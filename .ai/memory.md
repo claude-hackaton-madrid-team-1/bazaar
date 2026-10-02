@@ -273,3 +273,18 @@ passes locally in 0.2 s and on a rerun. A slow runner, not a regression: rerun t
 `PreToolUse:mcp__bazaar__<tool> hook error: <reason>`. Nothing was sent; the rows are in `decisions`
 (`desk/buyer`, rejected). The desk answered in Spanish to an English request: tighten its language line.
 
+### [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
+13 of 13 Abuela deals where she accepted our bid (message with no offer, "Deal!"/"Venga") show the
+`settlement` event in that same tick (feed, ticks 8–46). Our own accept of her offer settles at the
+next tick. The simulator (`bazaar-sim`) does the same; settling a tick later made the taker walk.
+
+### [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+docs.railway.com/infrastructure-as-code/reference: "Generated Railway service domains are not included
+in `.railway/railway.ts`" (custom domains only). `bazaar-sim`'s domain was made once with
+`railway domain --service bazaar-sim`; `railway config plan` still reports up to date afterwards.
+
+### [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+Created with `create database bazaar_sim` (connected to `postgres`, never `railway`); our schema is
+applied there. Against a simulator our client refuses a database URL naming `railway`
+(`BAZAAR_SIM_DATABASE_URL`), and its files default to `.local/sim-client/`, never the real `.local/`.
+

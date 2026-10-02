@@ -10,6 +10,7 @@ a key. `bazaar-mcp` exposes our tools, so every call needs a bearer token (see b
 | **Maker** | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` | Autonomous market maker (`bazaar agent maker`): posts, reprices and cancels our asks and bids; never accepts |
 | **Phoenix** | https://phoenix-production-6aa3.up.railway.app | Traces UI for every negotiation, duel, monitor tick and CLI line (project `bazaar`) |
 | **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
+| **Simulator** | https://bazaar-sim-production-1d48.up.railway.app | A simulated Bazaar (`bazaar-sim`): the organiser API's routes and shapes, keys `sim-team1`…`sim-team8`, for testing agents and the dashboard while the game is closed |
 
 Both agents start in **dry run**: they log and publish what they *would* do. A service trades only
 when `BAZAAR_LIVE=1` is set on it by hand (see README, "Production on Railway").
@@ -169,6 +170,13 @@ Organiser API, `https://bazaar.causaprima.ai`, no key: `GET /api/feed?limit=500`
 500 only), `/api/clock`, `/api/leaderboard`, `/api/dealers`, `/api/levels`, `/api/venues`,
 `/api/venues/{id}/offers`. The live stream `GET /api/events/stream?scope=team` needs our team key, so it
 stays server-side: a browser never holds the key.
+
+## Simulator
+
+https://bazaar-sim-production-1d48.up.railway.app serves the same routes as the organiser API (`/api/clock`, `/api/feed`, `/api/me`,
+`/api/events/stream`, ...) with the same JSON, plus `GET /sim/state` (a public summary). A dashboard
+can point its base URL there to develop against live-looking data; team routes take
+`X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). README, "Simulator".
 
 ## Not public
 
