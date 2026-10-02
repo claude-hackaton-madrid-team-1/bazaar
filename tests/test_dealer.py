@@ -171,6 +171,65 @@ def test_a_guardrail_denial_turns_the_move_into_a_walk_and_deals_are_reported():
     assert deals == [9]
 
 
+class LiveDealerClient(FakeDealerClient):
+    def me(self):
+        return {"cash": 400, "assets": []}
+
+
+@pytest.fixture
+def live_dealer_buy(monkeypatch, tmp_path):
+    from bazaar_agent import cli
+    from bazaar_agent.config import Settings
+
+    client = LiveDealerClient(asks=[12, 10, 9])
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    monkeypatch.setattr(cli, "_rarity_of", lambda item: "common")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    return cli, client
+
+
+def dealer_buy(cli, ledger, monkeypatch):
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
+    args = ["dealer", "buy", "LAV-03", "--max", "10", "--start", "6", "--live"]
+    result = CliRunner().invoke(cli.app, args)
+    return result, " ".join(result.output.split())
+
+
+def test_live_dealer_buy_with_the_ledger_down_exits_cleanly_before_opening(live_dealer_buy, monkeypatch):
+    import psycopg
+
+    from bazaar_agent.ledger_pg import PgLedger
+
+    cli, client = live_dealer_buy
+
+    def refused():
+        raise psycopg.OperationalError("down")
+
+    result, output = dealer_buy(cli, PgLedger(refused, "dealer-buy"), monkeypatch)
+    assert result.exit_code == 1 and not isinstance(result.exception, psycopg.Error | RuntimeError)
+    assert "refusing to trade: ledger read failed" in output and "(fail closed)" in output
+    assert client.sent == [] and client.reads == 1  # read the clock, never opened a thread
+
+
+def test_a_ledger_failure_inside_the_guard_walks_instead_of_accepting(live_dealer_buy, monkeypatch, tmp_path):
+    from bazaar_agent.guardrails import Ledger
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    class ReserveFails(Ledger):
+        def reserve_accept(self, *args, **kw):
+            raise LedgerUnavailable("accept reservation failed (OperationalError)")
+
+    cli, client = live_dealer_buy
+    result, output = dealer_buy(cli, ReserveFails(tmp_path / "ledger.jsonl"), monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert client.sent == [6, 7, 8] and client.accepted == [] and client.closed  # her 9 was not taken
+    assert "accept reservation failed (OperationalError); no write without the shared ledger" in output
+    assert "walked" in output
+
+
 def test_offer_terms_must_be_exactly_the_requested_item_for_cash_only():
     from bazaar_agent.agents.dealer import offer_terms_problem, requested_item
 

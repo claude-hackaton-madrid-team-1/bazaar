@@ -301,6 +301,7 @@ def dealer_buy(
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.dealer import BidPlan, bid_schedule, negotiate, template_words
+    from bazaar_agent.ledger_pg import LedgerUnavailable
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -320,16 +321,26 @@ def dealer_buy(
     client = team_client(settings)
     ledger = _ledger("dealer-buy", live=True)
     clock_now = Clock.model_validate(client.clock())
-    pre = gr.check(
-        gr.Action("buy", item, rarity, start),
-        gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
-        rules,
-    )
+    try:
+        pre = gr.check(
+            gr.Action("buy", item, rarity, start),
+            gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
+            rules,
+        )
+    except LedgerUnavailable as e:
+        _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
 
     def guard(move: Any) -> str | None:
+        """A ledger failure denies the move (negotiate walks): no write without the shared ledger."""
+        try:
+            return checked(move)
+        except LedgerUnavailable as e:
+            return f"{e}; no write without the shared ledger (fail closed)"
+
+    def checked(move: Any) -> str | None:
         c = Clock.model_validate(client.clock())
         ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
@@ -342,7 +353,11 @@ def dealer_buy(
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
-        ledger.record("spend", tick, t_hours, price, item)
+        try:
+            ledger.record("spend", tick, t_hours, price, item)
+        except LedgerUnavailable as e:  # the deal is done: say what the team-wide spend cap misses
+            console.print(f"[red]deal at {price} P done, but the shared ledger did not record its spend ({e})[/red]")
+            return
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
