@@ -315,6 +315,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Open pull requests
 
-_No open PRs (or `gh` unavailable)._
+| PR | Title | Branch |
+|---|---|---|
+| [#38](../../pull/38) | fix: greet the dealer we are actually talking to | `fix/dealer-greeting` |
 
 <!-- BAZAAR:ACTIVITY:END -->
