@@ -58,10 +58,12 @@ def runtime_env() -> dict:
     }
 
 
-def runtime(name: str, command: str, data: object) -> object:
+def runtime(name: str, command: str, data: object, enabled: bool = True) -> object:
+    """`enabled=False` declares no source: the service, its volume and variables stay, and no push
+    can deploy it. Railway has no 0-replica setting (the minimum is 1), so this is how it is off."""
     return service(
         name,
-        source=github(REPO, branch=BRANCH),
+        source=github(REPO, branch=BRANCH) if enabled else None,
         build=BUILD,
         start=f"/app/.venv/bin/bazaar {command}",
         deploy=ALWAYS,
@@ -95,7 +97,11 @@ def main(ctx=None):
             "PHOENIX_API_KEY": preserve(),  # a system key for span ingestion: `bazaar obs bootstrap`
         },
     )
-    monitor = runtime("bazaar-monitor", "monitor", monitor_data)
+    # OFF by team decision: the monitor runs in the CLI on a laptop (one monitor per team). Its
+    # source was disconnected and its deployment removed (`railway down`). To turn it back on: set
+    # enabled=True, `railway config apply` (it reconnects the repo and deploys main), and stop the
+    # laptop monitor.
+    monitor = runtime("bazaar-monitor", "monitor", monitor_data, enabled=False)
     duels = runtime("bazaar-duels", "duel run --play", duels_data)
 
     return project(
