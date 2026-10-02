@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -46,6 +48,9 @@ def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTI
     With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans.
     """
     llm_cli.pin_runtime(llm_runtime)
+    # Warnings (e.g. Phoenix unreachable) go to stdout with the console lines: a container platform
+    # such as Railway files stderr as errors. A no-op when logging is already configured.
+    logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if tm.init_tracing("bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
@@ -583,6 +588,9 @@ def monitor(
     public = public_client(settings)
     team = team_client(settings) if settings.bazaar_key else None
     ours = _our_team(settings)
+    if notify and sys.platform != "darwin":
+        console.print("[yellow]--notify needs macOS (osascript): alerts go to the log and alerts.jsonl only[/yellow]")
+        notify = False
     store = FeedStore(settings.feed_dir)
     watcher = Watcher(store, ours, FeedStore(settings.feed_dir, TEAM_EVENTS_FILE))
     options = Options(db_enabled, notify, refresh_every, show_events)
@@ -696,26 +704,104 @@ def feed_stats() -> None:
 # ---------------------------------------------------------------- observability
 
 
+def _phoenix_health(ui_url: str) -> tuple[bool, str]:
+    """(answers 2xx, what to show) for GET <ui_url>/healthz: public even when Phoenix auth is on."""
+    import httpx
+
+    try:
+        reply = httpx.get(f"{ui_url}/healthz", timeout=2.0)
+    except httpx.HTTPError as e:
+        return False, f"unreachable ({type(e).__name__}): `uv run bazaar obs up`"
+    return (
+        reply.is_success,
+        f"up (HTTP {reply.status_code})" if reply.is_success else f"answers HTTP {reply.status_code}",
+    )
+
+
 @obs_app.command("up")
 def obs_up() -> None:
-    """Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317."""
-    subprocess.run(["docker", "compose", "up", "-d", "--wait", "phoenix"], cwd=REPO_ROOT, check=True)
-    hint = "" if tm.tracing_config().enabled else " · tracing is OFF: export BAZAAR_TRACING=1 (or add it to .env)"
+    """Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317.
+
+    A Phoenix that already answers at the configured endpoint (ours on Railway, a teammate's, or the
+    local one) counts as up: nothing is started."""
+    cfg = tm.tracing_config()
+    hint = "" if cfg.enabled else " · tracing is OFF: export BAZAAR_TRACING=1 (or add it to .env)"
+    up, _ = _phoenix_health(cfg.ui_url)
+    if up:
+        console.print(f"[green]Phoenix is already up[/green] at {cfg.ui_url}: nothing to start{hint}")
+        return
+    try:
+        subprocess.run(["docker", "compose", "up", "-d", "--wait", "phoenix"], cwd=REPO_ROOT, check=True)
+    except FileNotFoundError:
+        _fail(
+            f"no Phoenix answers at {cfg.ui_url} and docker is not installed here: start Docker, or point "
+            'PHOENIX_COLLECTOR_ENDPOINT at a running Phoenix (README "Production on Railway")'
+        )
     console.print(f"[green]Phoenix is up[/green]: open {tm.DEFAULT_PHOENIX_URL}{hint}")
 
 
 @obs_app.command("status")
 def obs_status() -> None:
     """Whether tracing is on, where spans go, the Phoenix UI, and whether Phoenix answers."""
+    cfg = tm.tracing_config()
+    _, health = _phoenix_health(cfg.ui_url)
+    console.print(render.obs_table(cfg.enabled, cfg.endpoint, cfg.ui_url, cfg.project, cfg.api_key is not None, health))
+
+
+@obs_app.command("bootstrap")
+def obs_bootstrap(
+    url: str = typer.Option(..., help="The Phoenix base URL, e.g. https://phoenix-production-6aa3.up.railway.app"),
+    key_name: str = typer.Option("railway-ingest", help="Name of the system API key to create"),
+) -> None:
+    """Once per new Phoenix with auth: clear the admin's forced reset, mint a system API key for spans.
+
+    Reads the admin password from PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD (environment only). Writes the
+    new key to stdout and refuses to when stdout is a terminal: pipe it into Railway instead (README)."""
+    import os
+
     import httpx
 
-    cfg = tm.tracing_config()
+    from bazaar_agent import phoenix_admin as pa
+
+    password = os.environ.get("PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD", "")
+    if not password:
+        _fail("PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD is not set in the environment")
+    if sys.stdout.isatty():
+        _fail(
+            "refusing to print an API key to a terminal: "
+            "pipe stdout into `railway variable set PHOENIX_API_KEY --stdin`"
+        )
+    err = Console(stderr=True)
     try:
-        reply = httpx.get(f"{cfg.ui_url}/healthz", timeout=2.0)
-        health = f"up (HTTP {reply.status_code})" if reply.is_success else f"answers HTTP {reply.status_code}"
-    except httpx.HTTPError as e:
-        health = f"unreachable ({type(e).__name__}): `uv run bazaar obs up`"
-    console.print(render.obs_table(cfg.enabled, cfg.endpoint, cfg.ui_url, cfg.project, cfg.api_key is not None, health))
+        with httpx.Client(base_url=url.rstrip("/"), timeout=15.0) as client:
+            created = pa.bootstrap(client, password, key_name, "OTLP span ingestion for Team 1's Railway services")
+    except (pa.PhoenixAdminError, httpx.HTTPError) as e:
+        err.print(f"[red]bootstrap failed: {e if isinstance(e, pa.PhoenixAdminError) else type(e).__name__}[/red]")
+        raise typer.Exit(1) from None
+    sys.stdout.write(created.key)  # not through `console`: its tracing hook would copy it into a span
+    sys.stdout.flush()
+    err.print(f"[green]system API key '{created.name}' created[/green] (id {created.id}); admin reset cleared")
+
+
+@obs_app.command("spans")
+def obs_spans(limit: int = typer.Option(500, help="How many of the newest spans to count (max 1000)")) -> None:
+    """The newest spans in our Phoenix project, counted by name: proves the runtime's spans arrive."""
+    import httpx
+
+    from bazaar_agent import phoenix_admin as pa
+
+    cfg = tm.tracing_config()
+    headers = {"authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else None
+    try:
+        with httpx.Client(base_url=cfg.ui_url, headers=headers, timeout=15.0) as client:
+            summary = pa.span_summary(client, cfg.project, limit)
+    except (pa.PhoenixAdminError, httpx.HTTPError) as e:
+        _fail(f"cannot read spans from {cfg.ui_url}: {e if isinstance(e, pa.PhoenixAdminError) else type(e).__name__}")
+    console.print(
+        f"project {cfg.project} at {cfg.ui_url}: {summary.total} spans, newest start {summary.newest_start or '-'}"
+    )
+    for name, count in summary.by_name.items():
+        console.print(f"  {count:>5}  {name}")
 
 
 # ---------------------------------------------------------------- database
