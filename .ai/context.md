@@ -61,7 +61,7 @@ own market. Agents negotiate in natural language but close every deal with a str
 both sides agree on. Dominant constraint: negotiation quality within the game's fairness rules
 (one team key, rate limits, heartbeat trade cap). Source: the kickoff briefing,
 `docs/transcripts/2026-10-02-hackathon-kickoff.md` — a raw machine transcript, so confirm any
-figure against the official kit before coding against it.
+figure against the official kit (`vendor/bazaar-kit/`, rules in `RULES.md`) before coding against it.
 
 ## Game & judging (kickoff briefing, 2026-10-02)
 - **Players:** 18 teams, each with its own agent, plus dealer agents hosted by the organizers,
