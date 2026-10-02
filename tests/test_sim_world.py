@@ -60,8 +60,10 @@ def test_abuela_answers_on_the_next_tick_and_accepts_a_bid_at_her_floor():
     m.step()
     last = m.world.state.threads[th.id].messages[-1]
     assert last.sender == "abuela" and last.offer is None  # "Deal!": she took OUR offer
-    m.step()
-    assert m.world.state.threads[th.id].status == "deal"
+    assert m.world.state.threads[th.id].status == "deal"  # and it settled in that same tick (real feed)
+    settlement = [e for e in m.world.state.events if e.type == "settlement"][-1]
+    message = [e for e in m.world.state.events if e.type == "thread.message"][-1]
+    assert settlement.tick == message.tick == m.world.tick and settlement.id > message.id
     deal = m.world.team(US).deals[-1]
     assert deal.price == floor and deal.negotiated and deal.share == 1.0
 

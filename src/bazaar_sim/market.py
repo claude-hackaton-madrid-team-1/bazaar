@@ -229,6 +229,12 @@ def settle_due(w: World) -> None:
         _settle_match(w, match)
 
 
+def settle_now(w: World, offer: Offer) -> None:
+    """Settle one accepted offer at once (a dealer's own acceptance, made at the tick boundary)."""
+    if offer.status == "accepted":
+        _settle(w, offer)
+
+
 def _fail(w: World, offer: Offer, reason: str) -> None:
     offer.status = "failed"
     w.emit("settlement.failed", {"offer": offer.id, "reason": reason})

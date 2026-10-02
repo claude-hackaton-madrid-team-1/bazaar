@@ -393,6 +393,11 @@ def _answer(w: World, th: Thread) -> None:
 
 
 def _dealer_accepts(w: World, th: Thread, text: str) -> None:
+    """The dealer takes OUR standing offer. It settles in the same tick as her "Deal!" (real feed,
+    2026-10-02: 13 of 13 Abuela deals settled in the tick of that message): the team's offer was made
+    a tick earlier, so it still settles on the tick after it was posted."""
+    from bazaar_sim.market import settle_now
+
     ours = [o for o in w.state.offers.values() if o.thread == th.id and o.maker == th.team and o.status == "open"]
     if not ours:
         return
@@ -402,6 +407,7 @@ def _dealer_accepts(w: World, th: Thread, text: str) -> None:
     offer.accepted_tick = w.tick
     _retire(w, th, th.with_, "replaced")
     post_message(w, th, th.with_, text, None, public_text=True)
+    settle_now(w, offer)
 
 
 # ---------------------------------------------------------------- housekeeping and levels
