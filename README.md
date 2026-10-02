@@ -785,6 +785,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | Sat 01:48 | `3e5a4a6` |
 | [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | Sat 01:45 | `c73ee77` |
 | [#67](../../pull/67) | docs: sync the plan's task index with the triaged GitHub issues | Sat 01:42 | `68aa1b7` |
 | [#66](../../pull/66) | docs: first eval target is a nice-to-have; evals merged | Sat 01:30 | `3f737f0` |
@@ -796,13 +797,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#56](../../pull/56) | feat: generate the architecture status page in the README hook and CI | Sat 00:49 | `2d2f0bf` |
 | [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
 | [#53](../../pull/53) | chore: the Jev questions that designed our evals | Sat 00:23 | `e5d770e` |
-| [#52](../../pull/52) | docs: re-read the vendor rules every phase; one key, one request budget | Sat 00:20 | `3b09a5b` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | `docs/status-live` |
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | `fix/state-no-private-values` |
 | [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
