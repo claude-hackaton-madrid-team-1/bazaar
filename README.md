@@ -547,6 +547,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#50](../../pull/50) | docs: plan the nice-to-have Bazaar Live show | Sat 00:05 | `8e05ad6` |
 | [#49](../../pull/49) | docs: live service URLs and contracts in every doc | Sat 00:02 | `721f694` |
 | [#48](../../pull/48) | feat: autonomous taker and maker agents (dry run), shared Postgres ledger, read-only status | Fri 23:57 | `aca6fe1` |
 | [#47](../../pull/47) | fix: unattended tick loops survive network errors instead of exiting | Fri 23:45 | `f093e64` |
@@ -558,13 +559,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | Fri 22:31 | `7813244` |
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
-| [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#50](../../pull/50) | docs: plan the nice-to-have Bazaar Live show | `docs/nice-to-have-live-show` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
