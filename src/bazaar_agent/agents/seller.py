@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, Verdict, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check
 
 MAX_PRICE = 10_000_000  # RULES.md: whole primas from 1 to 10,000,000
 
@@ -146,7 +146,7 @@ def post(
     *,
     live: bool,
     expires_in_ticks: int = 40,
-    ledger: Ledger | None = None,
+    ledger: LedgerStore | None = None,
     commitments: Commitments | None = None,
 ) -> Posted:
     """Check the listing against the guardrails, then post it only when `live`.

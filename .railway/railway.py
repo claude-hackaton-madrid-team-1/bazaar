@@ -35,6 +35,7 @@ BUILD = {
         "uv.lock",
         "GUARDRAILS.md",
         "STRATEGY.md",
+        "RUNTIME.md",
         "questions/**",
         ".railway/**",
     ],
@@ -100,6 +101,26 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
     )
 
 
+def mcp_server(name: str, data: object) -> object:
+    """The runtime tools as a remote MCP server (`bazaar mcp serve`, README "Agent runtime"): Streamable
+    HTTP at /mcp on AGENT_PORT, behind `Authorization: Bearer <BAZAAR_MCP_TOKEN>`. The token is set once
+    by hand through stdin (`railway variable set BAZAAR_MCP_TOKEN --stdin`), never here.
+
+    DRY RUN on purpose: this file never sets BAZAAR_LIVE, so every write tool answers what it WOULD send.
+    The public domain is generated once with `railway domain --service bazaar-mcp --port 8080`, like the agents'."""
+    return service(
+        name,
+        source=github(REPO, branch=BRANCH),
+        build=BUILD,
+        start="/app/.venv/bin/bazaar mcp serve --host 0.0.0.0",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/health",
+        volumeMounts={APP_DATA: data},
+        env={**runtime_env(), "PORT": AGENT_PORT, "BAZAAR_MCP_TOKEN": preserve()},
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
@@ -107,6 +128,7 @@ def main(ctx=None):
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
     taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
     maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
+    mcp_data = volume("bazaar-mcp-data", region=REGION, sizeMB=VOLUME_MB)
 
     phoenix = service(
         "phoenix",
@@ -136,6 +158,8 @@ def main(ctx=None):
     # (duels first; the maker never accepts). Both stay in DRY RUN until BAZAAR_LIVE=1 is set by hand.
     taker = agent("bazaar-taker", "agent taker", taker_data)
     maker = agent("bazaar-maker", "agent maker", maker_data)
+    # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
+    mcp = mcp_server("bazaar-mcp", mcp_data)
 
     return project(
         "heartfelt-warmth",
@@ -145,10 +169,12 @@ def main(ctx=None):
             duels,
             taker,
             maker,
+            mcp,
             phoenix_data,
             monitor_data,
             duels_data,
             taker_data,
             maker_data,
+            mcp_data,
         ],
     )

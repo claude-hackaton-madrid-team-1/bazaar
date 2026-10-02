@@ -27,6 +27,12 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 - `ask_timeout_s` = 30 — limit for `bazaar ask` to turn a sentence into an intent.
 - `steer_timeout_s` = 30 — limit for `bazaar steer` to map an instruction to parameter deltas.
 
+## The desk (agent runtime on the Claude Agent SDK, outside the tick loop)
+- `desk_model` = sonnet-5-5 — the model for `bazaar agent chat` and `bazaar ask` through the desk and its subagents; a pinned Claude model (`--llm-runtime`, BAZAAR_LLM_RUNTIME) wins.
+- `desk_max_turns` = 16 — turns one desk request may take, subagent hand-offs and tool calls included.
+- `desk_timeout_s` = 180 — limit for one desk request; on a timeout, `bazaar ask` falls back to its intent parser.
+- `mcp_calls_per_minute` = 30 — tool calls per minute per bearer token on the remote MCP server (`bazaar mcp serve`), so no client can hammer the game API through us (5 req/s per team key).
+
 Model aliases (`src/bazaar_agent/llm/models.py`): `opus-5-5` → `claude-opus-5-5`, `sonnet-5-5` →
 `claude-sonnet-5-5`, `haiku-4-5` → `claude-haiku-4-5-20251001`, `fable-5-1` → `claude-fable-5-1`,
 `gpt-6-1-sol` → `gpt-6.1-sol`. Any other `claude-*` id goes to Anthropic and any `gpt-*` / `o<digit>`

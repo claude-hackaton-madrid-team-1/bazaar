@@ -205,6 +205,17 @@ def upsert_traders(conn: psycopg.Connection, snapshots: Iterable[Any], tick: int
     return len(rows)
 
 
+TRADER_COLUMNS = ("id", "kind", "name", "status", "level", "first_seen_tick", "last_seen_tick")
+
+
+def trader_rows(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Every trader the monitor has seen (dealers and teams), ordered by kind and id."""
+    rows = conn.execute(
+        "select id, kind, name, status, level, first_seen_tick, last_seen_tick from traders order by kind, id"
+    ).fetchall()
+    return [dict(zip(TRADER_COLUMNS, row, strict=True)) for row in rows]
+
+
 def insert_alerts(conn: psycopg.Connection, alerts: Iterable[Any]) -> int:
     """Insert alerts; one another monitor already stored (same tick, kind, subject, detail) is skipped.
     Returns how many were new."""
