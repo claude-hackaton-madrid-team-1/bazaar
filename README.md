@@ -277,6 +277,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
 | [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
 | [#34](../../pull/34) | feat: observability — trace negotiations, duels, monitor and CLI output to Arize Phoenix | Fri 22:03 | `ae5293b` |
 | [#33](../../pull/33) | feat: shared Railway Postgres with DATABASE_URL alone | Fri 21:57 | `4c6726f` |
@@ -288,7 +289,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
 | [#27](../../pull/27) | docs: translate the team briefing to English | Fri 20:35 | `caaecba` |
 | [#25](../../pull/25) | docs: team briefing (slides + audio + rules + API) | Fri 20:18 | `5255396` |
-| [#18](../../pull/18) | chore: add the official Bazaar Python SDK and starter kit | Fri 20:17 | `9d532bd` |
 
 ### Open pull requests
 
