@@ -163,6 +163,45 @@ class Observer:
         """The negotiation ended."""
 
 
+class _SafeObserver(Observer):
+    """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
+
+    def __init__(self, inner: Observer, log: Callable[[str], None]) -> None:
+        self._inner, self._log, self._warned = inner, log, False
+
+    def _call(self, name: str, *args: Any) -> None:
+        try:
+            getattr(self._inner, name)(*args)
+        except Exception as e:  # observability must never change the negotiation
+            if not self._warned:
+                self._log(f"tracing hook {name} failed ({type(e).__name__}); negotiation continues")
+                self._warned = True
+
+    def opened(self, thread_id: int) -> None:
+        self._call("opened", thread_id)
+
+    def wrap_tick(self, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
+        try:
+            return self._inner.wrap_tick(on_tick)
+        except Exception:
+            return on_tick
+
+    def thread_read(self, thread: dict[str, Any]) -> None:
+        self._call("thread_read", thread)
+
+    def guardrail(self, move: Move, denied: str | None) -> None:
+        self._call("guardrail", move, denied)
+
+    def move(self, move: Move, said: str | None) -> None:
+        self._call("move", move, said)
+
+    def refused(self, error: Exception) -> None:
+        self._call("refused", error)
+
+    def finished(self, outcome: Outcome) -> None:
+        self._call("finished", outcome)
+
+
 def negotiate(
     client: Any,
     dealer: str,
@@ -184,7 +223,7 @@ def negotiate(
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
     sleep = sleep or time.sleep
-    obs = observer or Observer()
+    obs: Observer = _SafeObserver(observer, log) if observer is not None else Observer()
 
     neg = Negotiation(plan)
     item = requested_item(topic)
