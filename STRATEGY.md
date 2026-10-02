@@ -20,6 +20,14 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - pack_value: buy a pack only when its expected value to us (given what we already hold) beats its learned price.
 - level_unlock: keep negotiated deals flowing with the newest dealer to unlock the next level early.
 
+## How the engine scores a move
+- Value of a missing page card: book × affinity, plus its share (by book, among the page's missing cards) of the page bonus, times `page_bonus_weight`.
+- Expected price: median tape price for the card, else for its rarity, else the dealer list price, else `rare_fallback_price` (rares) or book; dealer buys use that dealer's fills, rare bids use team-to-team prints.
+- Urgency: the mean of scarcity (1 at or below `scarce_minted_max` copies, then falling) and demand (teams whose top set is the card's set).
+- Score: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
+- Sell ask: the highest of our `your_value` × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price.
+- Pack EV: per slot, rarity odds × the mean value to us of one more copy of a released card of that rarity (copy marginals applied); a printed-out rarity gives the next one down.
+
 ## Parameters
 - `page_bonus_weight` = 1.0 — how much of a missing card's share of the 25 % page bonus counts toward its value.
 - `scarcity_weight` = 1.0 — how strongly scarcity raises a move's priority (0 = ignore supply).

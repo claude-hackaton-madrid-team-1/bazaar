@@ -43,6 +43,18 @@ Analyses read `.local/feed/feed.jsonl`; add `--live` to merge the current window
 
 `uv run bazaar status` shows cash, level, score and every card with `your_value`.
 
+`uv run bazaar strategy [--json]` ranks what to do next from `STRATEGY.md` (buys, sells, packs), each
+move with its guardrail verdict and the exact command. Supply is finite: zero minted copies is never a
+buy. Run the move's command as printed (a dry run), read the verdict, then add `--live` only when the
+coordinator decides to trade.
+
+| Offer | Command (dry run unless `--live`) |
+|---|---|
+| Sell one card for cash (never below `your_value`) | `uv run bazaar sell list <asset_id or ref> --price N` |
+| Bid cash for any copy of a card | `uv run bazaar sell bid <ref> --price N` |
+| Our open offers | `uv run bazaar sell offers` |
+| Withdraw one | `uv run bazaar sell cancel <offer_id>` |
+
 ## Memory (Postgres, pgvector when the server has it)
 
 Every process connects with `DATABASE_URL` only (env, then `.env`; unset = local docker).

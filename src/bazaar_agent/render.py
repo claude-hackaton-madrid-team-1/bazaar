@@ -290,3 +290,67 @@ def obs_table(enabled: bool, endpoint: str, ui_url: str, project: str, has_key: 
     ]:
         t.add_row(k, v)
     return t
+
+
+# ---------------------------------------------------------------- strategy playbook and offers
+
+
+def scarce_supply_table(supply: list) -> Table:
+    rows = sorted((s for s in supply if s.scarce), key=lambda s: (s.minted, s.ref))
+    t = Table(title=f"Scarce supply · {len(rows)} cards at or below scarce_minted_max copies (supply is finite)")
+    for col in ("card", "rarity", "minted", "print run", "ours", "availability"):
+        t.add_column(col, justify="right" if col in ("minted", "print run", "ours") else "left")
+    for s in rows:
+        t.add_row(s.ref, s.rarity, str(s.minted), str(s.print_run), str(s.ours), s.availability)
+    return t
+
+
+def moves_table(title: str, moves: list) -> Table:
+    t = Table(title=title)
+    for col in ("#", "card", "strategy", "value", "price", "surplus", "urgency", "score", "guardrails", "command"):
+        t.add_column(col, justify="right" if col in ("#", "value", "price", "surplus", "urgency", "score") else "left")
+    t.add_column("why", overflow="fold")
+    for i, m in enumerate(moves, start=1):
+        t.add_row(
+            str(i),
+            f"{m.ref} {m.rarity[:1].upper()}",
+            m.strategy,
+            f"{m.value:.1f}",
+            f"{m.price:g}",
+            f"{m.surplus:+.1f}",
+            f"{m.urgency:.2f}",
+            f"{m.score:.1f}",
+            m.guardrail,
+            m.command or "-",
+            m.reason,
+        )
+    return t
+
+
+def params_table(lines: list) -> Table:
+    t = Table(title="Strategy parameters · STRATEGY.md (edit it, then rerun `bazaar strategy`)")
+    for col in ("param", "value", "why", "line"):
+        t.add_column(col, justify="right" if col == "line" else "left")
+    for r in lines:
+        t.add_row(r.rule_id, r.raw_value, r.why, str(r.line))
+    return t
+
+
+def offers_table(offers: list, label: str = "offers") -> Table:
+    from bazaar_agent.agents.seller import offer_side
+
+    t = Table(title=f"Our {label} · {len(offers)} (cancel ours with `bazaar sell cancel <id>`)")
+    for col in ("id", "status", "venue", "maker", "to", "give", "want", "expires"):
+        t.add_column(col, justify="right" if col in ("id", "expires") else "left")
+    for o in offers:
+        t.add_row(
+            str(o.get("id")),
+            str(o.get("status") or "-"),
+            str(o.get("venue") or "-"),
+            str(o.get("maker") or "-"),
+            str(o.get("to") or "-"),
+            offer_side(o.get("give")),
+            offer_side(o.get("want")),
+            _n(o.get("expires_tick")),
+        )
+    return t
