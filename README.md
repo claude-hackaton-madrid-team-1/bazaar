@@ -24,6 +24,8 @@ uv run bazaar teams                       # the competition: flow, spend, inferr
 uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams
 uv run bazaar tape                        # every settlement with price
 uv run bazaar status                      # our cash, level, score, cards (needs BAZAAR_KEY)
+uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
+uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
 
 uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgres + pgvector memory
 uv run bazaar db tables                   # every table with its row count
@@ -86,6 +88,80 @@ per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, 
 `uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
 `touch .local/PAUSE` stops every write from every agent at once.
 
+## Observability (watch every negotiation live)
+
+Our runtime sends OpenTelemetry (OTLP) traces to [Arize Phoenix](https://arize.com/docs/phoenix)
+(the team's pick, Jev verdict `phoenix` at 0.90 in `questions/observability.json`).
+
+```sh
+uv run bazaar obs up            # Phoenix in docker: UI + OTLP/HTTP on http://127.0.0.1:6006, gRPC on :4317
+export BAZAAR_TRACING=1         # or BAZAAR_TRACING=1 in .env. Tracing is OFF without it
+uv run bazaar obs status        # tracing on/off, where spans go, whether Phoenix answers
+open http://127.0.0.1:6006      # project "bazaar"
+```
+
+What you see in Phoenix:
+
+| Trace | Comes from | Inside |
+|---|---|---|
+| `negotiation` (AGENT) | `bazaar dealer buy --live` | one `tick N` child per tick with events `message` (every line in the thread, both sides, with price), `dealer_offer`, `jev_verdict` (verdict, value, probabilities, latency), `guardrail` (allowed, violations), `our_move` (kind, price, our words, reason), `console`, and `exception` with the stack when the server refuses a move. The root holds dealer, item, plan, outcome, price, ticks and the full transcript |
+| `duel` (AGENT) | `bazaar duel run` | one per duel id: role, limit, a `duel tick N` child per tick with the rival offer, our move, guardrail, refusals |
+| `monitor tick N` | `bazaar monitor` | new events, newest id, gap flag, dealer/team/level counts, our cash/level/score; every `alert` and new or changed `trader` as an event; DB failures as exceptions (the tick goes on) |
+| `feed.capture`, `duels tick N` | `bazaar feed capture`, `bazaar duel run` | one trace per tick, with what the command printed |
+| `cli <command>` | every command | everything the command printed, as `console` events (with the command name) |
+| `thread.view` | `bazaar thread <id>` | the whole conversation as events, the transcript as output |
+
+Tick spans reach Phoenix about 2 s after each tick. A `negotiation` or `duel` root lands when it
+ends, so while one is running, look in the **Spans** tab. Long loops (`monitor`, `feed capture`,
+`duel run`) make one trace per tick, so they show up as they run.
+
+Without Phoenix, the same conversations are in the terminal (and as JSON for the UI team):
+
+```sh
+uv run bazaar threads                 # our threads: who, item, status, last message (--status open)
+uv run bazaar thread 115              # one whole conversation: sender, text, price, final, offer status
+uv run bazaar thread 115 --json       # stable JSON: {thread, messages[], standing_offers[]}
+```
+
+Safety rules for tracing:
+
+- **Off by default**, and off means off: no exporter, no console hook, `negotiate()` runs unchanged.
+- **Never blocks a tick.** Spans leave through a bounded `BatchSpanProcessor` queue (2048 spans,
+  dropped when full) on a background thread. An export times out after 3 s. If Phoenix is down
+  you get one warning per outage and trading goes on. Pending spans are flushed at exit.
+- **No secrets in spans.** Every string is scrubbed: Postgres passwords (`pgconn.redact`), the values of our `*_KEY`/`*_TOKEN`/`*_SECRET`
+  variables are cut out, `tk-…` team-key shapes are cut out, and everything passes through the
+  Jev masking (`jev.mask.mask_text`). Counterparty text is stored, but it is never executed and
+  never rendered as markup.
+- Phoenix only ingests traces, so console lines are span events, not OTel log records.
+
+Settings (environment or `.env`): `BAZAAR_TRACING=1`, `PHOENIX_COLLECTOR_ENDPOINT` (base URL,
+default `http://127.0.0.1:6006`), `PHOENIX_PROJECT` (default `bazaar`), `PHOENIX_API_KEY` (sent as
+a bearer token, only for a Phoenix with auth on). `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` wins over
+all of them and is used as is.
+
+### Seeing it from another laptop
+
+Phoenix runs on one machine. Teammates can reach it in either of two ways. Neither is deployed yet.
+
+1. **A shared host (recommended for the venue).** One laptop or a small VM runs Phoenix and
+   publishes the port: `PHOENIX_BIND=0.0.0.0 uv run bazaar obs up`. Every teammate whose agent
+   should report there sets `PHOENIX_COLLECTOR_ENDPOINT=http://<host-ip>:6006` plus
+   `BAZAAR_TRACING=1`, and opens `http://<host-ip>:6006` in a browser. Anyone on the same Wi-Fi
+   could read and write an open Phoenix. Bind to a private network instead
+   (`PHOENIX_BIND=<tailscale-ip>` on Tailscale), or turn on Phoenix auth: add
+   `PHOENIX_ENABLE_AUTH=true`, `PHOENIX_SECRET=<32+ chars, a digit and a lowercase letter>` and
+   `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` to the `phoenix` service, create an API key in its
+   Settings page, and give each teammate `PHOENIX_API_KEY`.
+2. **A hosted backend.** Phoenix's own hosted cloud is gone: `app.phoenix.arize.com` answers
+   HTTP 410, and the Phoenix docs now say Phoenix is self-hosted only, pointing to **Arize AX**
+   (managed, has a free tier) for SaaS. AX takes the same OTLP spans. Per Arize's `arize-otel`
+   package, the endpoint is `https://otlp.arize.com/v1` and the headers are `authorization` (API
+   key) and `arize-space-id`. Set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+   `OTEL_EXPORTER_OTLP_TRACES_HEADERS` in the shell environment (the exporter reads these from
+   the environment, not from `.env`). This path is untested: check it against Arize's docs before
+   relying on it.
+
 ## How it fits together
 
 ```
@@ -135,6 +211,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 first CLI + table commands done |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | 🔵 judge/mask/log/report done (135 tests, live parity); recorded-fixture parity test left |
 | N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ |
+| N7 (new) | Observability: OTel traces → Phoenix (negotiations, duels, monitor, console), `bazaar thread(s)` | 1 | 🔵 PR open (`obs up`, `obs status`, `thread 115`) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Valuation, buy/sell lists | 1 | ⬜ |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | ⬜ |
@@ -153,6 +230,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. |
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
+| `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
+| `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
@@ -162,6 +241,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar alerts` | The latest alerts raised by the monitor: new dealers, level changes, announcements. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
+| `uv run bazaar obs up` | Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317. |
+| `uv run bazaar obs status` | Whether tracing is on, where spans go, the Phoenix UI, and whether Phoenix answers. |
 | `uv run bazaar db up` | Start Postgres + pgvector (docker compose, localhost:5433). |
 | `uv run bazaar db check` | Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts. |
 | `uv run bazaar db init` | Create every table (idempotent, safe while other processes are connected). |
@@ -170,13 +251,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
+- [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
+- [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
 - [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
 - [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
 - [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
 - [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
 - [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
-- [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
-- [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
-- [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
 
 <!-- BAZAAR:STATUS:END -->

@@ -80,3 +80,18 @@ service may still lack it: the schema now works either way, and `uv run bazaar d
 ### [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
 A bad percent-escape in the password gives `invalid percent-encoded token: "<password...>"`. Print
 DB errors only through `pgconn.redact()` (as `bazaar db check` does), never `str(e)` of a connect error.
+
+### [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
+`app.phoenix.arize.com` answers HTTP 410 and the Phoenix docs now say Phoenix is self-hosted only
+(the managed SaaS is Arize AX). For teammates on other laptops: one host runs
+`PHOENIX_BIND=0.0.0.0 uv run bazaar obs up`, the others set `PHOENIX_COLLECTOR_ENDPOINT=http://<host>:6006`.
+Phoenix ingests traces only (no OTLP logs), so console lines are span events.
+
+### [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
+symptom: `pytest tests/test_telemetry_cli.py` never returned → root cause: `--max-ticks 2` with a
+fake clock stuck on one tick, so `run_per_tick` slept (real `time.sleep`) waiting for tick 2 → fix:
+CLI tests with a fixed clock use `--max-ticks 1`.
+
+### [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
+Use `typer.Context` and `typer.main.get_current_context(silent=True)` (its `command_path` names the
+running subcommand). In a group callback, `ctx.invoked_subcommand` is only the first level.
