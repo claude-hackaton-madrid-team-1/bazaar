@@ -86,7 +86,7 @@ ABUELA = {
     "level": 1,
     "menu": {
         "sells": [
-            {"pack": "sobre_barrio", "list_price": 26, "opening_ask": 30},
+            {"pack": "sobre_barrio", "list_price": 26, "opening_ask": 30, "per_team_per_hour": 3},
             {"rarity": "common", "sets": "released", "list_price": 10},
             {"rarity": "uncommon", "sets": "released", "list_price": 25},
         ]
@@ -242,7 +242,18 @@ def test_holders_come_from_settlements_listings_and_gifts():
 def test_dealer_quotes_keep_only_active_dealers_we_unlocked():
     quotes, newest = strategy.dealer_quotes(DEALERS, ["abuela"])
     assert {q.item for q in quotes} == {"sobre_barrio", "common", "uncommon"} and newest == "abuela"
+    assert next(q for q in quotes if q.item == "sobre_barrio").per_team_per_hour == 3
     assert strategy.dealer_quotes(DEALERS, []) == ((), None)
+    assert playbook().pack_quotas == {"sobre_barrio": 3}
+
+
+def test_a_dealer_line_for_one_set_covers_only_that_set():
+    lav_only = deepcopy(ABUELA)
+    lav_only["menu"]["sells"] = [{"rarity": "common", "sets": "LAV", "list_price": 10}]
+    m = market(dealers=[lav_only])
+    assert strategy.quote_for(m, m.cards["LAV-02"]) is not None
+    assert strategy.quote_for(m, m.cards["LAT-03"]) is None
+    assert strategy._set_scope(["LAV", "LAT"]) == ("LAV", "LAT") and strategy._set_scope("released") is None
 
 
 def test_urgency_mixes_scarcity_and_demand():
@@ -303,18 +314,39 @@ def test_buys_below_the_minimum_surplus_are_explained_not_proposed():
     assert any("surplus too small" in line for line in book.skipped)
 
 
-def test_sells_go_to_chasers_at_their_need_and_never_below_our_value():
+def test_sells_go_to_chasers_at_their_need_and_never_below_what_we_lose():
     book = playbook()
     assert [m.ref for m in book.sells] == ["LAT-09", "LAT-03"]
     lat09, lat03 = book.sells
-    assert (lat09.value, lat09.price, lat09.surplus, lat09.score) == (35.0, 68.0, 33.0, 60.49)
-    assert lat09.command == "uv run bazaar sell list 5 --price 68"
+    # LAT's page is complete in the fixture: selling our only LAT-09 also gives up the whole page bonus.
+    assert (lat09.value, lat09.price, lat09.surplus, lat09.score) == (45.0, 68.0, 23.0, 42.16)
+    assert "ours 35 + page bonus 10.0" in lat09.reason
+    assert lat09.command == "uv run bazaar sell list 5 --price 68" and lat09.asset_id == 5
     assert lat09.counterparties == ("t07", "t14")
     assert lat03.command == "uv run bazaar sell list 4 --price 10" and "duplicate" in lat03.reason
+    assert lat03.value == 1.2  # a duplicate gives up no page bonus
     assert all(m.price >= m.value + PARAMS.sell_min_surplus for m in book.sells)
     strict = playbook(rules=Guardrails(sell_min_value_ratio=3.0))
     assert all(m.price >= 3.0 * m.value for m in strict.sells)
-    assert next(m for m in strict.sells if m.ref == "LAT-09").price == 105
+    assert next(m for m in strict.sells if m.ref == "LAT-09").price == 135
+
+
+def test_the_page_bonus_at_stake_is_all_of_it_on_a_complete_page_and_a_share_otherwise():
+    m = market()
+    assert strategy.bonus_at_stake(m, m.cards["LAT-09"], PARAMS) == pytest.approx(0.25 * 80 * 0.5)
+    assert strategy.bonus_at_stake(m, m.cards["LAT-03"], PARAMS) == 0.0  # we keep a copy
+    page_bonus = 0.25 * 210 * 1.6  # LAV: missing LAV-02, LAV-08, LAV-09, LAV-10 (book 175)
+    assert strategy.bonus_at_stake(m, m.cards["LAV-01"], PARAMS) == pytest.approx(page_bonus * 10 / 185)
+    unweighted = PARAMS.model_copy(update={"page_bonus_weight": 0.0})
+    assert strategy.bonus_at_stake(m, m.cards["LAV-01"], unweighted) == 0.0
+    assert strategy.bonus_at_stake(m, m.cards["LAV-11"], PARAMS) == 0.0  # not a page card
+
+
+def test_a_copy_without_your_value_is_never_offered():
+    me = deepcopy(ME)
+    me["assets"][4]["your_value"] = None  # LAT-09
+    book = strategy.build_playbook(me, CATALOG, EVENTS, DEALERS, PARAMS, RULES)
+    assert "LAT-09" not in [m.ref for m in book.sells]
 
 
 def test_ranking_caps_each_side_and_breaks_ties_toward_duplicates_then_low_affinity():
@@ -357,6 +389,21 @@ def test_a_printed_out_rarity_falls_back_to_the_next_one_down():
     assert strategy.rarity_value(m, "common") == 0.0  # nothing below common
 
 
+def test_a_ladder_capped_below_the_market_price_is_not_proposed():
+    tight = Guardrails(max_price_uncommon=20, max_price_rare=60, max_price_pack=15)
+    book = playbook(rules=tight)
+    refs = [m.ref for m in book.buys]
+    assert "LAV-08" not in refs and "LAV-09" not in refs  # abuela fills LAV-08 at 22; teams pay rares 65
+    assert any(line.startswith("LAV-08:") and "cap below market" in line for line in book.skipped)
+    assert any(line.startswith("LAV-09:") and "cap below market" in line for line in book.skipped)
+    barrio = next(m for m in book.packs if m.ref == "sobre_barrio")
+    assert barrio.command == "" and "max_price_pack caps us at 15" in barrio.reason
+
+
+def test_packs_are_capped_at_max_moves_too():
+    assert len(playbook(params=PARAMS.model_copy(update={"max_moves": 1})).packs) == 1
+
+
 def test_a_pack_not_worth_its_price_gets_no_command():
     expensive = PARAMS.model_copy(update={"pack_price_estimate": 40})
     barrio = next(m for m in playbook(params=expensive).packs if m.ref == "sobre_barrio")
@@ -376,6 +423,13 @@ def test_guarded_shows_what_guardrails_would_say_for_each_move():
     assert next(m for m in book.packs if not m.command).guardrail == "-"
 
 
+def test_an_asset_already_in_our_open_offers_is_not_listed_again():
+    ctx = Context(cash=400, held={"LAT-03": 2, "LAT-09": 1}, tick=50, t_hours=1.0)
+    book = strategy.guarded(playbook(), ctx, RULES, listed=frozenset({5}))
+    lat09 = next(m for m in book.sells if m.ref == "LAT-09")
+    assert lat09.guardrail == "denied: asset 5 is already in one of our open offers"
+
+
 def test_playbook_serialises_to_json_with_its_parameters():
     data = strategy.playbook_dict(playbook(), strategy.load_strategy())
     again = json.loads(json.dumps(data))
@@ -386,8 +440,10 @@ def test_playbook_serialises_to_json_with_its_parameters():
 def test_strategy_tables_render_every_move_and_parameter():
     book = playbook()
     assert "LAV-09" in text(render.scarce_supply_table(list(book.supply)))
-    rendered = text(render.moves_table("Buys", list(book.buys)))
-    assert "sell bid LAV-09 --price 65" in rendered and "147.7" in rendered
+    assert "147.7" in text(render.moves_table("Buys", list(book.buys)))
+    assert render.move_commands(list(book.buys))[0] == "  #1 uv run bazaar sell bid LAV-09 --price 65"
+    info = render.move_commands([m for m in book.packs if not m.command])[0]
+    assert info.startswith("  #1 - (no command: ") and "no dealer we can reach sells it" in info
     assert "max_moves" in text(render.params_table(list(strategy.load_strategy().lines)))
 
 
@@ -400,3 +456,26 @@ def test_real_feed_slice_runs_end_to_end():
     lav10 = next(m for m in book.buys if m.ref == "LAV-10")
     assert lav10.counterparties == ("t10",) and lav10.price == 70.0
     assert intel.tape(real)[0].ref == "LAV-10"
+
+
+def test_a_new_dealer_without_fills_is_laddered_from_the_deepest_discount_seen():
+    chato = {
+        "id": "chato",
+        "status": "active",
+        "level": 2,
+        "menu": {"sells": [{"rarity": "rare", "sets": "released", "list_price": 77}]},
+    }
+    me = {**ME, "unlocked": ["abuela", "chato"]}
+    book = strategy.build_playbook(me, CATALOG, EVENTS, [ABUELA, chato], PARAMS, RULES)
+    lav09 = next(m for m in book.buys if m.ref == "LAV-09")
+    # abuela's deepest discount: a 26 P pack filled at 17 (0.654) → open a 77 P rare at 50, reach 77 in 14 ticks
+    assert lav09.command == "uv run bazaar dealer buy LAV-09 --start 50 --max 77 --step 3 --dealer chato"
+    assert "level_unlock" in lav09.strategy and (lav09.price, lav09.surplus) == (77.0, 68.6)
+    assert strategy.opening_ratio(strategy.build_market(me, CATALOG, [], [ABUELA, chato])) is None
+
+
+def test_ladder_steps_fit_the_thread_and_openings_follow_the_ratio():
+    assert strategy.bid_range([], 77, 145.6, 80, 2, 17 / 26) == (50, 77)
+    assert strategy.bid_range([], 77, 145.6, 80, 2) == (77, 77)  # nothing learned anywhere: list price
+    steps = (strategy.ladder_step(50, 77, 14), strategy.ladder_step(8, 9, 14), strategy.ladder_step(5, 5, 1))
+    assert steps == (3, 1, 1)

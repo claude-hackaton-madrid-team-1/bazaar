@@ -97,6 +97,10 @@ zero minted copies is never a buy), buys (`complete_pages`, `scarcity_first`, `d
 `level_unlock`), sells (`sell_to_need`), pack EV (`pack_value`) and the active parameters. Each move
 shows its value, expected price, surplus, urgency, score, the guardrail verdict for it right now, and
 the exact command to run (`--json` for machines). Commands are dry runs until you add `--live`.
+Guardrail verdicts count our open offers (`/api/me/offers`): cash they promise, cards they bid for and
+assets already listed. Packs are scarce: at most `max_packs_per_game_hour` (GUARDRAILS.md) and each
+dealer's own quota, so a pack move is kept only when Jev (`questions/packs.json`) says the slot is
+worth spending now; the header shows the slots used and left this game hour.
 
 - `uv run bazaar sell list <asset_id|ref> --price N` lists a card for cash, never below its `your_value`.
 - `uv run bazaar sell bid <ref> --price N` bids cash for any copy (how we buy rares only teams hold).

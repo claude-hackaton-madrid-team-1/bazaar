@@ -104,3 +104,42 @@ def test_offer_sides_read_in_a_few_words():
 def test_cli_cancel_is_a_dry_run_without_live():
     result = CliRunner().invoke(app, ["sell", "cancel", "12"])
     assert result.exit_code == 0 and "would cancel offer 12" in result.stdout
+
+
+OUR_OPEN = [
+    {"id": 1, "maker": "t01", "status": "open", "give": {"cash": 70}, "want": {"cards": ["LAV-09"]}},
+    {"id": 2, "maker": "m3950d43b", "status": "open", "give": {"assets": [{"id": 15, "ref": "LAT-09"}]}},
+    {"id": 3, "maker": "t07", "to": "t01", "status": "open", "give": {"cash": 50}, "want": {"cards": ["LAT-09"]}},
+    {"id": 4, "maker": "t01", "status": "cancelled", "give": {"cash": 30}, "want": {"cards": ["SAL-09"]}},
+]
+
+
+def test_open_commitments_count_our_open_offers_and_fail_closed_on_unknown_makers():
+    c = seller.open_commitments(OUR_OPEN, "t01")
+    assert (c.cash, c.wanted, c.listed) == (70, ("LAV-09",), frozenset({15}))  # 3 is to us, 4 is cancelled
+    assert seller.offers_in({"offers": OUR_OPEN[:1], "to_me": OUR_OPEN[2:3], "note": "x"}) == [OUR_OPEN[0], OUR_OPEN[2]]
+    ctx = seller.committed_context(CTX, c)
+    assert (ctx.cash, ctx.held["LAV-09"], ctx.held["LAT-09"]) == (283, 1, 1)
+
+
+def test_open_bids_block_a_second_bid_and_count_toward_the_cash_floor():
+    client, c = FakeOfferClient(), seller.open_commitments(OUR_OPEN, "t01")
+    again = seller.post(client, seller.bid_listing("LAV-09", "rare", 60), CTX, RULES, live=True, commitments=c)
+    other = seller.post(client, seller.bid_listing("SAL-09", "rare", 20), CTX, RULES, live=True, commitments=c)
+    assert "block_buying_held_cards" in again.message
+    assert "cash 283 - 20 < cash_floor 270" in other.message and client.posted == []
+
+
+def test_an_asset_already_listed_is_not_listed_twice():
+    client = FakeOfferClient()
+    c = seller.open_commitments(OUR_OPEN, "t01")
+    out = seller.post(client, seller.sell_listing(ME, "15", 90), CTX, RULES, live=True, commitments=c)
+    assert not out.sent and "already in one of our open offers" in out.message and client.posted == []
+
+
+def test_a_copy_without_your_value_is_never_listed():
+    me = {"assets": [{"id": 9, "kind": "card", "ref": "LAT-09", "your_value": None}]}
+    with pytest.raises(seller.OfferError, match="no your_value"):
+        seller.sell_listing(me, "LAT-09", 90)
+    both = {"assets": [*me["assets"], {"id": 15, "kind": "card", "ref": "LAT-09", "your_value": 35.0}]}
+    assert seller.sell_listing(both, "LAT-09", 90).asset_id == 15  # a priced copy is preferred

@@ -7,7 +7,8 @@ structure binds: the listing IS the structured offer (`give` / `want`) a counter
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, Verdict, check
@@ -54,16 +55,23 @@ def find_copy(me: dict[str, Any], target: str) -> dict[str, Any]:
     else:
         found = sorted(
             (a for a in cards if str(a.get("ref")) == target),
-            key=lambda a: (float(a.get("your_value") or 0), -int(a["id"])),
+            key=lambda a: (not _has_value(a), float(a.get("your_value") or 0), -int(a["id"])),
         )
     if not found:
         raise OfferError(f"we hold no card {target!r} (check `uv run bazaar status`)")
     return found[0]
 
 
+def _has_value(asset: dict[str, Any]) -> bool:
+    return isinstance(asset.get("your_value"), int | float)
+
+
 def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rastro") -> Listing:
+    """Fails closed: a copy without `your_value` in /api/me has no floor, so it is never listed."""
     _check_price(price)
     asset = find_copy(me, target)
+    if not _has_value(asset):
+        raise OfferError(f"asset {asset['id']} ({asset.get('ref')}) has no your_value in /api/me: not pricing it blind")
     return Listing(
         "sell",
         str(asset.get("ref")),
@@ -83,6 +91,46 @@ def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro")
 
 
 @dataclass(frozen=True)
+class Commitments:
+    """What our open offers already promise: cash out, cards we bid for, assets we listed."""
+
+    cash: int = 0
+    wanted: tuple[str, ...] = ()
+    listed: frozenset[int] = frozenset()
+
+
+def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every offer in a `GET /api/me/offers` body, whatever list it sits in."""
+    return [o for rows in response.values() if isinstance(rows, list) for o in rows if isinstance(o, dict)]
+
+
+def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
+    """Our open or queued offers. An offer counts as ours unless another team addressed it to us, so an
+    unknown maker fails closed: its cash and cards are counted as committed."""
+    cash, wanted, listed = 0, [], set()
+    for o in offers:
+        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
+            continue
+        give, want = o.get("give") or {}, o.get("want") or {}
+        cash += int(give.get("cash") or 0)
+        wanted += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
+        for a in give.get("assets") or []:
+            asset_id = a.get("id") if isinstance(a, dict) else a
+            if isinstance(asset_id, int):
+                listed.add(asset_id)
+    return Commitments(cash, tuple(wanted), frozenset(listed))
+
+
+def committed_context(ctx: Context, commitments: Commitments) -> Context:
+    """The guardrail context as if every open offer fills: less cash, and the cards we bid for held.
+    Two open bids cannot both pass the cash floor, and a second bid for the same card is refused."""
+    held = dict(ctx.held)
+    for ref in commitments.wanted:
+        held[ref] = held.get(ref, 0) + 1
+    return replace(ctx, cash=ctx.cash - commitments.cash, held=held)
+
+
+@dataclass(frozen=True)
 class Posted:
     sent: bool
     verdict: Verdict
@@ -99,13 +147,19 @@ def post(
     live: bool,
     expires_in_ticks: int = 40,
     ledger: Ledger | None = None,
+    commitments: Commitments | None = None,
 ) -> Posted:
     """Check the listing against the guardrails, then post it only when `live`.
 
-    A posted bid is recorded as spend in the shared ledger at once: it can fill on any later tick,
-    so max_spend_per_game_hour counts the commitment, not the uncertain fill.
+    Pass our open offers as `commitments`: the check then sees the cash and cards they already promise,
+    and an asset already listed is not listed twice. A posted bid is recorded as spend in the shared
+    ledger at once: it can fill on any later tick, so max_spend_per_game_hour counts the commitment.
     """
-    verdict = check(listing.action(), ctx, rules)
+    commitments = commitments or Commitments()
+    if listing.asset_id is not None and listing.asset_id in commitments.listed:
+        verdict = Verdict(False, (f"asset {listing.asset_id} is already in one of our open offers",))
+    else:
+        verdict = check(listing.action(), committed_context(ctx, commitments), rules)
     if not verdict.allowed:
         return Posted(False, verdict, None, f"guardrails refuse to {listing.describe()}: {verdict}")
     if not live:

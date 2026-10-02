@@ -46,7 +46,8 @@ Analyses read `.local/feed/feed.jsonl`; add `--live` to merge the current window
 `uv run bazaar strategy [--json]` ranks what to do next from `STRATEGY.md` (buys, sells, packs), each
 move with its guardrail verdict and the exact command. Supply is finite: zero minted copies is never a
 buy. Run the move's command as printed (a dry run), read the verdict, then add `--live` only when the
-coordinator decides to trade.
+coordinator decides to trade. Pack moves need a pack slot left this game hour and a Jev `yes` on
+`spend_pack_slot_now` (the `jev` column shows the verdict and its probability).
 
 | Offer | Command (dry run unless `--live`) |
 |---|---|

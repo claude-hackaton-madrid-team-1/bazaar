@@ -307,8 +307,9 @@ def scarce_supply_table(supply: list) -> Table:
 
 def moves_table(title: str, moves: list) -> Table:
     t = Table(title=title)
-    for col in ("#", "card", "strategy", "value", "price", "surplus", "urgency", "score", "guardrails", "command"):
-        t.add_column(col, justify="right" if col in ("#", "value", "price", "surplus", "urgency", "score") else "left")
+    numbers = ("#", "value", "price", "surplus", "urgency", "score")
+    for col in (*numbers[:1], "card", "strategy", *numbers[1:], "jev", "guardrails"):
+        t.add_column(col, justify="right" if col in numbers else "left", overflow="fold")
     t.add_column("why", overflow="fold")
     for i, m in enumerate(moves, start=1):
         t.add_row(
@@ -320,11 +321,20 @@ def moves_table(title: str, moves: list) -> Table:
             f"{m.surplus:+.1f}",
             f"{m.urgency:.2f}",
             f"{m.score:.1f}",
+            m.jev,
             m.guardrail,
-            m.command or "-",
             m.reason,
         )
     return t
+
+
+def move_commands(moves: list) -> list[str]:
+    """One plain line per move, so a command copies whole (a table cell would wrap it)."""
+    lines = []
+    for i, m in enumerate(moves, start=1):
+        why_not = m.reason.rsplit("; ", 1)[-1]
+        lines.append(f"  #{i} {m.command or f'- (no command: {why_not})'}")
+    return lines
 
 
 def params_table(lines: list) -> Table:

@@ -1,0 +1,17 @@
+{
+  "about": "Bazaar pack questions for the Jev judge. A verdict informs the trading agent but never authorizes a trade on its own; GUARDRAILS.md and our own checks still decide.",
+  "questions": {
+    "spend_pack_slot_now": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Should we spend one of our scarce pack slots now to buy `pack` at about `pack_learned_price`, given `pack_expected_value_to_us`, `pack_slots_left_this_game_hour`, `best_alternative_buy`, and `cash_above_floor`?",
+        "note": "We may buy only a few packs per game hour, so a slot is scarce. `pack_expected_value_to_us` already counts the cards we hold (a duplicate is worth little to us). Primas spent on a pack cannot buy `best_alternative_buy`, which may complete a page. Luck from opening packs never counts toward the score."
+      },
+      "criteria": {
+        "true": "The pack's expected value to us clearly beats its price, a slot is left, and spending these primas now does not starve a better buy such as `best_alternative_buy` or push cash toward the floor.",
+        "false": "The edge over the price is thin, or the same primas buy something worth more to us (`best_alternative_buy`), or cash above the floor is too low to afford both."
+      }
+    }
+  }
+}

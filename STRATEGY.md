@@ -17,7 +17,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - scarcity_first: the fewer copies exist, the sooner we act and the higher we value it; a card with zero minted copies cannot be bought yet, only pulled or waited for.
 - sell_to_need: sell duplicates and low-affinity cards to the teams that chase their set, priced at what the card is worth to them, never below our own value.
 - dealer_floor: buy plentiful commons and uncommons from dealers at their learned fill price, not from teams.
-- pack_value: buy a pack only when its expected value to us (given what we already hold) beats its learned price.
+- pack_value: buy a pack only when its expected value to us (given what we already hold) beats its learned price, a pack slot is left this game hour (`max_packs_per_game_hour` in GUARDRAILS.md and each dealer's `per_team_per_hour`), and Jev (`spend_pack_slot_now`, `questions/packs.json`) decides yes; `no` or `undecided` keeps the slot.
 - level_unlock: keep negotiated deals flowing with the newest dealer to unlock the next level early.
 
 ## How the engine scores a move
@@ -25,7 +25,9 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Expected price: median tape price for the card, else for its rarity, else the dealer list price, else `rare_fallback_price` (rares) or book; dealer buys use that dealer's fills, rare bids use team-to-team prints.
 - Urgency: the mean of scarcity (1 at or below `scarce_minted_max` copies, then falling) and demand (teams whose top set is the card's set).
 - Score: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
-- Sell ask: the highest of our `your_value` × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price.
+- Sell ask: the highest of what we lose × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price. What we lose is our `your_value`, plus the page bonus when we sell our only copy of a page card (all of it on a complete page, else its weighted share). A copy without `your_value` is never offered.
+- A buy whose guardrail price cap sits below the market price is not proposed ("cap below market"): that ladder cannot fill.
+- Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`.
 - Pack EV: per slot, rarity odds × the mean value to us of one more copy of a released card of that rarity (copy marginals applied); a printed-out rarity gives the next one down.
 
 ## Parameters

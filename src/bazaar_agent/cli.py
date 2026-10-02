@@ -788,6 +788,57 @@ def _team_me() -> tuple[Any, dict[str, Any]]:
     raise typer.Exit(1)
 
 
+def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in, open_commitments
+
+    try:
+        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+    except BazaarError as e:
+        console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
+    raise typer.Exit(1)
+
+
+def _pack_judge(settings: Any, timeout_s: float) -> Any:
+    """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / "packs.json")
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+
+    def ask(state: dict[str, Any]) -> tuple[str, float]:
+        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
+        return verdict.verdict, verdict.value
+
+    return ask
+
+
+def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
+    slots = book.pack_slots
+    quotas = ", ".join(f"{pack} dealer quota {n}" for pack, n in book.pack_quotas.items()) or "no dealer quota"
+    console.print(
+        f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
+        f"{max(0, ctx.cash - rules.cash_floor)} above cash_floor {rules.cash_floor} · spent last game hour "
+        f"{ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · pack slots this game hour: used {slots.used}, "
+        f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
+    )
+    console.print(render.scarce_supply_table(list(book.supply)))
+    for title, moves in (
+        ("Buys · complete_pages, scarcity_first, dealer_floor (ranked)", book.buys),
+        ("Sells · sell_to_need (ranked)", book.sells),
+        ("Packs · pack_value, gated by Jev spend_pack_slot_now", book.packs),
+    ):
+        console.print(render.moves_table(title, list(moves)))
+        for line in render.move_commands(list(moves)):
+            console.print(line, soft_wrap=True, markup=False, highlight=False)
+    if book.skipped:
+        console.print("[bold]Not proposed[/bold]:")
+        for line in book.skipped:
+            console.print(f"  • {line}")
+    console.print(render.params_table(list(loaded.lines)))
+    console.print("[yellow]Every command is a dry run: add --live to trade. Guardrails re-check each write.[/yellow]")
+
+
 @app.command()
 def strategy(
     as_json: bool = typer.Option(False, "--json", help="Print the playbook as JSON"),
@@ -798,41 +849,28 @@ def strategy(
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent import strategy as st
+    from bazaar_agent.agents.seller import committed_context
+    from bazaar_agent.pack_gate import gate_packs
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
-    _, me = _team_me()
+    client, me = _team_me()
+    commitments = _open_commitments(client, me)
     public = public_client(settings)
     now = Clock.model_validate(public.clock())
     personas = public.dealers()
-    book = st.build_playbook(
-        me,
-        public.catalog(),
-        _events(live),
-        personas.get("personas") or personas.get("dealers") or [],
-        loaded.params,
-        rules,
-    )
-    ctx = gr.context_from(me, now.tick, now.t_hours, gr.Ledger(settings.data_dir / "ledger.jsonl"), rules)
-    book = st.guarded(book, ctx, rules)
+    dealers_now = personas.get("personas") or personas.get("dealers") or []
+    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, loaded.params, rules)
+    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
+    used = ledger.packs_since(now.t_hours - 1.0)
+    slots = st.PackSlots(sum(used.values()), rules.max_packs_per_game_hour)
+    book = gate_packs(book, _pack_judge(settings, rules.jev_timeout_s), slots, used, rules, now.t_hours)
+    book = st.guarded(book, ctx, rules, commitments.listed)
     if as_json:
         typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
         return
-    console.print(
-        f"tick {now.tick} · cash {book.cash}, {max(0, book.cash - rules.cash_floor)} above cash_floor "
-        f"{rules.cash_floor} · spent last game hour {ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · "
-        "each move is checked alone: the total of all moves may not fit"
-    )
-    console.print(render.scarce_supply_table(list(book.supply)))
-    console.print(render.moves_table("Buys · complete_pages, scarcity_first, dealer_floor (ranked)", list(book.buys)))
-    console.print(render.moves_table("Sells · sell_to_need (ranked)", list(book.sells)))
-    console.print(render.moves_table("Packs · pack_value (expected value to us vs price)", list(book.packs)))
-    if book.skipped:
-        console.print("[bold]Not proposed[/bold]:")
-        for line in book.skipped:
-            console.print(f"  • {line}")
-    console.print(render.params_table(list(loaded.lines)))
-    console.print("[yellow]Every command is a dry run: add --live to trade. Guardrails re-check each write.[/yellow]")
+    _print_playbook(book, loaded, rules, ctx, commitments)
 
 
 # ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
@@ -851,8 +889,11 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     ledger = gr.Ledger(load_settings().data_dir / "ledger.jsonl")
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+    commitments = _open_commitments(client, me)
     try:
-        out = post(client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger)
+        out = post(
+            client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
+        )
     except BazaarError as e:
         _fail(f"offer refused: {e.code} ({e.message[:80]})")
         return
