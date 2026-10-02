@@ -33,7 +33,14 @@ def _command_name(decorator: ast.expr, func: ast.FunctionDef) -> tuple[str, str]
         return None
     if decorator.func.attr != "command" or not isinstance(decorator.func.value, ast.Name):
         return None
-    group = {"app": "", "feed_app": "feed ", "db_app": "db ", "dealer_app": "dealer "}.get(decorator.func.value.id)
+    group = {
+        "app": "",
+        "feed_app": "feed ",
+        "db_app": "db ",
+        "dealer_app": "dealer ",
+        "duel_app": "duel ",
+        "rules_app": "rules ",
+    }.get(decorator.func.value.id)
     if group is None:
         return None
     explicit = decorator.args[0].value if decorator.args and isinstance(decorator.args[0], ast.Constant) else None

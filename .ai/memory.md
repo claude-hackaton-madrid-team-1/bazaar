@@ -57,3 +57,7 @@ regression test `test_negotiate_sends_one_message_per_tick_even_when_the_clock_i
 ### [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
 Our bid 6 → her ask 7 → accepted (3 ticks, `dealer buy LAV-03 --start 6 --max 10`). Commons open at
 12, so 7 captures most of her range, and LAV-03 is worth 16 to us. Run by the Orca worker; LAV-04 next.
+
+### [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
+Bids 6→7→8→9, she accepted our 9 (no accept from us), so the old runner printed `price None`.
+Fixed: the deal hook falls back to our last bid and records spend in `.local/ledger.jsonl`.

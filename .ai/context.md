@@ -120,6 +120,9 @@ means wait for the tick named in it, never retry in a loop. Unit tests make no l
 **Album first:** before any buy, sell, listing or negotiation, read `GET /api/me` (album pages,
 missing page cards, duplicates, affinity, cash) — `uv run bazaar status` — and re-read it after
 every deal. Never decide on a stale view of what we hold.
+**Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
+`guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
+to validate. `touch .local/PAUSE` stops every write at once.
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through

@@ -86,6 +86,8 @@ def latest_dealer_offer(thread: dict[str, Any], dealer: str) -> tuple[int | None
 
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
+Guard = Callable[[Move], str | None]  # returns a deny reason, or None when the move is allowed
+DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a deal settles
 
 
 def apply_advice(move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None) -> Move:
@@ -115,6 +117,8 @@ def negotiate(
     advisor: Advisor | None = None,
     max_ticks: int = 14,
     sleep: Callable[[float], None] | None = None,
+    guard: Guard | None = None,
+    on_deal: DealHook | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out."""
     import time
@@ -138,6 +142,10 @@ def negotiate(
         state["status"] = thread.get("status", "open")
         if state["status"] != "open":
             log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
+            if state["status"] == "deal":
+                state["price"] = state["price"] or (neg.bids[-1] if neg.bids else None)
+                if on_deal is not None and state["price"] is not None:
+                    on_deal(int(state["price"]), clock.tick, clock.t_hours)
             return
         if state["accepted"]:
             log(f"tick {clock.tick}: accepted, waiting for settlement")
@@ -153,6 +161,11 @@ def negotiate(
             f"tick {clock.tick}: her ask {ask}{' FINAL' if final else ''} → {move.kind} {move.price or ''} "
             f"({move.reason})"
         )
+        if guard is not None and move.kind in ("accept", "bid"):
+            denied = guard(move)
+            if denied:
+                log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
+                move = Move("walk", reason=f"guardrail: {denied}")
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
