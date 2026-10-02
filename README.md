@@ -546,6 +546,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#49](../../pull/49) | docs: live service URLs and contracts in every doc | Sat 00:02 | `721f694` |
 | [#48](../../pull/48) | feat: autonomous taker and maker agents (dry run), shared Postgres ledger, read-only status | Fri 23:57 | `aca6fe1` |
 | [#47](../../pull/47) | fix: unattended tick loops survive network errors instead of exiting | Fri 23:45 | `f093e64` |
 | [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | Fri 23:00 | `f46872e` |
@@ -557,13 +558,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
 | [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
-| [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#49](../../pull/49) | docs: live service URLs and contracts in every doc | `docs/services-guide` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
