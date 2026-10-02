@@ -599,6 +599,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#56](../../pull/56) | feat: generate the architecture status page in the README hook and CI | Sat 00:49 | `2d2f0bf` |
 | [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
 | [#53](../../pull/53) | chore: the Jev questions that designed our evals | Sat 00:23 | `e5d770e` |
 | [#52](../../pull/52) | docs: re-read the vendor rules every phase; one key, one request budget | Sat 00:20 | `3b09a5b` |
@@ -610,7 +611,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | Fri 23:00 | `f46872e` |
 | [#44](../../pull/44) | docs: map every Railway service and public URL | Fri 22:44 | `d50bd8d` |
 | [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | Fri 22:42 | `2e5d7a5` |
-| [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | Fri 22:40 | `cdf0d11` |
 
 ### Open pull requests
 
