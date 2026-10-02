@@ -118,6 +118,12 @@ team's bad behaviour earns points only if correct and costs points if wrong.
 thread, 12 new listings; at most 6 open threads and 30 open offers; 5 req/s per key. A decision
 that cannot finish before `next_tick_in` minus a safety margin is dropped, not sent late. A `429`
 means wait for the tick named in it, never retry in a loop. Unit tests make no live network calls.
+**Vendor rules every phase:** before starting any phase or task, re-read `vendor/bazaar-kit/RULES.md`
+and `vendor/bazaar-kit/README.md` (and the `bazaar` skill) and check the plan against them. Every
+worker brief says the same. **One key, one budget:** ALL our processes together (monitor, duels,
+taker, maker, MCP server, CLI) share the key's 5 req/s (bursts of 20) and its 6 live-stream slots;
+a new service must fit inside that budget. Our MCP server and agent endpoints are for Team 1 only:
+never give another team a way to act with our key.
 **Album first:** before any buy, sell, listing or negotiation, read `GET /api/me` (album pages,
 missing page cards, duplicates, affinity, cash) — `uv run bazaar status` — and re-read it after
 every deal. Never decide on a stale view of what we hold.
