@@ -29,8 +29,46 @@ uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgr
 uv run bazaar db tables                   # every table with its row count
 ```
 
-Tests: `uv run pytest` (the DB test is skipped when Postgres is not running).
+Tests: `uv run pytest` (the DB tests are skipped when Postgres is unreachable).
 Lint: `uv run ruff check . && uv run ruff format --check .` · Types: `uv run mypy src`.
+
+## Shared database (Railway)
+
+Every process (CLI, monitor, agents, tests) connects with ONE variable, `DATABASE_URL`, read from
+the environment first, then `.env`. Unset means the local docker Postgres
+(`postgresql://bazaar:bazaar@localhost:5433/bazaar`). To share one memory across laptops:
+
+1. In Railway, open the Postgres service → **Settings → Networking → Public Access**. That creates
+   the TCP proxy and the `DATABASE_PUBLIC_URL` variable
+   (`postgresql://postgres:<password>@<name>.proxy.rlwy.net:<port>/railway`). Laptops need this
+   public URL: Railway's own `DATABASE_URL` is the private `*.railway.internal` address, which only
+   works inside the Railway project. Proxy traffic is billed as egress.
+2. Paste it into `.env` as `DATABASE_URL=...` (template line in `.env.example`). Never paste it into
+   chat, commits, `.ai/memory.md` or logs: the password is in it.
+3. `uv run bazaar db check`: host (never the password), server version, SSL, latency of 3 round
+   trips, pgvector on/off, row counts, and whether you are still on the local default URL. It exits
+   1 when the database is unreachable.
+4. `uv run bazaar db init`: creates every table and reports pgvector on/off. Safe to repeat, and
+   safe while other processes are connected (one transaction behind an advisory lock).
+
+- **SSL.** Railway's default image (`postgres-ssl`) serves TLS with a self-signed certificate.
+  libpq's default (`sslmode=prefer`) already encrypts; add `?sslmode=require` to the URL to make it
+  mandatory (not `verify-full`: the certificate is self-signed). An `sslmode` in the URL always
+  wins; the code never turns SSL off.
+- **pgvector.** Railway's docs say the default template ships no extensions, but its image has
+  installed `postgresql-17-pgvector` since 2026-03 (verified on `postgres-ssl:17`, pgvector 0.8.6).
+  An older service may need a redeploy, or use the pgvector template. Without pgvector the
+  schema still creates every table and skips only the `embedding vector(384)` columns; run
+  `db init` again after enabling it and they are added.
+- **One monitor writes per team.** Run a single `uv run bazaar monitor` against the shared database.
+  Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
+  writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
+  history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
+  second monitor doubles the team's API reads against the 5 req/s limit. Readers (`traders`,
+  `db tables`, `db check`, analyses) can run anywhere.
+- **Tests on the shared database.** `tests/test_db.py` runs in its own `bazaar_pytest_<random>`
+  schema per test and drops it, so teammates can run the suite at once and real tables are never
+  touched.
 
 ## Ticks: the rule every loop follows
 
@@ -125,19 +163,20 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
 | `uv run bazaar db up` | Start Postgres + pgvector (docker compose, localhost:5433). |
-| `uv run bazaar db init` | Create every table (idempotent). |
+| `uv run bazaar db check` | Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts. |
+| `uv run bazaar db init` | Create every table (idempotent, safe while other processes are connected). |
 | `uv run bazaar db load` | Load the captured feed into feed_events, tape and dealer_curves (idempotent). |
 | `uv run bazaar db tables` | Every table with its row count. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
+- [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
 - [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
 - [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
 - [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 - [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
 - [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
 - [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
-- [2026-10-02] gotcha — `.env` has `TYPESAFE_API_KEY` but no `BAZAAR_KEY` yet
-- [2026-10-02] gotcha — zsh treats `echo ====` as a path expansion
 
 <!-- BAZAAR:STATUS:END -->
