@@ -74,6 +74,15 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     return Move("bid", nxt, reason="small distinct step up")
 
 
+def bid_schedule(plan: BidPlan) -> list[int]:
+    """Every bid `decide()` would send if the dealer never answered: the dry run of one negotiation."""
+    neg, schedule = Negotiation(plan), []
+    while (move := decide(neg, None, None, False)).kind == "bid" and move.price is not None:
+        neg.bids.append(move.price)
+        schedule.append(move.price)
+    return schedule
+
+
 # How we address each dealer. An unknown dealer gets a neutral greeting, never another dealer's name.
 DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato"}
 

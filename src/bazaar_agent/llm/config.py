@@ -35,6 +35,10 @@ class RuntimeConfig(BaseModel):
     words_max_chars: int = Field(default=300, ge=40, le=1200)
     ask_timeout_s: float = Field(default=30.0, gt=0, le=120)
     steer_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    desk_model: str = "sonnet-5-5"
+    desk_max_turns: int = Field(default=16, ge=2, le=60)
+    desk_timeout_s: float = Field(default=180.0, gt=0, le=900)
+    mcp_calls_per_minute: int = Field(default=30, ge=1, le=600)
 
     @field_validator("runtime_models", mode="before")
     @classmethod
@@ -43,7 +47,7 @@ class RuntimeConfig(BaseModel):
             return tuple(part.strip().lower() for part in value.split(",") if part.strip())
         return value
 
-    @field_validator("runtime_model_default", "llm_runtime")
+    @field_validator("runtime_model_default", "llm_runtime", "desk_model")
     @classmethod
     def _lower(cls, value: str) -> str:
         return value.strip().lower()
@@ -77,7 +81,7 @@ def parse_runtime(text: str, path: Path = RUNTIME_FILE) -> LoadedRuntime:
 
 
 def _check_models(config: RuntimeConfig, path: Path) -> None:
-    names = [config.runtime_model_default, *config.runtime_models]
+    names = [config.runtime_model_default, config.desk_model, *config.runtime_models]
     if config.llm_runtime != AUTO:
         names.append(config.llm_runtime)
     for name in names:

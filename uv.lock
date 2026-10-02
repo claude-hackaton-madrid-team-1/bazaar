@@ -137,6 +137,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "claude-agent-sdk" },
     { name = "httpx" },
+    { name = "mcp" },
     { name = "openai" },
     { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -145,6 +146,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "typer" },
+    { name = "uvicorn" },
     { name = "websockets" },
 ]
 
@@ -165,6 +167,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=1.11.0" },
     { name = "claude-agent-sdk", specifier = "==0.2.163" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=2.2,<3" },
     { name = "openai", specifier = ">=3.24.0" },
     { name = "openinference-semantic-conventions", specifier = ">=0.1.41" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.45" },
@@ -173,6 +176,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "rich", specifier = ">=13.7" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13" },
 ]
 

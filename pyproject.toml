@@ -16,6 +16,9 @@ dependencies = [
   "openai>=3.24.0",
   "websockets>=13",
   "claude-agent-sdk==0.2.163",
+  # The remote MCP server (`bazaar mcp serve`): MCP Python SDK 2.x low-level Server + Streamable HTTP.
+  "mcp>=2.2,<3",
+  "uvicorn>=0.30",
 ]
 
 [project.scripts]

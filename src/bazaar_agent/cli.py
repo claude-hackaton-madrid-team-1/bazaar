@@ -20,6 +20,7 @@ from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.llm import cli as llm_cli
+from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
@@ -37,7 +38,8 @@ app.add_typer(rules_app, name="rules")
 obs_app = typer.Typer(no_args_is_help=True, help="Observability: OpenTelemetry traces in Arize Phoenix")
 app.add_typer(obs_app, name="obs")
 agent_app = typer.Typer(
-    no_args_is_help=True, help="Autonomous agents, every tick: taker and maker (dry run by default)"
+    no_args_is_help=True,
+    help="Autonomous agents: taker and maker every tick; the desk (chat) on the Claude Agent SDK. Dry run by default",
 )
 app.add_typer(agent_app, name="agent")
 console = Console()
@@ -288,7 +290,7 @@ def dealer_buy(
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate, template_words
+    from bazaar_agent.agents.dealer import BidPlan, bid_schedule, negotiate, template_words
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -298,10 +300,7 @@ def dealer_buy(
     if cap is not None and max_price > cap:
         _fail(f"--max {max_price} is above max_price_{rarity} = {cap} in GUARDRAILS.md")
     if not live:
-        neg, schedule = Negotiation(plan), []
-        while (move := decide(neg, None, None, False)).kind == "bid" and move.price is not None:
-            neg.bids.append(move.price)
-            schedule.append(move.price)
+        schedule = bid_schedule(plan)
         console.print(
             f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}, accept any ask ≤ next bid, "
             f"walk above {max_price}. Add --live to trade."
@@ -760,14 +759,12 @@ def traders() -> None:
     from bazaar_agent import db
 
     with db.connect(load_settings().database_url.get_secret_value()) as cx:
-        rows = cx.execute(
-            "select id, kind, name, status, level, first_seen_tick, last_seen_tick from traders order by kind, id"
-        ).fetchall()
+        rows = db.trader_rows(cx)
     t = Table(title=f"Traders · {len(rows)} (kept current by `bazaar monitor`)")
     for col in ("id", "kind", "name", "status", "level", "first seen", "last seen"):
         t.add_column(col)
     for r in rows:
-        t.add_row(*["-" if v is None else str(v) for v in r])
+        t.add_row(*["-" if v is None else str(v) for v in r.values()])
     console.print(t)
 
 
@@ -1042,16 +1039,9 @@ def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
 
 def _pack_judge(settings: Any, timeout_s: float) -> Any:
     """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
-    from bazaar_agent.jev import judge, load_questions
+    from bazaar_agent.pack_gate import jev_pack_judge
 
-    questions = load_questions(REPO_ROOT / "questions" / "packs.json")
-    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
-
-    def ask(state: dict[str, Any]) -> tuple[str, float]:
-        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
-        return verdict.verdict, verdict.value
-
-    return ask
+    return jev_pack_judge(settings, timeout_s)
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
@@ -1088,29 +1078,18 @@ def strategy(
     """Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict."""
     import json
 
-    from bazaar_agent import guardrails as gr
     from bazaar_agent import strategy as st
-    from bazaar_agent.agents.seller import committed_context
-    from bazaar_agent.pack_gate import gate_packs
+    from bazaar_agent.runtime.backend import playbook_now
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
     client, me = _team_me()
     commitments = _open_commitments(client, me)
     public = public_client(settings)
-    now = Clock.model_validate(public.clock())
-    personas = public.dealers()
-    dealers_now = personas.get("personas") or personas.get("dealers") or []
-    from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
-
-    params = steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, now.tick)
-    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, params, rules)
-    ledger = _ledger("strategy")
-    ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
-    used = ledger.packs_since(now.t_hours - 1.0)
-    slots = st.PackSlots(sum(used.values()), rules.max_packs_per_game_hour)
-    book = gate_packs(book, _pack_judge(settings, rules.jev_timeout_s), slots, used, rules, now.t_hours)
-    book = st.guarded(book, ctx, rules, commitments.listed)
+    judge = _pack_judge(settings, rules.jev_timeout_s)
+    book, ctx = playbook_now(
+        me, commitments, public, _events(live), settings, rules, loaded, _ledger("strategy"), judge
+    )
     if as_json:
         typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
         return
@@ -1362,6 +1341,11 @@ def agent_maker(
 # `bazaar llm`, `bazaar ask`, `bazaar steer` (and `--llm-runtime` in `_root`): see bazaar_agent/llm/cli.py.
 
 llm_cli.register(app)
+
+# ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
+# `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.
+
+runtime_cli.register(agent_app, app)
 
 
 if __name__ == "__main__":

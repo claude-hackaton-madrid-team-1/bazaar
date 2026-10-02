@@ -229,9 +229,24 @@ def _print_choices(rows: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------- bazaar ask
 
 
-def ask(text: str = typer.Argument(help='What you want, e.g. "buy LAV-09 under 90"')) -> None:
-    """Talk to the agent: sentence → strict intent → guardrail verdict → exact command. Dry run: never trades."""
+DESK_HELP = (
+    "Route through the desk (Claude Agent SDK: desk → subagent → tools → hooks → guardrails). "
+    "Default: on when CLAUDE_CODE_OAUTH_TOKEN is set. Falls back to the intent parser when the desk is unavailable."
+)
+
+
+def ask(
+    text: str = typer.Argument(help='What you want, e.g. "buy LAV-09 under 90"'),
+    desk: bool | None = typer.Option(None, "--desk/--no-desk", help=DESK_HELP),
+) -> None:
+    """Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default."""
     settings, loaded, rules = _load()
+    if desk if desk is not None else settings.claude_code_oauth_token is not None:
+        from bazaar_agent.runtime.cli import ask_desk
+
+        if ask_desk(text, settings, rules, loaded.config, STATE["pin"]):
+            return
+        console.print("[yellow]falling back to the intent parser (one structured call, no tools)[/yellow]")
     runtime = _runtime(settings, loaded, rules)
     clock = _public_clock(settings)
     result = parse_request(

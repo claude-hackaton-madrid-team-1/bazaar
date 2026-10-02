@@ -74,3 +74,21 @@ def gate_packs(
         return replace(mv, command="", jev=jev, reason=f"{mv.reason}; Jev {verdict}: keep the slot")
 
     return replace(book, packs=tuple(map(gated, book.packs)), pack_slots=slots)
+
+
+def jev_pack_judge(settings: Any, timeout_s: float) -> PackJudge:
+    """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state.
+
+    Shared by `bazaar strategy` and the runtime's `strategy` tool. Without TYPESAFE_API_KEY Jev answers
+    undecided, and an undecided verdict keeps the slot."""
+    from bazaar_agent.config import REPO_ROOT
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / "packs.json")
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+
+    def ask(state: dict[str, Any]) -> tuple[str, float]:
+        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
+        return verdict.verdict, verdict.value
+
+    return ask
