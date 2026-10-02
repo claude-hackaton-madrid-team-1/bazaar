@@ -108,7 +108,8 @@ def _coerce(raw: str) -> Any:
     return value
 
 
-def parse_guardrails(text: str, path: Path = GUARDRAILS_FILE) -> LoadedRules:
+def parse_md_config(text: str, path: Path) -> tuple[tuple[RuleLine, ...], tuple[str, ...], dict[str, Any]]:
+    """Read `` - `id` = value — why `` lines (rules) and other bullets (principles) from a Markdown file."""
     lines, principles, values = [], [], {}
     for number, raw in enumerate(text.splitlines(), start=1):
         if m := RULE_LINE.match(raw.strip()):
@@ -121,12 +122,20 @@ def parse_guardrails(text: str, path: Path = GUARDRAILS_FILE) -> LoadedRules:
             raise GuardrailsError(f"{path.name}:{number}: not a rule line (expected - `id` = value — why)")
         elif m := PRINCIPLE_LINE.match(raw.strip()):
             principles.append(m["text"])
+    return tuple(lines), tuple(principles), values
+
+
+def validated(model: type[BaseModel], values: dict[str, Any], path: Path) -> Any:
     try:
-        rules = Guardrails.model_validate(values)
+        return model.model_validate(values)
     except ValidationError as e:
         problems = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
         raise GuardrailsError(f"{path.name}: {problems}") from None
-    return LoadedRules(rules, tuple(lines), tuple(principles), path)
+
+
+def parse_guardrails(text: str, path: Path = GUARDRAILS_FILE) -> LoadedRules:
+    lines, principles, values = parse_md_config(text, path)
+    return LoadedRules(validated(Guardrails, values, path), lines, principles, path)
 
 
 def load_guardrails(path: Path = GUARDRAILS_FILE) -> LoadedRules:
