@@ -185,3 +185,15 @@ closed` once and their `/health` carries `doors`, `paused`, `next_opens`.
 symptom: `json.load` failed on the first line → root cause: `open_ledger` logged "ledger: shared Postgres
 table" through the stdout console before the JSON → fix: CLI ledger notes go to stderr (`err_console`).
 Same trap: `_events` prints "no captured feed yet" on stdout when `.local/feed` is empty (pre-existing).
+
+### [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
+`query()` with the laptop's `claude` login loaded the claude.ai MCP connectors on every call (4–7 s for one
+sentence). `strict_mcp_config=True` + `setting_sources=[]` + `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` brought
+Haiku to ~0.9 s (bare prompt) and 1.6–2.0 s (our words prompt). `output_format` comes back through
+a tool turn, so `max_turns=1` cannot return structured output: use ≥ 2 (we use 3). Bare mode (`--bare`)
+does not read CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_AUTH_TOKEN outranks it: `runtime/claude.py` blanks both.
+
+### [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
+`railway config plan` stays "already up to date" (changeSet empty, no diagnostics) with
+`CLAUDE_CODE_OAUTH_TOKEN: preserve()` on 3 services and no value set: declare first, set later with
+`railway variable set --stdin`, and the next apply keeps the value.
