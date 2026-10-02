@@ -230,5 +230,6 @@ class ApiResponsesTest(unittest.TestCase):
                 self.assertEqual(payload["error"], REFUSED_CODES[scheme])
                 self.assertIn(payload["error"], SPEC["components"]["schemas"]["ErrorCode"]["enum"])
 
+
 if __name__ == "__main__":
     unittest.main()
