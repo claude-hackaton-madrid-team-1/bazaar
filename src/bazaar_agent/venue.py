@@ -97,6 +97,17 @@ def save_broker_key(data_dir: Path, venue: str, key: str) -> Path:
     return path
 
 
+def check_key_file_writable(data_dir: Path) -> None:
+    """Before a live open: the key comes back only once, so prove it can be saved before asking for it."""
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        probe = data_dir / f".{BROKER_ENV_FILE}.probe"
+        os.close(os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
+        probe.unlink()
+    except OSError as e:
+        raise ConfigError(f"{data_dir} is not writable ({type(e).__name__}): the broker key could not be saved") from e
+
+
 # ---------------------------------------------------------------- one guarded write
 
 
@@ -145,19 +156,16 @@ def open_venue(
         f"open venue {spec.name!r} ({spec.mechanism}, {spec.fee_bps} bps + {spec.fee_per_card} P per card) "
         f"for {VENUE_COST} P (bond + opening fee) with cash {ctx.cash}"
     )
+
+    def send() -> Any:
+        check_key_file_writable(settings.data_dir)  # nothing is opened if the key would be lost
+        mechanism = {"mechanism": spec.mechanism}
+        return team.open_venue(
+            spec.name, spec.fee_bps, spec.fee_per_card, rules=mechanism, description=spec.description
+        )
+
     outcome = guarded_write(
-        Action("venue_open", spec.name, price=VENUE_COST),
-        ctx,
-        rules,
-        live=live,
-        describe=describe,
-        call=lambda: team.open_venue(
-            spec.name,
-            spec.fee_bps,
-            spec.fee_per_card,
-            rules={"mechanism": spec.mechanism},
-            description=spec.description,
-        ),
+        Action("venue_open", spec.name, price=VENUE_COST), ctx, rules, live=live, describe=describe, call=send
     )
     if not outcome.sent or outcome.response is None:
         return outcome, None
@@ -165,7 +173,13 @@ def open_venue(
     key, venue = str(body.pop("broker_key", "") or ""), str(body.get("venue") or "")
     if not key or not venue:
         return VenueOutcome(True, outcome.verdict, body, f"{outcome.message}; no broker key came back"), None
-    path = save_broker_key(settings.data_dir, venue, key)
+    try:
+        path = save_broker_key(settings.data_dir, venue, key)
+    except OSError as e:  # checked writable a moment ago; if it still fails, say so plainly (never the key)
+        raise ConfigError(
+            f"venue {venue} is OPEN but its broker key could not be saved ({type(e).__name__}). "
+            f"Close it (`bazaar venue close {venue} --live`, the bond comes back) and open it again."
+        ) from e
     return VenueOutcome(True, outcome.verdict, {**body, "broker_key": "[saved]"}, outcome.message), path
 
 
