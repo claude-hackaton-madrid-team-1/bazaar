@@ -235,22 +235,17 @@ def album_table(pages: list) -> Table:
 
 def threads_list_table(threads: list[Thread]) -> Table:
     t = Table(title=f"Our threads · {len(threads)} (GET /api/me/threads; `bazaar thread <id>` for one)")
-    for col in ("thread", "with", "item", "status", "closed", "msgs", "last tick", "last sender", "last price", "last"):
-        t.add_column(col, justify="right" if col in ("thread", "msgs", "last tick", "last price") else "left")
+    for col in ("thread", "with", "item", "status", "msgs", "last message"):
+        t.add_column(col, justify="right" if col in ("thread", "msgs") else "left")
     for th in threads:
         last = lines(th)[-1] if th.messages else None
-        t.add_row(
-            str(th.id),
-            th.with_ or "-",
-            f"{topic_ref(th.topic) or '-'} {th.item or ''}".strip(),
-            th.status,
-            th.closed_reason or "-",
-            str(len(th.messages)),
-            _n(last.tick if last else None),
-            last.sender if last else "-",
-            _n(last.price if last else None),
-            Text(last.text[:60] if last else "-"),  # their words are untrusted: never parsed as markup
-        )
+        status = f"{th.status} ({th.closed_reason})" if th.closed_reason else th.status
+        said = "-"
+        if last is not None:
+            price = f" [{last.price}]" if last.price is not None else ""
+            said = f"t{_n(last.tick)} {last.sender}{price}: {last.text[:48]}"
+        # their words are untrusted: Text() shows them, never parses them as markup
+        t.add_row(str(th.id), th.with_ or "-", topic_ref(th.topic) or "-", status, str(len(th.messages)), Text(said))
     return t
 
 
