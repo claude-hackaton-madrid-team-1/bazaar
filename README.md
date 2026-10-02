@@ -88,6 +88,24 @@ per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, 
 `uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
 `touch .local/PAUSE` stops every write from every agent at once.
 
+## Strategy (what to do next, ranked)
+
+[`STRATEGY.md`](STRATEGY.md) holds every strategy and its parameters; `src/bazaar_agent/strategy.py`
+implements them as pure functions over `/api/me`, the catalog, the dealers and the feed.
+`uv run bazaar strategy` prints the ranked playbook: scarce supply (supply is finite: a card with
+zero minted copies is never a buy), buys (`complete_pages`, `scarcity_first`, `dealer_floor`,
+`level_unlock`), sells (`sell_to_need`), pack EV (`pack_value`) and the active parameters. Each move
+shows its value, expected price, surplus, urgency, score, the guardrail verdict for it right now, and
+the exact command to run (`--json` for machines). Commands are dry runs until you add `--live`.
+Guardrail verdicts count our open offers (`/api/me/offers`): cash they promise, cards they bid for and
+assets already listed. Packs are scarce: at most `max_packs_per_game_hour` (GUARDRAILS.md) and each
+dealer's own quota, so a pack move is kept only when Jev (`questions/packs.json`) says the slot is
+worth spending now; the header shows the slots used and left this game hour.
+
+- `uv run bazaar sell list <asset_id|ref> --price N` lists a card for cash, never below its `your_value`.
+- `uv run bazaar sell bid <ref> --price N` bids cash for any copy (how we buy rares only teams hold).
+- `uv run bazaar sell offers` shows our open offers; `uv run bazaar sell cancel <offer_id>` withdraws one.
+
 ## Observability (watch every negotiation live)
 
 Our runtime sends OpenTelemetry (OTLP) traces to [Arize Phoenix](https://arize.com/docs/phoenix)
@@ -254,9 +272,15 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar db init` | Create every table (idempotent, safe while other processes are connected). |
 | `uv run bazaar db load` | Load the captured feed into feed_events, tape and dealer_curves (idempotent). |
 | `uv run bazaar db tables` | Every table with its row count. |
+| `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
+| `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
+| `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
+| `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
+| `uv run bazaar sell cancel` | Withdraw one of our open offers. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
 - [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
 - [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
 - [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
@@ -264,7 +288,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
 - [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
 - [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
-- [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -757,5 +757,221 @@ def db_tables() -> None:
     console.print(t)
 
 
+# ---------------------------------------------------------------- strategy engine (needs BAZAAR_KEY)
+
+
+def _strategy() -> Any:
+    from bazaar_agent.guardrails import GuardrailsError
+    from bazaar_agent.strategy import load_strategy
+
+    try:
+        return load_strategy()
+    except GuardrailsError as e:
+        _fail(f"STRATEGY.md is invalid, refusing to rank moves: {e}")
+
+
+def _team_client() -> Any:
+    """Our team client; exits naming the missing setting, never printing the key."""
+    try:
+        return team_client(load_settings())
+    except ConfigError as e:
+        console.print(f"[red]{e}[/red]")
+    raise typer.Exit(1)
+
+
+def _team_me() -> tuple[Any, dict[str, Any]]:
+    client = _team_client()
+    try:
+        return client, client.me()
+    except BazaarError as e:
+        console.print(f"[red]/api/me refused: {e.code} ({e.status})[/red]")
+    raise typer.Exit(1)
+
+
+def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in, open_commitments
+
+    try:
+        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+    except BazaarError as e:
+        console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
+    raise typer.Exit(1)
+
+
+def _pack_judge(settings: Any, timeout_s: float) -> Any:
+    """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / "packs.json")
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+
+    def ask(state: dict[str, Any]) -> tuple[str, float]:
+        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
+        return verdict.verdict, verdict.value
+
+    return ask
+
+
+def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
+    slots = book.pack_slots
+    quotas = ", ".join(f"{pack} dealer quota {n}" for pack, n in book.pack_quotas.items()) or "no dealer quota"
+    console.print(
+        f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
+        f"{max(0, ctx.cash - rules.cash_floor)} above cash_floor {rules.cash_floor} · spent last game hour "
+        f"{ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · pack slots this game hour: used {slots.used}, "
+        f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
+    )
+    console.print(render.scarce_supply_table(list(book.supply)))
+    for title, moves in (
+        ("Buys · complete_pages, scarcity_first, dealer_floor (ranked)", book.buys),
+        ("Sells · sell_to_need (ranked)", book.sells),
+        ("Packs · pack_value, gated by Jev spend_pack_slot_now", book.packs),
+    ):
+        console.print(render.moves_table(title, list(moves)))
+        for line in render.move_commands(list(moves)):
+            console.print(line, soft_wrap=True, markup=False, highlight=False)
+    if book.skipped:
+        console.print("[bold]Not proposed[/bold]:")
+        for line in book.skipped:
+            console.print(f"  • {line}")
+    console.print(render.params_table(list(loaded.lines)))
+    console.print("[yellow]Every command is a dry run: add --live to trade. Guardrails re-check each write.[/yellow]")
+
+
+@app.command()
+def strategy(
+    as_json: bool = typer.Option(False, "--json", help="Print the playbook as JSON"),
+    live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
+) -> None:
+    """Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict."""
+    import json
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent import strategy as st
+    from bazaar_agent.agents.seller import committed_context
+    from bazaar_agent.pack_gate import gate_packs
+
+    loaded, rules = _strategy(), _rules().rules
+    settings = load_settings()
+    client, me = _team_me()
+    commitments = _open_commitments(client, me)
+    public = public_client(settings)
+    now = Clock.model_validate(public.clock())
+    personas = public.dealers()
+    dealers_now = personas.get("personas") or personas.get("dealers") or []
+    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, loaded.params, rules)
+    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
+    used = ledger.packs_since(now.t_hours - 1.0)
+    slots = st.PackSlots(sum(used.values()), rules.max_packs_per_game_hour)
+    book = gate_packs(book, _pack_judge(settings, rules.jev_timeout_s), slots, used, rules, now.t_hours)
+    book = st.guarded(book, ctx, rules, commitments.listed)
+    if as_json:
+        typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
+        return
+    _print_playbook(book, loaded, rules, ctx, commitments)
+
+
+# ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
+
+sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
+app.add_typer(sell_app, name="sell")
+EXPIRES_HELP = "Ticks the offer stays open"
+POST_HELP = "Actually post. Without it: dry run, nothing is sent"
+
+
+def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.seller import post
+
+    rules = _rules().rules
+    ledger = gr.Ledger(load_settings().data_dir / "ledger.jsonl")
+    now = Clock.model_validate(client.clock())
+    ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+    commitments = _open_commitments(client, me)
+    try:
+        out = post(
+            client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
+        )
+    except BazaarError as e:
+        _fail(f"offer refused: {e.code} ({e.message[:80]})")
+        return
+    colour = "green" if out.verdict.allowed else "red"
+    console.print(f"[{colour}]{out.message}[/{colour}]")
+    if not out.verdict.allowed:
+        raise typer.Exit(1)
+
+
+@sell_app.command("list")
+def sell_list(
+    target: str = typer.Argument(help="Asset id (15) or card ref (LAT-09: the copy we lose least by selling)"),
+    price: int = typer.Option(..., min=1, help="Cash we want for it"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md)."""
+    from bazaar_agent.agents.seller import OfferError, sell_listing
+
+    client, me = _team_me()
+    try:
+        listing = sell_listing(me, target, price, venue)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("bid")
+def sell_bid(
+    ref: str = typer.Argument(help="Card ref we want, e.g. LAV-09 (any copy)"),
+    price: int = typer.Option(..., min=1, help="Cash we offer"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold."""
+    from bazaar_agent.agents.seller import OfferError, bid_listing
+
+    client, me = _team_me()
+    try:
+        listing = bid_listing(ref, _rarity_of(ref), price, venue)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("offers")
+def sell_offers() -> None:
+    """Our open and queued offers, and open offers addressed to us (GET /api/me/offers)."""
+    try:
+        data = _team_client().my_offers()
+    except BazaarError as e:
+        _fail(f"/api/me/offers refused: {e.code} ({e.status})")
+        return
+    for key, rows in data.items():
+        if isinstance(rows, list):
+            console.print(render.offers_table([r for r in rows if isinstance(r, dict)], key))
+
+
+@sell_app.command("cancel")
+def sell_cancel(
+    offer_id: int = typer.Argument(help="Offer id, from `bazaar sell offers`"),
+    live: bool = typer.Option(False, help="Actually cancel. Without it: dry run, nothing is sent"),
+) -> None:
+    """Withdraw one of our open offers."""
+    if not live:
+        console.print(f"[yellow]dry run[/yellow] would cancel offer {offer_id}. Add --live to cancel.")
+        return
+    try:
+        _team_client().cancel(offer_id)
+    except BazaarError as e:
+        _fail(f"cancel refused: {e.code} ({e.message[:80]})")
+        return
+    console.print(f"[green]cancelled offer {offer_id}[/green]")
+
+
 if __name__ == "__main__":
     app()

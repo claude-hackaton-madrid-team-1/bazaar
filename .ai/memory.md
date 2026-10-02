@@ -95,3 +95,9 @@ CLI tests with a fixed clock use `--max-ticks 1`.
 ### [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
 Use `typer.Context` and `typer.main.get_current_context(silent=True)` (its `command_path` names the
 running subcommand). In a group callback, `ctx.invoked_subcommand` is only the first level.
+
+### [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
+`uv run bazaar strategy`: top buys are public bids for LAV-09 / LAV-10 at 70 (worth 157 each with the
+page bonus share; LAV-09 has 1 minted copy, holder unknown; t10 holds LAV-10 and chases LAV itself),
+then MAL-10 53, SAL-09 74, SAL-10 80. Top sell: LAT-09 (ours 35, LAT ×0.5) at 68 to t07/t15/t18.
+A `sobre_barrio` is worth ~19 to us vs 17: a thin edge. Cash 353 leaves 83 above the floor: one rare.
