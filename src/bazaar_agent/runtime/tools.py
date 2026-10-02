@@ -239,10 +239,30 @@ def call(spec: ToolSpec, b: Backend, raw: dict[str, Any] | None, secrets: Iterab
             return safe_text(_failure(e), secrets), True
         tm.event("tool.answer", {"status": payload.get("status"), "sent": payload.get("sent")})
         clean = safe_value(json.loads(json.dumps(payload, default=str)), secrets)
-        text = json.dumps(clean, ensure_ascii=False, separators=(",", ":"))
-        if len(text) > MAX_ANSWER_CHARS:
-            text = text[:MAX_ANSWER_CHARS] + "… [cut: ask for fewer rows]"
+        return fitted(clean)
+
+
+def fitted(payload: Any) -> tuple[str, bool]:
+    """The answer as JSON text that fits MAX_ANSWER_CHARS: long lists are cut BEFORE serialising, so the
+    text always parses; still too long, a short JSON error asks for fewer rows."""
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    for keep in (20, 8, 3):
+        if len(text) <= MAX_ANSWER_CHARS:
+            return text, False
+        text = json.dumps(_cut_lists(payload, keep), ensure_ascii=False, separators=(",", ":"))
+    if len(text) <= MAX_ANSWER_CHARS:
         return text, False
+    return json.dumps({"error": "answer too large", "hint": "ask for fewer rows (limit)"}), True
+
+
+def _cut_lists(value: Any, keep: int) -> Any:
+    if isinstance(value, list):
+        return [_cut_lists(v, keep) for v in value[:keep]] + (
+            ["… cut: ask for fewer rows"] if len(value) > keep else []
+        )
+    if isinstance(value, dict):
+        return {k: _cut_lists(v, keep) for k, v in value.items()}
+    return value
 
 
 def answer(response: Any) -> dict[str, Any] | None:

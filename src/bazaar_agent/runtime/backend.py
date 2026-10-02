@@ -45,8 +45,10 @@ def _detached(argv: list[str], log_path: Path) -> Any:
 class Backend:
     """Settings, guardrails and lazily built clients. `live` is BAZAAR_LIVE=1 in the process environment.
 
-    `shared_ledger_only` (the remote server): no JSONL fallback, because a machine-local ledger would
-    stop counting the team's accepts, listings and spend together with the taker and maker."""
+    A live backend, and the remote server (`server`), take the shared Postgres ledger or nothing: a
+    machine-local JSONL ledger would stop counting the team's accepts, listings and spend together with
+    the taker, maker and duels. Ledger rows a sent request could not write wait in `pending` (and in a
+    local file) and are written first by the next write; until then no write is approved."""
 
     def __init__(
         self,
@@ -59,12 +61,14 @@ class Backend:
         ledger: LedgerStore | None = None,
         decisions: DecisionLog | None = None,
         spawn: Spawner = _detached,
-        shared_ledger_only: bool = False,
+        server: bool = False,
         log: Callable[[str], None] = lambda message: None,
     ) -> None:
         self.settings, self.rules, self.log, self.spawn = settings, rules, log, spawn
         self.live = live_mode(False) if live is None else live
-        self.shared_ledger_only = shared_ledger_only
+        self.server = server  # the remote MCP server: no live dealer children, no steering saved
+        self.shared_ledger_only = server or self.live
+        self.pending: list[tuple[str, int, float, int, str]] = []  # ledger rows of sent requests, not yet written
         self._team, self._public, self._ledger, self._decisions = team, public, ledger, decisions
         self._build = threading.Lock()
         # One write at a time: the ledger connection and the per-tick quotas are shared by every tool call.
@@ -104,6 +108,43 @@ class Backend:
                     raise LedgerUnavailable("the shared Postgres ledger is unreachable")
                 self._ledger = opened
             return self._ledger
+
+    def book(self, entries: list[tuple[str, int, float, int, str]]) -> str | None:
+        """Write ledger rows for a request that WAS sent; None when written. On a failure the rows wait in
+        `pending` (and `runtime/pending-ledger.jsonl`), and the error is returned, never raised."""
+        try:
+            for kind, tick, t_hours, price, item in entries:
+                self.ledger.record(kind, tick, t_hours, price, item)
+        except Exception as e:
+            self.failed(e)
+            self.pending.extend(entries)
+            self._keep_pending(entries)
+            return f"{type(e).__name__}: the shared ledger did not record this send (kept, written first next time)"
+        return None
+
+    def _keep_pending(self, entries: list[tuple[str, int, float, int, str]]) -> None:
+        import json as _json
+
+        path = self.settings.data_dir / "runtime" / "pending-ledger.jsonl"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as out:
+                for entry in entries:
+                    out.write(_json.dumps(entry) + "\n")
+        except OSError as e:
+            self.log(f"runtime: pending ledger rows kept in memory only ({type(e).__name__})")
+
+    def flush_pending(self) -> None:
+        """Write the rows a sent request left behind before judging anything new. Raises while the
+        ledger is still down: no write is approved on totals that miss our own sends."""
+        while self.pending:
+            kind, tick, t_hours, price, item = self.pending[0]
+            try:
+                self.ledger.record(kind, tick, t_hours, price, item)
+            except Exception as e:
+                self.failed(e)
+                raise
+            self.pending.pop(0)
 
     def failed(self, error: BaseException) -> None:
         """After a ledger failure, drop the connection: the next call reopens it (Postgres came back)."""

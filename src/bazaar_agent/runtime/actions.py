@@ -202,6 +202,7 @@ def check_write(b: Backend, tool: str, args: BaseModel) -> Planned:
 
     Raises on a read failure: the callers fail closed (no write without a fresh view of what we hold).
     """
+    b.flush_pending()  # our own sends first: never judge on totals that miss them
     clock, read_at = b.clock(), time.monotonic()
     if isinstance(args, DealerBuyArgs):
         return _plan_dealer(b, clock, read_at, args)
@@ -217,8 +218,9 @@ def check_write(b: Backend, tool: str, args: BaseModel) -> Planned:
         return Planned(tool, _denied(*stops) if stops else Verdict(True), clock, read_at)
     if isinstance(args, DuelMoveArgs):
         return _plan_duel(b, clock, read_at, args)
-    if isinstance(args, SteerArgs):
-        return Planned(tool, Verdict(True), clock, read_at)  # style, not a trade: clamped by steering.clamp
+    if isinstance(args, SteerArgs):  # style, not a trade (clamped by steering.clamp), but still a write
+        stops = kill_switch(b)
+        return Planned(tool, _denied(*stops) if stops else Verdict(True), clock, read_at)
     raise TypeError(f"no guardrail plan for {type(args).__name__}")
 
 
@@ -239,14 +241,10 @@ def outcome(planned: Planned, status: str, **fields: Any) -> dict[str, Any]:
 
 def _book(b: Backend, entries: list[tuple[str, int, float, int, str]]) -> dict[str, str]:
     """Ledger rows for a request that WAS sent. A failure here never turns a sent request into "not
-    sent": the answer stays `done`, with the bookkeeping error next to it."""
-    try:
-        for kind, tick, t_hours, price, item in entries:
-            b.ledger.record(kind, tick, t_hours, price, item)
-    except Exception as e:  # the request went out: report it, and let the next call reopen the ledger
-        b.failed(e)
-        return {"bookkeeping_error": f"{type(e).__name__}: the shared ledger did not record this send"}
-    return {}
+    sent": the answer stays `done`, with the bookkeeping error next to it, and the rows wait for the
+    next write (`Backend.flush_pending`), which approves nothing until they are in."""
+    error = b.book(entries)
+    return {"bookkeeping_error": error} if error else {}
 
 
 def _dealer_buy(b: Backend, args: DealerBuyArgs, planned: Planned, clock: Clock | None) -> dict[str, Any]:
@@ -262,6 +260,9 @@ def _dealer_buy(b: Backend, args: DealerBuyArgs, planned: Planned, clock: Clock 
     }
     if clock is None:
         return outcome(planned, "approved", dry_run=True, request=would, command=command)
+    if b.server:  # one place starts live negotiations (the desk or the CLI): two could count the same cash
+        why = "live dealer negotiations start from the desk or the CLI, never from the remote server"
+        return outcome(planned, "rejected", reason=why, request=would, command=command)
     open_threads = b.team.my_threads("open").get("threads") or []
     busy = [t for t in open_threads if t.get("with") == args.dealer]
     if busy:
@@ -411,6 +412,9 @@ def _steer(b: Backend, args: SteerArgs, planned: Planned, clock: Clock | None) -
     request = {"summary": steering.summary, "ticks": [steering.created_tick, steering.expires_tick], "preview": preview}
     if clock is None:
         return outcome(planned, "approved", dry_run=True, request=request, command="uv run bazaar steer --show")
+    if b.server:  # steering.json lives on each machine's volume: saving it here would steer nothing
+        why = "the remote server previews steering only: run `bazaar steer` where the agents run"
+        return outcome(planned, "approved", dry_run=True, request=request, reason=why)
     save_steering(b.settings.data_dir / STEERING_FILE, steering)
     return outcome(
         planned, "done", sent=True, method="save steering", request=request, response={"saved": STEERING_FILE}

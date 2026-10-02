@@ -279,13 +279,14 @@ def test_a_server_never_falls_back_to_a_local_ledger(tmp_path, monkeypatch):
     from tests.runtime_fakes import settings
 
     monkeypatch.setattr("bazaar_agent.ledger_pg.open_ledger", lambda *a, **kw: Ledger(tmp_path / "local.jsonl"))
-    server = Backend(
-        settings(tmp_path), Guardrails(), live=False, team=Team(), public=Public(), shared_ledger_only=True
-    )
+    server = Backend(settings(tmp_path), Guardrails(), live=False, team=Team(), public=Public(), server=True)
     with pytest.raises(LedgerUnavailable):
         _ = server.ledger
     text, failed = run(server, "sell_bid", {"ref": "LAV-09", "price": 60})
     assert failed and "shared ledger is unreachable" in text
+    live = Backend(settings(tmp_path), Guardrails(), live=True, team=Team(), public=Public())
+    with pytest.raises(LedgerUnavailable):  # a live desk counts with the team or not at all
+        _ = live.ledger
 
 
 def test_team_written_thread_topics_and_alerts_reach_the_model_as_untrusted_data(tmp_path):
@@ -311,3 +312,59 @@ def test_a_write_reads_the_game_four_times_and_the_catalog_once_per_window(tmp_p
     run(b, "sell_bid", {"ref": "LAV-09", "price": 60})
     run(b, "sell_bid", {"ref": "LAV-09", "price": 61})
     assert team.reads == ["me", "my_offers", "me", "my_offers"] and public.catalog_reads == 1
+
+
+def test_steering_meets_the_kill_switch_and_the_server_only_previews_it(tmp_path):
+    stopped = backend(tmp_path, live=True, rules=Guardrails(trading_enabled=False))
+    assert "trading_enabled = false" in run(stopped, "steer", WRITES["steer"])[0]["guardrail"]
+    server = backend(tmp_path, live=True)
+    server.server = True
+    preview, _ = run(server, "steer", WRITES["steer"])
+    assert preview["status"] == "approved" and "previews steering only" in preview["reason"]
+    assert not (tmp_path / "steering.json").exists()
+
+
+def test_the_remote_server_never_starts_a_live_dealer_child(tmp_path):
+    spawn = Spawner()
+    server = backend(tmp_path, live=True, spawn=spawn)
+    server.server = True
+    answer, _ = run(server, "dealer_buy", WRITES["dealer_buy"])
+    assert answer["status"] == "rejected" and "never from the remote server" in answer["reason"]
+    assert spawn.calls == []
+
+
+def test_rows_a_sent_request_could_not_write_go_in_first_and_block_until_then(tmp_path):
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    class Flaky(Ledger):
+        down = True
+
+        def record(self, *args, **kw):
+            if Flaky.down:
+                raise LedgerUnavailable("ledger write failed (OperationalError)")
+            super().record(*args, **kw)
+
+    team = full_team()
+    b = backend(tmp_path, live=True, team=team, ledger=Flaky(tmp_path / "ledger.jsonl"))
+    answer, _ = run(b, "sell_bid", {"ref": "LAV-09", "price": 60})
+    assert answer["status"] == "done" and len(b.pending) == 2
+    assert (tmp_path / "runtime" / "pending-ledger.jsonl").read_text().count("\n") == 2
+    b._ledger = Flaky(tmp_path / "ledger.jsonl")  # what the next open would return; still down
+    text, failed = run(b, "sell_bid", {"ref": "LAV-10", "price": 60})
+    assert failed and "shared ledger is unreachable" in text and len(team.sent) == 1
+    Flaky.down = False
+    b._ledger = Flaky(tmp_path / "ledger.jsonl")
+    run(b, "sell_cancel", {"offer_id": 77})  # any write: the missing rows go in before it is judged
+    kinds = [e["kind"] for e in Ledger(tmp_path / "ledger.jsonl").entries()]
+    assert b.pending == [] and kinds[:2] == ["listing", "spend"]
+
+
+def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():
+    big = {"rows": [{"text": "x" * 200, "i": i} for i in range(500)], "total": 500}
+    text, failed = tl.fitted(big)
+    parsed = json.loads(text)
+    assert not failed and len(text) <= tl.MAX_ANSWER_CHARS and parsed["total"] == 500
+    assert parsed["rows"][-1] == "… cut: ask for fewer rows"
+    huge = {"blob": "y" * (tl.MAX_ANSWER_CHARS + 10)}
+    text, failed = tl.fitted(huge)
+    assert failed and json.loads(text)["error"] == "answer too large"

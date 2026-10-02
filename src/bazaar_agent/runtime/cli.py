@@ -57,8 +57,8 @@ def _load() -> tuple[Settings, Guardrails, RuntimeConfig]:
 def make_backend(
     settings: Settings, rules: Guardrails, log: Callable[[str], None], *, live: bool | None = None, server: bool = False
 ) -> Backend:
-    """`live` None: BAZAAR_LIVE=1 in the environment decides. `server`: the shared ledger or no write."""
-    return Backend(settings, rules, live=live, shared_ledger_only=server, log=log)
+    """`live` None: BAZAAR_LIVE=1 in the environment decides. `server`: the remote MCP server."""
+    return Backend(settings, rules, live=live, server=server, log=log)
 
 
 def _say(secrets: tuple[str, ...]) -> Callable[[str], None]:

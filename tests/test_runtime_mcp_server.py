@@ -128,6 +128,8 @@ def test_a_failed_audit_row_never_turns_a_write_into_an_error(tmp_path):
     with client(b) as c:
         answer, failed = tool(c, "sell_bid", {"ref": "LAV-09", "price": 60})
     assert not failed and answer["status"] == "approved"
+    (line,) = (tmp_path / "runtime" / "audit-recovery.jsonl").read_text().splitlines()
+    assert json.loads(line)["tool"] == "sell_bid" and json.loads(line)["error"] == "OSError"
 
 
 def test_the_server_will_not_start_without_a_long_token(tmp_path, monkeypatch):

@@ -152,8 +152,19 @@ def _audit(backend: Backend, tool: str, arguments: dict[str, Any], text: str, se
     client retries: it is logged by class name only, and the tool's answer goes back as it is."""
     try:
         record_write(backend, "mcp", tool, arguments, answer(text), "checked in the tool", secrets)
-    except Exception as e:
+    except Exception as e:  # keep a scrubbed recovery line so the write can be reconciled later
         backend.log(f"bazaar-mcp: decisions row for {tool} not written ({type(e).__name__})")
+        _recovery_line(backend, {"tool": tool, "arguments": arguments, "answer": text, "error": type(e).__name__})
+
+
+def _recovery_line(backend: Backend, record: dict[str, Any]) -> None:
+    path = backend.settings.data_dir / "runtime" / "audit-recovery.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as out:
+            out.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError as e:
+        backend.log(f"bazaar-mcp: recovery line not written either ({type(e).__name__})")
 
 
 def build_server(

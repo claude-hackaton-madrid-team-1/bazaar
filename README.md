@@ -433,9 +433,11 @@ uv run bazaar agent tools                # every tool, read or write, which agen
 - **Two lines of defense.** The tool code checks first (`actions.check_write`): guardrails with the live
   `/me`, open offers and the shared ledger, plus the game's caps a live send would otherwise hit (tick
   budget, one thread per dealer and 6 open threads, 12 listings per tick counted team-wide, 30 open
-  offers, one accept per tick, one duel message per duel per tick). A request that was sent stays `done`
-  even when the ledger fails right after it (`bookkeeping_error`), and a ledger failure reopens the
-  connection on the next call. The desk's PreToolUse hook runs the same check again, enforces each
+  offers, one accept per tick, one duel message per duel per tick). A live runtime counts with the
+  team's Postgres ledger or not at all (no machine-local fallback). A request that was sent stays
+  `done` even when the ledger fails right after it (`bookkeeping_error`): its rows wait in
+  `.local/runtime/pending-ledger.jsonl` and go in before the next write is judged, and nothing is
+  approved until they do. The kill switch stops `steer` too. The desk's PreToolUse hook runs the same check again, enforces each
   agent's allow-list, lets `Agent` start only our four subagents (in the foreground), and fails closed
   when `/me` or the ledger does not answer. A hook deny wins over every permission rule.
 - **Locked session.** `permission_mode="dontAsk"`, `tools=["Agent"]` (no Bash, files or web),
@@ -467,7 +469,10 @@ teammate's Claude Code is the client. Railway service `bazaar-mcp` (declared in
   tool calls, because every caller shares our one team key (5 req/s for the whole team).
 - Write tools are DRY RUN unless `BAZAAR_LIVE=1` is set on that service (never in `railway.py`), and
   the guardrail check runs inside the server for each of them, against the shared Postgres ledger only
-  (no machine-local fallback: no ledger, no write). No tool returns a key, token, password or URL, and
+  (no machine-local fallback: no ledger, no write). Even live, the server never starts a `dealer buy`
+  child (live negotiations start from the desk or the CLI, one place) and only previews `steer`
+  (`steering.json` lives on each machine's volume). A write whose audit row fails leaves a scrubbed line
+  in `.local/runtime/audit-recovery.jsonl`. No tool returns a key, token, password or URL, and
   team-written text (thread topics, venue names in alerts) comes back as `untrusted_text`. Only our
   team's tools: no flags, no free-text messages, no `to` on offers, no key parameter. Every write call
   is a `decisions` row with agent `mcp`.
@@ -714,14 +719,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — Agent SDK subagents run in the background by default
+- [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
+- [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
 - [2026-10-03] build-error — rich swallowed "[jev accept (0.91)]" in a console line
 - [2026-10-03] finding — Jev on a real practice duel: leans accept, but under the design bar
 - [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
 - [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
 - [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
-- [2026-10-02] gotcha — after 23:00 the doors close and every tick loop just waits
-- [2026-10-02] finding — first autonomous dry runs (tick 155): the taker would buy MAL-02 for 5, the maker would list 3 asks
-- [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
 
 <!-- BAZAAR:STATUS:END -->
 
