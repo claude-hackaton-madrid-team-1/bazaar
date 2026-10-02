@@ -10,8 +10,8 @@ unknown id or a bad value), and commit. A new rule id also needs a field in
 Bullets without the `` `id` = value `` shape are principles: shown by the CLI, not enforced in code.
 
 ## Kill switch
-- `trading_enabled` = true — false stops every write (bids, accepts, listings, duel moves); reads continue.
-- `pause_file` = .local/PAUSE — if this file exists, every write is refused (`touch .local/PAUSE` to stop all agents at once).
+- `trading_enabled` = true — false HOLDS: our processes send nothing to the game (no bids, accepts, posts, duel moves, and also no cancels, thread closes or walks); reads continue, open offers and threads stay exactly as they are, and agents resume where they were when it is true again. Read again every tick: an edit counts without a restart.
+- `pause_file` = .local/PAUSE — if this file exists, the same hold (`touch .local/PAUSE` to hold all agents at once, delete it to resume).
 
 ## Money
 - `cash_floor` = 270 — never let a purchase take cash below this (venue bond 250 + 20 opening fee for level 2).
