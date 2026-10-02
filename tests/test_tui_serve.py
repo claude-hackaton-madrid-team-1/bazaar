@@ -16,9 +16,8 @@ except ImportError:
 @unittest.skipIf(websockets is None, "websockets not installed")
 class ServeTest(unittest.TestCase):
     def test_serves_the_page_and_streams_hello_first_to_a_late_client(self):
-        from websockets.asyncio.client import connect
-
         from serve import start
+        from websockets.asyncio.client import connect
 
         async def run():
             server, hub = await start(port=0, seed=3, speed=0.005)
@@ -27,6 +26,7 @@ class ServeTest(unittest.TestCase):
                 await asyncio.sleep(0.4)
                 page = await asyncio.to_thread(lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/").read())
                 self.assertIn(b"<!doctype html>", page.lower())
+
                 def fetch_js():
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/state.mjs") as r:
                         return r.headers["Content-Type"], r.read()

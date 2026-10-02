@@ -11,26 +11,47 @@ def ev(type_, payload=None, tick=10, actor=""):
 
 def offer(maker, to, give_cash=0, want_cash=0, give_types=(), want_types=(), final=False, expires=12):
     return {
-        "id": 7, "maker": maker, "to": to, "venue": None, "thread": 61, "status": "open",
+        "id": 7,
+        "maker": maker,
+        "to": to,
+        "venue": None,
+        "thread": 61,
+        "status": "open",
         "give": {"cash": give_cash, "assets": [], "types": list(give_types)},
         "want": {"cash": want_cash, "assets": [], "types": list(want_types)},
-        "expires_tick": expires, "created_tick": 10, "final": final,
+        "expires_tick": expires,
+        "created_tick": 10,
+        "final": final,
     }
 
 
 def message(sender, off, team="t01", text=None):
-    return ev("thread.message", {
-        "thread": 61, "kind": "persona", "message": 1, "sender": sender, "text": text,
-        "team": team, "with": "abuela", "offer": off,
-    }, actor=sender)
+    return ev(
+        "thread.message",
+        {
+            "thread": 61,
+            "kind": "persona",
+            "message": 1,
+            "sender": sender,
+            "text": text,
+            "team": team,
+            "with": "abuela",
+            "offer": off,
+        },
+        actor=sender,
+    )
 
 
 ME = {
     "cash": 412,
     "score": {"score": 18.4, "rank": 9, "duel_points": 4.0, "ladder_points": 6.5, "neg_points": 7.9, "mm_points": 0.0},
-    "album": {"filled": 14, "slots": 40, "pages": [
-        {"set": "LAT", "name": "La Latina", "have": 2, "of": 10, "complete": False, "master": False},
-    ]},
+    "album": {
+        "filled": 14,
+        "slots": 40,
+        "pages": [
+            {"set": "LAT", "name": "La Latina", "have": 2, "of": 10, "complete": False, "master": False},
+        ],
+    },
     "assets": [
         {"id": 1, "kind": "card", "ref": "LAT-03", "rarity": "common", "set": "LAT", "your_value": 6.0},
         {"id": 2, "kind": "card", "ref": "LAT-09", "rarity": "rare", "set": "LAT", "your_value": 40.0},
@@ -62,11 +83,18 @@ class ReducerTest(unittest.TestCase):
     def test_thoughts_and_actions_land_in_the_log_in_order(self):
         self.apply(self.s, ev("agent.thought", {"text": "Abuela is soft today"}, tick=3))
         self.apply(self.s, ev("agent.action", {"kind": "say", "summary": "bid 18 P"}, tick=4))
-        self.assertEqual([(l.tick, l.kind, l.text) for l in self.s.log],
-                         [(3, "thought", "Abuela is soft today"), (4, "say", "bid 18 P")])
+        self.assertEqual(
+            [(line.tick, line.kind, line.text) for line in self.s.log],
+            [(3, "thought", "Abuela is soft today"), (4, "say", "bid 18 P")],
+        )
 
     def test_dealer_ask_and_our_bid_on_one_thread(self):
-        self.apply(self.s, message("abuela", offer("abuela", "t01", give_types=["pack:sobre_barrio"], want_cash=30), text="30 P, cariño"))
+        self.apply(
+            self.s,
+            message(
+                "abuela", offer("abuela", "t01", give_types=["pack:sobre_barrio"], want_cash=30), text="30 P, cariño"
+            ),
+        )
         self.apply(self.s, message("t01", offer("t01", "abuela", give_cash=18, want_types=["pack:sobre_barrio"])))
         th = self.s.threads[61]
         self.assertEqual((th.with_, th.topic, th.side), ("abuela", "sobre_barrio", "buy"))
@@ -75,7 +103,10 @@ class ReducerTest(unittest.TestCase):
         self.assertFalse(th.final)
 
     def test_final_offer_and_expiry_are_tracked(self):
-        self.apply(self.s, message("abuela", offer("abuela", "t01", give_types=["card:LAT-08"], want_cash=22, final=True, expires=33)))
+        self.apply(
+            self.s,
+            message("abuela", offer("abuela", "t01", give_types=["card:LAT-08"], want_cash=22, final=True, expires=33)),
+        )
         th = self.s.threads[61]
         self.assertTrue(th.final)
         self.assertEqual((th.expires_tick, th.topic), (33, "LAT-08"))
@@ -99,58 +130,109 @@ class ReducerTest(unittest.TestCase):
         self.assertNotIn("sobre_barrio", self.s.owned)
 
     def test_market_trade_between_other_teams(self):
-        self.apply(self.s, ev("settlement", {
-            "parties": ["t04", "t11"], "venue": "rastro", "persona": None, "price": 14, "kind": "trade",
-            "items": [{"ref": "MAL-02", "name": "Plaza del Dos de Mayo", "frm": "t04", "to": "t11"}],
-        }, tick=50))
+        self.apply(
+            self.s,
+            ev(
+                "settlement",
+                {
+                    "parties": ["t04", "t11"],
+                    "venue": "rastro",
+                    "persona": None,
+                    "price": 14,
+                    "kind": "trade",
+                    "items": [{"ref": "MAL-02", "name": "Plaza del Dos de Mayo", "frm": "t04", "to": "t11"}],
+                },
+                tick=50,
+            ),
+        )
         t = self.s.tape[0]
-        self.assertEqual((t.tick, t.venue, t.seller, t.buyer, t.ref, t.price, t.ours, t.gain),
-                         (50, "rastro", "t04", "t11", "MAL-02", 14, False, None))
+        self.assertEqual(
+            (t.tick, t.venue, t.seller, t.buyer, t.ref, t.price, t.ours, t.gain),
+            (50, "rastro", "t04", "t11", "MAL-02", 14, False, None),
+        )
 
     def test_our_buy_gains_value_minus_price(self):
         self.apply(self.s, ev("agent.me", ME))
-        self.apply(self.s, ev("settlement", {
-            "parties": ["abuela", "t01"], "venue": None, "persona": "abuela", "price": 22,
-            "items": [{"ref": "LAT-09", "name": "San Isidro", "frm": "abuela", "to": "t01"}],
-        }))
+        self.apply(
+            self.s,
+            ev(
+                "settlement",
+                {
+                    "parties": ["abuela", "t01"],
+                    "venue": None,
+                    "persona": "abuela",
+                    "price": 22,
+                    "items": [{"ref": "LAT-09", "name": "San Isidro", "frm": "abuela", "to": "t01"}],
+                },
+            ),
+        )
         t = self.s.tape[0]
         self.assertTrue(t.ours)
         self.assertEqual((t.venue, t.gain), ("abuela", 4.0 - 22))
 
     def test_our_sale_gains_price_minus_value(self):
         self.apply(self.s, ev("agent.me", ME))
-        self.apply(self.s, ev("settlement", {
-            "parties": ["t01", "t05"], "venue": "rastro", "price": 14,
-            "items": [{"ref": "LAT-03", "name": "x", "frm": "t01", "to": "t05"}],
-        }))
+        self.apply(
+            self.s,
+            ev(
+                "settlement",
+                {
+                    "parties": ["t01", "t05"],
+                    "venue": "rastro",
+                    "price": 14,
+                    "items": [{"ref": "LAT-03", "name": "x", "frm": "t01", "to": "t05"}],
+                },
+            ),
+        )
         self.assertEqual(self.s.tape[0].gain, 14 - 6.0)
 
     def test_settlement_your_value_wins_over_the_snapshot(self):
         self.apply(self.s, ev("agent.me", ME))
-        self.apply(self.s, ev("settlement", {
-            "parties": ["abuela", "t01"], "price": 9, "your_value": 16.0,
-            "items": [{"ref": "MAL-05", "frm": "abuela", "to": "t01"}],
-        }))
+        self.apply(
+            self.s,
+            ev(
+                "settlement",
+                {
+                    "parties": ["abuela", "t01"],
+                    "price": 9,
+                    "your_value": 16.0,
+                    "items": [{"ref": "MAL-05", "frm": "abuela", "to": "t01"}],
+                },
+            ),
+        )
         self.assertEqual(self.s.tape[0].gain, 7.0)
 
     def test_tape_is_newest_first_and_bounded(self):
         for i in range(300):
-            self.apply(self.s, ev("settlement", {"parties": ["t02", "t03"], "price": i,
-                                                 "items": [{"ref": "LAV-01", "frm": "t02", "to": "t03"}]}, tick=i))
+            self.apply(
+                self.s,
+                ev(
+                    "settlement",
+                    {"parties": ["t02", "t03"], "price": i, "items": [{"ref": "LAV-01", "frm": "t02", "to": "t03"}]},
+                    tick=i,
+                ),
+            )
         self.assertEqual(self.s.tape[0].price, 299)
         self.assertLessEqual(len(self.s.tape), 200)
 
     def test_settlement_counts_into_last_prices_per_card(self):
         for p in (10, 12, 11):
-            self.apply(self.s, ev("settlement", {"parties": ["t02", "t03"], "price": p,
-                                                 "items": [{"ref": "LAV-01", "frm": "t02", "to": "t03"}]}))
+            self.apply(
+                self.s,
+                ev(
+                    "settlement",
+                    {"parties": ["t02", "t03"], "price": p, "items": [{"ref": "LAV-01", "frm": "t02", "to": "t03"}]},
+                ),
+            )
         self.assertEqual(list(self.s.prices["LAV-01"]), [10, 12, 11])
 
     def test_duel_message_tracks_both_sides(self):
         self.apply(self.s, ev("duel.message", {"duel": 3, "role": "seller", "sender": "t01", "price": 60, "days": 4}))
         self.apply(self.s, ev("duel.message", {"duel": 3, "role": "seller", "sender": "rival", "price": 41, "days": 7}))
         d = self.s.duels[3]
-        self.assertEqual((d.role, d.our_price, d.their_price, d.our_days, d.their_days, d.rounds), ("seller", 60, 41, 4, 7, 2))
+        self.assertEqual(
+            (d.role, d.our_price, d.their_price, d.our_days, d.their_days, d.rounds), ("seller", 60, 41, 4, 7, 2)
+        )
 
     def test_duel_result_closes_the_duel(self):
         self.apply(self.s, ev("duel.message", {"duel": 3, "role": "buyer", "sender": "t01", "price": 40}))
@@ -168,7 +250,7 @@ class ReducerTest(unittest.TestCase):
 
 class MockTest(unittest.TestCase):
     def test_mock_only_emits_known_types_and_moves_the_game(self):
-        from mock import MockGame
+        from mock import MockGame  # noqa: UP026
         from state import KNOWN_TYPES, State, apply
 
         game, s = MockGame(seed=7), State()
@@ -187,7 +269,7 @@ class MockTest(unittest.TestCase):
         self.assertEqual(s.team, "t01")
 
     def test_mock_carries_real_ids(self):
-        from mock import MockGame
+        from mock import MockGame  # noqa: UP026
 
         game = MockGame(seed=7)
         events = [e for _ in range(600) for e in game.step()]
@@ -222,7 +304,7 @@ class MockTest(unittest.TestCase):
                 self.assertIn(a["id"], ever_held)
 
     def test_mock_is_deterministic_per_seed(self):
-        from mock import MockGame
+        from mock import MockGame  # noqa: UP026
 
         a, b = MockGame(seed=3), MockGame(seed=3)
         self.assertEqual([a.step() for _ in range(50)], [b.step() for _ in range(50)])
