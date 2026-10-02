@@ -76,7 +76,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
-    "max_accepts_per_tick": "guardrails.check + ledger",
+    "max_accepts_per_tick": "guardrails.check + ledger.reserve_accept (shared, atomic)",
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice",
     "jev_timeout_s": "cli dealer buy → jev.judge",

@@ -168,3 +168,20 @@ symptom: `BazaarError: network: GET /api/clock: nodename nor servname provided` 
 process exited → root cause: `run_per_tick` let a clock-read or tick exception escape → fix: the loop
 reports and retries a failed clock read with backoff (1 s → 60 s) and a failed tick is reported and
 not retried within that tick; only Ctrl-C/SystemExit stop it (tests in tests/test_ticks.py).
+
+### [2026-10-02] finding — first autonomous dry runs (tick 155): the taker would buy MAL-02 for 5, the maker would list 3 asks
+`uv run bazaar agent taker --max-ticks 1`: 8 board asks under value; WOULD accept MAL-02 on rastro for 5
+(ask + fee, worth 14.1); LAV-08 at 33 and SAL-07 at 30 refused by `max_price_uncommon` 26; the rest lost
+the 1-accept quota. WOULD open a thread with abuela for LAV-08 (ladder 17→26). `agent maker`: asks LAT-09
+68, LAT-08 25, SAL-01 10 on rastro; no bids, because every missing rare routes to Chato (fills ~90 >
+`max_price_rare` 80), and the maker only bids where the strategy proposes a team bid.
+
+### [2026-10-02] gotcha — after 23:00 the doors close and every tick loop just waits
+`/api/clock` → `doors: closed`, `paused: true` until `next_opens` (Sat 09:00): `run_per_tick` polls every
+300 s and never calls `on_tick`, so a `--max-ticks 2` run looks hung. The agents log `waiting, doors
+closed` once and their `/health` carries `doors`, `paused`, `next_opens`.
+
+### [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
+symptom: `json.load` failed on the first line → root cause: `open_ledger` logged "ledger: shared Postgres
+table" through the stdout console before the JSON → fix: CLI ledger notes go to stderr (`err_console`).
+Same trap: `_events` prints "no captured feed yet" on stdout when `.local/feed` is empty (pre-existing).

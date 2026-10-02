@@ -68,6 +68,17 @@ coordinator decides to trade. Pack moves need a pack slot left this game hour an
 | Our open offers | `uv run bazaar sell offers` |
 | Withdraw one | `uv run bazaar sell cancel <offer_id>` |
 
+## Autonomous agents (taker and maker)
+
+`uv run bazaar agent taker` (board asks below value incl. the venue fee + up to `--threads` dealer
+conversations, one per dealer) and `uv run bazaar agent maker` (asks for sell candidates, bids for
+cards only teams hold, reprice/cancel). DRY RUN unless `--live` or `BAZAAR_LIVE=1` in the environment:
+never add either yourself; going live is the coordinator's call. Every move is a `decisions` row
+(Postgres, else `.local/agents/decisions.jsonl`); every live send an `executions` row.
+One team accept per tick across every machine (Postgres `ledger`, `reserve_accept`): duels first, then
+the taker; the maker never accepts. Railway: `bazaar-taker` / `bazaar-maker`, read-only status at
+`https://bazaar-{taker,maker}-production.up.railway.app/health` and `/state`, `wss://…/events`.
+
 ## Memory (Postgres, pgvector when the server has it)
 
 Every process connects with `DATABASE_URL` only (env, then `.env`; unset = local docker).
