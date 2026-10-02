@@ -1,0 +1,55 @@
+# MEMORY — Bazaar (shared team working log)
+
+Shared, **committed** working log for every teammate and every agent (Claude Code, Codex, Gemini,
+opencode). Protocol: see the "Memory protocol" section of `.ai/context.md`.
+
+Append only, newest at the bottom of `## Log`, terse. The latest headings are mirrored into the
+README status block on every commit.
+**NEVER write secrets here**: no team key, broker keys, `TYPESAFE_API_KEY`, `.env` values or tokens.
+
+## Log
+
+### [2026-10-02] gotcha — the public feed is capped at 500 events and has no cursor
+`GET /api/feed?limit=1000` returns at most 500 events (verified tick 31). Older events are gone
+for good once the history outgrows the window → keep `uv run bazaar feed capture` running all
+game; it reads once per tick and flags `GAP POSSIBLE` if a full window stops reaching our history.
+Our capture starts at event id 15 (ids 1–14 were `team.joined`), so Friday is effectively complete.
+
+### [2026-10-02] gotcha — keyless reads must not send an empty or wrong X-Team-Key
+Wrong keys count toward `too_many_failures` (20 per burst per address). `sdk.PublicBazaar` reuses
+the vendored SDK without the header for the public routes.
+
+### [2026-10-02] finding — Abuela's floor for `sobre_barrio` looks like 17 P (ticks 0–31)
+31 pack threads from every team in the feed: 13 filled, min 17 / median 17 / max 24 (list 26,
+opening ask 30). Teams that bid below 17 never filled: thread 12 (t15) bid 6→12 and she repeated
+17 seven times. Bidding up to 17 quickly seems to close in ~2 steps. Evidence: `uv run bazaar curves --dealer abuela --threads 20`.
+
+### [2026-10-02] finding — the feed is an order book: dealer text, real team ids, fill prices
+`thread.message` carries the structured offer, plus Abuela's text (a team's text is null).
+`offer.listed` carries the real team id; the venue board shows only a pseudonym, resolvable by
+offer id (`uv run bazaar book`). `settlement` carries parties, items and price (`uv run bazaar tape`).
+Ask the desk before relying on the pseudonym mapping for trading decisions.
+
+### [2026-10-02] build-error — DB test overwrote real dealer_curves rows
+symptom: rows for threads 10–12 changed after `pytest` → root cause: synthetic test ids collide
+with real ids, and `load_feed` upserts → fix: `tests/test_db.py` runs in a throwaway schema
+(`bazaar_pytest`) and drops it; real rows reloaded with `uv run bazaar db load`.
+
+### [2026-10-02] gotcha — zsh treats `echo ====` as a path expansion
+`=word` expands to a command path in zsh, so `echo ===` fails with "= not found" and aborts a
+`&&` chain. Use `echo "---"` in shell one-liners.
+
+### [2026-10-02] gotcha — `.env` has `TYPESAFE_API_KEY` but no `BAZAAR_KEY` yet
+Public commands work without the team key; `uv run bazaar status` needs `BAZAAR_KEY=tk-...` in `.env`.
+
+### [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
+`uv run python -m bazaar_agent.jev judge --state - --questions questions/negotiation.json --log`
+(~270–310 ms, model jev-1.13.0). With only offer + cash in the state, `offer_is_worth_accepting`
+came back undecided (0.59 vs the 0.75 bar). Feed Jev the album need, `your_value` and the learned
+fill prices, or it will rarely decide. Decision logs: `.local/jev-decisions/` (masked, local).
+
+### [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
+symptom: `bazaar dealer buy LAV-03 --live` sent 1 bid, then 13 `wait_for_tick` refusals and a
+timeout close, all inside tick 48 → root cause: `run_per_tick(max_ticks=1)` called in a loop, and
+each call forgets the last tick → fix: one `run_per_tick(..., stop=...)` owns the tick bookkeeping;
+regression test `test_negotiate_sends_one_message_per_tick_even_when_the_clock_is_read_many_times`.

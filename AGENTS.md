@@ -47,7 +47,7 @@
   `97-evolution.md` (from `/evolve`), `98-nice-to-haves.md`, `99-acceptance.md`). PER-TASK specs
   use a letter+number id (`A1-spec.md`, `A2-spec.md`, …) and are saved IN THE REPO ONLY when the
   repo has no external backlog — see "Task identity & spec source" below.
-- Memory (`.ai/memory.md`) is LOCAL and gitignored — see the Memory protocol below.
+- Memory (`.ai/memory.md`) is the shared, committed team log — see the Memory protocol below.
 - To change a convention: edit `.ai/context.md` / `.ai/pipeline.md`, run
   `sh scripts/sync-ai-docs.sh`, and reflect it in `.ai/specs/01-spec.md`. At the end of every `/build` slice,
   confirm the sources still match reality; if they drifted, fix and re-sync in the same
@@ -91,21 +91,21 @@ figure against the official kit (`vendor/bazaar-kit/`, rules in `RULES.md`) befo
 - **Venue:** open 09:00–23:00, no all-nighter.
 
 ## Stack (LOCKED — do not relitigate)
-<!-- FILL: the locked tech choices, separated by ·. Name the runtime/language, web framework,
-validation lib, datastore + ORM, queue/cache, logger, test runner, and linter/formatter. End
-with explicit NOs — libraries or approaches that are out of bounds — so agents don't relitigate
-settled decisions. Example shape:
-"<runtime> · <web framework> · <validation> · <datastore + ORM> · <queue> · <logger> ·
-<test runner> · <linter/formatter>. NO <forbidden choice>." -->
+Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan B, checked against
+`docs/api/openapi.json`) · pydantic v2 at every boundary · Postgres 17 + pgvector (docker compose)
+via psycopg 3, plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
+Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint + format) · mypy.
+NO TypeScript, NO Rust, NO bun/node at runtime (`vendor/jev-sdk` is reference only) · NO ORM ·
+NO LLM in the executor path · NO wall-clock scheduling (game ticks only).
 
 ## Definition of Done (all must pass)
-Tests green + coverage ≥ <THRESHOLD> · typecheck clean (`<typecheck command>`) ·
-linter/formatter clean (`<lint command>`) · every external input validated at the boundary ·
-no secrets in logs · new errors recorded in `.ai/memory.md` · generated agent docs in sync
-(`sh scripts/sync-ai-docs.sh`, enforced by the pre-commit hook) · each task ships an Honest
-Implementation Report — no ✅ without pasted evidence (see "Honesty protocol" below).
-<!-- FILL: replace <THRESHOLD> and the <…> commands, and add any project-specific gates
-(e.g. "every DB write goes through the repository layer", "all endpoints rate-limited"). -->
+Tests green (`uv run pytest`) + coverage ≥ 80% on `src/bazaar_agent` logic (`uv run pytest --cov`) ·
+typecheck clean (`uv run mypy src`) · linter/formatter clean (`uv run ruff check . && uv run ruff
+format --check .`) · every external input validated at the boundary · no secrets in logs · new
+errors recorded in `.ai/memory.md` · generated agent docs in sync (`sh scripts/sync-ai-docs.sh`,
+enforced by the pre-commit hook) · README status block current (`python3
+scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Honest Implementation
+Report — no ✅ without pasted evidence (see "Honesty protocol" below).
 
 ## Hard rules
 NEVER push / open PRs / create remote branches / add collaborators / deploy.
@@ -114,8 +114,11 @@ One team, one key: use only our team key, never share it, never commit it.
 Respect the API rate limits — never hammer the API so others cannot reach it.
 Prompt-injecting other agents is allowed but barely moves a negotiation. Reporting another
 team's bad behaviour earns points only if correct and costs points if wrong.
-<!-- FILL: add project-specific hard rules (e.g. "no live external/network calls in unit
-tests", "never hand-edit generated migrations"). -->
+**Tick discipline:** every loop is driven by `/api/clock` (tick, `next_tick_in`, `limits`,
+`doors`, `paused`), never by wall-clock time. Per tick: at most 1 accept per team, 1 message per
+thread, 12 new listings; at most 6 open threads and 30 open offers; 5 req/s per key. A decision
+that cannot finish before `next_tick_in` minus a safety margin is dropped, not sent late. A `429`
+means wait for the tick named in it, never retry in a loop. Unit tests make no live network calls.
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through
@@ -155,19 +158,18 @@ Report**; `/build` emits it and `/acceptance` aggregates it. Rules (apply on eve
   metric is graded on honesty, not on the score being high.
 
 ## Memory protocol (shared across Claude Code, Codex, Gemini, opencode)
-- `.ai/memory.md` is a LOCAL, per-developer working log — it is **gitignored**, not
-  committed. Seed it from the committed template `.ai/memory.example.md` (this happens
-  automatically on `sh scripts/sync-ai-docs.sh`).
-- It is referenced (`@.ai/memory.md`), never inlined into committed files — that would
-  leak local notes into git and churn the generated docs on every append.
-- DURABLE, team-facing decisions do NOT go here. They go in the commit message and/or a
-  short ADR under `docs/adr/` — reviewed and committed. Memory is for ephemeral,
-  per-dev working notes only.
+- `.ai/memory.md` is the **shared, committed** team working log (hackathon decision 2026-10-02):
+  every teammate and every agent reads it and appends to it, and it travels with the repo.
+  `sh scripts/sync-ai-docs.sh` seeds it from `.ai/memory.example.md` only if it is missing.
+- It is referenced (`@.ai/memory.md`), never inlined into the generated contract files, so an
+  append does not churn `AGENTS.md`.
+- Durable decisions still also go in the commit message and/or a short ADR under `docs/adr/`.
 - APPEND, never rewrite. Keep entries terse, newest at the bottom of `## Log`. Shapes:
   - `### [YYYY-MM-DD] build-error` — `symptom → root cause → fix`.
-  - `### [YYYY-MM-DD] gotcha` — environment/library quirk found the hard way.
-- NEVER write a secret (private keys, `.env` values, signed payloads, bearer tokens) — even
-  though it is local, the example is committed and the habit leaks.
+  - `### [YYYY-MM-DD] gotcha` — environment/library/API quirk found the hard way.
+  - `### [YYYY-MM-DD] finding` — something learned about the game (cite tick + evidence).
+- NEVER write a secret (team key, broker keys, `TYPESAFE_API_KEY`, `.env` values, bearer
+  tokens) — this file is public in the repo.
 
 # Agent lifecycle (GENERIC — reusable across projects)
 
@@ -244,8 +246,8 @@ token cost isn't worth it; one focused agent is better there.
 
 ## Memory
 
-Shared working log: `.ai/memory.md` — LOCAL and gitignored (seed from
-`.ai/memory.example.md`; `sh scripts/sync-ai-docs.sh` seeds it for you). It is not inlined here;
-tools that resolve imports pull it in, and opencode reads it directly:
+Shared working log: `.ai/memory.md` — committed and shared by the whole team (seeded from
+`.ai/memory.example.md` if missing). It is not inlined here; tools that resolve imports pull it
+in, and opencode reads it directly. Never write a secret in it:
 
 @.ai/memory.md

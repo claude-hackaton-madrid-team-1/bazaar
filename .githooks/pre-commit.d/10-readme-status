@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# Keep README.md's live status block current for teammates and agents (Python stdlib only).
+set -eu
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+python3 scripts/readme_status.py >/dev/null
+git add README.md
