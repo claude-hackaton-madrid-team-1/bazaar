@@ -4,6 +4,20 @@ from pathlib import Path
 
 API = Path(__file__).resolve().parent.parent / "docs" / "api"
 METHODS = {"get", "post", "put", "patch", "delete"}
+OPEN_OPERATIONS = {
+    ("get", p)
+    for p in (
+        "/api/health", "/api/clock", "/api/catalog", "/api/leaderboard", "/api/feed", "/api/schedule",
+        "/api/dealers", "/api/dealers/{pid}", "/api/levels", "/api/venues", "/api/venues/{vid}/offers", "/{path}",
+    )
+}
+ME_FIELDS = {
+    "id", "name", "cash", "level", "unlocked", "badges", "frozen", "affinity", "assets", "album",
+    "collection_value", "open_threads", "score", "tick", "tick_seconds", "venue",
+}
+OFFER_FIELDS = {
+    "id", "maker", "to", "venue", "thread", "status", "give", "want", "expires_tick", "created_tick", "final",
+}
 
 
 def load(name):
@@ -48,9 +62,30 @@ class OpenApiTest(unittest.TestCase):
 
     def test_team_operations_declare_their_key(self):
         for m, p in operations(self.spec):
-            if p.startswith("/api/me") or p.startswith("/api/duels") or p.startswith("/api/broker"):
-                schemes = {k for req in self.spec["paths"][p][m].get("security", []) for k in req}
-                self.assertTrue(schemes & {"TeamKey", "BrokerKey"}, f"{m.upper()} {p} declares no key")
+            if (m, p) in OPEN_OPERATIONS or p.startswith("/api/admin"):
+                continue
+            schemes = {k for req in self.spec["paths"][p][m].get("security", []) for k in req}
+            self.assertTrue(schemes & {"TeamKey", "BrokerKey"}, f"{m.upper()} {p} declares no key")
+
+    def test_core_response_fields_are_required(self):
+        schemas = self.spec["components"]["schemas"]
+        self.assertLessEqual(ME_FIELDS, set(schemas["Me"].get("required", [])))
+        self.assertLessEqual(OFFER_FIELDS, set(schemas["Offer"].get("required", [])))
+
+    def test_dealer_topics_match_one_alternative(self):
+        from jsonschema import Draft202012Validator
+
+        topic = Draft202012Validator({"$ref": "#/components/schemas/Topic", "components": self.spec["components"]})
+        for example in (
+            {"buy": {"pack": "sobre_barrio"}},
+            {"buy": {"card": "LAV-09"}},
+            {"buy": {"set": "LAV", "rarity": "rare"}},
+            {"sell": {"assets": [1, 2]}},
+        ):
+            self.assertEqual([e.message for e in topic.iter_errors(example)], [], example)
+
+    def test_server_snapshot_is_diffable(self):
+        self.assertGreater(len((API / "openapi.server.json").read_text().splitlines()), 1)
 
     def test_credentialed_operations_document_their_refusal(self):
         for m, p in operations(self.spec):

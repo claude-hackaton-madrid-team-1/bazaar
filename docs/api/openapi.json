@@ -7361,7 +7361,25 @@
           }
         },
         "additionalProperties": true,
-        "x-verified": true
+        "x-verified": true,
+        "required": [
+          "id",
+          "name",
+          "cash",
+          "level",
+          "unlocked",
+          "badges",
+          "frozen",
+          "affinity",
+          "assets",
+          "album",
+          "collection_value",
+          "open_threads",
+          "score",
+          "tick",
+          "tick_seconds",
+          "venue"
+        ]
       },
       "CardValue": {
         "type": "object",
@@ -7453,7 +7471,20 @@
           }
         },
         "additionalProperties": true,
-        "x-verified": true
+        "x-verified": true,
+        "required": [
+          "id",
+          "maker",
+          "to",
+          "venue",
+          "thread",
+          "status",
+          "give",
+          "want",
+          "expires_tick",
+          "created_tick",
+          "final"
+        ]
       },
       "OfferList": {
         "type": "object",
@@ -7681,7 +7712,7 @@
         "x-verified": true
       },
       "Topic": {
-        "oneOf": [
+        "anyOf": [
           {
             "type": "object",
             "properties": {
@@ -7693,11 +7724,17 @@
                   }
                 },
                 "additionalProperties": true,
-                "x-verified": true
+                "x-verified": true,
+                "required": [
+                  "pack"
+                ]
               }
             },
             "additionalProperties": true,
-            "x-verified": true
+            "x-verified": true,
+            "required": [
+              "buy"
+            ]
           },
           {
             "type": "object",
@@ -7710,11 +7747,17 @@
                   }
                 },
                 "additionalProperties": true,
-                "x-verified": true
+                "x-verified": true,
+                "required": [
+                  "card"
+                ]
               }
             },
             "additionalProperties": true,
-            "x-verified": true
+            "x-verified": true,
+            "required": [
+              "buy"
+            ]
           },
           {
             "type": "object",
@@ -7730,11 +7773,26 @@
                   }
                 },
                 "additionalProperties": true,
-                "x-verified": true
+                "x-verified": true,
+                "anyOf": [
+                  {
+                    "required": [
+                      "set"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rarity"
+                    ]
+                  }
+                ]
               }
             },
             "additionalProperties": true,
-            "x-verified": true
+            "x-verified": true,
+            "required": [
+              "buy"
+            ]
           },
           {
             "type": "object",
@@ -7750,11 +7808,17 @@
                   }
                 },
                 "additionalProperties": true,
-                "x-verified": true
+                "x-verified": true,
+                "required": [
+                  "assets"
+                ]
               }
             },
             "additionalProperties": true,
-            "x-verified": true
+            "x-verified": true,
+            "required": [
+              "sell"
+            ]
           }
         ],
         "x-verified": true,
