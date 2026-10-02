@@ -126,6 +126,14 @@ def test_a_monitor_tick_is_one_span_with_counts_alerts_traders_and_console_lines
     assert any(line.startswith("monitor: feed →") for line in lines_of(command))
 
 
+def test_monitor_notify_is_skipped_off_macos(runner, monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("osascript must not run off macOS"))
+    result = runner.invoke(cli.app, ["monitor", "--notify", "--no-db", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "--notify needs macOS" in result.output and "ALERT tick 120 feed:announcement" in result.output
+
+
 def test_a_db_failure_is_recorded_and_the_tick_goes_on(spans, runner, monkeypatch):
     from bazaar_agent import db
 

@@ -130,3 +130,28 @@ all laptops and browser tabs.
 52.0 s and max 58.7 s earlier (ticks 123→124: 9 events, max 54.5 s). A mid-tick message is otherwise
 seen only at the next tick. Events emitted at the tick boundary (7, then 4) came by poll first.
 Dedupe by id kept each event once in `feed.jsonl`.
+
+### [2026-10-02] build-error — Railway build failed: "No start command detected"
+symptom: the first `bazaar` service build failed in `railpack prepare` → root cause: Railpack only
+guesses a start for FastAPI/Flask/Django or a root `main.py`/`app.py` → fix: `.railway/railway.py`
+(Railway IaC, Python) sets build and start per service. Config as Code (`railway.toml`) is deprecated
+and new services cannot opt into it (docs.railway.com/config-as-code, cutoff 2026-12-01).
+
+### [2026-10-02] gotcha — Railpack's uv install is `--no-editable`, which breaks REPO_ROOT
+Railpack runs `uv sync --locked --no-dev --no-editable` (railpack core/providers/python), so
+`bazaar_agent` lands in `.venv/lib/.../site-packages` and `Path(__file__).parents[2]` no longer finds
+`vendor/bazaar-kit`, `GUARDRAILS.md` or `questions/`. Build command `uv sync --locked --no-dev`
+(editable) keeps REPO_ROOT at `/app` (verified in the container). Python defaults to 3.13.2 unless
+`RAILPACK_PYTHON_VERSION` is set.
+
+### [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
+`PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` still creates the admin with `reset_password=True`
+(phoenix.db.facilitator, 20.19.0).
+`patchViewer` accepts the same password, which clears the flag but ends every session: log in again.
+A system API key then comes from `POST /v1/system/api_keys` with the admin session. All of it is
+`bazaar obs bootstrap`. Phoenix's `/healthz` stays public with auth on; `/v1/*` and OTLP answer 401.
+
+### [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
+Secrets go `printf %s "$V" | railway variable set NAME --stdin --service X`, never as `NAME=value` on
+the command line. Railway's watch patterns turn README-bot pushes into SKIPPED deployments, and the
+MCP `redeploy` then needs the last SUCCESS deployment id (it refuses a SKIPPED one).
