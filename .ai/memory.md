@@ -116,3 +116,17 @@ Confirmed on developers.openai.com (latest-model guide). `gpt-6-1-sol` is our al
 symptom: `MarkupError` from `console.print(f"... rival {d.get('rival_offer')} ...")` (found by the
 security review of the runtime LLM PR) → root cause: rich parses `[...]` in untrusted text as markup,
 and `run_per_tick` has no try/except → fix: `rich.markup.escape()` on every counterparty or model string.
+
+### [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
+`GET /api/events/stream?scope=team` (key in `X-Team-Key`) sends `event: hello` (`{"tick", "scope":
+"team:t01"}`), then `event: <type>` + `data: <same object as /api/feed>`, and `: keep-alive` every
+~15 s (verified tick 105). It also sends `type: tick` events the feed never has, and our team-scoped
+events (`duel.message`, scope `team:t01`) that the public feed does not show. No `id:` lines, so a
+reconnect cannot resume: keep the per-tick `/api/feed` poll as gap-filler. 6 streams per key across
+all laptops and browser tabs.
+
+### [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
+`bazaar monitor --show-events`: ticks 128→129, 34 events reached us by stream before the poll, median
+52.0 s and max 58.7 s earlier (ticks 123→124: 9 events, max 54.5 s). A mid-tick message is otherwise
+seen only at the next tick. Events emitted at the tick boundary (7, then 4) came by poll first.
+Dedupe by id kept each event once in `feed.jsonl`.

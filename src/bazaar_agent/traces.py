@@ -328,3 +328,37 @@ def monitor_summary(new_events: int, dealers: int, teams: int, levels: int, me: 
             "bazaar.rank": score.get("rank"),
         },
     )
+
+
+@tm.never_raise
+def stream_batch(received: int, ingested: Any, state: str) -> None:
+    """A live-stream burst on the current `monitor stream` span: what arrived and what was new."""
+    fresh = ingested.fresh
+    tm.set_attributes(
+        trace.get_current_span(),
+        {
+            "bazaar.stream.received": received,
+            "bazaar.stream.new": len(fresh),
+            "bazaar.stream.private": len(ingested.private),
+            "bazaar.stream.state": state,
+            "bazaar.stream.first_id": fresh[0]["id"] if fresh else None,
+            "bazaar.stream.last_id": fresh[-1]["id"] if fresh else None,
+            "bazaar.stream.types": sorted({str(e.get("type")) for e in fresh}),
+        },
+    )
+
+
+@tm.never_raise
+def stream_lead(lead: Any, state: str, streamed: int) -> None:
+    """On the monitor tick span: how far the stream ran ahead of this tick's poll."""
+    tm.set_attributes(
+        trace.get_current_span(),
+        {
+            "bazaar.stream.state": state,
+            "bazaar.stream.since_last_tick": streamed,
+            "bazaar.stream.confirmed": lead.streamed,
+            "bazaar.stream.poll_only": lead.poll_only,
+            "bazaar.stream.lead_median_s": lead.median_s,
+            "bazaar.stream.lead_max_s": lead.max_s,
+        },
+    )

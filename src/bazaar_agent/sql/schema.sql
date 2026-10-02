@@ -120,6 +120,7 @@ begin
     select c.tbl, c.name, c.type from (values
       ('traders', 'status', 'text'),
       ('traders', 'updated_tick', 'int'),
+      ('dealer_curves', 'ours', 'boolean'),  -- our own thread; null = written before we knew our team id
       ('messages', 'embedding', vec),
       ('trader_behaviors', 'embedding', vec),
       ('learnings', 'embedding', vec)) as c(tbl, name, type)
@@ -129,4 +130,20 @@ begin
   loop
     execute format('alter table %I add column %I %s', col.tbl, col.name, col.type);
   end loop;
+end $$;
+
+-- Competitor activity: every feed event our team neither did nor is party to (`intel.is_ours`).
+-- "Us" is the trader row with status 'us' (written by the monitor); feed_events keeps everything.
+do $$
+begin
+  if to_regclass(format('%I.their_events', current_schema())) is null then
+    create view their_events as
+      select e.* from feed_events e
+       where not exists (
+         select 1 from traders u
+          where u.status = 'us'
+            and (u.id in (e.actor, e.payload->>'team', e.payload->>'with', e.payload->>'owner',
+                          e.payload->>'sender', e.payload->'offer'->>'maker')
+                 or coalesce(e.payload->'parties', '[]'::jsonb) ? u.id));
+  end if;
 end $$;

@@ -29,15 +29,27 @@ Kill switch: `touch .local/PAUSE` (remove the file to resume). Never bypass a de
 | Question | Command |
 |---|---|
 | What filled, at what price? | `uv run bazaar tape [--item sobre_barrio]` |
-| Where does a dealer give in? | `uv run bazaar curves --dealer abuela [--item X] [--threads 20]` |
-| What is each team chasing? | `uv run bazaar teams` (top set ≈ their ×1.6 affinity) |
-| Who is selling or bidding what? | `uv run bazaar book [--card LAV-04]` |
+| Where does a dealer give in? | `uv run bazaar curves --dealer abuela [--item X] [--threads 20] [--theirs]` |
+| How did OUR threads go? | `uv run bazaar curves --ours --threads 10` |
+| What is each team chasing? | `uv run bazaar teams` (top set ≈ their ×1.6 affinity; us in a separate table) |
+| Who is selling or bidding what? | `uv run bazaar book [--card LAV-04]` (our offers apart) |
 | Dealer menus and traits | `uv run bazaar dealers` |
 
 The feed keeps only the last 500 events, so the monitoring agent must stay running:
-`uv run bazaar monitor --notify` (feed → JSONL + Postgres, traders sync, /me snapshots, alerts on new
-dealers or levels). `uv run bazaar traders` and `uv run bazaar alerts` read what it found.
-Analyses read `.local/feed/feed.jsonl`; add `--live` to merge the current window.
+`uv run bazaar monitor --notify`. It is **real time**: ONE live SSE stream
+(`/api/events/stream?scope=team`) handles each event as it lands (JSONL + Postgres + alerts within
+a second), and the per-tick `/api/feed` poll fills gaps and is the dedupe truth. The 6-stream cap
+per team key is shared by every laptop's monitor AND every browser tab with the live game: on a
+`429 too_many_streams` it polls and retries next tick; a second monitor should use `--no-stream`.
+`--show-events` prints each streamed event with its arrival time. `uv run bazaar traders` and
+`uv run bazaar alerts` read what it found. Analyses read `.local/feed/feed.jsonl`; add `--live` to
+merge the current window.
+
+**Us vs them.** Our team id: `BAZAAR_TEAM_ID`, else `.local/team_id`, else `/api/me` once. Our own
+activity is tagged, never dropped: competitor views (`teams`, `competitor_profiles`, `book`) leave us
+out and show us apart (`--include-us` to mix); `curves` has an `ours` column and `--ours/--theirs/--all`;
+our trader row has status `us`; alerts never fire for our own actions; SQL view `their_events` is the
+feed without us. Never count our own fills as market evidence of what the competition pays.
 
 ## Our team (needs `BAZAAR_KEY` in `.env`)
 
@@ -80,8 +92,8 @@ A verdict informs, never authorizes. `undecided` maps to the conservative move, 
 ## SDK first, HTTP as Plan B
 
 Use `bazaar_agent.sdk` (the vendored `bazaar_sdk`). For a route a new level adds, use the SDK's
-`Bazaar.call(method, path, body)`. Raw `httpx` only when the SDK cannot do it (the SSE stream) or
-misbehaves, checked against `docs/api/openapi.json` (fields with `x-verified: false` need a fixture first).
+`Bazaar.call(method, path, body)`. Raw `httpx` only when the SDK cannot do it (the SSE stream, in
+`bazaar_agent.stream`: one per process, key in a header, never in the URL) or misbehaves, checked against `docs/api/openapi.json` (fields with `x-verified: false` need a fixture first).
 
 ## Never
 

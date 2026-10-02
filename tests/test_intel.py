@@ -143,3 +143,43 @@ def test_order_book_resolves_pseudonyms_to_teams():
 
 def test_set_of():
     assert (intel.set_of("LAV-07"), intel.set_of("sobre_barrio"), intel.set_of(None)) == ("LAV", None, None)
+
+
+# ---------------------------------------------------------------- us vs the competition
+
+
+def test_dealer_threads_tag_our_own_and_summaries_count_them():
+    threads = {t.thread: t for t in intel.dealer_threads(EVENTS, ours="t06")}
+    assert [n for n, t in sorted(threads.items()) if t.ours] == [11, 12]
+    assert not any(t.ours for t in intel.dealer_threads(EVENTS))  # unknown id: nothing tagged
+    summary = {s.item: s.ours for s in intel.curve_summary(threads.values())}
+    assert summary == {"sobre_barrio": 0, "LAV-07": 1, "assets:171": 1}
+
+
+def test_is_ours_covers_actor_team_owner_maker_and_settlement_parties():
+    ours = [
+        {"actor": "t01", "payload": {}},
+        {"actor": "chato", "payload": {"team": "t01", "sender": "chato"}},  # the dealer answering us
+        {"actor": "", "payload": {"owner": "t01"}},
+        {"actor": "", "payload": {"offer": {"maker": "t01"}}},
+        {"actor": "", "type": "settlement", "payload": {"parties": ["abuela", "t01"]}},
+    ]
+    theirs = [
+        {"actor": "t05", "payload": {"team": "t05", "parties": "t01"}},  # a string is not a party list
+        {"actor": "admin", "payload": {"level": "chato"}},
+    ]
+    assert all(intel.is_ours(e, "t01") for e in ours)
+    assert not any(intel.is_ours(e, "t01") for e in theirs)
+    assert not intel.is_ours(ours[0], None)
+
+
+def test_competitor_views_split_us_out_without_dropping_us():
+    flows = intel.team_flows(EVENTS)
+    theirs, us = intel.split_us(flows, "t06", lambda f: f.team)
+    assert [f.team for f in theirs] == ["t05"] and [f.team for f in us] == ["t06"]
+    assert intel.split_us(flows, None, lambda f: f.team) == (flows, [])
+    board = [{"id": 123, "maker": "p1", "give": {"assets": [{"ref": "LAT-05"}]}, "want": {"cash": 10}}]
+    book_theirs, book_us = intel.split_us(
+        intel.order_book(board, intel.listed_makers(EVENTS)), "t06", lambda b: b.maker
+    )
+    assert book_theirs == [] and [b.offer_id for b in book_us] == [123]

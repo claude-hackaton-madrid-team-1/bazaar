@@ -1,3 +1,5 @@
+import json
+
 from bazaar_agent import monitor as mon
 
 DEALERS = {
@@ -64,3 +66,106 @@ def test_a_level_going_active_is_reported_by_id():
         "chato",
         "announced → active: deal with him",
     )
+
+
+# ---------------------------------------------------------------- us vs the competition
+
+OURS = "t01"
+OUR_LEVEL = {"id": 4416, "tick": 98, "type": "level.unlocked", "actor": "", "payload": {"team": OURS, "level": 2}}
+THEIR_LEVEL = {"id": 4417, "tick": 98, "type": "level.unlocked", "actor": "", "payload": {"team": "t06", "level": 2}}
+OUR_VENUE = {"id": 4536, "tick": 100, "type": "venue.opened", "actor": "", "payload": {"owner": OURS, "name": "Ours"}}
+
+
+def test_our_trader_row_is_tagged_us_and_never_alerts():
+    events = [{"id": 1, "type": "offer.listed", "actor": OURS, "payload": {}}, THEIR_LEVEL]
+    teams = mon.team_snapshots(events, ours=OURS)
+    assert (teams[OURS].status, teams["t06"].status) == ("us", "active")
+    before = mon.team_snapshots([THEIR_LEVEL], ours=OURS)
+    alerts = mon.detect_changes(5, before, teams, [], [], ours=OURS)
+    assert alerts == []  # our own first appearance is not a new competitor
+
+
+def test_our_own_actions_never_raise_feed_alerts():
+    alerts = mon.event_alerts([OUR_LEVEL, OUR_VENUE, THEIR_LEVEL], ours=OURS)
+    assert [(a.kind, a.tick) for a in alerts] == [("feed:level.unlocked", 98)]
+    assert len(mon.event_alerts([OUR_LEVEL, OUR_VENUE, THEIR_LEVEL])) == 3  # unknown id: nothing is hidden
+
+
+# ---------------------------------------------------------------- one pipeline: stream + poll
+
+
+def ev(i, kind="thread.message", actor="t05", tick=106, **payload):
+    return {"id": i, "tick": tick, "type": kind, "scope": "public", "actor": actor, "payload": payload}
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def watcher(tmp_path, ours=OURS):
+    from bazaar_agent.feed import FeedStore
+
+    clock = FakeClock()
+    w = mon.Watcher(FeedStore(tmp_path), ours, FeedStore(tmp_path, "team_events.jsonl"), now=clock)
+    return w, clock
+
+
+def stored_ids(path):
+    return [json.loads(line)["id"] for line in path.read_text().splitlines()]
+
+
+def test_stream_and_poll_dedupe_by_id_and_the_poll_measures_the_lead(tmp_path):
+    w, clock = watcher(tmp_path)
+    w.from_poll([ev(1)], 500)  # baseline
+    streamed = w.from_stream([ev(5), ev(6)])
+    assert [e["id"] for e in streamed.fresh] == [5, 6]
+    assert w.from_stream([ev(6)]).fresh == []  # a repeat (reconnect replay) is a no-op
+    clock.t += 42.0  # the next tick's poll
+    result, polled, lead = w.from_poll([ev(1), ev(4), ev(5), ev(6), ev(7)], 500)
+    assert [e["id"] for e in polled.fresh] == [4, 7]  # only what the stream missed
+    assert (lead.streamed, lead.poll_only, lead.median_s, lead.max_s) == (2, 2, 42.0, 42.0)
+    assert "stream ahead on 2 events by median 42.0 s" in lead.describe()
+    assert (result.new, result.newest_id) == (2, 7)
+    assert sorted(stored_ids(tmp_path / "feed.jsonl")) == [1, 4, 5, 6, 7]  # each event exactly once
+
+
+def test_an_announcement_alerts_once_from_the_stream_never_again_from_the_poll(tmp_path):
+    w, _ = watcher(tmp_path)
+    w.from_poll([ev(1)], 500)
+    news = ev(2, "announcement", actor="admin", text="El Rata is coming")
+    assert [a.kind for a in w.from_stream([news]).alerts] == ["feed:announcement"]
+    _, polled, _ = w.from_poll([ev(1), news], 500)
+    assert polled.alerts == []
+
+
+def test_a_new_team_alerts_from_the_stream_after_the_baseline_but_never_us(tmp_path):
+    w, _ = watcher(tmp_path)
+    before = w.from_stream([ev(1, actor="t09")])  # before the first poll: still the baseline
+    assert before.alerts == []
+    _, first, _ = w.from_poll([ev(1, actor="t09"), ev(2, actor="t05")], 500)
+    assert first.alerts == [] and sorted(w.teams) == ["t05", "t09"]
+    later = w.from_stream([ev(3, actor="t12", tick=110), ev(4, actor=OURS, tick=110)])
+    assert [(a.kind, a.subject, a.tick) for a in later.alerts] == [("new_team", "t12", 110)]
+    assert w.teams[OURS].status == "us"
+
+
+def test_tick_events_are_skipped_and_team_scoped_events_stay_out_of_the_public_feed(tmp_path):
+    w, _ = watcher(tmp_path)
+    private = ev(9, "gift.given", actor="abuela", team=OURS) | {"scope": "team:t01"}
+    got = w.from_stream([ev(8, "tick", actor=""), private, ev(10)])
+    assert w.stream_only_skipped == 1
+    assert ([e["id"] for e in got.fresh], [e["id"] for e in got.private]) == ([10], [9])
+    assert stored_ids(tmp_path / "feed.jsonl") == [10]
+    assert stored_ids(tmp_path / "team_events.jsonl") == [9]
+
+
+def test_events_the_stream_delivered_do_not_hide_a_gap_in_the_poll(tmp_path):
+    w, _ = watcher(tmp_path)
+    w.from_poll([ev(1), ev(2)], 2)
+    w.from_stream([ev(50)])  # after a long stream outage, the stream is back at id 50
+    result, _, _ = w.from_poll([ev(40), ev(50)], 2)  # a full window that starts after our last poll
+    assert result.gap_possible
