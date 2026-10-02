@@ -452,6 +452,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
 - [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
 - [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
 - [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
@@ -459,7 +460,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] build-error — Railway build failed: "No start command detected"
 - [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
 - [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
-- [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
 
 <!-- BAZAAR:STATUS:END -->
 

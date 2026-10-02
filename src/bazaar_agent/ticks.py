@@ -66,6 +66,18 @@ def action_budget_s(clock: Clock, safety_margin_s: float = 2.0) -> float:
     return max(0.0, clock.next_tick_in - margin)
 
 
+ERROR_BACKOFF_MAX_S = 60.0
+
+
+def _report(stage: str, error: BaseException) -> None:
+    """Default error sink: one line plus the traceback on stderr (Railway and terminals keep it)."""
+    import sys
+    import traceback
+
+    print(f"tick loop: {stage} failed ({type(error).__name__}: {error}); continuing", file=sys.stderr)
+    traceback.print_exception(error, file=sys.stderr)
+
+
 def run_per_tick(
     read_clock: Callable[[], dict[str, Any]],
     on_tick: Callable[[Clock], None],
@@ -73,18 +85,33 @@ def run_per_tick(
     max_ticks: int | None = None,
     stop: Callable[[], bool] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    on_error: Callable[[str, BaseException], None] = _report,
 ) -> int:
     """Call `on_tick` once per new live tick until `max_ticks` or `stop()`. Returns ticks handled.
 
     One call owns the tick bookkeeping: never call this in a loop with max_ticks=1, or the same
     tick is handled again on every call.
+
+    Unattended loops must survive the network: a failed clock read is reported and retried with
+    exponential backoff (1 s → 60 s), and a failed tick is reported and counted as handled so it is
+    never retried in a burst. Only KeyboardInterrupt / SystemExit stop the loop.
     """
-    handled, last_tick = 0, None
+    handled, last_tick, failures = 0, None, 0
     while (max_ticks is None or handled < max_ticks) and not (stop and stop()):
-        clock = Clock.model_validate(read_clock())
+        try:
+            clock = Clock.model_validate(read_clock())
+        except Exception as error:  # DNS, Wi-Fi, a server restart, a malformed body
+            failures += 1
+            on_error("clock read", error)
+            sleep(min(ERROR_BACKOFF_MAX_S, 2.0 ** (failures - 1)))
+            continue
+        failures = 0
         started = time.monotonic()
         if clock.is_live and clock.tick != last_tick:
-            on_tick(clock)
+            try:
+                on_tick(clock)
+            except Exception as error:
+                on_error(f"tick {clock.tick}", error)
             last_tick, handled = clock.tick, handled + 1
             if (max_ticks is not None and handled >= max_ticks) or (stop and stop()):
                 break
