@@ -489,6 +489,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#48](../../pull/48) | feat: autonomous taker and maker agents (dry run), shared Postgres ledger, read-only status | `ogarciarevett/feat-taker-maker` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
