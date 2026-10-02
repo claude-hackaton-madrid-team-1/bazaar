@@ -98,12 +98,26 @@ class Backend:
 
     @property
     def ledger(self) -> LedgerStore:
-        """The shared Postgres ledger (reopened after a failure), else the JSONL file unless shared-only."""
+        """The shared Postgres ledger (it reconnects by itself), else the JSONL file unless shared-only.
+
+        Shared-only (live, or the remote server): `open_ledger(live=True)` refuses a DATABASE_URL that is not
+        the shared one; against a simulator it may fall back to the file, which shared-only refuses here."""
         with self._build:
             if self._ledger is None:
-                from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
+                from bazaar_agent.ledger_pg import LedgerNotShared, LedgerUnavailable, PgLedger, open_ledger
 
-                opened = open_ledger(self.settings.data_dir, source=SOURCE, log=self.log)
+                try:
+                    opened = open_ledger(
+                        self.settings.data_dir,
+                        source=SOURCE,
+                        live=self.shared_ledger_only,
+                        database_url=self.settings.database_url.get_secret_value(),
+                        game_url=self.settings.bazaar_url,
+                        log=self.log,
+                    )
+                except LedgerNotShared as e:  # callers see the runtime's one fail-closed message
+                    self.log(f"runtime: {e}")
+                    raise LedgerUnavailable("the shared Postgres ledger is not configured") from None
                 if self.shared_ledger_only and not isinstance(opened, PgLedger):
                     raise LedgerUnavailable("the shared Postgres ledger is unreachable")
                 self._ledger = opened
@@ -147,12 +161,14 @@ class Backend:
             self.pending.pop(0)
 
     def failed(self, error: BaseException) -> None:
-        """After a ledger failure, drop the connection: the next call reopens it (Postgres came back)."""
-        from bazaar_agent.ledger_pg import LedgerUnavailable
+        """After a ledger failure, reopen the ledger on the next call. A `PgLedger` is kept: it reconnects by
+        itself, at most once per `pgconn.RETRY_EVERY_S`, where a fresh open would try again at once."""
+        from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger
 
         if isinstance(error, LedgerUnavailable):
             with self._build:
-                self._ledger = None
+                if not isinstance(self._ledger, PgLedger):
+                    self._ledger = None
 
     @property
     def decisions(self) -> DecisionLog:
