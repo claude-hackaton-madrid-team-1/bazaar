@@ -71,12 +71,32 @@ def test_a_dry_run_falls_back_to_the_file_when_postgres_is_down(tmp_path):
 def test_live_refuses_a_ledger_that_is_not_shared(tmp_path):
     from bazaar_agent.config import DEFAULT_DATABASE_URL
 
-    for url in (DEFAULT_DATABASE_URL, "postgresql://me:pw@127.0.0.1:5432/bazaar", "not a url"):
+    local = [
+        DEFAULT_DATABASE_URL,
+        "postgresql://me:pw@127.0.0.1:5432/bazaar",
+        "postgresql://me:pw@host.docker.internal:5433/bazaar",
+        "postgresql://me:pw@db.localhost/bazaar",
+        "postgresql://me:pw@192.168.1.20:5432/bazaar",
+        "postgresql://me:pw@[::1]:5432/bazaar",
+        "not a url",
+    ]
+    for url in local:
         with pytest.raises(LedgerNotShared, match="live trading needs the team's shared ledger") as refusal:
             open_ledger(tmp_path, source="duels", live=True, database_url=url, game_url=GAME, connect=refused)
         assert "pw" not in str(refusal.value)
     # dry, the same URLs are fine: a local count is allowed when nothing is sent
     assert open_ledger(tmp_path, source="duels", database_url=DEFAULT_DATABASE_URL, game_url=GAME, connect=refused)
+
+
+def test_the_official_game_is_recognised_however_its_url_is_written(tmp_path):
+    from bazaar_agent.config import DEFAULT_DATABASE_URL
+    from bazaar_agent.ledger_pg import official_game
+
+    for url in (GAME, "https://BAZAAR.causaprima.ai./", "https://bazaar.causaprima.ai:443/api"):
+        assert official_game(url), url
+        with pytest.raises(LedgerNotShared):
+            open_ledger(tmp_path, source="duels", live=True, database_url=DEFAULT_DATABASE_URL, game_url=url)
+    assert not official_game(SIM) and not official_game("https://bazaar.causaprima.ai.evil.example")
 
 
 def test_live_on_a_down_shared_ledger_fails_closed_and_never_counts_on_the_file(tmp_path):

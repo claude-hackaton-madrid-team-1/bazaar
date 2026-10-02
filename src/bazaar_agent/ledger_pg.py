@@ -204,15 +204,21 @@ class FallbackLedger:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
 
 
+LOCAL_HOSTS = ("localhost", "host.docker.internal", "gateway.docker.internal")  # this machine, seen from docker
+
+
 def is_shared(target: Target) -> bool:
-    """A database other machines reach too: not the docker default, not a loopback host."""
-    host = target.host.strip("[]")
-    if target.is_local_default or host in ("", "localhost") or host.startswith("/"):  # "/..." is a Unix socket
+    """A database other machines reach too: not the docker default, not this machine or its LAN."""
+    host = target.host.strip("[]").rstrip(".").lower()
+    if target.is_local_default or not host or host.startswith("/"):  # "/..." is a Unix socket
+        return False
+    if host in LOCAL_HOSTS or host.endswith(".localhost"):
         return False
     try:
-        return not ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(host)
     except ValueError:
         return True  # a host name: Railway's proxy or private network
+    return not (address.is_loopback or address.is_private or address.is_link_local or address.is_unspecified)
 
 
 def _target(database_url: str) -> tuple[Target | None, str]:
@@ -228,7 +234,7 @@ def official_game(game_url: str) -> bool:
     """BAZAAR_URL is the real game, not a simulator: only there a live write needs the shared ledger."""
     from bazaar_agent.config import DEFAULT_URL
 
-    return (urlsplit(game_url).hostname or "").lower() == urlsplit(DEFAULT_URL).hostname
+    return (urlsplit(game_url).hostname or "").rstrip(".") == urlsplit(DEFAULT_URL).hostname  # hostname is lowercase
 
 
 def open_ledger(
