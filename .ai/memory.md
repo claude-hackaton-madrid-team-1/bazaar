@@ -162,3 +162,9 @@ MCP `redeploy` then needs the last SUCCESS deployment id (it refuses a SKIPPED o
 "failed" + `diagnostics`. Re-plan after every apply. A region set to null does not mean zero either:
 Railway moved the service to its default region (us-west2) until the region map was set back. To
 turn a service off, disconnect its source and `railway down` it (what we did to `bazaar-monitor`).
+
+### [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
+symptom: `BazaarError: network: GET /api/clock: nodename nor servname provided` and the MONITOR
+process exited → root cause: `run_per_tick` let a clock-read or tick exception escape → fix: the loop
+reports and retries a failed clock read with backoff (1 s → 60 s) and a failed tick is reported and
+not retried within that tick; only Ctrl-C/SystemExit stop it (tests in tests/test_ticks.py).

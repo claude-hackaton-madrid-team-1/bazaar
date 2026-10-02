@@ -51,3 +51,51 @@ def test_run_per_tick_handles_each_live_tick_once():
     n = run_per_tick(lambda: next(clocks), lambda c: seen.append(c.tick), max_ticks=3, sleep=sleeps.append)
     assert (n, seen) == (3, [1, 2, 3])
     assert PAUSED_POLL_S in sleeps
+
+
+def test_a_network_failure_on_the_clock_is_retried_with_backoff_not_fatal():
+    from bazaar_agent.ticks import ERROR_BACKOFF_MAX_S
+
+    reads = iter([OSError("nodename nor servname provided"), OSError("again"), {"tick": 5, "next_tick_in": 1}])
+
+    def read():
+        item = next(reads)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    seen, sleeps, errors = [], [], []
+    n = run_per_tick(
+        read,
+        lambda c: seen.append(c.tick),
+        max_ticks=1,
+        sleep=sleeps.append,
+        on_error=lambda stage, e: errors.append(stage),
+    )
+    assert (n, seen, errors) == (1, [5], ["clock read", "clock read"])
+    assert sleeps[:2] == [1.0, 2.0] and max(sleeps) <= ERROR_BACKOFF_MAX_S
+
+
+def test_a_failing_tick_is_reported_once_and_the_loop_goes_on():
+    clocks = iter([{"tick": 1, "next_tick_in": 1}, {"tick": 1, "next_tick_in": 1}, {"tick": 2, "next_tick_in": 1}])
+
+    def on_tick(c):
+        if c.tick == 1:
+            raise RuntimeError("boom")
+        seen.append(c.tick)
+
+    seen, errors = [], []
+    n = run_per_tick(
+        lambda: next(clocks), on_tick, max_ticks=2, sleep=lambda _: None, on_error=lambda stage, e: errors.append(stage)
+    )
+    assert (n, seen, errors) == (2, [2], ["tick 1"])  # tick 1 not retried within the same tick
+
+
+def test_ctrl_c_still_stops_the_loop():
+    import pytest
+
+    def read():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_per_tick(read, lambda c: None, sleep=lambda _: None)

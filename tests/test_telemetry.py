@@ -2,7 +2,6 @@
 
 import logging
 
-import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -180,15 +179,15 @@ def test_a_refused_move_marks_its_tick_error_with_the_stack(spans):
     assert root.attributes["bazaar.refusals"] == 1 and out.status == "deal"
 
 
-def test_an_exception_out_of_negotiate_marks_the_root_error(spans):
+def test_a_failing_tick_is_traced_as_an_error_and_the_negotiation_survives(spans):
+    # The tick loop is resilient (ticks.run_per_tick): a refused read fails that tick only.
     client = ChattyAbuela([12])
     client.thread = lambda tid: (_ for _ in ()).throw(BazaarError("rate_limited", "slow down", 429))
-    with pytest.raises(BazaarError):
-        traced_run(client)
-    root = next(s for s in spans.get_finished_spans() if s.name == "negotiation")
-    tick = next(s for s in spans.get_finished_spans() if s.name.startswith("tick "))
-    assert root.status.status_code is StatusCode.ERROR and tick.status.status_code is StatusCode.ERROR
-    assert events(root, "exception")[0].attributes["exception.type"] == "BazaarError"
+    out = traced_run(client)  # no crash: the loop reports the error and goes on until it times out
+    ticks = [s for s in spans.get_finished_spans() if s.name.startswith("tick ")]
+    assert ticks and all(t.status.status_code is StatusCode.ERROR for t in ticks)
+    assert events(ticks[0], "exception")[0].attributes["exception.type"] == "BazaarError"
+    assert out.status == "timeout" and out.price is None
 
 
 def test_tracing_off_records_nothing_and_negotiate_behaves_the_same():
