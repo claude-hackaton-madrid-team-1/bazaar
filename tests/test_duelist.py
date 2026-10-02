@@ -1,3 +1,5 @@
+import pytest
+
 from bazaar_agent.agents.duelist import duel_move, inside_limit, our_target
 
 
@@ -14,8 +16,8 @@ def duel(role="seller", limit=50, rival=None, deadline=112, **kw):
 
 
 def test_targets_start_at_the_anchor_and_end_near_the_limit_on_our_side():
-    assert our_target(50, "seller", 0.0) == 80 and our_target(50, "seller", 1.0) == 52
-    assert our_target(50, "buyer", 0.0) == 20 and our_target(50, "buyer", 1.0) == 48
+    assert our_target(50, "seller", 0.0) == 80 and our_target(50, "seller", 1.0) == 53  # 52.5 rounds up
+    assert our_target(50, "buyer", 0.0) == 20 and our_target(50, "buyer", 1.0) == 47  # 47.5 rounds down
 
 
 def test_never_accepts_outside_the_limit_even_at_the_deadline():
@@ -35,8 +37,8 @@ def test_endgame_takes_any_deal_strictly_inside_the_limit():
 
 
 def test_two_issue_sessions_always_carry_days():
-    move = duel_move(duel(issues=["price", "days"]), tick=100, started_tick=100)
-    assert (move.kind, move.days) == ("offer", 5)
+    move = duel_move(duel(issues=["price", "days"], your_days_weight=2.0), tick=100, started_tick=100)
+    assert (move.kind, move.price, move.days) == ("offer", 80, 0)  # 0 days cost nothing, whatever the weight's sign
 
 
 def test_unreadable_or_done_duels_are_left_alone():
@@ -84,3 +86,59 @@ def test_the_live_payload_is_read_and_played():
     assert duel_move({**LIVE, "rival_offer": {"price": 110, "days": 0}}, tick=143, started_tick=132).kind == "accept"
     assert duel_done({**LIVE, "status": "done"}) and duel_done({**LIVE, "result": "deal"})
     assert duel_id({"id": 7}) == 7 and duel_id({"duel": True}) is None
+
+
+# ---------------------------------------------------------------- our own offers stay strictly inside the limit
+
+
+def two_issue(role="seller", limit=100, weight=2.0, **kw):
+    return duel(role=role, limit=limit, issues=["price", "days"], your_days_weight=weight, **kw)
+
+
+def our_worth(d, move):
+    """Our offer at the worst-case cost of its days: what the rival's acceptance would be worth to us."""
+    penalty = abs(d["your_days_weight"]) * move.days
+    return move.price - penalty if d["role"] == "seller" else move.price + penalty
+
+
+def test_a_two_issue_offer_counts_its_days_against_our_limit():
+    # Before the fix: seller cost 100, weight 2, last tick → 105 with 5 days, worth 95 (outside the limit).
+    d = two_issue(weight=2.0)
+    move = duel_move(d, tick=111, started_tick=100)
+    assert move.kind == "offer" and our_worth(d, move) > 100
+    b = two_issue(role="buyer", limit=60, weight=2.0)
+    move = duel_move(b, tick=111, started_tick=100)
+    assert move.kind == "offer" and our_worth(b, move) < 60  # before: 54 + 5 days cost 64
+
+
+@pytest.mark.parametrize("role", ["seller", "buyer"])
+@pytest.mark.parametrize("weight", [2.0, -2.0, 0.5, -9.0, 0.0])
+@pytest.mark.parametrize("limit", [1, 2, 7, 10, 19, 60, 100, 104])
+def test_no_offer_is_ever_outside_or_on_the_limit(role, weight, limit):
+    d = two_issue(role=role, limit=limit, weight=weight)
+    for tick in range(100, 113):
+        move = duel_move(d, tick=tick, started_tick=100)
+        assert move.kind in ("offer", "hold")
+        if move.kind == "offer":
+            assert move.days is not None and 0 <= move.days <= 10
+            assert inside_limit(our_worth(d, move), limit, role), (tick, move)
+
+
+@pytest.mark.parametrize("limit", [1, 2, 7, 10, 19, 60, 100, 104])
+def test_price_only_offers_never_land_on_the_limit(limit):
+    for role in ("seller", "buyer"):
+        for tick in range(100, 113):
+            move = duel_move(duel(role=role, limit=limit), tick=tick, started_tick=100)
+            assert move.kind == "hold" or inside_limit(move.price, limit, role), (role, tick, move)
+
+
+def test_rounding_goes_toward_our_side_of_the_limit():
+    assert our_target(10, "buyer", 1.0) == 9  # 9.5 used to round to 10: zero surplus
+    assert our_target(10, "seller", 1.0) == 11
+    assert our_target(100, "seller", 1.0) == 105 and our_target(60, "buyer", 1.0) == 57  # float noise
+    assert duel_move(duel(role="buyer", limit=1), tick=111, started_tick=100).kind == "hold"
+
+
+def test_a_two_issue_duel_without_our_days_weight_holds():
+    assert duel_move(two_issue(weight=None), tick=105, started_tick=100).kind == "hold"
+    assert duel_move(two_issue(weight=None, rival=500), tick=111, started_tick=100).kind == "hold"

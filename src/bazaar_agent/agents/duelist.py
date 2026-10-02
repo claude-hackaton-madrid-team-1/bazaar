@@ -9,6 +9,7 @@ shrinks with every round of talk; a priced message in a two-issue session must a
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,10 @@ ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
 ENDGAME_TICKS = 2  # in the last ticks, any deal strictly inside our limit beats no deal
 DUEL_WORDS = "Propongo este precio, creo que es justo para los dos."
+# RULES.md: two-issue duels trade price and delivery days, 0 to 10. The sign of `your_days_weight` is not
+# verified, so we value every day at |weight| against us; 0 days is then the only free choice for our offers.
+OUR_DAYS = 0
+ROUNDING_SLACK = 1e-9  # 100 × 1.05 is 105.00000000000001 in floats: never let that round a price up
 
 
 @dataclass(frozen=True)
@@ -37,19 +42,31 @@ def _rival_price(duel: dict[str, Any]) -> int | None:
     return None
 
 
-def effective_price(duel: dict[str, Any], price: int) -> float | None:
-    """The rival's price, adjusted for delivery days in two-issue duels. None = cannot value it safely.
+def _two_issue(duel: Mapping[str, Any]) -> bool:
+    return "days" in (duel.get("issues") or [])
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
+    """A price with its delivery days, valued in the worst case. None = cannot value it safely.
 
     The sign of `your_days_weight` is not verified yet, so we assume the worst: days always cost us.
     """
-    if "days" not in (duel.get("issues") or []):
+    if not _two_issue(duel):
         return float(price)
-    offer = duel.get("rival_offer") or {}
-    days, weight = offer.get("days"), duel.get("your_days_weight")
-    if not isinstance(days, int | float) or not isinstance(weight, int | float):
+    n_days, weight = _number(days), _number(duel.get("your_days_weight"))
+    if n_days is None or weight is None:
         return None
-    penalty = abs(float(weight)) * float(days)
+    penalty = abs(weight) * n_days
     return price - penalty if duel.get("role") == "seller" else price + penalty
+
+
+def effective_price(duel: dict[str, Any], price: int) -> float | None:
+    """The rival's price, adjusted for the days of its offer in two-issue duels. None = cannot value it."""
+    return worth(duel, price, (duel.get("rival_offer") or {}).get("days"))
 
 
 def duel_id(duel: Mapping[str, Any]) -> int | None:
@@ -69,14 +86,24 @@ def duel_done(duel: Mapping[str, Any]) -> bool:
 
 
 def our_target(limit: int, role: str, progress: float, anchor: float = ANCHOR, floor: float = FLOOR_MARGIN) -> int:
-    """Our ask (seller) or bid (buyer) at `progress` 0..1 of the duel: anchor → limit ± margin."""
+    """Our ask (seller) or bid (buyer) at `progress` 0..1 of the duel: anchor → limit ± margin.
+    Rounded away from the limit (a seller up, a buyer down), so the margin never rounds to zero."""
     progress = min(1.0, max(0.0, progress))
     reach = anchor - (anchor - floor) * progress
-    price = limit * (1 + reach) if role == "seller" else limit * (1 - reach)
-    return max(1, round(price))
+    if role == "seller":
+        return max(1, math.ceil(limit * (1 + reach) - ROUNDING_SLACK))
+    return max(1, math.floor(limit * (1 - reach) + ROUNDING_SLACK))
 
 
-def inside_limit(price: int, limit: int, role: str) -> bool:
+def our_price(target: int, role: str, days: int, weight: float) -> int:
+    """The price that keeps our target after the worst-case cost of `days`, rounded to our side."""
+    penalty = abs(weight) * days
+    if role == "seller":
+        return math.ceil(target + penalty - ROUNDING_SLACK)
+    return math.floor(target - penalty + ROUNDING_SLACK)
+
+
+def inside_limit(price: float, limit: int, role: str) -> bool:
     """Strictly better than our limit: a seller above its cost, a buyer below its value."""
     return price > limit if role == "seller" else price < limit
 
@@ -97,16 +124,23 @@ def duel_move(
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     left = (deadline - tick) if isinstance(deadline, int) else total
     target = our_target(limit, role, (tick - started_tick) / total, anchor, floor)
-    days = 5 if "days" in (duel.get("issues") or []) else None  # neutral until the days module (#7)
+    weight = _number(duel.get("your_days_weight"))
+    if _two_issue(duel) and weight is None:
+        return DuelMove("hold", reason="two-issue duel without your_days_weight: cannot value days")
+    days = OUR_DAYS if _two_issue(duel) else None
+    price = our_price(target, role, days, weight or 0.0) if days is not None else target
     rival = _rival_price(duel)
-    worth = effective_price(duel, rival) if rival is not None else None
-    if rival is not None and worth is not None and inside_limit(round(worth), limit, role):
-        good_enough = worth >= target if role == "seller" else worth <= target
+    theirs = effective_price(duel, rival) if rival is not None else None
+    if rival is not None and theirs is not None and inside_limit(round(theirs), limit, role):
+        good_enough = theirs >= target if role == "seller" else theirs <= target
         if good_enough or left <= endgame_ticks:
             return DuelMove(
                 "accept", rival, reason="rival meets our target" if good_enough else "endgame, inside limit"
             )
-    return DuelMove("offer", target, days, reason=f"concede toward limit ({left} ticks left)")
+    ours = worth(duel, price, days)
+    if price < 1 or ours is None or not inside_limit(ours, limit, role):
+        return DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
+    return DuelMove("offer", price, days, reason=f"concede toward limit ({left} ticks left)")
 
 
 def template_duel_words(request: WordsRequest) -> str:
