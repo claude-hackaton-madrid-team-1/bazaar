@@ -31,6 +31,7 @@ from bazaar_agent.runtime.tools import BY_NAME, SERVER, TOOLS, VERSION, answer, 
 
 TOKEN_VARIABLE = "BAZAAR_MCP_TOKEN"
 MIN_TOKEN_CHARS = 32
+MIN_DISTINCT_CHARS = 16
 MCP_PATH = "/mcp"
 HEALTH_PATH = "/health"
 HTTP_RATE_PER_S, HTTP_BURST = 5.0, 20  # MCP plumbing (initialize, tools/list) per token, before tool calls
@@ -48,9 +49,13 @@ class TokenError(ValueError):
 
 
 def require_token(value: str | None) -> str:
+    """32+ characters with 16+ distinct ones: `secrets.token_urlsafe(48)` passes, "aaaa…" does not."""
     token = (value or "").strip()
-    if len(token) < MIN_TOKEN_CHARS:
-        raise TokenError(f"{TOKEN_VARIABLE} must be set to a random value of {MIN_TOKEN_CHARS}+ characters")
+    if len(token) < MIN_TOKEN_CHARS or len(set(token)) < MIN_DISTINCT_CHARS:
+        raise TokenError(
+            f"{TOKEN_VARIABLE} must be a random value of {MIN_TOKEN_CHARS}+ characters "
+            "(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+        )
     return token
 
 
@@ -113,10 +118,15 @@ class BearerGate:
         if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
             return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})  # no websockets here: policy violation
+            return
         if scope["type"] != "http":
-            return  # no websockets here
+            return
         if scope.get("path") == HEALTH_PATH and scope.get("method") == "GET":
-            await _reply(send, 200, {"ok": True, "server": SERVER, "tools": len(TOOLS), "live": self.live})
+            await _reply(
+                send, 200, {"ok": True, "server": SERVER, "tools": len(TOOLS)}
+            )  # nothing more, unauthenticated
             return
         presented = digest(self._presented(scope))
         if not hmac.compare_digest(presented, self._expected):
@@ -135,6 +145,15 @@ def _caller_key(ctx: Any) -> bytes:
     scope = getattr(getattr(ctx, "request", None), "scope", None) or {}
     key = (scope.get("state") or {}).get(STATE_KEY)
     return key if isinstance(key, bytes) else b"?"
+
+
+def _audit(backend: Backend, tool: str, arguments: dict[str, Any], text: str, secrets: tuple[str, ...]) -> None:
+    """The decisions row for a remote write. A failure here must not turn a sent write into an error the
+    client retries: it is logged by class name only, and the tool's answer goes back as it is."""
+    try:
+        record_write(backend, "mcp", tool, arguments, answer(text), "checked in the tool", secrets)
+    except Exception as e:
+        backend.log(f"bazaar-mcp: decisions row for {tool} not written ({type(e).__name__})")
 
 
 def build_server(
@@ -175,10 +194,7 @@ def build_server(
         arguments = dict(params.arguments or {})
         text, failed = await anyio.to_thread.run_sync(call, spec, backend, arguments, held)
         if spec.write:  # the audit trail the desk's hooks keep, for remote callers
-            verdict = "checked in the tool"
-            await anyio.to_thread.run_sync(
-                record_write, backend, "mcp", spec.name, arguments, answer(text), verdict, held
-            )
+            await anyio.to_thread.run_sync(_audit, backend, spec.name, arguments, text, held)
         return text_result(text, failed)
 
     instructions = (

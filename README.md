@@ -418,7 +418,7 @@ capabilities as typed MCP tools, and every write meets the guardrails twice. Cod
 ```sh
 uv run bazaar agent chat                 # talk to the desk (dry run unless BAZAAR_LIVE=1)
 uv run bazaar agent chat --once "buy LAV-09 under 90"   # one request, print the transcript, exit
-uv run bazaar ask "sell my spare LAT-03 for at least 6" # through the desk when CLAUDE_CODE_OAUTH_TOKEN is set
+uv run bazaar ask "sell my spare LAT-03 for at least 6" # through the desk when CLAUDE_CODE_OAUTH_TOKEN is set; never trades
 uv run bazaar ask --no-desk "..."        # the one-call intent parser (also the automatic fallback)
 uv run bazaar agent tools                # every tool, read or write, which agents may call it, its guardrails
 ```
@@ -426,13 +426,16 @@ uv run bazaar agent tools                # every tool, read or write, which agen
 - **Same code as the CLI.** Read tools call the functions behind `bazaar status|clock|strategy|curves|
   tape|teams|book|traders|alerts|rules|threads|thread`. `sell_list`/`sell_bid` call `seller.post` like
   `bazaar sell list|bid`; `dealer_buy`'s dry run is `bid_schedule()` like `bazaar dealer buy`, and live it
-  starts `bazaar dealer buy --live` as its own process (one move per tick, its own guardrail checks);
+  starts `bazaar dealer buy --live` as its own process (one move per tick, its own guardrail checks; one
+  such negotiation at a time per runtime, so two children never count the same cash);
   `duel_move` plays one move of `duel run --play`'s policy (the price is set by code, never by the model);
   `steer` runs `bazaar steer`'s clamp. `strategy` and `bazaar strategy` share `playbook_now()`.
 - **Two lines of defense.** The tool code checks first (`actions.check_write`): guardrails with the live
   `/me`, open offers and the shared ledger, plus the game's caps a live send would otherwise hit (tick
   budget, one thread per dealer and 6 open threads, 12 listings per tick counted team-wide, 30 open
-  offers, one accept per tick). The desk's PreToolUse hook runs the same check again, enforces each
+  offers, one accept per tick, one duel message per duel per tick). A request that was sent stays `done`
+  even when the ledger fails right after it (`bookkeeping_error`), and a ledger failure reopens the
+  connection on the next call. The desk's PreToolUse hook runs the same check again, enforces each
   agent's allow-list, lets `Agent` start only our four subagents (in the foreground), and fails closed
   when `/me` or the ledger does not answer. A hook deny wins over every permission rule.
 - **Locked session.** `permission_mode="dontAsk"`, `tools=["Agent"]` (no Bash, files or web),
@@ -444,8 +447,10 @@ uv run bazaar agent tools                # every tool, read or write, which agen
   `desk_timeout_s`. A missing CLI, a rejected token, a used-up subscription window, a rate limit or a
   timeout ends the request with the reason: `bazaar ask` falls back to its intent parser, `agent chat`
   prints the deterministic commands.
-- **Audit and secrets.** Every write call is a `decisions` row (`desk/<agent>` or `mcp`, dry runs too)
-  and every send an `executions` row. Tool answers, rows and printed lines are scrubbed: our secret
+- **`bazaar ask` never trades**, BAZAAR_LIVE or not: its desk is always a dry run. Only `agent chat`
+  follows BAZAAR_LIVE=1, like the taker and maker.
+- **Audit and secrets.** Every write call is a `decisions` row (`desk/<agent>` or `mcp`, dry runs too,
+  failed tool calls through `PostToolUseFailure`) and every send an `executions` row. Tool answers, rows and printed lines are scrubbed: our secret
   values, key and token shapes, bearer tokens and every URL are cut out.
 
 ### The tools as a remote MCP server (`bazaar-mcp`)
@@ -456,12 +461,16 @@ teammate's Claude Code is the client. Railway service `bazaar-mcp` (declared in
 `.railway/railway.py`; generate its public domain once with `railway domain --service bazaar-mcp --port 8080`).
 
 - `Authorization: Bearer <BAZAAR_MCP_TOKEN>` on every request (constant-time compare), else `401`;
-  `GET /health` is the only public route. The server refuses to start without a 32+ character token.
+  `GET /health` is the only public route (no mode, no game state). The server refuses to start without
+  a random token (32+ characters, 16+ distinct ones).
 - Rate limits per token: 5 HTTP requests/s (burst 20), then RUNTIME.md `mcp_calls_per_minute` (30)
   tool calls, because every caller shares our one team key (5 req/s for the whole team).
 - Write tools are DRY RUN unless `BAZAAR_LIVE=1` is set on that service (never in `railway.py`), and
-  the guardrail check runs inside the server for each of them. No tool returns a key, token, password
-  or URL. Only our team's tools: no flags, no free-text messages, no `to` on offers, no key parameter.
+  the guardrail check runs inside the server for each of them, against the shared Postgres ledger only
+  (no machine-local fallback: no ledger, no write). No tool returns a key, token, password or URL, and
+  team-written text (thread topics, venue names in alerts) comes back as `untrusted_text`. Only our
+  team's tools: no flags, no free-text messages, no `to` on offers, no key parameter. Every write call
+  is a `decisions` row with agent `mcp`.
 
 Set the token once, piped so it never lands on a command line, in shell history or in a log:
 

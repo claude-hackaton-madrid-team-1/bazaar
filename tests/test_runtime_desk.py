@@ -21,13 +21,14 @@ from claude_agent_sdk import (
 )
 from typer.testing import CliRunner
 
+from bazaar_agent.agents.runtime import live_mode
 from bazaar_agent.cli import app
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.runtime import cli as rt_cli
 from bazaar_agent.runtime import desk as dk
 from bazaar_agent.runtime import tools as tl
 from tests.agent_fakes import rows
-from tests.runtime_fakes import TEAM_KEY, TOKEN, backend
+from tests.runtime_fakes import TEAM_KEY, TOKEN, Team, backend
 from tests.test_llm import FakeProvider
 from tests.test_llm_cli import fake_runtime
 
@@ -129,16 +130,21 @@ def desk_env(tmp_path, monkeypatch):
     monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
     monkeypatch.setattr(rt_cli.console, "width", 240)
     monkeypatch.setattr(llm_cli.console, "width", 240)
-    b = backend(tmp_path)
-    monkeypatch.setattr(rt_cli, "make_backend", lambda settings, rules, log: b)
-    return b
+    team, built = Team(), []
+
+    def make(settings, rules, log, *, live=None, server=False):
+        built.append(backend(tmp_path, team=team, live=live_mode(False) if live is None else live))
+        return built[-1]
+
+    monkeypatch.setattr(rt_cli, "make_backend", make)
+    return built
 
 
-def use_script(monkeypatch, b, script):
+def use_script(monkeypatch, built, script):
     clients = []
 
     def factory(options):
-        clients.append(ScriptedClient(options, script, b))
+        clients.append(ScriptedClient(options, script, built[-1]))
         return clients[-1]
 
     monkeypatch.setattr(rt_cli, "CLIENT_FACTORY", factory)
@@ -157,9 +163,18 @@ def test_chat_routes_desk_to_buyer_through_hooks_and_tools_as_a_dry_run(desk_env
     assert "DENIED buyer → sell_list: not on its allow-list" in text
     assert TOKEN not in text and TEAM_KEY not in text and "[redacted] stays secret" in text
     assert clients[0].queries == ["buy LAV-09 under 90"] and not clients[0].connected
-    assert desk_env.team.sent == []  # nothing reached the game
+    assert desk_env[-1].team.sent == []  # nothing reached the game
     decided = [(r["kind"], r["status"], r["dry_run"]) for r in rows(tmp_path)]
     assert decided == [("sell_bid", "rejected", True), ("sell_bid", "approved", True)]
+
+
+def test_ask_never_trades_even_with_bazaar_live_set(desk_env, monkeypatch):
+    monkeypatch.setenv("BAZAAR_LIVE", "1")
+    use_script(monkeypatch, desk_env, BUY_SCRIPT)
+    out = runner.invoke(app, ["ask", "buy LAV-09 under 90"])
+    assert out.exit_code == 0, out.output
+    assert desk_env[-1].live is False and desk_env[-1].team.sent == [] and "dry run" in out.output
+    assert "buyer ← sell_bid: approved" in out.output
 
 
 def test_desk_failures_become_llm_errors_the_callers_fall_back_on(tmp_path):

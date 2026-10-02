@@ -64,9 +64,18 @@ class Guard:
         return {
             "PreToolUse": [HookMatcher(hooks=[self.pre_tool_use])],
             "PostToolUse": [HookMatcher(hooks=[self.post_tool_use])],
+            "PostToolUseFailure": [HookMatcher(hooks=[self.post_tool_use_failure])],
         }
 
     async def pre_tool_use(self, input_data: Any, tool_use_id: str | None, context: Any) -> Any:
+        """Never raises: any failure here denies the call (fail closed)."""
+        try:
+            return await self._pre(input_data, tool_use_id)
+        except Exception as e:
+            self.log(f"hook: DENIED (the hook failed: {type(e).__name__})")
+            return deny(f"the guardrail hook failed ({type(e).__name__}): not running the tool blind")
+
+    async def _pre(self, input_data: Any, tool_use_id: str | None) -> Any:
         agent, tool_name = caller(input_data), str(input_data.get("tool_name") or "")
         tool_input = dict(input_data.get("tool_input") or {})
         if tool_name not in self.allow.get(agent, frozenset()):
@@ -106,6 +115,7 @@ class Guard:
             with self.b.write_lock:
                 planned = check_write(self.b, spec.name, args)
         except Exception as e:  # /me, the clock or the ledger did not answer: fail closed
+            self.b.failed(e)
             return False, f"denied: cannot read the live state ({type(e).__name__}), not trading blind", -1
         return planned.verdict.allowed, str(planned.verdict), planned.tick
 
@@ -121,4 +131,15 @@ class Guard:
                 await asyncio.to_thread(
                     record_write, self.b, f"desk/{agent}", spec.name, tool_input, payload, verdict, self.secrets
                 )
+        return {}
+
+    async def post_tool_use_failure(self, input_data: Any, tool_use_id: str | None, context: Any) -> Any:
+        """A tool call that errored (the CLI reports it here, not in PostToolUse): still one row."""
+        spec = BY_MCP_NAME.get(str(input_data.get("tool_name") or ""))
+        verdict = self._verdicts.pop(tool_use_id or "", "allowed")
+        if spec is not None and spec.write:
+            failed = {"status": "failed", "reason": "the tool call failed", "tick": -1}
+            tool_input = dict(input_data.get("tool_input") or {})
+            agent = f"desk/{caller(input_data)}"
+            await asyncio.to_thread(record_write, self.b, agent, spec.name, tool_input, failed, verdict, self.secrets)
         return {}

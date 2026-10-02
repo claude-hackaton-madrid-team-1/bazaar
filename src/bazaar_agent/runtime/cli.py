@@ -54,8 +54,11 @@ def _load() -> tuple[Settings, Guardrails, RuntimeConfig]:
     return load_settings(), rules, config
 
 
-def make_backend(settings: Settings, rules: Guardrails, log: Callable[[str], None]) -> Backend:
-    return Backend(settings, rules, log=log)
+def make_backend(
+    settings: Settings, rules: Guardrails, log: Callable[[str], None], *, live: bool | None = None, server: bool = False
+) -> Backend:
+    """`live` None: BAZAAR_LIVE=1 in the environment decides. `server`: the shared ledger or no write."""
+    return Backend(settings, rules, live=live, shared_ledger_only=server, log=log)
 
 
 def _say(secrets: tuple[str, ...]) -> Callable[[str], None]:
@@ -76,7 +79,13 @@ def _show_event(say: Callable[[str], None]) -> Callable[[Any], None]:
 
 
 def build_desk(
-    settings: Settings, rules: Guardrails, config: RuntimeConfig, cli_pin: str | None, model: str | None = None
+    settings: Settings,
+    rules: Guardrails,
+    config: RuntimeConfig,
+    cli_pin: str | None,
+    model: str | None = None,
+    *,
+    live: bool | None = None,
 ) -> tuple[Any, Backend, Any, tuple[str, ...]]:
     """(desk, backend, its config, secrets). Raises `UnknownModelError` for a bad model name."""
     from bazaar_agent.runtime.agents import allow_lists
@@ -86,7 +95,7 @@ def build_desk(
 
     secrets = secrets_of(settings)
     say = _say(secrets)
-    backend = make_backend(settings, rules, say)
+    backend = make_backend(settings, rules, say, live=live)
     guard = Guard(
         backend,
         allow_lists(),
@@ -176,15 +185,14 @@ def chat(
 
 
 def ask_desk(text: str, settings: Settings, rules: Guardrails, config: RuntimeConfig, cli_pin: str | None) -> bool:
-    """`bazaar ask` through the desk. False (after saying why) when the desk is unavailable: the caller
-    falls back to the intent parser."""
+    """`bazaar ask` through the desk, ALWAYS a dry run (`ask` never trades, BAZAAR_LIVE or not). False
+    (after saying why) when the desk is unavailable: the caller falls back to the intent parser."""
     try:
-        desk, backend, desk_config, secrets = build_desk(settings, rules, config, cli_pin)
+        desk, backend, desk_config, secrets = build_desk(settings, rules, config, cli_pin, live=False)
     except UnknownModelError as e:
         console.print(f"[yellow]desk off ({escape(str(e))})[/yellow]")
         return False
-    mode = "LIVE" if backend.live else "dry run"
-    console.print(f"[dim]desk · {desk_config.model.alias} · {mode} · Claude: {_auth_line(settings)}[/dim]")
+    console.print(f"[dim]desk · {desk_config.model.alias} · dry run · Claude: {_auth_line(settings)}[/dim]")
 
     async def once() -> Any:
         try:
@@ -233,7 +241,7 @@ def mcp_serve(
     except TokenError as e:
         _fail(str(e))
     secrets = secrets_of(settings, [token])
-    backend = make_backend(settings, rules, _say(secrets))
+    backend = make_backend(settings, rules, _say(secrets), server=True)
     app = build_app(backend, token, config.mcp_calls_per_minute, secrets, host)
     bound = port if port is not None else int(os.environ.get("PORT") or DEFAULT_MCP_PORT)
     mode = "LIVE: write tools send" if backend.live else "DRY RUN: write tools send nothing"

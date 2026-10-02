@@ -29,9 +29,14 @@ class Public(FakePublic):
     def __init__(self, now=None, **kw):
         super().__init__(**kw)
         self.now = now or clock()
+        self.catalog_reads = 0
 
     def clock(self):
         return self.now.model_dump()
+
+    def catalog(self):
+        self.catalog_reads += 1
+        return super().catalog()
 
 
 class Team(FakeTeam):
@@ -52,13 +57,25 @@ class Team(FakeTeam):
         return {"ok": True}
 
 
+class Child:
+    """A `dealer buy --live` child: running until `done` is set."""
+
+    def __init__(self, pid):
+        self.pid, self.done = pid, False
+
+    def poll(self):
+        return 0 if self.done else None
+
+
 class Spawner:
     def __init__(self):
         self.calls: list[tuple[list[str], Path]] = []
+        self.children: list[Child] = []
 
     def __call__(self, argv, log_path):
         self.calls.append((list(argv), log_path))
-        return 4242
+        self.children.append(Child(4242 + len(self.children)))
+        return self.children[-1]
 
 
 def settings(tmp_path: Path) -> Settings:
@@ -70,14 +87,14 @@ def settings(tmp_path: Path) -> Settings:
     )
 
 
-def backend(tmp_path, *, live=False, team=None, public=None, rules=None, spawn=None):
+def backend(tmp_path, *, live=False, team=None, public=None, rules=None, spawn=None, ledger=None):
     return Backend(
         settings(tmp_path),
         rules or Guardrails(),
         live=live,
         team=team or Team(),
         public=public or Public(),
-        ledger=Ledger(tmp_path / "ledger.jsonl"),
+        ledger=ledger or Ledger(tmp_path / "ledger.jsonl"),
         decisions=DecisionLog(tmp_path),
         spawn=spawn or Spawner(),
     )

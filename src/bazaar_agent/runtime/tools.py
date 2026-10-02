@@ -235,6 +235,7 @@ def call(spec: ToolSpec, b: Backend, raw: dict[str, Any] | None, secrets: Iterab
             payload = spec.run(b, args)
         except Exception as e:  # reported to the caller as a fixed message; the details stay here
             tm.fail_current(e)
+            b.failed(e)
             return safe_text(_failure(e), secrets), True
         tm.event("tool.answer", {"status": payload.get("status"), "sent": payload.get("sent")})
         clean = safe_value(json.loads(json.dumps(payload, default=str)), secrets)

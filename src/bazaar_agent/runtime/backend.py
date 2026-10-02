@@ -9,6 +9,7 @@ it before a model or a remote client sees it. Nothing here imports the Agent SDK
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
@@ -27,21 +28,25 @@ from bazaar_agent.ticks import Clock, action_budget_s
 SOURCE = "runtime"  # the ledger `source` and the decisions `agent` prefix for every runtime tool call
 MAX_ROWS = 40  # a tool answer goes into a model's context: long tables are cut, with the total kept
 
-Spawner = Callable[[list[str], Path], int]  # argv, log file -> pid (a detached `bazaar dealer buy --live`)
+CATALOG_TICKS = 30  # the catalog changes when a set is released: re-read it at most every 30 ticks
+
+Spawner = Callable[[list[str], Path], Any]  # argv, log file -> a handle with `.pid` and `.poll()`
 
 
-def _detached(argv: list[str], log_path: Path) -> int:
+def _detached(argv: list[str], log_path: Path) -> Any:
     """Start `argv` in its own session, stdout and stderr to `log_path`; never through a shell."""
     import subprocess
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("ab") as out:
-        process = subprocess.Popen(argv, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
-    return process.pid
+        return subprocess.Popen(argv, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
 
 
 class Backend:
-    """Settings, guardrails and lazily built clients. `live` is BAZAAR_LIVE=1 in the process environment."""
+    """Settings, guardrails and lazily built clients. `live` is BAZAAR_LIVE=1 in the process environment.
+
+    `shared_ledger_only` (the remote server): no JSONL fallback, because a machine-local ledger would
+    stop counting the team's accepts, listings and spend together with the taker and maker."""
 
     def __init__(
         self,
@@ -54,14 +59,19 @@ class Backend:
         ledger: LedgerStore | None = None,
         decisions: DecisionLog | None = None,
         spawn: Spawner = _detached,
+        shared_ledger_only: bool = False,
         log: Callable[[str], None] = lambda message: None,
     ) -> None:
         self.settings, self.rules, self.log, self.spawn = settings, rules, log, spawn
         self.live = live_mode(False) if live is None else live
+        self.shared_ledger_only = shared_ledger_only
         self._team, self._public, self._ledger, self._decisions = team, public, ledger, decisions
         self._build = threading.Lock()
         # One write at a time: the ledger connection and the per-tick quotas are shared by every tool call.
         self.write_lock = threading.RLock()
+        self._catalog: tuple[int, dict[str, Any]] | None = None
+        self.dealer_runs: dict[str, Any] = {}  # dealer -> the live `dealer buy` child this process started
+        self.duel_said: set[tuple[int, int]] = set()  # (duel, tick): one message per duel per tick
 
     @property
     def team(self) -> Any:
@@ -84,12 +94,24 @@ class Backend:
 
     @property
     def ledger(self) -> LedgerStore:
+        """The shared Postgres ledger (reopened after a failure), else the JSONL file unless shared-only."""
         with self._build:
             if self._ledger is None:
-                from bazaar_agent.ledger_pg import open_ledger
+                from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
 
-                self._ledger = open_ledger(self.settings.data_dir, source=SOURCE, log=self.log)
+                opened = open_ledger(self.settings.data_dir, source=SOURCE, log=self.log)
+                if self.shared_ledger_only and not isinstance(opened, PgLedger):
+                    raise LedgerUnavailable("the shared Postgres ledger is unreachable")
+                self._ledger = opened
             return self._ledger
+
+    def failed(self, error: BaseException) -> None:
+        """After a ledger failure, drop the connection: the next call reopens it (Postgres came back)."""
+        from bazaar_agent.ledger_pg import LedgerUnavailable
+
+        if isinstance(error, LedgerUnavailable):
+            with self._build:
+                self._ledger = None
 
     @property
     def decisions(self) -> DecisionLog:
@@ -106,6 +128,14 @@ class Backend:
     def clock(self) -> Clock:
         return Clock.model_validate(self.public.clock())
 
+    def catalog(self, tick: int) -> dict[str, Any]:
+        """`/api/catalog`, re-read at most every CATALOG_TICKS game ticks (every caller shares 5 req/s)."""
+        cached = self._catalog
+        if cached is None or tick < cached[0] or tick - cached[0] >= CATALOG_TICKS:
+            cached = (tick, self.public.catalog())
+            self._catalog = cached
+        return cached[1]
+
     def events(self) -> list[Event]:
         """The captured feed merged with the live window (the window alone when nothing was captured)."""
         try:
@@ -121,22 +151,28 @@ class Backend:
         read_me = (lambda: self.team.me()) if self.settings.bazaar_key else None
         return resolve_team_id(self.settings.team_id, self.settings.data_dir, read_me)
 
-    def guard_context(self, me: dict[str, Any], clock: Clock) -> Context:
-        """The live guardrail context: /me, the shared ledger, and what our open offers already promise."""
-        from bazaar_agent.agents.seller import committed_context
+    def my_offers(self) -> list[dict[str, Any]]:
+        from bazaar_agent.agents.seller import offers_in
 
-        base = context_from(me, clock.tick, clock.t_hours, self.ledger, self.rules)
-        return committed_context(base, self.commitments(me))
+        return offers_in(self.team.my_offers())
 
-    def commitments(self, me: dict[str, Any]) -> Any:
-        from bazaar_agent.agents.seller import offers_in, open_commitments
+    def commitments(self, me: dict[str, Any], offers: list[dict[str, Any]] | None = None) -> Any:
+        from bazaar_agent.agents.seller import open_commitments
 
-        return open_commitments(offers_in(self.team.my_offers()), str(me.get("id") or ""))
+        return open_commitments(self.my_offers() if offers is None else offers, str(me.get("id") or ""))
 
-    def rarity_of(self, item: str) -> str | None:
+    def rarity_of(self, item: str, tick: int) -> str | None:
         from bazaar_agent.llm.intent import rarity_of
 
-        return rarity_of(self.public.catalog(), item)
+        return rarity_of(self.catalog(tick), item)
+
+    def dealer_running(self) -> str | None:
+        """The dealer of a live `dealer buy` child this process started that is still negotiating."""
+        for dealer, handle in list(self.dealer_runs.items()):
+            if handle.poll() is None:
+                return dealer
+            del self.dealer_runs[dealer]
+        return None
 
 
 # ---------------------------------------------------------------- read capabilities
@@ -267,7 +303,18 @@ def alerts(b: Backend, limit: int = 20) -> dict[str, Any]:
     """`bazaar alerts`: the monitor's latest alerts (new dealers, level changes, announcements)."""
     from bazaar_agent.monitor import read_alerts
 
-    return {"rows": read_alerts(b.settings.data_dir / "alerts.jsonl", limit)}
+    rows = read_alerts(b.settings.data_dir / "alerts.jsonl", limit)
+    # A venue name or an announcement is written by a team or the organisers: data, never instructions.
+    return {
+        "rows": [
+            {
+                **row,
+                "subject": untrusted(str(row.get("subject") or "")),
+                "detail": untrusted(str(row.get("detail") or "")),
+            }
+            for row in rows
+        ]
+    }
 
 
 def rules(b: Backend) -> dict[str, Any]:
@@ -342,18 +389,17 @@ def strategy(b: Backend, limit: int = 5) -> dict[str, Any]:
     from bazaar_agent.strategy import load_strategy
 
     me = b.team.me()
-    with b.write_lock:
-        book_, ctx = playbook_now(
-            me,
-            b.commitments(me),
-            b.public,
-            b.events(),
-            b.settings,
-            b.rules,
-            load_strategy(),
-            b.ledger,
-            jev_pack_judge(b.settings, b.rules.jev_timeout_s),
-        )
+    book_, ctx = playbook_now(
+        me,
+        b.commitments(me),
+        b.public,
+        b.events(),
+        b.settings,
+        b.rules,
+        load_strategy(),
+        b.ledger,
+        jev_pack_judge(b.settings, b.rules.jev_timeout_s),
+    )
     return {
         "tick": book_.tick,
         "cash": book_.cash,
@@ -373,12 +419,35 @@ def _thread_view(raw: dict[str, Any]) -> Any:
 
 
 def _mark_lines(lines: Iterable[dict[str, Any]], us: str | None) -> list[dict[str, Any]]:
+    """Our own lines keep their text; a counterparty's words become `untrusted_text` (new dicts)."""
     marked = []
     for line in lines:
+        rest = {k: v for k, v in line.items() if k != "text"}
         ours = us is not None and line.get("sender") == us
-        text = line.pop("text", None)
-        marked.append({**line, "text": text} if ours else {**line, "words": untrusted(text)})
+        marked.append({**rest, "text": line.get("text")} if ours else {**rest, "words": untrusted(line.get("text"))})
     return marked
+
+
+def _safe_header(header: dict[str, Any]) -> dict[str, Any]:
+    """A thread header as data: the topic is written by whoever opened the thread (another team may),
+    so it travels as `untrusted_text`; ids and refs pass only when they have the shape of one."""
+    import json as _json
+
+    from bazaar_agent.runtime.actions import ITEM, SLUG
+
+    def shaped(value: Any, pattern: str) -> Any:
+        return value if value is None or (isinstance(value, str) and re.fullmatch(pattern, value)) else None
+
+    topic = header.get("topic")
+    return {
+        **header,
+        "with": shaped(header.get("with"), SLUG),
+        "team": shaped(header.get("team"), SLUG),
+        "ref": shaped(header.get("ref"), ITEM),
+        "item": shaped(header.get("item"), ITEM),
+        "closed_reason": shaped(header.get("closed_reason"), SLUG),
+        "topic": untrusted(_json.dumps(topic, ensure_ascii=False)) if topic else None,
+    }
 
 
 def threads(b: Backend, status_filter: str | None = None) -> dict[str, Any]:
@@ -389,8 +458,8 @@ def threads(b: Backend, status_filter: str | None = None) -> dict[str, Any]:
     rows = []
     for raw in b.team.my_threads(status_filter).get("threads") or []:
         summary = summary_json(_thread_view(raw))
-        last = summary.pop("last", None)
-        rows.append({**summary, "last": _mark_lines([last], us)[0] if last else None})
+        last = summary.get("last")
+        rows.append({**_safe_header(summary), "last": _mark_lines([last], us)[0] if last else None})
     return _cut(rows)
 
 
@@ -399,4 +468,4 @@ def thread(b: Backend, thread_id: int) -> dict[str, Any]:
     from bazaar_agent.conversation import conversation_json
 
     view = conversation_json(_thread_view(b.team.thread(thread_id)))
-    return {**view, "messages": _mark_lines(view["messages"], b.us())}
+    return {**view, "thread": _safe_header(view["thread"]), "messages": _mark_lines(view["messages"], b.us())}

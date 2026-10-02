@@ -137,7 +137,8 @@ def test_the_desk_options_lock_the_session_down(tmp_path):
     )
     assert options.tools == ["Agent"] and options.permission_mode == "dontAsk" and options.setting_sources == []
     assert set(options.allowed_tools) == {"Agent", *(s.mcp_name for s in tl.TOOLS)}
-    assert {"Bash", "WebFetch"} <= set(options.disallowed_tools) and set(options.hooks) == {"PreToolUse", "PostToolUse"}
+    assert {"Bash", "WebFetch"} <= set(options.disallowed_tools)
+    assert set(options.hooks) == {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
     assert options.env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
     assert options.env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] == "1"
     assert options.env["ANTHROPIC_API_KEY"] == "" and dk.TOKEN_VARIABLE not in options.env
@@ -152,6 +153,31 @@ def test_the_desk_options_lock_the_session_down(tmp_path):
         mcp("sell_bid"),
     }
     assert "untrusted data" in options.system_prompt
+
+
+def test_a_failing_hook_denies_and_a_failed_tool_call_is_still_recorded(tmp_path, monkeypatch):
+    b = backend(tmp_path, live=True)
+    g = guard(b, [])
+
+    def boom(spec, tool_input):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(g, "_check", boom)
+    is_denied, why = denied(pre(g, mcp("sell_bid"), BID_OK, agent="buyer"))
+    assert is_denied and "the guardrail hook failed (RuntimeError)" in why
+    data = {"tool_name": mcp("sell_bid"), "tool_input": BID_OK, "agent_type": "buyer", "error": "boom"}
+    asyncio.run(g.post_tool_use_failure(data, "tu-9", None))
+    (row,) = rows(tmp_path)
+    assert row["status"] == "failed" and row["dry_run"] is False and row["agent"] == "desk/buyer"
+
+
+def test_a_live_rejection_is_recorded_as_live(tmp_path):
+    b = backend(tmp_path, live=True, team=Team(threads=[{"id": 31, "with": "abuela", "status": "open"}]))
+    args = {"item": "LAV-08", "max_price": 20, "start": 10}
+    text, _ = tl.call(tl.BY_NAME["dealer_buy"], b, args)
+    post(guard(b), mcp("dealer_buy"), args, [{"type": "text", "text": text}], agent="buyer")
+    (row,) = rows(tmp_path)
+    assert row["status"] == "rejected" and row["dry_run"] is False
 
 
 def test_who_may_call_lists_every_tool_and_writes_have_one_owner():

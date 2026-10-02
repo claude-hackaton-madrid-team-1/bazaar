@@ -73,7 +73,7 @@ def record_write(
             guardrail=str(body.get("guardrail") or verdict),
             chosen=status in ("approved", "done", "failed"),
             status=status_of(status),
-            dry_run=not body.get("sent") and not body.get("method"),
+            dry_run=not b.live,
             move=clean(body.get("request") or {}, held),
         )
     )

@@ -8,6 +8,7 @@ import json
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from typer.testing import CliRunner
 
 from bazaar_agent.cli import app as cli_app
@@ -50,12 +51,15 @@ def tool(c, name, arguments, rid=1):
 
 def test_every_request_but_health_needs_the_bearer_token(tmp_path):
     with client(backend(tmp_path)) as c:
-        assert c.get(ms.HEALTH_PATH).json() == {"ok": True, "server": "bazaar", "tools": 18, "live": False}
+        assert c.get(ms.HEALTH_PATH).json() == {"ok": True, "server": "bazaar", "tools": 18}  # no mode, no state
         for token in (None, "", "wrong-token", MCP_TOKEN[:-1], MCP_TOKEN + "x"):
             reply = rpc(c, "tools/list", token=token)
             assert reply.status_code == 401 and reply.json() == {"error": "unauthorized"}
             assert reply.headers["www-authenticate"].startswith("Bearer")
         assert rpc(c, "tools/list", token=f"bearer  {MCP_TOKEN}").status_code == 401  # one exact token only
+        bearer = {"authorization": f"Bearer {MCP_TOKEN}"}
+        with pytest.raises(WebSocketDisconnect), c.websocket_connect(ms.MCP_PATH, headers=bearer):
+            pass
         listed = rpc(c, "tools/list").json()["result"]["tools"]
         assert {t["name"] for t in listed} >= {"status", "sell_bid", "dealer_buy", "duel_move"}
         assert next(t for t in listed if t["name"] == "status")["annotations"]["readOnlyHint"] is True
@@ -111,8 +115,23 @@ def test_no_answer_carries_a_key_a_token_or_a_url(tmp_path):
         assert secret not in raw and secret not in text
 
 
+def test_a_failed_audit_row_never_turns_a_write_into_an_error(tmp_path):
+    class DiskFull:
+        def begin_tick(self, tick):
+            pass
+
+        def decide(self, decision):
+            raise OSError("No space left on device")
+
+    b = backend(tmp_path)
+    b._decisions = DiskFull()
+    with client(b) as c:
+        answer, failed = tool(c, "sell_bid", {"ref": "LAV-09", "price": 60})
+    assert not failed and answer["status"] == "approved"
+
+
 def test_the_server_will_not_start_without_a_long_token(tmp_path, monkeypatch):
-    for value in (None, "", "short"):
+    for value in (None, "", "short", "a" * 64, "ab" * 32):  # too short, or not random
         with pytest.raises(ms.TokenError):
             ms.require_token(value)
     monkeypatch.setenv(ms.TOKEN_VARIABLE, "short")
