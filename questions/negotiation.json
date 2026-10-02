@@ -1,0 +1,43 @@
+{
+  "about": "Bazaar negotiation questions for the Jev judge. A verdict informs the trading agent but never authorizes a trade on its own; game rules and our own checks still decide.",
+  "questions": {
+    "offer_is_worth_accepting": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Should we accept the offer in `offer`, given our `album`, our `cash`, and the `tick` we are in?",
+        "note": "Accepted offers are capped per heartbeat tick, so an acceptance spends a scarce slot. Value a card by how much it moves our album toward a completed barrio page, not by its list price. A duplicate we already hold is worth little to us."
+      },
+      "criteria": {
+        "true": "The offer moves us toward completing a page, or turns a duplicate into cash or a needed card, at a price we can afford, and nothing better is pending for this tick.",
+        "false": "The offer gives us a card we do not need, overpays for what we get, or spends the tick slot that a better pending deal needs."
+      }
+    },
+    "counterpart_needs_card": {
+      "type": "noul",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Reading `thread`, does the counterpart need the card in `card` to complete one of their album pages?",
+        "note": "Value is asymmetric: a card a team needs to finish a page is worth far more to them than to us. Judge only what the counterpart said or did in the thread, not what a team might want in general."
+      },
+      "criteria": {
+        "true": "The counterpart asked for the card more than once, named the page it completes, or raised their price for it.",
+        "false": "The thread shows no specific interest in the card, or the counterpart treats it as one option among many."
+      }
+    },
+    "negotiation_move": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `thread`, `offer`, and `album`, what is our best next move in this negotiation?",
+        "note": "Dealers such as Abuela remember how they were treated and walk after a final offer, so a counter that burns goodwill can cost later trades. Judge the move, not the exact wording."
+      },
+      "criteria": {
+        "accept": "The current offer is good enough and the counterpart signals it is final or close to final.",
+        "counter": "There is room to improve the terms and the counterpart is still engaged.",
+        "walk_away": "The terms cannot reach a price worth a tick slot, or the counterpart is stalling.",
+        "unclear": "The thread does not say enough to tell these apart."
+      }
+    }
+  }
+}

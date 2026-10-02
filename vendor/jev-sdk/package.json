@@ -1,0 +1,52 @@
+{
+  "name": "@ogarciarevett/jev-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "files": [
+    "src",
+    "skills",
+    "questions",
+    "README.md"
+  ],
+  "bin": {
+    "jev-judge": "src/jev-judge.ts",
+    "jev-score-options": "src/jev-score-options.ts",
+    "jev-finding": "src/jev-finding.ts",
+    "jev-outcome": "src/jev-outcome.ts",
+    "jev-report": "src/jev-report.ts",
+    "jev-capabilities": "src/jev-capabilities.ts",
+    "jev-mcp-server": "src/jev-mcp-server.ts",
+    "jev-stop-hook": "src/jev-stop-hook.ts",
+    "jev-smoke": "src/jev-smoke.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  },
+  "exports": {
+    ".": "./src/judge.ts",
+    "./judge": "./src/judge.ts",
+    "./mask": "./src/mask.ts",
+    "./decision-log": "./src/decision-log.ts",
+    "./finding": "./src/finding.ts",
+    "./capabilities": "./src/capabilities.ts",
+    "./score-options": "./src/score-options.ts",
+    "./questions/*": "./questions/*",
+    "./skills/jev/*": "./skills/jev/*",
+    "./jev-judge": "./src/jev-judge.ts",
+    "./jev-score-options": "./src/jev-score-options.ts",
+    "./jev-finding": "./src/jev-finding.ts",
+    "./jev-outcome": "./src/jev-outcome.ts",
+    "./jev-report": "./src/jev-report.ts",
+    "./jev-capabilities": "./src/jev-capabilities.ts",
+    "./jev-mcp-server": "./src/jev-mcp-server.ts",
+    "./jev-stop-hook": "./src/jev-stop-hook.ts",
+    "./jev-smoke": "./src/jev-smoke.ts"
+  }
+}
