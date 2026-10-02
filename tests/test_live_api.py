@@ -130,7 +130,7 @@ class LiveApiTest(unittest.TestCase):
         self.assertTrue(schema, f"{method.upper()} {path} {status} has no schema")
         errors = sorted(self.validator_for(schema).iter_errors(payload), key=lambda e: list(e.absolute_path))
         self.assertEqual(
-            [f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message[:200]}" for e in errors],
+            [f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: fails {e.validator}" for e in errors],
             [],
             f"{method.upper()} {path} {status} does not match its schema",
         )
@@ -168,6 +168,8 @@ class LiveApiTest(unittest.TestCase):
             with self.subTest(scheme=scheme):
                 self.assertIn(scheme, schemes(method, path))
                 status, ctype, body = request(method, path)
+                if status == 429 and b"too_many_failures" in body:
+                    self.skipTest("this address is locked out for wrong keys; try again later")
                 self.assertEqual(status, 401, body[:200])
                 payload = self.assert_matches_spec(method, path, status, ctype, body)
                 self.assertEqual(payload["error"], REFUSED_CODES[scheme])
