@@ -9,6 +9,7 @@ Real game or simulator (`bazaar-sim`), never mixed up:
   can never leak to a host that is not the game.
 - Against a simulator the agents' memory is `BAZAAR_SIM_DATABASE_URL` (else `DATABASE_URL`), and a
   URL naming the team's real `railway` database is refused: simulated trades never land in it.
+  Local files (feed capture, ledger, duels log) default to `.local/sim-client/`, not `.local/`.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ DEFAULT_DATABASE_URL = "postgresql://bazaar:bazaar@localhost:5433/bazaar"
 OFFICIAL_HOST = "bazaar.causaprima.ai"
 SIM_KEY_PREFIX = "sim-"
 REAL_DATABASE = "railway"  # the team's shared Railway database: real-game memory only
+SIM_DATA_DIR = REPO_ROOT / ".local" / "sim-client"  # default data dir against a simulator
 
 
 class ConfigError(RuntimeError):
@@ -141,6 +143,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):
         data["data_dir"] = data_dir
+    elif not is_official(str(data["bazaar_url"])):
+        data["data_dir"] = str(SIM_DATA_DIR)  # the real feed capture and ledger never see simulated play
     sim_db = data.pop("database_url_sim")
     if sim_db and not is_official(str(data["bazaar_url"])):
         data["database_url"] = sim_db

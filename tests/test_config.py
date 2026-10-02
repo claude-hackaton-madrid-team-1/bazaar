@@ -101,3 +101,14 @@ def test_the_monitor_stream_gets_the_same_guard(tmp_path, monkeypatch):
     s = settings_for(tmp_path, monkeypatch, BAZAAR_URL=SIM_URL, BAZAAR_KEY="tk-real-0042")
     with pytest.raises(ConfigError):
         cli.open_stream(s, lambda _: None)
+
+
+def test_simulated_play_keeps_its_files_out_of_the_real_data_dir(tmp_path, monkeypatch):
+    from bazaar_agent.config import REPO_ROOT, SIM_DATA_DIR
+
+    monkeypatch.delenv("BAZAAR_DATA_DIR", raising=False)
+    sim = settings_for(tmp_path, monkeypatch, BAZAAR_URL=SIM_URL)
+    assert sim.data_dir == SIM_DATA_DIR and sim.feed_dir != REPO_ROOT / ".local" / "feed"
+    assert settings_for(tmp_path, monkeypatch).data_dir == REPO_ROOT / ".local"
+    monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path / "mine"))
+    assert settings_for(tmp_path, monkeypatch, BAZAAR_URL=SIM_URL).data_dir == tmp_path / "mine"
