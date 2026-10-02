@@ -144,7 +144,7 @@ input[type="search"], input[type="text"], .ws input, select {
 .nav a:hover { color: var(--text-primary); }
 .nav a.on { color: var(--text-primary); border-bottom-color: var(--accent); }
 
-.page { display: grid; gap: 12px; }
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 
 .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-width: 0; }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
