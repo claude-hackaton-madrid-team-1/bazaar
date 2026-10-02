@@ -1,0 +1,30 @@
+{
+  "body": {
+    "venues": [
+      {
+        "bond": 0,
+        "description": "The house market. Posted offers only; no broker.",
+        "fee_bps": 500,
+        "fee_per_card": 1,
+        "fees": 0,
+        "house": true,
+        "name": "El Rastro",
+        "opened_tick": 0,
+        "owner": "world",
+        "owner_name": "The house",
+        "pairs": 0,
+        "pending_fee": null,
+        "rules": {},
+        "starter": false,
+        "status": "open",
+        "suspension_reason": "",
+        "traders": 0,
+        "trades": 0,
+        "venue": "rastro",
+        "volume": 0
+      }
+    ]
+  },
+  "content_type": "application/json",
+  "status": 200
+}

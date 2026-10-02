@@ -1,0 +1,14 @@
+{
+  "body": {
+    "doors": "open",
+    "last_tick_age_s": 27.9,
+    "loop_age_s": 0.3,
+    "ok": true,
+    "paused": false,
+    "pending_voices": 0,
+    "tick": 31,
+    "uptime_s": 8454
+  },
+  "content_type": "application/json",
+  "status": 200
+}

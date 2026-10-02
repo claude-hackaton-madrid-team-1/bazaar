@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import unittest
 import urllib.error
@@ -9,8 +10,11 @@ from urllib.parse import urlencode
 
 SPEC = json.loads((Path(__file__).resolve().parent.parent / "docs" / "api" / "openapi.json").read_text())
 BASE = os.environ.get("BAZAAR_URL", "https://bazaar.causaprima.ai").rstrip("/")
-KEY = os.environ.get("BAZAAR_KEY", "")
 LIVE = os.environ.get("BAZAAR_LIVE") == "1"
+RECORD = os.environ.get("BAZAAR_RECORD") == "1"
+KEY = os.environ.get("BAZAAR_KEY", "") if LIVE else "replay"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "api"
+PRIVATE_FIELDS = {"affinity", "your_value", "collection_value"}
 METHODS = {"get", "post", "put", "patch", "delete"}
 MIN_INTERVAL_S = 0.25
 
@@ -57,7 +61,48 @@ def schemes(method, path):
     return {k for req in SPEC["paths"][path][method].get("security", []) for k in req}
 
 
+def fixture_path(method, path, query, keyed):
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", f"{method} {path} {urlencode(query or {})}").strip("_")
+    return FIXTURES / f"{slug}.{'team' if keyed else 'anon'}.json"
+
+
+def mask(node):
+    if isinstance(node, dict):
+        return {k: mask(v) for k, v in node.items()}
+    if isinstance(node, float):
+        return 1.0
+    if isinstance(node, int) and not isinstance(node, bool):
+        return 1
+    return node
+
+
+def redact(node):
+    if isinstance(node, dict):
+        return {k: mask(v) if k in PRIVATE_FIELDS else redact(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [redact(v) for v in node]
+    return node
+
+
 def request(method, path, query=None, key=None):
+    fixture = fixture_path(method, path, query, bool(key))
+    if not LIVE:
+        if not fixture.exists():
+            raise AssertionError(f"no saved response {fixture.name}; record it with BAZAAR_LIVE=1 BAZAAR_RECORD=1")
+        saved = json.loads(fixture.read_text())
+        body = saved["body"]
+        raw = body.encode() if isinstance(body, str) else json.dumps(body).encode()
+        return saved["status"], saved["content_type"], raw
+    status, ctype, raw = call(method, path, query, key)
+    if RECORD and status != 429:
+        body = redact(json.loads(raw)) if ctype == "application/json" else raw.decode()
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        saved = {"status": status, "content_type": ctype, "body": body}
+        fixture.write_text(json.dumps(saved, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+    return status, ctype, raw
+
+
+def call(method, path, query=None, key=None):
     wait = _last_call[0] + MIN_INTERVAL_S - time.monotonic()
     if wait > 0:
         time.sleep(wait)
@@ -90,8 +135,7 @@ def resolve(schema):
     return schema
 
 
-@unittest.skipUnless(LIVE, "set BAZAAR_LIVE=1 to call the live API")
-class LiveApiTest(unittest.TestCase):
+class ApiResponsesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from jsonschema import Draft202012Validator
@@ -141,6 +185,17 @@ class LiveApiTest(unittest.TestCase):
             )
         return payload
 
+    def test_saved_responses_hide_private_values_and_keys(self):
+        saved = sorted(FIXTURES.glob("*.json"))
+        self.assertTrue(saved)
+        for fixture in saved:
+            with self.subTest(fixture=fixture.name):
+                text = fixture.read_text()
+                self.assertNotRegex(text, r"\btk-(?!xxxx)[a-z0-9]{4}-[a-z0-9]{4}\b")
+                self.assertNotRegex(text, r"\bbk_(?!\.\.\.)[A-Za-z0-9]{6,}")
+                body = json.loads(text)["body"]
+                self.assertEqual(redact(body), body)
+
     def test_every_operation_is_read_live_or_behind_a_key(self):
         probed = {("get", p) for p in {**PUBLIC_READS, **TEAM_READS}}
         refused = {op for op in operations() - probed if schemes(*op)}
@@ -155,7 +210,7 @@ class LiveApiTest(unittest.TestCase):
 
     def test_team_reads_match_the_spec(self):
         if not KEY:
-            self.skipTest("set BAZAAR_KEY to probe the team routes")
+            self.skipTest("set BAZAAR_KEY to call the team routes live")
         for path, (template, query) in TEAM_READS.items():
             with self.subTest(path=path):
                 concrete = self.fill(template)

@@ -1,0 +1,23 @@
+{
+  "body": {
+    "history": [
+      {
+        "from": "world",
+        "tick": 0,
+        "to": "t01",
+        "why": "starting grant"
+      }
+    ],
+    "id": 1,
+    "kind": "card",
+    "name": "Perrito con Abrigo",
+    "owner": "t01",
+    "print_run": 300,
+    "rarity": "common",
+    "ref": "SAL-03",
+    "serial": 1,
+    "set": "SAL"
+  },
+  "content_type": "application/json",
+  "status": 200
+}

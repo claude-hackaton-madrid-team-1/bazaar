@@ -1,0 +1,67 @@
+{
+  "body": {
+    "avatar": {
+      "color": "#E07A5F",
+      "emoji": "🧶",
+      "initials": "AC"
+    },
+    "bio": "Carmen has sold cards from the same folding table at El Rastro every Sunday for forty years. She knows every child who ever swapped a duplicate there and most of their grandchildren.\n",
+    "enabled": true,
+    "id": "abuela",
+    "kind": "dealer",
+    "level": 1,
+    "menu": {
+      "buys": [
+        {
+          "rarity": "common",
+          "sets": "released"
+        },
+        {
+          "rarity": "uncommon",
+          "sets": "released"
+        }
+      ],
+      "deals_per_team_per_hour": 8,
+      "sells": [
+        {
+          "list_price": 26,
+          "name": "Neighbourhood pack",
+          "opening_ask": 30,
+          "pack": "sobre_barrio",
+          "per_team_per_hour": 3
+        },
+        {
+          "list_price": 10,
+          "rarity": "common",
+          "sets": "released"
+        },
+        {
+          "list_price": 25,
+          "rarity": "uncommon",
+          "sets": "released"
+        }
+      ]
+    },
+    "name": "Abuela Carmen",
+    "open_to_all": true,
+    "status": "active",
+    "title": "card stall at El Rastro, since 1985",
+    "traits": {
+      "chattiness": 0.75,
+      "generosity": 0.8,
+      "memory": 0.15,
+      "patience": 0.85,
+      "shrewdness": 0.2,
+      "strictness": 0.1
+    },
+    "unlock": {
+      "always": true,
+      "early_deals_with": null,
+      "early_min_deals": 3,
+      "early_min_level": 0,
+      "open_to_all_at": null
+    }
+  },
+  "content_type": "application/json",
+  "status": 200
+}

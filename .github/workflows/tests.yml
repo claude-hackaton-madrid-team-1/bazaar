@@ -6,10 +6,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: live-api
-  cancel-in-progress: false
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,10 +13,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - name: Unit tests
-        run: uvx --with jsonschema pytest tests -q
-      - name: Integration tests against the live API
-        env:
-          BAZAAR_LIVE: "1"
-          BAZAAR_KEY: ${{ secrets.BAZAAR_KEY }}
-        run: uvx --with jsonschema pytest tests/test_live_api.py -v -rs
+      - name: Tests, API calls replayed from tests/fixtures/api
+        run: uvx --with jsonschema pytest tests -v -rs
