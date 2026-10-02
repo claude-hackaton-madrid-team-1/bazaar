@@ -247,6 +247,26 @@ With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chose
 message; the price stays the structured field set by code, and any other number, a timeout or an
 error sends the template instead.
 
+## Services and public URLs (start here for observability and the dashboard)
+
+Railway project **`heartfelt-warmth`** (environment `production`, region `europe-west4`):
+https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=912b1525-f223-4f0d-bfc6-8db725f7a6e0
+
+| Service | Public URL | Private (inside Railway) | Role | State |
+|---|---|---|---|---|
+| `phoenix` | https://phoenix-production-6aa3.up.railway.app (login `admin@localhost`, password in its Railway variables) | `phoenix.railway.internal:6006` (OTLP/HTTP), `:4317` (gRPC) | traces UI for every negotiation, duel, monitor tick and CLI line | running |
+| `Postgres` | `iriguchi.proxy.rlwy.net:28880`, db `railway`, user `postgres`, SSL (password: Postgres service → Variables) | `${{Postgres.DATABASE_URL}}` | the team's shared memory (feed, tape, dealer curves, traders, snapshots, alerts, decisions) | running |
+| `bazaar-duels` | none (worker, no HTTP) | — | the team's ONE duel player (`duel run --play`) | running |
+| `bazaar-monitor` | none (worker, no HTTP) | — | kept but scaled to 0: the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | idle |
+| `bazaar-taker`, `bazaar-maker` | none (workers) | — | autonomous buyer and seller, dry run until `BAZAAR_LIVE=1` | coming |
+| `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
+
+**Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
+keyless `GET /api/feed?limit=500` (public events, last 500 only), `/api/clock`, `/api/leaderboard`,
+`/api/dealers`, `/api/levels`, `/api/venues`, `/api/venues/{id}/offers`. The live stream
+`GET /api/events/stream?scope=team` needs our team key, so it must stay server-side (never in a
+browser): the dashboard should read our events through `bazaar-events` or Postgres, not with the key.
+
 ## Production on Railway (always on)
 
 Railway project `heartfelt-warmth`, environment `production`, region `europe-west4`. Everything but
@@ -255,7 +275,7 @@ Code, Python authoring, beta): change it by PR.
 
 | Service | What runs | Data | Notes |
 |---|---|---|---|
-| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | the team's ONE monitor |
+| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | scaled to 0 by team decision: the monitor runs in the CLI on a laptop |
 | `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
