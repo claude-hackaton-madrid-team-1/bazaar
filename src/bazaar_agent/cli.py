@@ -22,6 +22,8 @@ app.add_typer(feed_app, name="feed")
 app.add_typer(db_app, name="db")
 dealer_app = typer.Typer(no_args_is_help=True, help="Negotiate with dealers (one move per tick)")
 app.add_typer(dealer_app, name="dealer")
+duel_app = typer.Typer(no_args_is_help=True, help="Duels: log every response; play inside our limit")
+app.add_typer(duel_app, name="duel")
 console = Console()
 
 LIVE_HELP = "Merge the live feed window into the captured history"
@@ -112,7 +114,7 @@ def book(
 
 @app.command()
 def status(cards: bool = typer.Option(True, help="Also list our cards with your_value")) -> None:
-    """Our cash, level, score and cards (GET /api/me)."""
+    """Our cash, level, score, album pages with missing cards, and cards (GET /api/me)."""
     try:
         me: dict[str, Any] = team_client(load_settings()).me()
     except ConfigError as e:
@@ -120,6 +122,9 @@ def status(cards: bool = typer.Option(True, help="Also list our cards with your_
     except BazaarError as e:
         _fail(f"/api/me refused: {e.code} ({e.status})")
     console.print(render.status_table(me))
+    from bazaar_agent.album import album_view
+
+    console.print(render.album_table(album_view(me, public_client(load_settings()).catalog())))
     if cards:
         console.print(render.cards_table(me))
 
@@ -184,6 +189,59 @@ def _jev_advisor(item: str, settings: Any) -> Any:
         return verdict.verdict if verdict.decided else None
 
     return advise
+
+
+# ---------------------------------------------------------------- duels (needs BAZAAR_KEY)
+
+
+@duel_app.command("run")
+def duel_run(
+    play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+) -> None:
+    """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from bazaar_agent.agents.duelist import append_jsonl, duel_move
+
+    settings = load_settings()
+    client = team_client(settings)
+    log_path = settings.data_dir / "duels" / "duels.jsonl"
+    first_seen: dict[int, int] = {}
+
+    def on_tick(c: Clock) -> None:
+        try:
+            data = client.duels()
+        except BazaarError as e:
+            console.print(f"tick {c.tick}: /api/duels refused {e.code}")
+            return
+        append_jsonl(log_path, {"tick": c.tick, "response": data})
+        duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
+        console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        for d in duels:
+            did = d.get("id")
+            if not isinstance(did, int):
+                continue
+            first_seen.setdefault(did, c.tick)
+            move = duel_move(d, c.tick, first_seen[did])
+            console.print(
+                f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {d.get('rival_offer')} "
+                f"deadline {d.get('deadline')} -> {move.kind} {move.price or ''} ({move.reason})"
+            )
+            if not play or move.kind == "hold":
+                continue
+            try:
+                if move.kind == "accept":
+                    client.duel_accept(did)
+                elif move.price is not None:
+                    client.duel_say(
+                        did, "Propongo este precio, creo que es justo para los dos.", price=move.price, days=move.days
+                    )
+                append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
+            except BazaarError as e:
+                console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+                append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
+
+    console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
+    run_per_tick(client.clock, on_tick, max_ticks=max_ticks or None)
 
 
 # ---------------------------------------------------------------- feed capture

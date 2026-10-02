@@ -77,9 +77,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | 🔵 capture running; `bazaar curves` done |
 | [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ⬜ (blocked on P1) |
 | [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | ⬜ |
-| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ⬜ |
+| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | 🔵 live: LAV-03 bought at 7 (thread 99) |
 | [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | ⬜ |
-| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | ⬜ |
+| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 `bazaar duel run --play` running, waiting for h2 |
 | N1 (new) | Memory schema + repository + Friday backfill | 1 | 🔵 schema + `db load` done |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ⬜ |
 | N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ |
@@ -105,7 +105,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads. |
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. |
-| `uv run bazaar status` | Our cash, level, score and cards (GET /api/me). |
+| `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
@@ -116,6 +116,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
 - [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
 - [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
 - [2026-10-02] gotcha — `.env` has `TYPESAFE_API_KEY` but no `BAZAAR_KEY` yet
@@ -123,6 +124,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] build-error — DB test overwrote real dealer_curves rows
 - [2026-10-02] finding — the feed is an order book: dealer text, real team ids, fill prices
 - [2026-10-02] finding — Abuela's floor for `sobre_barrio` looks like 17 P (ticks 0–31)
-- [2026-10-02] gotcha — keyless reads must not send an empty or wrong X-Team-Key
 
 <!-- BAZAAR:STATUS:END -->

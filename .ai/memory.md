@@ -53,3 +53,7 @@ symptom: `bazaar dealer buy LAV-03 --live` sent 1 bid, then 13 `wait_for_tick` r
 timeout close, all inside tick 48 → root cause: `run_per_tick(max_ticks=1)` called in a loop, and
 each call forgets the last tick → fix: one `run_per_tick(..., stop=...)` owns the tick bookkeeping;
 regression test `test_negotiate_sends_one_message_per_tick_even_when_the_clock_is_read_many_times`.
+
+### [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
+Our bid 6 → her ask 7 → accepted (3 ticks, `dealer buy LAV-03 --start 6 --max 10`). Commons open at
+12, so 7 captures most of her range, and LAV-03 is worth 16 to us. Run by the Orca worker; LAV-04 next.

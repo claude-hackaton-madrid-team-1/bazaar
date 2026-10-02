@@ -9,6 +9,8 @@ Everything goes through `uv run bazaar …` (source: `src/bazaar_agent/`). Pytho
 
 ## Before you act
 
+0. `uv run bazaar status`: ALWAYS read `/api/me` first: album pages, missing page cards (with
+   their value to us), duplicates, affinity and cash. Re-read it after every deal.
 1. `uv run bazaar clock`: read the tick, `next_tick_in`, the **action budget** and the limits in force.
    The organisers change the pace (5–60 s), pause the clock and close the doors; never assume.
 2. Per tick our team may accept **1** offer, send **1** message per thread and post **12** listings;

@@ -217,3 +217,15 @@ def cards_table(me: dict) -> Table:
             _n(a.get("your_value"), "{:.1f}"),
         )
     return t
+
+
+def album_table(pages: list) -> Table:
+    t = Table(title="Album · from /api/me (check before every buy or sell)")
+    for col in ("set", "affinity", "page", "missing page cards (worth to us)", "duplicates"):
+        t.add_column(col, justify="right" if col in ("affinity", "page") else "left")
+    for p in pages:
+        missing = ", ".join(f"{m.ref} {m.rarity[:1].upper()} {m.value_to_us:.0f}" for m in p.missing) or "complete"
+        t.add_row(
+            f"{p.set_code} {p.name}", f"×{p.affinity}", f"{p.have}/{p.of}", missing, ", ".join(p.duplicates) or "-"
+        )
+    return t
