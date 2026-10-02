@@ -1,0 +1,71 @@
+{
+  "about": "How Team 1 evaluates its trading agents. A verdict informs; the team decides.",
+  "questions": {
+    "eval_home": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Given `context`, where should the team check its evals during the hackathon?",
+        "note": "It must be visible to the whole team today, cost nothing extra, and reuse what is already running."
+      },
+      "criteria": {
+        "phoenix": "Arize Phoenix (already deployed, auth on, receives every negotiation/duel/agent trace): datasets, experiments, span annotations and eval runs live next to the traces.",
+        "postgres_scorecard": "SQL views over our decisions/executions/outcomes tables and /me score snapshots in the shared Postgres, shown in the teammate's web dashboard and the CLI.",
+        "jev_report": "Jev's own decision log and outcome report (verdict right/wrong, calibration per question), CLI only.",
+        "phoenix_and_postgres": "Outcomes computed in Postgres (source of truth) and pushed to Phoenix as annotations/evals so humans review them on the traces."
+      }
+    },
+    "eval_method_first": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Given `context`, which evaluation method should we build first?",
+        "note": "Saturday's scored sessions start at 09:00; whatever we build first must improve decisions before Sunday."
+      },
+      "criteria": {
+        "online_outcomes": "Score every decision after it settles, from the tape and /me snapshots: realised surplus at our private values, ladder share of the dealer's range, duel pie share.",
+        "offline_sim_replay": "Replay strategies and parameter sets on the simulated market (bazaar-sim) and compare them before using them live.",
+        "llm_as_judge": "Claude on the subscription grades each negotiation transcript (tone, tactics, missed value) with a rubric.",
+        "jev_calibration": "Record whether each Jev verdict was right once the outcome is known and report calibration per question and stakes."
+      }
+    },
+    "eval_first_target": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Given `context` and the scoring rules in it, which decisions should the first eval cover?",
+        "note": "Pick where an eval most directly protects or adds leaderboard points this weekend."
+      },
+      "criteria": {
+        "duels": "Duel moves and accepts: share of the pie captured, deals inside our limit, rounds used.",
+        "dealer_ladder": "Dealer negotiations: share of each dealer's price range captured, best three per level, walks vs deals.",
+        "team_trades": "Taker accepts and maker listings: surplus at our private values, fill rate, never below our value.",
+        "market_test": "The broker on our venue: Market Test efficiency vs the free stall and the top three."
+      }
+    },
+    "scores_in_postgres_reviewed_in_phoenix": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Given `context`, should the eval scores be computed and stored in Postgres (the source of truth the dashboard reads) AND attached to the matching Phoenix traces as annotations, so humans review them on the traces?",
+        "note": "The online outcomes need the tape, /me snapshots and the decisions table, which all live in Postgres."
+      },
+      "criteria": {
+        "true": "Computing once in Postgres and attaching the score to each trace serves both the dashboard and trace review at little extra cost.",
+        "false": "One home is enough for a hackathon; writing to both is wasted effort."
+      }
+    },
+    "duels_first": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Given `context`, should the FIRST eval cover our duel decisions (pie share, deals inside our limit, rounds used) before dealers, team trades or the Market Test?",
+        "note": "Duels I is scored at game hour 6.5 on Saturday and the duel player already runs live; the venue and broker do not exist yet; dealer deals are few."
+      },
+      "criteria": {
+        "true": "Duels are live, scored soon and produce many decisions to evaluate.",
+        "false": "Another target protects more points first."
+      }
+    }
+  }
+}
