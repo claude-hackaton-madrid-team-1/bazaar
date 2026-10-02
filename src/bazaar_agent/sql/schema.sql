@@ -141,6 +141,21 @@ begin
       ('decisions', 'kind', 'text'),  -- accept_ask, dealer_bid, post_ask, cancel, ...
       ('decisions', 'dry_run', 'boolean'),
       ('ledger', 'slot', 'int'),  -- an accept's slot in its tick (1..accepts_per_team_per_tick)
+      -- Evals (`bazaar evals run`): one row per settled duel, dealer thread, team trade or Market Test.
+      ('outcomes', 'target', 'text'),  -- duel | dealer | trade | market_test
+      ('outcomes', 'subject', 'text'),  -- duel:85, thread:101, settlement:67, market_test:sat
+      ('outcomes', 'score', 'numeric'),  -- 0..1; null = settled but not scorable yet
+      ('outcomes', 'label', 'text'),  -- good | ok | bad
+      ('outcomes', 'explanation', 'text'),
+      ('outcomes', 'details', 'jsonb'),
+      ('outcomes', 'day', 'text'),  -- the game day (round) it settled in: fri | sat | sun
+      ('outcomes', 'jev_question', 'text'),
+      ('outcomes', 'jev_verdict', 'text'),
+      ('outcomes', 'trace_id', 'text'),  -- the Phoenix span the score is attached to
+      ('outcomes', 'span_id', 'text'),
+      ('outcomes', 'annotated_at', 'timestamptz'),
+      ('outcomes', 'annotation_tries', 'int'),
+      ('outcomes', 'scored_at', 'timestamptz'),
       ('messages', 'embedding', vec),
       ('trader_behaviors', 'embedding', vec),
       ('learnings', 'embedding', vec)) as c(tbl, name, type)
@@ -171,3 +186,48 @@ begin
                  or coalesce(e.payload->'parties', '[]'::jsonb) ? u.id));
   end if;
 end $$;
+
+-- Evals: an outcome is keyed by what it scores (target, subject), not by a decision, since duels and
+-- dealer threads have no decisions row. The first run drops the old decision_id primary key (the table
+-- was empty until the evals shipped); decision_id stays as a nullable link.
+do $$
+declare
+  pk text := (select c.conname from pg_constraint c
+               where c.conrelid = format('%I.outcomes', current_schema())::regclass and c.contype = 'p');
+begin
+  if pk is not null then
+    execute format('alter table outcomes drop constraint %I', pk);
+    alter table outcomes alter column decision_id drop not null;
+  end if;
+end $$;
+create unique index if not exists outcomes_subject on outcomes (target, subject);
+
+-- What the dashboard and `bazaar evals report` read: per target and game day.
+create or replace view eval_scorecard as
+  select target, coalesce(day, '?') as day, count(*) as outcomes, count(score) as scored,
+         round(avg(score), 3) as mean_score, min(score) as worst_score,
+         count(*) filter (where label = 'good') as good, count(*) filter (where label = 'ok') as ok,
+         count(*) filter (where label = 'bad') as bad, round(sum(realized_surplus), 1) as surplus,
+         (array_agg(subject order by score asc nulls last, subject))[1:5] as worst, max(recorded_tick) as last_tick
+    from outcomes where target is not null group by target, coalesce(day, '?');
+
+-- The dealer ladder as RULES.md scores it: per level, the best three shares (a missing one is zero).
+create or replace view eval_ladder as
+  with ranked as (
+    select (details->>'level')::int as level, details->>'dealer' as dealer, subject,
+           details->>'fill_price' is not null as deal, coalesce(score, 0) as share,
+           row_number() over (partition by (details->>'level')::int order by coalesce(score, 0) desc, subject) as rank
+      from outcomes where target = 'dealer' and details->>'level' is not null)
+  select level, string_agg(distinct dealer, ', ') as dealers, count(*) as threads,
+         count(*) filter (where deal) as deals,
+         round(coalesce(sum(share) filter (where rank <= 3), 0) / 3, 3) as best3_share,
+         array_agg(subject order by rank) filter (where rank <= 3) as best3
+    from ranked group by level;
+
+-- Jev calibration: was each decided verdict right once its decision settled?
+create or replace view eval_jev_calibration as
+  select jev_question as question, count(*) as outcomes,
+         count(*) filter (where jev_verdict in ('yes', 'no')) as decided,
+         count(*) filter (where jev_right) as n_right, count(*) filter (where not jev_right) as n_wrong,
+         count(*) filter (where jev_right is null) as n_unknown
+    from outcomes where jev_question is not null group by jev_question;

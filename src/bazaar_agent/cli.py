@@ -18,6 +18,7 @@ from rich.console import Console
 from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
+from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.runtime import cli as runtime_cli
@@ -1379,6 +1380,7 @@ def agent_maker(
 # `bazaar llm`, `bazaar ask`, `bazaar steer` (and `--llm-runtime` in `_root`): see bazaar_agent/llm/cli.py.
 
 llm_cli.register(app)
+evals_cli.register(app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.

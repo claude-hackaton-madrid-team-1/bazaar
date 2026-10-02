@@ -1,0 +1,1907 @@
+{
+ "source": "feed_events, our dealer threads 85/99/101/110/115/187, our settlements, day.opened, our duel.closed (2026-10-02)",
+ "events": [
+  {
+   "id": 38,
+   "tick": 0,
+   "type": "day.opened",
+   "actor": "",
+   "payload": {
+    "day": "fri",
+    "name": "Friday",
+    "closes": "2026-10-02T23:00:00+02:00",
+    "tick_seconds": 60.0
+   }
+  },
+  {
+   "id": 1927,
+   "tick": 48,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "abuela",
+    "topic": {
+     "buy": {
+      "card": "LAV-03"
+     }
+    },
+    "thread": 85
+   }
+  },
+  {
+   "id": 1928,
+   "tick": 48,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 564,
+     "to": "abuela",
+     "give": {
+      "cash": 6,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-03"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 85,
+     "created_tick": 48,
+     "expires_tick": 50
+    },
+    "sender": "t01",
+    "thread": 85,
+    "message": 516
+   }
+  },
+  {
+   "id": 2182,
+   "tick": 54,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "abuela",
+    "topic": {
+     "buy": {
+      "card": "LAV-03"
+     }
+    },
+    "thread": 99
+   }
+  },
+  {
+   "id": 2183,
+   "tick": 54,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 672,
+     "to": "abuela",
+     "give": {
+      "cash": 6,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-03"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 99,
+     "created_tick": 54,
+     "expires_tick": 56
+    },
+    "sender": "t01",
+    "thread": 99,
+    "message": 571
+   }
+  },
+  {
+   "id": 2217,
+   "tick": 55,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Welcome, hijo! Look, Té Moruno, 7 P. Made for beginners.",
+    "with": "abuela",
+    "offer": {
+     "id": 681,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-03"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 7,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 99,
+     "created_tick": 55,
+     "expires_tick": 57
+    },
+    "sender": "abuela",
+    "thread": 99,
+    "message": 579
+   }
+  },
+  {
+   "id": 2244,
+   "tick": 56,
+   "type": "settlement",
+   "actor": "",
+   "payload": {
+    "fee": 0,
+    "kind": "trade",
+    "tick": 56,
+    "items": [
+     {
+      "id": 375,
+      "to": "t01",
+      "frm": "abuela",
+      "ref": "LAV-03",
+      "set": "LAV",
+      "kind": "card",
+      "name": "Té Moruno",
+      "rarity": "common",
+      "serial": 17,
+      "print_run": 300
+     }
+    ],
+    "price": 7,
+    "venue": null,
+    "parties": [
+     "abuela",
+     "t01"
+    ],
+    "persona": "abuela",
+    "settlement": 92
+   }
+  },
+  {
+   "id": 2296,
+   "tick": 56,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "abuela",
+    "topic": {
+     "buy": {
+      "card": "LAV-04"
+     }
+    },
+    "thread": 101
+   }
+  },
+  {
+   "id": 2297,
+   "tick": 56,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 720,
+     "to": "abuela",
+     "give": {
+      "cash": 6,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 56,
+     "expires_tick": 58
+    },
+    "sender": "t01",
+    "thread": 101,
+    "message": 600
+   }
+  },
+  {
+   "id": 2332,
+   "tick": 57,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Welcome, hijo! Look, Mural de la Esquina, 12 P. Made for beginners.",
+    "with": "abuela",
+    "offer": {
+     "id": 728,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 12,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 57,
+     "expires_tick": 59
+    },
+    "sender": "abuela",
+    "thread": 101,
+    "message": 607
+   }
+  },
+  {
+   "id": 2336,
+   "tick": 57,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 732,
+     "to": "abuela",
+     "give": {
+      "cash": 7,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 57,
+     "expires_tick": 59
+    },
+    "sender": "t01",
+    "thread": 101,
+    "message": 611
+   }
+  },
+  {
+   "id": 2365,
+   "tick": 58,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Let's meet in the middle, cariño: 10 P.",
+    "with": "abuela",
+    "offer": {
+     "id": 737,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 10,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 58,
+     "expires_tick": 60
+    },
+    "sender": "abuela",
+    "thread": 101,
+    "message": 615
+   }
+  },
+  {
+   "id": 2374,
+   "tick": 58,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 744,
+     "to": "abuela",
+     "give": {
+      "cash": 8,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 58,
+     "expires_tick": 60
+    },
+    "sender": "t01",
+    "thread": 101,
+    "message": 622
+   }
+  },
+  {
+   "id": 2390,
+   "tick": 59,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Let's meet in the middle, cariño: 10 P.",
+    "with": "abuela",
+    "offer": {
+     "id": 752,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 10,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 59,
+     "expires_tick": 61
+    },
+    "sender": "abuela",
+    "thread": 101,
+    "message": 626
+   }
+  },
+  {
+   "id": 2411,
+   "tick": 59,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 759,
+     "to": "abuela",
+     "give": {
+      "cash": 9,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-04"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 101,
+     "created_tick": 59,
+     "expires_tick": 61
+    },
+    "sender": "t01",
+    "thread": 101,
+    "message": 631
+   }
+  },
+  {
+   "id": 2420,
+   "tick": 60,
+   "type": "settlement",
+   "actor": "",
+   "payload": {
+    "fee": 0,
+    "kind": "trade",
+    "tick": 60,
+    "items": [
+     {
+      "id": 377,
+      "to": "t01",
+      "frm": "abuela",
+      "ref": "LAV-04",
+      "set": "LAV",
+      "kind": "card",
+      "name": "Mural de la Esquina",
+      "rarity": "common",
+      "serial": 16,
+      "print_run": 300
+     }
+    ],
+    "price": 9,
+    "venue": null,
+    "parties": [
+     "t01",
+     "abuela"
+    ],
+    "persona": "abuela",
+    "settlement": 95
+   }
+  },
+  {
+   "id": 2437,
+   "tick": 60,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Deal! Mural de la Esquina for 9 P. Enjoy it, cariño.",
+    "with": "abuela",
+    "offer": null,
+    "sender": "abuela",
+    "thread": 101,
+    "message": 634
+   }
+  },
+  {
+   "id": 2469,
+   "tick": 60,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "abuela",
+    "topic": {
+     "buy": {
+      "card": "LAV-05"
+     }
+    },
+    "thread": 110
+   }
+  },
+  {
+   "id": 2470,
+   "tick": 60,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 775,
+     "to": "abuela",
+     "give": {
+      "cash": 6,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 60,
+     "expires_tick": 62
+    },
+    "sender": "t01",
+    "thread": 110,
+    "message": 647
+   }
+  },
+  {
+   "id": 2502,
+   "tick": 61,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Hola, cariño, have you eaten? Bici de Reparto for 12 P. A good start for your album. A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "with": "abuela",
+    "offer": {
+     "id": 785,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 12,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 61,
+     "expires_tick": 63
+    },
+    "sender": "abuela",
+    "thread": 110,
+    "message": 658
+   }
+  },
+  {
+   "id": 2529,
+   "tick": 61,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 793,
+     "to": "abuela",
+     "give": {
+      "cash": 7,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 61,
+     "expires_tick": 63
+    },
+    "sender": "t01",
+    "thread": 110,
+    "message": 666
+   }
+  },
+  {
+   "id": 2571,
+   "tick": 62,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Look, 10 P. My grandchildren would pay more! A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "with": "abuela",
+    "offer": {
+     "id": 810,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 10,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 62,
+     "expires_tick": 64
+    },
+    "sender": "abuela",
+    "thread": 110,
+    "message": 679
+   }
+  },
+  {
+   "id": 2597,
+   "tick": 62,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 819,
+     "to": "abuela",
+     "give": {
+      "cash": 8,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 62,
+     "expires_tick": 64
+    },
+    "sender": "t01",
+    "thread": 110,
+    "message": 686
+   }
+  },
+  {
+   "id": 2640,
+   "tick": 63,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Let's meet in the middle, cariño: 10 P. A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "with": "abuela",
+    "offer": {
+     "id": 838,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 10,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 63,
+     "expires_tick": 65
+    },
+    "sender": "abuela",
+    "thread": 110,
+    "message": 697
+   }
+  },
+  {
+   "id": 2660,
+   "tick": 63,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 843,
+     "to": "abuela",
+     "give": {
+      "cash": 9,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-05"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 110,
+     "created_tick": 63,
+     "expires_tick": 65
+    },
+    "sender": "t01",
+    "thread": 110,
+    "message": 702
+   }
+  },
+  {
+   "id": 2688,
+   "tick": 64,
+   "type": "settlement",
+   "actor": "",
+   "payload": {
+    "fee": 0,
+    "kind": "trade",
+    "tick": 64,
+    "items": [
+     {
+      "id": 381,
+      "to": "t01",
+      "frm": "abuela",
+      "ref": "LAV-05",
+      "set": "LAV",
+      "kind": "card",
+      "name": "Bici de Reparto",
+      "rarity": "common",
+      "serial": 17,
+      "print_run": 300
+     }
+    ],
+    "price": 9,
+    "venue": null,
+    "parties": [
+     "t01",
+     "abuela"
+    ],
+    "persona": "abuela",
+    "settlement": 102
+   }
+  },
+  {
+   "id": 2700,
+   "tick": 64,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Deal! Bici de Reparto for 9 P. Enjoy it, cariño.",
+    "with": "abuela",
+    "offer": null,
+    "sender": "abuela",
+    "thread": 110,
+    "message": 712
+   }
+  },
+  {
+   "id": 2742,
+   "tick": 64,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "abuela",
+    "topic": {
+     "buy": {
+      "card": "LAV-06"
+     }
+    },
+    "thread": 115
+   }
+  },
+  {
+   "id": 2743,
+   "tick": 64,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 879,
+     "to": "abuela",
+     "give": {
+      "cash": 15,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 64,
+     "expires_tick": 66
+    },
+    "sender": "t01",
+    "thread": 115,
+    "message": 721
+   }
+  },
+  {
+   "id": 2771,
+   "tick": 65,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Welcome, hijo! Look, La Tabacalera, 29 P. Made for beginners.",
+    "with": "abuela",
+    "offer": {
+     "id": 891,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 29,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 65,
+     "expires_tick": 67
+    },
+    "sender": "abuela",
+    "thread": 115,
+    "message": 733
+   }
+  },
+  {
+   "id": 2809,
+   "tick": 65,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 901,
+     "to": "abuela",
+     "give": {
+      "cash": 17,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 65,
+     "expires_tick": 67
+    },
+    "sender": "t01",
+    "thread": 115,
+    "message": 741
+   }
+  },
+  {
+   "id": 2857,
+   "tick": 66,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Let's meet in the middle, cariño: 25 P.",
+    "with": "abuela",
+    "offer": {
+     "id": 918,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 25,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 66,
+     "expires_tick": 68
+    },
+    "sender": "abuela",
+    "thread": 115,
+    "message": 749
+   }
+  },
+  {
+   "id": 2868,
+   "tick": 66,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 924,
+     "to": "abuela",
+     "give": {
+      "cash": 19,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 66,
+     "expires_tick": 68
+    },
+    "sender": "t01",
+    "thread": 115,
+    "message": 755
+   }
+  },
+  {
+   "id": 2915,
+   "tick": 67,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Look, 24 P. My grandchildren would pay more! A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "with": "abuela",
+    "offer": {
+     "id": 944,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 24,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 67,
+     "expires_tick": 69
+    },
+    "sender": "abuela",
+    "thread": 115,
+    "message": 762
+   }
+  },
+  {
+   "id": 2930,
+   "tick": 67,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 951,
+     "to": "abuela",
+     "give": {
+      "cash": 21,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 67,
+     "expires_tick": 69
+    },
+    "sender": "t01",
+    "thread": 115,
+    "message": 770
+   }
+  },
+  {
+   "id": 2964,
+   "tick": 68,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Look, 23 P. My grandchildren would pay more! A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "with": "abuela",
+    "offer": {
+     "id": 962,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 23,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "abuela",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 68,
+     "expires_tick": 70
+    },
+    "sender": "abuela",
+    "thread": 115,
+    "message": 781
+   }
+  },
+  {
+   "id": 2992,
+   "tick": 68,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "abuela",
+    "offer": {
+     "id": 970,
+     "to": "abuela",
+     "give": {
+      "cash": 22,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-06"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 115,
+     "created_tick": 68,
+     "expires_tick": 70
+    },
+    "sender": "t01",
+    "thread": 115,
+    "message": 788
+   }
+  },
+  {
+   "id": 2999,
+   "tick": 69,
+   "type": "settlement",
+   "actor": "",
+   "payload": {
+    "fee": 0,
+    "kind": "trade",
+    "tick": 69,
+    "items": [
+     {
+      "id": 178,
+      "to": "t01",
+      "frm": "abuela",
+      "ref": "LAV-06",
+      "set": "LAV",
+      "kind": "card",
+      "name": "La Tabacalera",
+      "rarity": "uncommon",
+      "serial": 2,
+      "print_run": 90
+     }
+    ],
+    "price": 22,
+    "venue": null,
+    "parties": [
+     "t01",
+     "abuela"
+    ],
+    "persona": "abuela",
+    "settlement": 113
+   }
+  },
+  {
+   "id": 3013,
+   "tick": 69,
+   "type": "thread.message",
+   "actor": "abuela",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Venga, 22 P. You drive a hard bargain for someone so young!",
+    "with": "abuela",
+    "offer": null,
+    "sender": "abuela",
+    "thread": 115,
+    "message": 790
+   }
+  },
+  {
+   "id": 4487,
+   "tick": 99,
+   "type": "thread.opened",
+   "actor": "",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "with": "chato",
+    "topic": {
+     "buy": {
+      "card": "LAV-08"
+     }
+    },
+    "thread": 187
+   }
+  },
+  {
+   "id": 4488,
+   "tick": 99,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "chato",
+    "offer": {
+     "id": 1474,
+     "to": "chato",
+     "give": {
+      "cash": 17,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 99,
+     "expires_tick": 101
+    },
+    "sender": "t01",
+    "thread": 187,
+    "message": 1145
+   }
+  },
+  {
+   "id": 4509,
+   "tick": 100,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "chato",
+    "offer": {
+     "id": 1488,
+     "to": "chato",
+     "give": {
+      "cash": 19,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 100,
+     "expires_tick": 102
+    },
+    "sender": "t01",
+    "thread": 187,
+    "message": 1159
+   }
+  },
+  {
+   "id": 4519,
+   "tick": 100,
+   "type": "thread.message",
+   "actor": "chato",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Soy El Chato. Carmen está al lado. Teatro Valle-Inclán, treinta y tres primas. Ahí empezamos.",
+    "with": "chato",
+    "offer": {
+     "id": 1482,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 33,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "chato",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 100,
+     "expires_tick": 102
+    },
+    "sender": "chato",
+    "thread": 187,
+    "message": 1153
+   }
+  },
+  {
+   "id": 4563,
+   "tick": 101,
+   "type": "thread.message",
+   "actor": "chato",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "No. 33 P, and I'm being generous.",
+    "with": "chato",
+    "offer": {
+     "id": 1499,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 33,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "chato",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 101,
+     "expires_tick": 103
+    },
+    "sender": "chato",
+    "thread": 187,
+    "message": 1169
+   }
+  },
+  {
+   "id": 4581,
+   "tick": 101,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "chato",
+    "offer": {
+     "id": 1506,
+     "to": "chato",
+     "give": {
+      "cash": 21,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 101,
+     "expires_tick": 103
+    },
+    "sender": "t01",
+    "thread": 187,
+    "message": 1176
+   }
+  },
+  {
+   "id": 4653,
+   "tick": 102,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "chato",
+    "offer": {
+     "id": 1534,
+     "to": "chato",
+     "give": {
+      "cash": 23,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 102,
+     "expires_tick": 104
+    },
+    "sender": "t01",
+    "thread": 187,
+    "message": 1201
+   }
+  },
+  {
+   "id": 4657,
+   "tick": 102,
+   "type": "thread.message",
+   "actor": "chato",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Still Chato. Still 33 P. You moved two, I moved nothing. That's how it works.",
+    "with": "chato",
+    "offer": {
+     "id": 1522,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 33,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "chato",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 102,
+     "expires_tick": 104
+    },
+    "sender": "chato",
+    "thread": 187,
+    "message": 1188
+   }
+  },
+  {
+   "id": 4723,
+   "tick": 103,
+   "type": "thread.message",
+   "actor": "chato",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "No. 32 P, and I'm being generous.",
+    "with": "chato",
+    "offer": {
+     "id": 1551,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 32,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "chato",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 103,
+     "expires_tick": 105
+    },
+    "sender": "chato",
+    "thread": 187,
+    "message": 1210
+   }
+  },
+  {
+   "id": 4748,
+   "tick": 103,
+   "type": "thread.message",
+   "actor": "t01",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": null,
+    "with": "chato",
+    "offer": {
+     "id": 1563,
+     "to": "chato",
+     "give": {
+      "cash": 24,
+      "types": [],
+      "assets": []
+     },
+     "want": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "final": false,
+     "maker": "t01",
+     "venue": null,
+     "status": "open",
+     "thread": 187,
+     "created_tick": 103,
+     "expires_tick": 105
+    },
+    "sender": "t01",
+    "thread": 187,
+    "message": 1223
+   }
+  },
+  {
+   "id": 4845,
+   "tick": 104,
+   "type": "thread.message",
+   "actor": "chato",
+   "payload": {
+    "kind": "persona",
+    "team": "t01",
+    "text": "Your abuela would've moved more than one. 31 P. I match what you move, nothing extra.",
+    "with": "chato",
+    "offer": {
+     "id": 1573,
+     "to": "t01",
+     "give": {
+      "cash": 0,
+      "types": [
+       "card:LAV-08"
+      ],
+      "assets": []
+     },
+     "want": {
+      "cash": 31,
+      "types": [],
+      "assets": []
+     },
+     "final": false,
+     "maker": "chato",
+     "venue": null,
+     "status": "cancelled",
+     "thread": 187,
+     "created_tick": 104,
+     "expires_tick": 106
+    },
+    "sender": "chato",
+    "thread": 187,
+    "message": 1230
+   }
+  },
+  {
+   "id": 7159,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 5,
+    "item": "Taxi Blanco",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 7162,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 6,
+    "item": "Taxi Blanco",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 7192,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 23,
+    "item": "Andén 0",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 7195,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 24,
+    "item": "Andén 0",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 7270,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 119,
+    "item": "El Tren Fantasma",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 7273,
+   "tick": 132,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 120,
+    "item": "El Tren Fantasma",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 8927,
+   "tick": 144,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 95,
+    "item": "Mercado de Vallehermoso",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 8954,
+   "tick": 144,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 147,
+    "item": "Taxi Blanco",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 8957,
+   "tick": 144,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 148,
+    "item": "Taxi Blanco",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 9268,
+   "tick": 146,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 131,
+    "item": "El Rastro al Amanecer",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 9271,
+   "tick": 146,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 132,
+    "item": "El Rastro al Amanecer",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 9286,
+   "tick": 146,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 201,
+    "item": "Mercado de Vallehermoso",
+    "status": "no_deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 9634,
+   "tick": 149,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 267,
+    "item": "El Tren Fantasma",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 9836,
+   "tick": 151,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 273,
+    "item": "Plaza de Olavide",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10050,
+   "tick": 153,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 85,
+    "item": "Plaza de Olavide",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10166,
+   "tick": 154,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 86,
+    "item": "Plaza de Olavide",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10169,
+   "tick": 154,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 96,
+    "item": "Mercado de Vallehermoso",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10279,
+   "tick": 155,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 268,
+    "item": "El Tren Fantasma",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10445,
+   "tick": 156,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 202,
+    "item": "Mercado de Vallehermoso",
+    "status": "deal",
+    "session": 1
+   }
+  },
+  {
+   "id": 10793,
+   "tick": 159,
+   "type": "duel.closed",
+   "actor": "",
+   "payload": {
+    "duel": 274,
+    "item": "Plaza de Olavide",
+    "status": "deal",
+    "session": 1
+   }
+  }
+ ]
+}
