@@ -86,6 +86,12 @@ One team accept per tick across every machine (Postgres `ledger`, `reserve_accep
 the taker; the maker never accepts. Railway: `bazaar-taker` / `bazaar-maker`, read-only status at
 `https://bazaar-{taker,maker}-production.up.railway.app/health` and `/state`, `wss://…/events`.
 
+## Runtime LLM
+
+`uv run bazaar llm` shows the RUNTIME.md config, which credential Claude uses (API key, or the Claude
+subscription via the Claude Agent SDK with `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`) by name
+only, and Jev's last model choices. `uv run bazaar ask "..."` / `uv run bazaar steer "..."` never trade.
+
 ## Memory (Postgres, pgvector when the server has it)
 
 Every process connects with `DATABASE_URL` only (env, then `.env`; unset = local docker).
@@ -115,6 +121,6 @@ Use `bazaar_agent.sdk` (the vendored `bazaar_sdk`). For a route a new level adds
 
 ## Never
 
-Print, log or commit a key (`BAZAAR_KEY`, broker keys, `TYPESAFE_API_KEY`, `DATABASE_URL`). Push. Hammer the API.
+Print, log or commit a key (`BAZAAR_KEY`, broker keys, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `DATABASE_URL`). Push. Hammer the API.
 Accept outside a hard limit. Flag without a words-vs-structure mismatch and a critical Jev verdict.
 Record findings and gotchas in `.ai/memory.md` (public, committed).

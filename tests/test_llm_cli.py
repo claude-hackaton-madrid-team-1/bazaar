@@ -17,7 +17,7 @@ SECRET = "sk-ant-THIS-MUST-NOT-PRINT"
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    for name in ("BAZAAR_KEY", "OPENAI_API_KEY", "BAZAAR_LLM_RUNTIME", "TYPESAFE_API_KEY"):
+    for name in ("BAZAAR_KEY", "OPENAI_API_KEY", "BAZAAR_LLM_RUNTIME", "TYPESAFE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.setenv(name, "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
     monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path))

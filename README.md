@@ -244,7 +244,8 @@ options below remain for a Phoenix outside Railway.
 a probability per candidate; undecided → `runtime_model_default`), unless you pin one:
 `--llm-runtime` > `BAZAAR_LLM_RUNTIME` > RUNTIME.md `llm_runtime`. Aliases: `opus-5-5`,
 `sonnet-5-5`, `haiku-4-5`, `fable-5-1`, `gpt-6-1-sol` (any `claude-*` / `gpt-*` id passes through).
-Keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` in `.env`; without one, every LLM path falls back.
+Credentials: `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude, see below), `OPENAI_API_KEY`
+in `.env`; without one, every LLM path falls back.
 
 ```sh
 uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices
@@ -258,6 +259,51 @@ uv run bazaar steer --show                           # what is steered now, and 
 With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chosen model write each
 message; the price stays the structured field set by code, and any other number, a timeout or an
 error sends the template instead.
+
+### LLM on the Claude subscription (no API key)
+
+Claude models run on a Claude Pro/Max/Team/Enterprise subscription through the
+[Claude Agent SDK for Python](https://code.claude.com/docs/en/agent-sdk/python) (`claude-agent-sdk`,
+pinned in `pyproject.toml`). Its wheel bundles the Claude Code CLI, so `uv sync` is the whole install,
+here and on Railway. Code: `src/bazaar_agent/runtime/claude.py`.
+
+1. Mint a long-lived token (one year, model requests only) on your own account:
+   `claude setup-token`. It prints the token once and stores it nowhere
+   ([docs](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token)).
+2. Local: add `CLAUDE_CODE_OAUTH_TOKEN=<token>` to `.env` (never commit it), then `uv run bazaar llm`
+   should say `Claude: Claude subscription via the Claude Agent SDK (CLAUDE_CODE_OAUTH_TOKEN)`.
+3. Railway, piped so the token never lands on a command line or in shell history:
+
+   ```sh
+   read -rs TOKEN   # paste the token, Enter
+   for svc in bazaar-duels bazaar-taker bazaar-maker; do
+     printf %s "$TOKEN" | railway variable set CLAUDE_CODE_OAUTH_TOKEN --stdin --service "$svc"
+   done
+   unset TOKEN
+   ```
+
+   `.railway/railway.py` declares the variable as `preserve()` on those three services, so
+   `railway config apply` keeps the value. Setting it redeploys each service.
+
+- **Routing.** A Claude alias uses `ANTHROPIC_API_KEY` (the API) when it is set, else
+  `CLAUDE_CODE_OAUTH_TOKEN` (the subscription). OpenAI aliases still need `OPENAI_API_KEY`. Jev only
+  chooses among models a credential can reach, so with the token alone it picks among Haiku, Sonnet
+  and Opus.
+- **Each call is one locked, one-shot CLI run:** our system prompt, no tools, no settings files, no
+  CLAUDE.md or memory, no MCP servers, no session files. Effort and output cap follow the request.
+  Structured output (`ask`, `steer`) is validated by our pydantic models.
+- **Latency** (measured on a laptop, 2026-10-03): message words take 1.6–2.0 s on Haiku, 2.4–4 s on
+  Sonnet and 3.1–3.8 s on Opus. That is why RUNTIME.md `subscription_words_timeout_s` is 6, still cut
+  to the time left in the tick. `ask` took 1.6–2.3 s and `steer` 3.8 s (limit 30 s).
+- **Fallbacks.** A timeout, a refusal, a bad answer, a rejected token (`auth`) or a used-up
+  subscription window (`usage_limit`, the 5-hour or weekly limit) sends the template or falls back to
+  the default model. After a usage limit, the provider makes no more calls until the window's reset time.
+  After a rejected token, it makes none for 10 minutes. No tick waits on a call that is bound to fail.
+- **Never printed.** The token is a `SecretStr`. `bazaar llm` prints only variable names. The CLI's
+  stderr is dropped, and telemetry cuts every `*_TOKEN` value out of spans.
+- **Terms.** Anthropic's [usage policy](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+  allows subscription credentials for ordinary, individual use only. Use your own token for our own
+  agent. Never share it, and never offer it to other people or apps.
 
 ## Autonomous agents (taker and maker)
 
@@ -361,8 +407,8 @@ Code, Python authoring, beta): change it by PR.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
   `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
-  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `PHOENIX_SECRET`, `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`,
-  `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
+  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `PHOENIX_SECRET`,
+  `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`, `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
   it touching a command line: `printf %s "$VALUE" | railway variable set NAME --stdin --service <svc>`.
 - **Pause every write** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
   (on the volume, so it survives redeploys); `rm` it to resume.
@@ -417,9 +463,10 @@ then redeploy `bazaar-duels`.
   `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`.
 - **Known limit: other state in `BAZAAR_DATA_DIR` is per container.** `steering.json`: a laptop
   `bazaar steer` does not reach Railway's duel player; steer it in its container
-  (`railway ssh --service bazaar-duels -- /app/.venv/bin/bazaar steer "..."`). The runtime LLM keys
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are not set on Railway yet, so every LLM path there falls
-  back to its template or default (RUNTIME.md `llm_words` is off anyway).
+  (`railway ssh --service bazaar-duels -- /app/.venv/bin/bazaar steer "..."`). The runtime LLM runs
+  on Railway once `CLAUDE_CODE_OAUTH_TOKEN` is set on `bazaar-duels`, `bazaar-taker` and `bazaar-maker`
+  (see "LLM on the Claude subscription"). Until then, every LLM path falls back to its template or
+  default. RUNTIME.md `llm_words` is off anyway.
 
 ## How it fits together
 
@@ -521,20 +568,20 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers. |
-| `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which keys are set (never values), and Jev's last choices. |
+| `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → strict intent → guardrail verdict → exact command. Dry run: never trades. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
+- [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
 - [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
 - [2026-10-02] gotcha — after 23:00 the doors close and every tick loop just waits
 - [2026-10-02] finding — first autonomous dry runs (tick 155): the taker would buy MAL-02 for 5, the maker would list 3 asks
 - [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
 - [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
 - [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
-- [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
-- [2026-10-02] gotcha — Railpack's uv install is `--no-editable`, which breaks REPO_ROOT
 
 <!-- BAZAAR:STATUS:END -->
 

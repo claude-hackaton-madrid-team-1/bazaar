@@ -5,7 +5,7 @@ picks the top model; anything else falls back to RUNTIME.md `runtime_model_defau
 map is logged on every fresh decision. A choice is cached per (move kind, tick-length bucket,
 injection flags present, stakes bucket) for `model_choice_cache_ticks` ticks, so a 15 s tick never
 pays for two model-choice calls, and a harmless move's cheap model is never reused for a risky one.
-Only candidates whose provider key is set are offered to Jev. A pinned model (flag, env,
+Only candidates whose provider has a credential set are offered to Jev. A pinned model (flag, env,
 RUNTIME.md) skips Jev entirely and is logged as pinned.
 """
 
@@ -165,7 +165,7 @@ class ModelChooser:
 
     @property
     def candidates(self) -> tuple[str, ...]:
-        """The RUNTIME.md candidates we can call (provider key set): Jev never picks one we cannot use."""
+        """The RUNTIME.md candidates we can call (credential set): Jev never picks one we cannot use."""
         models = self.config.runtime_models
         return models if self._available is None else tuple(m for m in models if self._available(m))
 
@@ -179,7 +179,7 @@ class ModelChooser:
             self._log(choice, situation)
             return choice
         if len(self.candidates) < 2:
-            return self._default(situation, tick, "fewer than two callable candidates (keys set) in runtime_models")
+            return self._default(situation, tick, "fewer than two callable candidates in runtime_models")
         key = cache_key(situation)
         cached = self._cached(key, tick)
         if cached is not None:

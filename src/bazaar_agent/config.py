@@ -39,6 +39,7 @@ class Settings(BaseModel):
     typesafe_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+    claude_code_oauth_token: SecretStr | None = None  # `claude setup-token`: Claude models on the subscription
     llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
@@ -68,6 +69,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
         "typesafe_api_key": pick("TYPESAFE_API_KEY"),
         "anthropic_api_key": pick("ANTHROPIC_API_KEY"),
         "openai_api_key": pick("OPENAI_API_KEY"),
+        "claude_code_oauth_token": pick("CLAUDE_CODE_OAUTH_TOKEN"),
         "llm_runtime": pick("BAZAAR_LLM_RUNTIME"),
         "database_url": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "team_id": pick("BAZAAR_TEAM_ID"),
