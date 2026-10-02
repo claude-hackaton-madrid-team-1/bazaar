@@ -4,7 +4,7 @@
     "title": "The Bazaar · Cromos de Madrid",
     "version": "0.1-team1",
     "summary": "Trading-card negotiation game API (Causa Prima hackathon, Madrid, 2–4 Oct 2026).",
-    "description": "Enriched spec built by Team 1 from the server's own `/openapi.json` (which carries request schemas only), real responses captured with our team key, the official kit (`bazaar_sdk.py`, `RULES.md`) and the frontend bundles.\n\nEvery response schema carries `x-verified`: `true` means the shape was observed on the live API; `false` means it is inferred from the SDK docstrings, the rules or the frontend code and must be checked against a real response.\n\n**Words persuade, structure binds.** Only a structured offer that its counterparty accepts moves cards or cash, and it settles on the next tick, all at once or not at all.\n\n**Limits** (RULES.md; the numbers in force are always in `GET /api/clock` → `limits`): 5 requests/s per key with bursts of 20; 60 req/s per address without a key; per tick one accepted offer per team, one message per conversation and 12 new listings (cancelled ones count); at most 6 open conversations, one per dealer, and 30 open offers; 6 SSE streams per key. Bodies: strict JSON up to 64 KB, 8 levels deep, numbers below 10^12; prices and cash are whole primas from 1 to 10,000,000; at most 50 items on one side of an offer; messages keep 1,200 characters, venue names 40.\n\n**Clock**: Fri 19:00–23:00 (60 s ticks), Sat 09:00–23:00 (30 s), Sun 09:00–15:00 (15 s), Madrid time. Outside those hours nothing ticks.\n\n**Errors**: a refused request is a 4xx with `{\"error\": \"<code>\", \"message\": \"<why>\"}`; it costs nothing and moves nothing.",
+    "description": "Enriched spec built by Team 1 from the server's own `/openapi.json` (which carries request schemas only), real responses captured with our team key, the official kit (`bazaar_sdk.py`, `RULES.md`) and the frontend bundles.\n\nEvery response schema carries `x-verified`: `true` means the shape was observed on the live API; `false` means it is inferred from the SDK docstrings, the rules or the frontend code and must be checked against a real response.\n\n**Words persuade, structure binds.** Only a structured offer that its counterparty accepts moves cards or cash, and it settles on the next tick, all at once or not at all.\n\n**Limits** (RULES.md; the numbers in force are always in `GET /api/clock` → `limits`): 5 requests/s per key with bursts of 20; 60 req/s per address without a key; per tick one accepted offer per team, one message per conversation and 12 new listings (cancelled ones count); at most 6 open conversations, one per dealer, and 30 open offers; 6 SSE streams per key. Bodies: strict JSON up to 64 KB, 8 levels deep, numbers below 10^12; prices and cash are whole primas from 1 to 10,000,000; at most 50 items on one side of an offer; messages keep 1,200 characters, venue names 40.\n\n**Clock**: Fri 19:00–23:00 (60 s ticks), Sat 09:00–23:00 (30 s), Sun 09:00–15:00 (15 s), Madrid time. Outside those hours nothing ticks.\n\n**Errors**: a refused request is a 4xx with `{\"error\": \"<code>\", \"message\": \"<why>\"}`; it costs nothing and moves nothing. A missing or wrong key is `bad_key` (team and broker) or `bad_token` (admin), 401. Repeated wrong-key requests from one address (a few dozen in under a minute was enough) trip `too_many_failures` (429) for every wrong-key request from that address; requests with a valid key keep working. An unknown route is `not_found`, 404.",
     "contact": {
       "name": "Causa Prima desk",
       "url": "https://bazaar.causaprima.ai"
@@ -3513,6 +3513,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -3559,6 +3569,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3612,6 +3632,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -3649,6 +3679,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -3683,6 +3723,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3730,6 +3780,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3781,6 +3841,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -3826,6 +3896,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3889,6 +3969,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -3946,6 +4036,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4009,6 +4109,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4043,6 +4153,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4093,6 +4213,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4138,6 +4268,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4199,6 +4339,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4244,6 +4394,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4301,6 +4461,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4364,6 +4534,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4422,6 +4602,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4522,6 +4712,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4570,6 +4770,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4604,6 +4814,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4668,6 +4888,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4703,6 +4933,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4755,6 +4995,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4789,6 +5039,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4852,6 +5112,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -4897,6 +5167,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -4971,6 +5251,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5019,6 +5309,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5053,6 +5353,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5105,6 +5415,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5139,6 +5459,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5187,6 +5517,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5250,6 +5590,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5299,6 +5649,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5333,6 +5693,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5383,6 +5753,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5417,6 +5797,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5467,6 +5857,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5505,6 +5905,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5539,6 +5949,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5655,6 +6075,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5720,6 +6150,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -5754,6 +6194,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5792,6 +6242,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token (`bad_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -6112,7 +6572,9 @@
           "too_many_streams",
           "too_many_failures",
           "sold_out",
-          "invalid"
+          "invalid",
+          "bad_token",
+          "not_found"
         ]
       },
       "Health": {
