@@ -18,10 +18,18 @@ from typing import Any
 
 from bazaar_agent.agents.runtime import live_mode
 from bazaar_agent.album import album_view
-from bazaar_agent.config import REPO_ROOT, Settings
+from bazaar_agent.config import Settings
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
-from bazaar_agent.guardrails import ENFORCED_BY, Context, Guardrails, LedgerStore, context_from, load_guardrails
+from bazaar_agent.guardrails import (
+    ENFORCED_BY,
+    Context,
+    Guardrails,
+    LedgerStore,
+    context_from,
+    kill_switch,
+    load_guardrails,
+)
 from bazaar_agent.llm.chooser import injection_flags
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -363,7 +371,7 @@ def rules(b: Backend) -> dict[str, Any]:
     from bazaar_agent.llm.steering import STEERABLE, STEERING_FILE, load_steering
 
     loaded = load_guardrails()
-    paused = (REPO_ROOT / b.rules.pause_file).exists() or not b.rules.trading_enabled
+    stops = kill_switch(b.rules)
     steering = load_steering(b.settings.data_dir / STEERING_FILE)
     return {
         "rules": [
@@ -371,7 +379,7 @@ def rules(b: Backend) -> dict[str, Any]:
             for r in loaded.lines
         ],
         "principles": list(loaded.principles),
-        "kill_switch": "paused" if paused else "trading enabled",
+        "kill_switch": f"holding: {'; '.join(stops)}" if stops else "trading enabled",
         "live": b.live,
         "steerable": {name: bound.meaning for name, bound in STEERABLE.items()},
         "steering": None if steering is None else {**asdict(steering), "deltas": dict(steering.deltas)},

@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from bazaar_agent import guardrails as gr
 from bazaar_agent.agents.dealer import BidPlan, bid_schedule
 from bazaar_agent.agents.seller import (
     Listing,
@@ -115,11 +116,9 @@ def _denied(*reasons: str) -> Verdict:
 
 
 def kill_switch(b: Backend) -> list[str]:
-    """`touch .local/PAUSE` or `trading_enabled = false` stops every write, cancels included."""
-    reasons = [] if b.rules.trading_enabled else ["trading_enabled = false"]
-    if (REPO_ROOT / b.rules.pause_file).exists():
-        reasons.append(f"pause file {b.rules.pause_file} exists")
-    return reasons
+    """`touch .local/PAUSE` or `trading_enabled = false` holds every write, cancels included. Read live
+    (`guardrails.kill_switch`): a GUARDRAILS.md edit counts on the next call, without a restart."""
+    return list(gr.kill_switch(b.rules))
 
 
 @dataclass(frozen=True)
@@ -191,6 +190,7 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
         t_hours=clock.t_hours,
         accepts_this_tick=b.ledger.accepts_in_tick(clock.tick),
         paused=(REPO_ROOT / b.rules.pause_file).exists(),
+        stops=gr.kill_switch(b.rules),
     )
     action = Action("duel_accept" if move.kind == "accept" else "duel_offer", str(args.duel_id))
     detail = {"duel": duel, "move": move}

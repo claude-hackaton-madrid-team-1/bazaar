@@ -11,6 +11,7 @@ from bazaar_agent.guardrails import Guardrails, Ledger
 from bazaar_agent.runtime import tools as tl
 from tests.agent_fakes import clock, our_ask
 from tests.runtime_fakes import DUEL, TEAM_KEY, TOKEN, Public, Spawner, Team, backend
+from tests.test_kill_switch import Switch
 
 runner = CliRunner()
 WRITES = {
@@ -89,7 +90,7 @@ def test_every_write_is_a_dry_run_by_default_and_sends_nothing(tmp_path):
     assert dealer["request"]["bids"] == list(range(10, 21)) and "--max 20 --start 10" in dealer["command"]
 
 
-def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path):
+def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path, monkeypatch):
     team = full_team()
     b = backend(tmp_path, team=team)
     refused = {
@@ -100,9 +101,13 @@ def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path):
     for name, (args, why) in refused.items():
         answer, _ = run(b, name, args)
         assert answer["status"] == "rejected" and why in answer["guardrail"], (name, answer)
-    stopped = backend(tmp_path, team=team, rules=Guardrails(trading_enabled=False))
-    assert "trading_enabled = false" in run(stopped, "sell_cancel", {"offer_id": 77})[0]["guardrail"]
+    (tmp_path / "switch").mkdir()
+    switch = Switch(tmp_path / "switch", monkeypatch)
+    switch.trading(False)  # edited while the runtime runs: the same backend holds on its next call
+    assert "trading_enabled = false" in run(b, "sell_cancel", {"offer_id": 77})[0]["guardrail"]
     assert team.sent == []
+    switch.trading(True)
+    assert run(b, "sell_cancel", {"offer_id": 77})[0]["guardrail"] == "allowed"
 
 
 def test_bad_arguments_are_refused_at_the_boundary(tmp_path):
@@ -314,9 +319,13 @@ def test_a_write_reads_the_game_four_times_and_the_catalog_once_per_window(tmp_p
     assert team.reads == ["me", "my_offers", "me", "my_offers"] and public.catalog_reads == 1
 
 
-def test_steering_meets_the_kill_switch_and_the_server_only_previews_it(tmp_path):
-    stopped = backend(tmp_path, live=True, rules=Guardrails(trading_enabled=False))
+def test_steering_meets_the_kill_switch_and_the_server_only_previews_it(tmp_path, monkeypatch):
+    (tmp_path / "switch").mkdir()
+    switch = Switch(tmp_path / "switch", monkeypatch)
+    switch.trading(False)
+    stopped = backend(tmp_path, live=True)
     assert "trading_enabled = false" in run(stopped, "steer", WRITES["steer"])[0]["guardrail"]
+    switch.trading(True)
     server = backend(tmp_path, live=True)
     server.server = True
     preview, _ = run(server, "steer", WRITES["steer"])
