@@ -121,7 +121,7 @@
           "mark": "✓"
         },
         {
-          "text": "bazaar-taker, -maker: dry run",
+          "text": "bazaar-taker, -maker: LIVE",
           "mark": "✓"
         },
         {
@@ -129,7 +129,8 @@
           "mark": "✓"
         },
         {
-          "text": "bazaar-monitor off (CLI)"
+          "text": "bazaar-monitor: back on (drift)",
+          "mark": "◐"
         },
         {
           "text": "bazaar-mcp ✓ · sim, evals",
@@ -170,11 +171,11 @@
       "status": "part",
       "lines": [
         {
-          "text": "taker = buyer (dry run)",
+          "text": "taker = buyer, live from 09:00",
           "mark": "✓"
         },
         {
-          "text": "maker = seller (dry run)",
+          "text": "maker = seller, live from 09:00",
           "mark": "✓"
         },
         {
@@ -186,7 +187,7 @@
           "mark": "✓"
         },
         {
-          "text": "BAZAAR_LIVE=1: your call",
+          "text": "BAZAAR_LIVE=1 set Sat 01:45",
           "note": true
         },
         {
@@ -306,14 +307,20 @@
     {
       "status": "todo",
       "label": "decision",
-      "title": "Go live: BAZAAR_LIVE=1",
-      "body": "Taker and maker trade the real game only after you set it on their Railway service."
+      "title": "Market Test venue + broker",
+      "body": "Up to 30 points. Build-only now (tested on the simulator), then you decide on the 270 P venue bond at 09:00."
     },
     {
       "status": "todo",
       "label": "decision",
-      "title": "Market Test venue + broker",
-      "body": "Worth up to 30 points; blocked by the trading permission until you choose full or build-only."
+      "title": "One agent instead of three",
+      "body": "Merge bazaar-duels, -taker and -maker into one tick loop (one read of clock and /me, Jev orders the moves); built in dry run, switched after a side-by-side hour."
+    },
+    {
+      "status": "todo",
+      "label": "decision",
+      "title": "Marius's PRs #60–#62",
+      "body": "Reviewed: #60 approve, #61 safe with fixes, #62 approve after rebase. Post the findings on his PRs, or a worker takes them over."
     }
   ],
   "being_built": [
@@ -321,13 +328,13 @@
       "status": "wip",
       "label": "worker",
       "title": "bazaar-sim",
-      "body": "A simulated market to test every agent live while the game is closed."
+      "body": "Down until #55 merges (the service builds from main). Now: rebase, conflicts, and the BAZAAR_SIM=1 flag with hard-coded URLs."
     },
     {
       "status": "wip",
       "label": "worker",
       "title": "Evals on Railway",
-      "body": "Code merged (#58): online outcomes in Postgres + Phoenix annotations. Now: the bazaar-evals service."
+      "body": "Code merged (#58). Now: the bazaar-evals service, taking bazaar-monitor down again, and BAZAAR_LIVE kept by the IaC."
     }
   ],
   "not_started": [
