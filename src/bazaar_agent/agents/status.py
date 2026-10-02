@@ -57,7 +57,7 @@ INPUT_FIELDS = frozenset(  # the card, where, with whom, and the counterparty's 
 UNSENT_FIELDS = frozenset({"tick", "kind", "status"})  # a row not sent: no counterparty, offer id or price
 UNSENT_INPUT_FIELDS = frozenset({"item", "ref", "card", "venue", "side"})
 INPUT_GROUPS = ("offer", "listing")  # maker_jev's states nest the card they are about one level down
-SENT_PRICE = "price"  # our own price is public once posted: shown on an approved (sent or would-send) row only
+SENT_PRICE = "price"  # our own price is public once posted: shown only on an approved row of a live agent
 MOVE_FIELDS = frozenset(
     {"kind", "price", "accept", "open_thread", "topic", "cancel", "hold", "reprice", "give", "want", "venue"}
 )
@@ -82,10 +82,10 @@ def _guardrail(verdict: object) -> str:
 
 def public_decision(row: dict[str, Any]) -> dict[str, Any]:
     """What /state and /events show of one decision: what the agent did, never its private numbers.
-    A row that was not sent (rejected, skipped, expired) shows only the card, where and its status: a
-    rival who lists a card and sees our `skip ... accept quota` row for its offer and price would learn
-    that its ask sat below our value."""
-    sent = row.get("status") == "approved"
+    A row that was not sent (rejected, skipped, expired, or any dry-run row) shows only the card, where and
+    its status: a rival who lists a card and sees our `skip ... accept quota` or `would accept` row for its
+    offer and price would learn that its ask sat below our value. A missing `dry_run` counts as a dry run."""
+    sent = row.get("status") == "approved" and row.get("dry_run") is False
     fields = INPUT_FIELDS | {SENT_PRICE} if sent else UNSENT_INPUT_FIELDS
     raw = row.get("inputs")
     inputs: dict[str, Any] = {}

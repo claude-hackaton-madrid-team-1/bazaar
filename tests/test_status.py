@@ -46,7 +46,8 @@ def decision(i=1, **extra):
         "jev": {"verdict": "undecided", "value": 0.5},
         "chosen": True,
         "status": "approved",
-        "sent": "would-send",
+        "dry_run": False,
+        "sent": "sending",
         **extra,
     }
 
@@ -79,7 +80,7 @@ def test_health_and_state_serve_the_contract_with_open_cors(served):
         "LAV-02",
         {"accept": 1},
         {"verdict": "undecided"},
-        "would-send",
+        "sending",
     )
     assert get(port, "/health")[2]["last_tick_at"] == "2026-09-21T14:13:20+00:00"
     assert get(port, "/nope")[0] == 404
@@ -213,7 +214,7 @@ def numbers(payload):
 def taker_rows(tmp_path, hub):
     """A dealer opening and a bid through the real Recorder: the same calls the taker makes."""
     log = DecisionLog(tmp_path)
-    rec = Recorder("taker", log, live=False, log=lambda line: None, hub=hub)
+    rec = Recorder("taker", log, live=True, log=lambda line: None, hub=hub)  # decide() itself never sends
     rec.decide(
         155,
         "dealer_open",
@@ -314,6 +315,21 @@ def test_a_rejected_accept_carries_no_price_offer_id_or_counterparty(served):
         "move": {},
     }
     assert numbers(d) == {100.0, 2.0}  # the tick and LAV-02; no offer id, ask, fee or price
+
+
+@pytest.mark.parametrize("dry_run", [True, None])  # None: a row without the flag counts as a dry run
+def test_a_dry_run_would_accept_is_never_sent_so_it_shows_no_price(served, dry_run):
+    hub, port = served
+    board = {"offer_id": 9137, "venue": "rastro", "maker": "t07", "ref": "LAV-02", "ask": 9}
+    hub.decision(decision(inputs=board, dry_run=dry_run, sent="would-send", move={"accept": 9137, "price": 10}))
+    (d,) = get(port, "/state")[2]["decisions"]
+    assert (d["status"], d["inputs"], d["move"], d["jev"]) == (
+        "approved",
+        {"ref": "LAV-02", "venue": "rastro"},
+        {},
+        None,
+    )
+    assert numbers(d) == {100.0, 2.0}
 
 
 def test_a_price_we_never_sent_is_not_published(served):

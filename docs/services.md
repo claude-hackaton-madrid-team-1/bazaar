@@ -12,8 +12,9 @@ one of our private numbers (see "Public by design"). Phoenix is read-only behind
 | **Phoenix** | https://phoenix-production-6aa3.up.railway.app | Traces UI for every negotiation, duel, monitor tick and CLI line (project `bazaar`) |
 | **bazaar-mcp** | `https://<generated domain>/mcp` (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
 
-Both agents start in **dry run**: they log and publish what they *would* do. A service trades only
-when `BAZAAR_LIVE=1` is set on it by hand (see README, "Production on Railway").
+Both agents start in **dry run**: they log what they *would* do and publish only its outline (no prices,
+see "Public by design"). A service trades only when `BAZAAR_LIVE=1` is set on it by hand (see README,
+"Production on Railway").
 
 ## Taker and maker: HTTP
 
@@ -73,7 +74,7 @@ A decision, as published:
 
 ```json
 {"agent": "taker", "decision_id": 4180, "tick": 155, "kind": "dealer_bid",
- "chosen": true, "status": "approved", "dry_run": true, "sent": "would-send", "thread_id": 812,
+ "chosen": true, "status": "approved", "dry_run": false, "sent": "sending", "thread_id": 812,
  "guardrail": "allowed", "jev": {"verdict": "yes"},
  "inputs": {"dealer": "abuela", "thread": 812, "item": "LAV-08", "her_ask": 30, "final": false},
  "move": {"kind": "bid", "price": 21}}
@@ -91,11 +92,12 @@ A decision, as published:
   `maker`, `ask` / `her_ask` (the counterparty's price), `fee` and `final`, read from the row's inputs
   (and from their `offer` / `listing` part for the maker's Jev rows). Our own `price` and the `move`
   (`{kind, price}`, `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`,
-  `{hold}`, `{reprice, price}`) appear only on an `approved` row: a price we never sent stays private.
-- A row that was not sent (`rejected`, `expired`, a skipped accept) is cut down further:
-  `{agent, tick, kind, status, guardrail, jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
+  `{hold}`, `{reprice, price}`) appear only on an `approved` row of a live agent: a price we never sent
+  stays private.
+- A row that was not sent (`rejected`, `expired`, a skipped accept, and every dry-run row) is cut down
+  further: `{agent, tick, kind, status, guardrail, jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
   No counterparty, offer id, ask or price: otherwise a rival could list a card and learn from our
-  `skip ... accept quota` row that its ask sat below our value.
+  `skip ... accept quota` or dry-run `would accept` row that its ask sat below our value.
 - An execution shows the `request` we sent (`offer`, `thread`, `with`, `topic`, `price`, `give`, `want`,
   `venue`), whether it worked (`ok`, `error_code`) and the id it created (`created_id`), not the
   game's answer body.
