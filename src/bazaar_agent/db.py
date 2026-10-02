@@ -97,17 +97,18 @@ def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, 
     return {"feed_events": len(events), "tape": len(prints)}
 
 
-def load_curves(conn: psycopg.Connection, events: Iterable[Event]) -> int:
+def load_curves(conn: psycopg.Connection, events: Iterable[Event], ours: str | None = None) -> int:
     """Rebuild dealer curves from a FULL history (see `covers_history`). A curve only grows: a writer
-    that is behind (fewer steps, a shorter span, no fill yet) never overwrites a fresher row."""
-    curves = dealer_threads(events)  # sorted by thread id
+    that is behind (fewer steps, a shorter span, no fill yet) never overwrites a fresher row.
+    `ours` (our team id) tags our own threads; a writer that does not know it leaves the tag alone."""
+    curves = dealer_threads(events, ours)  # sorted by thread id
     with conn.cursor() as cur:
         cur.executemany(
             "insert into dealer_curves (thread_id, dealer, team, item, opening_ask, asks, bids, final_ask, "
-            "outcome, fill_price, steps, ticks) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "outcome, fill_price, steps, ticks, ours) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "on conflict (thread_id) do update set asks = excluded.asks, bids = excluded.bids, "
             "final_ask = excluded.final_ask, outcome = excluded.outcome, fill_price = excluded.fill_price, "
-            "steps = excluded.steps, ticks = excluded.ticks "
+            "steps = excluded.steps, ticks = excluded.ticks, ours = coalesce(excluded.ours, dealer_curves.ours) "
             "where excluded.steps >= coalesce(dealer_curves.steps, 0) "
             "and excluded.ticks >= coalesce(dealer_curves.ticks, 0) "
             "and (excluded.fill_price is not null or dealer_curves.fill_price is null)",
@@ -125,6 +126,7 @@ def load_curves(conn: psycopg.Connection, events: Iterable[Event]) -> int:
                     t.fill_price,
                     t.steps,
                     t.last_tick - t.opened_tick,
+                    t.ours if ours else None,
                 )
                 for t in curves
             ],
@@ -148,21 +150,22 @@ def covers_history(conn: psycopg.Connection, events: list[Event]) -> bool:
     return oldest is None or min(e["id"] for e in events) <= oldest
 
 
-def load_feed(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, int]:
+def load_feed(conn: psycopg.Connection, events: Iterable[Event], ours: str | None = None) -> dict[str, int]:
     """Upsert raw events and the tape; rebuild dealer curves when this history is complete. Idempotent."""
     events = list(events)
     counts = load_events(conn, events)
-    return {**counts, "dealer_curves": load_curves(conn, events) if covers_history(conn, events) else 0}
+    curves = load_curves(conn, events, ours) if covers_history(conn, events) else 0
+    return {**counts, "dealer_curves": curves}
 
 
-def load_history(conn: psycopg.Connection, events: Iterable[Event], tick: int) -> bool:
+def load_history(conn: psycopg.Connection, events: Iterable[Event], tick: int, ours: str | None = None) -> bool:
     """The monitor's periodic rebuild. False when the derived tables were left to a fuller history."""
     events = list(events)
     load_events(conn, events)
     if not covers_history(conn, events):
         return False
-    load_curves(conn, events)
-    save_competitors(conn, team_flows(events), tick)
+    load_curves(conn, events, ours)
+    save_competitors(conn, team_flows(events), tick, ours)
     return True
 
 
@@ -235,7 +238,9 @@ def save_snapshot(conn: psycopg.Connection, tick: int, me: dict[str, Any]) -> No
     conn.commit()
 
 
-def save_competitors(conn: psycopg.Connection, flows: Iterable[Any], tick: int) -> int:
+def save_competitors(conn: psycopg.Connection, flows: Iterable[Any], tick: int, ours: str | None = None) -> int:
+    """Upsert competitor profiles. Our own team is not a competitor: it is skipped, and a row an older
+    version wrote for it is removed (`bazaar teams` shows our flow apart, from the feed)."""
     rows = [
         (
             f.team,
@@ -247,8 +252,11 @@ def save_competitors(conn: psycopg.Connection, flows: Iterable[Any], tick: int) 
             json.dumps({"top_set": f.top_set, "dealer_threads": f.dealer_threads, "bids": f.bids}),
         )
         for f in sorted(flows, key=lambda f: f.team)
+        if f.team != ours
     ]
     with conn.cursor() as cur:
+        if ours:
+            cur.execute("delete from competitor_profiles where team = %s", (ours,))
         cur.executemany(
             "insert into competitor_profiles (team, updated_tick, set_interest, avg_pack_price, listings, fills, "
             "notes) values (%s, %s, %s, %s, %s, %s, %s) on conflict (team) do update set "

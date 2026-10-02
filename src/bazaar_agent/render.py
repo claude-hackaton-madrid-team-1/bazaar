@@ -58,12 +58,13 @@ def tape_table(prints: list, limit: int) -> Table:
     return t
 
 
-def curves_table(summaries: list) -> Table:
-    t = Table(title="Dealer curves · every team's threads, rebuilt from the feed")
+def curves_table(summaries: list, title: str = "every team's threads") -> Table:
+    t = Table(title=f"Dealer curves · {title}, rebuilt from the feed")
     for col in (
         "dealer",
         "item",
         "threads",
+        "ours",
         "fills",
         "fill min",
         "fill med",
@@ -78,6 +79,7 @@ def curves_table(summaries: list) -> Table:
             s.dealer,
             s.item,
             str(s.threads),
+            str(s.ours) if s.ours else "-",
             str(s.fills),
             _n(s.fill_min),
             _n(s.fill_median, "{:.1f}"),
@@ -91,12 +93,13 @@ def curves_table(summaries: list) -> Table:
 
 def threads_table(threads: list, limit: int) -> Table:
     t = Table(title=f"Dealer threads · last {min(limit, len(threads))}")
-    for col in ("thread", "team", "dealer", "side", "item", "team prices", "dealer prices", "final", "fill"):
+    for col in ("thread", "team", "ours", "dealer", "side", "item", "team prices", "dealer prices", "final", "fill"):
         t.add_column(col)
     for d in threads[-limit:]:
         t.add_row(
             str(d.thread),
             d.team,
+            "[bold]us[/bold]" if d.ours else "",
             d.dealer,
             d.side,
             d.item,
@@ -108,8 +111,10 @@ def threads_table(threads: list, limit: int) -> Table:
     return t
 
 
-def teams_table(flows: list) -> Table:
-    t = Table(title="Competition · team flow from the public feed")
+def teams_table(
+    flows: list, title: str = "Competition · team flow from the public feed", us: str | None = None
+) -> Table:
+    t = Table(title=title)
     for col in (
         "team",
         "dealer thr",
@@ -127,7 +132,7 @@ def teams_table(flows: list) -> Table:
     for f in flows:
         interest = " ".join(f"{s}{n:+d}" for s, n in f.set_interest.most_common() if n)
         t.add_row(
-            f.team,
+            f"{f.team} [bold](us)[/bold]" if us and f.team == us else f.team,
             str(f.dealer_threads),
             str(f.bids),
             str(f.buys),
@@ -142,8 +147,8 @@ def teams_table(flows: list) -> Table:
     return t
 
 
-def book_table(lines: list, venue: str) -> Table:
-    t = Table(title=f"Order book · {venue} · {len(lines)} lines")
+def book_table(lines: list, venue: str, title: str = "Order book", us: str | None = None) -> Table:
+    t = Table(title=f"{title} · {venue} · {len(lines)} lines")
     for col in ("card", "side", "price", "maker", "pseudonym", "offer", "expires"):
         t.add_column(col, justify="right" if col in ("price", "offer", "expires") else "left")
     for b in lines:
@@ -152,7 +157,7 @@ def book_table(lines: list, venue: str) -> Table:
             b.card,
             f"[{style}]{b.side}[/{style}]",
             str(b.price),
-            b.maker,
+            f"{b.maker} [bold](us)[/bold]" if us and b.maker == us else b.maker,
             b.pseudonym,
             str(b.offer_id),
             _n(b.expires_tick),

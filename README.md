@@ -16,14 +16,14 @@ uv sync                                   # Python deps
 cp -n .env.example .env 2>/dev/null; $EDITOR .env   # BAZAAR_KEY=tk-... and TYPESAFE_API_KEY=...
 
 uv run bazaar clock                       # tick, pace, limits, action budget left in this tick
-uv run bazaar monitor --notify           # KEEP RUNNING: feed + traders + /me snapshots + new-dealer alerts
+uv run bazaar monitor --notify           # KEEP RUNNING: live stream + per-tick poll, traders, /me, alerts in seconds
 (cd web && npm ci && npm run build)       # once per web change: static export to web/out
 uv run --project tui tui/serve.py         # web view on http://localhost:8777, fed by the monitor (--mock: mock game)
-uv run bazaar traders                     # every dealer and team the monitor has seen
+uv run bazaar traders                     # every dealer and team the monitor has seen (our row: status `us`)
 uv run bazaar alerts                      # new dealers, levels going active, announcements
-uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads
-uv run bazaar teams                       # the competition: flow, spend, inferred ×1.6 set
-uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams
+uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads (--ours/--theirs)
+uv run bazaar teams                       # the competition: flow, spend, inferred ×1.6 set (us apart)
+uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams (ours apart)
 uv run bazaar tape                        # every settlement with price
 uv run bazaar status                      # our cash, level, score, cards (needs BAZAAR_KEY)
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
@@ -68,11 +68,51 @@ the environment first, then `.env`. Unset means the local docker Postgres
   Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
   writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
   history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
-  second monitor doubles the team's API reads against the 5 req/s limit. Readers (`traders`,
-  `db tables`, `db check`, analyses) can run anywhere.
+  second monitor doubles the team's API reads against the 5 req/s limit, and takes a second of
+  our 6 live streams (see below). Readers (`traders`, `db tables`, `db check`, analyses) can run
+  anywhere.
 - **Tests on the shared database.** `tests/test_db.py` runs in its own `bazaar_pytest_<random>`
   schema per test and drops it, so teammates can run the suite at once and real tables are never
   touched.
+
+## The monitoring agent (real time)
+
+`uv run bazaar monitor` holds **one** live connection to `GET /api/events/stream?scope=team`
+(server-sent events, our `X-Team-Key` in a header) and pushes every event through the same
+pipeline the moment it lands: `.local/feed/feed.jsonl` (dedupe by event id), Postgres
+`feed_events` + `tape`, alerts, and an OpenTelemetry span. The per-tick `/api/feed` poll stays on:
+it fills whatever the stream missed (a reconnect, a refusal) and is the source of truth for dedupe,
+so an event delivered by both is stored and alerted once. The SDK has no SSE method, so this is the
+documented raw-`httpx` Plan B (`src/bazaar_agent/stream.py`, format checked on a real connection).
+
+- **Latency.** Live run, tick 128 → 129 (2026-10-02): 34 events reached us by stream before the
+  tick-129 poll, median 52.0 s and max 58.7 s earlier, so an alert fires within a second of its
+  event instead of at the next tick. The tick line says it: `stream live: +34 live, stream ahead on
+  34 events by median 52.0 s (max 58.7 s), 7 poll-only` (poll-only = emitted at the tick boundary,
+  read by the poll first). `--show-events` prints each streamed event with its arrival time.
+- **The stream cap is shared.** 6 open streams per team key, counted across every process on every
+  teammate's laptop **and every browser tab** showing the live game. One stream per process
+  (enforced), so a second monitor is one more stream; run it with `--no-stream` if the cap is tight.
+  On `429` (`too_many_streams`) or `503` the monitor drops to polling and tries the stream again at
+  the next tick, never in a loop. Drops reconnect with backoff 0.6 s → 10 s. A `401` stops the
+  stream for the run (retrying a bad key counts toward `too_many_failures`).
+- **What it keeps.** Public events go to `feed.jsonl`; events scoped to our team (e.g. our practice
+  duel messages) go to `.local/feed/team_events.jsonl`, never into the public feed tables. `tick`
+  events, which `/api/feed` never carries, are not stored.
+
+### Us vs the competition
+
+Our team id comes from `BAZAAR_TEAM_ID` (env or `.env`), else `.local/team_id`, else one
+`GET /api/me` (then cached). Our own activity is **tagged, never dropped**:
+
+| Where | What changes |
+|---|---|
+| `bazaar teams`, `competitor_profiles` | the competition table leaves us out; we get our own "Us" table (`--include-us` mixes us in). The monitor deletes our stale `competitor_profiles` row |
+| `bazaar curves`, `dealer_curves` | an `ours` column (`dealer_curves.ours boolean`, null = written before we knew our id); `--ours`, `--theirs`, `--all` (default) |
+| `bazaar book` | our own offers in a separate "Our offers" table (`--include-us` to mix) |
+| `bazaar traders`, `traders` | our row has status `us` |
+| alerts | never for our own actions (our level-up, our venue, our listing, a dealer answering us) |
+| `feed_events`, `tape` | keep everything; the SQL view `their_events` is the feed minus our activity |
 
 ## Ticks: the rule every loop follows
 
@@ -126,7 +166,8 @@ What you see in Phoenix:
 |---|---|---|
 | `negotiation` (AGENT) | `bazaar dealer buy --live` | one `tick N` child per tick with events `message` (every line in the thread, both sides, with price), `dealer_offer`, `jev_verdict` (verdict, value, probabilities, latency), `guardrail` (allowed, violations), `our_move` (kind, price, our words, reason), `console`, and `exception` with the stack when the server refuses a move. The root holds dealer, item, plan, outcome, price, ticks and the full transcript |
 | `duel` (AGENT) | `bazaar duel run` | one per duel id: role, limit, a `duel tick N` child per tick with the rival offer, our move, guardrail, refusals |
-| `monitor tick N` | `bazaar monitor` | new events, newest id, gap flag, dealer/team/level counts, our cash/level/score; every `alert` and new or changed `trader` as an event; DB failures as exceptions (the tick goes on) |
+| `monitor tick N` | `bazaar monitor` | new events, newest id, gap flag, dealer/team/level counts, our cash/level/score, the stream's state and lead over the poll; every `alert` and new or changed `trader` as an event; DB failures as exceptions (the tick goes on) |
+| `monitor stream` | `bazaar monitor` | one trace per live-stream burst between ticks: events received and new, first/last id, types, stream state; its `alert` events |
 | `feed.capture`, `duels tick N` | `bazaar feed capture`, `bazaar duel run` | one trace per tick, with what the command printed |
 | `cli <command>` | every command | everything the command printed, as `console` events (with the command name) |
 | `thread.view` | `bazaar thread <id>` | the whole conversation as events, the transcript as output |
@@ -181,6 +222,27 @@ Phoenix runs on one machine. Teammates can reach it in either of two ways. Neith
    `OTEL_EXPORTER_OTLP_TRACES_HEADERS` in the shell environment (the exporter reads these from
    the environment, not from `.env`). This path is untested: check it against Arize's docs before
    relying on it.
+
+## Runtime LLM (talk to it, let it write the words, steer it)
+
+[`RUNTIME.md`](RUNTIME.md) configures it. Jev picks the model per move (`questions/runtime_model.json`,
+a probability per candidate; undecided → `runtime_model_default`), unless you pin one:
+`--llm-runtime` > `BAZAAR_LLM_RUNTIME` > RUNTIME.md `llm_runtime`. Aliases: `opus-5-5`,
+`sonnet-5-5`, `haiku-4-5`, `fable-5-1`, `gpt-6-1-sol` (any `claude-*` / `gpt-*` id passes through).
+Keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` in `.env`; without one, every LLM path falls back.
+
+```sh
+uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices
+uv run bazaar ask "buy LAV-09 under 90"              # strict intent → guardrail verdict → the command (never runs it)
+uv run bazaar --llm-runtime opus-5-5 ask "sell my spare SAL-03 for at least 8"
+uv run bazaar steer "be more aggressive with rares tonight"   # bounded deltas, clamped by GUARDRAILS.md,
+                                                     # applied by `bazaar strategy` and `duel run` until a tick
+uv run bazaar steer --show                           # what is steered now, and until which tick
+```
+
+With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chosen model write each
+message; the price stays the structured field set by code, and any other number, a timeout or an
+error sends the template instead.
 
 ## How it fits together
 
@@ -252,9 +314,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar clock` | Current tick, pace, doors, per-tick limits and the action budget left in this tick. |
 | `uv run bazaar dealers` | Dealers in play: traits, menu, list prices, hourly quotas. |
 | `uv run bazaar tape` | Every settlement (trade print): who bought what from whom, at what price. |
-| `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads. |
-| `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). |
-| `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. |
+| `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads; ours are tagged. |
+| `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart. |
+| `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
@@ -262,7 +324,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
 | `uv run bazaar rules check` | Dry-run one action against the guardrails with our live /me, clock and ledger. |
-| `uv run bazaar monitor` | The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts. |
+| `uv run bazaar monitor` | The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts. |
 | `uv run bazaar traders` | Every trader we know (dealers and teams) from the monitor's Postgres table, with status and level. |
 | `uv run bazaar alerts` | The latest alerts raised by the monitor: new dealers, level changes, announcements. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
@@ -279,17 +341,20 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers. |
+| `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which keys are set (never values), and Jev's last choices. |
+| `uv run bazaar ask` | Talk to the agent: sentence → strict intent → guardrail verdict → exact command. Dry run: never trades. |
+| `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
+- [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
+- [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
+- [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
+- [2026-10-02] finding — Jev picks the runtime LLM decisively when the state has stakes and time
 - [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
 - [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
 - [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
-- [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
-- [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
-- [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
-- [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
-- [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -302,6 +367,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | Fri 22:34 | `a7c09df` |
+| [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | Fri 22:31 | `7813244` |
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
 | [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
@@ -312,14 +379,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#31](../../pull/31) | fix: close the Greptile P1s on the live trading path | Fri 21:34 | `808dc3e` |
 | [#30](../../pull/30) | feat: GUARDRAILS.md rule book, enforced by the runtime and shown in the CLI | Fri 21:29 | `239bb72` |
 | [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
-| [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
-| [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
 
 ### Open pull requests
 
-| PR | Title | Branch |
-|---|---|---|
-| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | `ogarciarevett/feat-monitor-realtime` |
-| [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | `ogarciarevett/feat-runtime-llm` |
+_No open PRs (or `gh` unavailable)._
 
 <!-- BAZAAR:ACTIVITY:END -->
