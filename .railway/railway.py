@@ -149,6 +149,41 @@ def evals_service() -> object:
     )
 
 
+SIM_PORT = "8080"
+# The simulator's world lives in its OWN database on the team's Postgres server, created once with
+# `create database bazaar_sim` (README "Simulator"). The simulator refuses any other database name,
+# so this can never point at the real `railway` one.
+SIM_DATABASE_URL = (
+    "postgresql://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/bazaar_sim"
+)
+
+
+def simulator() -> object:
+    """`bazaar-sim serve`: a simulated Bazaar API for testing every agent while the game is closed.
+
+    Team keys are `sim-team1` ... `sim-team8`; a real key is refused. SIM_ADMIN_TOKEN (reset and
+    manual ticks) is generated once and set with `railway variable set ... --stdin`, never here.
+    Its public domain is a Railway-generated `*.up.railway.app` one: Railway IaC does not declare
+    generated domains (docs.railway.com/infrastructure-as-code/reference, "Custom domains"), so it was
+    created once with `railway domain --service bazaar-sim` and is listed in the README."""
+    return service(
+        "bazaar-sim",
+        source=github(REPO, branch=BRANCH),
+        build=BUILD,
+        start="/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/api/health",
+        env={
+            "RAILPACK_PYTHON_VERSION": "3.12",
+            "PORT": SIM_PORT,
+            "SIM_DATABASE_URL": SIM_DATABASE_URL,
+            "SIM_TICK_SECONDS": "10",
+            "SIM_ADMIN_TOKEN": preserve(),
+        },
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
@@ -189,6 +224,7 @@ def main(ctx=None):
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     evals = evals_service()
+    sim = simulator()
 
     return project(
         "heartfelt-warmth",
@@ -200,6 +236,7 @@ def main(ctx=None):
             maker,
             mcp,
             evals,
+            sim,
             phoenix_data,
             monitor_data,
             duels_data,
