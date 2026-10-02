@@ -133,6 +133,7 @@ class ServeTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as base:
             path = Path(base) / "stream.jsonl"
+            history = [envelope(4000 + i, "offer.listed", {"venue": "rastro"}, tick=6) for i in range(700)]
             tick = [
                 envelope(-21, "agent.hello", {"team": "t01", "name": "Team 1"}),
                 envelope(-22, "agent.me", {"cash": 400}),
@@ -140,12 +141,13 @@ class ServeTest(unittest.TestCase):
                 envelope(5000, "settlement", {"parties": ["t02", "t03"], "price": 9, "items": []}),
             ]
             later = json.dumps(envelope(5001, "offer.listed", {"venue": "rastro"}, tick=8))
-            path.write_text("".join(json.dumps(e) + "\n" for e in tick) + later[:20])
+            path.write_text("".join(json.dumps(e) + "\n" for e in history + tick) + later[:20])
 
             async def check(port):
                 async with connect(f"ws://127.0.0.1:{port}/events", max_queue=None) as ws:
-                    replay = [json.loads(await ws.recv()) for _ in range(len(tick))]
-                    self.assertEqual([e["id"] for e in replay], [-21, -22, -23, 5000])
+                    replay = [json.loads(await asyncio.wait_for(ws.recv(), 2)) for _ in range(len(history) + len(tick))]
+                    expected = [-21, -22, -23] + [e["id"] for e in history] + [5000]
+                    self.assertEqual([e["id"] for e in replay], expected)
                     with path.open("a") as f:
                         f.write(later[20:] + "\n")
                     self.assertEqual(await asyncio.wait_for(ws.recv(), 2), later)

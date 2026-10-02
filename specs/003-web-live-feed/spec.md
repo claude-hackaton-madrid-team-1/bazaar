@@ -32,7 +32,9 @@ Album screens stay empty and Market and Debug show the whole market. That is exp
 
 `tui/serve.py` tails `.local/stream.jsonl` by default (it replays what is already there, then
 streams new lines as the monitor writes them). The mock game stays behind `--mock` for when the
-doors are closed.
+doors are closed. A client that joins late first gets the latest `agent.hello`, `agent.me`, `clock`
+and `agent.phase`, always, then the last 5000 events (the web reducer bounds its own state), so our
+events in that replay are already ours.
 
 ```
 uv run bazaar monitor                          # writes .local/stream.jsonl every tick

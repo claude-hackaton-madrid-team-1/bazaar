@@ -64,7 +64,7 @@ class StreamFile:
 
 
 class Hub:
-    def __init__(self, game, speed, keep=500):
+    def __init__(self, game, speed, keep=5000):
         self.game, self.speed = game, speed
         self.backlog = deque(maxlen=keep)
         self.sticky = {}
@@ -72,9 +72,9 @@ class Hub:
         self.task = None
 
     async def handler(self, ws):
-        kept = {e["id"] for e in self.backlog}
-        replay = [e for e in self.sticky.values() if e["id"] not in kept]
-        for e in replay + list(self.backlog):
+        first = list(self.sticky.values())
+        sent = {id(e) for e in first}
+        for e in first + [e for e in self.backlog if id(e) not in sent]:
             await ws.send(json.dumps(e))
         self.clients.add(ws)
         try:
