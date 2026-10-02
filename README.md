@@ -499,12 +499,13 @@ Locally: `BAZAAR_MCP_TOKEN=... uv run bazaar mcp serve` (127.0.0.1:8765, DNS-reb
 Jev chose the design (`questions/evals.json`, verdicts logged): **online outcomes**, scored after each
 decision settles, **stored in Postgres** (the source of truth the dashboard reads) and **attached to
 the matching Phoenix trace** as an annotation. The evals measure what the game scores (RULES.md
-"Scoring"), never the number of trades, fees or luck. `bazaar evals run` reads Postgres only: no game
-API call, so it costs nothing of the key's 5 req/s.
+"Scoring"), never the number of trades, fees or luck. A pass of `bazaar evals run` reads Postgres only
+(no game API call), and nothing in the evals uses the team key: they cost nothing of its 5 req/s.
 
 ```sh
 uv run bazaar evals run                 # score everything settled; idempotent (a re-run changes 0 rows)
 uv run bazaar evals run --since-tick 300
+uv run bazaar evals run --every-ticks 6 # keep running on the game clock (keyless /api/clock)
 uv run bazaar evals report              # scorecard, dealer ladder, worst 5 per target, Jev calibration
 uv run bazaar evals report --json       # the same for the dashboard
 uv run bazaar duel done                 # one /api/duels?done=true read: finished duels into Postgres
@@ -528,11 +529,13 @@ dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:
 `eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
 the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
 
-**Always on.** Railway service `bazaar-evals` runs `bazaar evals run --every 180`: it scores again
-only when an input moved in Postgres (a game tick, a duel from `duel done` or `import-duels`, a `/me`
-snapshot, a decision), retries Phoenix for a missing span on the next three polls (a trace lands when
-its duel or negotiation ends), and backs off while Postgres is unreachable. It has no game key. After a
-restart, `bazaar duel run` reads `?done=true` once, so a duel that finished while it was down is stored.
+**Always on.** Railway service `bazaar-evals` runs `bazaar evals run --every-ticks 6`. Like every
+loop here it follows the game clock (tick discipline), read from the keyless public `/api/clock`, so
+it never touches the team key: doors closed, no pass. Every 6 ticks it scores again when an input moved
+in Postgres (a game tick, a duel from `duel done` or `import-duels`, a `/me` snapshot, a decision) or an
+outcome still waits for its Phoenix span (each is looked up on three passes: a trace lands when its duel
+or negotiation ends). A Postgres outage is retried at the next due tick. After a restart, `bazaar duel
+run` reads `?done=true` once, so a duel that finished while it was down is stored.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
@@ -548,7 +551,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-mcp` | `https://<generated domain>/mcp` (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | declared in `.railway/railway.py`, dry run (no `BAZAAR_LIVE`) |
-| `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every 180`) into Postgres `outcomes` and Phoenix annotations | running |
+| `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -570,7 +573,7 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
-| `bazaar-evals` | `bazaar evals run --every 180` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: it never calls the game API |
+| `bazaar-evals` | `bazaar evals run --every-ticks 6` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: only the keyless `/api/clock` paces it |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 

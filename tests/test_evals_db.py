@@ -201,46 +201,80 @@ def test_the_cli_imports_a_duel_runner_log(cli_db: None, tmp_path: Any) -> None:
     assert out.exit_code == 0 and "1 duel snapshot(s) upserted" in out.output and "no such file" in out.output
 
 
-def test_the_loop_backs_off_while_postgres_fails() -> None:
-    waits: list[float] = []
-    calls = {"n": 0}
+def clock(tick: int) -> Any:
+    from bazaar_agent.ticks import Clock
 
-    def step() -> None:
-        calls["n"] += 1
-        if calls["n"] in (2, 3):
-            raise psycopg.OperationalError("down")
-        if calls["n"] == 5:
-            raise KeyboardInterrupt
-
-    with pytest.raises(KeyboardInterrupt):
-        evals_cli.run_forever(60, step, waits.append)
-    assert waits == [60, 60, 120, 60]
+    return Clock.model_validate({"tick": tick, "next_tick_in": 20, "tick_seconds": 30})
 
 
-def test_the_loop_scores_when_an_input_moved_or_a_span_is_still_pending(
+def test_the_loop_runs_on_game_ticks_every_n_and_only_when_an_input_moved(
     database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     setup = open_in(database_url, schema)
     db.init_schema(setup)
     setup.close()
     monkeypatch.setattr(evals_cli, "_connect", lambda: open_in(database_url, schema))
-    passes: list[int | None] = []
-    monkeypatch.setattr(evals_cli, "_pass", lambda conn, since, phoenix, as_json: passes.append(since))
-    # (inputs, pending spans) per poll: new tick · same · same with a span pending · a duel from `duel done`
-    polls = iter([((10, None), 0), ((10, None), 0), ((10, None), 2), ((10, "duel 85"), 0)])
+    passes: list[int] = []
+    # (inputs, pending spans) per due tick: new · nothing new · a span pending · nothing · a `duel done` duel
+    states = iter([((10, None), 0), ((10, None), 0), ((10, None), 2), ((10, None), 0), ((10, "duel 85"), 0)])
     current: dict[str, Any] = {}
-
-    def fake_forever(every: float, step: Any) -> None:
-        for _ in range(4):
-            current["inputs"], current["pending"] = next(polls)
-            step()
-
     monkeypatch.setattr(evals_cli, "_inputs_state", lambda conn: current["inputs"])
     monkeypatch.setattr(evals_cli, "_pending", lambda conn: current["pending"])
-    monkeypatch.setattr(evals_cli, "run_forever", fake_forever)
-    result = CliRunner().invoke(evals_cli.evals_app, ["run", "--every", "60"])
+    gate = evals_cli.TickGate(3, lambda conn: passes.append(current["tick"]), phoenix=True)
+    for tick in (100, 101, 102, 103, 106, 107, 109, 112):
+        due = gate.last_tick is None or tick - gate.last_tick >= 3
+        if due:
+            current["inputs"], current["pending"] = next(states)
+        current["tick"] = tick
+        gate(clock(tick))
+    assert passes == [100, 106, 112]  # due at 100, 103, 106, 109, 112; 103 and 109 saw nothing new
+    assert gate.conn is not None
+    gate.conn.close()
+
+
+def test_a_postgres_error_drops_the_connection_and_waits_for_the_next_due_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Broken:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    opened: list[Broken] = []
+
+    def connect() -> Broken:
+        opened.append(Broken())
+        return opened[-1]
+
+    def down(conn: Any) -> Any:
+        raise psycopg.OperationalError("down")
+
+    monkeypatch.setattr(evals_cli, "_connect", connect)
+    monkeypatch.setattr(evals_cli, "_inputs_state", down)
+    gate = evals_cli.TickGate(2, lambda conn: None, phoenix=False)
+    with pytest.raises(psycopg.OperationalError):
+        gate(clock(10))  # run_per_tick reports it and goes on with the next tick
+    assert gate.conn is None and opened[0].closed
+    gate(clock(11))  # not due yet: no reconnect storm during an outage
+    assert len(opened) == 1
+
+
+def test_the_cli_loop_reads_the_keyless_public_clock(cli_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    import bazaar_agent.sdk as sdk
+    import bazaar_agent.ticks as ticks
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_per_tick(read_clock: Any, on_tick: Any, **kwargs: Any) -> int:
+        seen["reader"], seen["gate"] = read_clock, on_tick
+        return 0
+
+    monkeypatch.setattr(ticks, "run_per_tick", fake_run_per_tick)
+    result = CliRunner().invoke(evals_cli.evals_app, ["run", "--every-ticks", "6", "--no-phoenix"])
     assert result.exit_code == 0, result.output
-    assert len(passes) == 3  # the second poll saw nothing new
+    assert isinstance(seen["reader"].__self__, sdk.PublicBazaar)  # no team key on this client
+    assert seen["gate"].every_ticks == 6 and "every 6 game ticks" in result.output
 
 
 def test_the_gate_reads_inputs_and_pending_spans(seeded: psycopg.Connection) -> None:

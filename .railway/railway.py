@@ -121,20 +121,21 @@ def mcp_server(name: str, data: object) -> object:
     )
 
 
-EVALS_EVERY_S = "180"  # how often bazaar-evals looks for new inputs in Postgres (a tick, a duel, a snapshot)
+EVALS_EVERY_TICKS = "6"  # bazaar-evals looks for new inputs every 6 game ticks (3 min at 30 s, 90 s at 15 s)
 
 
 def evals_service() -> object:
     """`bazaar evals run` on a loop (README "Evals"): Postgres in, Postgres and Phoenix annotations out.
 
-    It never calls the game API, so it gets no BAZAAR_KEY and adds nothing to the key's 5 req/s budget.
+    It never uses the team key, so it gets no BAZAAR_KEY and adds nothing to the key's 5 req/s budget: its
+    loop follows the game clock through the keyless public /api/clock (tick discipline).
     Both secrets it needs are references to the services that own them, so nothing here is preserve()d.
     It writes no file: no volume."""
     return service(
         "bazaar-evals",
         source=github(REPO, branch=BRANCH),
         build=BUILD,
-        start=f"/app/.venv/bin/bazaar evals run --every {EVALS_EVERY_S}",
+        start=f"/app/.venv/bin/bazaar evals run --every-ticks {EVALS_EVERY_TICKS}",
         deploy=ALWAYS,
         replicas={REGION: 1},
         env={

@@ -1,15 +1,16 @@
 """`bazaar evals run | report | import-duels`: Team 1's online-outcome evals (questions/evals.json).
 
-Postgres in, Postgres and Phoenix out. No command here calls the game API, so the evals add nothing
-to the team key's 5 req/s budget. `run --every N` is the always-on loop of the `bazaar-evals` Railway
-service: it scores again only when an input moved (a new tick, duel, snapshot or decision in Postgres,
-or an outcome still waiting for its Phoenix span), and backs off while Postgres is unreachable.
+Postgres in, Postgres and Phoenix out. No command here uses the team key, so the evals add nothing to
+its 5 req/s budget. `run --every-ticks N` is the always-on loop of the `bazaar-evals` Railway service.
+Like every loop here it is driven by the game clock (tick discipline), read keyless from the public
+`/api/clock` (the shared `ticks.run_per_tick`: doors closed = no pass, clock errors back off). Every N
+ticks it scores again when an input moved (a tick, duel, snapshot or decision in Postgres, or an outcome
+still waiting for its Phoenix span); a Postgres outage is retried at the next due tick.
 """
 
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
@@ -21,12 +22,12 @@ from rich.markup import escape
 
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import load_settings
+from bazaar_agent.ticks import Clock
 
 evals_app = typer.Typer(
     no_args_is_help=True, help="Evals: score settled duels, dealer deals, trades (Postgres + Phoenix)"
 )
 console = Console()
-BACKOFF_MAX_S = 600.0
 
 
 def register(app: typer.Typer) -> None:
@@ -109,52 +110,54 @@ def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_js
         console.print(f"  [dim]{escape(note)}[/dim]")
 
 
-def run_forever(every: float, step: Callable[[], None], sleep: Callable[[float], None] = time.sleep) -> None:
-    """Call `step` every `every` s; while Postgres fails, back off (every × 2^n, at most 10 min)."""
-    failures = 0
-    while True:
+class TickGate:
+    """The always-on loop's step, driven by the game clock: every `every_ticks` ticks, one pass when an
+    input moved since the last one (or an outcome still waits for its Phoenix span). A Postgres error
+    drops the connection and is retried at the next due tick, so an outage costs one attempt per window."""
+
+    def __init__(self, every_ticks: int, run_pass: Callable[[psycopg.Connection], None], phoenix: bool) -> None:
+        self.every_ticks, self.run_pass, self.phoenix = every_ticks, run_pass, phoenix
+        self.conn: psycopg.Connection | None = None
+        self.seen: tuple[Any, ...] | None = None
+        self.last_tick: int | None = None
+
+    def __call__(self, clock: Clock) -> None:
+        if self.last_tick is not None and clock.tick - self.last_tick < self.every_ticks:
+            return
+        self.last_tick = clock.tick
+        if self.conn is None or self.conn.closed:
+            self.conn = _connect()
         try:
-            step()
-            failures = 0
-            wait = every
-        except psycopg.Error as e:
-            failures += 1
-            wait = min(BACKOFF_MAX_S, every * 2 ** (failures - 1))
-            _warn(f"evals: Postgres error ({type(e).__name__}), retrying in {wait:.0f} s")
-        sleep(wait)
+            seen = _inputs_state(self.conn)
+            if seen != self.seen or (self.phoenix and _pending(self.conn) > 0):
+                self.run_pass(self.conn)
+                self.seen = seen
+        except psycopg.Error:
+            self.conn.close()
+            self.conn = None
+            raise
 
 
 @evals_app.command("run")
 def evals_run(
     since_tick: int | None = typer.Option(None, help="Score only what settled at or after this tick"),
-    every: float = typer.Option(0.0, help="Keep running: look for new ticks every N seconds (0 = one pass)"),
+    every_ticks: int = typer.Option(
+        0, min=0, help="Keep running on the game clock: a pass every N ticks (keyless /api/clock; 0 = one pass)"
+    ),
     phoenix: bool = typer.Option(True, help="Attach outcomes to their Phoenix traces as annotations"),
     as_json: bool = typer.Option(False, "--json", help="The pass summary as JSON"),
 ) -> None:
     """Score every settled duel, dealer thread, team trade and Market Test; upsert into `outcomes`."""
-    if every <= 0:
+    if every_ticks <= 0:
         with _connect() as conn:
             _pass(conn, since_tick, phoenix, as_json)
         return
-    state: dict[str, Any] = {"conn": None, "seen": None}
+    from bazaar_agent.sdk import public_client
+    from bazaar_agent.ticks import run_per_tick
 
-    def step() -> None:
-        """One pass when an input moved since the last pass (see `_inputs_state`)."""
-        conn = state["conn"]
-        if conn is None or conn.closed:
-            conn = state["conn"] = _connect()
-        try:
-            seen = _inputs_state(conn)
-            if seen != state["seen"] or (phoenix and _pending(conn) > 0):
-                _pass(conn, since_tick, phoenix, as_json)
-                state["seen"] = seen
-        except psycopg.Error:
-            conn.close()
-            state["conn"] = None
-            raise
-
-    console.print(f"evals: every {every:.0f} s, scoring when an input moved (Ctrl-C to stop)")
-    run_forever(every, step)
+    gate = TickGate(every_ticks, lambda conn: _pass(conn, since_tick, phoenix, as_json), phoenix)
+    console.print(f"evals: every {every_ticks} game ticks (keyless /api/clock), when an input moved (Ctrl-C to stop)")
+    run_per_tick(public_client(load_settings()).clock, gate)
 
 
 @evals_app.command("report")
