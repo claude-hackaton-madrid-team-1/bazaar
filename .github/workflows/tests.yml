@@ -22,5 +22,27 @@ jobs:
           uv run mypy src
       - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
         run: uv run pytest tests -v -rs
-      - name: Web view reducer
-        run: node --test tests/web
+      - name: Web server for the dashboard (tui/serve.py needs websockets)
+        run: uv run --with websockets pytest tests/test_tui_serve.py -v -rs
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install the web view (package.json + package-lock.json)
+        run: npm ci
+      - name: Reducer and selectors (Node strips the TypeScript types natively)
+        run: npm test
+      - name: Types
+        run: npx tsc --noEmit
+      - name: Static export to web/out
+        run: npm run build

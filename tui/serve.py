@@ -1,10 +1,13 @@
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 from collections import deque
+from functools import partial
 from http import HTTPStatus
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -14,10 +17,23 @@ from websockets.http11 import Response
 
 from mock import MockGame
 
-WEB = Path(__file__).resolve().parent.parent / "web"
-CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
-                 ".mjs": "text/javascript; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                 ".svg": "image/svg+xml"}
+REPO = Path(__file__).resolve().parent.parent
+WEB_OUT = REPO / "web" / "out"
+BUILD = "cd web && npm ci && npm run build"
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain; charset=utf-8",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+}
 STICKY = ("agent.hello", "agent.me", "clock", "agent.phase")
 
 
@@ -54,22 +70,56 @@ class Hub:
             self.task.cancel()
 
 
-def static(connection, request):
-    path = request.path.split("?", 1)[0]
-    if path == "/events":
+def locate(root, raw_path):
+    path = unquote(raw_path.split("?", 1)[0].split("#", 1)[0])
+    if "\0" in path:
         return None
-    target = (WEB / (path.lstrip("/") or "index.html")).resolve()
-    if not target.is_file() or WEB.resolve() not in target.parents:
-        return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
+    base = root.resolve()
+    target = (base / path.lstrip("/")).resolve()
+    if target != base and base not in target.parents:
+        return None
+    if target.is_dir():
+        target = target / "index.html"
+    return target if target.is_file() else None
+
+
+def file_response(status, target):
     body = target.read_bytes()
-    headers = Headers({"Content-Type": CONTENT_TYPES.get(target.suffix, "application/octet-stream"),
-                       "Content-Length": str(len(body)), "Cache-Control": "no-store"})
-    return Response(HTTPStatus.OK, "OK", headers, body)
+    headers = Headers(
+        {
+            "Content-Type": CONTENT_TYPES.get(target.suffix, "application/octet-stream"),
+            "Content-Length": str(len(body)),
+            "Cache-Control": "no-store",
+        }
+    )
+    return Response(status, status.phrase, headers, body)
 
 
-async def start(port=8777, seed=None, speed=0.35, host="127.0.0.1"):
+def static(root, connection, request):
+    if request.path.split("?", 1)[0] == "/events":
+        return None
+    target = locate(root, request.path)
+    if target is not None:
+        return file_response(HTTPStatus.OK, target)
+    missing = Path(root) / "404.html"
+    if missing.is_file():
+        return file_response(HTTPStatus.NOT_FOUND, missing)
+    return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
+
+
+def missing_hint(root):
+    if (Path(root) / "index.html").is_file():
+        return None
+    try:
+        shown = Path(root).resolve().relative_to(REPO)
+    except ValueError:
+        shown = Path(root)
+    return f"{shown} not found — run: {BUILD}"
+
+
+async def start(port=8777, seed=None, speed=0.35, host="127.0.0.1", root=WEB_OUT):
     hub = Hub(MockGame(seed=seed), speed)
-    server = await serve(hub.handler, host, port, process_request=static)
+    server = await serve(hub.handler, host, port, process_request=partial(static, Path(root)))
     hub.task = asyncio.create_task(hub.run())
     return server, hub
 
@@ -80,13 +130,14 @@ async def main():
     ap.add_argument("--seed", type=int)
     ap.add_argument("--speed", type=float, default=0.35, help="seconds per mock step")
     args = ap.parse_args()
+    hint = missing_hint(WEB_OUT)
+    if hint:
+        print(hint, file=sys.stderr)
     server, hub = await start(args.port, args.seed, args.speed)
     print(f"http://localhost:{args.port}   (events on ws://localhost:{args.port}/events)")
     await server.serve_forever()
 
 
 if __name__ == "__main__":
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
