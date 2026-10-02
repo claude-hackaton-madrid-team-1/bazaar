@@ -1,0 +1,5 @@
+---
+description: Agent operating contract (generated from .ai/context.md)
+globs: **/*
+alwaysApply: true
+---

@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+# post-commit — runs every executable hook dropped into `.githooks/post-commit.d/` by
+# `/bootstrap`. That is where the chosen language's after-commit tasks live (e.g. run the
+# test suite, regenerate coverage, refresh docs). The template ships this layer empty and
+# language-agnostic; `/bootstrap` populates it for the project's language.
+#
+# Enable per clone with `sh scripts/install.sh` (or `git config core.hooksPath .githooks`).
+set -eu
+
+HOOK_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$HOOK_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
+if [ -d "$HOOK_DIR/post-commit.d" ]; then
+	for hook in "$HOOK_DIR"/post-commit.d/*; do
+		[ -f "$hook" ] || continue
+		[ -x "$hook" ] || continue
+		"$hook" || exit 1
+	done
+fi

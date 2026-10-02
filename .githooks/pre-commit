@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+# pre-commit — two layers, both language-agnostic by themselves:
+#
+#   1. SYNC DRIFT GATE (always, template infrastructure): regenerate every per-tool artifact
+#      from .ai/ with the dependency-free shell generator. The per-tool skill/agent/command
+#      mirrors (.claude/.gemini/.opencode/.cursor, .ai/generated) are gitignored (local-only) so
+#      the repo holds no duplicates — regenerating them just refreshes the dev's working tree.
+#      The only generated files still committed are the root contract entries (AGENTS.md,
+#      CLAUDE.md, GEMINI.md); the gate blocks the commit if THOSE drift from .ai/. The generator
+#      is deterministic (no timestamps), so this only fires on real drift. Needs nothing but a
+#      POSIX shell + awk/sed — no node/bun/python.
+#
+#   2. PROJECT QUALITY GATES (optional, language-specific): run every executable hook dropped
+#      into `.githooks/pre-commit.d/` by `/bootstrap`. That is where the chosen language's
+#      lint / format / typecheck commands live — the template ships this layer empty.
+#
+# Enable per clone with `sh scripts/install.sh` (or `git config core.hooksPath .githooks`).
+set -eu
+
+HOOK_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$HOOK_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
+# --- 1. sync drift gate -------------------------------------------------------
+sh scripts/sync-ai-docs.sh >/dev/null
+
+# Only the committed contract entries are gated; the per-tool mirrors are gitignored (local-only).
+PATHS="AGENTS.md CLAUDE.md GEMINI.md"
+# shellcheck disable=SC2086  # $PATHS is a deliberate space-separated list — must word-split into args.
+if ! git diff --quiet -- $PATHS; then
+	echo "✗ The committed contract files (AGENTS.md/CLAUDE.md/GEMINI.md) are out of sync with .ai/." >&2
+	echo "  Run 'sh scripts/sync-ai-docs.sh', then stage the regenerated files:" >&2
+	# shellcheck disable=SC2086
+	git --no-pager diff --name-only -- $PATHS >&2
+	exit 1
+fi
+
+# Guard the source-of-truth model: per-tool mirrors and local runtime adapters must never become
+# tracked again. Root entry files and .codex/config.toml are intentionally committed.
+TRACKED_MIRRORS=$(git ls-files -- .claude .gemini .opencode .cursor .ai/generated .agents .codex/agents)
+if [ -n "$TRACKED_MIRRORS" ]; then
+	echo "✗ Generated/local agent mirror files are tracked, but .ai/ must remain the source of truth." >&2
+	echo "  Remove these from git and let scripts/sync-ai-docs.sh or the tool runtime recreate them locally:" >&2
+	printf '%s\n' "$TRACKED_MIRRORS" >&2
+	exit 1
+fi
+
+# --- 2. project quality gates (added by /bootstrap, per language) -------------
+if [ -d "$HOOK_DIR/pre-commit.d" ]; then
+	for hook in "$HOOK_DIR"/pre-commit.d/*; do
+		[ -f "$hook" ] || continue   # nothing dropped in yet
+		[ -x "$hook" ] || continue   # skip non-executable files (e.g. README, .gitkeep)
+		"$hook" || exit 1
+	done
+fi
