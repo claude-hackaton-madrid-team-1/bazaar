@@ -15,9 +15,9 @@ from typing import Any, Literal
 MoveKind = Literal["accept", "bid", "walk", "wait"]
 
 KIND_WORDS = (
-    "¡Buenas, Carmen! Me haría mucha ilusión completar mi página. ¿Le parece bien {p} primas?",
+    "¡Buenas, {n}! Me haría mucha ilusión completar mi página. ¿Le parece bien {p} primas?",
     "Qué puesto tan bonito tiene. ¿Podríamos dejarlo en {p}?",
-    "Gracias por su paciencia, Carmen. Subo a {p}, ¿trato hecho?",
+    "Gracias por su paciencia, {n}. Subo a {p}, ¿trato hecho?",
     "Es usted un encanto. {p} primas y me lo llevo con mucho cariño.",
     "Mi abuela también vendía en el Rastro. ¿{p} le parece justo?",
     "Le prometo cuidarlo mucho. ¿Cerramos en {p}?",
@@ -71,8 +71,14 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     return Move("bid", nxt, reason="small distinct step up")
 
 
-def words(step: int, price: int) -> str:
-    return KIND_WORDS[step % len(KIND_WORDS)].format(p=price)
+# How we address each dealer. An unknown dealer gets a neutral greeting, never another dealer's name.
+DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato"}
+
+
+def words(step: int, price: int, dealer: str = "") -> str:
+    """Kind, varied words for a bid. The structured price is what binds; the text never changes it."""
+    name = DEALER_NAMES.get(dealer, "amigo")
+    return KIND_WORDS[step % len(KIND_WORDS)].format(p=price, n=name)
 
 
 def newest_dealer_offer(thread: dict[str, Any], dealer: str) -> dict[str, Any] | None:
@@ -277,13 +283,15 @@ def negotiate(
             if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
-        obs.move(move, words(len(neg.bids), move.price) if move.kind == "bid" and move.price is not None else None)
+        obs.move(
+            move, words(len(neg.bids), move.price, dealer) if move.kind == "bid" and move.price is not None else None
+        )
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None:
-                client.say(tid, words(len(neg.bids), move.price), price=move.price)
+                client.say(tid, words(len(neg.bids), move.price, dealer), price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 client.close_thread(tid)

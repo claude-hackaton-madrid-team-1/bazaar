@@ -252,3 +252,11 @@ def test_a_broken_observer_never_changes_or_breaks_the_negotiation():
     )
     assert (client.sent, out.status, out.price) == ([6, 7, 8], "deal", 9)
     assert sum("tracing hook" in line for line in logs) == 1  # warned once, not every tick
+
+
+def test_words_address_the_dealer_we_are_talking_to():
+    texts = [words(step, 20, "chato") for step in range(6)]
+    assert not any("Carmen" in t for t in texts)
+    assert any("Chato" in t for t in texts)
+    assert any("Carmen" in words(step, 9, "abuela") for step in range(6))
+    assert all("Carmen" not in words(step, 9, "nuevo") for step in range(6))  # unknown dealer: neutral
