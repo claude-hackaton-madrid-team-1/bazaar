@@ -27,6 +27,8 @@ dev = [
     "mypy>=1.11",
     "jsonschema>=4.26.0",
 ]
+# Railway IaC authoring (.railway/railway.py): `uv run --group infra railway config plan`.
+infra = ["railway-sdk==0.2.0"]
 
 [build-system]
 requires = ["hatchling"]
