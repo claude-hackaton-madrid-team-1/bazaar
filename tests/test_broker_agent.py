@@ -243,6 +243,52 @@ def test_a_refused_book_read_matches_nothing(tmp_path):
     assert broker.sent == [] and any("book refused bad_key" in line for line in lines)
 
 
+def test_a_pause_file_touched_mid_tick_stops_the_next_match(tmp_path):
+    class PausingBroker(FakeBroker):
+        def match(self, sell, buy, price):
+            (tmp_path / "PAUSE").touch()  # someone pauses every agent right after our first send
+            return super().match(sell, buy, price)
+
+    broker = PausingBroker(offers=crossing_book().offers, bench=crossing_book().bench)
+    agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock())
+    assert broker.sent == [("b5-0", "b5-1", 35)]
+    assert [d["status"] for d in rows(tmp_path)] == ["approved", "done", "rejected", "rejected"]
+
+
+def test_a_match_whose_logging_eats_the_tick_is_dropped_not_sent_late(tmp_path):
+    t = [0.0]
+
+    class SlowLog(DecisionLog):
+        def decide(self, d):
+            t[0] = 1_000.0  # writing the decision took the rest of the tick
+            return super().decide(d)
+
+    broker = crossing_book()
+    a = BrokerAgent(
+        broker,
+        FakeTeam(),
+        us="t01",
+        rules=Guardrails(allow_venue_open=True, pause_file=str(tmp_path / "PAUSE")),
+        decisions=SlowLog(tmp_path),
+        live=True,
+        log=lambda line: None,
+        now=lambda: t[0],
+    )
+    a.on_tick(clock())
+    assert broker.sent == []
+    assert a.history[-1].expired == 3
+    assert [d["status"] for d in rows(tmp_path) if d.get("update")] == ["expired"]
+
+
+def test_a_session_closed_by_its_event_never_reopens_from_a_late_book(tmp_path):
+    events = [{"id": 1, "tick": 99, "type": "bench.finished", "payload": {"run": 8}}]
+    broker = FakeBroker(bench=[bench_sell("b8-0", 30), bench_buy("b8-1", 40)])  # read just before it ended
+    a = agent(tmp_path, broker, events=lambda: deepcopy(events), allow_venue_open=True)
+    a.on_tick(clock(tick=100))
+    a.on_tick(clock(tick=101))
+    assert a.sessions.open == {} and not (tmp_path / "agents" / "broker_sessions.jsonl").exists()
+
+
 def test_bench_run_ids_normalise():
     assert bench_run(12) == bench_run("12") == bench_run("b12") == "b12"
 
