@@ -50,6 +50,24 @@ class FakePublic:
         return {"levels": []}
 
 
+class FakeStream:
+    """Stands in for `stream.EventStream`: emits a script at start, never touches the network."""
+
+    def __init__(self, emit, items=()):
+        self.emit, self.items, self.state, self.nudges = emit, list(items), "idle", 0
+
+    def start(self):
+        self.state = "live"
+        for item in self.items:
+            self.emit(item)
+
+    def on_tick(self):
+        self.nudges += 1
+
+    def stop(self):
+        self.state = "stopped"
+
+
 class FakeTeam:
     def __init__(self, refuse=False):
         self.refuse = refuse
@@ -68,6 +86,7 @@ def runner(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "public_client", lambda settings: FakePublic())
     monkeypatch.setattr(cli, "team_client", lambda settings: FakeTeam())
+    monkeypatch.setattr(cli, "open_stream", lambda settings, emit: FakeStream(emit))  # unit tests: no network
     hooks = len(cli.console._render_hooks)
     yield CliRunner()
     while len(cli.console._render_hooks) > hooks:
@@ -124,7 +143,7 @@ def test_a_db_failure_is_recorded_and_the_tick_goes_on(spans, runner, monkeypatc
 
 def test_console_output_is_identical_with_tracing_off_and_on(spans, runner, monkeypatch):
     def strip_clock(text):
-        return re.sub(r"\d\d:\d\d:\d\d", "HH:MM:SS", text)
+        return re.sub(r"\d\d:\d\d:\d\d(\.\d+)?", "HH:MM:SS", text)
 
     traced = runner.invoke(cli.app, ["monitor", "--no-db", "--max-ticks", "1"]).output
     tm.uninstall()

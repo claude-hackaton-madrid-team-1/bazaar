@@ -97,39 +97,86 @@ def tape_cmd(
     console.print(render.tape_table(prints, limit))
 
 
+def _our_team(settings: Any = None) -> str | None:
+    """Our team id (BAZAAR_TEAM_ID, the `.local/team_id` cache, else /api/me once): tags us in every view."""
+    from bazaar_agent.identity import resolve_team_id
+
+    settings = settings or load_settings()
+    read_me = (lambda: team_client(settings).me()) if settings.bazaar_key else None
+    team = resolve_team_id(
+        settings.team_id, settings.data_dir, read_me, lambda m: console.print(f"[yellow]{m}[/yellow]")
+    )
+    if team is None:
+        console.print("[yellow]our team id is unknown: we show as competition (set BAZAAR_TEAM_ID)[/yellow]")
+    return team
+
+
 @app.command()
 def curves(
     dealer: str | None = typer.Option(None, help="Filter by dealer id, e.g. abuela"),
     item: str | None = typer.Option(None, help="Filter by item, e.g. sobre_barrio"),
     threads: int = typer.Option(0, help="Also list the last N threads with every price"),
     live: bool = typer.Option(False, help=LIVE_HELP),
+    ours: bool = typer.Option(False, "--ours", help="Only our own threads"),
+    theirs: bool = typer.Option(False, "--theirs", help="Only the other teams' threads"),
+    every: bool = typer.Option(False, "--all", help="Every team's threads, ours counted in 'ours' (default)"),
 ) -> None:
-    """Dealer concession curves rebuilt from every team's public threads."""
-    rows = intel.dealer_threads(_events(live))
-    rows = [t for t in rows if (not dealer or t.dealer == dealer) and (not item or t.item == item)]
-    console.print(render.curves_table(intel.curve_summary(rows)))
+    """Dealer concession curves rebuilt from every team's public threads; ours are tagged."""
+    if ours + theirs + every > 1:
+        _fail("pick one of --ours, --theirs, --all")
+    us = _our_team()
+    if (ours or theirs) and us is None:
+        _fail("--ours/--theirs need our team id: set BAZAAR_TEAM_ID (or BAZAAR_KEY)")
+    rows = [
+        t
+        for t in intel.dealer_threads(_events(live), us)
+        if (not dealer or t.dealer == dealer)
+        and (not item or t.item == item)
+        and (not ours or t.ours)
+        and (not theirs or not t.ours)
+    ]
+    title = "our threads" if ours else "the other teams' threads" if theirs else "every team's threads"
+    console.print(render.curves_table(intel.curve_summary(rows), title))
     if threads:
         console.print(render.threads_table(rows, threads))
 
 
 @app.command()
-def teams(live: bool = typer.Option(False, help=LIVE_HELP)) -> None:
-    """The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set)."""
-    console.print(render.teams_table(intel.team_flows(_events(live))))
+def teams(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    include_us: bool = typer.Option(False, "--include-us", help="Mix our own row into the competition table"),
+) -> None:
+    """The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart."""
+    us = _our_team()
+    flows = intel.team_flows(_events(live))
+    if include_us or us is None:
+        console.print(render.teams_table(flows, us=us))
+        return
+    theirs, ours = intel.split_us(flows, us, lambda f: f.team)
+    console.print(render.teams_table(theirs))
+    console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
 
 
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
     card: str | None = typer.Option(None, help="Filter by card ref, e.g. LAV-04"),
+    include_us: bool = typer.Option(False, "--include-us", help="Mix our own offers into the book"),
 ) -> None:
-    """Live order book of a venue, with board pseudonyms resolved to team ids from the feed."""
+    """Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart."""
     client = public_client(load_settings())
     board = client.board(venue).get("offers") or []
     lines = intel.order_book(board, intel.listed_makers(_events(live=True)))
     if card:
         lines = [b for b in lines if b.card == card]
-    console.print(render.book_table(lines, venue))
+    us = _our_team()
+    if include_us:
+        console.print(render.book_table(lines, venue, us=us))
+        return
+    theirs, ours = intel.split_us(lines, us, lambda b: b.maker)
+    console.print(render.book_table(theirs, venue))
+    if ours:
+        console.print(render.book_table(ours, venue, "Our offers", us=us))
 
 
 # ---------------------------------------------------------------- our team (needs BAZAAR_KEY)
@@ -505,117 +552,61 @@ def rules_check(
 # ---------------------------------------------------------------- monitoring agent
 
 
+TEAM_EVENTS_FILE = "team_events.jsonl"  # stream events scoped to our team: never mixed into the public feed
+
+
+def open_stream(settings: Any, emit: Callable[[Any], None]) -> Any:
+    """The monitor's live feed: ONE SSE connection with our key (tests replace this factory)."""
+    from bazaar_agent.stream import EventStream
+
+    key = settings.bazaar_key.get_secret_value() if settings.bazaar_key else None
+    return EventStream(settings.bazaar_url, key, emit)
+
+
 @app.command()
 def monitor(
     db_enabled: bool = typer.Option(True, "--db/--no-db", help="Write to Postgres (JSONL capture always runs)"),
     notify: bool = typer.Option(False, help="macOS notification on every alert"),
     refresh_every: int = typer.Option(5, help="Rebuild dealer curves and competitor profiles every N ticks"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    stream: bool = typer.Option(
+        True, "--stream/--no-stream", help="Hold ONE live SSE stream (6 per team key, shared by laptops and tabs)"
+    ),
+    show_events: bool = typer.Option(False, help="Print every streamed event as it lands, timestamped"),
 ) -> None:
-    """The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts."""
-    from bazaar_agent import db
-    from bazaar_agent import monitor as mon
-    from bazaar_agent.pgconn import Reconnector
+    """The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts."""
+    from bazaar_agent.agents.monitoring import MonitorLoop, Options
+    from bazaar_agent.monitor import Watcher
+    from bazaar_agent.stream import Inbox
 
     settings = load_settings()
-    public, store = public_client(settings), FeedStore(settings.feed_dir)
+    public = public_client(settings)
     team = team_client(settings) if settings.bazaar_key else None
-    alerts_path = settings.data_dir / "alerts.jsonl"
-    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "ticks": 0}
-
-    def open_pg() -> Any:
-        try:
-            return db.connect_ready("bazaar-monitor")
-        except Exception as e:  # recorded on the tick span; Reconnector keeps the tick going on JSONL
-            tm.fail_current(e)
-            raise
-
-    pg = Reconnector(open_pg, lambda m: console.print(f"[yellow]{m}[/yellow]"))
-
-    def raise_alerts(alerts: list[Any]) -> None:
-        mon.append_alerts(alerts_path, alerts)
-        traces.alert_events(alerts)
-        for a in alerts:
-            console.print(f"[bold red]ALERT[/bold red] tick {a.tick} {a.kind} {a.subject}: {a.detail}")
-            if notify:
-                subprocess.run(
-                    ["osascript", "-e", f'display notification "{a.subject}: {a.kind}" with title "Bazaar"'],
-                    check=False,
-                    capture_output=True,
-                )
-
-    def on_tick(c: Clock) -> None:
-        state["ticks"] += 1
-        newest_before = store.newest_id()
-        try:
-            window = public.feed_window(DEFAULT_WINDOW)
-        except BazaarError as e:
-            console.print(f"tick {c.tick}: feed refused {e.code}")
-            tm.fail_current(e)
-            window = []
-        result = store.append(window, DEFAULT_WINDOW)
-        traces.feed_capture(result)
-        new_events = [e for e in window if newest_before is None or e["id"] > newest_before]
-        first = state["ticks"] == 1
-        history = list(store.events()) if first or state["ticks"] % refresh_every == 0 else None
-        try:
-            dealers_after = mon.dealer_snapshots(public.dealers())
-            levels_after = public.levels().get("levels") or []
-        except BazaarError as e:
-            console.print(f"tick {c.tick}: dealers/levels refused {e.code}")
-            tm.fail_current(e)
-            dealers_after, levels_after = state["dealers"], state["levels"]
-        # Known teams win: most feed events carry no level, so a new snapshot must not overwrite one.
-        teams_after = {**mon.team_snapshots(history if first and history else new_events), **state["teams"]}
-        alerts = (
-            mon.detect_changes(
-                c.tick,
-                {**state["dealers"], **state["teams"]},
-                {**dealers_after, **teams_after},
-                state["levels"],
-                levels_after,
-            )
-            if not first
-            else []
+    ours = _our_team(settings)
+    store = FeedStore(settings.feed_dir)
+    watcher = Watcher(store, ours, FeedStore(settings.feed_dir, TEAM_EVENTS_FILE))
+    options = Options(db_enabled, notify, refresh_every, show_events)
+    loop = MonitorLoop(public, team, watcher, settings.data_dir, options, console.print)
+    inbox = Inbox()
+    loop.stream = open_stream(settings, inbox.put) if stream else None
+    console.print(
+        f"monitor: feed → {store.path}, alerts → {loop.alerts_path}, db {'on' if db_enabled else 'off'}, "
+        f"stream {'on (1 of the 6 per team key)' if stream else 'off: poll only'}, "
+        f"us = {ours or 'unknown (set BAZAAR_TEAM_ID or BAZAAR_KEY)'}"
+    )
+    try:
+        if loop.stream is not None:
+            loop.stream.start()
+        run_per_tick(
+            public.clock,
+            traces.per_tick("monitor tick", loop.on_tick),
+            max_ticks=max_ticks or None,
+            sleep=lambda seconds: inbox.wait(seconds, loop.on_stream),
         )
-        alerts += mon.event_alerts(new_events)
-        traces.trader_changes({**state["dealers"], **state["teams"]}, {**dealers_after, **teams_after})
-        state["dealers"], state["teams"], state["levels"] = dealers_after, teams_after, levels_after
-        me = None
-        if team is not None:
-            try:
-                me = team.me()
-            except BazaarError as e:
-                console.print(f"tick {c.tick}: /me refused {e.code}")
-                tm.fail_current(e)
-        cx = pg.get() if db_enabled else None
-        if cx is not None:
-            try:
-                db.load_events(cx, new_events)
-                db.upsert_traders(cx, list(dealers_after.values()) + list(teams_after.values()), c.tick)
-                if me is not None:
-                    db.save_snapshot(cx, c.tick, me)
-                if alerts:
-                    db.insert_alerts(cx, alerts)
-                if history is not None and not db.load_history(cx, history, c.tick):
-                    console.print(f"tick {c.tick}: curves/competitors left to the monitor with older history")
-            except Exception as e:
-                console.print(f"[yellow]tick {c.tick}: DB write failed ({type(e).__name__}: {str(e)[:80]})[/yellow]")
-                tm.fail_current(e)
-                pg.drop()
-        raise_alerts(alerts)
-        traces.monitor_summary(len(new_events), len(dealers_after), len(teams_after), len(levels_after), me)
-        gap = " [red]GAP POSSIBLE[/red]" if result.gap_possible else ""
-        cash = (
-            f" · cash {me.get('cash')} lvl {me.get('level')} score {(me.get('score') or {}).get('score')}" if me else ""
-        )
-        console.print(
-            f"{datetime.now():%H:%M:%S} tick {c.tick}: +{result.new} events (id {result.newest_id}){gap} · "
-            f"{len(dealers_after)} dealers, {len(teams_after)} teams, {len(levels_after)} levels{cash}"
-        )
-
-    console.print(f"monitor: feed → {store.path}, alerts → {alerts_path}, db {'on' if db_enabled else 'off'}")
-    run_per_tick(public.clock, traces.per_tick("monitor tick", on_tick), max_ticks=max_ticks or None)
+    finally:
+        if loop.stream is not None:
+            loop.stream.stop()
+        inbox.flush(loop.on_stream)
 
 
 @app.command()
@@ -765,7 +756,7 @@ def db_load(live: bool = typer.Option(True, help=LIVE_HELP)) -> None:
     from bazaar_agent import db
 
     with db.connect() as conn:
-        counts = db.load_feed(conn, _events(live))
+        counts = db.load_feed(conn, _events(live), _our_team())
     console.print(f"[green]loaded[/green] {counts}")
 
 

@@ -9,12 +9,37 @@ Observed shapes (2026-10-02): `settlement` carries parties, items (frm/to) and p
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
 
 Event = dict[str, Any]
+
+
+# ---------------------------------------------------------------- us vs the competition
+
+
+def is_ours(event: Event, team: str | None) -> bool:
+    """True when our team did it or it is about us: we are its actor, its team, owner or maker, or a
+    party to the settlement. Feed tables keep every event; competitor views and alerts skip these."""
+    if not team:
+        return False
+    p = event.get("payload") or {}
+    offer = p.get("offer")
+    maker = offer.get("maker") if isinstance(offer, dict) else None
+    named = (event.get("actor"), p.get("team"), p.get("with"), p.get("owner"), p.get("sender"), maker)
+    parties = p.get("parties")
+    return team in named or (isinstance(parties, list) and team in parties)
+
+
+def split_us[T](rows: Iterable[T], team: str | None, key: Callable[[T], str]) -> tuple[list[T], list[T]]:
+    """(the competition, us): our rows are tagged and shown apart, never dropped."""
+    theirs: list[T] = []
+    us: list[T] = []
+    for row in rows:
+        (us if team and key(row) == team else theirs).append(row)
+    return theirs, us
 
 
 def _cash(side: dict[str, Any] | None) -> int:
@@ -99,6 +124,7 @@ class DealerThread:
     last_tick: int = 0
     fill_price: int | None = None
     fill_tick: int | None = None
+    ours: bool = False  # our own thread (see `dealer_threads(..., ours=)`)
 
     @property
     def opening_ask(self) -> int | None:
@@ -135,8 +161,9 @@ def _matches(thread: DealerThread, p: Print, items: list[dict[str, Any]]) -> boo
     return any(i.get("ref") == thread.item for i in items)
 
 
-def dealer_threads(events: Iterable[Event]) -> list[DealerThread]:
-    """Every dealer conversation in the feed, ours and other teams', with its fill if one settled."""
+def dealer_threads(events: Iterable[Event], ours: str | None = None) -> list[DealerThread]:
+    """Every dealer conversation in the feed, ours and other teams', with its fill if one settled.
+    With `ours` (our team id) our own threads carry `ours=True`."""
     threads: dict[int, DealerThread] = {}
     settlements: list[tuple[Print, list[dict[str, Any]]]] = []
     for e in events:
@@ -152,6 +179,7 @@ def dealer_threads(events: Iterable[Event]) -> list[DealerThread]:
                 opened_tick=int(e.get("tick", 0)),
                 asset_ids=ids,
                 last_tick=int(e.get("tick", 0)),
+                ours=bool(ours) and p.get("team") == ours,
             )
         elif kind == "thread.message" and p.get("kind") == "persona":
             t = threads.get(int(p.get("thread", -1)))
@@ -192,6 +220,7 @@ class CurveSummary:
     opening_ask_median: float | None
     final_median: float | None
     steps_to_fill_median: float | None
+    ours: int = 0  # how many of the threads are ours
 
 
 def curve_summary(threads: Iterable[DealerThread]) -> list[CurveSummary]:
@@ -217,6 +246,7 @@ def curve_summary(threads: Iterable[DealerThread]) -> list[CurveSummary]:
                 opening_ask_median=med([t.opening_ask for t in ts if t.opening_ask is not None]),
                 final_median=med([t.final_price for t in ts if t.final_price is not None]),
                 steps_to_fill_median=med([t.steps for t in ts if t.fill_price is not None]),
+                ours=sum(t.ours for t in ts),
             )
         )
     return out

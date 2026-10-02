@@ -190,3 +190,39 @@ def test_a_check_against_a_closed_port_fails_fast():
 
     ok, lines = db.run_check("postgresql://nobody:Never-Printed-pw@127.0.0.1:1/x?connect_timeout=2")
     assert not ok and "Never-Printed-pw" not in "\n".join(lines)
+
+
+def test_dealer_curves_tag_our_threads_and_an_unaware_writer_keeps_the_tag(conn):
+    from bazaar_agent import db
+
+    def tags():
+        return conn.execute("select thread_id, ours from dealer_curves order by thread_id").fetchall()
+
+    db.load_curves(conn, EVENTS)  # a writer that does not know our team id (an older monitor)
+    assert tags() == [(10, None), (11, None), (12, None)]
+    db.load_curves(conn, EVENTS, ours="t06")
+    assert tags() == [(10, False), (11, True), (12, True)]
+    db.load_curves(conn, EVENTS)  # unaware again: the tag stays
+    assert tags() == [(10, False), (11, True), (12, True)]
+
+
+def test_competitor_profiles_leave_us_out_and_drop_a_stale_row_for_us(conn):
+    from bazaar_agent import db
+    from bazaar_agent.intel import team_flows
+
+    db.save_competitors(conn, team_flows(EVENTS), tick=50)  # an older monitor stored us as a competitor
+    assert [r[0] for r in conn.execute("select team from competitor_profiles order by team")] == ["t05", "t06"]
+    db.save_competitors(conn, team_flows(EVENTS), tick=51, ours="t06")
+    assert [r[0] for r in conn.execute("select team from competitor_profiles order by team")] == ["t05"]
+
+
+def test_their_events_keeps_everything_but_our_own_activity(conn):
+    from bazaar_agent import db
+
+    db.load_events(conn, EVENTS)
+    everything = conn.execute("select count(*) from their_events").fetchone()
+    assert everything == (len(EVENTS),)  # no 'us' trader row yet: nothing is hidden
+    db.upsert_traders(conn, [TraderSnapshot("t06", "team", "t06", "us", None, "{}", {}, {})], tick=5)
+    ids = [r[0] for r in conn.execute("select id from their_events order by id")]
+    assert ids == [1, 2, 3, 4, 5, 6]  # thread 11/12, its messages, the sale and the listing are t06's
+    assert conn.execute("select count(*) from feed_events").fetchone() == (len(EVENTS),)
