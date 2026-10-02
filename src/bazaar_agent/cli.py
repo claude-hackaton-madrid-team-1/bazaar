@@ -356,6 +356,7 @@ def dealer_buy(
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             reserve=reserve,
+            kill_switch=lambda: gr.kill_switch(rules),
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -568,7 +569,7 @@ def duel_run(
                     tick=c.tick,
                     t_hours=c.t_hours,
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
-                    paused=(REPO_ROOT / rules.pause_file).exists(),
+                    stops=gr.kill_switch(rules),  # read live: a GUARDRAILS.md edit counts without a restart
                 )
                 verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
@@ -686,7 +687,7 @@ def rules_show() -> None:
     """Every guardrail from GUARDRAILS.md, its value, and the code that enforces it."""
     from rich.table import Table
 
-    from bazaar_agent.guardrails import ENFORCED_BY
+    from bazaar_agent.guardrails import ENFORCED_BY, kill_switch
 
     loaded = _rules()
     t = Table(title=f"Guardrails · {loaded.path.name} (edit it, then rerun this to validate)")
@@ -699,11 +700,11 @@ def rules_show() -> None:
         console.print("[bold]Principles[/bold] (read by agents, not enforced in code):")
         for line in loaded.principles:
             console.print(f"  • {line}")
-    pause = REPO_ROOT / loaded.rules.pause_file
-    state = (
-        "[red]PAUSED[/red]" if pause.exists() or not loaded.rules.trading_enabled else "[green]trading enabled[/green]"
+    stops = kill_switch(loaded.rules, loaded.path)
+    state = f"[red]ON, holding[/red] ({'; '.join(stops)})" if stops else "[green]off, trading enabled[/green]"
+    console.print(
+        f"Kill switch: {state}. touch {loaded.rules.pause_file} to hold: nothing is sent, not even cancels or closes"
     )
-    console.print(f"Kill switch: {state} (touch {loaded.rules.pause_file} to stop every write)")
 
 
 @rules_app.command("check")
@@ -1229,7 +1230,12 @@ def sell_cancel(
     offer_id: int = typer.Argument(help="Offer id, from `bazaar sell offers`"),
     live: bool = typer.Option(False, help="Actually cancel. Without it: dry run, nothing is sent"),
 ) -> None:
-    """Withdraw one of our open offers."""
+    """Withdraw one of our open offers (refused while the kill switch is on: open offers stay open)."""
+    from bazaar_agent import guardrails as gr
+
+    stops = gr.kill_switch(_rules().rules)
+    if stops:
+        _fail(f"kill switch on, nothing is sent (open offers stay open): {'; '.join(stops)}")
     if not live:
         console.print(f"[yellow]dry run[/yellow] would cancel offer {offer_id}. Add --live to cancel.")
         return

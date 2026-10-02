@@ -15,6 +15,8 @@ Album first (`/api/me`), then:
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
 ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
 that is not a strategy target is cancelled, so stop the maker before trading by hand.
+While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
+posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -55,7 +57,7 @@ from bazaar_agent.agents.seller import (
     sell_listing,
 )
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, context_from, kill_switch
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
@@ -192,9 +194,18 @@ class Maker:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        mine, total = our_open_offers(snap.offers, snap.us)
+        stops = kill_switch(self.rules)
+        if stops:
+            if self.hub is not None:
+                self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=[])
+            self.log(
+                f"tick {clock.tick} maker: kill switch on: holding (no posts, no cancels; {total} open offer(s) "
+                f"stay open): {'; '.join(stops)}"
+            )
+            return
         params = self.params(clock.tick)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
-        mine, total = our_open_offers(snap.offers, snap.us)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
             snap,
@@ -224,8 +235,9 @@ class Maker:
         )
 
     def _ctx(self, run: _MakerRun) -> Context:
-        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be)."""
-        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent)
+        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
+        kill switch as it is now (it may go on mid-tick)."""
+        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent, stops=kill_switch(self.rules))
 
     def _do(self, run: _MakerRun, action: MakerAction) -> None:
         if action.kind == "cancel" and action.offer is not None:
@@ -247,7 +259,8 @@ class Maker:
 
     def _cancel(self, run: _MakerRun, offer: OpenOffer, why: str) -> bool:
         tick = run.snap.clock.tick
-        status: Status = "approved" if run.window.open() else "expired"
+        verdict = check(Action("cancel", str(offer.id)), self._ctx(run), self.rules)  # only the kill switch applies
+        status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
         inputs = {
             "offer_id": offer.id,
             "side": offer.side,
@@ -258,10 +271,11 @@ class Maker:
         did = self.rec.decide(
             tick,
             f"cancel_{offer.side}",
-            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why}",
+            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why} "
+            f"· guardrails {verdict}",
             inputs=inputs,
             reason=why,
-            guardrail="allowed",
+            guardrail=str(verdict),
             chosen=status == "approved",
             status=status,
             move={"cancel": offer.id},
