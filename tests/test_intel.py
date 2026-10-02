@@ -102,6 +102,21 @@ def test_dealer_threads_rebuild_quotes_finals_and_fills():
     assert (threads[12].side, threads[12].fill_price) == ("sell", 13)  # matched by asset id
 
 
+def test_a_fill_goes_to_the_newest_thread_open_before_it_not_an_abandoned_older_one():
+    """Threads 85 and 99 (our LAV-03, 2026-10-02): 85 got no answer, 99 filled at 7 on tick 56."""
+    lav03 = {"buy": {"card": "LAV-03"}}
+    events = [
+        opened(1, 85, "t01", lav03, tick=48),
+        msg(2, 85, "t01", "t01", give_cash=6, tick=48),
+        opened(3, 99, "t01", lav03, tick=54),
+        msg(4, 99, "t01", "t01", give_cash=6, tick=54),
+        msg(5, 99, "t01", "abuela", want_cash=7, tick=55),
+        settle(6, 92, "abuela", "t01", "LAV-03", 7, tick=56, kind="card"),
+    ]
+    threads = {t.thread: t for t in intel.dealer_threads(events)}
+    assert (threads[85].fill_price, threads[99].fill_price, threads[99].fill_tick) == (None, 7, 56)
+
+
 def test_curve_summary_groups_by_dealer_and_item():
     summary = {s.item: s for s in intel.curve_summary(intel.dealer_threads(EVENTS))}
     assert (summary["sobre_barrio"].fills, summary["sobre_barrio"].fill_median) == (1, 20.0)

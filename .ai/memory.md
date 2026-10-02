@@ -233,3 +233,26 @@ black 26 wraps a split conditional expression in parentheses and joins implicit 
 that fit in 120 columns; ruff 0.16 leaves both as written, so ruff-formatted code failed `black --check`
 in 3 files (db.py, strategy.py, jev/mask.py). The reverse holds: ruff's format check accepts black's
 output. Format with `uv run black src tests scripts`; CI and the pre-commit hook check both.
+
+### [2026-10-03] finding — a finished duel's `result` is our surplus after decay; there is no pie or share
+`GET /api/duels?done=true` (practice session 1, our 26 duels): `status` deal | no_deal (6 still `live`:
+the doors closed mid-session), `price`, `rounds`, `result` = our surplus × (1 − decay_per_round) ** rounds
+(duel 85: (138 − 109) × 0.94⁷ = 18.8). No `share`, no rival limit: `bazaar evals` bounds the pie with the
+rival's best offer. Our 7 played deals took 1–9 rounds and kept 57–94 % of their value; 8 log-only duels
+had the rival inside our limit (176.9 P kept in deals, up to 42 P left on the table in one walk).
+
+### [2026-10-03] build-error — dealer fills went to an abandoned older thread
+symptom: dealer_curves showed thread 85 (LAV-03, no answer) filled at 7 and thread 99 open → root cause:
+`intel.dealer_threads` matched settlements to threads oldest first → fix: newest thread opened before the
+fill owns it (one conversation per dealer); regression test in tests/test_intel.py. Rows already in
+`dealer_curves` keep the old fill (its upsert never un-fills a row); the evals read our threads from
+`feed_events`, so they are right either way.
+
+### [2026-10-03] gotcha — `right` is a reserved word in Postgres
+A view column `as right` is accepted, but `select right from eval_jev_calibration` is a syntax error
+(RIGHT JOIN): the calibration view names them `n_right`, `n_wrong`, `n_unknown`.
+
+### [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
+`.railway/railway.py` is a named partial: a service it created and no longer declares is deleted.
+`bazaar-sim` is declared only on PR #55's branch, so a plan from main (or a branch without it) shows
+"- Delete service bazaar-sim". Never apply a plan with a destructive change nobody asked for.

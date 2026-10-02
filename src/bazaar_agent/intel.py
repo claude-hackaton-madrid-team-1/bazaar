@@ -198,7 +198,9 @@ def dealer_threads(events: Iterable[Event], ours: str | None = None) -> list[Dea
             for pr in tape([e]):
                 settlements.append((pr, (e.get("payload") or {}).get("items") or []))
     used: set[int] = set()
-    for t in sorted(threads.values(), key=lambda x: x.opened_tick):
+    # Newest thread first: a team has one open conversation per dealer, so a fill belongs to the
+    # latest thread opened before it, never to an older one that was abandoned without a deal.
+    for t in sorted(threads.values(), key=lambda x: (x.opened_tick, x.thread), reverse=True):
         for pr, items in settlements:
             if pr.settlement in used or pr.tick < t.opened_tick or not _matches(t, pr, items):
                 continue

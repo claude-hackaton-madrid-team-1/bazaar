@@ -494,6 +494,48 @@ claude mcp add --transport http bazaar https://<bazaar-mcp domain>/mcp \
 ```
 
 Locally: `BAZAAR_MCP_TOKEN=... uv run bazaar mcp serve` (127.0.0.1:8765, DNS-rebinding protection on).
+## Evals (how well each settled decision scored)
+
+Jev chose the design (`questions/evals.json`, verdicts logged): **online outcomes**, scored after each
+decision settles, **stored in Postgres** (the source of truth the dashboard reads) and **attached to
+the matching Phoenix trace** as an annotation. The evals measure what the game scores (RULES.md
+"Scoring"), never the number of trades, fees or luck. A pass of `bazaar evals run` reads Postgres only
+(no game API call), and nothing in the evals uses the team key: they cost nothing of its 5 req/s.
+
+```sh
+uv run bazaar evals run                 # score everything settled; idempotent (a re-run changes 0 rows)
+uv run bazaar evals run --since-tick 300
+uv run bazaar evals run --every-ticks 6 # keep running on the game clock (keyless /api/clock)
+uv run bazaar evals report              # scorecard, dealer ladder, worst 5 per target, Jev calibration
+uv run bazaar evals report --json       # the same for the dashboard
+uv run bazaar duel done                 # one /api/duels?done=true read: finished duels into Postgres
+uv run bazaar evals import-duels .local/duels/duels.jsonl   # a duel runner's log into Postgres, no API
+```
+
+| Target | Score (0..1) | Where the inputs come from |
+|---|---|---|
+| **duel** | Deal: our surplus over the pie the rival revealed (its best offer bounds its limit), times the value kept after decay `(1 - decay) ** rounds`. The API has no `share` or pie (verified on the practice session), so the share part is an upper bound. No deal: 0, labelled `bad` when the rival offered inside our limit (money left on the table), `ok` when it never did. A deal outside our limit: 0, `bad`, flagged. | `duels` table (written by `bazaar duel run` each tick, finished duels from `?done=true`), `duel.closed` feed events |
+| **dealer** | The share of the dealer's price range a deal captured: from its list price (highest opening ask seen, any team) to its best fill seen (lowest fill), per dealer and rarity. No deal: 0. A deal at the dealer's opening price is called out: it does not count toward unlocking a level. View `eval_ladder`: best three per level, a missing one as zero. | `feed_events` (our threads), `dealer_curves` (every team's), `traders.level` |
+| **trade** | Surplus at our private values over the trade's gross: a bought card at its `your_value` in the first `/me` snapshot holding it, minus the cash that left (the snapshots' cash change, else price + fee); a sold card the other way round. A loss is 0 and `bad`. When the trade came from a live decision with a decided Jev verdict, the verdict is marked right or wrong. | `feed_events` settlements with us as a party and no dealer, `snapshots`, `decisions` |
+| **market_test** | Stub until we run a venue: the official `bench_efficiency` from `/me`, once a day. | `snapshots.score` |
+
+Labels: `good` ≥ 0.6, `ok` ≥ 0.3, `bad` below. Every outcome carries an explanation a human can check
+("Deal at 138 vs our limit 109: +29.0 P, 18.8 P after 7 rounds (kept 65%) …") and its numbers in `details`.
+
+**Where to see them.** `bazaar evals report` in the CLI; in Phoenix, on each `duel` / `negotiation` /
+`<agent> tick N` trace as an annotation named `duel_pie_share`, `ladder_share` or `trade_surplus`
+(annotator `CODE`, identifier `bazaar-evals:<subject>`: a re-score updates it in place); in Postgres for the
+dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:101`), and the views
+`eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
+the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
+
+**Always on.** Railway service `bazaar-evals` runs `bazaar evals run --every-ticks 6`. Like every
+loop here it follows the game clock (tick discipline), read from the keyless public `/api/clock`, so
+it never touches the team key: doors closed, no pass. Every 6 ticks it scores again when an input moved
+in Postgres (a game tick, a duel from `duel done` or `import-duels`, a `/me` snapshot, a decision) or an
+outcome still waits for its Phoenix span (each is looked up on three passes: a trace lands when its duel
+or negotiation ends). A Postgres outage is retried at the next due tick. After a restart, `bazaar duel
+run` reads `?done=true` once, so a duel that finished while it was down is stored.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
@@ -509,6 +551,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-mcp` | `https://<generated domain>/mcp` (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | declared in `.railway/railway.py`, dry run (no `BAZAAR_LIVE`) |
+| `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -530,6 +573,7 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
+| `bazaar-evals` | `bazaar evals run --every-ticks 6` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: only the keyless `/api/clock` paces it |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
@@ -669,6 +713,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
+| N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored; `bazaar-evals` service; Market Test stub until we run a venue |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
@@ -692,6 +737,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
+| `uv run bazaar duel done` | Read our finished duels once (`/api/duels?done=true`, one request) and store them for the evals. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
 | `uv run bazaar rules check` | Dry-run one action against the guardrails with our live /me, clock and ledger. |
 | `uv run bazaar monitor` | The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts. |
@@ -719,14 +765,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
+- [2026-10-03] gotcha — `right` is a reserved word in Postgres
+- [2026-10-03] build-error — dealer fills went to an abandoned older thread
+- [2026-10-03] finding — a finished duel's `result` is our surplus after decay; there is no pie or share
 - [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
 - [2026-10-03] finding — Agent SDK subagents run in the background by default
 - [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
 - [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
-- [2026-10-03] build-error — rich swallowed "[jev accept (0.91)]" in a console line
-- [2026-10-03] finding — Jev on a real practice duel: leans accept, but under the design bar
-- [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
-- [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
 
 <!-- BAZAAR:STATUS:END -->
 

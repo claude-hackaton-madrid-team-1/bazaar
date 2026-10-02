@@ -121,6 +121,34 @@ def mcp_server(name: str, data: object) -> object:
     )
 
 
+EVALS_EVERY_TICKS = "6"  # bazaar-evals looks for new inputs every 6 game ticks (3 min at 30 s, 90 s at 15 s)
+
+
+def evals_service() -> object:
+    """`bazaar evals run` on a loop (README "Evals"): Postgres in, Postgres and Phoenix annotations out.
+
+    It never uses the team key, so it gets no BAZAAR_KEY and adds nothing to the key's 5 req/s budget: its
+    loop follows the game clock through the keyless public /api/clock (tick discipline).
+    Both secrets it needs are references to the services that own them, so nothing here is preserve()d.
+    It writes no file: no volume."""
+    return service(
+        "bazaar-evals",
+        source=github(REPO, branch=BRANCH),
+        build=BUILD,
+        start=f"/app/.venv/bin/bazaar evals run --every-ticks {EVALS_EVERY_TICKS}",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        env={
+            "RAILPACK_PYTHON_VERSION": "3.12",
+            "DATABASE_URL": "${{Postgres.DATABASE_URL}}",  # private *.railway.internal URL
+            "PHOENIX_COLLECTOR_ENDPOINT": "http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:" + PHOENIX_PORT,
+            "PHOENIX_API_KEY": "${{phoenix.PHOENIX_API_KEY}}",
+            "PHOENIX_PROJECT": "bazaar",
+            "COLUMNS": "200",
+        },
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
@@ -160,6 +188,7 @@ def main(ctx=None):
     maker = agent("bazaar-maker", "agent maker", maker_data)
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
+    evals = evals_service()
 
     return project(
         "heartfelt-warmth",
@@ -170,6 +199,7 @@ def main(ctx=None):
             taker,
             maker,
             mcp,
+            evals,
             phoenix_data,
             monitor_data,
             duels_data,
