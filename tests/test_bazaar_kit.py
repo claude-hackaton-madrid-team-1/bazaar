@@ -2,7 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kit"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor" / "bazaar-kit"))
 
 TEAM_METHODS = [
     "health", "clock", "catalog", "leaderboard", "feed", "schedule", "dealers", "dealer", "levels", "call",
