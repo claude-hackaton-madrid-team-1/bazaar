@@ -30,6 +30,7 @@ from bazaar_agent.stream import EventStream, Note
 from bazaar_agent.ticks import Clock
 
 ALERTS_FILE = "alerts.jsonl"
+WEB_STREAM_FILE = "stream.jsonl"  # what tui/serve.py relays to the web view (specs/003-web-live-feed)
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class MonitorLoop:
         self.public, self.team, self.watcher = public, team, watcher
         self.data_dir, self.options, self.say, self.stream = data_dir, options, say, stream
         self.alerts_path = data_dir / ALERTS_FILE
+        self.web_path = data_dir / WEB_STREAM_FILE
         self.dealers: dict[str, mon.TraderSnapshot] = {}
         self.levels: list[Any] = []
         self.teams_seen: dict[str, mon.TraderSnapshot] = {}
@@ -92,6 +94,7 @@ class MonitorLoop:
     def _stream_events(self, events: list[Event]) -> None:
         ingested = self.watcher.from_stream(events)
         self.streamed_since_tick += len(ingested.fresh)
+        mon.append_stream(self.web_path, ingested.fresh + ingested.private)
         traces.stream_batch(len(events), ingested, self.stream_state)
         if self.options.show_events:
             for e in ingested.fresh + ingested.private:
@@ -129,6 +132,7 @@ class MonitorLoop:
         me = self._read_me(c)
         self._write(lambda cx: self._store_tick(cx, c.tick, ingested.fresh, alerts, history, me), f"tick {c.tick}")
         self.raise_alerts(alerts, "poll")
+        mon.append_stream(self.web_path, mon.web_events(c, ingested.fresh + ingested.private, me))
         traces.monitor_summary(len(ingested.fresh), len(dealers_after), len(teams_now), len(levels_after), me)
         self.say(self._tick_line(c, result, lead, me))
         self.streamed_since_tick = 0

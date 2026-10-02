@@ -11,8 +11,9 @@ at one screen, the web one: the Textual TUI goes.
 
 ### The monitor publishes the web's event contract
 
-Every tick `bazaar monitor` appends to `.local/stream.jsonl` (one event per line, the envelope of
-001: `{"id", "tick", "t", "type", "scope", "actor", "payload"}`):
+`bazaar monitor` appends to `.local/stream.jsonl` (one event per line, the envelope of
+001: `{"id", "tick", "t", "type", "scope", "actor", "payload"}`). Events from the live stream are
+written the moment they land; every tick adds the rest:
 
 | Event | From | Payload |
 |---|---|---|

@@ -1,6 +1,8 @@
 """`MonitorLoop` with a fake Postgres and fake clients: what each tick and each stream burst writes,
 and how refusals and a failed write leave the loop running. No network, no database."""
 
+import json
+
 from bazaar_agent import db
 from bazaar_agent.agents.monitoring import MonitorLoop, Options
 from bazaar_agent.feed import FeedStore
@@ -158,3 +160,26 @@ def test_a_failing_stream_burst_is_reported_and_the_monitor_keeps_running(tmp_pa
     assert "stream burst failed (OSError: disk full)" in said[-1]
     loop.on_tick(clock(120))  # the next tick still runs
     assert "tick 120: +2 events" in said[-1]
+
+
+def web_stream(tmp_path):
+    path = tmp_path / "stream.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+
+
+def test_a_tick_writes_hello_me_clock_and_the_polled_events_to_the_web_stream(tmp_path, monkeypatch):
+    Recorder(monkeypatch)
+    loop, _ = make(tmp_path, team=Team())
+    loop.on_tick(clock(120))
+    events = web_stream(tmp_path)
+    assert [e["type"] for e in events] == ["agent.hello", "agent.me", "clock", "announcement", "offer.listed"]
+    assert events[0]["payload"]["team"] == "t01" and [e["id"] for e in events[3:]] == [41, 42]
+
+
+def test_a_stream_burst_reaches_the_web_stream_at_once_and_only_once(tmp_path, monkeypatch):
+    Recorder(monkeypatch)
+    loop, _ = make(tmp_path)
+    news = {"id": 60, "tick": 120, "type": "thread.message", "actor": "t05", "payload": {}}
+    loop.on_stream([news])
+    loop.on_stream([news])
+    assert web_stream(tmp_path) == [news]
