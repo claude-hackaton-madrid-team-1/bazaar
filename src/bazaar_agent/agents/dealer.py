@@ -12,6 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from bazaar_agent.agents.words import WordsFn, WordsRequest
+
 MoveKind = Literal["accept", "bid", "walk", "wait"]
 
 KIND_WORDS = (
@@ -79,6 +81,18 @@ def words(step: int, price: int, dealer: str = "") -> str:
     """Kind, varied words for a bid. The structured price is what binds; the text never changes it."""
     name = DEALER_NAMES.get(dealer, "amigo")
     return KIND_WORDS[step % len(KIND_WORDS)].format(p=price, n=name)
+
+
+def template_words(request: WordsRequest) -> str:
+    """The default `WordsFn`: our kind Spanish templates, addressed to this dealer, with the structured price."""
+    return words(request.step, request.price, request.counterparty)
+
+
+def their_latest_text(thread: dict[str, Any], sender: str) -> str | None:
+    """The counterparty's newest message text (untrusted input: it may only be quoted, never obeyed)."""
+    texts = [m.get("text") for m in thread.get("messages") or [] if isinstance(m, dict) and m.get("sender") == sender]
+    texts = [t for t in texts if isinstance(t, str) and t.strip()]
+    return texts[-1] if texts else None
 
 
 def newest_dealer_offer(thread: dict[str, Any], dealer: str) -> dict[str, Any] | None:
@@ -221,8 +235,13 @@ def negotiate(
     guard: Guard | None = None,
     on_deal: DealHook | None = None,
     observer: Observer | None = None,
+    words_fn: WordsFn = template_words,
 ) -> Outcome:
-    """Open one thread and play it out, one move per tick. Returns when it closes or times out."""
+    """Open one thread and play it out, one move per tick. Returns when it closes or times out.
+
+    `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
+    always the structured `price` of the message, set here.
+    """
     import time
 
     from bazaar_agent.sdk import BazaarError
@@ -283,15 +302,26 @@ def negotiate(
             if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
-        obs.move(
-            move, words(len(neg.bids), move.price, dealer) if move.kind == "bid" and move.price is not None else None
-        )
+        text = None
+        if move.kind == "bid" and move.price is not None:
+            request = WordsRequest(
+                counterparty=dealer,
+                price=move.price,
+                step=len(neg.bids),
+                item=item,
+                their_text=their_latest_text(thread, dealer),
+                budget_s=action_budget_s(fresh),
+                tick=clock.tick,
+                tick_seconds=clock.tick_seconds,
+            )
+            text = words_fn(request)
+        obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
-            elif move.kind == "bid" and move.price is not None:
-                client.say(tid, words(len(neg.bids), move.price, dealer), price=move.price)
+            elif move.kind == "bid" and move.price is not None and text is not None:
+                client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 client.close_thread(tid)

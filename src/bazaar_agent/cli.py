@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -15,8 +16,9 @@ from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
+from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
-from bazaar_agent.ticks import Clock, run_per_tick
+from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
 feed_app = typer.Typer(no_args_is_help=True, help="Capture and inspect the public feed")
@@ -34,12 +36,15 @@ app.add_typer(obs_app, name="obs")
 console = Console()
 
 LIVE_HELP = "Merge the live feed window into the captured history"
-DUEL_WORDS = "Propongo este precio, creo que es justo para los dos."
 
 
 @app.callback()
-def _tracing(ctx: typer.Context) -> None:
-    """With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans."""
+def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTION) -> None:
+    """Global options. `--llm-runtime` pins the runtime LLM for this run (see RUNTIME.md).
+
+    With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans.
+    """
+    llm_cli.pin_runtime(llm_runtime)
     if tm.init_tracing("bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
@@ -213,7 +218,7 @@ def dealer_buy(
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate
+    from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate, template_words
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -272,6 +277,7 @@ def dealer_buy(
             on_deal=on_deal,
             max_ticks=rules.dealer_max_ticks_per_thread,
             observer=observer,
+            words_fn=llm_cli.words_for(settings, rules, template_words),
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -334,7 +340,8 @@ def duel_run(
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duelist import append_jsonl, duel_move
+    from bazaar_agent.agents.duelist import append_jsonl, duel_move, rival_text, template_duel_words
+    from bazaar_agent.agents.words import WordsRequest
 
     rules = _rules().rules
     settings = load_settings()
@@ -343,8 +350,10 @@ def duel_run(
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
     duel_traces = traces.DuelTraces()
+    duel_words = llm_cli.words_for(settings, rules, template_duel_words)
 
     def on_tick(c: Clock) -> None:
+        started = time.monotonic()
         try:
             data = client.duels()
         except BazaarError as e:
@@ -391,12 +400,23 @@ def duel_run(
             )
             if not play or move.kind == "hold":
                 continue
+            said: str | None = None
             try:
                 if move.kind == "accept":
                     client.duel_accept(did)
                 elif move.price is not None:
-                    client.duel_say(did, DUEL_WORDS, price=move.price, days=move.days)
-                duel_traces.sent(did, move, DUEL_WORDS if move.kind == "offer" else None)
+                    request = WordsRequest(
+                        counterparty=f"duel:{did}",
+                        price=move.price,
+                        step=c.tick - first_seen[did],
+                        their_text=rival_text(d),
+                        budget_s=max(0.0, action_budget_s(c) - (time.monotonic() - started)),
+                        tick=c.tick,
+                        tick_seconds=c.tick_seconds,
+                    )
+                    said = duel_words(request)
+                    client.duel_say(did, said, price=move.price, days=move.days)
+                duel_traces.sent(did, move, said)
                 append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
             except BazaarError as e:
                 console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
@@ -971,6 +991,12 @@ def sell_cancel(
         _fail(f"cancel refused: {e.code} ({e.message[:80]})")
         return
     console.print(f"[green]cancelled offer {offer_id}[/green]")
+
+
+# ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
+# `bazaar llm`, `bazaar ask`, `bazaar steer` (and `--llm-runtime` in `_root`): see bazaar_agent/llm/cli.py.
+
+llm_cli.register(app)
 
 
 if __name__ == "__main__":

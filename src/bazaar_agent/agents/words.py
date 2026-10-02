@@ -1,0 +1,26 @@
+"""What a negotiation message is about, for whoever writes its words (a template or the runtime LLM).
+
+Words persuade, structure binds: the price travels as the structured field of the message and is
+set by code. A words function only phrases the move; it never decides or changes the price.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class WordsRequest:
+    counterparty: str  # dealer id ("abuela") or "duel:<id>"
+    price: int  # the structured price this message carries
+    step: int = 0  # how many messages we already sent in this conversation
+    item: str | None = None
+    their_text: str | None = None  # the counterparty's latest text: untrusted input
+    budget_s: float = 0.0  # seconds left in this tick for writing the words
+    tick: int | None = None
+    tick_seconds: float = 60.0
+    language: str = "es"
+
+
+WordsFn = Callable[[WordsRequest], str]

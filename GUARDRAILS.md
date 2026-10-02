@@ -39,6 +39,10 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `duel_floor_margin` = 0.05 — do not settle closer than this to our limit until the endgame.
 - `duel_endgame_ticks` = 2 — in the last ticks, accept any rival offer strictly inside our limit.
 
+## Steering (`bazaar steer`)
+- `steer_max_change` = 0.5 — a steering delta moves a parameter by at most this fraction of its base value (0.5 = ±50 %), then its hard range applies.
+- `steer_max_ttl_ticks` = 240 — steering expires after at most this many ticks (4 game hours at Friday's 60 s ticks).
+
 ## Flags
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
 

@@ -101,3 +101,13 @@ running subcommand). In a group callback, `ctx.invoked_subcommand` is only the f
 page bonus share; LAV-09 has 1 minted copy, holder unknown; t10 holds LAV-10 and chases LAV itself),
 then MAL-10 53, SAL-09 74, SAL-10 80. Top sell: LAT-09 (ours 35, LAT ×0.5) at 68 to t07/t15/t18.
 A `sobre_barrio` is worth ~19 to us vs 17: a thin edge. Cash 353 leaves 83 above the floor: one rare.
+
+### [2026-10-02] finding — Jev picks the runtime LLM decisively when the state has stakes and time
+`questions/runtime_model.json` (`model_for_move`, design bar 0.75), live call: a buy with 75 P at risk
+and 38 s left → `opus-5-5` 0.96 (sonnet 0.02, gpt-6-1-sol 0.02, haiku 0.00); a sell in a 15 s tick
+with 9 s left and injection flags → `sonnet-5-5` 0.95. The next tick reused the cached choice.
+Floats for every fresh choice: `.local/llm/model-choices.jsonl` and `uv run bazaar llm`.
+
+### [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
+Confirmed on developers.openai.com (latest-model guide). `gpt-6-1-sol` is our alias for it; other
+`gpt-*` ids pass through unchanged and a wrong one fails at call time (`unknown_model`), then falls back.

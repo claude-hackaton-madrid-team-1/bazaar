@@ -48,6 +48,8 @@ class Guardrails(BaseModel):
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
+    steer_max_change: float = 0.5
+    steer_max_ttl_ticks: int = 240
     allow_flags: bool = False
 
     def max_price_for(self, rarity: str | None) -> int | None:
@@ -79,6 +81,8 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
+    "steer_max_change": "llm.steering.clamp",
+    "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
 }
 
