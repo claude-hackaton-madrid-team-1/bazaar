@@ -67,11 +67,11 @@
           "mark": "✓"
         },
         {
-          "text": "desk + subagents",
-          "mark": "◑"
+          "text": "desk + subagents (#59)",
+          "mark": "✓"
         },
         {
-          "text": "token in .env still empty",
+          "text": "token on duels, taker, maker",
           "note": true
         }
       ],
@@ -98,8 +98,8 @@
           "mark": "✓"
         },
         {
-          "text": "duels duel_move ◑ · maker prices",
-          "mark": "◑"
+          "text": "duels duel_move · maker prices (#57)",
+          "mark": "✓"
         },
         {
           "text": "calibration in evals",
@@ -147,16 +147,19 @@
       "status": "wip",
       "lines": [
         {
-          "text": "Claude Agent SDK runtime"
+          "text": "Claude Agent SDK runtime",
+          "mark": "✓"
         },
         {
-          "text": "MCP tools + guardrail hook"
+          "text": "MCP tools + guardrail hook",
+          "mark": "✓"
         },
         {
-          "text": "buyer · seller · duelist"
+          "text": "buyer · seller · duelist",
+          "mark": "✓"
         },
         {
-          "text": "bazaar-mcp, bearer auth",
+          "text": "bazaar-mcp: service being created",
           "note": true
         }
       ],
@@ -297,12 +300,6 @@
     {
       "status": "todo",
       "label": "blocked",
-      "title": "Subscription token",
-      "body": "Paste it after `CLAUDE_CODE_OAUTH_TOKEN=` in `.env`. Then Claude uploads it to duels, taker and maker."
-    },
-    {
-      "status": "todo",
-      "label": "blocked",
       "title": "Trust the bazaar-live folder",
       "body": "Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start."
     },
@@ -329,14 +326,8 @@
     {
       "status": "wip",
       "label": "worker",
-      "title": "Jev for duels and the maker",
-      "body": "`duel_move`, `list_price_choice`, calibration outcomes."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
       "title": "Agent runtime + bazaar-mcp",
-      "body": "Claude Agent SDK: MCP tools, guardrail hook, subagents, remote MCP with bearer auth."
+      "body": "Runtime merged (#59). Now: the bazaar-mcp Railway service, its domain, bearer token and checks."
     },
     {
       "status": "wip",
