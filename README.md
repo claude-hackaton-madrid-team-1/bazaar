@@ -16,7 +16,7 @@ uv sync                                   # Python deps
 cp -n .env.example .env 2>/dev/null; $EDITOR .env   # BAZAAR_KEY=tk-... and TYPESAFE_API_KEY=...
 
 uv run bazaar clock                       # tick, pace, limits, action budget left in this tick
-uv run bazaar monitor --notify           # live stream + per-tick poll, traders, /me, alerts. 24/7 on Railway: local only if it is down
+uv run bazaar monitor --notify           # KEEP RUNNING on ONE laptop: the team's monitor (Railway's is off)
 uv run bazaar traders                     # every dealer and team the monitor has seen (our row: status `us`)
 uv run bazaar alerts                      # new dealers, levels going active, announcements
 uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads (--ours/--theirs)
@@ -65,8 +65,8 @@ the environment first, then `.env`. Unset means the local docker Postgres
   An older service may need a redeploy, or use the pgvector template. Without pgvector the
   schema still creates every table and skips only the `embedding vector(384)` columns; run
   `db init` again after enabling it and they are added.
-- **One monitor writes per team.** It is `bazaar-monitor` on Railway (see "Production on Railway"):
-  run `uv run bazaar monitor` on a laptop only while that one is down.
+- **One monitor writes per team.** It runs in the CLI on one laptop (`uv run bazaar monitor`);
+  `bazaar-monitor` on Railway is off by team decision (see "Production on Railway").
   Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
   writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
   history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
@@ -257,7 +257,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `phoenix` | https://phoenix-production-6aa3.up.railway.app (login `admin@localhost`, password in its Railway variables) | `phoenix.railway.internal:6006` (OTLP/HTTP), `:4317` (gRPC) | traces UI for every negotiation, duel, monitor tick and CLI line | running |
 | `Postgres` | `iriguchi.proxy.rlwy.net:28880`, db `railway`, user `postgres`, SSL (password: Postgres service → Variables) | `${{Postgres.DATABASE_URL}}` | the team's shared memory (feed, tape, dealer curves, traders, snapshots, alerts, decisions) | running |
 | `bazaar-duels` | none (worker, no HTTP) | — | the team's ONE duel player (`duel run --play`) | running |
-| `bazaar-monitor` | none (worker, no HTTP) | — | kept but scaled to 0: the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | idle |
+| `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
 | `bazaar-taker`, `bazaar-maker` | none (workers) | — | autonomous buyer and seller, dry run until `BAZAAR_LIVE=1` | coming |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
@@ -275,16 +275,22 @@ Code, Python authoring, beta): change it by PR.
 
 | Service | What runs | Data | Notes |
 |---|---|---|---|
-| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | scaled to 0 by team decision: the monitor runs in the CLI on a laptop |
+| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | OFF by team decision (no source, no deployment): the monitor runs in the CLI on a laptop |
 | `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
-- **Builds.** Both runtime services build this repo's `main` with Railpack (Python 3.12 through
+- **Builds.** `bazaar-duels` builds this repo's `main` with Railpack (Python 3.12 through
   `RAILPACK_PYTHON_VERSION`, `uv sync --locked --no-dev`, editable so `vendor/` and
   `GUARDRAILS.md` resolve from `/app`). Every push to `main` that touches `src/`, `vendor/bazaar-kit/`,
   `pyproject.toml`, `uv.lock`, `GUARDRAILS.md`, `STRATEGY.md`, `questions/` or `.railway/`
-  redeploys them; README-only commits are skipped. Restart policy: always.
+  redeploys it; README-only commits are skipped. Restart policy: always.
+- **The monitor is off, not deleted.** Railway has no 0-replica setting (the API rejects
+  `numReplicas` 0, and dropping the region moves the service to a default region), so "off" is no
+  source and no deployment: `.railway/railway.py` declares `bazaar-monitor` with `enabled=False`.
+  To turn it back on: set `enabled=True`, `railway config plan` (shows `source.repo` reconnecting),
+  `apply`, then `railway redeploy --service bazaar-monitor --from-source --yes` if no build starts,
+  and stop the laptop monitor: one monitor per team.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
   `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
@@ -323,14 +329,14 @@ PHOENIX_API_KEY=<your key>
 railway link --project heartfelt-warmth --environment production   # once per clone
 uv run --group infra railway config plan    # preview what .railway/railway.py would change
 uv run --group infra railway config apply   # apply it (a partial: it never touches Postgres)
-railway logs --service bazaar-monitor       # `tick N` lines; same for bazaar-duels and phoenix
-railway redeploy --service bazaar-duels     # a fresh container of the current build
-railway restart --service bazaar-monitor    # restart in place
+railway logs --service bazaar-duels        # `tick N` lines and one line per duel move
+railway redeploy --service bazaar-duels --yes   # a fresh container of the current build
+railway restart --service bazaar-duels --yes    # restart in place
 ```
 
 A new Phoenix (a fresh volume) needs its ingestion key once, piped straight into Railway:
 `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD=... uv run bazaar obs bootstrap --url <phoenix URL> | railway variable set PHOENIX_API_KEY --stdin --service phoenix`,
-then redeploy `bazaar-monitor` and `bazaar-duels`.
+then redeploy `bazaar-duels`.
 
 - **Known limit: state in `BAZAAR_DATA_DIR` is per container.** `ledger.jsonl` (accepts per tick,
   spend) lives on each service's volume, so `bazaar-duels` cannot see an accept made by another
@@ -446,6 +452,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
 - [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
 - [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
 - [2026-10-02] gotcha — Railpack's uv install is `--no-editable`, which breaks REPO_ROOT
@@ -453,7 +460,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
 - [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
 - [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
-- [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
 
 <!-- BAZAAR:STATUS:END -->
 

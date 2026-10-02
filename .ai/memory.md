@@ -155,3 +155,10 @@ A system API key then comes from `POST /v1/system/api_keys` with the admin sessi
 Secrets go `printf %s "$V" | railway variable set NAME --stdin --service X`, never as `NAME=value` on
 the command line. Railway's watch patterns turn README-bot pushes into SKIPPED deployments, and the
 MCP `redeploy` then needs the last SUCCESS deployment id (it refuses a SKIPPED one).
+
+### [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
+`numReplicas: 0` is rejected ("Too small: expected number to be >=1"), yet `railway config apply`
+(CLI 5.45.8) printed only its header and exited 0; the reason is in `--json` → `applyResult.status`
+"failed" + `diagnostics`. Re-plan after every apply. A region set to null does not mean zero either:
+Railway moved the service to its default region (us-west2) until the region map was set back. To
+turn a service off, disconnect its source and `railway down` it (what we did to `bazaar-monitor`).
