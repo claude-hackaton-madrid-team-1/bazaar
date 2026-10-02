@@ -643,6 +643,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | `ogarciarevett/feat-agent-runtime` |
 | [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | `ogarciarevett/feat-evals` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | `ogarciarevett/feat-bazaar-sim` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
