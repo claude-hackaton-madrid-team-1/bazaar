@@ -68,10 +68,11 @@ def greedy_by_price(sells, buys, fee):
     return out
 
 
-def brute_force(sells, buys, fee):
-    """(best surplus, most pairs at that surplus) over every matching: the ground truth for small books."""
+def brute_force(sells, buys, fee, cap=None):
+    """(best surplus, most pairs at that surplus) over every matching of at most `cap` pairs: the ground truth."""
     best = (0, 0)
-    for k in range(min(len(sells), len(buys)) + 1):
+    most = min(len(sells), len(buys)) if cap is None else min(len(sells), len(buys), cap)
+    for k in range(most + 1):
         for chosen in itertools.combinations(sells, k):
             for partners in itertools.permutations(buys, k):
                 if all(feasible(s, b, fee) for s, b in zip(chosen, partners, strict=True)):
@@ -209,6 +210,26 @@ def test_public_offers_can_be_left_out_and_the_bench_still_matches():
     )
     plan = plan_matches(quotes_from(book, public=False).quotes, Fee())
     assert [(m.sell.id, m.buy.id) for m in plan] == [("b3-0", "b3-1")]
+
+
+def test_the_per_tick_cap_keeps_the_best_pairs_not_the_first_ones():
+    fee = Fee(per_card=2)
+    sells, buys = [sell(1, 10, "a"), sell(2, 20, "b")], [buy(3, 30, "c"), buy(4, 21, "d")]
+    assert [(m.sell.id, m.buy.id, m.surplus) for m in best_matches(sells, buys, fee, k=1)] == [(1, 3, 20)]
+    assert [(m.sell.id, m.buy.id) for m in plan_matches(sells + buys, fee, limit=1)] == [(1, 3)]
+    assert best_matches(sells, buys, fee, k=0) == []
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_capped_plans_across_items_equal_brute_force(seed):
+    rng = random.Random(1000 + seed)
+    items, makers = ["card:A", "card:B"], ["a", "b", "c"]
+    sells = [sell(i, rng.randint(5, 30), rng.choice(makers), rng.choice(items)) for i in range(rng.randint(0, 4))]
+    buys = [buy(10 + i, rng.randint(5, 40), rng.choice(makers), rng.choice(items)) for i in range(rng.randint(0, 4))]
+    fee, cap = Fee(per_card=rng.choice([0, 2])), rng.randint(0, 3)
+    plan = plan_matches(sells + buys, fee, limit=cap)
+    assert len(plan) <= cap
+    assert (sum(m.surplus for m in plan), len(plan)) == brute_force(sells, buys, fee, cap)
 
 
 def test_bench_comes_first_then_surplus_and_the_limit_cuts_the_tail():
