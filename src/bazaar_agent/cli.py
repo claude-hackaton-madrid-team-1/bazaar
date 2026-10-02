@@ -889,7 +889,10 @@ def strategy(
     now = Clock.model_validate(public.clock())
     personas = public.dealers()
     dealers_now = personas.get("personas") or personas.get("dealers") or []
-    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, loaded.params, rules)
+    from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+
+    params = steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, now.tick)
+    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, params, rules)
     ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
     ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
     used = ledger.packs_since(now.t_hours - 1.0)

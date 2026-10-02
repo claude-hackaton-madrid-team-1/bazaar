@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bazaar_agent.config import REPO_ROOT
-from bazaar_agent.guardrails import RULE_LINE, RuleLine
+from bazaar_agent.guardrails import GuardrailsError, RuleLine, parse_md_config, validated
 from bazaar_agent.llm.models import AUTO, UnknownModelError, resolve
 
 RUNTIME_FILE = REPO_ROOT / "RUNTIME.md"
@@ -64,37 +64,15 @@ class LoadedRuntime:
     path: Path
 
 
-def _coerce(raw: str) -> Any:
-    value = raw.strip().strip("`")
-    if value.lower() in ("true", "false"):
-        return value.lower() == "true"
-    for convert in (int, float):
-        try:
-            return convert(value)
-        except ValueError:
-            pass
-    return value
-
-
 def parse_runtime(text: str, path: Path = RUNTIME_FILE) -> LoadedRuntime:
-    lines: list[RuleLine] = []
-    values: dict[str, Any] = {}
-    for number, raw in enumerate(text.splitlines(), start=1):
-        if m := RULE_LINE.match(raw.strip()):
-            line = RuleLine(m["id"], m["value"].strip(), m["why"].strip(), number)
-            if line.rule_id in values:
-                raise RuntimeConfigError(f"{path.name}:{number}: `{line.rule_id}` is defined twice")
-            lines.append(line)
-            values[line.rule_id] = _coerce(line.raw_value)
-        elif raw.strip().startswith("- `"):
-            raise RuntimeConfigError(f"{path.name}:{number}: not a parameter line (expected - `id` = value — why)")
+    """Same line format and parser as GUARDRAILS.md and STRATEGY.md (`guardrails.parse_md_config`)."""
     try:
-        config = RuntimeConfig.model_validate(values)
-    except ValidationError as e:
-        problems = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
-        raise RuntimeConfigError(f"{path.name}: {problems}") from None
+        lines, _, values = parse_md_config(text, path)
+        config = validated(RuntimeConfig, values, path)
+    except GuardrailsError as e:
+        raise RuntimeConfigError(str(e)) from None
     _check_models(config, path)
-    return LoadedRuntime(config, tuple(lines), path)
+    return LoadedRuntime(config, lines, path)
 
 
 def _check_models(config: RuntimeConfig, path: Path) -> None:

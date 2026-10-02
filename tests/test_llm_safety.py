@@ -130,7 +130,7 @@ def test_duel_run_reads_active_steering_each_tick(tmp_path):
 
 
 def test_every_steerable_parameter_names_what_reads_it():
-    assert {b.used_by for b in st.STEERABLE.values()} == {"duel run", st.STRATEGY_PENDING}
+    assert {b.used_by for b in st.STEERABLE.values()} == {"duel run", st.USED_BY_STRATEGY}
 
 
 # ---------------------------------------------------------------- intent

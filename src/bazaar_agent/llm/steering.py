@@ -5,8 +5,8 @@ value within `steer_max_change` of its base (GUARDRAILS.md) and inside the param
 the duel anchor never drops below the floor margin. Steering lives in `.local/steering.json`, one
 at a time (a new one replaces the old), and expires at a game tick, never at a wall-clock time.
 Price caps, the cash floor and every other guardrail are never steerable; `duel_floor_margin` (a
-safety margin) may only be tightened. `duel run` applies the duel parameters every tick; the
-STRATEGY.md parameters are stored and shown, and apply once the strategy runtime reads them.
+safety margin) may only be tightened. `duel run` applies the duel parameters every tick, and
+`bazaar strategy` applies the STRATEGY.md ones when it ranks moves.
 """
 
 from __future__ import annotations
@@ -20,15 +20,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bazaar_agent.config import REPO_ROOT
-from bazaar_agent.guardrails import RULE_LINE, Guardrails
+from bazaar_agent.guardrails import Guardrails, GuardrailsError
 from bazaar_agent.llm.chooser import ModelChoice, MoveSituation
 from bazaar_agent.llm.intent import Clarification
 from bazaar_agent.llm.models import UnknownModelError
 from bazaar_agent.llm.providers import LLMError, TextRequest
 from bazaar_agent.llm.runtime import LLMRuntime
+from bazaar_agent.strategy import STRATEGY_FILE, StrategyParams, load_strategy
 
-STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
 STEERING_FILE = "steering.json"
 STEER_MAX_TOKENS = 8000
 
@@ -54,13 +53,13 @@ class Bound:
     tighten_only: bool = False  # a safety margin: steering may raise it, never lower it
 
 
-STRATEGY_PENDING = "strategy runtime (not on main yet: stored only)"
+USED_BY_STRATEGY = "bazaar strategy"
 STEERABLE: Mapping[str, Bound] = {
     "scarcity_weight": Bound(
-        0.0, 3.0, False, "STRATEGY.md", "how strongly scarcity raises a move's priority", STRATEGY_PENDING
+        0.0, 3.0, False, "STRATEGY.md", "how strongly scarcity raises a move's priority", USED_BY_STRATEGY
     ),
     "page_bonus_weight": Bound(
-        0.0, 2.0, False, "STRATEGY.md", "how much of a missing card's page bonus counts", STRATEGY_PENDING
+        0.0, 2.0, False, "STRATEGY.md", "how much of a missing card's page bonus counts", USED_BY_STRATEGY
     ),
     "min_buy_surplus": Bound(
         0,
@@ -68,13 +67,13 @@ STEERABLE: Mapping[str, Bound] = {
         True,
         "STRATEGY.md",
         "buy only when value beats price by this many primas (lower = bolder)",
-        STRATEGY_PENDING,
+        USED_BY_STRATEGY,
     ),
     "sell_need_share": Bound(
-        0.3, 1.0, False, "STRATEGY.md", "ask a buyer this share of the card's value to them", STRATEGY_PENDING
+        0.3, 1.0, False, "STRATEGY.md", "ask a buyer this share of the card's value to them", USED_BY_STRATEGY
     ),
     "sell_min_surplus": Bound(
-        0, 30, True, "STRATEGY.md", "sell only when price beats our value by this many primas", STRATEGY_PENDING
+        0, 30, True, "STRATEGY.md", "sell only when price beats our value by this many primas", USED_BY_STRATEGY
     ),
     "duel_anchor": Bound(
         0.1, 1.0, False, "GUARDRAILS.md", "open a duel this far beyond our limit (higher = tougher)", "duel run"
@@ -83,7 +82,7 @@ STEERABLE: Mapping[str, Bound] = {
         0.0, 0.3, False, "GUARDRAILS.md", "never settle closer than this to our limit (tighten only)", "duel run", True
     ),
 }
-# STRATEGY.md values (strategy PR); used when that file is absent or does not set a parameter.
+# The committed STRATEGY.md values, used only when that file is missing or invalid.
 STRATEGY_DEFAULTS: Mapping[str, float] = {
     "scarcity_weight": 1.0,
     "page_bonus_weight": 1.0,
@@ -130,14 +129,11 @@ class Steering:
 def base_params(rules: Guardrails, strategy_path: Path = STRATEGY_FILE) -> dict[str, float]:
     """Every steerable parameter's current value: STRATEGY.md (or its defaults) and GUARDRAILS.md."""
     values = dict(STRATEGY_DEFAULTS)
-    if strategy_path.is_file():
-        for raw in strategy_path.read_text(encoding="utf-8").splitlines():
-            m = RULE_LINE.match(raw.strip())
-            if m and m["id"] in STRATEGY_DEFAULTS:
-                try:
-                    values[m["id"]] = float(m["value"].strip().strip("`"))
-                except ValueError:
-                    continue
+    try:
+        loaded = load_strategy(strategy_path).params
+        values = {name: float(getattr(loaded, name)) for name in STRATEGY_DEFAULTS}
+    except GuardrailsError:
+        pass  # `bazaar strategy` reports a bad STRATEGY.md itself; steering previews the defaults
     return {**values, "duel_anchor": rules.duel_anchor, "duel_floor_margin": rules.duel_floor_margin}
 
 
@@ -180,6 +176,16 @@ def steered_duel_params(rules: Guardrails, steering_path: Path, tick: int) -> tu
     base = {"duel_anchor": rules.duel_anchor, "duel_floor_margin": rules.duel_floor_margin}
     steered = apply_steering(base, load_steering(steering_path), tick, rules)
     return steered["duel_anchor"], steered["duel_floor_margin"]
+
+
+def steered_strategy_params(
+    params: StrategyParams, rules: Guardrails, steering_path: Path, tick: int
+) -> StrategyParams:
+    """STRATEGY.md parameters with any active steering applied and clamped (a new, frozen copy)."""
+    base = {name: float(getattr(params, name)) for name in STRATEGY_DEFAULTS}
+    steered = apply_steering(base, load_steering(steering_path), tick, rules)
+    changed = {name: value for name, value in steered.items() if value != base[name]}
+    return params.model_copy(update=changed) if changed else params
 
 
 def steering_from_draft(

@@ -28,7 +28,6 @@ PACK_ID = re.compile(r"^sobre_[a-z_]+$")
 COUNTERPARTY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")  # never starts with "-": it lands in a command line
 MAX_PRICE = 1000
 ASK_MAX_TOKENS = 8000
-SELL_COMMAND: str | None = None  # no `bazaar sell` on main yet: sells are shown as a guardrail check
 
 
 class IntentError(ValueError):
@@ -138,9 +137,7 @@ def command_for(intent: Intent, text: str) -> str:
         start = start_bid(intent.max_price)
         return f"uv run bazaar dealer buy {intent.item} --max {intent.max_price} --start {start}{dealer}"
     if intent.kind == "sell" and intent.item and intent.min_price:
-        if SELL_COMMAND:
-            return f"{SELL_COMMAND} {intent.item} --price {intent.min_price}"
-        return f"uv run bazaar rules check sell {intent.item} --price {intent.min_price}"
+        return f"uv run bazaar sell list {intent.item} --price {intent.min_price}"
     if intent.kind == "steer":
         return f"uv run bazaar steer {shlex.quote(text)}"
     return "uv run bazaar status"

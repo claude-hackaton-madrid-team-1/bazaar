@@ -166,7 +166,7 @@ def test_runtime_md_fails_fast_on_unknown_params_bad_values_and_unknown_models(t
         parse_runtime("- `runtime_models` = haiku-4-5, llama-3 — x")
     with pytest.raises(RuntimeConfigError, match="twice"):
         parse_runtime("- `runtime_models` = haiku-4-5, haiku-4-5 — x")
-    with pytest.raises(RuntimeConfigError, match="not a parameter line"):
+    with pytest.raises(RuntimeConfigError, match="not a rule line"):
         parse_runtime("- `llm_words` true")
     assert load_runtime(tmp_path / "none.md").config == RuntimeConfig()
     with pytest.raises(RuntimeConfigError, match="no criteria"):
@@ -411,8 +411,8 @@ def test_a_valid_buy_becomes_an_intent_and_an_exact_dry_run_command():
     intent = it.validate_intent(draft(item="lav-09", counterparty="Abuela", constraints=[" tonight ", ""]))
     assert intent == it.Intent("buy", "LAV-09", 90, None, "abuela", ("tonight",))
     assert it.command_for(intent, "x") == "uv run bazaar dealer buy LAV-09 --max 90 --start 45 --dealer abuela"
-    sell = it.validate_intent(draft(kind="sell", item="sobre_barrio", max_price=None, min_price=20))
-    assert it.command_for(sell, "x") == "uv run bazaar rules check sell sobre_barrio --price 20"
+    sell = it.validate_intent(draft(kind="sell", item="sal-03", max_price=None, min_price=20))
+    assert it.command_for(sell, "x") == "uv run bazaar sell list SAL-03 --price 20"
     assert it.command_for(it.Intent("steer"), "be bold") == "uv run bazaar steer 'be bold'"
     assert it.command_for(it.Intent("status"), "how are we") == "uv run bazaar status"
 
@@ -641,12 +641,30 @@ def test_steering_storage_roundtrip_corruption_and_clear(tmp_path):
     assert st.clear_steering(path) and not st.clear_steering(path) and st.load_steering(path) is None
 
 
-def test_base_params_read_strategy_md_when_present(tmp_path):
+def test_base_params_read_strategy_md_and_fall_back_to_defaults(tmp_path):
+    from bazaar_agent.strategy import STRATEGY_FILE
+
     strategy = tmp_path / "STRATEGY.md"
-    strategy.write_text("- `scarcity_weight` = 2.0 — x\n- `min_buy_surplus` = oops — y\n- `max_moves` = 12 — z\n")
+    text = STRATEGY_FILE.read_text(encoding="utf-8")
+    strategy.write_text(text.replace("- `scarcity_weight` = 1.0", "- `scarcity_weight` = 2.0"))
     base = st.base_params(RULES, strategy)
-    assert base["scarcity_weight"] == 2.0 and base["min_buy_surplus"] == 2 and "max_moves" not in base
+    assert base["scarcity_weight"] == 2.0 and "max_moves" not in base
     assert base["duel_anchor"] == RULES.duel_anchor
+    strategy.write_text("- `scarcity_weight` = oops — broken\n")
+    assert st.base_params(RULES, strategy)["scarcity_weight"] == st.STRATEGY_DEFAULTS["scarcity_weight"]
+
+
+def test_bazaar_strategy_ranks_with_steered_parameters_while_steering_is_active(tmp_path):
+    from bazaar_agent.strategy import load_strategy
+
+    params = load_strategy().params
+    path = tmp_path / "steering.json"
+    assert st.steered_strategy_params(params, RULES, path, 5) is params  # no steering: untouched
+    st.save_steering(path, st.Steering("bold", "s", {"scarcity_weight": 0.4, "min_buy_surplus": -1}, 5, 9, "m"))
+    steered = st.steered_strategy_params(params, RULES, path, 6)
+    assert (steered.scarcity_weight, steered.min_buy_surplus) == (params.scarcity_weight + 0.4, 1.0)
+    assert steered.max_moves == params.max_moves and params.scarcity_weight == 1.0  # a copy, not a mutation
+    assert st.steered_strategy_params(params, RULES, path, 9) is params  # expired
 
 
 def test_steer_request_end_to_end_with_a_fake_model(tmp_path):

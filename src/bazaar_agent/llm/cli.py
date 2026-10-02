@@ -224,7 +224,7 @@ def ask(text: str = typer.Argument(help='What you want, e.g. "buy LAV-09 under 9
     _print_verdict(intent, settings, rules)
     command = command_for(intent, text)
     console.print(f"[yellow]dry run: nothing was sent.[/yellow] Command:\n  {escape(command)}")
-    if intent.kind == "buy":
+    if intent.kind in ("buy", "sell"):
         console.print(f"  to trade (you run it): {escape(command)} --live")
 
 

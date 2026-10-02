@@ -192,7 +192,8 @@ Keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` in `.env`; without one, every LLM pa
 uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices
 uv run bazaar ask "buy LAV-09 under 90"              # strict intent → guardrail verdict → the command (never runs it)
 uv run bazaar --llm-runtime opus-5-5 ask "sell my spare SAL-03 for at least 8"
-uv run bazaar steer "be more aggressive with rares tonight"   # bounded deltas, clamped by GUARDRAILS.md
+uv run bazaar steer "be more aggressive with rares tonight"   # bounded deltas, clamped by GUARDRAILS.md,
+                                                     # applied by `bazaar strategy` and `duel run` until a tick
 uv run bazaar steer --show                           # what is steered now, and until which tick
 ```
 
@@ -311,7 +312,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
 - [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
 - [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
-- [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
 
 <!-- BAZAAR:STATUS:END -->
 
