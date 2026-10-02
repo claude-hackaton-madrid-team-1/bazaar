@@ -739,6 +739,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | Sat 01:10 | `e75f4b9` |
 | [#57](../../pull/57) | feat: Jev decides duel moves and maker prices among legal candidates | Sat 00:54 | `488a7fb` |
 | [#56](../../pull/56) | feat: generate the architecture status page in the README hook and CI | Sat 00:49 | `2d2f0bf` |
 | [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
@@ -750,13 +751,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#48](../../pull/48) | feat: autonomous taker and maker agents (dry run), shared Postgres ledger, read-only status | Fri 23:57 | `aca6fe1` |
 | [#47](../../pull/47) | fix: unattended tick loops survive network errors instead of exiting | Fri 23:45 | `f093e64` |
 | [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | Fri 23:00 | `f46872e` |
-| [#44](../../pull/44) | docs: map every Railway service and public URL | Fri 22:44 | `d50bd8d` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | `ogarciarevett/feat-agent-runtime` |
 | [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | `ogarciarevett/feat-evals` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | `ogarciarevett/feat-bazaar-sim` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
