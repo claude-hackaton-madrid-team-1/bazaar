@@ -1,0 +1,325 @@
+"""What the taker and the maker share: the tick window, live mode, the feed they rank from, Jev advice.
+
+Tick discipline is the one in `ticks.py`: the loop is driven by `/api/clock`, never by wall-clock
+time; each tick gets a deadline (`action_budget_s`) and every send checks it right before it goes.
+A move that would land after the deadline is dropped (logged as `expired`), never sent late.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+import psycopg
+
+from bazaar_agent import telemetry as tm
+from bazaar_agent.agents.market import Venue, venues_from
+from bazaar_agent.agents.seller import Commitments, committed_context
+from bazaar_agent.decisions import Decision, DecisionLog, Status
+from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
+from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.ticks import Clock, action_budget_s
+
+DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
+LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
+
+
+def live_mode(flag: bool, env: Mapping[str, str] | None = None) -> bool:
+    """`--live`, or BAZAAR_LIVE=1 in the process environment (Railway). Anything else is a dry run."""
+    return flag or (os.environ if env is None else env).get(LIVE_ENV, "").strip() == "1"
+
+
+@dataclass(frozen=True)
+class TickWindow:
+    """The time left to act in one tick. `open()` is checked right before every send."""
+
+    tick: int
+    deadline: float  # time.monotonic() value
+    now: Callable[[], float] = time.monotonic
+
+    def left(self) -> float:
+        return max(0.0, self.deadline - self.now())
+
+    def open(self) -> bool:
+        return self.left() > 0
+
+
+def window_for(clock: Clock, started: float, now: Callable[[], float] = time.monotonic) -> TickWindow:
+    return TickWindow(clock.tick, started + action_budget_s(clock), now)
+
+
+@dataclass(frozen=True)
+class JevAdvice:
+    """Jev's answer to `offer_is_worth_accepting`: advisory only, it never lifts a limit."""
+
+    verdict: str  # "yes" | "no" | "undecided"
+    value: float
+    probabilities: Mapping[str, float] | None = None
+    reason: str | None = None
+
+    @property
+    def decided(self) -> bool:
+        return self.verdict in ("yes", "no")
+
+    def as_dict(self) -> dict[str, Any]:
+        probabilities = dict(self.probabilities) if self.probabilities is not None else None
+        return {"verdict": self.verdict, "value": self.value, "probabilities": probabilities, "reason": self.reason}
+
+
+JevFn = Callable[[dict[str, Any]], JevAdvice]
+
+
+def no_jev(state: dict[str, Any]) -> JevAdvice:
+    return JevAdvice("undecided", 0.0, reason="jev off")
+
+
+def _row_event(row: tuple[Any, ...]) -> Event:
+    event_id, tick, kind, actor, payload = row
+    return {"id": int(event_id), "tick": tick, "type": kind, "actor": actor, "payload": payload or {}}
+
+
+class MarketFeed:
+    """Feed events for the strategy: the shared `feed_events` table (the monitor writes it) when Postgres
+    answers, else this machine's captured JSONL; the public live window is merged in every tick."""
+
+    def __init__(
+        self,
+        read_window: Callable[[int], list[Event]],
+        store: FeedStore | None = None,
+        connect: Callable[[], psycopg.Connection] | None = None,
+        log: Callable[[str], None] = lambda message: None,
+    ) -> None:
+        self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self._conn: psycopg.Connection | None = None
+        self._events: dict[int, Event] = {}
+        self._newest_db = 0
+        self._loaded_store = False
+        self._db_down = False
+        self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+
+    def _from_db(self) -> bool:
+        if self._connect is None:
+            return False
+        if self._skip > 0:
+            self._skip -= 1
+            return False
+        try:
+            if self._conn is None or self._conn.closed:
+                self._conn = self._connect()
+                self._conn.autocommit = True
+            rows = self._conn.execute(
+                "select id, tick, type, actor, payload from feed_events where id > %s order by id",
+                (self._newest_db,),
+            ).fetchall()
+        except Exception as e:  # down or unreachable: the JSONL + live window still serve this tick
+            if not self._db_down:
+                self._log(f"feed: Postgres unavailable ({type(e).__name__}), using the captured JSONL + live window")
+            self._db_down, self._conn, self._skip = True, None, DB_RETRY_EVERY
+            return False
+        self._db_down = False
+        for row in rows:
+            event = _row_event(row)
+            self._events[event["id"]] = event
+            self._newest_db = max(self._newest_db, event["id"])
+        return True
+
+    def events(self) -> list[Event]:
+        if not self._from_db() and self._store is not None and not self._loaded_store:
+            for event in self._store.events():
+                self._events.setdefault(event["id"], event)
+            self._loaded_store = True
+        try:
+            for event in self._read_window(DEFAULT_WINDOW):
+                self._events[event["id"]] = event
+        except Exception as e:
+            self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
+        return [self._events[i] for i in sorted(self._events)]
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """One tick's view, read album first: `/api/me` before anything is decided."""
+
+    clock: Clock
+    me: dict[str, Any]
+    offers: dict[str, Any]  # GET /api/me/offers
+    catalog: dict[str, Any]
+    dealers: list[dict[str, Any]]
+    venues: list[Venue]
+    events: list[Event]
+
+    @property
+    def us(self) -> str:
+        return str(self.me.get("id") or "")
+
+
+def read_snapshot(team: Any, public: Any, feed: MarketFeed, clock: Clock) -> Snapshot:
+    """Team reads (`me`, our offers) with the key; everything public without it."""
+    me = team.me()
+    offers = team.my_offers()
+    personas = public.dealers()
+    return Snapshot(
+        clock=clock,
+        me=me,
+        offers=offers,
+        catalog=public.catalog(),
+        dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
+        venues=venues_from(public.venues()),
+        events=feed.events(),
+    )
+
+
+def guard_context(snap: Snapshot, ledger: LedgerStore, rules: Guardrails, commitments: Commitments) -> Context:
+    """The live guardrail context: /me, the shared ledger, and what our open offers already promise."""
+    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules)
+    return committed_context(base, commitments)
+
+
+def accept_limit(clock: Clock, rules: Guardrails) -> int:
+    """Accepts per tick for the whole team: the stricter of the clock's limit and GUARDRAILS.md."""
+    return min(clock.limits.accepts_per_team_per_tick, rules.max_accepts_per_tick)
+
+
+class Recorder:
+    """Every proposed move: one console line, one `decisions` row, one trace event on the tick span.
+    Every live send: one `executions` row with the answer or the refusal code."""
+
+    def __init__(
+        self, agent: str, decisions: DecisionLog, live: bool, log: Callable[[str], None], hub: Any = None
+    ) -> None:
+        self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
+        self.hub = hub  # agents.status.StatusHub when the status server runs
+
+    def decide(
+        self,
+        tick: int,
+        kind: str,
+        line: str,
+        *,
+        inputs: dict[str, Any],
+        reason: str,
+        guardrail: str,
+        chosen: bool,
+        status: Status,
+        jev: JevAdvice | None = None,
+        thread_id: int | None = None,
+        move: dict[str, Any] | None = None,
+    ) -> int:
+        self.log(f"tick {tick} {self.agent}: {self._prefix(chosen, status)}{line}")
+        decision = Decision(
+            agent=self.agent,
+            tick=tick,
+            kind=kind,
+            inputs=inputs,
+            reason=reason,
+            guardrail=guardrail,
+            chosen=chosen,
+            status=status,
+            dry_run=not self.live,
+            jev=jev.as_dict() if jev is not None else None,
+            thread_id=thread_id,
+            move=move or {},
+        )
+        tm.event(
+            "decision",
+            {
+                "kind": kind,
+                "status": status,
+                "chosen": chosen,
+                "guardrail": guardrail,
+                "dry_run": not self.live,
+                "line": line,
+                "jev": jev.verdict if jev is not None else None,
+            },
+        )
+        decision_id = self.decisions.decide(decision)
+        if self.hub is not None:
+            sent = "would-send" if not self.live else "sending"
+            self.hub.decision(
+                {
+                    "decision_id": decision_id,
+                    "tick": tick,
+                    "kind": kind,
+                    "line": line,
+                    "move": move or {},
+                    "inputs": inputs,
+                    "strategy": inputs.get("strategy"),
+                    "reason": reason,
+                    "guardrail": guardrail,
+                    "jev": decision.jev,
+                    "chosen": chosen,
+                    "status": status,
+                    "dry_run": not self.live,
+                    "sent": sent if chosen and status == "approved" else "not sent",
+                }
+            )
+        return decision_id
+
+    def _executed(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
+    ) -> None:
+        self.decisions.executed(decision_id, tick, method, request, response, code)
+        if self.hub is not None:
+            self.hub.execution(
+                {
+                    "decision_id": decision_id,
+                    "tick": tick,
+                    "method": method,
+                    "request": request,
+                    "response": response,
+                    "error_code": code,
+                }
+            )
+
+    def _prefix(self, chosen: bool, status: Status) -> str:
+        if status == "expired":
+            return "DROPPED: "
+        if chosen and status == "approved":
+            return "" if self.live else "WOULD "
+        return ""
+
+    def send(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], call: Callable[[], Any]
+    ) -> dict[str, Any] | None:
+        """Send one request; None when the server refused it (logged, recorded, the loop goes on)."""
+        from bazaar_agent.sdk import BazaarError
+
+        try:
+            response = call()
+        except BazaarError as e:
+            self._executed(decision_id, tick, method, request, None, e.code)
+            self.decisions.settle(decision_id, "failed")
+            tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})
+            self.log(f"tick {tick} {self.agent}: {method} refused {e.code} ({e.message[:80]})")
+            return None
+        body = response if isinstance(response, dict) else {"result": response}
+        self._executed(decision_id, tick, method, request, body, None)
+        self.decisions.settle(decision_id, "done")
+        return body
+
+
+def watched_clock(
+    read: Callable[[], dict[str, Any]], name: str, log: Callable[[str], None], hub: Any = None
+) -> Callable[[], dict[str, Any]]:
+    """`read_clock` for `run_per_tick` that also tells the status hub, and the log once per change,
+    when the game is not ticking (doors closed, paused): the agent waits, it is not stuck."""
+    last: list[str] = []
+
+    def read_clock() -> dict[str, Any]:
+        payload = read()
+        if hub is not None:
+            hub.clock(payload)
+        live = payload.get("doors", "open") == "open" and not payload.get("paused")
+        state = "live" if live else f"doors {payload.get('doors')}" + (", paused" if payload.get("paused") else "")
+        if last != [state]:
+            if not live:
+                log(f"{name}: waiting, {state}; next opening {payload.get('next_opens') or 'unknown'}")
+            elif last:
+                log(f"{name}: the game is ticking again (tick {payload.get('tick')})")
+            last[:] = [state]
+        return payload
+
+    return read_clock

@@ -1,18 +1,20 @@
 """Guardrails: the rules in GUARDRAILS.md, parsed into a typed model and enforced before any write.
 
 Every write path (dealer bids and accepts, duel moves) calls `check()` first. A denied action is
-not sent; the caller turns it into a walk or a hold. A small append-only ledger shared by all
-processes (`.local/ledger.jsonl`) counts spend per game hour and accepts per tick.
+not sent; the caller turns it into a walk or a hold. An append-only ledger shared by all processes
+counts spend per game hour and accepts per tick: the Postgres `ledger` table when DATABASE_URL is
+reachable (`ledger_pg.open_ledger`, shared across machines), else `.local/ledger.jsonl` (this machine).
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, Protocol, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -74,7 +76,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
-    "max_accepts_per_tick": "guardrails.check + ledger",
+    "max_accepts_per_tick": "guardrails.check + ledger.reserve_accept (shared, atomic)",
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice",
     "jev_timeout_s": "cli dealer buy → jev.judge",
@@ -159,11 +161,29 @@ def is_pack(item: str) -> bool:
     return bool(item) and "-" not in item and ":" not in item
 
 
+LedgerKind = Literal["spend", "accept", "listing"]
+
+
+class LedgerStore(Protocol):
+    """What the guardrails read and the agents write: the JSONL file or the shared Postgres table."""
+
+    where: str
+
+    def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None: ...
+    def spent_since(self, t_hours: float) -> int: ...
+    def packs_since(self, t_hours: float) -> Counter[str]: ...
+    def accepts_in_tick(self, tick: int) -> int: ...
+    def count_in_tick(self, kind: str, tick: int) -> int: ...
+    def accept_items(self, tick: int) -> list[str]: ...
+    def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
+
+
 class Ledger:
-    """Append-only JSONL of committed spend and accepts, read by every process."""
+    """Append-only JSONL of committed spend and accepts, read by every process on this machine."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.where = f"file {path.name}"
 
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -190,7 +210,27 @@ class Ledger:
         )
 
     def accepts_in_tick(self, tick: int) -> int:
-        return sum(1 for e in self.entries() if e.get("kind") == "accept" and e.get("tick") == tick)
+        return self.count_in_tick("accept", tick)
+
+    def count_in_tick(self, kind: str, tick: int) -> int:
+        return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
+
+    def accept_items(self, tick: int) -> list[str]:
+        """What took this tick's accepts: a card ref, a pack id, or `duel:<id>`."""
+        return [str(e.get("item") or "") for e in self.entries() if e.get("kind") == "accept" and e.get("tick") == tick]
+
+    def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
+        """Count and record an accept under one file lock: two processes cannot both take the last slot."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.accepts_in_tick(tick) >= limit:
+                    return False
+                self.record("accept", tick, t_hours, price, item)
+                return True
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------- the check
@@ -230,7 +270,7 @@ class Context:
     packs_last_hour: int = 0
 
 
-def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: Ledger, rules: Guardrails) -> Context:
+def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
     held: dict[str, int] = {}
     for a in me.get("assets") or []:
         if a.get("kind") == "card":

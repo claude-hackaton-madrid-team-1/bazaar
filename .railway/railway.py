@@ -40,10 +40,11 @@ BUILD = {
     ],
 }
 ALWAYS = {"restartPolicyType": "ALWAYS"}
+AGENT_PORT = "8080"  # each agent's read-only status: GET /health, GET /state, WS /events (public domain)
 
 
 def runtime_env() -> dict:
-    """What `bazaar monitor` and `bazaar duel run` read (src/bazaar_agent/config.py, telemetry.py)."""
+    """What `bazaar monitor`, `bazaar duel run` and `bazaar agent` read (config.py, telemetry.py)."""
     return {
         "RAILPACK_PYTHON_VERSION": "3.12",
         "BAZAAR_DATA_DIR": APP_DATA,
@@ -73,11 +74,31 @@ def runtime(name: str, command: str, data: object, enabled: bool = True) -> obje
     )
 
 
+def agent(name: str, command: str, data: object, enabled: bool = True) -> object:
+    """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
+
+    DRY RUN on purpose: this file never sets BAZAAR_LIVE. Live trading needs BAZAAR_LIVE=1 set by hand
+    on the service (README "Autonomous agents"), never here. `enabled=False`: no source (see runtime())."""
+    return service(
+        name,
+        source=github(REPO, branch=BRANCH) if enabled else None,
+        build=BUILD,
+        start=f"/app/.venv/bin/bazaar {command}",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/health",
+        volumeMounts={APP_DATA: data},
+        env={**runtime_env(), "PORT": AGENT_PORT},
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
     monitor_data = volume("bazaar-monitor-data", region=REGION, sizeMB=VOLUME_MB)
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
+    taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
+    maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
 
     phoenix = service(
         "phoenix",
@@ -103,8 +124,23 @@ def main(ctx=None):
     # laptop monitor.
     monitor = runtime("bazaar-monitor", "monitor", monitor_data, enabled=False)
     duels = runtime("bazaar-duels", "duel run --play", duels_data)
+    # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
+    # (duels first; the maker never accepts). Both stay in DRY RUN until BAZAAR_LIVE=1 is set by hand.
+    taker = agent("bazaar-taker", "agent taker", taker_data)
+    maker = agent("bazaar-maker", "agent maker", maker_data)
 
     return project(
         "heartfelt-warmth",
-        resources=[phoenix, monitor, duels, phoenix_data, monitor_data, duels_data],
+        resources=[
+            phoenix,
+            monitor,
+            duels,
+            taker,
+            maker,
+            phoenix_data,
+            monitor_data,
+            duels_data,
+            taker_data,
+            maker_data,
+        ],
     )

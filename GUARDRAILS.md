@@ -27,7 +27,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `block_buying_held_cards` = true — never buy a page card we already hold; duplicates are worth 0.25× or less to us.
 
 ## Ticks and limits
-- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process through the ledger.
+- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker never accepts).
 - `dealer_max_ticks_per_thread` = 14 — close a dealer conversation after this many ticks without a deal.
 
 ## Jev

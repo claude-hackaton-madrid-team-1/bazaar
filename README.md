@@ -26,6 +26,8 @@ uv run bazaar tape                        # every settlement with price
 uv run bazaar status                      # our cash, level, score, cards (needs BAZAAR_KEY)
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
+uv run bazaar agent taker                 # autonomous buyer, every tick: DRY RUN (logs WOULD-moves) until --live
+uv run bazaar agent maker                 # autonomous market maker (asks, bids, reprices): DRY RUN until --live
 
 uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgres + pgvector memory
 uv run bazaar db tables                   # every table with its row count
@@ -247,6 +249,58 @@ With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chose
 message; the price stays the structured field set by code, and any other number, a timeout or an
 error sends the template instead.
 
+## Autonomous agents (taker and maker)
+
+Two tick-driven agents trade on their own, inside `GUARDRAILS.md`, with the strategy from `STRATEGY.md`.
+Both are **dry runs by default**: they read everything, decide, log `WOULD …` and write every decision
+to Postgres, but send nothing. Live needs `--live`, or `BAZAAR_LIVE=1` in the process environment (never
+read from `.env`); on Railway that variable is set by hand, never in `.railway/railway.py`.
+
+```sh
+uv run bazaar agent taker            # dry run; --threads N dealer conversations (default 3), --no-jev
+uv run bazaar agent maker            # dry run
+uv run bazaar agent taker --port 8080   # also serve the read-only status (GET /health, /state, WS /events)
+```
+
+Every tick, both read `/api/me` once (album first), our open offers, the catalog, the dealers, the venues
+and the feed (the shared `feed_events` table when Postgres answers, else `.local/feed`, plus the live
+window), then rank with the strategy engine. A tick's deadline is `ticks.action_budget_s`; every send
+checks it right before it goes, and a move that would be late is logged `DROPPED` and not sent.
+
+| Agent | Does every tick | Never |
+|---|---|---|
+| **taker** (`agents/taker.py`, `agents/desk.py`) | (a) scans every board we may trade on (El Rastro + team venues) for standing ASKS of missing page cards whose **ask + the venue fee the accepting side pays** is below the card's value to us (book × affinity + page-bonus share) by at least `min_buy_surplus`, scarce cards first; (b) keeps up to N dealer conversations (one per dealer) for the strategy's top dealer buys and packs, one move per tick each with `dealer.decide()`, never blocking on one thread. Jev `offer_is_worth_accepting` is advisory: a decided `no` vetoes a board accept, a decided `yes` may accept a dealer's ask early, inside our max | accepts above a guardrail, opens a second thread with a dealer, buys a card twice in a tick |
+| **maker** (`agents/maker.py`) | posts ASKS for the strategy's sell candidates (duplicates, low-affinity sets, priced at the buyer's need, never below `your_value × sell_min_value_ratio`) and BIDS for missing page cards only teams hold (below their value to us), on the venue with the best expected fill (trades so far, discounted by the fee share); reprices a target that moved ≥ 5 %, cancels one that is no longer a target (and refunds a cancelled bid's spend in the ledger) | accepts anything, lists on our own venue, posts more than `offers_per_team_per_tick` (12, counted team-wide in the ledger) or above `max_open_offers_per_team` (30), lets open bids + a new bid take cash below `cash_floor` |
+
+The maker owns our **board** offers: a hand-listed offer that is not a strategy target is cancelled, so
+stop the maker before trading by hand. Offers inside a dealer thread belong to the taker's desk.
+
+**One accept per tick for the whole team, across machines.** The guardrail ledger is the Postgres
+`ledger` table (`bazaar db init` creates it; the JSONL file only when Postgres is unreachable at
+start). `bazaar-duels`, the taker, `dealer buy` and the CLI all reserve accepts through
+`ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
+take the same slot. **Duels first**: the duel player decides right after the tick lands; the taker
+waits until 2 s into the tick (15 % on fast ticks) and steps back when a `duel:<id>` accept is already
+recorded for the tick. The maker never accepts. Spend per game hour and packs per hour come from the
+same table, so `max_spend_per_game_hour` holds for the team, not per process.
+
+**What they write.** Every proposed move is a `decisions` row (`agent`, `kind`, inputs, the strategy's
+reason, Jev's verdict with its floats, the guardrail verdict, chosen or not, `dry_run`, status
+`approved`/`rejected`/`expired`/`done`/`failed`); every live send is an `executions` row with the
+server's answer or refusal code. Without Postgres they go to `.local/agents/*.jsonl`. With
+`BAZAAR_TRACING=1`, each tick is a `taker tick N` / `maker tick N` trace with one `decision` event per move.
+
+**Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
+`GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
+the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
+offers, the last 50 decisions with move, reason, strategy, Jev, guardrail and sent/would-send), and
+`WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
+`{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
+`agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
+there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
+(public read-only data). It runs on its own thread: publishing from the tick loop is an append and a
+scheduled broadcast, so a slow client never delays a tick.
+
 ## Services and public URLs (start here for observability and the dashboard)
 
 Railway project **`heartfelt-warmth`** (environment `production`, region `europe-west4`):
@@ -258,7 +312,8 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `Postgres` | `iriguchi.proxy.rlwy.net:28880`, db `railway`, user `postgres`, SSL (password: Postgres service → Variables) | `${{Postgres.DATABASE_URL}}` | the team's shared memory (feed, tape, dealer curves, traders, snapshots, alerts, decisions) | running |
 | `bazaar-duels` | none (worker, no HTTP) | — | the team's ONE duel player (`duel run --play`) | running |
 | `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
-| `bazaar-taker`, `bazaar-maker` | none (workers) | — | autonomous buyer and seller, dry run until `BAZAAR_LIVE=1` | coming |
+| `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
+| `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -276,7 +331,9 @@ Code, Python authoring, beta): change it by PR.
 | Service | What runs | Data | Notes |
 |---|---|---|---|
 | `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | OFF by team decision (no source, no deployment): the monitor runs in the CLI on a laptop |
-| `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player |
+| `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player; first claim on the team's accept each tick |
+| `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand |
+| `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
@@ -338,10 +395,17 @@ A new Phoenix (a fresh volume) needs its ingestion key once, piped straight into
 `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD=... uv run bazaar obs bootstrap --url <phoenix URL> | railway variable set PHOENIX_API_KEY --stdin --service phoenix`,
 then redeploy `bazaar-duels`.
 
-- **Known limit: state in `BAZAAR_DATA_DIR` is per container.** `ledger.jsonl` (accepts per tick,
-  spend) lives on each service's volume, so `bazaar-duels` cannot see an accept made by another
-  process (a laptop `dealer buy`, or a second duel player). Moving it to Postgres is the follow-up;
-  until then, run only ONE writing process per kind. The same holds for `steering.json`: a laptop
+- **The guardrail ledger is shared.** Accepts per tick, spend per game hour and listings per tick
+  live in the Postgres `ledger` table, so `bazaar-duels`, `bazaar-taker`, `bazaar-maker` and a laptop's
+  `dealer buy` see one count (see "Autonomous agents"). A process that cannot reach Postgres at start
+  falls back to its own `ledger.jsonl` and says so in its log; a ledger failure mid-run sends nothing
+  that tick (fail closed).
+- **Turn an agent live** (a team decision, not a deploy):
+  `printf 1 | railway variable set BAZAAR_LIVE --stdin --service bazaar-taker` (it redeploys); delete
+  the variable to go back to dry run. `/health` says `mode: live|dry`; check it after any
+  `railway config apply` too, since the file does not declare `BAZAAR_LIVE`. The kill switch still applies:
+  `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`.
+- **Known limit: other state in `BAZAAR_DATA_DIR` is per container.** `steering.json`: a laptop
   `bazaar steer` does not reach Railway's duel player; steer it in its container
   (`railway ssh --service bazaar-duels -- /app/.venv/bin/bazaar steer "..."`). The runtime LLM keys
   (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are not set on Railway yet, so every LLM path there falls
@@ -395,7 +459,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
 | N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ not started (after strategy + LLM) |
-| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | ⬜ not started (autonomous loop) |
+| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`, dry run on Railway; live switch-on ⬜ |
 | [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); executor ⬜ |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
@@ -405,7 +469,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
-| [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | ⬜ |
+| [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (dry run); our own venue ⬜ |
 | [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | ⬜ |
 | [#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17) | Pitch + scoring tracker | 3 | ⬜ |
@@ -452,14 +516,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
+- [2026-10-02] gotcha — after 23:00 the doors close and every tick loop just waits
+- [2026-10-02] finding — first autonomous dry runs (tick 155): the taker would buy MAL-02 for 5, the maker would list 3 asks
 - [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
 - [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
 - [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
 - [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
 - [2026-10-02] gotcha — Railpack's uv install is `--no-editable`, which breaks REPO_ROOT
-- [2026-10-02] build-error — Railway build failed: "No start command detected"
-- [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
-- [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -333,6 +333,7 @@ class Move:
     guardrail: str = "-"
     asset_id: int | None = None  # sells: the exact copy listed
     jev: str = "-"  # packs: Jev's verdict and probability on spending a slot
+    ladder: tuple[int, int, int] | None = None  # dealer buys and packs: (start, max, step) of the bid ladder
 
 
 def urgency_of(card: Card, chasers: int, params: StrategyParams) -> float:
@@ -497,6 +498,7 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
         f"worth {case.worth}; {quote.dealer} fills {est.basis} → {est.price:g}; ladder {plan[0]}→{plan[1]}; "
         f"{case.supply_note}",
         dealer_command(card.ref, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)),
+        ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)),
     )
 
 
@@ -681,6 +683,7 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 dealer_command(pack, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread))
                 if actionable and quote and plan
                 else "",
+                ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)) if actionable and plan else None,
             )
         )
     return sorted(moves, key=lambda mv: (not mv.command, -mv.surplus))[: params.max_moves]  # actionable first
