@@ -95,7 +95,10 @@ Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan 
 `docs/api/openapi.json`) · pydantic v2 at every boundary · Postgres 17 + pgvector (docker compose
 locally, or the team's shared Railway Postgres via `DATABASE_URL`; pgvector optional) via psycopg 3,
 plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
-Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint + format) · mypy.
+Jev through our Python port (`bazaar_agent.jev`) · OpenTelemetry tracing (`opentelemetry-sdk`,
+`opentelemetry-exporter-otlp-proto-http`, `openinference-semantic-conventions`; OTLP/HTTP to Arize
+Phoenix, the team's on Railway or local `bazaar obs up`; `docs/adr/0001-agent-behavior-tracing.md`) · pytest ·
+ruff (lint + format) · mypy.
 NO TypeScript, NO Rust, NO bun/node at runtime (`vendor/jev-sdk` is reference only) · NO ORM ·
 NO LLM in the executor path · NO wall-clock scheduling (game ticks only).
 
@@ -126,6 +129,8 @@ every deal. Never decide on a stale view of what we hold.
 **Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
 `guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
 to validate. `touch .local/PAUSE` stops every write at once.
+**Tracing:** it must never block or fail a tick and never export a secret. Nothing is exported unless
+`BAZAAR_TRACING=1`, and secret values are redacted before any span leaves the process (ADR 0001).
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through

@@ -379,6 +379,34 @@ id and Python SDK version when we build it). Today we only keep the seam that ma
   executor invariant failure, or a `cooloff` / `persona_quota` from a dealer.
 - `bazaar jev report` after each session: verdict calibration against outcomes.
 
+### 8.1 Agent behavior tracing
+
+What our agents observed, decided and did, as OpenTelemetry traces in Phoenix. Decision and rationale:
+[ADR 0001](../../docs/adr/0001-agent-behavior-tracing.md). Work items: N10.1–N10.4 in [`02-plan.md`](./02-plan.md).
+
+- **Backend.** The team's Phoenix on Railway is the single shared backend; local `bazaar obs up` is for
+  development (`BAZAAR_TRACING=1`, `PHOENIX_*`). No second exporter and no new dependency.
+- **Session** (`session.id`) = one negotiation: `dealer:{dealer}:thread:{id}` or `duel:{id}`, later the
+  seller, taker and maker.
+- **Trace** = one agent turn (observe → decide → act), so it is live and crash-safe. When the
+  negotiation closes, an outcome trace with the transcript is written to the same session.
+- **Typed child spans** inside a turn (OpenInference kinds):
+
+| Kind | What it records |
+|---|---|
+| `AGENT` | the turn itself (root span) |
+| `CHAIN` | the policy or strategy step that turns the observation into a move |
+| `LLM` | one call of the runtime LLM layer: model, provider, masked and truncated prompt and response, latency |
+| `EVALUATOR` | one Jev call, with the masked state only |
+| `GUARDRAIL` | one `guardrails.check()` verdict |
+| `TOOL` | one game action (open, message, offer, accept) |
+
+- Attributes stay OpenInference-compatible, so Phoenix can filter, annotate and evaluate Jev and LLM
+  spans, and another OTLP backend could read them later.
+- Code lives in `telemetry.py` (provider, exporter, redaction, typed-span helpers) and `traces.py` (span
+  model), reusing the `Observer` hook of the dealer negotiator. No second tracing module.
+- Out of scope: HTTP, database, log and infrastructure metrics.
+
 ## 9. Security
 
 - Trust boundary 1, the game API: every response is validated by `models.py` and every counterparty
@@ -388,7 +416,9 @@ id and Python SDK version when we build it). Today we only keep the seam that ma
   offer it sends from that row. It never reads message text. It checks that the structured offer it
   accepts matches what the decision approved (asset ids, cash, direction).
 - Secrets: `BAZAAR_KEY`, broker keys and `TYPESAFE_API_KEY` live only in `.env` (gitignored, verified),
-  are passed to child processes by env, and are never printed, logged or embedded.
+  are passed to child processes by env, and are never printed, logged or embedded. Traces redact
+  secret values the same way and carry counterparty text (and LLM prompts and responses) only as
+  masked, untrusted, truncated data.
 - Flags (`POST /api/flags`) are costly when wrong. They need the deterministic words-vs-structure
   mismatch **and** `message_is_bad_faith` with `critical` stakes (≥ 0.9).
 

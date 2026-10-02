@@ -57,6 +57,10 @@ negotiates well.
 | 1.8 | Venue + broker (`board`), ready for the **h5** Market Test; open the venue as soon as L2 lands | #11, #12 | Limit estimation from Friday's bench data |
 | 1.9 | Duel policy for **Duels I (h6.5)**: limit floor, anchor, decay-aware acceptance | #5 | Calibrated on the practice fixtures |
 | 1.10 | `docker compose up` for everything, `restart: unless-stopped`, heartbeat, sleep on `doors: closed` | #3 | 30 min `DRY_RUN` without a 429 |
+| 1.11 | Trace the dealer negotiator: typed spans, `session.id`, one trace per turn | new (N10.1) | ADR 0001; moves identical with tracing on or off |
+| 1.12 | LLM spans for the runtime LLM layer, EVALUATOR spans for Jev | new (N10.2) | Masked and truncated prompts and responses |
+| 1.13 | Trace the duelist, **before Duels I (h6.5)** | new (N10.3) | Hard deadline: Saturday h6.5; production service |
+| 1.14 | Trace strategy + seller, `agent-tracing` skill, README Observability | new (N10.4) | Then `sh scripts/sync-ai-docs.sh` |
 
 ### Phase 2 — Saturday (weight 1, 30 s ticks): run, measure, improve
 
@@ -106,6 +110,10 @@ negotiates well.
 | N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
+| N10.1 (new) | Trace the dealer negotiator: typed spans, `session.id`, one trace per turn, transcript in the outcome (ADR 0001) | 1 | ⬜ |
+| N10.2 (new) | LLM spans for the runtime LLM layer and EVALUATOR spans for Jev | 1 | ⬜ |
+| N10.3 (new) | Trace the duelist the same way (before Duels I, Saturday h6.5) | 1 | ⬜ |
+| N10.4 (new) | Trace strategy + seller; `agent-tracing` skill; README Observability update | 1 | ⬜ |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | ⬜ |
@@ -159,6 +167,38 @@ Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
+
+### N10 — Agent behavior tracing in Phoenix: turns, typed spans, sessions (ADR 0001)
+Files: `src/bazaar_agent/{telemetry,traces,cli,strategy}.py`, `src/bazaar_agent/agents/{dealer,duelist,seller}.py`,
+`src/bazaar_agent/llm/providers.py`, `tests/test_telemetry.py` and new tests beside it, `README.md`,
+`.ai/skills/agent-tracing/SKILL.md`. Decision: [`docs/adr/0001-agent-behavior-tracing.md`](../../docs/adr/0001-agent-behavior-tracing.md), spec §8.1.
+Delivered as a stack of PRs, no new dependency and no second exporter: PR 0 `docs/adr-agent-tracing` (ADR,
+spec §8.1, this plan, context lines; base `main`), then N10.1–N10.4 as PR 1–4, each targeting the previous
+branch. When all are approved they are merged top-down into their bases and PR 0 reaches `main` in one
+merge, outside a duel session: any merge touching `src/` redeploys `bazaar-duels`. Each PR stays under
+1000 changed lines.
+- N10.1 (PR 1, `feat/tracing-agent-turns`) — Typed-span helpers in `telemetry.py` (kinds AGENT, CHAIN,
+  TOOL, GUARDRAIL), `session.id` and one trace per turn. The dealer negotiator moves from span events to
+  typed spans (session `dealer:{dealer}:thread:{id}`) and keeps the transcript in the outcome trace.
+  · **Acceptance:** a fake-transport test of a full thread shows one trace per tick under one session
+  id plus an outcome trace with the transcript; the moves are identical with tracing on and off;
+  `BAZAAR_TRACING` unset means zero spans; an exporter that raises never fails or delays a tick;
+  `tests/test_dealer.py` and the telemetry tests stay green.
+- N10.2 (PR 2, `feat/tracing-llm-layer`) — LLM spans around `LLMProvider.complete` / `structured` (model,
+  provider, masked and truncated prompt and response, latency) and EVALUATOR spans for every `jev.judge`
+  call (`cli._jev_advisor`, `cli._pack_judge`, `llm/chooser.py`). · **Acceptance:** one LLM span per
+  provider call and one EVALUATOR span per Jev call, `undecided` included with its reason; no secret
+  value and no unmasked Jev state in any attribute; prompts and responses truncated.
+- N10.3 (PR 3, `feat/tracing-duel-turns`) — **Before Duels I (Saturday h6.5).** The same model for duels,
+  session `duel:{id}`. `bazaar-duels` is the production duel player, so extra care: extract the turn
+  from `cli.duel_run` into `agents/duelist.py` so it is testable. · **Acceptance:** replaying a recorded
+  practice-duel fixture (#4) shows one trace per acting tick under `duel:{id}`; the moves are identical
+  with tracing on and off.
+- N10.4 (PR 4, `feat/tracing-strategy-seller`) — Spans for the strategy engine (`strategy.py`) and the
+  seller (`agents/seller.py`), the README Observability update (shared Phoenix, typed spans, sessions)
+  and `.ai/skills/agent-tracing/SKILL.md`, the contract every new agent (taker, maker) must follow.
+  · **Acceptance:** a traced strategy decision and a traced sell/bid show up under their own session; the
+  skill is in the generated mirrors after `sh scripts/sync-ai-docs.sh`.
 
 ---
 

@@ -397,6 +397,10 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
+| N10.1 (new) | Trace the dealer negotiator: typed spans, `session.id`, one trace per turn, transcript in the outcome (ADR 0001) | 1 | ⬜ |
+| N10.2 (new) | LLM spans for the runtime LLM layer and EVALUATOR spans for Jev | 1 | ⬜ |
+| N10.3 (new) | Trace the duelist the same way (before Duels I, Saturday h6.5) | 1 | ⬜ |
+| N10.4 (new) | Trace strategy + seller; `agent-tracing` skill; README Observability update | 1 | ⬜ |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | ⬜ |
