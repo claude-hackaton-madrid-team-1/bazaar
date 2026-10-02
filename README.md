@@ -39,6 +39,13 @@ at most **6** open threads and **30** open offers; **5** requests/s per key. A d
 cannot finish before the tick ends (minus a safety margin, see `ticks.action_budget_s`) is
 dropped, not sent late. A `429` means wait for the tick it names.
 
+## Guardrails (the rule book the runtime enforces)
+
+[`GUARDRAILS.md`](GUARDRAILS.md) holds every limit: cash floor, spend per game hour, price caps
+per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, the kill switch.
+`uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
+`touch .local/PAUSE` stops every write from every agent at once.
+
 ## How it fits together
 
 ```
@@ -107,6 +114,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. |
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
+| `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
+| `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
+| `uv run bazaar rules check` | Dry-run one action against the guardrails with our live /me, clock and ledger. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
 | `uv run bazaar db up` | Start Postgres + pgvector (docker compose, localhost:5433). |
@@ -116,6 +126,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 - [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
 - [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
 - [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
@@ -123,6 +134,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] gotcha — zsh treats `echo ====` as a path expansion
 - [2026-10-02] build-error — DB test overwrote real dealer_curves rows
 - [2026-10-02] finding — the feed is an order book: dealer text, real team ids, fill prices
-- [2026-10-02] finding — Abuela's floor for `sobre_barrio` looks like 17 P (ticks 0–31)
 
 <!-- BAZAAR:STATUS:END -->

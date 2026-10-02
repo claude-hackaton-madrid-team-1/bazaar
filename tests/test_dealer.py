@@ -132,3 +132,32 @@ def test_negotiate_times_out_by_ticks_and_closes_the_thread():
         max_ticks=3,
     )
     assert (out.status, len(client.sent), client.closed) == ("timeout", 3, True)
+
+
+def test_a_guardrail_denial_turns_the_move_into_a_walk_and_deals_are_reported():
+    from bazaar_agent.agents.dealer import negotiate
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        guard=lambda m: "cash_floor" if m.price and m.price >= 8 else None,
+    )
+    assert (client.sent, out.status, client.closed) == ([6, 7], "walked", True)
+
+    deals = []
+    client = FakeDealerClient(asks=[12, 10, 9])
+    negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        on_deal=lambda price, tick, t: deals.append(price),
+    )
+    assert deals == [9]

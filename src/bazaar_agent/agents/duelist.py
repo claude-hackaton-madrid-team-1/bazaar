@@ -33,10 +33,10 @@ def _rival_price(duel: dict[str, Any]) -> int | None:
     return None
 
 
-def our_target(limit: int, role: str, progress: float) -> int:
+def our_target(limit: int, role: str, progress: float, anchor: float = ANCHOR, floor: float = FLOOR_MARGIN) -> int:
     """Our ask (seller) or bid (buyer) at `progress` 0..1 of the duel: anchor → limit ± margin."""
     progress = min(1.0, max(0.0, progress))
-    reach = ANCHOR - (ANCHOR - FLOOR_MARGIN) * progress
+    reach = anchor - (anchor - floor) * progress
     price = limit * (1 + reach) if role == "seller" else limit * (1 - reach)
     return max(1, round(price))
 
@@ -46,19 +46,27 @@ def inside_limit(price: int, limit: int, role: str) -> bool:
     return price > limit if role == "seller" else price < limit
 
 
-def duel_move(duel: dict[str, Any], tick: int, started_tick: int) -> DuelMove:
+def duel_move(
+    duel: dict[str, Any],
+    tick: int,
+    started_tick: int,
+    *,
+    anchor: float = ANCHOR,
+    floor: float = FLOOR_MARGIN,
+    endgame_ticks: int = ENDGAME_TICKS,
+) -> DuelMove:
     limit, role = duel.get("your_limit"), duel.get("role")
     deadline = duel.get("deadline")
     if duel.get("done") or not isinstance(limit, int) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="done or unreadable duel")
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     left = (deadline - tick) if isinstance(deadline, int) else total
-    target = our_target(limit, role, (tick - started_tick) / total)
+    target = our_target(limit, role, (tick - started_tick) / total, anchor, floor)
     days = 5 if "days" in (duel.get("issues") or []) else None  # neutral until the days module (#7)
     rival = _rival_price(duel)
     if rival is not None and inside_limit(rival, limit, role):
         good_enough = rival >= target if role == "seller" else rival <= target
-        if good_enough or left <= ENDGAME_TICKS:
+        if good_enough or left <= endgame_ticks:
             return DuelMove(
                 "accept", rival, reason="rival meets our target" if good_enough else "endgame, inside limit"
             )

@@ -24,6 +24,8 @@ dealer_app = typer.Typer(no_args_is_help=True, help="Negotiate with dealers (one
 app.add_typer(dealer_app, name="dealer")
 duel_app = typer.Typer(no_args_is_help=True, help="Duels: log every response; play inside our limit")
 app.add_typer(duel_app, name="duel")
+rules_app = typer.Typer(help="Guardrails from GUARDRAILS.md: show them, or check an action against live /me")
+app.add_typer(rules_app, name="rules")
 console = Console()
 
 LIVE_HELP = "Merge the live feed window into the captured history"
@@ -143,10 +145,16 @@ def dealer_buy(
     jev: bool = typer.Option(False, help="Ask Jev negotiation_move each tick (advisory, inside the limit)"),
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
+    from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate
 
+    rules = _rules().rules
     plan = BidPlan(start, step, max_price)
     topic = {"buy": {"pack": item}} if "-" not in item else {"buy": {"card": item}}
+    rarity = _rarity_of(item)
+    cap = rules.max_price_for(rarity)
+    if cap is not None and max_price > cap:
+        _fail(f"--max {max_price} is above max_price_{rarity} = {cap} in GUARDRAILS.md")
     if not live:
         neg, schedule = Negotiation(plan), []
         while (move := decide(neg, None, None, False)).kind == "bid" and move.price is not None:
@@ -159,8 +167,40 @@ def dealer_buy(
         return
     settings = load_settings()
     client = team_client(settings)
-    advisor = _jev_advisor(item, settings) if jev else None
-    out = negotiate(client, dealer, topic, plan, log=console.print, advisor=advisor)
+    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    clock_now = Clock.model_validate(client.clock())
+    pre = gr.check(
+        gr.Action("buy", item, rarity, start),
+        gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
+        rules,
+    )
+    if not pre.allowed:
+        _fail(f"guardrails refuse to open this thread: {pre}")
+
+    def guard(move: Any) -> str | None:
+        c = Clock.model_validate(client.clock())
+        ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
+        kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
+        verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
+        if verdict.allowed and move.kind == "accept":
+            ledger.record("accept", c.tick, c.t_hours, int(move.price or 0), item)
+        return None if verdict.allowed else "; ".join(verdict.violations)
+
+    def on_deal(price: int, tick: int, t_hours: float) -> None:
+        ledger.record("spend", tick, t_hours, price, item)
+
+    advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
+    out = negotiate(
+        client,
+        dealer,
+        topic,
+        plan,
+        log=console.print,
+        advisor=advisor,
+        guard=guard,
+        on_deal=on_deal,
+        max_ticks=rules.dealer_max_ticks_per_thread,
+    )
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
@@ -168,7 +208,26 @@ def dealer_buy(
     )
 
 
-def _jev_advisor(item: str, settings: Any) -> Any:
+def _rules() -> Any:
+    from bazaar_agent.guardrails import GuardrailsError, load_guardrails
+
+    try:
+        return load_guardrails()
+    except GuardrailsError as e:
+        _fail(f"GUARDRAILS.md is invalid, refusing to trade: {e}")
+
+
+def _rarity_of(item: str) -> str | None:
+    if "-" not in item:
+        return "pack"
+    for s in public_client(load_settings()).catalog().get("sets") or []:
+        for c in s.get("cards") or []:
+            if c.get("id") == item:
+                return str(c.get("rarity"))
+    return None
+
+
+def _jev_advisor(item: str, settings: Any, timeout_s: float = 3.0) -> Any:
     from bazaar_agent.jev import judge, load_questions
 
     questions = load_questions(REPO_ROOT / "questions" / "negotiation.json")
@@ -184,7 +243,7 @@ def _jev_advisor(item: str, settings: Any) -> Any:
             "learned": "Abuela usually fills commons at 9 and packs at 17",
         }
         key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
-        verdict = judge(state, move_q, api_key=key, timeout_s=3.0).verdicts["negotiation_move"]
+        verdict = judge(state, move_q, api_key=key, timeout_s=timeout_s).verdicts["negotiation_move"]
         console.print(f"  jev: {verdict.verdict} ({verdict.value:.2f})")
         return verdict.verdict if verdict.decided else None
 
@@ -200,10 +259,13 @@ def duel_run(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.duelist import append_jsonl, duel_move
 
+    rules = _rules().rules
     settings = load_settings()
     client = team_client(settings)
+    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
 
@@ -221,7 +283,30 @@ def duel_run(
             if not isinstance(did, int):
                 continue
             first_seen.setdefault(did, c.tick)
-            move = duel_move(d, c.tick, first_seen[did])
+            move = duel_move(
+                d,
+                c.tick,
+                first_seen[did],
+                anchor=rules.duel_anchor,
+                floor=rules.duel_floor_margin,
+                endgame_ticks=rules.duel_endgame_ticks,
+            )
+            if play and move.kind in ("accept", "offer"):
+                kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
+                ctx = gr.Context(
+                    cash=0,
+                    held={},
+                    tick=c.tick,
+                    t_hours=c.t_hours,
+                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                    paused=(REPO_ROOT / rules.pause_file).exists(),
+                )
+                verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
+                if not verdict.allowed:
+                    console.print(f"  duel {did}: GUARDRAIL {verdict}")
+                    continue
+                if move.kind == "accept":
+                    ledger.record("accept", c.tick, c.t_hours, 0, f"duel:{did}")
             console.print(
                 f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {d.get('rival_offer')} "
                 f"deadline {d.get('deadline')} -> {move.kind} {move.price or ''} ({move.reason})"
@@ -242,6 +327,68 @@ def duel_run(
 
     console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
     run_per_tick(client.clock, on_tick, max_ticks=max_ticks or None)
+
+
+# ---------------------------------------------------------------- guardrails
+
+
+@rules_app.callback(invoke_without_command=True)
+def rules_root(ctx: typer.Context) -> None:
+    """Every guardrail from GUARDRAILS.md, its value, and the code that enforces it."""
+    if ctx.invoked_subcommand is None:
+        rules_show()
+
+
+@rules_app.command("show")
+def rules_show() -> None:
+    """Every guardrail from GUARDRAILS.md, its value, and the code that enforces it."""
+    from rich.table import Table
+
+    from bazaar_agent.guardrails import ENFORCED_BY
+
+    loaded = _rules()
+    t = Table(title=f"Guardrails · {loaded.path.name} (edit it, then rerun this to validate)")
+    for col in ("rule", "value", "enforced by", "why", "line"):
+        t.add_column(col, justify="right" if col == "line" else "left")
+    for r in loaded.lines:
+        t.add_row(r.rule_id, r.raw_value, ENFORCED_BY.get(r.rule_id, "[red]not enforced[/red]"), r.why, str(r.line))
+    console.print(t)
+    if loaded.principles:
+        console.print("[bold]Principles[/bold] (read by agents, not enforced in code):")
+        for line in loaded.principles:
+            console.print(f"  • {line}")
+    pause = REPO_ROOT / loaded.rules.pause_file
+    state = (
+        "[red]PAUSED[/red]" if pause.exists() or not loaded.rules.trading_enabled else "[green]trading enabled[/green]"
+    )
+    console.print(f"Kill switch: {state} (touch {loaded.rules.pause_file} to stop every write)")
+
+
+@rules_app.command("check")
+def rules_check(
+    kind: str = typer.Argument(help="buy | bid | accept_buy | sell | accept_sell | duel_accept | flag"),
+    item: str = typer.Argument(help="Card ref (LAV-05) or pack id"),
+    price: int = typer.Option(..., help="Price in primas"),
+    your_value: float | None = typer.Option(None, help="For sells: what we lose by selling that copy"),
+) -> None:
+    """Dry-run one action against the guardrails with our live /me, clock and ledger."""
+    from bazaar_agent import guardrails as gr
+
+    rules = _rules().rules
+    settings = load_settings()
+    client = team_client(settings)
+    c = Clock.model_validate(client.clock())
+    ctx = gr.context_from(client.me(), c.tick, c.t_hours, gr.Ledger(settings.data_dir / "ledger.jsonl"), rules)
+    try:
+        action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
+    except ValueError as e:
+        _fail(str(e))
+    verdict = gr.check(action, ctx, rules)
+    colour = "green" if verdict.allowed else "red"
+    console.print(
+        f"[{colour}]{verdict}[/{colour}] · cash {ctx.cash}, spent last game hour {ctx.spent_last_hour}, "
+        f"accepts this tick {ctx.accepts_this_tick}"
+    )
 
 
 # ---------------------------------------------------------------- feed capture
