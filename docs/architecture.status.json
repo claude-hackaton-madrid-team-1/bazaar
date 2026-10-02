@@ -301,7 +301,7 @@
       "status": "todo",
       "label": "blocked",
       "title": "Trust the bazaar-live folder",
-      "body": "Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start."
+      "body": "The trust prompt is waiting in the Orca tab of worktree feat-live-show-v1: choose \"Yes, I trust this folder\", then the live-show worker starts there."
     },
     {
       "status": "todo",
@@ -314,12 +314,6 @@
       "label": "decision",
       "title": "Market Test venue + broker",
       "body": "Worth up to 30 points; blocked by the trading permission until you choose full or build-only."
-    },
-    {
-      "status": "todo",
-      "label": "decision",
-      "title": "First eval target",
-      "body": "Jev leaned toward duels (0.64 / 0.72) but stayed under its 0.75 bar."
     }
   ],
   "being_built": [
@@ -332,14 +326,14 @@
     {
       "status": "wip",
       "label": "worker",
-      "title": "Evals",
-      "body": "Online outcomes per decision, stored in Postgres and annotated on Phoenix traces."
+      "title": "bazaar-sim",
+      "body": "A simulated market to test every agent live while the game is closed."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "bazaar-sim",
-      "body": "A simulated market to test every agent live while the game is closed."
+      "title": "Evals on Railway",
+      "body": "Code merged (#58): online outcomes in Postgres + Phoenix annotations. Now: the bazaar-evals service."
     }
   ],
   "not_started": [
@@ -366,6 +360,12 @@
       "label": "later",
       "title": "Bazaar Live show",
       "body": "Buyer and seller animated with Motion and voiced with TTS, in the bazaar-live repo."
+    },
+    {
+      "status": "todo",
+      "label": "later",
+      "title": "First eval target",
+      "body": "Nice to have: Jev leaned toward duels (0.64 / 0.72, under its 0.75 bar); revisit with Saturday's outcomes."
     }
   ],
   "links": [
