@@ -241,27 +241,68 @@ def match_price(ask: int, bid: int, fee: Fee) -> int:
     raise ValueError(f"ask {ask} and bid {bid} do not cross with fee {fee}")
 
 
-def best_matches(sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee) -> list[Match]:
-    """The maximum-surplus set of pairs (most pairs among equals) for one item."""
+def best_matches(sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, k: int | None = None) -> list[Match]:
+    """The maximum-surplus set of pairs (most pairs among equals) for one item, at most `k` pairs if given.
+
+    The cap is exact, not a truncation: n − k dummy columns worth more than any real matching are added,
+    so the best assignment seats exactly n − k sells on dummies and the other k on their best k-matching.
+    """
     sells = sorted(sells, key=lambda q: (q.price, str(q.id)))[:MAX_SIDE]
     buys = sorted(buys, key=lambda q: (-q.price, str(q.id)))[:MAX_SIDE]
-    scale = min(len(sells), len(buys)) + 1
+    n, m = len(sells), len(buys)
+    scale = min(n, m) + 1
     weights = [[(b.price - s.price) * scale + 1 if feasible(s, b, fee) else 0 for b in buys] for s in sells]
-    pairs = max_weight_assignment(weights)
+    if k is not None and k < min(n, m):
+        big = sum(max(row, default=0) for row in weights) + 1
+        weights = [row + [big] * (n - k) for row in weights]
     out = []
-    for r, c in pairs:
+    for r, c in max_weight_assignment(weights):
+        if c >= m:  # a dummy: this sell sits out
+            continue
         s, b = sells[r], buys[c]
         price = match_price(s.price, b.price, fee)
         out.append(Match(s, b, price, fee.of(price)))
     return out
 
 
+def _score(matches: Sequence[Match]) -> tuple[int, int]:
+    return sum(m.surplus for m in matches), len(matches)
+
+
+def _allocate(groups: Sequence[tuple[list[Quote], list[Quote]]], fee: Fee, k: int | None) -> list[Match]:
+    """The best matches over several items with at most `k` pairs in all: each item's best j-matching for
+    every j, combined by a knapsack over items (exact; only needed when the cap binds)."""
+    full = [best_matches(sells, buys, fee) for sells, buys in groups]
+    if k is None or sum(len(f) for f in full) <= k:
+        return [m for f in full for m in f]
+    best: dict[int, tuple[tuple[int, int], list[Match]]] = {0: ((0, 0), [])}
+    for (sells, buys), whole in zip(groups, full, strict=True):
+        options = [best_matches(sells, buys, fee, j) for j in range(min(len(whole), k + 1))] + [whole]
+        step: dict[int, tuple[tuple[int, int], list[Match]]] = {}
+        for used, (score, picked) in best.items():
+            for option in options:
+                total = used + len(option)
+                if total > k:
+                    continue
+                gain = _score(option)
+                candidate = ((score[0] + gain[0], score[1] + gain[1]), picked + option)
+                if total not in step or candidate[0] > step[total][0]:
+                    step[total] = candidate
+        best = step
+    return max(best.values(), key=lambda entry: entry[0])[1]
+
+
 def plan_matches(quotes: Iterable[Quote], fee: Fee, limit: int | None = None) -> list[Match]:
-    """Best matches for every item, bench first (the Market Test scores them), then by surplus."""
+    """The best matches for every item within `limit` pairs: the bench first (the Market Test scores it),
+    then the public offers with the pairs left, each chosen exactly under the cap. Sorted bench first,
+    then by surplus."""
     by_item: dict[str, tuple[list[Quote], list[Quote]]] = defaultdict(lambda: ([], []))
     for q in quotes:
         sells, buys = by_item[q.item]
         (sells if q.side == "sell" else buys).append(q)
-    plan = [m for sells, buys in by_item.values() for m in best_matches(sells, buys, fee)]
+    bench = [group for item, group in by_item.items() if item.startswith("bench:")]
+    public = [group for item, group in by_item.items() if not item.startswith("bench:")]
+    plan = _allocate(bench, fee, limit)
+    plan += _allocate(public, fee, None if limit is None else limit - len(plan))
     plan.sort(key=lambda m: (not m.sell.bench, -m.surplus, str(m.sell.id)))
-    return plan if limit is None else plan[:limit]
+    return plan
