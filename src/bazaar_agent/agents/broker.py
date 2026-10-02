@@ -38,7 +38,7 @@ from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.feed import Event
-from bazaar_agent.guardrails import Action, Context, Guardrails, Verdict, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, check
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import Clock
 
@@ -97,11 +97,15 @@ class BenchSessions:
         self.closed: list[Session] = []
         self._on_close = on_close
         self._seen: set[int] = set()
+        self._finished: set[str] = set()  # a run closed by its event never reopens from a late book read
 
-    def _start(self, run: str, tick: int) -> Session:
+    def _start(self, run: str, tick: int) -> Session | None:
+        if run in self._finished:
+            return None
         return self.open.setdefault(run, Session(run, tick, tick))
 
     def _finish(self, run: str, tick: int) -> None:
+        self._finished.add(run)
         session = self.open.pop(run, None)
         if session is not None:
             session.last_tick = max(session.last_tick, tick)
@@ -123,13 +127,15 @@ class BenchSessions:
 
     def observe_book(self, runs: set[str], tick: int) -> None:
         for run in runs:
-            session = self._start(run, tick)
-            session.in_book, session.last_tick = True, tick
+            if (session := self._start(run, tick)) is not None:
+                session.in_book, session.last_tick = True, tick
         for run in [r for r, s in self.open.items() if s.in_book and r not in runs]:
             self._finish(run, tick)
 
     def record(self, m: Match, tick: int, refused: bool) -> None:
         session = self._start(m.sell.item.removeprefix("bench:"), tick)
+        if session is None:
+            return
         session.last_tick = tick
         if refused:
             session.refused += 1
@@ -152,7 +158,6 @@ def broker_context(rules: Guardrails, clock: Clock) -> Context:
 class _Run:
     clock: Clock
     window: TickWindow
-    verdict: Verdict
     stats: TickStats
     pairs: set[frozenset[str]] = field(default_factory=set)
 
@@ -198,9 +203,8 @@ class BrokerAgent:
         quotes = quotes_from(book, our_ids, public=ours_ok)
         self.sessions.observe_book({q.item.removeprefix("bench:") for q in quotes.quotes if q.bench}, clock.tick)
         plan = plan_matches(quotes.quotes, Fee(book.fee_bps, book.fee_per_card), self.config.max_matches_per_tick)
-        verdict = check(Action("broker_match"), broker_context(self.rules, clock), self.rules)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
-        run = _Run(clock, window, verdict, stats)
+        run = _Run(clock, window, stats)
         for m in plan:
             self._match(run, m)
         self.pairs_seen |= run.pairs
@@ -234,7 +238,9 @@ class BrokerAgent:
         tick, stats = run.clock.tick, run.stats
         stats.proposed += 1
         stats.proposed_surplus += m.surplus
-        status: Status = "rejected" if not run.verdict.allowed else "approved" if run.window.open() else "expired"
+        # checked per match, not per tick: a pause file touched mid-tick stops the very next send
+        verdict = check(Action("broker_match"), broker_context(self.rules, run.clock), self.rules)
+        status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
         chosen = status == "approved"
         what = "bench" if m.sell.bench else m.sell.item
         line = (
@@ -245,7 +251,7 @@ class BrokerAgent:
         did = self.rec.decide(
             tick,
             "broker_match",
-            line if chosen else f"skip {line}: {run.verdict if status == 'rejected' else 'tick window closed'}",
+            line if chosen else f"skip {line}: {verdict if status == 'rejected' else 'tick window closed'}",
             inputs={
                 "item": m.sell.item,
                 "bench": m.sell.bench,
@@ -257,7 +263,7 @@ class BrokerAgent:
                 **request,
             },
             reason="maximum-surplus matching (exact), midpoint price",
-            guardrail=str(run.verdict),
+            guardrail=str(verdict),
             chosen=chosen,
             status=status,
             move=request,
@@ -266,6 +272,11 @@ class BrokerAgent:
             stats.denied += 1
             return
         if status == "expired":
+            stats.expired += 1
+            return
+        if self.live and not run.window.open():  # logging took the last of the tick: drop it, never send late
+            self.rec.decisions.settle(did, "expired")
+            self.log(f"tick {tick} broker: DROPPED match {m.sell.id} × {m.buy.id}: tick window closed")
             stats.expired += 1
             return
         refused = False

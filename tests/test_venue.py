@@ -112,6 +112,29 @@ def test_a_live_allowed_open_sends_a_board_venue_and_saves_the_key_0600_never_re
     assert SIM_KEY in saved.read_text() and "v07" in saved.read_text()
 
 
+def test_nothing_is_opened_when_the_broker_key_could_not_be_saved(tmp_path):
+    team, blocker = FakeTeam(), tmp_path / "a-file"
+    blocker.write_text("not a directory")
+    with pytest.raises(ConfigError, match="not writable"):
+        vn.open_venue(
+            team, SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=blocker / "x")
+        )
+    assert team.sent == []
+
+
+def test_a_save_that_still_fails_after_the_open_says_so_without_the_key(tmp_path, monkeypatch):
+    def broken(*args):
+        raise PermissionError("disk went read-only")
+
+    monkeypatch.setattr(vn, "save_broker_key", broken)
+    with pytest.raises(ConfigError) as e:
+        vn.open_venue(
+            FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=tmp_path)
+        )
+    assert "venue v07 is OPEN" in str(e.value) and "venue close v07" in str(e.value)
+    assert SIM_KEY not in str(e.value)
+
+
 def test_load_settings_reads_the_saved_broker_key_and_never_shows_it(tmp_path, monkeypatch):
     vn.save_broker_key(tmp_path, "v07", SIM_KEY)
     monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path))
