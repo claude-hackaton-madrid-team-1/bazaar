@@ -292,6 +292,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Open pull requests
 
-_No open PRs (or `gh` unavailable)._
+| PR | Title | Branch |
+|---|---|---|
+| [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | `ogarciarevett/feat-strategy-engine` |
 
 <!-- BAZAAR:ACTIVITY:END -->
