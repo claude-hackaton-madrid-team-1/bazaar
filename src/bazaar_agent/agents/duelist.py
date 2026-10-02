@@ -9,6 +9,7 @@ shrinks with every round of talk; a priced message in a two-issue session must a
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -51,6 +52,22 @@ def effective_price(duel: dict[str, Any], price: int) -> float | None:
     return price - penalty if duel.get("role") == "seller" else price + penalty
 
 
+def duel_id(duel: Mapping[str, Any]) -> int | None:
+    """The live API names it `duel` (verified 2026-10-02, practice session); `id` kept for older shapes."""
+    value = duel.get("duel", duel.get("id"))
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def duel_deadline(duel: Mapping[str, Any]) -> int | None:
+    value = duel.get("deadline_tick", duel.get("deadline"))
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def duel_done(duel: Mapping[str, Any]) -> bool:
+    status = duel.get("status")
+    return bool(duel.get("done")) or (status is not None and status != "live") or duel.get("result") is not None
+
+
 def our_target(limit: int, role: str, progress: float, anchor: float = ANCHOR, floor: float = FLOOR_MARGIN) -> int:
     """Our ask (seller) or bid (buyer) at `progress` 0..1 of the duel: anchor → limit ± margin."""
     progress = min(1.0, max(0.0, progress))
@@ -74,8 +91,8 @@ def duel_move(
     endgame_ticks: int = ENDGAME_TICKS,
 ) -> DuelMove:
     limit, role = duel.get("your_limit"), duel.get("role")
-    deadline = duel.get("deadline")
-    if duel.get("done") or not isinstance(limit, int) or role not in ("seller", "buyer"):
+    deadline = duel_deadline(duel)
+    if duel_done(duel) or not isinstance(limit, int) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="done or unreadable duel")
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     left = (deadline - tick) if isinstance(deadline, int) else total

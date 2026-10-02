@@ -390,7 +390,15 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duelist import DuelMove, append_jsonl, duel_move, rival_text, template_duel_words
+    from bazaar_agent.agents.duelist import (
+        DuelMove,
+        append_jsonl,
+        duel_deadline,
+        duel_id,
+        duel_move,
+        rival_text,
+        template_duel_words,
+    )
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
@@ -438,8 +446,8 @@ def duel_run(
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
         for d in duels:
-            did = d.get("id")
-            if not isinstance(did, int):
+            did = duel_id(d)
+            if did is None:
                 continue
             first_seen.setdefault(did, c.tick)
             move = duel_move(
@@ -474,11 +482,11 @@ def duel_run(
             # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
             console.print(
                 f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
-                f"deadline {d.get('deadline')} -> {move.kind} {move.price or ''} ({move.reason})"
+                f"deadline {duel_deadline(d)} -> {move.kind} {move.price or ''} ({move.reason})"
             )
             if play and move.kind != "hold":
                 send(d, did, move, c, send_by)
-        duel_traces.end_tick(d.get("id") for d in duels)
+        duel_traces.end_tick(duel_id(d) for d in duels)
 
     console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
     try:

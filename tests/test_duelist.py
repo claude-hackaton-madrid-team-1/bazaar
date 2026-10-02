@@ -53,3 +53,34 @@ def test_two_issue_accepts_price_in_the_worst_case_cost_of_days():
     assert duel_move(d, tick=111, started_tick=100).kind == "offer"
     d["rival_offer"] = {"price": 56}  # days missing: cannot value it, never accept
     assert effective_price(d, 56) is None and duel_move(d, tick=111, started_tick=100).kind == "offer"
+
+
+# The real shape of GET /api/duels (practice session, tick 134, 2026-10-02).
+LIVE = {
+    "duel": 95,
+    "session": 1,
+    "status": "live",
+    "role": "seller",
+    "item": "Mercado de Vallehermoso",
+    "issues": ["price"],
+    "your_days_weight": None,
+    "your_limit": 104,
+    "rival": "Rival Noche",
+    "deadline_tick": 144,
+    "decay_per_round": 0.06,
+    "rounds": 0,
+    "your_offer": None,
+    "rival_offer": {"id": 701, "price": 98, "tick": 132, "days": 0},
+    "result": None,
+}
+
+
+def test_the_live_payload_is_read_and_played():
+    from bazaar_agent.agents.duelist import duel_deadline, duel_done, duel_id
+
+    assert (duel_id(LIVE), duel_deadline(LIVE), duel_done(LIVE)) == (95, 144, False)
+    move = duel_move(LIVE, tick=134, started_tick=132)
+    assert move.kind == "offer" and move.price > 104  # 98 is below our cost: never accepted
+    assert duel_move({**LIVE, "rival_offer": {"price": 110, "days": 0}}, tick=143, started_tick=132).kind == "accept"
+    assert duel_done({**LIVE, "status": "done"}) and duel_done({**LIVE, "result": "deal"})
+    assert duel_id({"id": 7}) == 7 and duel_id({"duel": True}) is None
