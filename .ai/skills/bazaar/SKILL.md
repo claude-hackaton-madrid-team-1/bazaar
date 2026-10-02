@@ -16,6 +16,9 @@ Everything goes through `uv run bazaar …` (source: `src/bazaar_agent/`). Pytho
 
 ## Before you act
 
+- Re-read the vendor rules (`vendor/bazaar-kit/RULES.md`, `README.md`) at the start of every phase.
+- One key, one budget: every process together stays under 5 req/s and 6 live streams.
+
 0. `uv run bazaar status`: ALWAYS read `/api/me` first: album pages, missing page cards (with
    their value to us), duplicates, affinity and cash. Re-read it after every deal.
 1. `uv run bazaar clock`: read the tick, `next_tick_in`, the **action budget** and the limits in force.
