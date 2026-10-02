@@ -15,6 +15,7 @@ from bazaar_agent.config import BROKER_ENV_FILE, ConfigError, Settings, load_set
 
 REAL_KEY = "bk_" + "A1b2C3d4E5f6G7h8"  # shapes only: no real key appears in this repo
 SIM_KEY = "simbk-" + "Z9y8X7w6V5u4"
+BUILD_ONLY = "- `allow_venue_open` = false — build only"
 
 
 class FakeTeam:
@@ -182,6 +183,7 @@ def test_cli_venue_open_live_is_refused_while_build_only(tmp_path, monkeypatch):
     team = FakeTeam()
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "_team_client", lambda: team)
+    monkeypatch.setattr(cli, "_rules", lambda: gr.parse_guardrails(BUILD_ONLY))  # not the committed file's state
     result = CliRunner().invoke(cli.app, ["venue", "open", "--live", "--fee-bps", "0"])
     assert result.exit_code == 1, result.output
     assert "allow_venue_open = false" in " ".join(result.output.split())
