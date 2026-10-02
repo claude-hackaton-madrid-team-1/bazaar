@@ -523,14 +523,16 @@ Labels: `good` ≥ 0.6, `ok` ≥ 0.3, `bad` below. Every outcome carries an expl
 
 **Where to see them.** `bazaar evals report` in the CLI; in Phoenix, on each `duel` / `negotiation` /
 `<agent> tick N` trace as an annotation named `duel_pie_share`, `ladder_share` or `trade_surplus`
-(annotator `CODE`, identifier `bazaar-evals`: a re-score updates it in place); in Postgres for the
+(annotator `CODE`, identifier `bazaar-evals:<subject>`: a re-score updates it in place); in Postgres for the
 dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:101`), and the views
 `eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
 the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
 
 **Always on.** Railway service `bazaar-evals` runs `bazaar evals run --every 180`: it scores again
-only when a new game tick reached Postgres, retries Phoenix for a span three times (a trace lands when
-its duel or negotiation ends), and backs off while Postgres is unreachable. It has no game key.
+only when an input moved in Postgres (a game tick, a duel from `duel done` or `import-duels`, a `/me`
+snapshot, a decision), retries Phoenix for a missing span on the next three polls (a trace lands when
+its duel or negotiation ends), and backs off while Postgres is unreachable. It has no game key. After a
+restart, `bazaar duel run` reads `?done=true` once, so a duel that finished while it was down is stored.
 
 ## Services and public URLs (start here for observability and the dashboard)
 

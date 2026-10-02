@@ -8,7 +8,7 @@ https://arize.com/docs/phoenix/sdk-api-reference/rest-api/overview
   the attribute value is JSON-parsed, so `bazaar.duel.id:85` matches the integer 85.
 - `POST /v1/span_annotations?sync=true` with `{"data": [{"span_id", "name", "annotator_kind": "CODE",
   "result": {"label", "score", "explanation"}, "metadata", "identifier"}]}`; a known identifier
-  updates the annotation instead of adding a second one.
+  updates the annotation instead of adding a second one. Ours is `bazaar-evals:<subject>`.
 
 Which span: a duel's root `duel` span (`bazaar.duel.id`), a dealer thread's `negotiation` root
 (`bazaar.thread.id`), a team trade's decision tick (`<agent> tick <tick>`). A Market Test has no
@@ -61,7 +61,8 @@ def annotation_payload(p: Pending, span: SpanRef) -> dict[str, Any]:
         "span_id": span.span_id,
         "name": ANNOTATION_NAMES.get(p.target, f"eval_{p.target}"),
         "annotator_kind": "CODE",
-        "identifier": ANNOTATOR_IDENTIFIER,
+        # One annotation per outcome: two trades decided in the same tick share that tick's span.
+        "identifier": f"{ANNOTATOR_IDENTIFIER}:{p.subject}",
         "result": {"label": p.label, "score": p.score, "explanation": p.explanation},
         "metadata": {"target": p.target, "subject": p.subject, "day": p.day, "tick": p.tick, "source": "bazaar evals"},
     }

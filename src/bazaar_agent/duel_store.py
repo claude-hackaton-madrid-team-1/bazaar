@@ -76,6 +76,12 @@ def save_duels(conn: psycopg.Connection, duels: Iterable[Mapping[str, Any]], tic
     return len(rows)
 
 
+def duel_list(response: object) -> list[dict[str, Any]]:
+    """The duels in an `/api/duels` response, validated: anything but a list of objects reads as none."""
+    duels = response.get("duels") if isinstance(response, Mapping) else None
+    return [d for d in duels if isinstance(d, dict)] if isinstance(duels, list) else []
+
+
 def jsonl_duels(path: Path) -> Iterator[tuple[int, list[dict[str, Any]]]]:
     """(tick, duels) for every `/api/duels` response a duel runner logged; other lines are skipped."""
     with path.open(encoding="utf-8", errors="replace") as handle:
@@ -84,9 +90,9 @@ def jsonl_duels(path: Path) -> Iterator[tuple[int, list[dict[str, Any]]]]:
                 row = json.loads(line)
             except ValueError:
                 continue
-            response = row.get("response") if isinstance(row, dict) else None
-            if isinstance(response, dict) and isinstance(row.get("tick"), int):
-                yield row["tick"], [d for d in response.get("duels") or [] if isinstance(d, dict)]
+            tick = row.get("tick") if isinstance(row, dict) else None
+            if isinstance(tick, int) and not isinstance(tick, bool) and isinstance(row.get("response"), dict):
+                yield tick, duel_list(row["response"])
 
 
 class DuelStore:
@@ -96,7 +102,7 @@ class DuelStore:
         self._connect, self._log = connect, log
         self._conn: psycopg.Connection | None = None
         self._skip_until: int | None = None
-        self._live: set[int] = set()
+        self._live: set[int] | None = None  # None until the first tick: a restart catches up once
 
     def _db(self, tick: int) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
@@ -130,11 +136,12 @@ class DuelStore:
             self._down(tick, "write", e)
             return 0
 
-    def ended(self, live: Iterable[Mapping[str, Any]]) -> set[int]:
-        """Duel ids that were live last call and are not now: the ones to read with `?done=true`."""
+    def read_finished(self, live: Iterable[Mapping[str, Any]]) -> bool:
+        """Whether to read `?done=true` this tick: a duel left the live list since the last tick, or this
+        is the runner's first tick (a duel may have finished while it was down)."""
         now = {did for d in live if (did := duel_id(d)) is not None}
-        gone, self._live = self._live - now, now
-        return gone
+        before, self._live = self._live, now
+        return before is None or bool(before - now)
 
     def close(self) -> None:
         if self._conn is not None:

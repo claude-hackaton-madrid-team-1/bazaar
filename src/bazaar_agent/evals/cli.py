@@ -2,8 +2,8 @@
 
 Postgres in, Postgres and Phoenix out. No command here calls the game API, so the evals add nothing
 to the team key's 5 req/s budget. `run --every N` is the always-on loop of the `bazaar-evals` Railway
-service: it scores again only when the game has moved (a new tick in Postgres), and backs off while
-Postgres is unreachable.
+service: it scores again only when an input moved (a new tick, duel, snapshot or decision in Postgres,
+or an outcome still waiting for its Phoenix span), and backs off while Postgres is unreachable.
 """
 
 from __future__ import annotations
@@ -61,10 +61,31 @@ def _annotator(phoenix: bool) -> Any:
     return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, _warn)
 
 
-def _latest_tick(conn: psycopg.Connection) -> int | None:
-    row = conn.execute("select max(tick) from feed_events").fetchone()
+_INPUTS_STATE = (
+    "select (select max(tick) from feed_events), (select max(updated_at) from duels), "
+    "(select max(tick) from snapshots), (select max(id) from decisions)"
+)
+_PENDING = (
+    "select count(*) from outcomes where target is not null and annotated_at is null "
+    "and coalesce(annotation_tries, 0) < %s"
+)
+
+
+def _inputs_state(conn: psycopg.Connection) -> tuple[Any, ...]:
+    """What a pass reads: the newest game tick, a duel written by `duel done` or `import-duels`, a /me
+    snapshot, a decision. Unchanged since the last pass = nothing new to score."""
+    row = conn.execute(_INPUTS_STATE).fetchone()
     conn.commit()
-    return int(row[0]) if row and row[0] is not None else None
+    return tuple(row) if row else ()
+
+
+def _pending(conn: psycopg.Connection) -> int:
+    """Outcomes still waiting for their Phoenix span (each is retried at most MAX_ANNOTATION_TRIES times)."""
+    from bazaar_agent.evals.store import MAX_ANNOTATION_TRIES
+
+    row = conn.execute(_PENDING, (MAX_ANNOTATION_TRIES,)).fetchone()
+    conn.commit()
+    return int(row[0]) if row else 0
 
 
 def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_json: bool) -> None:
@@ -118,21 +139,21 @@ def evals_run(
     state: dict[str, Any] = {"conn": None, "seen": None}
 
     def step() -> None:
-        """One pass when the game moved: a tick in Postgres that the last pass did not see."""
+        """One pass when an input moved since the last pass (see `_inputs_state`)."""
         conn = state["conn"]
         if conn is None or conn.closed:
             conn = state["conn"] = _connect()
         try:
-            tick = _latest_tick(conn)
-            if tick is None or tick != state["seen"]:
+            seen = _inputs_state(conn)
+            if seen != state["seen"] or (phoenix and _pending(conn) > 0):
                 _pass(conn, since_tick, phoenix, as_json)
-                state["seen"] = tick
+                state["seen"] = seen
         except psycopg.Error:
             conn.close()
             state["conn"] = None
             raise
 
-    console.print(f"evals: every {every:.0f} s, scoring when the game tick moves (Ctrl-C to stop)")
+    console.print(f"evals: every {every:.0f} s, scoring when an input moved (Ctrl-C to stop)")
     run_forever(every, step)
 
 

@@ -131,8 +131,15 @@ def valuation(conn: psycopg.Connection, s: Settlement, ours: str) -> Valuation:
             "and tick > %s and tick <= %s and coalesce((payload->>'settlement')::bigint, id) <> %s",
             (ours, b[0], a[0], s.settlement),
         )
-        cash = int(a[1]) - int(b[1]) if others and others[0][0] == 0 else None
+        change = int(a[1]) - int(b[1])
+        cash = change if others and others[0][0] == 0 and change in _trade_cash(s, ours) else None
     return Valuation(value, cash, b[0] if b else None, a[0] if a else None)
+
+
+def _trade_cash(s: Settlement, ours: str) -> tuple[int, ...]:
+    """The cash changes this trade alone can explain (whoever paid the venue fee). Anything else between
+    the two snapshots (a venue bond, a pack, a fee earned on our venue) means the change is not the trade's."""
+    return (-s.price, -(s.price + s.fee)) if s.buyer == ours else (s.price, s.price - s.fee)
 
 
 @dataclass(frozen=True)

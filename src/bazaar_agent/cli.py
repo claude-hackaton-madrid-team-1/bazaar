@@ -428,7 +428,7 @@ def duel_run(
     from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
-    from bazaar_agent.duel_store import DuelStore
+    from bazaar_agent.duel_store import DuelStore, duel_list
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
@@ -507,7 +507,7 @@ def duel_run(
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
             return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
-        store.save(tick, [d for d in data.get("duels") or [] if isinstance(d, dict) and d.get("status") != "live"])
+        store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -520,7 +520,7 @@ def duel_run(
             duel_traces.read_failed(c.tick, e)
             return
         append_jsonl(log_path, {"tick": c.tick, "response": data})
-        duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
+        duels = duel_list(data)
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for live_id in live_ids:
@@ -592,7 +592,7 @@ def duel_run(
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
-        if store.ended(duels):
+        if store.read_finished(duels):
             save_finished(c.tick)
 
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
@@ -652,17 +652,17 @@ def _maker_jev(settings: Any, rules: Any) -> Any:
 def duel_done() -> None:
     """Read our finished duels once (`/api/duels?done=true`, one request) and store them for the evals."""
     from bazaar_agent import db
-    from bazaar_agent.duel_store import save_duels
+    from bazaar_agent.duel_store import duel_list, save_duels
 
     try:
         data = team_client(load_settings()).duels(done=True)
     except BazaarError as e:
         _fail(f"/api/duels?done=true refused: {e.code} ({e.message[:80]})")
         return
-    finished = [d for d in data.get("duels") or [] if isinstance(d, dict) and d.get("status") != "live"]
+    listed = duel_list(data)
     with db.connect_ready("bazaar-duels") as conn:
-        saved = save_duels(conn, finished, None)
-    console.print(f"stored {saved} finished duel(s) in Postgres duels ({len(data.get('duels') or [])} listed)")
+        saved = save_duels(conn, [d for d in listed if d.get("status") != "live"], None)
+    console.print(f"stored {saved} finished duel(s) in Postgres duels ({len(listed)} listed)")
 
 
 # ---------------------------------------------------------------- guardrails

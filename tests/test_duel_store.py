@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import pytest
 
-from bazaar_agent.duel_store import DuelStore, _row, jsonl_duels
+from bazaar_agent.duel_store import DuelStore, _row, duel_list, jsonl_duels
 
 DONE = {
     "duel": 85,
@@ -48,16 +49,29 @@ def test_jsonl_logs_yield_each_response_and_skip_moves_and_junk(tmp_path: Path) 
         {"tick": 120, "response": {"duels": [{"duel": 5, "status": "live"}, "junk"]}},
         {"tick": 121, "duel": 5, "move": {"kind": "offer", "price": 70}},
         {"tick": 122, "response": {"duels": []}},
+        {"tick": 123, "response": {"duels": 1}},
+        {"tick": True, "response": {"duels": []}},
+        ["not", "an", "object"],
     ]
     log.write_text("\n".join(json.dumps(x) for x in lines) + "\nnot json\n", encoding="utf-8")
-    assert list(jsonl_duels(log)) == [(120, [{"duel": 5, "status": "live"}]), (122, [])]
+    assert list(jsonl_duels(log)) == [(120, [{"duel": 5, "status": "live"}]), (122, []), (123, [])]
 
 
-def test_ended_reports_duels_that_left_the_live_list_once() -> None:
+def test_finished_duels_are_read_after_a_restart_and_when_one_leaves_the_live_list() -> None:
     store = DuelStore(None, lambda m: None)
-    assert store.ended([{"duel": 1}, {"duel": 2}]) == set()
-    assert store.ended([{"duel": 2}]) == {1}
-    assert store.ended([{"duel": 2}]) == set()
+    assert store.read_finished([{"duel": 1}, {"duel": 2}]) is True  # first tick: catch up on downtime
+    assert store.read_finished([{"duel": 1}, {"duel": 2}]) is False
+    assert store.read_finished([{"duel": 2}]) is True  # duel 1 ended
+    assert store.read_finished([{"duel": 2}, {"duel": 3}]) is False  # a new duel is not an ended one
+
+
+@pytest.mark.parametrize("response", [{"duels": 1}, {"duels": None}, {"duels": "x"}, None, []])
+def test_a_malformed_duel_list_reads_as_no_duels(response: object) -> None:
+    assert duel_list(response) == []
+
+
+def test_a_duel_list_keeps_only_objects() -> None:
+    assert duel_list({"duels": [1, {"duel": 2}]}) == [{"duel": 2}]
 
 
 def test_without_postgres_the_store_writes_nothing_and_never_raises() -> None:

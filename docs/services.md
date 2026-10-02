@@ -161,7 +161,7 @@ eval_jev_calibration  question, outcomes, decided, n_right, n_wrong, n_unknown
 
 In Phoenix, each score is a span annotation on its trace: `duel_pie_share` on a `duel` root,
 `ladder_share` on a `negotiation` root, `trade_surplus` on the deciding `<agent> tick N` trace
-(annotator `CODE`, identifier `bazaar-evals`).
+(annotator `CODE`, identifier `bazaar-evals:<subject>`, so two trades decided in one tick keep two annotations).
 
 ## Game endpoints a dashboard can call directly
 

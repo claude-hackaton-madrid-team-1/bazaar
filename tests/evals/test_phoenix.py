@@ -72,10 +72,17 @@ def test_the_annotation_payload_matches_phoenix_span_annotation_data() -> None:
         "span_id": "8290db9711b5b8f0",
         "name": "duel_pie_share",
         "annotator_kind": "CODE",
-        "identifier": ANNOTATOR_IDENTIFIER,
+        "identifier": f"{ANNOTATOR_IDENTIFIER}:duel:85",
         "result": {"label": "good", "score": 0.6483, "explanation": "Deal at 138 ..."},
         "metadata": {"target": "duel", "subject": "duel:85", "day": "fri", "tick": 156, "source": "bazaar evals"},
     }
+
+
+def test_two_trades_on_one_tick_span_keep_two_annotations() -> None:
+    other = Pending("trade", "settlement:68", 0.5, "good", "Sold ...", dict(TRADE.details), None, 41)
+    tick_span = SpanRef("c" * 32, "3" * 16)
+    first, second = annotation_payload(TRADE, tick_span), annotation_payload(other, tick_span)
+    assert first["span_id"] == second["span_id"] and first["identifier"] != second["identifier"]
 
 
 def test_the_annotator_finds_spans_by_name_and_attribute_and_posts_synchronously() -> None:

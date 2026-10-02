@@ -217,7 +217,7 @@ def test_the_loop_backs_off_while_postgres_fails() -> None:
     assert waits == [60, 60, 120, 60]
 
 
-def test_the_loop_scores_only_when_the_game_tick_moved(
+def test_the_loop_scores_when_an_input_moved_or_a_span_is_still_pending(
     database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     setup = open_in(database_url, schema)
@@ -226,17 +226,40 @@ def test_the_loop_scores_only_when_the_game_tick_moved(
     monkeypatch.setattr(evals_cli, "_connect", lambda: open_in(database_url, schema))
     passes: list[int | None] = []
     monkeypatch.setattr(evals_cli, "_pass", lambda conn, since, phoenix, as_json: passes.append(since))
-    ticks = iter([10, 10, 11])
+    # (inputs, pending spans) per poll: new tick · same · same with a span pending · a duel from `duel done`
+    polls = iter([((10, None), 0), ((10, None), 0), ((10, None), 2), ((10, "duel 85"), 0)])
+    current: dict[str, Any] = {}
 
     def fake_forever(every: float, step: Any) -> None:
-        for _ in range(3):
-            monkeypatch.setattr(evals_cli, "_latest_tick", lambda conn: next(ticks))
+        for _ in range(4):
+            current["inputs"], current["pending"] = next(polls)
             step()
 
+    monkeypatch.setattr(evals_cli, "_inputs_state", lambda conn: current["inputs"])
+    monkeypatch.setattr(evals_cli, "_pending", lambda conn: current["pending"])
     monkeypatch.setattr(evals_cli, "run_forever", fake_forever)
     result = CliRunner().invoke(evals_cli.evals_app, ["run", "--every", "60"])
     assert result.exit_code == 0, result.output
-    assert len(passes) == 2  # tick 10, then tick 11; the repeat of 10 was skipped
+    assert len(passes) == 3  # the second poll saw nothing new
+
+
+def test_the_gate_reads_inputs_and_pending_spans(seeded: psycopg.Connection) -> None:
+    before = evals_cli._inputs_state(seeded)
+    assert before[0] == 170 and before[2] == 171  # newest feed tick, newest /me snapshot
+    run_once(seeded, OURS)
+    assert evals_cli._pending(seeded) == 27  # nothing annotated yet: every outcome waits for its span
+    save_duels(seeded, [{"duel": 4242, "status": "no_deal", "role": "seller", "your_limit": 5}], None)
+    assert evals_cli._inputs_state(seeded) != before  # a duel stored by `duel done` moves the gate
+
+
+def test_a_cash_change_the_trade_cannot_explain_falls_back_to_the_price(seeded: psycopg.Connection) -> None:
+    seeded.execute("update snapshots set cash = 339 - 270 where tick = 171")  # a venue bond in between
+    seeded.commit()
+    run_once(seeded, OURS)
+    details = rows(
+        seeded, "select details->>'cash_from', realized_surplus::float from outcomes where subject = 'settlement:500'"
+    )
+    assert details == [("price", 6.0)]  # 20 - (12 + 2), not 20 - 284
 
 
 def test_phoenix_down_mid_pass_keeps_the_scores(seeded: psycopg.Connection) -> None:
