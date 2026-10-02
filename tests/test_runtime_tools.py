@@ -195,7 +195,7 @@ def cli_env(tmp_path, monkeypatch):
     monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
     monkeypatch.setattr(cli, "_team_me", lambda: (team, team.me()))
     monkeypatch.setattr(cli, "public_client", lambda settings: Public())
-    monkeypatch.setattr(cli, "_ledger", lambda source: Ledger(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(cli, "_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr("bazaar_agent.pack_gate.jev_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr(cli, "_events", lambda live: Public().feed_window(500))

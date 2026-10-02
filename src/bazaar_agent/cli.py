@@ -81,16 +81,25 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def _ledger(source: str) -> Any:
-    """The guardrail ledger every process shares: Postgres when DATABASE_URL answers, else the JSONL file."""
+def _ledger(source: str, live: bool = False) -> Any:
+    """The guardrail ledger every process shares. Live: the shared Postgres one or exit (`open_ledger`)."""
     from rich.markup import escape
 
-    from bazaar_agent.ledger_pg import open_ledger
+    from bazaar_agent.ledger_pg import LedgerNotShared, open_ledger
 
-    # stderr: a command's stdout may be JSON (`strategy --json`), and this line is only context
-    return open_ledger(
-        load_settings().data_dir, source=source, log=lambda m: err_console.print(f"[dim]{escape(m)}[/dim]")
-    )
+    settings = load_settings()
+    try:
+        # stderr: a command's stdout may be JSON (`strategy --json`), and this line is only context
+        return open_ledger(
+            settings.data_dir,
+            source=source,
+            live=live,
+            database_url=settings.database_url.get_secret_value(),
+            game_url=settings.bazaar_url,
+            log=lambda m: err_console.print(f"[dim]{escape(m)}[/dim]"),
+        )
+    except LedgerNotShared as e:
+        _fail(f"refusing to trade: {e}")
 
 
 # ---------------------------------------------------------------- public views (no key)
@@ -309,7 +318,7 @@ def dealer_buy(
         return
     settings = load_settings()
     client = team_client(settings)
-    ledger = _ledger("dealer-buy")
+    ledger = _ledger("dealer-buy", live=True)
     clock_now = Clock.model_validate(client.clock())
     pre = gr.check(
         gr.Action("buy", item, rarity, start),
@@ -429,12 +438,13 @@ def duel_run(
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
+    from bazaar_agent.ledger_pg import LedgerUnavailable
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
     settings = load_settings()
     client = team_client(settings)
-    ledger = _ledger("duels")
+    ledger = _ledger("duels", live=play)
     duel_jev = _duel_jev(settings, rules) if jev else None
     # Decision rows go to Postgres only when the ledger reached it: a dead host must not stall a duel tick.
     decisions = DecisionLog(
@@ -556,12 +566,18 @@ def duel_run(
                 continue
             if play and move.kind in ("accept", "offer"):
                 kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
+                try:
+                    accepts_this_tick = ledger.accepts_in_tick(c.tick)
+                except LedgerUnavailable as e:  # fail closed for this duel; the tick and the loop go on
+                    console.print(f"  duel {did}: {escape(str(e))}; no {move.kind} this tick (fail closed)")
+                    record(d, move, pick, c.tick, "rejected", f"ledger unavailable: {e}")
+                    continue
                 ctx = gr.Context(
                     cash=0,
                     held={},
                     tick=c.tick,
                     t_hours=c.t_hours,
-                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                    accepts_this_tick=accepts_this_tick,
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
                 verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
@@ -571,7 +587,15 @@ def duel_run(
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     continue
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-                if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
+                try:
+                    reserved = move.kind != "accept" or ledger.reserve_accept(
+                        c.tick, c.t_hours, 0, f"duel:{did}", limit
+                    )
+                except LedgerUnavailable as e:
+                    console.print(f"  duel {did}: {escape(str(e))}; no accept this tick (fail closed)")
+                    record(d, move, pick, c.tick, "rejected", f"ledger unavailable: {e}")
+                    continue
+                if not reserved:
                     console.print(f"  duel {did}: another process took the team's accept this tick")
                     record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
                     continue
@@ -1148,7 +1172,7 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     from bazaar_agent.agents.seller import post
 
     rules = _rules().rules
-    ledger = _ledger("sell")
+    ledger = _ledger("sell", live=live)
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
     commitments = _open_commitments(client, me)
@@ -1281,7 +1305,7 @@ def _run_agent(
     from bazaar_agent.agents.runtime import MarketFeed, live_mode, watched_clock
     from bazaar_agent.agents.status import StatusHub, start_status_server
     from bazaar_agent.decisions import DecisionLog
-    from bazaar_agent.ledger_pg import open_ledger
+    from bazaar_agent.ledger_pg import LedgerNotShared, open_ledger
     from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
 
     loaded, rules = _strategy(), _rules().rules
@@ -1297,7 +1321,11 @@ def _run_agent(
 
     mode = "LIVE: trades are sent" if is_live else "DRY RUN: nothing is sent (add --live, or BAZAAR_LIVE=1)"
     console.print(f"[bold]{name}[/bold] · {mode}")
-    ledger = open_ledger(settings.data_dir, source=name, log=log)
+    try:
+        url, game = settings.database_url.get_secret_value(), settings.bazaar_url
+        ledger = open_ledger(settings.data_dir, source=name, live=is_live, database_url=url, game_url=game, log=log)
+    except LedgerNotShared as e:
+        _fail(f"{name}: refusing to trade: {e}")
     decisions = DecisionLog(settings.data_dir, connect, log)
     feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log)
 
