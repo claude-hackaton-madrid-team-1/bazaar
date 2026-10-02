@@ -41,7 +41,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **Page** = the commons, uncommons and rares of a set (10 cards). A complete page gives a bonus; the epic and the legendary on top give a bit more.
 - Everyone starts the same: 400 P, 11 commons, 3 uncommons and 1 rare.
 - **Private values:** every team has the same six set multipliers, shuffled.
-- Value verified against the API: `book × afinidad × [1, 0.25, 0.1][copia]` (#23). The `your_value` of a card in hand is the value of the last copy.
+- Value verified against the API: `book × affinity × [1, 0.25, 0.1][copy]` (#23). The `your_value` of a card in hand is the value of the last copy.
 - **The example from the slides:** A has a duplicate copy worth 6 P to them, and B is missing it for their page and it is worth 24 P to them. They close at 14 P: A gains +8 and B gains +10, so **+18 P** is created. That is what scores.
 - **In circulation at tick 0:** 0 epics and 0 legendaries. LAV-09, MAL-09 and MAL-07 have a single copy (#22).
 
