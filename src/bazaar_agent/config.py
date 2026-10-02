@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, SecretStr
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_URL = "https://bazaar.causaprima.ai"
 DEFAULT_DATABASE_URL = "postgresql://bazaar:bazaar@localhost:5433/bazaar"
+BROKER_ENV_FILE = "broker.env"  # <data_dir>/broker.env (0600): the broker key a live `venue open` saved
 
 
 class ConfigError(RuntimeError):
@@ -44,6 +45,8 @@ class Settings(BaseModel):
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
+    broker_key: SecretStr | None = None  # BAZAAR_BROKER_KEY: our venue's X-Broker-Key (returned once on open)
+    venue_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")  # BAZAAR_VENUE: our venue id
 
     @property
     def feed_dir(self) -> Path:
@@ -53,6 +56,14 @@ class Settings(BaseModel):
         if self.bazaar_key is None or not self.bazaar_key.get_secret_value():
             raise ConfigError("BAZAAR_KEY is not set: add it to .env (the key on the team slip).")
         return self.bazaar_key.get_secret_value()
+
+    def require_broker_key(self) -> str:
+        if self.broker_key is None or not self.broker_key.get_secret_value():
+            raise ConfigError(
+                "BAZAAR_BROKER_KEY is not set: a live `bazaar venue open` saves it to "
+                f"{BROKER_ENV_FILE} in the data dir; on Railway set the variable by hand."
+            )
+        return self.broker_key.get_secret_value()
 
 
 def load_settings(env_file: Path | None = None) -> Settings:
@@ -76,4 +87,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):
         data["data_dir"] = data_dir
+    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved.
+    saved = read_env_file(Path(data.get("data_dir") or REPO_ROOT / ".local") / BROKER_ENV_FILE)
+    data["broker_key"] = pick("BAZAAR_BROKER_KEY") or saved.get("BAZAAR_BROKER_KEY") or None
+    data["venue_id"] = pick("BAZAAR_VENUE") or saved.get("BAZAAR_VENUE") or None
     return Settings.model_validate(data)

@@ -72,7 +72,7 @@ JSON_MIME = "application/json"
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _SECRET_NAME = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD)\Z", re.IGNORECASE)
-_TEAM_KEY = re.compile(r"\btk-[A-Za-z0-9_-]{6,}")
+_TEAM_KEY = re.compile(r"\b(?:tk-|bk_|simbk-)[A-Za-z0-9_-]{6,}")  # team keys and broker keys (real and sim)
 _LOG = logging.getLogger(__name__)
 
 type SpanValue = str | bool | int | float | list[str] | list[int]
