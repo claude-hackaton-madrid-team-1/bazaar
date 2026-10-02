@@ -255,9 +255,13 @@ def test_jev_yes_accepts_a_dealer_ask_early_but_never_above_the_max(tmp_path):
         "give": {"types": ["card:LAV-08"]},
         "want": {"cash": 21},
     }
-    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    opening = {**offer, "id": 801, "want": {"cash": 22}}  # inside our max, so Jev is asked
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [opening]}
     t.on_tick(at(team, TICK + 1))
-    assert team.sent[-1] == ("accept", 802)  # 21 <= max 22: Jev may close early
+    assert team.sent[-1] == ("say", 5000, 19)  # Jev's yes on her opening ask is overridden: we counter
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    t.on_tick(at(team, TICK + 2))
+    assert team.sent[-1] == ("accept", 802)  # she came down to 21 <= max 22: Jev may close early
 
 
 def test_a_read_refusal_skips_the_tick_without_sending(tmp_path):

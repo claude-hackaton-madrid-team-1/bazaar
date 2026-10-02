@@ -1,8 +1,10 @@
 """Negotiate with a dealer (Abuela first), one move per tick, inside a hard price limit.
 
-`decide()` is pure and holds every rule; `negotiate()` runs it against the live thread.
-Rules learned from the feed (see `bazaar curves`): the dealer only moves when we move, the same
-price twice earns nothing, small steps earn small steps, and a `final` offer is take-it-or-walk.
+`decide()` holds every rule (its only side effect is noting the dealer's asks on the negotiation);
+`negotiate()` runs it against the live thread. Rules learned from the feed (see `bazaar curves`): the
+dealer only moves when we move, the same price twice earns nothing, small steps earn small steps, and
+a `final` offer is take-it-or-walk. The ladder score is the share of the dealer's range we capture, so
+we never close at her opening ask: we take a non-final ask only after we countered it and she came down.
 Words persuade, structure binds: we read only the structured offers, never the dealer's text.
 """
 
@@ -52,6 +54,9 @@ class Move:
 class Negotiation:
     plan: BidPlan
     bids: list[int] = field(default_factory=list)
+    opening_ask: int | None = None  # the dealer's first structured ask we saw
+    lowest_ask: int | None = None
+    bids_at_opening: int = 0  # bids we had sent when her opening ask appeared; later ones are counters
 
     def next_bid(self) -> int | None:
         """A strictly higher price than our last bid, capped at the limit; None when spent."""
@@ -60,13 +65,49 @@ class Negotiation:
         nxt = min(self.plan.max_price, self.bids[-1] + self.plan.step)
         return nxt if nxt > self.bids[-1] else None
 
+    def see_ask(self, ask: int | None) -> None:
+        """Note the dealer's standing ask. Idempotent: seeing the same ask twice changes nothing."""
+        if ask is None:
+            return
+        if self.opening_ask is None:
+            self.opening_ask, self.bids_at_opening = ask, len(self.bids)
+        self.lowest_ask = ask if self.lowest_ask is None else min(self.lowest_ask, ask)
+
+    @property
+    def countered(self) -> bool:
+        """We sent at least one bid after her opening ask appeared."""
+        return self.opening_ask is not None and len(self.bids) > self.bids_at_opening
+
+    @property
+    def conceded(self) -> bool:
+        """She came down from her opening ask at least once."""
+        return self.opening_ask is not None and self.lowest_ask is not None and self.lowest_ask < self.opening_ask
+
+    @property
+    def may_close(self) -> bool:
+        """A non-final ask may be taken: closing at her opening price captures none of her range."""
+        return self.countered and self.conceded
+
+
+def counter_below(neg: Negotiation, ask: int) -> Move:
+    """Her ask is inside what we would pay, but she has not come down yet: bid strictly below it (a bid
+    at her ask would close at her opening price). The dealer matches our step, so we never step past it."""
+    last = neg.bids[-1] if neg.bids else 0
+    price = max(1, last + 1, ask - neg.plan.step)
+    if price >= ask:
+        return Move("wait", reason=f"no counter left between our {last} and her unconceded {ask}")
+    return Move("bid", price, reason=f"counter below her unconceded ask {ask}")
+
 
 def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool) -> Move:
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
+    neg.see_ask(ask)
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
         if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
-            return Move("accept", ask, offer_id, "final within limit" if final else "ask meets our next bid")
+            if final or neg.may_close:
+                return Move("accept", ask, offer_id, "final within limit" if final else "ask meets our next bid")
+            return counter_below(neg, ask)
         if final:
             return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
     if nxt is None:
@@ -159,12 +200,14 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move], str | None]  # returns a deny reason, or None when the move is allowed
+Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
 DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a deal settles
 
 
 def apply_advice(move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None) -> Move:
-    """Jev may make us accept earlier (still inside the limit) or keep bidding; it never lifts the limit."""
-    ready = advice == "accept" and move.kind == "bid" and ask is not None and offer_id is not None
+    """Jev may make us accept earlier (still inside the limit) or keep bidding; it never lifts the limit
+    and never takes an ask before we countered it and the dealer came down (`Negotiation.may_close`)."""
+    ready = advice == "accept" and move.kind == "bid" and ask is not None and offer_id is not None and neg.may_close
     if ready and ask is not None and ask <= neg.plan.max_price:
         return Move("accept", ask, offer_id, "jev: accept (inside limit)")
     return move
@@ -258,11 +301,13 @@ def negotiate(
     on_deal: DealHook | None = None,
     observer: Observer | None = None,
     words_fn: WordsFn = template_words,
+    reserve: Reserve | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
-    always the structured `price` of the message, set here.
+    always the structured `price` of the message, set here. `reserve` claims the team's accept slot on
+    the same tick the accept is sent; a slot already taken means try next tick, never walk.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -324,6 +369,9 @@ def negotiate(
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
             send_by = time.monotonic() + action_budget_s(fresh)
+            if move.kind == "accept" and reserve is not None and not reserve(move, fresh):
+                log(f"tick {fresh.tick}: the team's accept slot is taken this tick, trying again next tick")
+                return
         text = None
         if move.kind == "bid" and move.price is not None:
             text = bid_words(words_fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
