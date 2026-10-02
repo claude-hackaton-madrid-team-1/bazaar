@@ -16,7 +16,7 @@ uv sync                                   # Python deps
 cp -n .env.example .env 2>/dev/null; $EDITOR .env   # BAZAAR_KEY=tk-... and TYPESAFE_API_KEY=...
 
 uv run bazaar clock                       # tick, pace, limits, action budget left in this tick
-uv run bazaar monitor --notify           # KEEP RUNNING: live stream + per-tick poll, traders, /me, alerts in seconds
+uv run bazaar monitor --notify           # live stream + per-tick poll, traders, /me, alerts. 24/7 on Railway: local only if it is down
 uv run bazaar traders                     # every dealer and team the monitor has seen (our row: status `us`)
 uv run bazaar alerts                      # new dealers, levels going active, announcements
 uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads (--ours/--theirs)
@@ -40,11 +40,13 @@ Every process (CLI, monitor, agents, tests) connects with ONE variable, `DATABAS
 the environment first, then `.env`. Unset means the local docker Postgres
 (`postgresql://bazaar:bazaar@localhost:5433/bazaar`). To share one memory across laptops:
 
-1. In Railway, open the Postgres service → **Settings → Networking → Public Access**. That creates
-   the TCP proxy and the `DATABASE_PUBLIC_URL` variable
-   (`postgresql://postgres:<password>@<name>.proxy.rlwy.net:<port>/railway`). Laptops need this
-   public URL: Railway's own `DATABASE_URL` is the private `*.railway.internal` address, which only
-   works inside the Railway project. Proxy traffic is billed as egress.
+1. Laptops need the PUBLIC address: Railway's own `DATABASE_URL` is the private
+   `*.railway.internal` address, which only works inside the Railway project (our services on
+   Railway use it). The team's `Postgres` service already has a TCP proxy (**Settings → Networking
+   → Public Access**); proxy traffic is billed as egress. This template has NO
+   `DATABASE_PUBLIC_URL` variable: copy the public URL from the service's **Connect** tab (Public
+   Network), or build it from the service's variables:
+   `postgresql://$PGUSER:$PGPASSWORD@$RAILWAY_TCP_PROXY_DOMAIN:$RAILWAY_TCP_PROXY_PORT/$PGDATABASE?sslmode=require`.
 2. Paste it into `.env` as `DATABASE_URL=...` (template line in `.env.example`). Never paste it into
    chat, commits, `.ai/memory.md` or logs: the password is in it.
 3. `uv run bazaar db check`: host (never the password), server version, SSL, latency of 3 round
@@ -59,10 +61,12 @@ the environment first, then `.env`. Unset means the local docker Postgres
   wins; the code never turns SSL off.
 - **pgvector.** Railway's docs say the default template ships no extensions, but its image has
   installed `postgresql-17-pgvector` since 2026-03 (verified on `postgres-ssl:17`, pgvector 0.8.6).
+  The team's service runs `postgres-ssl:18` (PostgreSQL 18.6) with pgvector 0.8.6.
   An older service may need a redeploy, or use the pgvector template. Without pgvector the
   schema still creates every table and skips only the `embedding vector(384)` columns; run
   `db init` again after enabling it and they are added.
-- **One monitor writes per team.** Run a single `uv run bazaar monitor` against the shared database.
+- **One monitor writes per team.** It is `bazaar-monitor` on Railway (see "Production on Railway"):
+  run `uv run bazaar monitor` on a laptop only while that one is down.
   Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
   writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
   history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
@@ -201,7 +205,8 @@ all of them and is used as is.
 
 ### Seeing it from another laptop
 
-Phoenix runs on one machine. Teammates can reach it in either of two ways. Neither is deployed yet.
+The team's Phoenix now runs on Railway (next section): open its URL, no host needed. The two older
+options below remain for a Phoenix outside Railway.
 
 1. **A shared host (recommended for the venue).** One laptop or a small VM runs Phoenix and
    publishes the port: `PHOENIX_BIND=0.0.0.0 uv run bazaar obs up`. Every teammate whose agent
@@ -241,6 +246,80 @@ uv run bazaar steer --show                           # what is steered now, and 
 With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chosen model write each
 message; the price stays the structured field set by code, and any other number, a timeout or an
 error sends the template instead.
+
+## Production on Railway (always on)
+
+Railway project `heartfelt-warmth`, environment `production`, region `europe-west4`. Everything but
+the database is code in [`.railway/railway.py`](.railway/railway.py) (Railway Infrastructure as
+Code, Python authoring, beta): change it by PR.
+
+| Service | What runs | Data | Notes |
+|---|---|---|---|
+| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | the team's ONE monitor |
+| `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player |
+| `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
+| `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
+
+- **Builds.** Both runtime services build this repo's `main` with Railpack (Python 3.12 through
+  `RAILPACK_PYTHON_VERSION`, `uv sync --locked --no-dev`, editable so `vendor/` and
+  `GUARDRAILS.md` resolve from `/app`). Every push to `main` that touches `src/`, `vendor/bazaar-kit/`,
+  `pyproject.toml`, `uv.lock`, `GUARDRAILS.md`, `STRATEGY.md`, `questions/` or `.railway/`
+  redeploys them; README-only commits are skipped. Restart policy: always.
+- **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
+  `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
+  `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
+  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `PHOENIX_SECRET`, `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`,
+  `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
+  it touching a command line: `printf %s "$VALUE" | railway variable set NAME --stdin --service <svc>`.
+- **Pause every write** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
+  (on the volume, so it survives redeploys); `rm` it to resume.
+
+### Open Phoenix
+
+1. Open https://phoenix-production-6aa3.up.railway.app and sign in as `admin@localhost`.
+2. The password is the `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` variable: Railway dashboard →
+   project `heartfelt-warmth` → service `phoenix` → **Variables** (click the eye). No forced reset:
+   `bazaar obs bootstrap` cleared it. If you change the password in Phoenix, the variable no longer
+   matches it (Phoenix reads the variable only when it first creates the admin).
+3. Project `bazaar`: one trace per `monitor tick N` / `duels tick N`, plus a `duel` trace per duel.
+
+### Send your laptop's traces there
+
+Create your own key in Phoenix (**Settings → API Keys**: a user key; a system key if it is a
+shared bot), then in `.env`:
+
+```sh
+BAZAAR_TRACING=1
+PHOENIX_COLLECTOR_ENDPOINT=https://phoenix-production-6aa3.up.railway.app
+PHOENIX_API_KEY=<your key>
+```
+
+`uv run bazaar obs status` should say `up (HTTP 200)` and `PHOENIX_API_KEY set`, and
+`uv run bazaar obs spans` lists the newest spans by name (it reads them with that key).
+
+### Change, restart, redeploy
+
+```sh
+railway link --project heartfelt-warmth --environment production   # once per clone
+uv run --group infra railway config plan    # preview what .railway/railway.py would change
+uv run --group infra railway config apply   # apply it (a partial: it never touches Postgres)
+railway logs --service bazaar-monitor       # `tick N` lines; same for bazaar-duels and phoenix
+railway redeploy --service bazaar-duels     # a fresh container of the current build
+railway restart --service bazaar-monitor    # restart in place
+```
+
+A new Phoenix (a fresh volume) needs its ingestion key once, piped straight into Railway:
+`PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD=... uv run bazaar obs bootstrap --url <phoenix URL> | railway variable set PHOENIX_API_KEY --stdin --service phoenix`,
+then redeploy `bazaar-monitor` and `bazaar-duels`.
+
+- **Known limit: state in `BAZAAR_DATA_DIR` is per container.** `ledger.jsonl` (accepts per tick,
+  spend) lives on each service's volume, so `bazaar-duels` cannot see an accept made by another
+  process (a laptop `dealer buy`, or a second duel player). Moving it to Postgres is the follow-up;
+  until then, run only ONE writing process per kind. The same holds for `steering.json`: a laptop
+  `bazaar steer` does not reach Railway's duel player; steer it in its container
+  (`railway ssh --service bazaar-duels -- /app/.venv/bin/bazaar steer "..."`). The runtime LLM keys
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are not set on Railway yet, so every LLM path there falls
+  back to its template or default (RUNTIME.md `llm_words` is off anyway).
 
 ## How it fits together
 
@@ -329,6 +408,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
 | `uv run bazaar obs up` | Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317. |
 | `uv run bazaar obs status` | Whether tracing is on, where spans go, the Phoenix UI, and whether Phoenix answers. |
+| `uv run bazaar obs bootstrap` | Once per new Phoenix with auth: clear the admin's forced reset, mint a system API key for spans. |
+| `uv run bazaar obs spans` | The newest spans in our Phoenix project, counted by name: proves the runtime's spans arrive. |
 | `uv run bazaar db up` | Start Postgres + pgvector (docker compose, localhost:5433). |
 | `uv run bazaar db check` | Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts. |
 | `uv run bazaar db init` | Create every table (idempotent, safe while other processes are connected). |
@@ -345,14 +426,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
+- [2026-10-02] gotcha — Phoenix forces an admin password reset even with an initial password set
+- [2026-10-02] gotcha — Railpack's uv install is `--no-editable`, which breaks REPO_ROOT
+- [2026-10-02] build-error — Railway build failed: "No start command detected"
 - [2026-10-02] finding — the stream runs up to a tick ahead of the poll (ticks 123–129)
 - [2026-10-02] gotcha — the SSE stream is the feed plus `tick` events, with no `id:` lines
 - [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
 - [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
-- [2026-10-02] finding — Jev picks the runtime LLM decisively when the state has stakes and time
-- [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
-- [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
-- [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
 
 <!-- BAZAAR:STATUS:END -->
 
