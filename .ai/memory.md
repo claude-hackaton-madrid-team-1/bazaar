@@ -111,3 +111,8 @@ Floats for every fresh choice: `.local/llm/model-choices.jsonl` and `uv run baza
 ### [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
 Confirmed on developers.openai.com (latest-model guide). `gpt-6-1-sol` is our alias for it; other
 `gpt-*` ids pass through unchanged and a wrong one fails at call time (`unknown_model`), then falls back.
+
+### [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
+symptom: `MarkupError` from `console.print(f"... rival {d.get('rival_offer')} ...")` (found by the
+security review of the runtime LLM PR) → root cause: rich parses `[...]` in untrusted text as markup,
+and `run_per_tick` has no try/except → fix: `rich.markup.escape()` on every counterparty or model string.

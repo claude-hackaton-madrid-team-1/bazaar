@@ -13,7 +13,7 @@ refusal, bad output) falls back to the existing path: template words, the defaul
 - `llm_runtime` = auto — `auto` lets Jev choose; an alias or model id pins one. The `--llm-runtime` flag and `BAZAAR_LLM_RUNTIME` win over this line.
 - `runtime_models` = haiku-4-5, sonnet-5-5, opus-5-5, gpt-6-1-sol — candidates for Jev's `model_for_move` choice; each needs criteria in `questions/runtime_model.json`.
 - `runtime_model_default` = haiku-4-5 — used when Jev is undecided, slow or keyless; the fastest candidate, so a fallback still fits a 15 s tick.
-- `model_choice_cache_ticks` = 5 — reuse a choice for the same move kind and tick length for this many ticks, so a 15 s tick never pays two Jev calls.
+- `model_choice_cache_ticks` = 5 — reuse a choice for the same move kind, tick length, injection flags and stakes for this many ticks, so a 15 s tick never pays two model-choice Jev calls.
 
 ## Words (negotiation messages)
 - `llm_words` = false — true lets the chosen model write dealer and duel messages; off until ANTHROPIC_API_KEY is in `.env` and a dry run looks right.

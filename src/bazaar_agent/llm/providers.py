@@ -26,6 +26,9 @@ T = TypeVar("T", bound=BaseModel)
 Effort = Literal["low", "medium", "high"]
 
 KEY_VARIABLES: Mapping[Provider, str] = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+# Pinned so a stray ANTHROPIC_BASE_URL / OPENAI_BASE_URL in the shell cannot send a key elsewhere.
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Server-side refusal fallback (`fallbacks: "default"`) is offered on these Claude API models.
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
@@ -60,6 +63,11 @@ class LLMProvider(Protocol):
     def complete(self, request: TextRequest) -> str: ...
 
     def structured(self, request: TextRequest, schema: type[T]) -> T: ...
+
+
+def attempt_timeout_s(request: TextRequest) -> float:
+    """Per-attempt SDK timeout, so every retry still fits inside the request's hard deadline."""
+    return request.timeout_s / (request.retries + 1)
 
 
 def run_with_deadline(call: Callable[[], Any], timeout_s: float) -> Any:
@@ -134,11 +142,17 @@ class AnthropicProvider:
         if client is None:
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key, max_retries=0)
+            # Redirects are not followed: the key goes to the documented endpoint and nowhere else.
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                base_url=ANTHROPIC_BASE_URL,
+                max_retries=0,
+                http_client=anthropic.DefaultHttpxClient(follow_redirects=False),
+            )
         self._client = client
 
     def _messages(self, request: TextRequest) -> Any:
-        return self._client.with_options(timeout=request.timeout_s, max_retries=request.retries).beta.messages
+        return self._client.with_options(timeout=attempt_timeout_s(request), max_retries=request.retries).beta.messages
 
     def complete(self, request: TextRequest) -> str:
         kwargs = anthropic_request_kwargs(request)
@@ -220,11 +234,16 @@ class OpenAIProvider:
         if client is None:
             import openai
 
-            client = openai.OpenAI(api_key=api_key, max_retries=0)
+            client = openai.OpenAI(
+                api_key=api_key,
+                base_url=OPENAI_BASE_URL,
+                max_retries=0,
+                http_client=openai.DefaultHttpxClient(follow_redirects=False),
+            )
         self._client = client
 
     def _responses(self, request: TextRequest) -> Any:
-        return self._client.with_options(timeout=request.timeout_s, max_retries=request.retries).responses
+        return self._client.with_options(timeout=attempt_timeout_s(request), max_retries=request.retries).responses
 
     def complete(self, request: TextRequest) -> str:
         kwargs = openai_request_kwargs(request)

@@ -2,9 +2,11 @@
 
 The verdict carries a probability (0..1) per candidate. A decided verdict (design stakes, 0.75)
 picks the top model; anything else falls back to RUNTIME.md `runtime_model_default`. The full float
-map is logged on every fresh decision. A choice is cached per (move kind, tick-length bucket) for
-`model_choice_cache_ticks` ticks, so a 15 s tick never pays for two Jev calls. A pinned model
-(flag, env, RUNTIME.md) skips Jev entirely and is logged as pinned.
+map is logged on every fresh decision. A choice is cached per (move kind, tick-length bucket,
+injection flags present, stakes bucket) for `model_choice_cache_ticks` ticks, so a 15 s tick never
+pays for two model-choice calls, and a harmless move's cheap model is never reused for a risky one.
+Only candidates whose provider key is set are offered to Jev. A pinned model (flag, env,
+RUNTIME.md) skips Jev entirely and is logged as pinned.
 """
 
 from __future__ import annotations
@@ -49,6 +51,25 @@ def injection_flags(text: str | None) -> tuple[str, ...]:
     if not text:
         return ()
     return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(text))
+
+
+def stakes_bucket(value_at_risk: int) -> str:
+    """The value bands the question's criteria use: under about 20 primas, 20 to 60, above 60."""
+    if value_at_risk <= 20:
+        return "low"
+    return "mid" if value_at_risk <= 60 else "high"
+
+
+CacheKey = tuple[str, str, bool, str]
+
+
+def cache_key(situation: MoveSituation) -> CacheKey:
+    return (
+        situation.kind,
+        tick_bucket(situation.tick_seconds),
+        bool(situation.flags),
+        stakes_bucket(situation.value_at_risk),
+    )
 
 
 def tick_bucket(tick_seconds: float) -> str:
@@ -128,6 +149,7 @@ class ModelChooser:
         judge_fn: Judge = judge,
         question_pack: Mapping[str, Mapping[str, object]] | None = None,
         clock: Callable[[], float] = time.time,
+        available: Callable[[str], bool] | None = None,
     ) -> None:
         self.config = config
         self.pin = pin
@@ -137,12 +159,15 @@ class ModelChooser:
         self._judge = judge_fn
         self._pack = question_pack
         self._clock = clock
-        self._cache: dict[tuple[str, str], ModelChoice] = {}
+        self._available = available
+        self._cache: dict[CacheKey, ModelChoice] = {}
         self._warm()
 
     @property
     def candidates(self) -> tuple[str, ...]:
-        return self.config.runtime_models
+        """The RUNTIME.md candidates we can call (provider key set): Jev never picks one we cannot use."""
+        models = self.config.runtime_models
+        return models if self._available is None else tuple(m for m in models if self._available(m))
 
     def question(self) -> dict[str, object]:
         pack = self._pack if self._pack is not None else load_questions(QUESTION_FILE)
@@ -154,8 +179,8 @@ class ModelChooser:
             self._log(choice, situation)
             return choice
         if len(self.candidates) < 2:
-            return self._default(situation, tick, "fewer than two candidates in runtime_models", log=False)
-        key = (situation.kind, tick_bucket(situation.tick_seconds))
+            return self._default(situation, tick, "fewer than two callable candidates (keys set) in runtime_models")
+        key = cache_key(situation)
         cached = self._cached(key, tick)
         if cached is not None:
             return cached
@@ -194,7 +219,7 @@ class ModelChooser:
             self._log(choice, situation)
         return choice
 
-    def _cached(self, key: tuple[str, str], tick: int | None) -> ModelChoice | None:
+    def _cached(self, key: CacheKey, tick: int | None) -> ModelChoice | None:
         entry = self._cache.get(key)
         if entry is None or entry.tick is None or tick is None:
             return None
@@ -210,6 +235,8 @@ class ModelChooser:
             "tick": choice.tick,
             "kind": situation.kind,
             "bucket": tick_bucket(situation.tick_seconds),
+            "flagged": bool(situation.flags),
+            "stakes": stakes_bucket(situation.value_at_risk),
             "model": choice.alias,
             "source": choice.source,
             "reason": choice.reason,
@@ -224,19 +251,33 @@ class ModelChooser:
     def _warm(self) -> None:
         """Reuse fresh Jev decisions logged by another process (one `bazaar ask` per process)."""
         for record in read_choices(self.log_path, WARM_LINES):
-            if record.get("source") not in ("jev", "default") or not isinstance(record.get("tick"), int):
-                continue
-            if record.get("model") not in (*self.candidates, self.config.runtime_model_default):
-                continue
-            key = (str(record.get("kind")), str(record.get("bucket")))
-            self._cache[key] = ModelChoice(
-                alias=str(record["model"]),
-                source=record["source"],
-                reason=str(record.get("reason") or ""),
-                probabilities=dict(record.get("probabilities") or {}),
-                confidence=record.get("confidence"),
-                tick=int(record["tick"]),
-            )
+            try:
+                key, choice = _cached_record(record)
+            except (KeyError, TypeError, ValueError):
+                continue  # a malformed log line is skipped, never fatal at startup
+            if choice.source in ("jev", "default") and choice.alias in (
+                *self.candidates,
+                self.config.runtime_model_default,
+            ):
+                self._cache[key] = choice
+
+
+def _cached_record(record: Mapping[str, Any]) -> tuple[CacheKey, ModelChoice]:
+    tick, source = record["tick"], record["source"]
+    if not isinstance(tick, int) or isinstance(tick, bool) or source not in ("jev", "default"):
+        raise ValueError("not a cacheable choice")
+    probabilities = {str(k): float(v) for k, v in dict(record.get("probabilities") or {}).items()}
+    confidence = record.get("confidence")
+    key: CacheKey = (str(record["kind"]), str(record["bucket"]), bool(record["flagged"]), str(record["stakes"]))
+    choice = ModelChoice(
+        alias=str(record["model"]),
+        source=source,
+        reason=str(record.get("reason") or ""),
+        probabilities=probabilities,
+        confidence=None if confidence is None else float(confidence),
+        tick=tick,
+    )
+    return key, choice
 
 
 def read_choices(path: Path | None, limit: int) -> list[dict[str, Any]]:

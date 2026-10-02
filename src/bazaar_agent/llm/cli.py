@@ -12,6 +12,7 @@ from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from bazaar_agent.agents.words import WordsFn
@@ -22,9 +23,10 @@ from bazaar_agent.llm.chooser import QUESTION_FILE, ModelChoice, model_question,
 from bazaar_agent.llm.config import LoadedRuntime, RuntimeConfigError, load_runtime
 from bazaar_agent.llm.intent import Clarification, Intent, command_for, guardrail_action, parse_request, rarity_of
 from bazaar_agent.llm.models import ALIASES, UnknownModelError, pinned_model, resolve
-from bazaar_agent.llm.providers import KEY_VARIABLES, api_key_for
+from bazaar_agent.llm.providers import KEY_VARIABLES, LLMError, api_key_for
 from bazaar_agent.llm.runtime import CHOICE_LOG, LLMRuntime, build_runtime
 from bazaar_agent.llm.steering import (
+    STEERABLE,
     STEERING_FILE,
     Steering,
     apply_steering,
@@ -86,17 +88,21 @@ def _public_clock(settings: Settings) -> Clock | None:
 
 
 def words_for(settings: Settings, rules: Guardrails, fallback: WordsFn) -> WordsFn:
-    """The words writer for a trading loop: the runtime LLM when RUNTIME.md `llm_words` = true, else `fallback`."""
+    """The words writer for a trading loop: the runtime LLM when RUNTIME.md `llm_words` = true, else `fallback`.
+
+    Providers are built here, before the first tick, so no SDK import or client setup eats a tick.
+    """
     try:
         loaded = load_runtime()
+        if not loaded.config.llm_words:
+            return fallback
         runtime = build_runtime(settings, loaded.config, rules, cli_pin=STATE["pin"])
-    except (RuntimeConfigError, UnknownModelError) as e:
-        console.print(f"[yellow]runtime LLM off ({e}): template words[/yellow]")
-        return fallback
-    if not loaded.config.llm_words:
+        runtime.warm()
+    except (RuntimeConfigError, UnknownModelError, LLMError) as e:
+        console.print(f"[yellow]runtime LLM off ({escape(str(e))}): template words[/yellow]")
         return fallback
     console.print("words: runtime LLM (llm_words = true), templates on any failure")
-    return llm_words(runtime, fallback, log=console.print)
+    return llm_words(runtime, fallback, log=lambda line: console.print(escape(line)))
 
 
 def _floats(probabilities: Any) -> str:
@@ -108,7 +114,7 @@ def _print_choice(choice: ModelChoice | None, model: str | None) -> None:
     if choice is None:
         return
     cached = " (cached)" if choice.cached else ""
-    console.print(f"model [bold]{model or choice.alias}[/bold] ← {choice.source}{cached}: {choice.reason}")
+    console.print(f"model [bold]{model or choice.alias}[/bold] ← {choice.source}{cached}: {escape(choice.reason)}")
     if choice.probabilities:
         console.print(f"  jev floats: {_floats(choice.probabilities)}")
 
@@ -185,7 +191,7 @@ def _print_choices(rows: list[dict[str, Any]]) -> None:
             str(r.get("source")),
             "-" if conf is None else f"{float(conf):.3f}",
             _floats(r.get("probabilities")),
-            str(r.get("reason")),
+            escape(str(r.get("reason"))),
         )
     console.print(t)
 
@@ -203,9 +209,9 @@ def ask(text: str = typer.Argument(help='What you want, e.g. "buy LAV-09 under 9
     )
     _print_choice(result.choice, result.model)
     if result.error:
-        _fail(result.error)
+        _fail(escape(result.error))
     if isinstance(result.outcome, Clarification):
-        console.print(f"[yellow]Need one detail first:[/yellow] {result.outcome.question}")
+        console.print(f"[yellow]Need one detail first:[/yellow] {escape(result.outcome.question)}")
         return
     if not isinstance(result.outcome, Intent):
         _fail("no intent came back")
@@ -213,13 +219,13 @@ def ask(text: str = typer.Argument(help='What you want, e.g. "buy LAV-09 under 9
     console.print(
         f"intent [bold]{intent.kind}[/bold] item {intent.item or '-'} max {intent.max_price or '-'} "
         f"min {intent.min_price or '-'} counterparty {intent.counterparty or '-'} "
-        f"constraints {list(intent.constraints) or '-'}"
+        f"constraints {escape(str(list(intent.constraints) or '-'))}"
     )
     _print_verdict(intent, settings, rules)
     command = command_for(intent, text)
-    console.print(f"[yellow]dry run: nothing was sent.[/yellow] Command:\n  {command}")
+    console.print(f"[yellow]dry run: nothing was sent.[/yellow] Command:\n  {escape(command)}")
     if intent.kind == "buy":
-        console.print(f"  to trade (you run it): {command} --live")
+        console.print(f"  to trade (you run it): {escape(command)} --live")
 
 
 def _print_verdict(intent: Intent, settings: Settings, rules: Guardrails) -> None:
@@ -283,9 +289,9 @@ def steer(
     )
     _print_choice(result.choice, result.model)
     if result.error:
-        _fail(result.error)
+        _fail(escape(result.error))
     if isinstance(result.outcome, Clarification):
-        console.print(f"[yellow]Need one detail first:[/yellow] {result.outcome.question}")
+        console.print(f"[yellow]Need one detail first:[/yellow] {escape(result.outcome.question)}")
         return
     if not isinstance(result.outcome, Steering):
         _fail("no steering came back")
@@ -302,18 +308,19 @@ def _show_steering(steering: Steering | None, rules: Guardrails, clock: Clock | 
     state = "active" if steering.active(tick) else "[red]expired[/red]"
     console.print(
         f"steering ({state}, ticks {steering.created_tick}..{steering.expires_tick}, by {steering.model}): "
-        f"{steering.summary}\n  instruction: {steering.text}"
+        f"{escape(steering.summary)}\n  instruction: {escape(steering.text)}"
     )
     base = base_params(rules)
     applied = apply_steering(base, steering, tick, rules)
     t = Table(title=f"Parameters at tick {tick}")
-    for col in ("param", "base", "delta asked", "applied", "clamped"):
+    for col in ("param", "base", "delta asked", "applied", "clamped", "used by"):
         t.add_column(col)
     for param, delta in steering.deltas.items():
         if param not in base:
             continue
         clamped = steering.active(tick) and abs(applied[param] - (base[param] + delta)) > 1e-9
-        t.add_row(param, f"{base[param]:g}", f"{delta:+g}", f"{applied[param]:g}", "yes" if clamped else "")
+        used_by = STEERABLE[param].used_by
+        t.add_row(param, f"{base[param]:g}", f"{delta:+g}", f"{applied[param]:g}", "yes" if clamped else "", used_by)
     console.print(t)
 
 

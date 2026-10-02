@@ -4,18 +4,21 @@ The LLM may only name parameters in `STEERABLE` and propose deltas. `clamp()` ke
 value within `steer_max_change` of its base (GUARDRAILS.md) and inside the parameter's hard range;
 the duel anchor never drops below the floor margin. Steering lives in `.local/steering.json`, one
 at a time (a new one replaces the old), and expires at a game tick, never at a wall-clock time.
-Price caps, the cash floor and every other guardrail are never steerable.
+Price caps, the cash floor and every other guardrail are never steerable; `duel_floor_margin` (a
+safety margin) may only be tightened. `duel run` applies the duel parameters every tick; the
+STRATEGY.md parameters are stored and shown, and apply once the strategy runtime reads them.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import RULE_LINE, Guardrails
@@ -47,18 +50,38 @@ class Bound:
     integer: bool
     source: str  # where the base value lives
     meaning: str
+    used_by: str  # the code that reads the steered value
+    tighten_only: bool = False  # a safety margin: steering may raise it, never lower it
 
 
+STRATEGY_PENDING = "strategy runtime (not on main yet: stored only)"
 STEERABLE: Mapping[str, Bound] = {
-    "scarcity_weight": Bound(0.0, 3.0, False, "STRATEGY.md", "how strongly scarcity raises a move's priority"),
-    "page_bonus_weight": Bound(0.0, 2.0, False, "STRATEGY.md", "how much of a missing card's page bonus counts"),
-    "min_buy_surplus": Bound(
-        0, 20, True, "STRATEGY.md", "buy only when value beats price by this many primas (lower = more aggressive)"
+    "scarcity_weight": Bound(
+        0.0, 3.0, False, "STRATEGY.md", "how strongly scarcity raises a move's priority", STRATEGY_PENDING
     ),
-    "sell_need_share": Bound(0.3, 1.0, False, "STRATEGY.md", "ask a buyer this share of the card's value to them"),
-    "sell_min_surplus": Bound(0, 30, True, "STRATEGY.md", "sell only when price beats our value by this many primas"),
-    "duel_anchor": Bound(0.1, 1.0, False, "GUARDRAILS.md", "open a duel this far beyond our limit (higher = tougher)"),
-    "duel_floor_margin": Bound(0.0, 0.3, False, "GUARDRAILS.md", "never settle closer than this to our limit"),
+    "page_bonus_weight": Bound(
+        0.0, 2.0, False, "STRATEGY.md", "how much of a missing card's page bonus counts", STRATEGY_PENDING
+    ),
+    "min_buy_surplus": Bound(
+        0,
+        20,
+        True,
+        "STRATEGY.md",
+        "buy only when value beats price by this many primas (lower = bolder)",
+        STRATEGY_PENDING,
+    ),
+    "sell_need_share": Bound(
+        0.3, 1.0, False, "STRATEGY.md", "ask a buyer this share of the card's value to them", STRATEGY_PENDING
+    ),
+    "sell_min_surplus": Bound(
+        0, 30, True, "STRATEGY.md", "sell only when price beats our value by this many primas", STRATEGY_PENDING
+    ),
+    "duel_anchor": Bound(
+        0.1, 1.0, False, "GUARDRAILS.md", "open a duel this far beyond our limit (higher = tougher)", "duel run"
+    ),
+    "duel_floor_margin": Bound(
+        0.0, 0.3, False, "GUARDRAILS.md", "never settle closer than this to our limit (tighten only)", "duel run", True
+    ),
 }
 # STRATEGY.md values (strategy PR); used when that file is absent or does not set a parameter.
 STRATEGY_DEFAULTS: Mapping[str, float] = {
@@ -74,7 +97,7 @@ class SteerDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     param: SteerParam
-    delta: float
+    delta: float = Field(allow_inf_nan=False)
 
 
 class SteerDraft(BaseModel):
@@ -119,12 +142,22 @@ def base_params(rules: Guardrails, strategy_path: Path = STRATEGY_FILE) -> dict[
 
 
 def clamp(param: str, base: float, delta: float, rules: Guardrails) -> float:
-    """base + delta, kept within `steer_max_change` × base and the parameter's hard range."""
+    """base + delta, kept within `steer_max_change` × base and the parameter's hard range.
+
+    A safety margin only tightens; a whole-number parameter is rounded inside the fence, never out
+    of it; a non-finite delta changes nothing.
+    """
     bound = STEERABLE[param]
+    if not math.isfinite(delta):
+        return base
     reach = rules.steer_max_change * max(abs(base), 1.0 if bound.integer else 0.1)
     low, high = max(bound.low, base - reach), min(bound.high, base + reach)
+    if bound.tighten_only:
+        low = max(low, base)
     value = min(max(base + delta, low), high)
-    return float(round(value)) if bound.integer else round(value, 4)
+    if bound.integer:
+        return float(min(max(round(value), math.ceil(low)), math.floor(high)))
+    return round(value, 4)
 
 
 def apply_steering(
@@ -140,6 +173,13 @@ def apply_steering(
     if "duel_anchor" in result and "duel_floor_margin" in result:
         result["duel_anchor"] = max(result["duel_anchor"], result["duel_floor_margin"])
     return result
+
+
+def steered_duel_params(rules: Guardrails, steering_path: Path, tick: int) -> tuple[float, float]:
+    """(anchor, floor margin) for `duel run` at this tick: GUARDRAILS.md with any active steering applied."""
+    base = {"duel_anchor": rules.duel_anchor, "duel_floor_margin": rules.duel_floor_margin}
+    steered = apply_steering(base, load_steering(steering_path), tick, rules)
+    return steered["duel_anchor"], steered["duel_floor_margin"]
 
 
 def steering_from_draft(
@@ -171,6 +211,8 @@ def load_steering(path: Path) -> Steering | None:
     try:
         data: Any = json.loads(path.read_text(encoding="utf-8"))
         deltas = {str(k): float(v) for k, v in dict(data["deltas"]).items() if str(k) in STEERABLE}
+        if not all(math.isfinite(v) for v in deltas.values()):
+            return None
         return Steering(
             str(data["text"]),
             str(data["summary"]),

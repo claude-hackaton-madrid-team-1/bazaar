@@ -472,18 +472,39 @@ def test_guardrail_action_values_a_sell_by_our_cheapest_copy():
 # ---------------------------------------------------------------- words: the price stays with code
 
 
-def test_the_price_guard_keeps_the_price_and_rejects_any_other_number():
-    assert wd.guard_text('"**Buenas**, Carmen, ¿le parece bien 9?"', 9, 300) == "Buenas, Carmen, ¿le parece bien 9?"
-    assert wd.guard_text("Qué bonito puesto, Carmen.", 9, 300) == "Qué bonito puesto, Carmen."
-    assert wd.guard_text("Le ofrezco 12 primas", 9, 300) is None
-    assert wd.guard_text("Mejor 9,5", 9, 300) is None
-    assert wd.guard_text("1.000 gracias", 1000, 300) == "1.000 gracias"
-    assert wd.guard_text("Le doy veinte primas", 9, 300) is None
-    assert wd.guard_text("   ", 9, 300) is None
+def test_the_guard_rejects_any_number_since_the_model_never_sees_the_price():
+    assert wd.guard_text('"**Buenas**, Carmen, ¿qué tal?"', 300) == "Buenas, Carmen, ¿qué tal?"
+    assert wd.guard_text("Qué bonito puesto, señora. ¡Me encanta!", 300) == "Qué bonito puesto, señora. ¡Me encanta!"
+    rejected = [
+        "¿le parece bien 9?",  # even the price: the model cannot know it
+        "Le dejo ¹² primas",  # superscripts fold to 12
+        "Ofrezco １２",  # fullwidth
+        "Ofrezco ١٢",  # Arabic-Indic
+        "Ofrezco ㊿",  # circled
+        "17\u200b17 primas",  # a zero-width space cannot split a number
+        "son 12k",
+        "Le doy veinte primas",
+        "doscientas primas",
+        "quinientos, ni uno más",
+        "un millón de gracias",
+        "una docena",
+        "el doble",
+        "la mitad",
+        "once primas",
+        "cero",
+        "Capítulo XII",
+        "trеs",  # Cyrillic "е": a homoglyph hides a number word
+        "Acepto, trato hecho",
+        "Le prometo comprar más",
+        "Vieja tacaña",
+        "   ",
+        "a" * 400,
+    ]
+    for text in rejected:
+        assert wd.guard_text(text, 300) is None, text
     long = "Qué alegría verla de nuevo, Carmen. " * 12
-    trimmed = wd.guard_text(long, 9, 300)
+    trimmed = wd.guard_text(long, 300)
     assert trimmed is not None and len(trimmed) <= 300 and trimmed.endswith(".")
-    assert wd.guard_text("a" * 400, 9, 300) is None
 
 
 def request(**kw):
@@ -497,8 +518,8 @@ def test_words_come_from_the_llm_only_when_enabled_and_fall_back_otherwise(tmp_p
     assert good.requests == []
     result = wd.write_words(request(tick=5), runtime(tmp_path, good, config=on))
     assert result.text == "¡Qué puesto tan bonito tiene, Carmen!" and good.requests[0].timeout_s == 2.5
-    wrong_price = FakeProvider(text="Se lo dejo en 15")
-    assert wd.write_words(request(), runtime(tmp_path, wrong_price, config=on)).text is None
+    a_number = FakeProvider(text="Se lo dejo en 15")
+    assert wd.write_words(request(), runtime(tmp_path, a_number, config=on)).text is None
     slow = FakeProvider(error=LLMError("timeout", "slow"))
     assert wd.write_words(request(), runtime(tmp_path, slow, config=on)).reason == "timeout"
     no_time = FakeProvider(text="hola")

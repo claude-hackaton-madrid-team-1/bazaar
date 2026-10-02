@@ -303,6 +303,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
 - [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
 - [2026-10-02] finding — Jev picks the runtime LLM decisively when the state has stakes and time
 - [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell

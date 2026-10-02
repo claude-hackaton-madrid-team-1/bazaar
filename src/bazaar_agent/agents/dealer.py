@@ -8,8 +8,9 @@ Words persuade, structure binds: we read only the structured offers, never the d
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from bazaar_agent.agents.words import WordsFn, WordsRequest
@@ -86,6 +87,18 @@ def words(step: int, price: int, dealer: str = "") -> str:
 def template_words(request: WordsRequest) -> str:
     """The default `WordsFn`: our kind Spanish templates, addressed to this dealer, with the structured price."""
     return words(request.step, request.price, request.counterparty)
+
+
+def bid_words(words_fn: WordsFn, base: WordsRequest, thread: dict[str, Any], clock: Any, send_by: float) -> str:
+    """The text for one bid: the counterparty's latest words and the time left until `send_by` added."""
+    request = replace(
+        base,
+        their_text=their_latest_text(thread, base.counterparty),
+        budget_s=max(0.0, send_by - time.monotonic()),
+        tick=clock.tick,
+        tick_seconds=clock.tick_seconds,
+    )
+    return words_fn(request)
 
 
 def their_latest_text(thread: dict[str, Any], sender: str) -> str | None:
@@ -242,8 +255,6 @@ def negotiate(
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
     always the structured `price` of the message, set here.
     """
-    import time
-
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
@@ -297,24 +308,19 @@ def negotiate(
             if denied:
                 log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
                 move = Move("walk", reason=f"guardrail: {denied}")
+        send_by = 0.0  # monotonic deadline for the send, set when the clock is re-read
         if move.kind in ("accept", "bid"):
             fresh = Clock.model_validate(client.clock())  # the thread read and Jev may have used the tick
             if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
+            send_by = time.monotonic() + action_budget_s(fresh)
         text = None
         if move.kind == "bid" and move.price is not None:
-            request = WordsRequest(
-                counterparty=dealer,
-                price=move.price,
-                step=len(neg.bids),
-                item=item,
-                their_text=their_latest_text(thread, dealer),
-                budget_s=action_budget_s(fresh),
-                tick=clock.tick,
-                tick_seconds=clock.tick_seconds,
-            )
-            text = words_fn(request)
+            text = bid_words(words_fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
+            if time.monotonic() > send_by:
+                log(f"tick {clock.tick}: the words took the rest of the tick, re-deciding next tick")
+                return
         obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:

@@ -8,8 +8,8 @@ from bazaar_agent.config import Settings
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.llm.chooser import ModelChoice, ModelChooser, MoveSituation
 from bazaar_agent.llm.config import RuntimeConfig
-from bazaar_agent.llm.models import ModelRef, Pin, pinned_model, resolve
-from bazaar_agent.llm.providers import LLMProvider, ProviderFactory, default_factory, provider_for
+from bazaar_agent.llm.models import ModelRef, Pin, Provider, pinned_model, resolve
+from bazaar_agent.llm.providers import LLMProvider, ProviderFactory, api_key_for, default_factory, provider_for
 
 CHOICE_LOG = "llm/model-choices.jsonl"
 
@@ -35,16 +35,39 @@ class LLMRuntime:
         self.settings = settings
         self.chooser = chooser
         self._factory = factory
+        self._providers: dict[Provider, LLMProvider] = {}
 
     @property
     def pin(self) -> Pin | None:
         return self.chooser.pin
 
+    def provider(self, ref: ModelRef) -> LLMProvider:
+        """The provider for `ref`, built once per process (SDK import and client setup stay out of a tick).
+
+        Raises `LLMError("key_missing")` naming the variable when its key is not set.
+        """
+        if ref.provider not in self._providers:
+            self._providers[ref.provider] = provider_for(ref, self.settings, self._factory)
+        return self._providers[ref.provider]
+
+    def warm(self) -> None:
+        """Build every provider we hold a key for now, before the first tick needs one."""
+        for alias in (*self.config.runtime_models, self.config.runtime_model_default):
+            ref = resolve(alias)
+            if api_key_for(ref.provider, self.settings) is not None:
+                self.provider(ref)
+
     def pick(self, situation: MoveSituation, tick: int | None = None, budget_s: float | None = None) -> Picked:
-        """Choose the model for this move and route it. Raises `LLMError` when its provider has no key."""
+        """Choose the model for this move and route it. Raises `LLMError` when its provider has no key.
+
+        Without any key for the default model or a pin, nothing can run: it raises before asking Jev.
+        """
+        fixed = self.pin.model if self.pin is not None else resolve(self.config.runtime_model_default)
+        if not self.chooser.candidates or self.pin is not None:
+            self.provider(fixed)
         choice = self.chooser.choose(situation, tick, budget_s)
         ref = resolve(choice.alias)
-        return Picked(choice, ref, provider_for(ref, self.settings, self._factory))
+        return Picked(choice, ref, self.provider(ref))
 
 
 def build_runtime(
@@ -64,5 +87,6 @@ def build_runtime(
         jev_timeout_s=rules.jev_timeout_s,
         jev_api_key=jev_key,
         log_path=settings.data_dir / CHOICE_LOG,
+        available=lambda alias: api_key_for(resolve(alias).provider, settings) is not None,
     )
     return LLMRuntime(config, settings, chooser, factory)

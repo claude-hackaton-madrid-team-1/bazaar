@@ -23,9 +23,9 @@ from bazaar_agent.llm.providers import LLMError, TextRequest
 from bazaar_agent.llm.runtime import LLMRuntime
 
 IntentKind = Literal["buy", "sell", "steer", "status"]
-CARD_REF = re.compile(r"^[A-Z]{3}-\d{2}$")
+CARD_REF = re.compile(r"^[A-Z]{3}-[0-9]{2}$")
 PACK_ID = re.compile(r"^sobre_[a-z_]+$")
-COUNTERPARTY = re.compile(r"^[a-z0-9_-]{1,32}$")
+COUNTERPARTY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")  # never starts with "-": it lands in a command line
 MAX_PRICE = 1000
 ASK_MAX_TOKENS = 8000
 SELL_COMMAND: str | None = None  # no `bazaar sell` on main yet: sells are shown as a guardrail check
