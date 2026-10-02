@@ -146,7 +146,9 @@ def test_publishing_never_waits_on_the_server_or_a_stuck_client(served):
             return time.perf_counter() - started
 
     elapsed = asyncio.run(stuck_client_then_publish())
-    assert elapsed < 2.0  # ~2000 publishes: each is an append and a scheduled broadcast, never a send
+    # ~2000 publishes: each is an append and a scheduled broadcast, never a send. A send to the stuck
+    # client would block for good; the bound only absorbs slow CI runners (2.00-2.08 s seen there).
+    assert elapsed < 6.0
     assert get(port, "/health")[0] == 200  # and the server still answers
 
 

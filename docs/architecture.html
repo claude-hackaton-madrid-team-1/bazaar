@@ -87,8 +87,8 @@ footer { color: var(--muted); font-size: 13px }
       <text x="130" y="476" class="s">live stream + feed poll</text>
       <text x="130" y="504" class="s">/me snapshots, alerts</text>
       <text x="130" y="534" class="n">album checked first</text>
-      <rect x="450" y="340" width="332" height="238" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="470" y="382" class="t">LLM → Sonnet 5.5 ◑</text>
+      <rect x="450" y="340" width="332" height="238" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="470" y="382" class="t">LLM → Sonnet 5.5 ✓</text>
       <text x="470" y="418" class="s">Claude via subscription ✓ (#51)</text>
       <text x="470" y="446" class="s">Jev picks the model ✓</text>
       <text x="470" y="474" class="s">strategy proposes moves ✓</text>
@@ -109,14 +109,14 @@ footer { color: var(--muted); font-size: 13px }
       <text x="1608" y="176" class="s">bazaar-taker, -maker: dry run ✓</text>
       <text x="1608" y="204" class="s">phoenix (auth) · Postgres ✓</text>
       <text x="1608" y="232" class="s">bazaar-monitor off (CLI)</text>
-      <text x="1608" y="260" class="s">sim · mcp · evals ◑</text>
+      <text x="1608" y="260" class="s">bazaar-mcp ✓ · sim, evals ◑</text>
       <text x="1608" y="290" class="n">bazaar-live: folder trust</text>
-      <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ◑</text>
-      <text x="1608" y="454" class="s">Claude Agent SDK runtime ✓</text>
+      <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ✓</text>
+      <text x="1608" y="454" class="s">Claude Agent SDK runtime (#59) ✓</text>
       <text x="1608" y="482" class="s">MCP tools + guardrail hook ✓</text>
-      <text x="1608" y="510" class="s">buyer · seller · duelist ✓</text>
-      <text x="1608" y="540" class="n">bazaar-mcp: service being created</text>
+      <text x="1608" y="510" class="s">desk + 4 subagents ✓</text>
+      <text x="1608" y="540" class="n">bazaar-mcp: live, bearer, dry run</text>
       <rect x="1420" y="760" width="400" height="250" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1440" y="802" class="t">BUY / SELL ◐</text>
       <text x="1440" y="838" class="s">taker = buyer (dry run) ✓</text>
@@ -167,8 +167,7 @@ footer { color: var(--muted); font-size: 13px }
     <section>
       <h2>Being built now</h2>
       <div class="list">
-<div class="item"><span class="pill p-wip">worker</span><b>Agent runtime + bazaar-mcp</b><p>Runtime merged (#59). Now: the bazaar-mcp Railway service, its domain, bearer token and checks.</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>A simulated market to test every agent live while the game is closed.</p></div>
+<div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>A simulated market to test every agent live while the game is closed.</p></div>
         <div class="item"><span class="pill p-wip">worker</span><b>Evals on Railway</b><p>Code merged (#58): online outcomes in Postgres + Phoenix annotations. Now: the bazaar-evals service.</p></div>
       </div>
     </section>
@@ -190,6 +189,7 @@ footer { color: var(--muted); font-size: 13px }
 <div class="item"><b>Taker</b><span class="mono">https://bazaar-taker-production.up.railway.app · wss://bazaar-taker-production.up.railway.app/events</span></div>
       <div class="item"><b>Maker</b><span class="mono">https://bazaar-maker-production.up.railway.app · wss://bazaar-maker-production.up.railway.app/events</span></div>
       <div class="item"><b>Phoenix</b><span class="mono">https://phoenix-production-6aa3.up.railway.app</span></div>
+      <div class="item"><b>bazaar-mcp</b><span class="mono">https://bazaar-mcp-production.up.railway.app/mcp</span></div>
     </div>
   </section>
   <section>
