@@ -40,6 +40,7 @@ from rich.console import Console, ConsoleRenderable, RenderHook
 
 from bazaar_agent.config import REPO_ROOT, read_env_file
 from bazaar_agent.jev.mask import JEV_REDACTION, mask_text
+from bazaar_agent.pgconn import redact as redact_db_passwords
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -84,6 +85,7 @@ class TracingConfig:
     project: str
     api_key: str | None = field(default=None, repr=False)
     secrets: tuple[str, ...] = field(default=(), repr=False)
+    database_url: str | None = field(default=None, repr=False)
 
     @property
     def ui_url(self) -> str:
@@ -112,6 +114,7 @@ def tracing_config(env: Mapping[str, str] | None = None) -> TracingConfig:
         project=pick("PHOENIX_PROJECT", "PHOENIX_PROJECT_NAME") or DEFAULT_PROJECT,
         api_key=pick("PHOENIX_API_KEY"),
         secrets=tuple(sorted(secrets, key=len, reverse=True)),
+        database_url=pick("DATABASE_URL"),
     )
 
 
@@ -122,6 +125,7 @@ class _Runtime:
         self.tracer: Tracer | None = None
         self.provider: TracerProvider | None = None
         self.secrets: tuple[str, ...] = ()
+        self.database_url: str | None = None
         self.warned: set[str] = set()
 
 
@@ -180,13 +184,18 @@ class QuietExporter(SpanExporter):
             return False
 
 
-def install(tracer: Tracer, secrets: tuple[str, ...] = (), provider: TracerProvider | None = None) -> None:
+def install(
+    tracer: Tracer,
+    secrets: tuple[str, ...] = (),
+    provider: TracerProvider | None = None,
+    database_url: str | None = None,
+) -> None:
     """Route every helper here to `tracer` (tests install an in-memory one)."""
-    _RT.tracer, _RT.secrets, _RT.provider = tracer, secrets, provider
+    _RT.tracer, _RT.secrets, _RT.provider, _RT.database_url = tracer, secrets, provider, database_url
 
 
 def uninstall() -> None:
-    _RT.tracer, _RT.secrets, _RT.provider = None, (), None
+    _RT.tracer, _RT.secrets, _RT.provider, _RT.database_url = None, (), None, None
 
 
 def enabled() -> bool:
@@ -226,7 +235,7 @@ def init_tracing(service_name: str, config: TracingConfig | None = None, exporte
         # already warns once per outage, so neither may flood the trading console.
         logging.getLogger("opentelemetry.exporter").setLevel(logging.CRITICAL)
         logging.getLogger("opentelemetry.sdk._shared_internal").setLevel(logging.ERROR)
-        install(provider.get_tracer("bazaar_agent"), cfg.secrets, provider)
+        install(provider.get_tracer("bazaar_agent"), cfg.secrets, provider, cfg.database_url)
         atexit.register(shutdown_tracing)
         return True
     except Exception as e:  # noqa: BLE001 - tracing is optional, trading is not
@@ -247,7 +256,9 @@ def shutdown_tracing() -> None:
 
 
 def scrub(text: str) -> str:
-    """Our secret values cut out, team-key shapes cut out, then the Jev masking."""
+    """DB passwords cut out (`pgconn.redact`: libpq can echo one), our secret values and team-key
+    shapes cut out, then the Jev masking."""
+    text = redact_db_passwords(text, _RT.database_url)
     for secret in _RT.secrets:
         text = text.replace(secret, JEV_REDACTION)
     return mask_text(_TEAM_KEY.sub(JEV_REDACTION, text))

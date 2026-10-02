@@ -129,7 +129,7 @@ Safety rules for tracing:
 - **Never blocks a tick.** Spans leave through a bounded `BatchSpanProcessor` queue (2048 spans,
   dropped when full) on a background thread. An export times out after 3 s. If Phoenix is down
   you get one warning per outage and trading goes on. Pending spans are flushed at exit.
-- **No secrets in spans.** Every string is scrubbed: the values of our `*_KEY`/`*_TOKEN`/`*_SECRET`
+- **No secrets in spans.** Every string is scrubbed: Postgres passwords (`pgconn.redact`), the values of our `*_KEY`/`*_TOKEN`/`*_SECRET`
   variables are cut out, `tk-…` team-key shapes are cut out, and everything passes through the
   Jev masking (`jev.mask.mask_text`). Counterparty text is stored, but it is never executed and
   never rendered as markup.

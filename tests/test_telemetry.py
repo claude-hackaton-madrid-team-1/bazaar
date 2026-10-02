@@ -349,3 +349,13 @@ def test_guardrail_refusal_before_opening_is_its_own_trace(spans):
     (only,) = spans.get_finished_spans()
     assert only.attributes["openinference.span.kind"] == "GUARDRAIL"
     assert tuple(events(only, "guardrail")[0].attributes["violations"]) == ("cash_floor 270", "block_buying_held_cards")
+
+
+def test_a_database_password_never_reaches_a_span(spans):
+    url = "postgresql://postgres:s3cr%zzLongPass@db.proxy.rlwy.net:5432/railway?sslmode=require"
+    cfg = tm.tracing_config({"DATABASE_URL": url})
+    assert cfg.database_url == url and "s3cr" not in repr(cfg)
+    tm.install(tm.tracer(), secrets=(), database_url=cfg.database_url)
+    # libpq echoes the undecodable password token (see .ai/memory.md); pgconn.redact is the one fix
+    assert "s3cr" not in tm.scrub('invalid percent-encoded token: "s3cr%zzLongPass@db.proxy.rlwy.net"')
+    assert "hunter22pass" not in tm.scrub("connection failed: password=hunter22pass host=db")
