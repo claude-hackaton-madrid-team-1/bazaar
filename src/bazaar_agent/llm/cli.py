@@ -248,7 +248,9 @@ def _print_verdict(intent: Intent, settings: Settings, rules: Guardrails) -> Non
     action = guardrail_action(intent, rarity, me)
     if action is None:
         return
-    ctx = gr.context_from(me, clock.tick, clock.t_hours, gr.Ledger(settings.data_dir / "ledger.jsonl"), rules)
+    from bazaar_agent.ledger_pg import open_ledger
+
+    ctx = gr.context_from(me, clock.tick, clock.t_hours, open_ledger(settings.data_dir, source="ask"), rules)
     verdict = gr.check(action, ctx, rules)
     colour = "green" if verdict.allowed else "red"
     console.print(

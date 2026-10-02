@@ -91,6 +91,15 @@ create table if not exists outcomes (
   decision_id bigint primary key references decisions(id), realized_surplus numeric,
   ladder_share numeric, jev_right bool, recorded_tick int);
 
+-- The guardrail ledger shared by every process on every machine (taker, maker, duels, the CLI):
+-- spend per game hour, accepts per tick, listings per tick. Append-only; a refund is a negative spend.
+create table if not exists ledger (
+  id bigserial primary key, kind text not null check (kind in ('spend','accept','listing')),
+  tick int not null, t_hours double precision not null, price int not null default 0,
+  item text not null default '', source text, created_at timestamptz default now());
+create index if not exists ledger_kind_tick on ledger (kind, tick);
+create index if not exists ledger_kind_hours on ledger (kind, t_hours);
+
 -- Monitoring agent (bazaar monitor): the announcements and trader changes it saw.
 create table if not exists alerts (
   id bigserial primary key, tick int, kind text, subject text, detail text,
@@ -121,6 +130,10 @@ begin
       ('traders', 'status', 'text'),
       ('traders', 'updated_tick', 'int'),
       ('dealer_curves', 'ours', 'boolean'),  -- our own thread; null = written before we knew our team id
+      ('decisions', 'agent', 'text'),  -- taker | maker: which autonomous agent proposed the move
+      ('decisions', 'kind', 'text'),  -- accept_ask, dealer_bid, post_ask, cancel, ...
+      ('decisions', 'dry_run', 'boolean'),
+      ('ledger', 'slot', 'int'),  -- an accept's slot in its tick (1..accepts_per_team_per_tick)
       ('messages', 'embedding', vec),
       ('trader_behaviors', 'embedding', vec),
       ('learnings', 'embedding', vec)) as c(tbl, name, type)
@@ -131,6 +144,10 @@ begin
     execute format('alter table %I add column %I %s', col.tbl, col.name, col.type);
   end loop;
 end $$;
+
+-- One team accept per slot per tick, enforced by the database itself: two processes on two machines
+-- can never both take the same slot (`ledger_pg.PgLedger.reserve_accept`).
+create unique index if not exists ledger_accept_slot on ledger (tick, slot) where kind = 'accept' and slot is not null;
 
 -- Competitor activity: every feed event our team neither did nor is party to (`intel.is_ours`).
 -- "Us" is the trader row with status 'us' (written by the monitor); feed_events keeps everything.

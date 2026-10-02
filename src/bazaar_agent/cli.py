@@ -36,7 +36,12 @@ rules_app = typer.Typer(help="Guardrails from GUARDRAILS.md: show them, or check
 app.add_typer(rules_app, name="rules")
 obs_app = typer.Typer(no_args_is_help=True, help="Observability: OpenTelemetry traces in Arize Phoenix")
 app.add_typer(obs_app, name="obs")
+agent_app = typer.Typer(
+    no_args_is_help=True, help="Autonomous agents, every tick: taker and maker (dry run by default)"
+)
+app.add_typer(agent_app, name="agent")
 console = Console()
+err_console = Console(stderr=True)
 
 LIVE_HELP = "Merge the live feed window into the captured history"
 
@@ -71,6 +76,18 @@ def _events(live: bool) -> list[Event]:
 def _fail(message: str) -> None:
     console.print(f"[red]{message}[/red]")
     raise typer.Exit(1)
+
+
+def _ledger(source: str) -> Any:
+    """The guardrail ledger every process shares: Postgres when DATABASE_URL answers, else the JSONL file."""
+    from rich.markup import escape
+
+    from bazaar_agent.ledger_pg import open_ledger
+
+    # stderr: a command's stdout may be JSON (`strategy --json`), and this line is only context
+    return open_ledger(
+        load_settings().data_dir, source=source, log=lambda m: err_console.print(f"[dim]{escape(m)}[/dim]")
+    )
 
 
 # ---------------------------------------------------------------- public views (no key)
@@ -292,7 +309,7 @@ def dealer_buy(
         return
     settings = load_settings()
     client = team_client(settings)
-    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ledger = _ledger("dealer-buy")
     clock_now = Clock.model_validate(client.clock())
     pre = gr.check(
         gr.Action("buy", item, rarity, start),
@@ -309,7 +326,9 @@ def dealer_buy(
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
         if verdict.allowed and move.kind == "accept":
-            ledger.record("accept", c.tick, c.t_hours, int(move.price or 0), item)
+            limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+            if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+                return "another process took the team's accept this tick (shared ledger)"
             tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return None if verdict.allowed else "; ".join(verdict.violations)
 
@@ -410,7 +429,7 @@ def duel_run(
     rules = _rules().rules
     settings = load_settings()
     client = team_client(settings)
-    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ledger = _ledger("duels")
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
@@ -482,8 +501,10 @@ def duel_run(
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
                     continue
-                if move.kind == "accept":
-                    ledger.record("accept", c.tick, c.t_hours, 0, f"duel:{did}")
+                limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+                if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
+                    console.print(f"  duel {did}: another process took the team's accept this tick")
+                    continue
             # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
             console.print(
                 f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
@@ -549,7 +570,7 @@ def rules_check(
     settings = load_settings()
     client = team_client(settings)
     c = Clock.model_validate(client.clock())
-    ctx = gr.context_from(client.me(), c.tick, c.t_hours, gr.Ledger(settings.data_dir / "ledger.jsonl"), rules)
+    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
     try:
         action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
     except ValueError as e:
@@ -978,7 +999,7 @@ def strategy(
 
     params = steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, now.tick)
     book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, params, rules)
-    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ledger = _ledger("strategy")
     ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
     used = ledger.packs_since(now.t_hours - 1.0)
     slots = st.PackSlots(sum(used.values()), rules.max_packs_per_game_hour)
@@ -1003,7 +1024,7 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     from bazaar_agent.agents.seller import post
 
     rules = _rules().rules
-    ledger = gr.Ledger(load_settings().data_dir / "ledger.jsonl")
+    ledger = _ledger("sell")
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
     commitments = _open_commitments(client, me)
@@ -1088,6 +1109,146 @@ def sell_cancel(
         _fail(f"cancel refused: {e.code} ({e.message[:80]})")
         return
     console.print(f"[green]cancelled offer {offer_id}[/green]")
+
+
+# ---------------------------------------------------------------- autonomous agents (needs BAZAAR_KEY)
+
+PORT_HELP = "Serve the read-only status (GET /health, /state, WS /events) on this port; default $PORT, else off"
+HOST_HELP = "Interface for the status server (default 0.0.0.0)"
+AGENT_LIVE_HELP = "Actually trade. Without it (and without BAZAAR_LIVE=1 in the environment): dry run, nothing is sent"
+
+
+def _offer_jev(settings: Any, timeout_s: float) -> Any:
+    """Jev `offer_is_worth_accepting` (questions/negotiation.json) as the agents' advisory `JevFn`."""
+    from bazaar_agent.agents.runtime import JevAdvice
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / "negotiation.json")
+    question = {"offer_is_worth_accepting": questions["offer_is_worth_accepting"]}
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+
+    def ask(state: dict[str, Any]) -> JevAdvice:
+        result = judge(state, question, api_key=key, timeout_s=timeout_s)
+        tm.record_jev(result, "offer_is_worth_accepting")
+        verdict = result.verdicts["offer_is_worth_accepting"]
+        return JevAdvice(verdict.verdict, verdict.value, verdict.probabilities, verdict.reason)
+
+    return ask
+
+
+def _status_port(port: int | None) -> int:
+    """`--port`, else Railway's PORT, else 0 (no status server on a laptop unless asked)."""
+    import os
+
+    if port is not None:
+        return port
+    raw = os.environ.get("PORT", "").strip()
+    return int(raw) if raw.isdigit() else 0
+
+
+def _run_agent(
+    name: str, live: bool, max_ticks: int, build: Callable[..., Any], port: int | None = None, host: str | None = None
+) -> None:
+    """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
+    read-only status server, the loop."""
+    from rich.markup import escape
+
+    from bazaar_agent import db
+    from bazaar_agent.agents.runtime import MarketFeed, live_mode, watched_clock
+    from bazaar_agent.agents.status import StatusHub, start_status_server
+    from bazaar_agent.decisions import DecisionLog
+    from bazaar_agent.ledger_pg import open_ledger
+    from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+
+    loaded, rules = _strategy(), _rules().rules
+    settings = load_settings()
+    team, public = _team_client(), public_client(settings)
+    is_live = live_mode(live)
+
+    def log(line: str) -> None:
+        console.print(escape(line), soft_wrap=True, highlight=False)
+
+    def connect() -> Any:
+        return db.connect(app=f"bazaar-{name}")
+
+    mode = "LIVE: trades are sent" if is_live else "DRY RUN: nothing is sent (add --live, or BAZAAR_LIVE=1)"
+    console.print(f"[bold]{name}[/bold] · {mode}")
+    ledger = open_ledger(settings.data_dir, source=name, log=log)
+    decisions = DecisionLog(settings.data_dir, connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log)
+
+    def params(tick: int) -> Any:
+        return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
+
+    hub = StatusHub(name, is_live)
+    serve_on = _status_port(port)
+    if serve_on:
+        bind = host or "0.0.0.0"  # read-only public status (Railway routes PORT to it)
+        log(f"{name}: status on http://{bind}:{start_status_server(hub, bind, serve_on)} (/health /state, WS /events)")
+    agent = build(
+        team,
+        public,
+        rules=rules,
+        params=params,
+        ledger=ledger,
+        decisions=decisions,
+        feed=feed,
+        live=is_live,
+        log=log,
+        settings=settings,
+        hub=hub,
+    )
+    log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
+    try:
+        read_clock = watched_clock(team.clock, name, log, hub)
+        run_per_tick(read_clock, traces.per_tick(f"{name} tick", agent.on_tick), max_ticks=max_ticks or None)
+    finally:
+        decisions.close()
+
+
+@agent_app.command("taker")
+def agent_taker(
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    threads: int = typer.Option(3, min=0, max=6, help="Dealer conversations at once (one per dealer)"),
+    jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
+    port: int | None = typer.Option(None, help=PORT_HELP),
+    host: str | None = typer.Option(None, help=HOST_HELP),
+) -> None:
+    """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
+    from bazaar_agent.agents.dealer import template_words
+    from bazaar_agent.agents.runtime import no_jev
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+
+    def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
+        rules = kw["rules"]
+        return Taker(
+            team,
+            public,
+            jev=_offer_jev(settings, rules.jev_timeout_s) if jev else no_jev,
+            pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
+            words_fn=llm_cli.words_for(settings, rules, template_words),
+            config=TakerConfig(max_dealer_threads=threads),
+            **kw,
+        )
+
+    _run_agent("taker", live, max_ticks, build, port, host)
+
+
+@agent_app.command("maker")
+def agent_maker(
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    port: int | None = typer.Option(None, help=PORT_HELP),
+    host: str | None = typer.Option(None, help=HOST_HELP),
+) -> None:
+    """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
+    from bazaar_agent.agents.maker import Maker
+
+    def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
+        return Maker(team, public, **kw)
+
+    _run_agent("maker", live, max_ticks, build, port, host)
 
 
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
