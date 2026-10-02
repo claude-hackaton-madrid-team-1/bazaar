@@ -427,6 +427,7 @@ def duel_run(
     from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
+    from bazaar_agent.duel_store import DuelStore
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
@@ -440,6 +441,10 @@ def duel_run(
     )
     rec = Recorder("duels", decisions, play, lambda line: None)  # the duel loop prints its own lines
     log_path = settings.data_dir / "duels" / "duels.jsonl"
+    store = DuelStore(
+        _db_connect("bazaar-duels") if ledger.where.startswith("postgres") else None,
+        lambda m: console.print(f"[dim]{escape(m)}[/dim]"),
+    )
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
@@ -492,6 +497,16 @@ def duel_run(
             jev=pick.advice if pick is not None else None,
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
+
+    def save_finished(tick: int) -> None:
+        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
+        try:
+            data = client.duels(done=True)
+        except BazaarError as e:
+            console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
+            return
+        append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
+        store.save(tick, [d for d in data.get("duels") or [] if isinstance(d, dict) and d.get("status") != "live"])
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -575,12 +590,18 @@ def duel_run(
             except Exception as e:  # calibration is a side record: it never breaks the loop
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
-    console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''})")
+        store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
+        if store.ended(duels):
+            save_finished(c.tick)
+
+    mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
+    console.print(f"duels → {log_path} + Postgres duels ({mode})")
     try:
         run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
     finally:
         duel_traces.close("stopped")
         decisions.close()
+        store.close()
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -624,6 +645,23 @@ def _maker_jev(settings: Any, rules: Any) -> Any:
     journal = _jev_journal(settings)
     price_fn, reprice_fn = _jev_fns(settings, rules, journal, "maker.json", PRICE_QUESTION, REPRICE_QUESTION)
     return MakerJev(price_fn, reprice_fn, journal=journal)
+
+
+@duel_app.command("done")
+def duel_done() -> None:
+    """Read our finished duels once (`/api/duels?done=true`, one request) and store them for the evals."""
+    from bazaar_agent import db
+    from bazaar_agent.duel_store import save_duels
+
+    try:
+        data = team_client(load_settings()).duels(done=True)
+    except BazaarError as e:
+        _fail(f"/api/duels?done=true refused: {e.code} ({e.message[:80]})")
+        return
+    finished = [d for d in data.get("duels") or [] if isinstance(d, dict) and d.get("status") != "live"]
+    with db.connect_ready("bazaar-duels") as conn:
+        saved = save_duels(conn, finished, None)
+    console.print(f"stored {saved} finished duel(s) in Postgres duels ({len(data.get('duels') or [])} listed)")
 
 
 # ---------------------------------------------------------------- guardrails

@@ -91,6 +91,13 @@ create table if not exists outcomes (
   decision_id bigint primary key references decisions(id), realized_surplus numeric,
   ladder_share numeric, jev_right bool, recorded_tick int);
 
+-- Duels as /api/duels shows them: the latest payload per duel (`bazaar duel run` each tick, the
+-- finished one from `?done=true`). The evals read it instead of calling the game API.
+create table if not exists duels (
+  duel int primary key, session int, tick int, status text, role text, item text, your_limit int,
+  rival text, deadline_tick int, rounds int, decay_per_round numeric, price int, days int,
+  result numeric, payload jsonb, updated_at timestamptz default now());
+
 -- The guardrail ledger shared by every process on every machine (taker, maker, duels, the CLI):
 -- spend per game hour, accepts per tick, listings per tick. Append-only; a refund is a negative spend.
 create table if not exists ledger (
