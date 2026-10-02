@@ -92,15 +92,15 @@ footer { color: var(--muted); font-size: 13px }
       <text x="470" y="418" class="s">Claude via subscription ✓ (#51)</text>
       <text x="470" y="446" class="s">Jev picks the model ✓</text>
       <text x="470" y="474" class="s">strategy proposes moves ✓</text>
-      <text x="470" y="502" class="s">desk + subagents ◑</text>
-      <text x="470" y="532" class="n">token in .env still empty</text>
+      <text x="470" y="502" class="s">desk + subagents (#59) ✓</text>
+      <text x="470" y="532" class="n">token on duels, taker, maker</text>
       <rect x="862" y="300" width="410" height="292" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
       <text x="882" y="342" class="t">JEV (decision / orchestrator) ◑</text>
       <text x="882" y="378" class="s">jev-1.13.0 · key on Railway ✓</text>
       <text x="882" y="406" class="s">dealer negotiation_move ✓</text>
       <text x="882" y="434" class="s">taker offer_is_worth_accepting ✓</text>
       <text x="882" y="462" class="s">pack gate ✓ · LLM model choice ✓</text>
-      <text x="882" y="490" class="s">duels duel_move ◑ · maker prices ◑</text>
+      <text x="882" y="490" class="s">duels duel_move · maker prices (#57) ✓</text>
       <text x="882" y="518" class="s">calibration in evals ◑</text>
       <text x="882" y="548" class="n">undecided is never a yes</text>
       <rect x="1588" y="70" width="380" height="252" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
@@ -113,10 +113,10 @@ footer { color: var(--muted); font-size: 13px }
       <text x="1608" y="290" class="n">bazaar-live: folder trust</text>
       <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ◑</text>
-      <text x="1608" y="454" class="s">Claude Agent SDK runtime</text>
-      <text x="1608" y="482" class="s">MCP tools + guardrail hook</text>
-      <text x="1608" y="510" class="s">buyer · seller · duelist</text>
-      <text x="1608" y="540" class="n">bazaar-mcp, bearer auth</text>
+      <text x="1608" y="454" class="s">Claude Agent SDK runtime ✓</text>
+      <text x="1608" y="482" class="s">MCP tools + guardrail hook ✓</text>
+      <text x="1608" y="510" class="s">buyer · seller · duelist ✓</text>
+      <text x="1608" y="540" class="n">bazaar-mcp: service being created</text>
       <rect x="1420" y="760" width="400" height="250" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1440" y="802" class="t">BUY / SELL ◐</text>
       <text x="1440" y="838" class="s">taker = buyer (dry run) ✓</text>
@@ -159,8 +159,7 @@ footer { color: var(--muted); font-size: 13px }
     <section>
       <h2>Waiting on you</h2>
       <div class="list">
-<div class="item"><span class="pill p-todo">blocked</span><b>Subscription token</b><p>Paste it after <code>CLAUDE_CODE_OAUTH_TOKEN=</code> in <code>.env</code>. Then Claude uploads it to duels, taker and maker.</p></div>
-        <div class="item"><span class="pill p-todo">blocked</span><b>Trust the bazaar-live folder</b><p>Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start.</p></div>
+<div class="item"><span class="pill p-todo">blocked</span><b>Trust the bazaar-live folder</b><p>Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start.</p></div>
         <div class="item"><span class="pill p-todo">decision</span><b>Go live: BAZAAR_LIVE=1</b><p>Taker and maker trade the real game only after you set it on their Railway service.</p></div>
         <div class="item"><span class="pill p-todo">decision</span><b>Market Test venue + broker</b><p>Worth up to 30 points; blocked by the trading permission until you choose full or build-only.</p></div>
         <div class="item"><span class="pill p-todo">decision</span><b>First eval target</b><p>Jev leaned toward duels (0.64 / 0.72) but stayed under its 0.75 bar.</p></div>
@@ -169,8 +168,7 @@ footer { color: var(--muted); font-size: 13px }
     <section>
       <h2>Being built now</h2>
       <div class="list">
-<div class="item"><span class="pill p-wip">worker</span><b>Jev for duels and the maker</b><p><code>duel_move</code>, <code>list_price_choice</code>, calibration outcomes.</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>Agent runtime + bazaar-mcp</b><p>Claude Agent SDK: MCP tools, guardrail hook, subagents, remote MCP with bearer auth.</p></div>
+<div class="item"><span class="pill p-wip">worker</span><b>Agent runtime + bazaar-mcp</b><p>Runtime merged (#59). Now: the bazaar-mcp Railway service, its domain, bearer token and checks.</p></div>
         <div class="item"><span class="pill p-wip">worker</span><b>Evals</b><p>Online outcomes per decision, stored in Postgres and annotated on Phoenix traces.</p></div>
         <div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>A simulated market to test every agent live while the game is closed.</p></div>
       </div>
