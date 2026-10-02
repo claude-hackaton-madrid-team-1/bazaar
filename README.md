@@ -324,6 +324,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | Fri 22:31 | `7813244` |
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
 | [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
@@ -335,13 +336,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#30](../../pull/30) | feat: GUARDRAILS.md rule book, enforced by the runtime and shown in the CLI | Fri 21:29 | `239bb72` |
 | [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
 | [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
-| [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
 | [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | `ogarciarevett/feat-monitor-realtime` |
-| [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | `ogarciarevett/feat-runtime-llm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
