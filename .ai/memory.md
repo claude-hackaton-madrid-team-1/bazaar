@@ -70,3 +70,34 @@ friendly prices. If I like you.»"}`. Abuela ladder so far: LAV-03 7, LAV-04 9, 
 ### [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
 By design (upstream parity) it does not load `.env`: run `set -a; . ./.env; set +a` first, or it
 returns `undecided (typesafe_api_key_missing)`. `bazaar dealer buy --jev` loads `.env` itself.
+
+### [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
+docs.railway.com/databases/postgresql says the default template adds no extensions, but the image
+(`ghcr.io/railwayapp-templates/postgres-ssl:17`) installs `postgresql-17-pgvector` since 2026-03-14
+(verified locally: `create extension vector` → 0.8.6; SSL on with `sslmode=require`). An older
+service may still lack it: the schema now works either way, and `uv run bazaar db check` says which.
+
+### [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
+A bad percent-escape in the password gives `invalid percent-encoded token: "<password...>"`. Print
+DB errors only through `pgconn.redact()` (as `bazaar db check` does), never `str(e)` of a connect error.
+
+### [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
+`app.phoenix.arize.com` answers HTTP 410 and the Phoenix docs now say Phoenix is self-hosted only
+(the managed SaaS is Arize AX). For teammates on other laptops: one host runs
+`PHOENIX_BIND=0.0.0.0 uv run bazaar obs up`, the others set `PHOENIX_COLLECTOR_ENDPOINT=http://<host>:6006`.
+Phoenix ingests traces only (no OTLP logs), so console lines are span events.
+
+### [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
+symptom: `pytest tests/test_telemetry_cli.py` never returned → root cause: `--max-ticks 2` with a
+fake clock stuck on one tick, so `run_per_tick` slept (real `time.sleep`) waiting for tick 2 → fix:
+CLI tests with a fixed clock use `--max-ticks 1`.
+
+### [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
+Use `typer.Context` and `typer.main.get_current_context(silent=True)` (its `command_path` names the
+running subcommand). In a group callback, `ctx.invoked_subcommand` is only the first level.
+
+### [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
+`uv run bazaar strategy`: top buys are public bids for LAV-09 / LAV-10 at 70 (worth 157 each with the
+page bonus share; LAV-09 has 1 minted copy, holder unknown; t10 holds LAV-10 and chases LAV itself),
+then MAL-10 53, SAL-09 74, SAL-10 80. Top sell: LAT-09 (ours 35, LAT ×0.5) at 68 to t07/t15/t18.
+A `sobre_barrio` is worth ~19 to us vs 17: a thin edge. Cash 353 leaves 83 above the floor: one rare.

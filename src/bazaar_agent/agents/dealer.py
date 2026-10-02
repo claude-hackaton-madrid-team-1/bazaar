@@ -15,9 +15,9 @@ from typing import Any, Literal
 MoveKind = Literal["accept", "bid", "walk", "wait"]
 
 KIND_WORDS = (
-    "¡Buenas, Carmen! Me haría mucha ilusión completar mi página. ¿Le parece bien {p} primas?",
+    "¡Buenas, {n}! Me haría mucha ilusión completar mi página. ¿Le parece bien {p} primas?",
     "Qué puesto tan bonito tiene. ¿Podríamos dejarlo en {p}?",
-    "Gracias por su paciencia, Carmen. Subo a {p}, ¿trato hecho?",
+    "Gracias por su paciencia, {n}. Subo a {p}, ¿trato hecho?",
     "Es usted un encanto. {p} primas y me lo llevo con mucho cariño.",
     "Mi abuela también vendía en el Rastro. ¿{p} le parece justo?",
     "Le prometo cuidarlo mucho. ¿Cerramos en {p}?",
@@ -71,8 +71,14 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     return Move("bid", nxt, reason="small distinct step up")
 
 
-def words(step: int, price: int) -> str:
-    return KIND_WORDS[step % len(KIND_WORDS)].format(p=price)
+# How we address each dealer. An unknown dealer gets a neutral greeting, never another dealer's name.
+DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato"}
+
+
+def words(step: int, price: int, dealer: str = "") -> str:
+    """Kind, varied words for a bid. The structured price is what binds; the text never changes it."""
+    name = DEALER_NAMES.get(dealer, "amigo")
+    return KIND_WORDS[step % len(KIND_WORDS)].format(p=price, n=name)
 
 
 def newest_dealer_offer(thread: dict[str, Any], dealer: str) -> dict[str, Any] | None:
@@ -137,6 +143,71 @@ class Outcome:
     ticks: int
 
 
+class Observer:
+    """Watches one negotiation and never changes a move. This base does nothing (tracing off);
+    `traces.NegotiationTrace` overrides the hooks to send every step to Phoenix."""
+
+    def opened(self, thread_id: int) -> None:
+        """The thread exists."""
+
+    def wrap_tick(self, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
+        return on_tick
+
+    def thread_read(self, thread: dict[str, Any]) -> None:
+        """The thread as read this tick: messages, standing offers, status."""
+
+    def guardrail(self, move: Move, denied: str | None) -> None:
+        """A guard verdict on a move (denied is None when allowed)."""
+
+    def move(self, move: Move, said: str | None) -> None:
+        """The move we are about to send, and the words with it."""
+
+    def refused(self, error: Exception) -> None:
+        """The server refused our move."""
+
+    def finished(self, outcome: Outcome) -> None:
+        """The negotiation ended."""
+
+
+class _SafeObserver(Observer):
+    """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
+
+    def __init__(self, inner: Observer, log: Callable[[str], None]) -> None:
+        self._inner, self._log, self._warned = inner, log, False
+
+    def _call(self, name: str, *args: Any) -> None:
+        try:
+            getattr(self._inner, name)(*args)
+        except Exception as e:  # observability must never change the negotiation
+            if not self._warned:
+                self._log(f"tracing hook {name} failed ({type(e).__name__}); negotiation continues")
+                self._warned = True
+
+    def opened(self, thread_id: int) -> None:
+        self._call("opened", thread_id)
+
+    def wrap_tick(self, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
+        try:
+            return self._inner.wrap_tick(on_tick)
+        except Exception:
+            return on_tick
+
+    def thread_read(self, thread: dict[str, Any]) -> None:
+        self._call("thread_read", thread)
+
+    def guardrail(self, move: Move, denied: str | None) -> None:
+        self._call("guardrail", move, denied)
+
+    def move(self, move: Move, said: str | None) -> None:
+        self._call("move", move, said)
+
+    def refused(self, error: Exception) -> None:
+        self._call("refused", error)
+
+    def finished(self, outcome: Outcome) -> None:
+        self._call("finished", outcome)
+
+
 def negotiate(
     client: Any,
     dealer: str,
@@ -149,6 +220,7 @@ def negotiate(
     sleep: Callable[[float], None] | None = None,
     guard: Guard | None = None,
     on_deal: DealHook | None = None,
+    observer: Observer | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out."""
     import time
@@ -157,11 +229,13 @@ def negotiate(
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
     sleep = sleep or time.sleep
+    obs: Observer = _SafeObserver(observer, log) if observer is not None else Observer()
 
     neg = Negotiation(plan)
     item = requested_item(topic)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
+    obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
     state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
 
@@ -170,6 +244,7 @@ def negotiate(
             return
         state["ticks"] += 1
         thread = client.thread(tid)
+        obs.thread_read(thread)
         state["status"] = thread.get("status", "open")
         if state["status"] != "open":
             log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
@@ -199,6 +274,7 @@ def negotiate(
         )
         if guard is not None and move.kind in ("accept", "bid"):
             denied = guard(move)
+            obs.guardrail(move, denied)
             if denied:
                 log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
                 move = Move("walk", reason=f"guardrail: {denied}")
@@ -207,26 +283,33 @@ def negotiate(
             if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
+        obs.move(
+            move, words(len(neg.bids), move.price, dealer) if move.kind == "bid" and move.price is not None else None
+        )
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None:
-                client.say(tid, words(len(neg.bids), move.price), price=move.price)
+                client.say(tid, words(len(neg.bids), move.price, dealer), price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 client.close_thread(tid)
                 state["status"] = "walked"
         except BazaarError as e:
+            obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
 
-    run_per_tick(client.clock, on_tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
+    tick = obs.wrap_tick(on_tick)
+    run_per_tick(client.clock, tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
     if state["status"] == "open" and state["accepted"]:
         # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
-        run_per_tick(client.clock, on_tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
+        run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
             state["status"] = "accepted_pending"
     if state["status"] == "open":
         client.close_thread(tid)
         state["status"] = "timeout"
-    return Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]))
+    outcome = Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]))
+    obs.finished(outcome)
+    return outcome

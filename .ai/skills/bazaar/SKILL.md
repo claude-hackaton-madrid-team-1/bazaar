@@ -43,9 +43,33 @@ Analyses read `.local/feed/feed.jsonl`; add `--live` to merge the current window
 
 `uv run bazaar status` shows cash, level, score and every card with `your_value`.
 
-## Memory (Postgres + pgvector)
+`uv run bazaar strategy [--json]` ranks what to do next from `STRATEGY.md` (buys, sells, packs), each
+move with its guardrail verdict and the exact command. Supply is finite: zero minted copies is never a
+buy. Run the move's command as printed (a dry run), read the verdict, then add `--live` only when the
+coordinator decides to trade. Pack moves need a pack slot left this game hour and a Jev `yes` on
+`spend_pack_slot_now` (the `jev` column shows the verdict and its probability).
 
-`uv run bazaar db up && uv run bazaar db init && uv run bazaar db load`, then `uv run bazaar db tables`.
+| Offer | Command (dry run unless `--live`) |
+|---|---|
+| Sell one card for cash (never below `your_value`) | `uv run bazaar sell list <asset_id or ref> --price N` |
+| Bid cash for any copy of a card | `uv run bazaar sell bid <ref> --price N` |
+| Our open offers | `uv run bazaar sell offers` |
+| Withdraw one | `uv run bazaar sell cancel <offer_id>` |
+
+## Memory (Postgres, pgvector when the server has it)
+
+Every process connects with `DATABASE_URL` only (env, then `.env`; unset = local docker).
+Local: `uv run bazaar db up && uv run bazaar db init && uv run bazaar db load`, then `uv run bazaar db tables`.
+Shared team DB on Railway: `DATABASE_URL` in `.env` is the Postgres service's `DATABASE_PUBLIC_URL`
+(`*.proxy.rlwy.net:<port>`; add `?sslmode=require`). Then:
+
+1. `uv run bazaar db check`: host (never the password), version, SSL, 3 round-trip latencies,
+   pgvector on/off, row counts, local-default or not. Exit 1 = unreachable: fix `.env`, do not retry in a loop.
+2. `uv run bazaar db init`: idempotent, safe while others are connected; reports pgvector on/off.
+   Without pgvector every table is still created, minus the `embedding` columns.
+
+Only ONE `bazaar monitor` writes per team. Duplicates are deduped and a lagging writer cannot roll
+rows back, but a second monitor doubles our API reads. Never print, paste or commit `DATABASE_URL`.
 Schema: `src/bazaar_agent/sql/schema.sql` (spec §5).
 
 ## Jev verdicts
@@ -61,6 +85,6 @@ misbehaves, checked against `docs/api/openapi.json` (fields with `x-verified: fa
 
 ## Never
 
-Print, log or commit a key (`BAZAAR_KEY`, broker keys, `TYPESAFE_API_KEY`). Push. Hammer the API.
+Print, log or commit a key (`BAZAAR_KEY`, broker keys, `TYPESAFE_API_KEY`, `DATABASE_URL`). Push. Hammer the API.
 Accept outside a hard limit. Flag without a words-vs-structure mismatch and a critical Jev verdict.
 Record findings and gotchas in `.ai/memory.md` (public, committed).

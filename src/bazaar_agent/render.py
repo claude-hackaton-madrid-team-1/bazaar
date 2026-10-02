@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from rich.table import Table
+from rich.text import Text
 
+from bazaar_agent.conversation import Thread, lines, topic_ref
 from bazaar_agent.ticks import Clock, action_budget_s
 
 
@@ -227,5 +229,138 @@ def album_table(pages: list) -> Table:
         missing = ", ".join(f"{m.ref} {m.rarity[:1].upper()} {m.value_to_us:.0f}" for m in p.missing) or "complete"
         t.add_row(
             f"{p.set_code} {p.name}", f"×{p.affinity}", f"{p.have}/{p.of}", missing, ", ".join(p.duplicates) or "-"
+        )
+    return t
+
+
+def threads_list_table(threads: list[Thread]) -> Table:
+    t = Table(title=f"Our threads · {len(threads)} (GET /api/me/threads; `bazaar thread <id>` for one)")
+    for col in ("thread", "with", "item", "status", "msgs", "last message"):
+        t.add_column(col, justify="right" if col in ("thread", "msgs") else "left")
+    for th in threads:
+        last = lines(th)[-1] if th.messages else None
+        status = f"{th.status} ({th.closed_reason})" if th.closed_reason else th.status
+        said = "-"
+        if last is not None:
+            price = f" [{last.price}]" if last.price is not None else ""
+            said = f"t{_n(last.tick)} {last.sender}{price}: {last.text[:48]}"
+        # their words are untrusted: Text() shows them, never parses them as markup
+        t.add_row(str(th.id), th.with_ or "-", topic_ref(th.topic) or "-", status, str(len(th.messages)), Text(said))
+    return t
+
+
+def thread_table(th: Thread) -> Table:
+    closed = f" ({th.closed_reason})" if th.closed_reason else ""
+    title = f"Thread {th.id} · {th.with_ or '-'} · {topic_ref(th.topic) or '-'} {th.item or ''} · {th.status}{closed}"
+    t = Table(title=title, caption=_standing(th))
+    for col in ("msg", "tick", "sender", "text", "price", "final", "offer", "offer status"):
+        t.add_column(col, justify="right" if col in ("msg", "tick", "price", "offer") else "left")
+    for line in lines(th):
+        style = "cyan" if line.sender == th.with_ else "green"
+        t.add_row(
+            _n(line.id),
+            _n(line.tick),
+            Text(line.sender, style=style),
+            Text(line.text),  # their words are untrusted: never parsed as markup
+            _n(line.price),
+            "FINAL" if line.final else "",
+            _n(line.offer_id),
+            line.offer_status or "-",
+        )
+    return t
+
+
+def _standing(th: Thread) -> str:
+    offers = [f"#{o.id} {o.maker} {o.price}{' FINAL' if o.final else ''}" for o in th.standing_offers]
+    return "standing offers: " + (", ".join(offers) if offers else "none")
+
+
+def obs_table(enabled: bool, endpoint: str, ui_url: str, project: str, has_key: bool, health: str) -> Table:
+    t = Table(title="Observability · OpenTelemetry → Arize Phoenix", show_header=False)
+    t.add_column("field", style="bold")
+    t.add_column("value")
+    state = "[green]ON[/green]" if enabled else "[yellow]off[/yellow] (export BAZAAR_TRACING=1, or add it to .env)"
+    for k, v in [
+        ("tracing", state),
+        ("spans go to", endpoint),
+        ("Phoenix UI", ui_url),
+        ("project", project),
+        ("PHOENIX_API_KEY", "set (sent as a bearer token)" if has_key else "not set (local Phoenix needs none)"),
+        ("Phoenix", health),
+    ]:
+        t.add_row(k, v)
+    return t
+
+
+# ---------------------------------------------------------------- strategy playbook and offers
+
+
+def scarce_supply_table(supply: list) -> Table:
+    rows = sorted((s for s in supply if s.scarce), key=lambda s: (s.minted, s.ref))
+    t = Table(title=f"Scarce supply · {len(rows)} cards at or below scarce_minted_max copies (supply is finite)")
+    for col in ("card", "rarity", "minted", "print run", "ours", "availability"):
+        t.add_column(col, justify="right" if col in ("minted", "print run", "ours") else "left")
+    for s in rows:
+        t.add_row(s.ref, s.rarity, str(s.minted), str(s.print_run), str(s.ours), s.availability)
+    return t
+
+
+def moves_table(title: str, moves: list) -> Table:
+    t = Table(title=title)
+    numbers = ("#", "value", "price", "surplus", "urgency", "score")
+    for col in (*numbers[:1], "card", "strategy", *numbers[1:], "jev", "guardrails"):
+        t.add_column(col, justify="right" if col in numbers else "left", overflow="fold")
+    t.add_column("why", overflow="fold")
+    for i, m in enumerate(moves, start=1):
+        t.add_row(
+            str(i),
+            f"{m.ref} {m.rarity[:1].upper()}",
+            m.strategy,
+            f"{m.value:.1f}",
+            f"{m.price:g}",
+            f"{m.surplus:+.1f}",
+            f"{m.urgency:.2f}",
+            f"{m.score:.1f}",
+            m.jev,
+            m.guardrail,
+            m.reason,
+        )
+    return t
+
+
+def move_commands(moves: list) -> list[str]:
+    """One plain line per move, so a command copies whole (a table cell would wrap it)."""
+    lines = []
+    for i, m in enumerate(moves, start=1):
+        why_not = m.reason.rsplit("; ", 1)[-1]
+        lines.append(f"  #{i} {m.command or f'- (no command: {why_not})'}")
+    return lines
+
+
+def params_table(lines: list) -> Table:
+    t = Table(title="Strategy parameters · STRATEGY.md (edit it, then rerun `bazaar strategy`)")
+    for col in ("param", "value", "why", "line"):
+        t.add_column(col, justify="right" if col == "line" else "left")
+    for r in lines:
+        t.add_row(r.rule_id, r.raw_value, r.why, str(r.line))
+    return t
+
+
+def offers_table(offers: list, label: str = "offers") -> Table:
+    from bazaar_agent.agents.seller import offer_side
+
+    t = Table(title=f"Our {label} · {len(offers)} (cancel ours with `bazaar sell cancel <id>`)")
+    for col in ("id", "status", "venue", "maker", "to", "give", "want", "expires"):
+        t.add_column(col, justify="right" if col in ("id", "expires") else "left")
+    for o in offers:
+        t.add_row(
+            str(o.get("id")),
+            str(o.get("status") or "-"),
+            str(o.get("venue") or "-"),
+            str(o.get("maker") or "-"),
+            str(o.get("to") or "-"),
+            offer_side(o.get("give")),
+            offer_side(o.get("want")),
+            _n(o.get("expires_tick")),
         )
     return t

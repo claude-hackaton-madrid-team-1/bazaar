@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render
+from bazaar_agent import intel, render, traces
+from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.sdk import BazaarError, public_client, team_client
@@ -17,7 +20,7 @@ from bazaar_agent.ticks import Clock, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
 feed_app = typer.Typer(no_args_is_help=True, help="Capture and inspect the public feed")
-db_app = typer.Typer(no_args_is_help=True, help="Local Postgres + pgvector memory")
+db_app = typer.Typer(no_args_is_help=True, help="Postgres memory: local docker or the shared Railway DB")
 app.add_typer(feed_app, name="feed")
 app.add_typer(db_app, name="db")
 dealer_app = typer.Typer(no_args_is_help=True, help="Negotiate with dealers (one move per tick)")
@@ -26,9 +29,21 @@ duel_app = typer.Typer(no_args_is_help=True, help="Duels: log every response; pl
 app.add_typer(duel_app, name="duel")
 rules_app = typer.Typer(help="Guardrails from GUARDRAILS.md: show them, or check an action against live /me")
 app.add_typer(rules_app, name="rules")
+obs_app = typer.Typer(no_args_is_help=True, help="Observability: OpenTelemetry traces in Arize Phoenix")
+app.add_typer(obs_app, name="obs")
 console = Console()
 
 LIVE_HELP = "Merge the live feed window into the captured history"
+DUEL_WORDS = "Propongo este precio, creo que es justo para los dos."
+
+
+@app.callback()
+def _tracing(ctx: typer.Context) -> None:
+    """With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans."""
+    if tm.init_tracing("bazaar"):
+        command = ctx.invoked_subcommand or "bazaar"
+        ctx.with_resource(tm.command_span(command))
+        tm.capture_console(console, command)
 
 
 def _events(live: bool) -> list[Event]:
@@ -131,6 +146,58 @@ def status(cards: bool = typer.Option(True, help="Also list our cards with your_
         console.print(render.cards_table(me))
 
 
+def _team_read(read: Callable[[Any], Any]) -> Any:
+    """One read with our team key; a missing key or a refusal ends the command with its reason."""
+    try:
+        return read(team_client(load_settings()))
+    except ConfigError as e:
+        _fail(str(e))
+    except BazaarError as e:
+        _fail(f"refused: {e.code} ({e.status})")
+
+
+@app.command("threads")
+def threads_cmd(
+    status: str | None = typer.Option(None, help="Only this status: open | deal | walked | closed | cooloff"),
+    as_json: bool = typer.Option(False, "--json", help="JSON for the UI team instead of a table"),
+) -> None:
+    """Our negotiation threads (GET /api/me/threads): who, what, status and the last message."""
+    from pydantic import ValidationError
+
+    from bazaar_agent.conversation import Thread, summary_json
+
+    data = _team_read(lambda c: c.my_threads(status))
+    try:
+        views = [Thread.model_validate(t) for t in data.get("threads") or []]
+    except ValidationError as e:
+        _fail(f"/api/me/threads has an unexpected shape: {e.error_count()} problem(s)")
+    if as_json:
+        typer.echo(json.dumps({"threads": [summary_json(v) for v in views]}, ensure_ascii=False, indent=2))
+        return
+    console.print(render.threads_list_table(views))
+
+
+@app.command("thread")
+def thread_cmd(
+    thread_id: int = typer.Argument(help="Thread id, e.g. 115"),
+    as_json: bool = typer.Option(False, "--json", help="JSON for the UI team instead of a table"),
+) -> None:
+    """One whole conversation (GET /api/threads/{id}): every message with sender, text and price."""
+    from pydantic import ValidationError
+
+    from bazaar_agent.conversation import Thread, conversation_json
+
+    try:
+        view = Thread.model_validate(_team_read(lambda c: c.thread(thread_id)))
+    except ValidationError as e:
+        _fail(f"thread {thread_id} has an unexpected shape: {e.error_count()} problem(s)")
+    traces.trace_thread(view)
+    if as_json:
+        typer.echo(json.dumps(conversation_json(view), ensure_ascii=False, indent=2))
+        return
+    console.print(render.thread_table(view))
+
+
 # ---------------------------------------------------------------- dealers (writes: needs BAZAAR_KEY)
 
 
@@ -175,6 +242,7 @@ def dealer_buy(
         rules,
     )
     if not pre.allowed:
+        tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
 
     def guard(move: Any) -> str | None:
@@ -184,23 +252,27 @@ def dealer_buy(
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
         if verdict.allowed and move.kind == "accept":
             ledger.record("accept", c.tick, c.t_hours, int(move.price or 0), item)
+            tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         ledger.record("spend", tick, t_hours, price, item)
+        tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
-    out = negotiate(
-        client,
-        dealer,
-        topic,
-        plan,
-        log=console.print,
-        advisor=advisor,
-        guard=guard,
-        on_deal=on_deal,
-        max_ticks=rules.dealer_max_ticks_per_thread,
-    )
+    with traces.trace_negotiation(dealer, topic, plan) as observer:
+        out = negotiate(
+            client,
+            dealer,
+            topic,
+            plan,
+            log=console.print,
+            advisor=advisor,
+            guard=guard,
+            on_deal=on_deal,
+            max_ticks=rules.dealer_max_ticks_per_thread,
+            observer=observer,
+        )
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
@@ -243,7 +315,9 @@ def _jev_advisor(item: str, settings: Any, timeout_s: float = 3.0) -> Any:
             "learned": "Abuela usually fills commons at 9 and packs at 17",
         }
         key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
-        verdict = judge(state, move_q, api_key=key, timeout_s=timeout_s).verdicts["negotiation_move"]
+        result = judge(state, move_q, api_key=key, timeout_s=timeout_s)
+        tm.record_jev(result, "negotiation_move")
+        verdict = result.verdicts["negotiation_move"]
         console.print(f"  jev: {verdict.verdict} ({verdict.value:.2f})")
         return verdict.verdict if verdict.decided else None
 
@@ -268,12 +342,14 @@ def duel_run(
     ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
+    duel_traces = traces.DuelTraces()
 
     def on_tick(c: Clock) -> None:
         try:
             data = client.duels()
         except BazaarError as e:
             console.print(f"tick {c.tick}: /api/duels refused {e.code}")
+            duel_traces.read_failed(c.tick, e)
             return
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
@@ -291,6 +367,7 @@ def duel_run(
                 floor=rules.duel_floor_margin,
                 endgame_ticks=rules.duel_endgame_ticks,
             )
+            duel_traces.seen(d, c.tick, move)
             if play and move.kind in ("accept", "offer"):
                 kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
                 ctx = gr.Context(
@@ -302,6 +379,7 @@ def duel_run(
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
                 verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
+                duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
                     continue
@@ -317,16 +395,20 @@ def duel_run(
                 if move.kind == "accept":
                     client.duel_accept(did)
                 elif move.price is not None:
-                    client.duel_say(
-                        did, "Propongo este precio, creo que es justo para los dos.", price=move.price, days=move.days
-                    )
+                    client.duel_say(did, DUEL_WORDS, price=move.price, days=move.days)
+                duel_traces.sent(did, move, DUEL_WORDS if move.kind == "offer" else None)
                 append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
             except BazaarError as e:
                 console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+                duel_traces.refused(did, e)
                 append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
+        duel_traces.end_tick(d.get("id") for d in duels)
 
     console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
-    run_per_tick(client.clock, on_tick, max_ticks=max_ticks or None)
+    try:
+        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
+    finally:
+        duel_traces.close("stopped")
 
 
 # ---------------------------------------------------------------- guardrails
@@ -404,30 +486,27 @@ def monitor(
     """The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts."""
     from bazaar_agent import db
     from bazaar_agent import monitor as mon
+    from bazaar_agent.pgconn import Reconnector
 
     settings = load_settings()
     public, store = public_client(settings), FeedStore(settings.feed_dir)
     team = team_client(settings) if settings.bazaar_key else None
     alerts_path = settings.data_dir / "alerts.jsonl"
     stream_path = settings.data_dir / "stream.jsonl"
-    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "conn": None, "ticks": 0, "db_warned": False}
+    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "ticks": 0}
 
-    def conn() -> Any:
-        if not db_enabled:
-            return None
-        if state["conn"] is None or state["conn"].closed:
-            try:
-                state["conn"] = db.connect(settings.database_url.get_secret_value())
-                db.init_schema(state["conn"])
-            except Exception as e:  # Postgres down: keep capturing JSONL, warn once
-                if not state["db_warned"]:
-                    console.print(f"[yellow]Postgres unavailable ({type(e).__name__}); JSONL only[/yellow]")
-                    state["db_warned"] = True
-                state["conn"] = None
-        return state["conn"]
+    def open_pg() -> Any:
+        try:
+            return db.connect_ready("bazaar-monitor")
+        except Exception as e:  # recorded on the tick span; Reconnector keeps the tick going on JSONL
+            tm.fail_current(e)
+            raise
+
+    pg = Reconnector(open_pg, lambda m: console.print(f"[yellow]{m}[/yellow]"))
 
     def raise_alerts(alerts: list[Any]) -> None:
         mon.append_alerts(alerts_path, alerts)
+        traces.alert_events(alerts)
         for a in alerts:
             console.print(f"[bold red]ALERT[/bold red] tick {a.tick} {a.kind} {a.subject}: {a.detail}")
             if notify:
@@ -444,8 +523,10 @@ def monitor(
             window = public.feed_window(DEFAULT_WINDOW)
         except BazaarError as e:
             console.print(f"tick {c.tick}: feed refused {e.code}")
+            tm.fail_current(e)
             window = []
         result = store.append(window, DEFAULT_WINDOW)
+        traces.feed_capture(result)
         new_events = [e for e in window if newest_before is None or e["id"] > newest_before]
         first = state["ticks"] == 1
         history = list(store.events()) if first or state["ticks"] % refresh_every == 0 else None
@@ -454,6 +535,7 @@ def monitor(
             levels_after = public.levels().get("levels") or []
         except BazaarError as e:
             console.print(f"tick {c.tick}: dealers/levels refused {e.code}")
+            tm.fail_current(e)
             dealers_after, levels_after = state["dealers"], state["levels"]
         # Known teams win: most feed events carry no level, so a new snapshot must not overwrite one.
         teams_after = {**mon.team_snapshots(history if first and history else new_events), **state["teams"]}
@@ -469,6 +551,7 @@ def monitor(
             else []
         )
         alerts += mon.event_alerts(new_events)
+        traces.trader_changes({**state["dealers"], **state["teams"]}, {**dealers_after, **teams_after})
         state["dealers"], state["teams"], state["levels"] = dealers_after, teams_after, levels_after
         me = None
         if team is not None:
@@ -476,7 +559,8 @@ def monitor(
                 me = team.me()
             except BazaarError as e:
                 console.print(f"tick {c.tick}: /me refused {e.code}")
-        cx = conn()
+                tm.fail_current(e)
+        cx = pg.get() if db_enabled else None
         if cx is not None:
             try:
                 db.load_events(cx, new_events)
@@ -485,15 +569,15 @@ def monitor(
                     db.save_snapshot(cx, c.tick, me)
                 if alerts:
                     db.insert_alerts(cx, alerts)
-                if history is not None:
-                    db.load_events(cx, history)
-                    db.load_curves(cx, history)
-                    db.save_competitors(cx, intel.team_flows(history), c.tick)
+                if history is not None and not db.load_history(cx, history, c.tick):
+                    console.print(f"tick {c.tick}: curves/competitors left to the monitor with older history")
             except Exception as e:
                 console.print(f"[yellow]tick {c.tick}: DB write failed ({type(e).__name__}: {str(e)[:80]})[/yellow]")
-                state["conn"] = None
+                tm.fail_current(e)
+                pg.drop()
         raise_alerts(alerts)
         mon.append_stream(stream_path, mon.web_events(c, new_events, me))
+        traces.monitor_summary(len(new_events), len(dealers_after), len(teams_after), len(levels_after), me)
         gap = " [red]GAP POSSIBLE[/red]" if result.gap_possible else ""
         cash = (
             f" · cash {me.get('cash')} lvl {me.get('level')} score {(me.get('score') or {}).get('score')}" if me else ""
@@ -506,7 +590,7 @@ def monitor(
     console.print(
         f"monitor: feed → {store.path}, alerts → {alerts_path}, web → {stream_path}, db {'on' if db_enabled else 'off'}"
     )
-    run_per_tick(public.clock, on_tick, max_ticks=max_ticks or None)
+    run_per_tick(public.clock, traces.per_tick("monitor tick", on_tick), max_ticks=max_ticks or None)
 
 
 @app.command()
@@ -553,17 +637,20 @@ def feed_capture(
     client, store = public_client(settings), FeedStore(settings.feed_dir)
 
     def capture(c: Clock | None = None) -> None:
-        try:
-            result = store.append(client.feed_window(window), window)
-        except BazaarError as e:
-            console.print(f"[red]feed read refused ({e.code}); next tick[/red]")
-            return
-        stamp = datetime.now().strftime("%H:%M:%S")
-        warn = " [red]GAP POSSIBLE: window overran our history[/red]" if result.gap_possible else ""
-        console.print(
-            f"{stamp} tick {c.tick if c else '-'}: fetched {result.fetched}, new {result.new}, "
-            f"newest id {result.newest_id}{warn}"
-        )
+        with tm.span("feed.capture", tm.CHAIN, {"bazaar.tick": c.tick if c else None}, root=True):
+            try:
+                result = store.append(client.feed_window(window), window)
+            except BazaarError as e:
+                console.print(f"[red]feed read refused ({e.code}); next tick[/red]")
+                tm.fail_current(e)
+                return
+            traces.feed_capture(result)
+            stamp = datetime.now().strftime("%H:%M:%S")
+            warn = " [red]GAP POSSIBLE: window overran our history[/red]" if result.gap_possible else ""
+            console.print(
+                f"{stamp} tick {c.tick if c else '-'}: fetched {result.fetched}, new {result.new}, "
+                f"newest id {result.newest_id}{warn}"
+            )
 
     if once:
         capture()
@@ -590,6 +677,31 @@ def feed_stats() -> None:
         console.print(f"  {kind:<20} {n}")
 
 
+# ---------------------------------------------------------------- observability
+
+
+@obs_app.command("up")
+def obs_up() -> None:
+    """Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317."""
+    subprocess.run(["docker", "compose", "up", "-d", "--wait", "phoenix"], cwd=REPO_ROOT, check=True)
+    hint = "" if tm.tracing_config().enabled else " · tracing is OFF: export BAZAAR_TRACING=1 (or add it to .env)"
+    console.print(f"[green]Phoenix is up[/green]: open {tm.DEFAULT_PHOENIX_URL}{hint}")
+
+
+@obs_app.command("status")
+def obs_status() -> None:
+    """Whether tracing is on, where spans go, the Phoenix UI, and whether Phoenix answers."""
+    import httpx
+
+    cfg = tm.tracing_config()
+    try:
+        reply = httpx.get(f"{cfg.ui_url}/healthz", timeout=2.0)
+        health = f"up (HTTP {reply.status_code})" if reply.is_success else f"answers HTTP {reply.status_code}"
+    except httpx.HTTPError as e:
+        health = f"unreachable ({type(e).__name__}): `uv run bazaar obs up`"
+    console.print(render.obs_table(cfg.enabled, cfg.endpoint, cfg.ui_url, cfg.project, cfg.api_key is not None, health))
+
+
 # ---------------------------------------------------------------- database
 
 
@@ -599,14 +711,26 @@ def db_up() -> None:
     subprocess.run(["docker", "compose", "up", "-d", "--wait", "db"], cwd=REPO_ROOT, check=True)
 
 
-@db_app.command("init")
-def db_init() -> None:
-    """Create every table (idempotent)."""
+@db_app.command("check")
+def db_check() -> None:
+    """Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts."""
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
-        db.init_schema(conn)
-    console.print("[green]schema applied[/green]")
+    ok, lines = db.run_check()
+    for line in lines:
+        console.print(line, highlight=False, markup=False, soft_wrap=True)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@db_app.command("init")
+def db_init() -> None:
+    """Create every table (idempotent, safe while other processes are connected)."""
+    from bazaar_agent import db
+
+    with db.connect() as conn:
+        vector = db.init_schema(conn)
+    console.print("[green]schema applied[/green] · pgvector " + ("on" if vector else "off: embedding columns skipped"))
     db_tables()
 
 
@@ -615,7 +739,7 @@ def db_load(live: bool = typer.Option(True, help=LIVE_HELP)) -> None:
     """Load the captured feed into feed_events, tape and dealer_curves (idempotent)."""
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
+    with db.connect() as conn:
         counts = db.load_feed(conn, _events(live))
     console.print(f"[green]loaded[/green] {counts}")
 
@@ -627,7 +751,7 @@ def db_tables() -> None:
 
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
+    with db.connect() as conn:
         counts = db.table_counts(conn)
     t = Table(title="bazaar db")
     t.add_column("table")
@@ -635,6 +759,222 @@ def db_tables() -> None:
     for name, n in counts:
         t.add_row(name, str(n))
     console.print(t)
+
+
+# ---------------------------------------------------------------- strategy engine (needs BAZAAR_KEY)
+
+
+def _strategy() -> Any:
+    from bazaar_agent.guardrails import GuardrailsError
+    from bazaar_agent.strategy import load_strategy
+
+    try:
+        return load_strategy()
+    except GuardrailsError as e:
+        _fail(f"STRATEGY.md is invalid, refusing to rank moves: {e}")
+
+
+def _team_client() -> Any:
+    """Our team client; exits naming the missing setting, never printing the key."""
+    try:
+        return team_client(load_settings())
+    except ConfigError as e:
+        console.print(f"[red]{e}[/red]")
+    raise typer.Exit(1)
+
+
+def _team_me() -> tuple[Any, dict[str, Any]]:
+    client = _team_client()
+    try:
+        return client, client.me()
+    except BazaarError as e:
+        console.print(f"[red]/api/me refused: {e.code} ({e.status})[/red]")
+    raise typer.Exit(1)
+
+
+def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in, open_commitments
+
+    try:
+        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+    except BazaarError as e:
+        console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
+    raise typer.Exit(1)
+
+
+def _pack_judge(settings: Any, timeout_s: float) -> Any:
+    """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / "packs.json")
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+
+    def ask(state: dict[str, Any]) -> tuple[str, float]:
+        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
+        return verdict.verdict, verdict.value
+
+    return ask
+
+
+def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
+    slots = book.pack_slots
+    quotas = ", ".join(f"{pack} dealer quota {n}" for pack, n in book.pack_quotas.items()) or "no dealer quota"
+    console.print(
+        f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
+        f"{max(0, ctx.cash - rules.cash_floor)} above cash_floor {rules.cash_floor} · spent last game hour "
+        f"{ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · pack slots this game hour: used {slots.used}, "
+        f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
+    )
+    console.print(render.scarce_supply_table(list(book.supply)))
+    for title, moves in (
+        ("Buys · complete_pages, scarcity_first, dealer_floor (ranked)", book.buys),
+        ("Sells · sell_to_need (ranked)", book.sells),
+        ("Packs · pack_value, gated by Jev spend_pack_slot_now", book.packs),
+    ):
+        console.print(render.moves_table(title, list(moves)))
+        for line in render.move_commands(list(moves)):
+            console.print(line, soft_wrap=True, markup=False, highlight=False)
+    if book.skipped:
+        console.print("[bold]Not proposed[/bold]:")
+        for line in book.skipped:
+            console.print(f"  • {line}")
+    console.print(render.params_table(list(loaded.lines)))
+    console.print("[yellow]Every command is a dry run: add --live to trade. Guardrails re-check each write.[/yellow]")
+
+
+@app.command()
+def strategy(
+    as_json: bool = typer.Option(False, "--json", help="Print the playbook as JSON"),
+    live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
+) -> None:
+    """Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict."""
+    import json
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent import strategy as st
+    from bazaar_agent.agents.seller import committed_context
+    from bazaar_agent.pack_gate import gate_packs
+
+    loaded, rules = _strategy(), _rules().rules
+    settings = load_settings()
+    client, me = _team_me()
+    commitments = _open_commitments(client, me)
+    public = public_client(settings)
+    now = Clock.model_validate(public.clock())
+    personas = public.dealers()
+    dealers_now = personas.get("personas") or personas.get("dealers") or []
+    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, loaded.params, rules)
+    ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
+    ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
+    used = ledger.packs_since(now.t_hours - 1.0)
+    slots = st.PackSlots(sum(used.values()), rules.max_packs_per_game_hour)
+    book = gate_packs(book, _pack_judge(settings, rules.jev_timeout_s), slots, used, rules, now.t_hours)
+    book = st.guarded(book, ctx, rules, commitments.listed)
+    if as_json:
+        typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
+        return
+    _print_playbook(book, loaded, rules, ctx, commitments)
+
+
+# ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
+
+sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
+app.add_typer(sell_app, name="sell")
+EXPIRES_HELP = "Ticks the offer stays open"
+POST_HELP = "Actually post. Without it: dry run, nothing is sent"
+
+
+def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.seller import post
+
+    rules = _rules().rules
+    ledger = gr.Ledger(load_settings().data_dir / "ledger.jsonl")
+    now = Clock.model_validate(client.clock())
+    ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+    commitments = _open_commitments(client, me)
+    try:
+        out = post(
+            client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
+        )
+    except BazaarError as e:
+        _fail(f"offer refused: {e.code} ({e.message[:80]})")
+        return
+    colour = "green" if out.verdict.allowed else "red"
+    console.print(f"[{colour}]{out.message}[/{colour}]")
+    if not out.verdict.allowed:
+        raise typer.Exit(1)
+
+
+@sell_app.command("list")
+def sell_list(
+    target: str = typer.Argument(help="Asset id (15) or card ref (LAT-09: the copy we lose least by selling)"),
+    price: int = typer.Option(..., min=1, help="Cash we want for it"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md)."""
+    from bazaar_agent.agents.seller import OfferError, sell_listing
+
+    client, me = _team_me()
+    try:
+        listing = sell_listing(me, target, price, venue)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("bid")
+def sell_bid(
+    ref: str = typer.Argument(help="Card ref we want, e.g. LAV-09 (any copy)"),
+    price: int = typer.Option(..., min=1, help="Cash we offer"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold."""
+    from bazaar_agent.agents.seller import OfferError, bid_listing
+
+    client, me = _team_me()
+    try:
+        listing = bid_listing(ref, _rarity_of(ref), price, venue)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("offers")
+def sell_offers() -> None:
+    """Our open and queued offers, and open offers addressed to us (GET /api/me/offers)."""
+    try:
+        data = _team_client().my_offers()
+    except BazaarError as e:
+        _fail(f"/api/me/offers refused: {e.code} ({e.status})")
+        return
+    for key, rows in data.items():
+        if isinstance(rows, list):
+            console.print(render.offers_table([r for r in rows if isinstance(r, dict)], key))
+
+
+@sell_app.command("cancel")
+def sell_cancel(
+    offer_id: int = typer.Argument(help="Offer id, from `bazaar sell offers`"),
+    live: bool = typer.Option(False, help="Actually cancel. Without it: dry run, nothing is sent"),
+) -> None:
+    """Withdraw one of our open offers."""
+    if not live:
+        console.print(f"[yellow]dry run[/yellow] would cancel offer {offer_id}. Add --live to cancel.")
+        return
+    try:
+        _team_client().cancel(offer_id)
+    except BazaarError as e:
+        _fail(f"cancel refused: {e.code} ({e.message[:80]})")
+        return
+    console.print(f"[green]cancelled offer {offer_id}[/green]")
 
 
 if __name__ == "__main__":

@@ -224,3 +224,39 @@ def test_an_accept_on_the_last_tick_waits_for_settlement_instead_of_timing_out()
         max_ticks=2,
     )
     assert (client.accepted, client.closed, out.status, out.price) == ([501], False, "deal", 6)
+
+
+def test_a_broken_observer_never_changes_or_breaks_the_negotiation():
+    from bazaar_agent.agents.dealer import Observer, negotiate
+
+    class Exploding(Observer):
+        def __getattribute__(self, name):
+            if name in ("opened", "thread_read", "guardrail", "move", "refused", "finished"):
+
+                def boom(*_a):
+                    raise RuntimeError("tracing backend down")
+
+                return boom
+            return object.__getattribute__(self, name)
+
+    logs: list[str] = []
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=logs.append,
+        sleep=lambda _: None,
+        observer=Exploding(),
+    )
+    assert (client.sent, out.status, out.price) == ([6, 7, 8], "deal", 9)
+    assert sum("tracing hook" in line for line in logs) == 1  # warned once, not every tick
+
+
+def test_words_address_the_dealer_we_are_talking_to():
+    texts = [words(step, 20, "chato") for step in range(6)]
+    assert not any("Carmen" in t for t in texts)
+    assert any("Chato" in t for t in texts)
+    assert any("Carmen" in words(step, 9, "abuela") for step in range(6))
+    assert all("Carmen" not in words(step, 9, "nuevo") for step in range(6))  # unknown dealer: neutral
