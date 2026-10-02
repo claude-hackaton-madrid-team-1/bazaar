@@ -466,6 +466,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#44](../../pull/44) | docs: map every Railway service and public URL | Fri 22:44 | `d50bd8d` |
 | [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | Fri 22:42 | `2e5d7a5` |
 | [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | Fri 22:40 | `cdf0d11` |
 | [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | Fri 22:34 | `a7c09df` |
@@ -477,13 +478,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#34](../../pull/34) | feat: observability — trace negotiations, duels, monitor and CLI output to Arize Phoenix | Fri 22:03 | `ae5293b` |
 | [#33](../../pull/33) | feat: shared Railway Postgres with DATABASE_URL alone | Fri 21:57 | `4c6726f` |
 | [#32](../../pull/32) | feat: monitoring agent: feed, traders DB, /me snapshots, new-dealer alerts | Fri 21:38 | `da01693` |
-| [#31](../../pull/31) | fix: close the Greptile P1s on the live trading path | Fri 21:34 | `808dc3e` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#44](../../pull/44) | docs: map every Railway service and public URL | `docs/services-map` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
 <!-- BAZAAR:ACTIVITY:END -->
