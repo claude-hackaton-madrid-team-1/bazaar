@@ -57,6 +57,18 @@ def test_two_issue_accepts_price_in_the_worst_case_cost_of_days():
     assert effective_price(d, 56) is None and duel_move(d, tick=111, started_tick=100).kind == "offer"
 
 
+def test_days_outside_the_rules_range_cannot_be_valued():
+    from bazaar_agent.agents.duelist import effective_price
+
+    d = duel(issues=["price", "days"], your_days_weight=2.0)
+    for days in (-5, 11, float("nan"), True):  # RULES.md: 0 to 10. -5 would turn 45 into "55" for a cost of 50
+        d["rival_offer"] = {"price": 45, "days": days}
+        assert effective_price(d, 45) is None, days
+        assert duel_move(d, tick=111, started_tick=100).kind != "accept", days
+    d["rival_offer"] = {"price": 75, "days": 10}
+    assert effective_price(d, 75) == 55
+
+
 # The real shape of GET /api/duels (practice session, tick 134, 2026-10-02).
 LIVE = {
     "duel": 95,

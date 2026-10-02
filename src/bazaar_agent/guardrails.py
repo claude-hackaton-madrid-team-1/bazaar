@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -238,6 +239,14 @@ class Ledger:
 # ---------------------------------------------------------------- the check
 
 
+DUEL_DAYS_MAX = 10  # RULES.md: two-issue duels trade delivery days 0 to 10
+
+
+def duel_days_ok(days: float) -> bool:
+    """Inside the rules' 0 to 10 days. Anything else (negative, NaN) would turn the days penalty into a bonus."""
+    return 0 <= days <= DUEL_DAYS_MAX
+
+
 ActionKind = Literal["buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag"]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 
@@ -348,6 +357,10 @@ def _duel_limit_violations(action: Action) -> list[str]:
         return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
     if action.days is not None and action.days_weight is None:
         return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
+    if action.days is not None and not duel_days_ok(action.days):
+        return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
+    if action.days_weight is not None and not math.isfinite(action.days_weight):
+        return [f"your_days_weight {action.days_weight}: cannot value the duel move (duel_inside_limit)"]
     penalty = abs(action.days_weight or 0.0) * (action.days or 0.0)
     seller = action.role == "seller"
     worth = action.price - penalty if seller else action.price + penalty

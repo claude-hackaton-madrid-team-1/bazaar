@@ -34,6 +34,7 @@ from bazaar_agent.agents.duelist import (
     duel_move,
     effective_price,
     inside_limit,
+    worth,
 )
 from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
@@ -106,13 +107,7 @@ def surplus(worth: float, limit: int, role: str) -> float:
 
 def own_worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
     """One of OUR offers at the worst-case cost of its days (as `effective_price` values the rival's)."""
-    if not two_issue(duel):
-        return float(price)
-    weight, n_days = _number(duel.get("your_days_weight")), _number(days)
-    if weight is None or n_days is None:
-        return None
-    penalty = abs(weight) * n_days
-    return price - penalty if duel.get("role") == "seller" else price + penalty
+    return worth(duel, price, days)
 
 
 def _rival_history(duel: Mapping[str, Any]) -> list[dict[str, Any]]:

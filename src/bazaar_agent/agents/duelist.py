@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from bazaar_agent.agents.words import WordsRequest
-from bazaar_agent.guardrails import Action
+from bazaar_agent.guardrails import Action, duel_days_ok
 
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
@@ -48,7 +48,10 @@ def _two_issue(duel: Mapping[str, Any]) -> bool:
 
 
 def _number(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+    """A finite number from the payload, else None (bools, NaN and infinities are not numbers here)."""
+    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+        return None
+    return float(value)
 
 
 def worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
@@ -59,7 +62,7 @@ def worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
     if not _two_issue(duel):
         return float(price)
     n_days, weight = _number(days), _number(duel.get("your_days_weight"))
-    if n_days is None or weight is None:
+    if n_days is None or weight is None or not duel_days_ok(n_days):  # days outside 0 to 10: never valued
         return None
     penalty = abs(weight) * n_days
     return price - penalty if duel.get("role") == "seller" else price + penalty

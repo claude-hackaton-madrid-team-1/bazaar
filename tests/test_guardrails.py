@@ -113,6 +113,8 @@ def test_a_duel_move_outside_our_limit_is_denied():
     assert "worth 64" in str(duel_check(price=54, limit=60, role="buyer", days=5, weight=-2.0))
     assert duel_check(price=105, days=0, weight=2.0).allowed and duel_check(price=111, days=5, weight=-2.0).allowed
     assert "your_days_weight" in str(duel_check(days=0))  # cannot value the days: denied
+    for days in (-5, 11, float("nan")):  # outside RULES.md's 0 to 10: -5 days would pass 95 as worth 105
+        assert "days" in str(duel_check(price=95, days=days, weight=2.0)), days
     assert "cannot value" in str(duel_check(price=None)) and "cannot value" in str(duel_check(limit=None))
     assert "cannot value" in str(duel_check(role=None))
     off = gr.parse_guardrails("- `duel_inside_limit` = false — x").rules
