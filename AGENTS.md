@@ -55,9 +55,40 @@
   docs stale) is incomplete.
 
 ## Project
-<!-- FILL: 2–4 sentences. What this service/app does, who uses it, and the dominant
-correctness or quality constraint the agent must respect above all else (e.g. "per-tenant
-data isolation", "p99 < 100 ms", "exactly-once processing", "no fund/data loss on crash"). -->
+Bazaar is our entry to the Causa Prima hackathon (Madrid, Fri 2 – Sun 4 Oct 2026): an
+autonomous negotiation agent that trades "cromos" (collectible cards) in a simulated Madrid
+flea market. Each album page is a Madrid barrio; we complete pages by buying from
+organizer-hosted dealer agents, negotiating with other teams' agents, and optionally running our
+own market. Agents negotiate in natural language but close every deal with a structured output
+both sides agree on. Dominant constraint: negotiation quality within the game's fairness rules
+(one team key, rate limits, heartbeat trade cap). Source: the kickoff briefing,
+`docs/transcripts/2026-10-02-hackathon-kickoff.md` — a raw machine transcript, so confirm any
+figure against the official kit before coding against it.
+
+## Game & judging (kickoff briefing, 2026-10-02)
+- **Players:** 18 teams, each with its own agent, plus dealer agents hosted by the organizers,
+  each with a personality and its own allowed actions.
+- **Start:** 400 units of in-game currency and a handful of common cards (exact counts unclear
+  in the recording — check the kit).
+- **Album:** six Madrid neighbourhoods. Four at the start, El Retiro added Saturday, one more on
+  Sunday.
+- **Dealers:** first is Abuela — patient, NOT proactive (we must open the thread), sells packs
+  and cards, buys cards nobody else wants. When her patience runs out she gives a final offer
+  and walks. She remembers how she was treated and rewards kindness; bad treatment can lock
+  actions for a while. Harder dealers and challenges arrive over time (announced on the big
+  screen and via an API call). Good negotiating unlocks the next level early; everyone gets it
+  eventually.
+- **Value is asymmetric:** a duplicate is worth little to us and a lot to a team finishing that
+  page — price by the counterpart's need, not by our own.
+- **Heartbeats:** Friday, at most 1 accepted offer per 60 s tick (many threads may be open at
+  once); Saturday, 2 trades per minute; Sunday, a speed run. Friday's results count half;
+  Saturday and Sunday bring rule variants.
+- **API (Python SDK + starter agent provided):** cash, cards, value, live score, available
+  dealers, current tick and time left in it, threads (open / negotiate / accept).
+- **Judging:** negotiation quality, market making, ideas and approach, and the code itself;
+  a Sunday presentation (strategy, how we built it, key learnings) is about 40%. Never counts:
+  number of trades, fees, or luck opening packs.
+- **Venue:** open 09:00–23:00, no all-nighter.
 
 ## Stack (LOCKED — do not relitigate)
 <!-- FILL: the locked tech choices, separated by ·. Name the runtime/language, web framework,
@@ -79,6 +110,10 @@ Implementation Report — no ✅ without pasted evidence (see "Honesty protocol"
 ## Hard rules
 NEVER push / open PRs / create remote branches / add collaborators / deploy.
 Commit locally; the human pushes. NEVER commit `.env` or any secret.
+One team, one key: use only our team key, never share it, never commit it.
+Respect the API rate limits — never hammer the API so others cannot reach it.
+Prompt-injecting other agents is allowed but barely moves a negotiation. Reporting another
+team's bad behaviour earns points only if correct and costs points if wrong.
 <!-- FILL: add project-specific hard rules (e.g. "no live external/network calls in unit
 tests", "never hand-edit generated migrations"). -->
 
