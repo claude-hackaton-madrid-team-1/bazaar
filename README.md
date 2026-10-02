@@ -594,6 +594,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
 | [#53](../../pull/53) | chore: the Jev questions that designed our evals | Sat 00:23 | `e5d770e` |
 | [#52](../../pull/52) | docs: re-read the vendor rules every phase; one key, one request budget | Sat 00:20 | `3b09a5b` |
 | [#51](../../pull/51) | feat: runtime LLM on the Claude subscription (Claude Agent SDK, no API key) | Sat 00:16 | `c895269` |
@@ -605,13 +606,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#44](../../pull/44) | docs: map every Railway service and public URL | Fri 22:44 | `d50bd8d` |
 | [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | Fri 22:42 | `2e5d7a5` |
 | [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | Fri 22:40 | `cdf0d11` |
-| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | Fri 22:34 | `a7c09df` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#54](../../pull/54) | docs: architecture diagram with build status | `docs/architecture-diagram` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
