@@ -94,3 +94,41 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
     assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+
+
+# ---------------------------------------------------------------- our venue (build only)
+
+VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
+
+
+def test_allow_venue_open_is_false_in_the_committed_file():
+    assert REAL.rules.allow_venue_open is False
+    assert gr.Guardrails().allow_venue_open is False
+
+
+def test_allow_venue_open_false_refuses_every_venue_write_but_close():
+    off = gr.Guardrails()
+    for kind in ("venue_open", "venue_fee", "venue_announce", "broker_match"):
+        assert "allow_venue_open = false" in str(gr.check(gr.Action(kind), ctx(cash=600), off))
+    assert gr.check(gr.Action("venue_close", "v07"), ctx(), off).allowed
+    on = gr.Guardrails(allow_venue_open=True)
+    for kind in VENUE_KINDS:
+        assert gr.check(gr.Action(kind), ctx(cash=600), on).allowed
+
+
+def test_the_venue_bond_and_opening_fee_never_take_cash_below_the_floor():
+    on = gr.Guardrails(allow_venue_open=True)  # cash_floor 270, as committed
+    assert gr.VENUE_COST == 270
+    assert gr.check(gr.Action("venue_open"), ctx(cash=540), on).allowed
+    denied = gr.check(gr.Action("venue_open"), ctx(cash=539), on)
+    assert "cash 539 - venue bond and fee 270 < cash_floor 270" in str(denied)
+    # the bond is not a purchase: no rarity cap, no spend cap
+    assert gr.check(gr.Action("venue_open"), ctx(cash=600, spent_last_hour=150), on).allowed
+
+
+def test_the_kill_switch_and_the_pause_file_stop_every_venue_write():
+    off = gr.Guardrails(allow_venue_open=True, trading_enabled=False)
+    on = gr.Guardrails(allow_venue_open=True)
+    for kind in VENUE_KINDS:
+        assert "trading_enabled = false" in str(gr.check(gr.Action(kind), ctx(cash=600), off))
+        assert "pause file" in str(gr.check(gr.Action(kind), ctx(cash=600, paused=True), on))

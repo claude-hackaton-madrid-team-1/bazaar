@@ -53,6 +53,7 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    allow_venue_open: bool = False
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -86,6 +87,7 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches)",
 }
 
 
@@ -236,7 +238,21 @@ class Ledger:
 # ---------------------------------------------------------------- the check
 
 
-ActionKind = Literal["buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag"]
+ActionKind = Literal[
+    "buy",
+    "sell",
+    "accept_buy",
+    "accept_sell",
+    "bid",
+    "duel_offer",
+    "duel_accept",
+    "flag",
+    "venue_open",
+    "venue_close",
+    "venue_fee",
+    "venue_announce",
+    "broker_match",
+]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 
 
@@ -330,4 +346,29 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    v.extend(_venue_violations(action, ctx, rules))
     return Verdict(not v, tuple(v))
+
+
+# Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
+VENUE_BOND = 250
+VENUE_OPENING_FEE = 20
+VENUE_COST = VENUE_BOND + VENUE_OPENING_FEE
+# Writes that only make sense while we run a venue: all of them wait for `allow_venue_open`. Closing does not,
+# so a venue opened by hand can still be closed from the CLI (the kill switch still stops it).
+VENUE_SWITCHED: frozenset[str] = frozenset({"venue_open", "venue_fee", "venue_announce", "broker_match"})
+
+
+def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """Venue writes: the build-only switch, and the bond + opening fee never taking cash below `cash_floor`.
+
+    The bond is not a purchase: it is never counted against `max_spend_per_game_hour` or a rarity cap
+    (`action.price` is the cash the open takes, `VENUE_COST` when the caller leaves it out)."""
+    v: list[str] = []
+    if action.kind in VENUE_SWITCHED and not rules.allow_venue_open:
+        v.append("allow_venue_open = false (build only: flip it in GUARDRAILS.md to run our venue)")
+    if action.kind == "venue_open":
+        cost = VENUE_COST if action.price is None else action.price
+        if ctx.cash - cost < rules.cash_floor:
+            v.append(f"cash {ctx.cash} - venue bond and fee {cost} < cash_floor {rules.cash_floor}")
+    return v
