@@ -7,7 +7,14 @@
 Events use the web view's envelope (spec 003 on feat/web-live): `{id, tick, t, type, scope, actor,
 payload}` with negative made-up ids, plus an `agent` field; types `agent.decision`, `agent.execution`
 and `agent.tick`. Read-only: nothing here can trade, change a parameter, or reveal a key, URL or
-password (every string goes through the telemetry scrubber). CORS is open: it is public read-only data.
+password (every string goes through the telemetry scrubber). CORS is open and there is no token (a
+browser page reads it, so a token would ship in its JS): the data itself must be public.
+
+So every decision, execution and view part goes through an allow-list before the hub keeps it: what the
+agent DID (kind, card, venue, counterparty, the price it sent, status, guardrail and Jev labels), never
+why in numbers (our card value, max price, bid ladder, surplus, score, cash, limits, and the reason and
+console line that spell them out). A field nobody listed below stays private. The full decision still
+goes to the `decisions` table and Phoenix.
 
 The server runs on its own thread and event loop. The tick loop only appends to a bounded buffer under
 a lock and schedules the broadcast on the server's loop, so a slow or stuck client never blocks a tick.
@@ -40,6 +47,79 @@ CORS = {
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "*",
 }
+
+# The public view, as allow-lists: a field added to a decision later stays private until it is listed here.
+DECISION_FIELDS = frozenset({"decision_id", "tick", "kind", "chosen", "status", "dry_run", "sent", "thread_id"})
+INPUT_FIELDS = frozenset(  # the card, where, with whom, and the counterparty's public price
+    {"dealer", "thread", "item", "ref", "card", "rarity", "side", "venue", "offer_id", "maker"}
+    | {"ask", "her_ask", "fee", "final"}
+)
+INPUT_GROUPS = ("offer", "listing")  # maker_jev's states nest the card they are about one level down
+SENT_PRICE = "price"  # our own price is public once posted: shown on an approved (sent or would-send) row only
+MOVE_FIELDS = frozenset(
+    {"kind", "price", "accept", "open_thread", "topic", "cancel", "hold", "reprice", "give", "want", "venue"}
+)
+REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
+VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain values (card refs)
+    "threads": frozenset({"dealer", "thread", "item", "ticks", "opened_tick", "accepted_price"}),
+    "open_offers": frozenset({"id", "side", "ref", "price", "venue", "expires_tick", "created_tick"}),
+    "posted_this_tick": None,
+}
+SCALAR = (str, int, float, bool, type(None))
+
+
+def _pick(source: object, fields: frozenset[str]) -> dict[str, Any]:
+    return {k: v for k, v in source.items() if k in fields} if isinstance(source, dict) else {}
+
+
+def _guardrail(verdict: object) -> str:
+    """`allowed`, `denied` or `-`: the rule text names our cash and limits."""
+    text = str(verdict or "")
+    return "allowed" if text == "allowed" else "denied" if text.startswith("denied") else "-"
+
+
+def public_decision(row: dict[str, Any]) -> dict[str, Any]:
+    """What /state and /events show of one decision: what the agent did, never its private numbers."""
+    sent = row.get("status") == "approved"
+    fields = INPUT_FIELDS | {SENT_PRICE} if sent else INPUT_FIELDS
+    raw = row.get("inputs")
+    inputs: dict[str, Any] = {}
+    for group in (raw, *(raw.get(g) for g in INPUT_GROUPS)) if isinstance(raw, dict) else ():
+        inputs.update({k: v for k, v in _pick(group, fields).items() if isinstance(v, SCALAR)})
+    jev = row.get("jev")
+    return {
+        **_pick(row, DECISION_FIELDS),
+        "guardrail": _guardrail(row.get("guardrail")),
+        "jev": {"verdict": jev.get("verdict")} if isinstance(jev, dict) else None,
+        "inputs": inputs,
+        "move": _pick(row.get("move"), MOVE_FIELDS) if sent else {},
+    }
+
+
+def public_execution(row: dict[str, Any]) -> dict[str, Any]:
+    """One request we sent: the request (public once sent) and how it ended, not the game's answer body."""
+    response = row.get("response")
+    created = response.get("id") if isinstance(response, dict) else None
+    return {
+        "decision_id": row.get("decision_id"),
+        "tick": row.get("tick"),
+        "method": row.get("method"),
+        "request": _pick(row.get("request"), REQUEST_FIELDS),
+        "ok": row.get("error_code") is None,
+        "error_code": row.get("error_code"),
+        "created_id": created if isinstance(created, int) else None,
+    }
+
+
+def public_view(parts: dict[str, Any]) -> dict[str, Any]:
+    """The live view (taker threads, maker offers) without our bids, max or value; unknown parts dropped."""
+    out: dict[str, Any] = {}
+    for name, fields in VIEW_FIELDS.items():
+        items = parts.get(name)
+        if not isinstance(items, list | tuple):
+            continue
+        out[name] = [v for v in items if isinstance(v, SCALAR)] if fields is None else [_pick(v, fields) for v in items]
+    return out
 
 
 class StatusHub:
@@ -75,20 +155,21 @@ class StatusHub:
             self._doors["server_tick"] = payload.get("tick")
 
     def view(self, **parts: Any) -> None:
-        """The agent's live view: `threads=[...]` (taker) or `open_offers=[...]` (maker)."""
-        clean = scrubbed(parts)
+        """The agent's live view: `threads=[...]` (taker) or `open_offers=[...]` (maker), allow-listed."""
+        clean = scrubbed(public_view(parts))
         with self._lock:
             self._view.update(clean if isinstance(clean, dict) else {})
 
     def decision(self, row: dict[str, Any]) -> None:
-        payload = self._publish("agent.decision", row)
+        payload = self._publish("agent.decision", public_decision(row))
         with self._lock:
             self._decisions.append(payload)
 
     def execution(self, row: dict[str, Any]) -> None:
-        self._publish("agent.execution", row)
+        self._publish("agent.execution", public_execution(row))
 
     def _publish(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """The one way out to /state and /events: `payload` is already a public view."""
         clean = scrubbed({**payload, "agent": self.agent})
         body = clean if isinstance(clean, dict) else {}
         with self._lock:
