@@ -70,3 +70,13 @@ friendly prices. If I like you.»"}`. Abuela ladder so far: LAV-03 7, LAV-04 9, 
 ### [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
 By design (upstream parity) it does not load `.env`: run `set -a; . ./.env; set +a` first, or it
 returns `undecided (typesafe_api_key_missing)`. `bazaar dealer buy --jev` loads `.env` itself.
+
+### [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
+docs.railway.com/databases/postgresql says the default template adds no extensions, but the image
+(`ghcr.io/railwayapp-templates/postgres-ssl:17`) installs `postgresql-17-pgvector` since 2026-03-14
+(verified locally: `create extension vector` → 0.8.6; SSL on with `sslmode=require`). An older
+service may still lack it: the schema now works either way, and `uv run bazaar db check` says which.
+
+### [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
+A bad percent-escape in the password gives `invalid percent-encoded token: "<password...>"`. Print
+DB errors only through `pgconn.redact()` (as `bazaar db check` does), never `str(e)` of a connect error.
