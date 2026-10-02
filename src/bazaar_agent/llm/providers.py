@@ -6,6 +6,10 @@ never carry a key. Anthropic calls follow the claude-api skill: the beta Message
 `fallbacks: "default"` on the models that support server-side refusal fallback, `effort` only on
 models that accept it, and `stop_reason` checked before reading content. OpenAI calls use the
 Responses API (`responses.create` / `responses.parse(text_format=...)`).
+
+Routing: a Claude model goes to the Claude API when ANTHROPIC_API_KEY is set, else to the Claude
+subscription (CLAUDE_CODE_OAUTH_TOKEN, through the Claude Agent SDK in `bazaar_agent.runtime.claude`);
+an OpenAI model needs OPENAI_API_KEY.
 """
 
 from __future__ import annotations
@@ -14,10 +18,10 @@ import queue
 import re
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from bazaar_agent.config import Settings
 from bazaar_agent.llm.models import ModelRef, Provider
@@ -25,7 +29,20 @@ from bazaar_agent.llm.models import ModelRef, Provider
 T = TypeVar("T", bound=BaseModel)
 Effort = Literal["low", "medium", "high"]
 
+Route = Literal["anthropic", "claude-subscription", "openai"]
+SUBSCRIPTION: Route = "claude-subscription"
 KEY_VARIABLES: Mapping[Provider, str] = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+TOKEN_VARIABLE = "CLAUDE_CODE_OAUTH_TOKEN"  # `claude setup-token`: Claude models on the Claude subscription
+# What to set for a model family, in the order routing tries them.
+CREDENTIAL_VARIABLES: Mapping[Provider, str] = {
+    "anthropic": f"ANTHROPIC_API_KEY or {TOKEN_VARIABLE}",
+    "openai": "OPENAI_API_KEY",
+}
+ROUTE_LABELS: Mapping[Route, str] = {
+    "anthropic": "Claude API",
+    SUBSCRIPTION: "Claude subscription via the Claude Agent SDK",
+    "openai": "OpenAI API",
+}
 # Pinned so a stray ANTHROPIC_BASE_URL / OPENAI_BASE_URL in the shell cannot send a key elsewhere.
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -275,23 +292,48 @@ class OpenAIProvider:
 # ---------------------------------------------------------------- routing
 
 
-def api_key_for(provider: Provider, settings: Settings) -> str | None:
-    secret = settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
+@dataclass(frozen=True)
+class Credential:
+    """Which route serves a model family, and the variable that enables it. The value never prints."""
+
+    route: Route
+    variable: str
+    secret: str = field(repr=False)
+
+
+def _value(secret: SecretStr | None) -> str | None:
     value = secret.get_secret_value().strip() if secret is not None else ""
     return value or None
 
 
-ProviderFactory = Callable[[Provider, str], LLMProvider]
+def credential_for(provider: Provider, settings: Settings) -> Credential | None:
+    """Claude: ANTHROPIC_API_KEY (the API) first, else CLAUDE_CODE_OAUTH_TOKEN (the subscription).
+    OpenAI: OPENAI_API_KEY. None when nothing is set."""
+    if provider == "openai":
+        key = _value(settings.openai_api_key)
+        return Credential("openai", KEY_VARIABLES["openai"], key) if key else None
+    key = _value(settings.anthropic_api_key)
+    if key:
+        return Credential("anthropic", KEY_VARIABLES["anthropic"], key)
+    token = _value(settings.claude_code_oauth_token)
+    return Credential(SUBSCRIPTION, TOKEN_VARIABLE, token) if token else None
 
 
-def default_factory(provider: Provider, api_key: str) -> LLMProvider:
-    return AnthropicProvider(api_key) if provider == "anthropic" else OpenAIProvider(api_key)
+ProviderFactory = Callable[[Route, str], LLMProvider]
+
+
+def default_factory(route: Route, secret: str) -> LLMProvider:
+    if route == SUBSCRIPTION:
+        from bazaar_agent.runtime.claude import SubscriptionProvider  # imports the Agent SDK only when used
+
+        return SubscriptionProvider(secret)
+    return AnthropicProvider(secret) if route == "anthropic" else OpenAIProvider(secret)
 
 
 def provider_for(ref: ModelRef, settings: Settings, factory: ProviderFactory = default_factory) -> LLMProvider:
-    """The provider that serves `ref`. Raises `LLMError("key_missing")` naming the variable, never a value."""
-    key = api_key_for(ref.provider, settings)
-    if key is None:
-        variable = KEY_VARIABLES[ref.provider]
-        raise LLMError("key_missing", f"set {variable} in .env to use {ref.alias} ({ref.provider})")
-    return factory(ref.provider, key)
+    """The provider that serves `ref`. Raises `LLMError("key_missing")` naming the variables, never a value."""
+    credential = credential_for(ref.provider, settings)
+    if credential is None:
+        variables = CREDENTIAL_VARIABLES[ref.provider]
+        raise LLMError("key_missing", f"set {variables} in .env to use {ref.alias} ({ref.provider})")
+    return factory(credential.route, credential.secret)

@@ -31,6 +31,7 @@ class RuntimeConfig(BaseModel):
     model_choice_cache_ticks: int = Field(default=5, ge=1, le=120)
     llm_words: bool = False
     words_timeout_s: float = Field(default=2.5, gt=0, le=10)
+    subscription_words_timeout_s: float = Field(default=6.0, gt=0, le=10)
     words_max_chars: int = Field(default=300, ge=40, le=1200)
     ask_timeout_s: float = Field(default=30.0, gt=0, le=120)
     steer_timeout_s: float = Field(default=30.0, gt=0, le=120)

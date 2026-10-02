@@ -2,7 +2,7 @@
 
 Thin wrappers registered onto the main app by `register()`; the logic lives in the llm modules.
 Nothing here trades: `ask` prints the guardrail verdict and the command, `steer` writes only
-`.local/steering.json`. Keys are reported as set or not set, never printed.
+`.local/steering.json`. Keys and the subscription token are reported as set or not set, never printed.
 """
 
 from __future__ import annotations
@@ -23,7 +23,13 @@ from bazaar_agent.llm.chooser import QUESTION_FILE, ModelChoice, model_question,
 from bazaar_agent.llm.config import LoadedRuntime, RuntimeConfigError, load_runtime
 from bazaar_agent.llm.intent import Clarification, Intent, command_for, guardrail_action, parse_request, rarity_of
 from bazaar_agent.llm.models import ALIASES, UnknownModelError, pinned_model, resolve
-from bazaar_agent.llm.providers import KEY_VARIABLES, LLMError, api_key_for
+from bazaar_agent.llm.providers import (
+    CREDENTIAL_VARIABLES,
+    ROUTE_LABELS,
+    SUBSCRIPTION,
+    LLMError,
+    credential_for,
+)
 from bazaar_agent.llm.runtime import CHOICE_LOG, LLMRuntime, build_runtime
 from bazaar_agent.llm.steering import (
     STEERABLE,
@@ -101,8 +107,16 @@ def words_for(settings: Settings, rules: Guardrails, fallback: WordsFn) -> Words
     except (RuntimeConfigError, UnknownModelError, LLMError) as e:
         console.print(f"[yellow]runtime LLM off ({escape(str(e))}): template words[/yellow]")
         return fallback
-    console.print("words: runtime LLM (llm_words = true), templates on any failure")
+    console.print(f"words: runtime LLM (llm_words = true), {claude_auth(settings)}, templates on any failure")
     return llm_words(runtime, fallback, log=lambda line: console.print(escape(line)))
+
+
+def claude_auth(settings: Settings) -> str:
+    """Which credential Claude models use, by variable name only (never a value)."""
+    credential = credential_for("anthropic", settings)
+    if credential is None:
+        return f"Claude: no credential ({CREDENTIAL_VARIABLES['anthropic']} not set)"
+    return f"Claude: {ROUTE_LABELS[credential.route]} ({credential.variable})"
 
 
 def _floats(probabilities: Any) -> str:
@@ -123,7 +137,7 @@ def _print_choice(choice: ModelChoice | None, model: str | None) -> None:
 
 
 def llm_show(last: int = typer.Option(10, help="How many logged model choices to show")) -> None:
-    """Runtime LLM config (RUNTIME.md), pinned model, which keys are set (never values), and Jev's last choices."""
+    """Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices."""
     settings, loaded, rules = _load()
     config = loaded.config
     t = Table(title=f"Runtime LLM · {loaded.path.name}{'' if loaded.lines else ' (missing: defaults)'}")
@@ -144,6 +158,7 @@ def llm_show(last: int = typer.Option(10, help="How many logged model choices to
             f"default [bold]{config.runtime_model_default}[/bold]"
         )
     _print_models(settings, config.runtime_models, config.runtime_model_default)
+    console.print(claude_auth(settings) + _sdk_note(settings))
     jev = "set" if settings.typesafe_api_key else "[red]not set[/red] (Jev undecided → default model)"
     console.print(f"TYPESAFE_API_KEY (Jev model choice): {jev}")
     try:
@@ -160,17 +175,32 @@ def llm_show(last: int = typer.Option(10, help="How many logged model choices to
     _print_choices(read_choices(settings.data_dir / CHOICE_LOG, last))
 
 
+def _sdk_note(settings: Settings) -> str:
+    credential = credential_for("anthropic", settings)
+    if credential is None or credential.route != SUBSCRIPTION:
+        return ""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return f", claude-agent-sdk {version('claude-agent-sdk')} (bundles the Claude Code CLI)"
+    except PackageNotFoundError:
+        return ", [red]claude-agent-sdk is not installed[/red] (uv sync)"
+
+
 def _print_models(settings: Settings, candidates: tuple[str, ...], default: str) -> None:
     t = Table(title="Models")
-    for col in ("alias", "model id", "provider", "key", "role"):
+    for col in ("alias", "model id", "provider", "credential", "route", "role"):
         t.add_column(col)
     names = list(dict.fromkeys([*candidates, default, *ALIASES]))
     for name in names:
         ref = resolve(name)
-        has_key = api_key_for(ref.provider, settings) is not None
-        key = f"{KEY_VARIABLES[ref.provider]} {'set' if has_key else '[red]not set[/red]'}"
+        credential = credential_for(ref.provider, settings)
+        if credential is None:
+            cred, route = f"{CREDENTIAL_VARIABLES[ref.provider]} [red]not set[/red]", "-"
+        else:
+            cred, route = f"{credential.variable} set", credential.route
         role = "default" if name == default else ("candidate" if name in candidates else "alias")
-        t.add_row(ref.alias, ref.model_id, ref.provider, key, role)
+        t.add_row(ref.alias, ref.model_id, ref.provider, cred, route, role)
     console.print(t)
 
 

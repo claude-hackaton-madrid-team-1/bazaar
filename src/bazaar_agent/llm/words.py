@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.llm.chooser import MoveSituation, injection_flags
 from bazaar_agent.llm.models import UnknownModelError
-from bazaar_agent.llm.providers import LLMError, TextRequest
+from bazaar_agent.llm.providers import SUBSCRIPTION, LLMError, TextRequest
 from bazaar_agent.llm.runtime import LLMRuntime
 
 WORDS_MARGIN_S = 0.5  # left after the words for the send itself
@@ -132,11 +132,20 @@ def words_prompt(request: WordsRequest, max_chars: int) -> str:
     )
 
 
+def words_timeout_s(runtime: LLMRuntime) -> float:
+    """The words deadline before the margin. On the Claude subscription every call starts a Claude Code
+    CLI process, so it gets `subscription_words_timeout_s` (also the bound if Jev then picks OpenAI)."""
+    config = runtime.config
+    if runtime.route("anthropic") == SUBSCRIPTION:
+        return config.subscription_words_timeout_s
+    return config.words_timeout_s
+
+
 def write_words(request: WordsRequest, runtime: LLMRuntime) -> WordsResult:
     config = runtime.config
     if not config.llm_words:
         return WordsResult(None, "llm_words = false")
-    words_s = min(config.words_timeout_s, request.budget_s - WORDS_MARGIN_S)
+    words_s = min(words_timeout_s(runtime), request.budget_s - WORDS_MARGIN_S)
     if words_s < MIN_WORDS_S:
         return WordsResult(None, f"only {request.budget_s:.1f}s left in the tick")
     their = request.their_text or ""
