@@ -680,9 +680,11 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 f"EV {ev:.1f} = {slot_text}; price {est.basis} {est.price:g}"
                 + ("" if quote else "; no dealer we can reach sells it")
                 + (f"; max_price_pack caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
-                dealer_command(pack, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread))
-                if actionable and quote and plan
-                else "",
+                (
+                    dealer_command(pack, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread))
+                    if actionable and quote and plan
+                    else ""
+                ),
                 ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)) if actionable and plan else None,
             )
         )

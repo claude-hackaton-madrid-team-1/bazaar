@@ -44,7 +44,7 @@ uv run bazaar db tables                   # every table with its row count
 ```
 
 Tests: `uv run pytest` (the DB tests are skipped when Postgres is unreachable).
-Lint: `uv run ruff check . && uv run ruff format --check .` · Types: `uv run mypy src`.
+Format: `uv run black src tests scripts` · Lint: `uv run ruff check . && uv run ruff format --check . && uv run black --check src tests scripts` · Types: `uv run mypy src`.
 
 ## Shared database (Railway)
 
@@ -719,6 +719,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
 - [2026-10-03] finding — Agent SDK subagents run in the background by default
 - [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
 - [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
@@ -726,7 +727,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — Jev on a real practice duel: leans accept, but under the design bar
 - [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
 - [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
-- [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -106,8 +106,7 @@ _JEV_ONLY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+\b", _CI),
     # A connection string, with or without credentials in it.
     re.compile(
-        r"\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb(?:\+srv)?|amqp|amqps|nats|grpc|grpcs)://"
-        rf"{_NS}+",
+        r"\b(?:postgres(?:ql)?|redis|rediss|mysql|mongodb(?:\+srv)?|amqp|amqps|nats|grpc|grpcs)://" rf"{_NS}+",
         _CI,
     ),
     # Common API-key shapes beyond the shared sanitizer. Case-sensitive upstream (no `i` flag).
@@ -172,9 +171,9 @@ def mask_state(state: object) -> JsonValue:
         return [mask_state(entry) for entry in state]
     if isinstance(state, Mapping):
         return {
-            _masked_key(str(key), index): JEV_REDACTION
-            if _CREDENTIAL_FIELD_NAME.search(str(key))
-            else mask_state(entry)
+            _masked_key(str(key), index): (
+                JEV_REDACTION if _CREDENTIAL_FIELD_NAME.search(str(key)) else mask_state(entry)
+            )
             for index, (key, entry) in enumerate(state.items())
         }
     raise TypeError(f"a Jev state holds JSON values only, not {type(state).__name__}")

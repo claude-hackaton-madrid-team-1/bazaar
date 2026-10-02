@@ -227,3 +227,9 @@ background subagent. The desk's PreToolUse hook rewrites every `Agent` call with
 `run_in_background: false` (`updatedInput`) so the desk reports an answer, and denies any subagent
 that is not ours (`CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1` removes general-purpose too).
 
+
+### [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
+black 26 wraps a split conditional expression in parentheses and joins implicit string concatenations
+that fit in 120 columns; ruff 0.16 leaves both as written, so ruff-formatted code failed `black --check`
+in 3 files (db.py, strategy.py, jev/mask.py). The reverse holds: ruff's format check accepts black's
+output. Format with `uv run black src tests scripts`; CI and the pre-commit hook check both.

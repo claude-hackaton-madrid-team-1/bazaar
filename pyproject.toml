@@ -29,6 +29,7 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.6",
+    "black>=26.5",
     "mypy>=1.11",
     "jsonschema>=4.26.0",
 ]
@@ -55,6 +56,12 @@ omit = ["src/bazaar_agent/cli.py"]
 line-length = 120
 target-version = "py312"
 extend-exclude = ["vendor"]
+
+# black is the formatter of record; ruff lints (and its format check agrees with black's output).
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+extend-exclude = "^/vendor/"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
