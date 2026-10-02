@@ -1,0 +1,115 @@
+<title>Bazaar Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Omar's whiteboard on top (the architecture, status-coloured), then a ledger of what is pending, by who acts next. */
+:root {
+  --bg: #f6f7f4; --paper: #ffffff; --ink: #1d2320; --muted: #5b655f; --line: #c9d0cb;
+  --done: #c6ecd0; --done-ink: #17643a; --wip: #cfe3ff; --wip-ink: #1d4f9c;
+  --part: #ffefb0; --part-ink: #7a5a00; --todo: #e7e9e6; --todo-ink: #4a524d; --accent: #c2410c;
+  --hand: "Kalam", "Comic Sans MS", cursive; --body: "Atkinson Hyperlegible", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
+  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
+  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
+  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
+  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px }
+header { display: grid; gap: 6px }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
+.sub { color: var(--muted); max-width: 70ch; margin: 0 }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--muted) }
+.legend span { display: inline-flex; align-items: center; gap: 6px }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--ink) }
+.board { background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px; overflow-x: auto }
+.board svg { display: block; width: 100%; min-width: 760px; height: auto }
+.board text { font-family: var(--hand); fill: var(--ink) }
+.board .t { font-size: 30px; font-weight: 700 } .board .s { font-size: 19px } .board .n { font-size: 17px; fill: var(--muted) }
+.board .edge { stroke: var(--ink); stroke-width: 2.2; fill: none }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
+section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
+.list { display: grid; gap: 10px }
+.item { background: var(--paper); border: 1.5px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0 }
+.item b { font-weight: 700 }
+.item p { margin: 0; color: var(--muted); font-size: 14px }
+.pill { justify-self: start; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px }
+.p-done { background: var(--done); color: var(--done-ink) } .p-wip { background: var(--wip); color: var(--wip-ink) }
+.p-part { background: var(--part); color: var(--part-ink) } .p-todo { background: var(--todo); color: var(--todo-ink) }
+code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
+a { color: var(--accent) }
+footer { color: var(--muted); font-size: 13px }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Team 1 · Causa Prima hackathon · Madrid · status before Saturday 09:00 (30 s ticks)</div>
+    <h1>Bazaar Architecture</h1>
+    <p class="sub">Omar's original design, mapped to what runs today. Every box carries its status: Jev decides inside the guardrails, the LLM proposes and executes, Postgres remembers, and the buy/sell agents act on the game one tick at a time.</p>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--done)"></i>Done / live</span>
+      <span><i class="sw" style="background:var(--wip)"></i>In progress (Orca worker)</span>
+      <span><i class="sw" style="background:var(--part)"></i>Partial</span>
+      <span><i class="sw" style="background:var(--todo)"></i>Pending / blocked</span>
+    </div>
+  </header>
+
+  <div class="board" role="img" aria-label="Architecture diagram: Postgres feeds STATE and the proposer LLM; the LLM proposes to Jev; Jev and the runtime LLM exchange decisions; Jev drives BUY/SELL, which reports back to the runtime; guardrails constrain Jev; Railway hosts the runtime.">
+    <svg viewBox="0 0 2000 1320" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker></defs>
+      <!-- edges -->
+      <path class="edge" marker-end="url(#ah)" d="M372,430 L448,412"/>
+      <path class="edge" marker-end="url(#ah)" d="M782,408 L862,388"/>
+      <path class="edge" marker-end="url(#ah)" marker-start="url(#ah)" d="M1272,380 L1588,380"/>
+      <path class="edge" marker-end="url(#ah)" d="M1160,592 L1480,760"/>
+      <path class="edge" marker-end="url(#ah)" d="M1640,760 L1720,576"/>
+      <path class="edge" marker-end="url(#ah)" d="M330,700 L250,560"/>
+      <path class="edge" marker-end="url(#ah)" d="M600,700 L610,578"/>
+      <path class="edge" marker-end="url(#ah)" d="M860,250 L960,356"/>
+      <path class="edge" marker-end="url(#ah)" d="M1780,322 L1780,376"/>
+
+      <!-- Postgres container -->
+      <rect x="50" y="700" width="790" height="580" rx="12" fill="none" stroke="var(--ink)" stroke-width="2" stroke-dasharray="10 8"/>
+      <text x="74" y="740" class="s">Railway Postgres 18.6 + pgvector 0.8.6 ✓</text>
+      $boxes
+    </svg>
+  </div>
+
+  <div class="cols">
+    <section>
+      <h2>Waiting on you</h2>
+      <div class="list">
+$waiting
+      </div>
+    </section>
+    <section>
+      <h2>Being built now</h2>
+      <div class="list">
+$built
+      </div>
+    </section>
+    <section>
+      <h2>Not started</h2>
+      <div class="list">
+$notstarted
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Live links</h2>
+    <div class="list">
+$links
+    </div>
+  </section>
+  <section>
+    <h2>Backlog</h2>
+    <div class="list">
+$backlog
+    </div>
+  </section>
+  <footer>Source of truth: the bazaar repo (<code>.ai/specs/01-spec.md</code>, <code>02-plan.md</code>, <code>docs/services.md</code>). Editable copy of this diagram: <code>docs/architecture.excalidraw</code>.</footer>
+</div>

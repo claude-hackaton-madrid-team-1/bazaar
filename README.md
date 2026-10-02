@@ -495,6 +495,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
     code and the "Activity" block (recent merges, open PRs), then commits it as `github-actions[bot]`.
   On a conflict inside a block, take either side and rerun `python3 scripts/readme_status.py`.
   Keep `.ai/specs/02-plan.md`'s task index current: it is what the backlog table shows.
+- **Architecture page is generated too:** `scripts/architecture_page.py` renders `docs/architecture.html`
+  from `docs/architecture.status.json` (box statuses, lists, links; edit the JSON, never the HTML) plus the
+  plan's task index, in the same hook and CI job. Git hooks and CI cannot publish claude.ai artifacts, so
+  after every merge that changes `docs/architecture.html`, the coordinator republishes it to
+  https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39.
 - **Backlog:** GitHub issues are the source of truth; the plan mirrors them.
 - **Never** push from an agent, never commit `.env`, one team key only.
 

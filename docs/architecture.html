@@ -1,0 +1,227 @@
+<title>Bazaar Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Omar's whiteboard on top (the architecture, status-coloured), then a ledger of what is pending, by who acts next. */
+:root {
+  --bg: #f6f7f4; --paper: #ffffff; --ink: #1d2320; --muted: #5b655f; --line: #c9d0cb;
+  --done: #c6ecd0; --done-ink: #17643a; --wip: #cfe3ff; --wip-ink: #1d4f9c;
+  --part: #ffefb0; --part-ink: #7a5a00; --todo: #e7e9e6; --todo-ink: #4a524d; --accent: #c2410c;
+  --hand: "Kalam", "Comic Sans MS", cursive; --body: "Atkinson Hyperlegible", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
+  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
+  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
+  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
+  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px }
+header { display: grid; gap: 6px }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
+.sub { color: var(--muted); max-width: 70ch; margin: 0 }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--muted) }
+.legend span { display: inline-flex; align-items: center; gap: 6px }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--ink) }
+.board { background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px; overflow-x: auto }
+.board svg { display: block; width: 100%; min-width: 760px; height: auto }
+.board text { font-family: var(--hand); fill: var(--ink) }
+.board .t { font-size: 30px; font-weight: 700 } .board .s { font-size: 19px } .board .n { font-size: 17px; fill: var(--muted) }
+.board .edge { stroke: var(--ink); stroke-width: 2.2; fill: none }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
+section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
+.list { display: grid; gap: 10px }
+.item { background: var(--paper); border: 1.5px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0 }
+.item b { font-weight: 700 }
+.item p { margin: 0; color: var(--muted); font-size: 14px }
+.pill { justify-self: start; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px }
+.p-done { background: var(--done); color: var(--done-ink) } .p-wip { background: var(--wip); color: var(--wip-ink) }
+.p-part { background: var(--part); color: var(--part-ink) } .p-todo { background: var(--todo); color: var(--todo-ink) }
+code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
+a { color: var(--accent) }
+footer { color: var(--muted); font-size: 13px }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Team 1 · Causa Prima hackathon · Madrid · status before Saturday 09:00 (30 s ticks)</div>
+    <h1>Bazaar Architecture</h1>
+    <p class="sub">Omar's original design, mapped to what runs today. Every box carries its status: Jev decides inside the guardrails, the LLM proposes and executes, Postgres remembers, and the buy/sell agents act on the game one tick at a time.</p>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--done)"></i>Done / live</span>
+      <span><i class="sw" style="background:var(--wip)"></i>In progress (Orca worker)</span>
+      <span><i class="sw" style="background:var(--part)"></i>Partial</span>
+      <span><i class="sw" style="background:var(--todo)"></i>Pending / blocked</span>
+    </div>
+  </header>
+
+  <div class="board" role="img" aria-label="Architecture diagram: Postgres feeds STATE and the proposer LLM; the LLM proposes to Jev; Jev and the runtime LLM exchange decisions; Jev drives BUY/SELL, which reports back to the runtime; guardrails constrain Jev; Railway hosts the runtime.">
+    <svg viewBox="0 0 2000 1320" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker></defs>
+      <!-- edges -->
+      <path class="edge" marker-end="url(#ah)" d="M372,430 L448,412"/>
+      <path class="edge" marker-end="url(#ah)" d="M782,408 L862,388"/>
+      <path class="edge" marker-end="url(#ah)" marker-start="url(#ah)" d="M1272,380 L1588,380"/>
+      <path class="edge" marker-end="url(#ah)" d="M1160,592 L1480,760"/>
+      <path class="edge" marker-end="url(#ah)" d="M1640,760 L1720,576"/>
+      <path class="edge" marker-end="url(#ah)" d="M330,700 L250,560"/>
+      <path class="edge" marker-end="url(#ah)" d="M600,700 L610,578"/>
+      <path class="edge" marker-end="url(#ah)" d="M860,250 L960,356"/>
+      <path class="edge" marker-end="url(#ah)" d="M1780,322 L1780,376"/>
+
+      <!-- Postgres container -->
+      <rect x="50" y="700" width="790" height="580" rx="12" fill="none" stroke="var(--ink)" stroke-width="2" stroke-dasharray="10 8"/>
+      <text x="74" y="740" class="s">Railway Postgres 18.6 + pgvector 0.8.6 ✓</text>
+      <rect x="470" y="70" width="400" height="220" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="490" y="112" class="t">Guardrails / hard rules</text>
+      <text x="490" y="148" class="s">✓ GUARDRAILS.md checked before every write</text>
+      <text x="490" y="176" class="s">✓ Review cards: album first, offer terms</text>
+      <text x="490" y="204" class="s">✓ 1 accept per tick, duels first (Postgres)</text>
+      <text x="490" y="232" class="s">◐ Prompt injection: quoted, no 200k cap</text>
+      <text x="490" y="260" class="s">◐ 10 s per offer, then learn: no learner</text>
+      <rect x="110" y="370" width="262" height="190" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="130" y="412" class="t">STATE ✓</text>
+      <text x="130" y="448" class="s">CLI monitor (laptop)</text>
+      <text x="130" y="476" class="s">live stream + feed poll</text>
+      <text x="130" y="504" class="s">/me snapshots, alerts</text>
+      <text x="130" y="534" class="n">album checked first</text>
+      <rect x="450" y="340" width="332" height="238" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="470" y="382" class="t">LLM → Sonnet 5.5 ◑</text>
+      <text x="470" y="418" class="s">Claude via subscription ✓ (#51)</text>
+      <text x="470" y="446" class="s">Jev picks the model ✓</text>
+      <text x="470" y="474" class="s">strategy proposes moves ✓</text>
+      <text x="470" y="502" class="s">desk + subagents ◑</text>
+      <text x="470" y="532" class="n">token in .env still empty</text>
+      <rect x="862" y="300" width="410" height="292" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="882" y="342" class="t">JEV (decision / orchestrator) ◑</text>
+      <text x="882" y="378" class="s">jev-1.13.0 · key on Railway ✓</text>
+      <text x="882" y="406" class="s">dealer negotiation_move ✓</text>
+      <text x="882" y="434" class="s">taker offer_is_worth_accepting ✓</text>
+      <text x="882" y="462" class="s">pack gate ✓ · LLM model choice ✓</text>
+      <text x="882" y="490" class="s">duels duel_move ◑ · maker prices ◑</text>
+      <text x="882" y="518" class="s">calibration in evals ◑</text>
+      <text x="882" y="548" class="n">undecided is never a yes</text>
+      <rect x="1588" y="70" width="380" height="252" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="1608" y="112" class="t">runtime (Railway) ✓</text>
+      <text x="1608" y="148" class="s">bazaar-duels: playing ✓</text>
+      <text x="1608" y="176" class="s">bazaar-taker, -maker: dry run ✓</text>
+      <text x="1608" y="204" class="s">phoenix (auth) · Postgres ✓</text>
+      <text x="1608" y="232" class="s">bazaar-monitor off (CLI)</text>
+      <text x="1608" y="260" class="s">sim · mcp · evals ◑</text>
+      <text x="1608" y="290" class="n">bazaar-live: folder trust</text>
+      <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ◑</text>
+      <text x="1608" y="454" class="s">Claude Agent SDK runtime</text>
+      <text x="1608" y="482" class="s">MCP tools + guardrail hook</text>
+      <text x="1608" y="510" class="s">buyer · seller · duelist</text>
+      <text x="1608" y="540" class="n">bazaar-mcp, bearer auth</text>
+      <rect x="1420" y="760" width="400" height="250" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="1440" y="802" class="t">BUY / SELL ◐</text>
+      <text x="1440" y="838" class="s">taker = buyer (dry run) ✓</text>
+      <text x="1440" y="866" class="s">maker = seller (dry run) ✓</text>
+      <text x="1440" y="894" class="s">duels live: 41 moves, 2 deals ✓</text>
+      <text x="1440" y="922" class="s">dealer buy: 4 Abuela deals ✓</text>
+      <text x="1440" y="952" class="n">BAZAAR_LIVE=1: your call</text>
+      <text x="1440" y="978" class="n">venue + broker: blocked</text>
+      <rect x="74" y="770" width="320" height="140" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="94" y="812" class="t">Pg vectors ✓</text>
+      <text x="94" y="848" class="s">pgvector 0.8.6, PG 18.6</text>
+      <text x="94" y="878" class="n">no embeddings written yet</text>
+      <rect x="430" y="770" width="390" height="120" rx="10" fill="var(--todo)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="450" y="812" class="t">DB · cards ○</text>
+      <text x="450" y="848" class="n">table empty (catalog read live)</text>
+      <rect x="430" y="910" width="390" height="140" rx="10" fill="var(--todo)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="450" y="952" class="t">DB · traders_behaviors ○</text>
+      <text x="450" y="988" class="n">empty; dealer_curves, traders and</text>
+      <text x="450" y="1014" class="n">competitor_profiles are filled ✓</text>
+      <rect x="430" y="1070" width="390" height="120" rx="10" fill="var(--todo)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="450" y="1112" class="t">DB · learnings ○</text>
+      <text x="450" y="1148" class="n">empty: the learner is not built</text>
+      <rect x="74" y="930" width="320" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="94" y="972" class="t">Also stored ✓</text>
+      <text x="94" y="1008" class="s">feed · tape · dealer_curves</text>
+      <text x="94" y="1036" class="s">traders · snapshots · alerts</text>
+      <text x="94" y="1064" class="s">decisions · executions</text>
+      <text x="94" y="1092" class="s">ledger (accept slot)</text>
+      <text x="94" y="1122" class="n">outcomes + scorecard ◑</text>
+      <rect x="880" y="760" width="480" height="230" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="900" y="802" class="t">Observability + evals ◑</text>
+      <text x="900" y="838" class="s">Phoenix: every negotiation, duel, tick ✓</text>
+      <text x="900" y="866" class="s">taker/maker /health /state /events ✓</text>
+      <text x="900" y="894" class="s">evals: outcomes → Postgres + Phoenix ◑</text>
+      <text x="900" y="924" class="n">Bazaar Live show: repo ready, not built</text>
+    </svg>
+  </div>
+
+  <div class="cols">
+    <section>
+      <h2>Waiting on you</h2>
+      <div class="list">
+<div class="item"><span class="pill p-todo">blocked</span><b>Subscription token</b><p>Paste it after <code>CLAUDE_CODE_OAUTH_TOKEN=</code> in <code>.env</code>. Then Claude uploads it to duels, taker and maker.</p></div>
+        <div class="item"><span class="pill p-todo">blocked</span><b>Trust the bazaar-live folder</b><p>Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start.</p></div>
+        <div class="item"><span class="pill p-todo">decision</span><b>Go live: BAZAAR_LIVE=1</b><p>Taker and maker trade the real game only after you set it on their Railway service.</p></div>
+        <div class="item"><span class="pill p-todo">decision</span><b>Market Test venue + broker</b><p>Worth up to 30 points; blocked by the trading permission until you choose full or build-only.</p></div>
+        <div class="item"><span class="pill p-todo">decision</span><b>First eval target</b><p>Jev leaned toward duels (0.64 / 0.72) but stayed under its 0.75 bar.</p></div>
+      </div>
+    </section>
+    <section>
+      <h2>Being built now</h2>
+      <div class="list">
+<div class="item"><span class="pill p-wip">worker</span><b>Jev for duels and the maker</b><p><code>duel_move</code>, <code>list_price_choice</code>, calibration outcomes.</p></div>
+        <div class="item"><span class="pill p-wip">worker</span><b>Agent runtime + bazaar-mcp</b><p>Claude Agent SDK: MCP tools, guardrail hook, subagents, remote MCP with bearer auth.</p></div>
+        <div class="item"><span class="pill p-wip">worker</span><b>Evals</b><p>Online outcomes per decision, stored in Postgres and annotated on Phoenix traces.</p></div>
+        <div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>A simulated market to test every agent live while the game is closed.</p></div>
+      </div>
+    </section>
+    <section>
+      <h2>Not started</h2>
+      <div class="list">
+<div class="item"><span class="pill p-part">gap</span><b>The learner</b><p>Fills <code>traders_behaviors</code>, <code>learnings</code> and embeddings: the "then learn" loop of the original design.</p></div>
+        <div class="item"><span class="pill p-part">gap</span><b>Prompt-injection cap</b><p>The original rule says at most 200k of counterparty text per decision; today text is only quoted and escaped.</p></div>
+        <div class="item"><span class="pill p-part">gap</span><b>10 s per offer, then learn</b><p>Tick budgets and a 3 s Jev timeout exist; a per-offer timeout feeding the learner does not.</p></div>
+        <div class="item"><span class="pill p-todo">later</span><b>Bazaar Live show</b><p>Buyer and seller animated with Motion and voiced with TTS, in the bazaar-live repo.</p></div>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Live links</h2>
+    <div class="list">
+<div class="item"><b>Taker</b><span class="mono">https://bazaar-taker-production.up.railway.app · wss://bazaar-taker-production.up.railway.app/events</span></div>
+      <div class="item"><b>Maker</b><span class="mono">https://bazaar-maker-production.up.railway.app · wss://bazaar-maker-production.up.railway.app/events</span></div>
+      <div class="item"><b>Phoenix</b><span class="mono">https://phoenix-production-6aa3.up.railway.app</span></div>
+    </div>
+  </section>
+  <section>
+    <h2>Backlog</h2>
+    <div class="list">
+<div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21">#21</a></span><b>Feed capture + dealer curves</b><p>✅ <code>bazaar monitor</code> (#32); real-time SSE + ours/theirs tagging 🔵 worker</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2">#2</a></span><b>Team key + API client + fixtures</b><p>✅ key works; SDK bridge; API fixtures (#26)</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3">#3</a></span><b>Tick loop, governor, scheduler, kill switch</b><p>🔵 tick loop + budget + <code>.local/PAUSE</code> done; cancel-open-offers kill switch ⬜</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8">#8</a></span><b>Abuela negotiator (concession curve)</b><p>✅ 4 negotiated deals (7/9/9/22)</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9">#9</a></span><b>Ladder maximizer + reach L2</b><p>🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24)</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4">#4</a></span><b>Duel logger (practice h2)</b><p>🔵 <code>bazaar duel run --play</code> running, waiting for practice duels</p></div>
+      <div class="item"><span class="mono">N1 (new)</span><b>Memory schema + repository + Railway-ready DB</b><p>✅ (#29, #32, #33)</p></div>
+      <div class="item"><span class="mono">N2 (new)</span><b>Intel: order book, tape, competitor profiles</b><p>✅ (#29, #32)</p></div>
+      <div class="item"><span class="mono">N3 (new)</span><b>Learner + embeddings + RAG context</b><p>⬜ not started (after strategy + LLM)</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1">#1</a></span><b>Decision model: decider + Jev packs + policy</b><p>🔵 autonomous taker + maker (<code>bazaar agent</code>), every move in <code>decisions</code>, dry run on Railway; live switch-on ⬜</p></div>
+      <div class="item"><span class="mono">[#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24)</span><b>Executor firewall, offer inspector, flags</b><p>🔵 guardrails + offer-term check done (#30, #31); executor ⬜</p></div>
+      <div class="item"><span class="mono">N4 (new)</span><b><code>service.py</code> + CLI + bazaar skill + commands</b><p>🔵 CLI + skill done; <code>service.py</code> seam ⬜</p></div>
+      <div class="item"><span class="mono">N5 (new)</span><b>Jev port to Python (judge, mask, log, report, parity)</b><p>✅ (#29, #31); recorded-fixture parity test ⬜</p></div>
+      <div class="item"><span class="mono">N6 (new)</span><b>Voice interface: ElevenLabs agent + Python tool server</b><p>⬜ later</p></div>
+      <div class="item"><span class="mono">N7 (new)</span><b>Observability: OTel traces → Phoenix, <code>bazaar thread(s)</code></b><p>✅ (#34, #35)</p></div>
+      <div class="item"><span class="mono">N8 (new)</span><b>Runtime LLM: Jev-chosen model, <code>--llm-runtime</code>, ask, words, steer</b><p>🔵 worker</p></div>
+      <div class="item"><span class="mono">N9 (new)</span><b>Guardrails rule book (GUARDRAILS.md)</b><p>✅ (#30)</p></div>
+      <div class="item"><span class="mono">N10 (new)</span><b>NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo <code>bazaar-live</code></b><p>⬜ planned (98-nice-to-haves.md)</p></div>
+      <div class="item"><span class="mono">[#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23)</span><b>Strategy engine (scarcity, valuation, buy/sell, 3-pack quota)</b><p>🔵 worker</p></div>
+      <div class="item"><span class="mono">[#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12)</span><b>Venue + limit-estimating broker</b><p>⬜ not started (Market Test, Saturday)</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13">#13</a></span><b>Organic market making</b><p>🔵 maker posts/reprices/cancels asks and bids on the best venue (dry run); our own venue ⬜</p></div>
+      <div class="item"><span class="mono">[#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7)</span><b>Duel policy, days module</b><p>🔵 safe player + days worst case (#31); calibration ⬜</p></div>
+      <div class="item"><span class="mono"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15">#15</a></span><b>Score simulator + dashboard</b><p>⬜</p></div>
+      <div class="item"><span class="mono">[#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17)</span><b>Pitch + scoring tracker</b><p>⬜</p></div>
+    </div>
+  </section>
+  <footer>Source of truth: the bazaar repo (<code>.ai/specs/01-spec.md</code>, <code>02-plan.md</code>, <code>docs/services.md</code>). Editable copy of this diagram: <code>docs/architecture.excalidraw</code>.</footer>
+</div>

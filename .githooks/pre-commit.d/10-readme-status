@@ -1,14 +1,19 @@
 #!/usr/bin/env sh
-# Keep README.md's live status block current for teammates and agents (Python stdlib only).
-# Only stages README.md when it had no unstaged edits of its own, so a half-staged README is never
-# swept into the commit; otherwise it regenerates in place and asks you to stage it yourself.
+# Keep README.md's live status block and docs/architecture.html current for teammates and agents
+# (Python stdlib only). Only stages a file when it had no unstaged edits of its own, so a
+# half-staged file is never swept into the commit; otherwise it regenerates in place and asks you
+# to stage it yourself.
 set -eu
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
-if git diff --quiet -- README.md; then
-	python3 scripts/readme_status.py >/dev/null
-	git diff --quiet -- README.md || git add README.md
-else
-	python3 scripts/readme_status.py >/dev/null
-	echo "README.md has unstaged edits: status block regenerated but NOT staged. Review and 'git add README.md'." >&2
-fi
+refresh() { # refresh <file> <generator script>
+	if git diff --quiet -- "$1"; then
+		python3 "$2" >/dev/null
+		git diff --quiet -- "$1" || git add "$1"
+	else
+		python3 "$2" >/dev/null
+		echo "$1 has unstaged edits: regenerated but NOT staged. Review and 'git add $1'." >&2
+	fi
+}
+refresh README.md scripts/readme_status.py
+refresh docs/architecture.html scripts/architecture_page.py
