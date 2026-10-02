@@ -179,6 +179,7 @@ def simulator() -> object:
             "PORT": SIM_PORT,
             "SIM_DATABASE_URL": SIM_DATABASE_URL,
             "SIM_TICK_SECONDS": "10",
+            "SIM_CLIENT_IP_HEADER": "x-real-ip",  # set by Railway's edge; a client-sent X-Forwarded-For is ignored
             "SIM_ADMIN_TOKEN": preserve(),
         },
     )
