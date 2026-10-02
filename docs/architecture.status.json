@@ -1,0 +1,402 @@
+{
+  "boxes": {
+    "guardrails": {
+      "title": "Guardrails / hard rules",
+      "status": "part",
+      "lines": [
+        {
+          "text": "GUARDRAILS.md checked before every write",
+          "mark": "✓",
+          "lead": true
+        },
+        {
+          "text": "Review cards: album first, offer terms",
+          "mark": "✓",
+          "lead": true
+        },
+        {
+          "text": "1 accept per tick, duels first (Postgres)",
+          "mark": "✓",
+          "lead": true
+        },
+        {
+          "text": "Prompt injection: quoted, no 200k cap",
+          "mark": "◐",
+          "lead": true
+        },
+        {
+          "text": "10 s per offer, then learn: no learner",
+          "mark": "◐",
+          "lead": true
+        }
+      ]
+    },
+    "state": {
+      "title": "STATE",
+      "status": "done",
+      "lines": [
+        {
+          "text": "CLI monitor (laptop)"
+        },
+        {
+          "text": "live stream + feed poll"
+        },
+        {
+          "text": "/me snapshots, alerts"
+        },
+        {
+          "text": "album checked first",
+          "note": true
+        }
+      ],
+      "mark": "✓"
+    },
+    "llm_proposer": {
+      "title": "LLM → Sonnet 5.5",
+      "status": "wip",
+      "lines": [
+        {
+          "text": "Claude via subscription ✓ (#51)"
+        },
+        {
+          "text": "Jev picks the model",
+          "mark": "✓"
+        },
+        {
+          "text": "strategy proposes moves",
+          "mark": "✓"
+        },
+        {
+          "text": "desk + subagents",
+          "mark": "◑"
+        },
+        {
+          "text": "token in .env still empty",
+          "note": true
+        }
+      ],
+      "mark": "◑"
+    },
+    "jev": {
+      "title": "JEV (decision / orchestrator)",
+      "status": "wip",
+      "lines": [
+        {
+          "text": "jev-1.13.0 · key on Railway",
+          "mark": "✓"
+        },
+        {
+          "text": "dealer negotiation_move",
+          "mark": "✓"
+        },
+        {
+          "text": "taker offer_is_worth_accepting",
+          "mark": "✓"
+        },
+        {
+          "text": "pack gate ✓ · LLM model choice",
+          "mark": "✓"
+        },
+        {
+          "text": "duels duel_move ◑ · maker prices",
+          "mark": "◑"
+        },
+        {
+          "text": "calibration in evals",
+          "mark": "◑"
+        },
+        {
+          "text": "undecided is never a yes",
+          "note": true
+        }
+      ],
+      "mark": "◑"
+    },
+    "runtime": {
+      "title": "runtime (Railway)",
+      "status": "done",
+      "lines": [
+        {
+          "text": "bazaar-duels: playing",
+          "mark": "✓"
+        },
+        {
+          "text": "bazaar-taker, -maker: dry run",
+          "mark": "✓"
+        },
+        {
+          "text": "phoenix (auth) · Postgres",
+          "mark": "✓"
+        },
+        {
+          "text": "bazaar-monitor off (CLI)"
+        },
+        {
+          "text": "sim · mcp · evals",
+          "mark": "◑"
+        },
+        {
+          "text": "bazaar-live: folder trust",
+          "note": true
+        }
+      ],
+      "mark": "✓"
+    },
+    "llm_runtime": {
+      "title": "LLM → Sonnet 5.5",
+      "status": "wip",
+      "lines": [
+        {
+          "text": "Claude Agent SDK runtime"
+        },
+        {
+          "text": "MCP tools + guardrail hook"
+        },
+        {
+          "text": "buyer · seller · duelist"
+        },
+        {
+          "text": "bazaar-mcp, bearer auth",
+          "note": true
+        }
+      ],
+      "mark": "◑"
+    },
+    "buy_sell": {
+      "title": "BUY / SELL",
+      "status": "part",
+      "lines": [
+        {
+          "text": "taker = buyer (dry run)",
+          "mark": "✓"
+        },
+        {
+          "text": "maker = seller (dry run)",
+          "mark": "✓"
+        },
+        {
+          "text": "duels live: 41 moves, 2 deals",
+          "mark": "✓"
+        },
+        {
+          "text": "dealer buy: 4 Abuela deals",
+          "mark": "✓"
+        },
+        {
+          "text": "BAZAAR_LIVE=1: your call",
+          "note": true
+        },
+        {
+          "text": "venue + broker: blocked",
+          "note": true
+        }
+      ],
+      "mark": "◐"
+    },
+    "pg_vectors": {
+      "title": "Pg vectors",
+      "status": "done",
+      "lines": [
+        {
+          "text": "pgvector 0.8.6, PG 18.6"
+        },
+        {
+          "text": "no embeddings written yet",
+          "note": true
+        }
+      ],
+      "mark": "✓"
+    },
+    "db_cards": {
+      "title": "DB · cards",
+      "status": "todo",
+      "lines": [
+        {
+          "text": "table empty (catalog read live)",
+          "note": true
+        }
+      ],
+      "mark": "○"
+    },
+    "db_traders_behaviors": {
+      "title": "DB · traders_behaviors",
+      "status": "todo",
+      "lines": [
+        {
+          "text": "empty; dealer_curves, traders and",
+          "note": true
+        },
+        {
+          "text": "competitor_profiles are filled",
+          "mark": "✓",
+          "note": true
+        }
+      ],
+      "mark": "○"
+    },
+    "db_learnings": {
+      "title": "DB · learnings",
+      "status": "todo",
+      "lines": [
+        {
+          "text": "empty: the learner is not built",
+          "note": true
+        }
+      ],
+      "mark": "○"
+    },
+    "also_stored": {
+      "title": "Also stored",
+      "status": "done",
+      "lines": [
+        {
+          "text": "feed · tape · dealer_curves"
+        },
+        {
+          "text": "traders · snapshots · alerts"
+        },
+        {
+          "text": "decisions · executions"
+        },
+        {
+          "text": "ledger (accept slot)"
+        },
+        {
+          "text": "outcomes + scorecard",
+          "mark": "◑",
+          "note": true
+        }
+      ],
+      "mark": "✓"
+    },
+    "observability": {
+      "title": "Observability + evals",
+      "status": "wip",
+      "lines": [
+        {
+          "text": "Phoenix: every negotiation, duel, tick",
+          "mark": "✓"
+        },
+        {
+          "text": "taker/maker /health /state /events",
+          "mark": "✓"
+        },
+        {
+          "text": "evals: outcomes → Postgres + Phoenix",
+          "mark": "◑"
+        },
+        {
+          "text": "Bazaar Live show: repo ready, not built",
+          "note": true
+        }
+      ],
+      "mark": "◑"
+    }
+  },
+  "waiting_on_you": [
+    {
+      "status": "todo",
+      "label": "blocked",
+      "title": "Subscription token",
+      "body": "Paste it after `CLAUDE_CODE_OAUTH_TOKEN=` in `.env`. Then Claude uploads it to duels, taker and maker."
+    },
+    {
+      "status": "todo",
+      "label": "blocked",
+      "title": "Trust the bazaar-live folder",
+      "body": "Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start."
+    },
+    {
+      "status": "todo",
+      "label": "decision",
+      "title": "Go live: BAZAAR_LIVE=1",
+      "body": "Taker and maker trade the real game only after you set it on their Railway service."
+    },
+    {
+      "status": "todo",
+      "label": "decision",
+      "title": "Market Test venue + broker",
+      "body": "Worth up to 30 points; blocked by the trading permission until you choose full or build-only."
+    },
+    {
+      "status": "todo",
+      "label": "decision",
+      "title": "First eval target",
+      "body": "Jev leaned toward duels (0.64 / 0.72) but stayed under its 0.75 bar."
+    }
+  ],
+  "being_built": [
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Jev for duels and the maker",
+      "body": "`duel_move`, `list_price_choice`, calibration outcomes."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Agent runtime + bazaar-mcp",
+      "body": "Claude Agent SDK: MCP tools, guardrail hook, subagents, remote MCP with bearer auth."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Evals",
+      "body": "Online outcomes per decision, stored in Postgres and annotated on Phoenix traces."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "bazaar-sim",
+      "body": "A simulated market to test every agent live while the game is closed."
+    }
+  ],
+  "not_started": [
+    {
+      "status": "part",
+      "label": "gap",
+      "title": "The learner",
+      "body": "Fills `traders_behaviors`, `learnings` and embeddings: the \"then learn\" loop of the original design."
+    },
+    {
+      "status": "part",
+      "label": "gap",
+      "title": "Prompt-injection cap",
+      "body": "The original rule says at most 200k of counterparty text per decision; today text is only quoted and escaped."
+    },
+    {
+      "status": "part",
+      "label": "gap",
+      "title": "10 s per offer, then learn",
+      "body": "Tick budgets and a 3 s Jev timeout exist; a per-offer timeout feeding the learner does not."
+    },
+    {
+      "status": "todo",
+      "label": "later",
+      "title": "Bazaar Live show",
+      "body": "Buyer and seller animated with Motion and voiced with TTS, in the bazaar-live repo."
+    }
+  ],
+  "links": [
+    {
+      "name": "Taker",
+      "urls": [
+        "https://bazaar-taker-production.up.railway.app",
+        "wss://bazaar-taker-production.up.railway.app/events"
+      ]
+    },
+    {
+      "name": "Maker",
+      "urls": [
+        "https://bazaar-maker-production.up.railway.app",
+        "wss://bazaar-maker-production.up.railway.app/events"
+      ]
+    },
+    {
+      "name": "Phoenix",
+      "urls": [
+        "https://phoenix-production-6aa3.up.railway.app"
+      ]
+    }
+  ]
+}
