@@ -92,6 +92,10 @@ A decision, as published:
   (and from their `offer` / `listing` part for the maker's Jev rows). Our own `price` and the `move`
   (`{kind, price}`, `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`,
   `{hold}`, `{reprice, price}`) appear only on an `approved` row: a price we never sent stays private.
+- A row that was not sent (`rejected`, `expired`, a skipped accept) is cut down further:
+  `{agent, tick, kind, status, guardrail, jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
+  No counterparty, offer id, ask or price: otherwise a rival could list a card and learn from our
+  `skip ... accept quota` row that its ask sat below our value.
 - An execution shows the `request` we sent (`offer`, `thread`, `with`, `topic`, `price`, `give`, `want`,
   `venue`), whether it worked (`ok`, `error_code`) and the id it created (`created_id`), not the
   game's answer body.

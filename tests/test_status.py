@@ -283,10 +283,37 @@ def test_guardrail_and_jev_publish_labels_not_our_cash_or_limits(served):
     hub, port = served
     denied = "denied: cash 301 - 40 < cash_floor 270; price 40 > max_price_uncommon 26"
     hub.decision(decision(guardrail=denied, status="rejected", chosen=False))
-    hub.decision(decision(guardrail="-", status="rejected", chosen=False, jev={"verdict": "no", "value": 0.12}))
+    hub.decision(decision(guardrail="-", jev={"verdict": "no", "value": 0.12}))
     first, second = get(port, "/state")[2]["decisions"]
     assert (first["guardrail"], second["guardrail"], second["jev"]) == ("denied", "-", {"verdict": "no"})
     assert numbers(first).isdisjoint({301.0, 270.0, 26.0}) and "0.12" not in json.dumps(second)
+
+
+def test_a_rejected_accept_carries_no_price_offer_id_or_counterparty(served):
+    hub, port = served
+    board = {"offer_id": 9137, "venue": "rastro", "maker": "t07", "ref": "LAV-02", "rarity": "common", "ask": 9}
+    skipped = decision(
+        inputs={**board, "fee": 1, "total": 10, "value": 20.8},
+        guardrail="-",
+        status="rejected",
+        chosen=False,
+        jev={"verdict": "no", "value": 0.31},
+        thread_id=4,
+        move={"accept": 9137, "price": 10},
+    )
+    hub.decision(skipped)
+    (d,) = get(port, "/state")[2]["decisions"]
+    assert d == {
+        "agent": "taker",
+        "tick": 100,
+        "kind": "accept_ask",
+        "status": "rejected",
+        "guardrail": "-",
+        "jev": None,
+        "inputs": {"ref": "LAV-02", "venue": "rastro"},
+        "move": {},
+    }
+    assert numbers(d) == {100.0, 2.0}  # the tick and LAV-02; no offer id, ask, fee or price
 
 
 def test_a_price_we_never_sent_is_not_published(served):

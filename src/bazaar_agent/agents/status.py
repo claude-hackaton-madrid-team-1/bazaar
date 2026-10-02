@@ -54,6 +54,8 @@ INPUT_FIELDS = frozenset(  # the card, where, with whom, and the counterparty's 
     {"dealer", "thread", "item", "ref", "card", "rarity", "side", "venue", "offer_id", "maker"}
     | {"ask", "her_ask", "fee", "final"}
 )
+UNSENT_FIELDS = frozenset({"tick", "kind", "status"})  # a row not sent: no counterparty, offer id or price
+UNSENT_INPUT_FIELDS = frozenset({"item", "ref", "card", "venue", "side"})
 INPUT_GROUPS = ("offer", "listing")  # maker_jev's states nest the card they are about one level down
 SENT_PRICE = "price"  # our own price is public once posted: shown on an approved (sent or would-send) row only
 MOVE_FIELDS = frozenset(
@@ -79,18 +81,21 @@ def _guardrail(verdict: object) -> str:
 
 
 def public_decision(row: dict[str, Any]) -> dict[str, Any]:
-    """What /state and /events show of one decision: what the agent did, never its private numbers."""
+    """What /state and /events show of one decision: what the agent did, never its private numbers.
+    A row that was not sent (rejected, skipped, expired) shows only the card, where and its status: a
+    rival who lists a card and sees our `skip ... accept quota` row for its offer and price would learn
+    that its ask sat below our value."""
     sent = row.get("status") == "approved"
-    fields = INPUT_FIELDS | {SENT_PRICE} if sent else INPUT_FIELDS
+    fields = INPUT_FIELDS | {SENT_PRICE} if sent else UNSENT_INPUT_FIELDS
     raw = row.get("inputs")
     inputs: dict[str, Any] = {}
     for group in (raw, *(raw.get(g) for g in INPUT_GROUPS)) if isinstance(raw, dict) else ():
         inputs.update({k: v for k, v in _pick(group, fields).items() if isinstance(v, SCALAR)})
     jev = row.get("jev")
     return {
-        **_pick(row, DECISION_FIELDS),
+        **_pick(row, DECISION_FIELDS if sent else UNSENT_FIELDS),
         "guardrail": _guardrail(row.get("guardrail")),
-        "jev": {"verdict": jev.get("verdict")} if isinstance(jev, dict) else None,
+        "jev": {"verdict": jev.get("verdict")} if isinstance(jev, dict) and sent else None,
         "inputs": inputs,
         "move": _pick(row.get("move"), MOVE_FIELDS) if sent else {},
     }
