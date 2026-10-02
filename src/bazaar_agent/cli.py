@@ -737,7 +737,7 @@ def open_stream(settings: Any, emit: Callable[[Any], None]) -> Any:
     """The monitor's live feed: ONE SSE connection with our key (tests replace this factory)."""
     from bazaar_agent.stream import EventStream
 
-    key = settings.bazaar_key.get_secret_value() if settings.bazaar_key else None
+    key = settings.team_key()  # the same sim-/real guard as every team request
     return EventStream(settings.bazaar_url, key, emit)
 
 
@@ -797,7 +797,7 @@ def traders() -> None:
 
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as cx:
+    with db.connect(load_settings().require_database_url()) as cx:
         rows = db.trader_rows(cx)
     t = Table(title=f"Traders · {len(rows)} (kept current by `bazaar monitor`)")
     for col in ("id", "kind", "name", "status", "level", "first seen", "last seen"):
