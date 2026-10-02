@@ -181,3 +181,13 @@ def test_objects_use_javascript_key_order_and_compact_separators() -> None:
 def test_lengths_count_utf16_code_units_like_javascript() -> None:
     assert utf16_length("ab") == 2
     assert utf16_length("\U0001f600") == 2
+
+
+def test_credentials_hidden_in_field_names_or_prefixed_fields_never_leave():
+    from bazaar_agent.jev.mask import mask_state
+
+    out = mask_state(
+        {"token_value": "opaque", "client_secret_id": "x", "sk-live-abcdefghijklmnopqrstu": "v", "ok": "1"}
+    )
+    assert out["token_value"] == "[redacted]" and out["client_secret_id"] == "[redacted]"
+    assert "sk-live-abcdefghijklmnopqrstu" not in out and out["ok"] == "1"

@@ -82,10 +82,13 @@ def run_per_tick(
     handled, last_tick = 0, None
     while (max_ticks is None or handled < max_ticks) and not (stop and stop()):
         clock = Clock.model_validate(read_clock())
+        started = time.monotonic()
         if clock.is_live and clock.tick != last_tick:
             on_tick(clock)
             last_tick, handled = clock.tick, handled + 1
             if (max_ticks is not None and handled >= max_ticks) or (stop and stop()):
                 break
-        sleep(seconds_until_next_tick(clock))
+        # The clock was read before on_tick did its work: subtract that time, or we oversleep.
+        worked = time.monotonic() - started if clock.is_live else 0.0
+        sleep(max(MIN_SLEEP_S, seconds_until_next_tick(clock) - worked))
     return handled

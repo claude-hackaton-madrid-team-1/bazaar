@@ -41,7 +41,8 @@ _CI = re.ASCII | re.IGNORECASE
 
 # Credential-bearing JSON fields are masked before inspecting their values.
 _CREDENTIAL_FIELD_NAME = re.compile(
-    r"(?:api[_-]?key|secret|token|password|passphrase|private[_-]?key|signing[_-]?key|authorization)\Z",
+    # Anywhere in the name, not only at the end: `token_value` and `client_secret_id` hold credentials too.
+    r"(?:api[_-]?key|secret|token|password|passphrase|private[_-]?key|signing[_-]?key|authorization|credential|cookie)",
     _CI,
 )
 
@@ -156,6 +157,11 @@ def mask_text(text: str) -> str:
     return masked
 
 
+def _masked_key(key: str, index: int) -> str:
+    """A field name is sent too: one that looks like a credential is replaced, numbered to stay unique."""
+    return key if mask_text(key) == key.strip() or not key.strip() else f"{JEV_REDACTION}#{index}"
+
+
 def mask_state(state: object) -> JsonValue:
     """The masked form of a state: every string is masked, every number and boolean is kept."""
     if state is None or isinstance(state, bool | int | float):
@@ -166,8 +172,10 @@ def mask_state(state: object) -> JsonValue:
         return [mask_state(entry) for entry in state]
     if isinstance(state, Mapping):
         return {
-            str(key): JEV_REDACTION if _CREDENTIAL_FIELD_NAME.search(str(key)) else mask_state(entry)
-            for key, entry in state.items()
+            _masked_key(str(key), index): JEV_REDACTION
+            if _CREDENTIAL_FIELD_NAME.search(str(key))
+            else mask_state(entry)
+            for index, (key, entry) in enumerate(state.items())
         }
     raise TypeError(f"a Jev state holds JSON values only, not {type(state).__name__}")
 

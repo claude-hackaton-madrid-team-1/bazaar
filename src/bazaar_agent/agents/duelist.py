@@ -33,6 +33,21 @@ def _rival_price(duel: dict[str, Any]) -> int | None:
     return None
 
 
+def effective_price(duel: dict[str, Any], price: int) -> float | None:
+    """The rival's price, adjusted for delivery days in two-issue duels. None = cannot value it safely.
+
+    The sign of `your_days_weight` is not verified yet, so we assume the worst: days always cost us.
+    """
+    if "days" not in (duel.get("issues") or []):
+        return float(price)
+    offer = duel.get("rival_offer") or {}
+    days, weight = offer.get("days"), duel.get("your_days_weight")
+    if not isinstance(days, int | float) or not isinstance(weight, int | float):
+        return None
+    penalty = abs(float(weight)) * float(days)
+    return price - penalty if duel.get("role") == "seller" else price + penalty
+
+
 def our_target(limit: int, role: str, progress: float, anchor: float = ANCHOR, floor: float = FLOOR_MARGIN) -> int:
     """Our ask (seller) or bid (buyer) at `progress` 0..1 of the duel: anchor → limit ± margin."""
     progress = min(1.0, max(0.0, progress))
@@ -64,8 +79,9 @@ def duel_move(
     target = our_target(limit, role, (tick - started_tick) / total, anchor, floor)
     days = 5 if "days" in (duel.get("issues") or []) else None  # neutral until the days module (#7)
     rival = _rival_price(duel)
-    if rival is not None and inside_limit(rival, limit, role):
-        good_enough = rival >= target if role == "seller" else rival <= target
+    worth = effective_price(duel, rival) if rival is not None else None
+    if rival is not None and worth is not None and inside_limit(round(worth), limit, role):
+        good_enough = worth >= target if role == "seller" else worth <= target
         if good_enough or left <= endgame_ticks:
             return DuelMove(
                 "accept", rival, reason="rival meets our target" if good_enough else "endgame, inside limit"

@@ -1,7 +1,14 @@
 #!/usr/bin/env sh
 # Keep README.md's live status block current for teammates and agents (Python stdlib only).
+# Only stages README.md when it had no unstaged edits of its own, so a half-staged README is never
+# swept into the commit; otherwise it regenerates in place and asks you to stage it yourself.
 set -eu
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
-python3 scripts/readme_status.py >/dev/null
-git add README.md
+if git diff --quiet -- README.md; then
+	python3 scripts/readme_status.py >/dev/null
+	git diff --quiet -- README.md || git add README.md
+else
+	python3 scripts/readme_status.py >/dev/null
+	echo "README.md has unstaged edits: status block regenerated but NOT staged. Review and 'git add README.md'." >&2
+fi
