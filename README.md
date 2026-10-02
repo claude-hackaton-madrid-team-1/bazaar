@@ -802,6 +802,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
 | [#67](../../pull/67) | docs: sync the plan's task index with the triaged GitHub issues | `docs/plan-issue-triage` |
 | [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | `ogarciarevett/docs-architecture-runtime` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
