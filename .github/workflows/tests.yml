@@ -22,3 +22,5 @@ jobs:
           uv run mypy src
       - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
         run: uv run pytest tests -v -rs
+      - name: Web view reducer
+        run: node --test tests/web

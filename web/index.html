@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Bazaar Agent Live</title>
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header id="top">
+    <div class="brand"><span class="logo">BAZAAR</span><span id="team" class="team"></span></div>
+    <div class="clock">
+      <span id="day" class="day"></span>
+      <span id="tick" class="tick"></span>
+      <span class="tickbar" aria-hidden="true"><span id="tickfill"></span></span>
+    </div>
+    <form id="wsform" class="ws">
+      <span id="wsdot" class="dot"></span>
+      <span id="wsstatus" class="wsstatus"></span>
+      <input id="wsurl" spellcheck="false" aria-label="WebSocket URL">
+    </form>
+    <div class="actions">
+      <button id="pause" type="button" title="Freeze the view (space)">Pause</button>
+      <button id="theme" type="button" title="Switch light / dark">◐</button>
+    </div>
+  </header>
+
+  <section id="tiles" class="tiles"></section>
+
+  <main class="grid">
+    <section class="panel" id="loop-panel">
+      <h2>Agent loop</h2>
+      <div id="phase" class="phase"></div>
+      <div id="goal" class="goal"></div>
+      <ol id="log" class="log"></ol>
+    </section>
+
+    <section class="panel" id="negs-panel">
+      <h2>Negotiations <span class="legend"><i class="sw us"></i>us <i class="sw them"></i>them</span></h2>
+      <div id="threads" class="threads"></div>
+      <h3>Duels</h3>
+      <div id="duels"></div>
+    </section>
+
+    <section class="panel" id="side-panel">
+      <h2>Album</h2>
+      <div id="album" class="album"></div>
+      <div id="rarity-legend" class="rarity-legend"></div>
+      <h2 class="spaced">Score</h2>
+      <div id="score" class="score"></div>
+    </section>
+  </main>
+
+  <section class="grid bottom">
+    <section class="panel" id="tape-panel">
+      <h2>Market tape <span id="tapestats" class="sub"></span></h2>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Which trades">
+          <button type="button" data-tape="all" class="on">All</button>
+          <button type="button" data-tape="ours">Ours</button>
+        </div>
+        <input id="tapeq" type="search" placeholder="team, card, venue, id…" aria-label="Filter trades">
+      </div>
+      <div class="scroll"><table id="tape" class="table"></table></div>
+    </section>
+
+    <section class="panel" id="events-panel">
+      <h2>Event stream <span id="evstats" class="sub"></span></h2>
+      <div class="controls">
+        <input id="evq" type="search" placeholder="type, actor, id…" aria-label="Filter events">
+        <label class="check"><input id="hideagent" type="checkbox"> hide agent.*</label>
+      </div>
+      <div class="scroll"><table id="events" class="table"></table></div>
+    </section>
+  </section>
+
+  <aside id="inspector" class="inspector" hidden>
+    <div class="insp-head">
+      <strong id="insp-title"></strong>
+      <span>
+        <button id="insp-copy" type="button">Copy</button>
+        <button id="insp-close" type="button" aria-label="Close">✕</button>
+      </span>
+    </div>
+    <div id="insp-meta" class="insp-meta"></div>
+    <pre id="insp-json"></pre>
+  </aside>
+
+  <div id="tip" class="tip" hidden></div>
+</body>
+</html>
