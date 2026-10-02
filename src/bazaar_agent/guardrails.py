@@ -50,6 +50,7 @@ class Guardrails(BaseModel):
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
+    duel_inside_limit: bool = True
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
@@ -83,6 +84,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
+    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
@@ -247,6 +249,10 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
+    role: str | None = None  # duels: "seller" | "buyer"
+    days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
+    days_weight: float | None = None  # two-issue duels: `your_days_weight`
 
 
 @dataclass(frozen=True)
@@ -330,4 +336,25 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
+        v.extend(_duel_limit_violations(action))
     return Verdict(not v, tuple(v))
+
+
+def _duel_limit_violations(action: Action) -> list[str]:
+    """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
+    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here."""
+    if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
+        return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
+    if action.days is not None and action.days_weight is None:
+        return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
+    penalty = abs(action.days_weight or 0.0) * (action.days or 0.0)
+    seller = action.role == "seller"
+    worth = action.price - penalty if seller else action.price + penalty
+    if (worth > action.limit) if seller else (worth < action.limit):
+        return []
+    side = "above" if seller else "below"
+    return [
+        f"duel {action.role} price {action.price} is worth {worth:g}, not strictly {side} limit "
+        f"{action.limit} (duel_inside_limit)"
+    ]

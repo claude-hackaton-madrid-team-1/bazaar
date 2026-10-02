@@ -142,3 +142,19 @@ def test_rounding_goes_toward_our_side_of_the_limit():
 def test_a_two_issue_duel_without_our_days_weight_holds():
     assert duel_move(two_issue(weight=None), tick=105, started_tick=100).kind == "hold"
     assert duel_move(two_issue(weight=None, rival=500), tick=111, started_tick=100).kind == "hold"
+
+
+def test_the_guardrail_action_carries_the_terms_we_would_agree_to():
+    from bazaar_agent.agents.duelist import DuelMove, duel_action
+
+    d = two_issue(weight=-3.0)
+    d["rival_offer"] = {"price": 130, "days": 4}
+    accept = duel_action(d, DuelMove("accept", 130))
+    assert (accept.kind, accept.price, accept.days, accept.days_weight) == ("duel_accept", 130, 4, -3.0)
+    assert (accept.limit, accept.role, accept.item) == (100, "seller", "1")
+    offer = duel_action(d, DuelMove("offer", 150, 2))
+    assert (offer.kind, offer.price, offer.days) == ("duel_offer", 150, 2)
+    d["rival_offer"] = {"price": 130}  # days unreadable: nothing the guardrail can value
+    assert duel_action(d, DuelMove("accept", 130)).price is None
+    price_only = duel_action(duel(rival=60), DuelMove("accept", 60))
+    assert (price_only.price, price_only.days, price_only.limit) == (60, None, 50)

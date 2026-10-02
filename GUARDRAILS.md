@@ -38,6 +38,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `duel_anchor` = 0.6 — open this far beyond our limit (fraction of the limit).
 - `duel_floor_margin` = 0.05 — do not settle closer than this to our limit until the endgame.
 - `duel_endgame_ticks` = 2 — in the last ticks, accept any rival offer strictly inside our limit.
+- `duel_inside_limit` = true — refuse any duel offer or accept whose price, after the worst-case cost of its days (|`your_days_weight`| per day), is not strictly inside our limit.
 
 ## Steering (`bazaar steer`)
 - `steer_max_change` = 0.5 — a steering delta moves a parameter by at most this fraction of its base value (0.5 = ±50 %), then its hard range applies.

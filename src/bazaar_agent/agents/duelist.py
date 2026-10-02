@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from bazaar_agent.agents.words import WordsRequest
+from bazaar_agent.guardrails import Action
 
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
@@ -141,6 +142,24 @@ def duel_move(
     if price < 1 or ours is None or not inside_limit(ours, limit, role):
         return DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
     return DuelMove("offer", price, days, reason=f"concede toward limit ({left} ticks left)")
+
+
+def duel_action(duel: Mapping[str, Any], move: DuelMove) -> Action:
+    """The guardrail's view of a duel move: the price and days we would agree to, with our limit and role.
+    An accept takes the rival's days. Two-issue terms we cannot read go out without a price (denied)."""
+    days = (duel.get("rival_offer") or {}).get("days") if move.kind == "accept" else move.days
+    n_days = _number(days) if _two_issue(duel) else None
+    price = move.price if not _two_issue(duel) or n_days is not None else None
+    limit, role = duel.get("your_limit"), duel.get("role")
+    return Action(
+        "duel_accept" if move.kind == "accept" else "duel_offer",
+        str(duel_id(duel)),
+        price=price,
+        limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else None,
+        role=role if isinstance(role, str) else None,
+        days=n_days,
+        days_weight=_number(duel.get("your_days_weight")),
+    )
 
 
 def template_duel_words(request: WordsRequest) -> str:
