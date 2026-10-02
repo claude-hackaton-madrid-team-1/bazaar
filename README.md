@@ -300,6 +300,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
 | [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
 | [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
@@ -311,12 +312,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
 | [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
 | [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
-| [#27](../../pull/27) | docs: translate the team briefing to English | Fri 20:35 | `caaecba` |
 
 ### Open pull requests
 
-| PR | Title | Branch |
-|---|---|---|
-| [#38](../../pull/38) | fix: greet the dealer we are actually talking to | `fix/dealer-greeting` |
+_No open PRs (or `gh` unavailable)._
 
 <!-- BAZAAR:ACTIVITY:END -->
