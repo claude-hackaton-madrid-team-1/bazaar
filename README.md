@@ -365,6 +365,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | Fri 22:34 | `a7c09df` |
 | [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | Fri 22:31 | `7813244` |
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
 | [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
@@ -376,12 +377,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#31](../../pull/31) | fix: close the Greptile P1s on the live trading path | Fri 21:34 | `808dc3e` |
 | [#30](../../pull/30) | feat: GUARDRAILS.md rule book, enforced by the runtime and shown in the CLI | Fri 21:29 | `239bb72` |
 | [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
-| [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
 
 ### Open pull requests
 
-| PR | Title | Branch |
-|---|---|---|
-| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | `ogarciarevett/feat-monitor-realtime` |
+_No open PRs (or `gh` unavailable)._
 
 <!-- BAZAAR:ACTIVITY:END -->
