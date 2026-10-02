@@ -92,8 +92,9 @@ figure against the official kit (`vendor/bazaar-kit/`, rules in `RULES.md`) befo
 
 ## Stack (LOCKED — do not relitigate)
 Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan B, checked against
-`docs/api/openapi.json`) · pydantic v2 at every boundary · Postgres 17 + pgvector (docker compose)
-via psycopg 3, plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
+`docs/api/openapi.json`) · pydantic v2 at every boundary · Postgres 17 + pgvector (docker compose
+locally, or the team's shared Railway Postgres via `DATABASE_URL`; pgvector optional) via psycopg 3,
+plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
 Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint + format) · mypy.
 NO TypeScript, NO Rust, NO bun/node at runtime (`vendor/jev-sdk` is reference only) · NO ORM ·
 NO LLM in the executor path · NO wall-clock scheduling (game ticks only).

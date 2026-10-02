@@ -1,29 +1,55 @@
-"""Postgres access: plain SQL through psycopg 3, no ORM."""
+"""Postgres access: plain SQL through psycopg 3, no ORM.
+
+Several writers may share one database (a monitor on each laptop, all on the team's Railway
+Postgres), so every write is idempotent and never moves a row backwards: rows are written in key
+order (no deadlock between writers), stale ticks do not overwrite newer ones, alerts have a natural
+key, and only the writer holding the oldest history rebuilds the history-derived tables.
+"""
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
 
 import psycopg
 from psycopg import sql as pgsql
 
-from bazaar_agent.intel import Print, dealer_threads, set_of, tape
+from bazaar_agent.config import load_settings
+from bazaar_agent.intel import Print, dealer_threads, set_of, tape, team_flows
+from bazaar_agent.pgconn import DatabaseUrlError, Target, describe, redact
+from bazaar_agent.pgconn import connect as connect
 
 Event = dict[str, Any]
 
 
-def connect(database_url: str) -> psycopg.Connection:
-    return psycopg.connect(database_url, connect_timeout=5)
-
-
-def init_schema(conn: psycopg.Connection) -> None:
+def init_schema(conn: psycopg.Connection) -> bool:
+    """Apply the schema (idempotent, safe beside other sessions). True when pgvector is on."""
     sql = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
     with conn.cursor() as cur:
         cur.execute(sql)  # type: ignore[arg-type]  # trusted file shipped in the package
     conn.commit()
+    return pgvector_version(conn) is not None
+
+
+def connect_ready(app: str) -> psycopg.Connection:
+    """A connection to DATABASE_URL with the schema applied: what a long-running writer opens."""
+    conn = connect(app=app)
+    try:
+        init_schema(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def pgvector_version(conn: psycopg.Connection) -> str | None:
+    row = conn.execute("select extversion from pg_extension where extname = 'vector'").fetchone()
+    conn.commit()
+    return str(row[0]) if row else None
 
 
 def table_counts(conn: psycopg.Connection) -> list[tuple[str, int]]:
@@ -40,8 +66,8 @@ def table_counts(conn: psycopg.Connection) -> list[tuple[str, int]]:
 
 def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, int]:
     """Insert raw events and their settlements (tape). Safe on any subset: conflicts are ignored."""
-    events = list(events)
-    prints: list[Print] = tape(events)
+    events = sorted(events, key=lambda e: e["id"])
+    prints: list[Print] = sorted(tape(events), key=lambda p: p.settlement)
     with conn.cursor() as cur:
         cur.executemany(
             "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s) "
@@ -72,15 +98,19 @@ def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, 
 
 
 def load_curves(conn: psycopg.Connection, events: Iterable[Event]) -> int:
-    """Rebuild dealer curves. Needs the FULL history: a partial window would overwrite good rows."""
-    curves = dealer_threads(events)
+    """Rebuild dealer curves from a FULL history (see `covers_history`). A curve only grows: a writer
+    that is behind (fewer steps, a shorter span, no fill yet) never overwrites a fresher row."""
+    curves = dealer_threads(events)  # sorted by thread id
     with conn.cursor() as cur:
         cur.executemany(
             "insert into dealer_curves (thread_id, dealer, team, item, opening_ask, asks, bids, final_ask, "
             "outcome, fill_price, steps, ticks) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "on conflict (thread_id) do update set asks = excluded.asks, bids = excluded.bids, "
             "final_ask = excluded.final_ask, outcome = excluded.outcome, fill_price = excluded.fill_price, "
-            "steps = excluded.steps, ticks = excluded.ticks",
+            "steps = excluded.steps, ticks = excluded.ticks "
+            "where excluded.steps >= coalesce(dealer_curves.steps, 0) "
+            "and excluded.ticks >= coalesce(dealer_curves.ticks, 0) "
+            "and (excluded.fill_price is not null or dealer_curves.fill_price is null)",
             [
                 (
                     t.thread,
@@ -103,14 +133,42 @@ def load_curves(conn: psycopg.Connection, events: Iterable[Event]) -> int:
     return len(curves)
 
 
+def covers_history(conn: psycopg.Connection, events: list[Event]) -> bool:
+    """True when `events` reach back as far as the stored feed (call it after `load_events`).
+
+    dealer_curves and competitor_profiles are rebuilt from a writer's whole capture. A teammate whose
+    capture started later holds only the recent window, and its rebuild would replace counts built
+    from more history, so the writer with the oldest history owns those tables.
+    """
+    if not events:
+        return False
+    row = conn.execute("select min(id) from feed_events").fetchone()
+    conn.commit()
+    oldest = row[0] if row else None
+    return oldest is None or min(e["id"] for e in events) <= oldest
+
+
 def load_feed(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, int]:
-    """Upsert raw events, the tape and the rebuilt dealer curves from the full history. Idempotent."""
+    """Upsert raw events and the tape; rebuild dealer curves when this history is complete. Idempotent."""
     events = list(events)
     counts = load_events(conn, events)
-    return {**counts, "dealer_curves": load_curves(conn, events)}
+    return {**counts, "dealer_curves": load_curves(conn, events) if covers_history(conn, events) else 0}
+
+
+def load_history(conn: psycopg.Connection, events: Iterable[Event], tick: int) -> bool:
+    """The monitor's periodic rebuild. False when the derived tables were left to a fuller history."""
+    events = list(events)
+    load_events(conn, events)
+    if not covers_history(conn, events):
+        return False
+    load_curves(conn, events)
+    save_competitors(conn, team_flows(events), tick)
+    return True
 
 
 def upsert_traders(conn: psycopg.Connection, snapshots: Iterable[Any], tick: int) -> int:
+    """Upsert every trader seen at `tick`. A writer at an older tick never overwrites a newer row,
+    and a snapshot without a level (most feed events carry none) keeps the known one."""
     rows = [
         (
             t.trader_id,
@@ -125,31 +183,41 @@ def upsert_traders(conn: psycopg.Connection, snapshots: Iterable[Any], tick: int
             t.status,
             tick,
         )
-        for t in snapshots
+        for t in sorted(snapshots, key=lambda s: s.trader_id)
     ]
     with conn.cursor() as cur:
         cur.executemany(
             "insert into traders (id, kind, name, level, traits, menu, unlock, first_seen_tick, last_seen_tick, "
             "status, updated_tick) values (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s) "
-            "on conflict (id) do update set name = excluded.name, level = excluded.level, traits = excluded.traits, "
-            "menu = excluded.menu, unlock = excluded.unlock, last_seen_tick = excluded.last_seen_tick, "
-            "status = excluded.status, updated_tick = excluded.updated_tick",
+            "on conflict (id) do update set name = excluded.name, "
+            "level = coalesce(excluded.level, traders.level), traits = excluded.traits, "
+            "menu = excluded.menu, unlock = excluded.unlock, "
+            "first_seen_tick = least(traders.first_seen_tick, excluded.first_seen_tick), "
+            "last_seen_tick = greatest(traders.last_seen_tick, excluded.last_seen_tick), "
+            "status = excluded.status, updated_tick = excluded.updated_tick "
+            "where traders.updated_tick is null or excluded.updated_tick >= traders.updated_tick",
             rows,
         )
     conn.commit()
     return len(rows)
 
 
-def insert_alerts(conn: psycopg.Connection, alerts: Iterable[Any]) -> None:
+def insert_alerts(conn: psycopg.Connection, alerts: Iterable[Any]) -> int:
+    """Insert alerts; one another monitor already stored (same tick, kind, subject, detail) is skipped.
+    Returns how many were new."""
+    rows = sorted({(a.tick, a.kind, a.subject, a.detail) for a in alerts})
     with conn.cursor() as cur:
         cur.executemany(
-            "insert into alerts (tick, kind, subject, detail) values (%s, %s, %s, %s)",
-            [(a.tick, a.kind, a.subject, a.detail) for a in alerts],
+            "insert into alerts (tick, kind, subject, detail) values (%s, %s, %s, %s) on conflict do nothing",
+            rows,
         )
+        added = max(cur.rowcount, 0)
     conn.commit()
+    return added
 
 
 def save_snapshot(conn: psycopg.Connection, tick: int, me: dict[str, Any]) -> None:
+    """Our /api/me at `tick`. Two monitors in the same tick store the same team's state: last one wins."""
     with conn.cursor() as cur:
         cur.execute(
             "insert into snapshots (tick, cash, level, assets, album, score) values (%s, %s, %s, %s, %s, %s) "
@@ -178,7 +246,7 @@ def save_competitors(conn: psycopg.Connection, flows: Iterable[Any], tick: int) 
             json.dumps({"buys": f.buys, "sells": f.sells, "spent": f.spent, "earned": f.earned}),
             json.dumps({"top_set": f.top_set, "dealer_threads": f.dealer_threads, "bids": f.bids}),
         )
-        for f in flows
+        for f in sorted(flows, key=lambda f: f.team)
     ]
     with conn.cursor() as cur:
         cur.executemany(
@@ -186,8 +254,85 @@ def save_competitors(conn: psycopg.Connection, flows: Iterable[Any], tick: int) 
             "notes) values (%s, %s, %s, %s, %s, %s, %s) on conflict (team) do update set "
             "updated_tick = excluded.updated_tick, "
             "set_interest = excluded.set_interest, avg_pack_price = excluded.avg_pack_price, "
-            "listings = excluded.listings, fills = excluded.fills, notes = excluded.notes",
+            "listings = excluded.listings, fills = excluded.fills, notes = excluded.notes "
+            "where competitor_profiles.updated_tick is null "
+            "or excluded.updated_tick >= competitor_profiles.updated_tick",
             rows,
         )
     conn.commit()
     return len(rows)
+
+
+# ---------------------------------------------------------------- `bazaar db check`
+
+
+@dataclass(frozen=True)
+class CheckReport:
+    server_version: str
+    round_trips_ms: tuple[float, ...]
+    ssl: bool
+    pgvector: str | None  # installed version
+    pgvector_shipped: bool  # the server has the extension files: `bazaar db init` can turn it on
+    tables: list[tuple[str, int]]
+
+
+def check(database_url: str, round_trips: int = 3) -> CheckReport:
+    with connect(database_url, app="bazaar-check") as conn:
+        timings = []
+        for _ in range(round_trips):
+            start = time.perf_counter()
+            conn.execute("select 1").fetchone()
+            timings.append((time.perf_counter() - start) * 1000)
+        version = conn.execute("show server_version").fetchone()
+        ssl = conn.execute("select ssl from pg_stat_ssl where pid = pg_backend_pid()").fetchone()
+        shipped = conn.execute("select 1 from pg_available_extensions where name = 'vector'").fetchone()
+        return CheckReport(
+            server_version=str(version[0]) if version else "?",
+            round_trips_ms=tuple(timings),
+            ssl=bool(ssl and ssl[0]),
+            pgvector=pgvector_version(conn),
+            pgvector_shipped=shipped is not None,
+            tables=table_counts(conn),
+        )
+
+
+def _target_line(target: Target) -> str:
+    where = "local default URL: yes (docker compose)" if target.is_local_default else "local default URL: no"
+    return f"target    {target} · {where}"
+
+
+def report_lines(report: CheckReport, target: Target) -> list[str]:
+    pgvector = (
+        f"on ({report.pgvector})"
+        if report.pgvector
+        else "off: shipped, run `bazaar db init`"
+        if report.pgvector_shipped
+        else "off: this server has no pgvector (embedding columns skipped)"
+    )
+    width = max((len(name) for name, _ in report.tables), default=0)
+    tables = [f"  {name:<{width}}  {n:>7}" for name, n in report.tables]
+    return [
+        f"server    PostgreSQL {report.server_version}",
+        f"ssl       {'on' if report.ssl else 'off'} (sslmode {target.sslmode})",
+        f"latency   {' / '.join(f'{ms:.1f}' for ms in report.round_trips_ms)} ms "
+        f"({len(report.round_trips_ms)} round trips)",
+        f"pgvector  {pgvector}",
+        f"tables    {len(report.tables) or 'none: run `bazaar db init`'}",
+        *tables,
+    ]
+
+
+def run_check(database_url: str | None = None) -> tuple[bool, list[str]]:
+    """`bazaar db check`: (reachable, lines to print). No line ever carries the password."""
+    url = load_settings().database_url.get_secret_value() if database_url is None else database_url
+    try:
+        target = describe(url)
+    except DatabaseUrlError as e:
+        return False, [str(e)]
+    lines = [_target_line(target)]
+    try:
+        return True, lines + report_lines(check(url), target)
+    except psycopg.Error as e:
+        detail = (redact(str(e), url).strip().splitlines() or ["?"])[0]  # first attempt; the rest repeats it
+        hint = "start it with `uv run bazaar db up`" if target.is_local_default else "check DATABASE_URL in .env"
+        return False, [*lines, f"unreachable: {detail}", f"hint      {hint}"]

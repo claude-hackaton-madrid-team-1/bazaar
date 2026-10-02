@@ -17,7 +17,7 @@ from bazaar_agent.ticks import Clock, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
 feed_app = typer.Typer(no_args_is_help=True, help="Capture and inspect the public feed")
-db_app = typer.Typer(no_args_is_help=True, help="Local Postgres + pgvector memory")
+db_app = typer.Typer(no_args_is_help=True, help="Postgres memory: local docker or the shared Railway DB")
 app.add_typer(feed_app, name="feed")
 app.add_typer(db_app, name="db")
 dealer_app = typer.Typer(no_args_is_help=True, help="Negotiate with dealers (one move per tick)")
@@ -404,26 +404,14 @@ def monitor(
     """The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts."""
     from bazaar_agent import db
     from bazaar_agent import monitor as mon
+    from bazaar_agent.pgconn import Reconnector
 
     settings = load_settings()
     public, store = public_client(settings), FeedStore(settings.feed_dir)
     team = team_client(settings) if settings.bazaar_key else None
     alerts_path = settings.data_dir / "alerts.jsonl"
-    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "conn": None, "ticks": 0, "db_warned": False}
-
-    def conn() -> Any:
-        if not db_enabled:
-            return None
-        if state["conn"] is None or state["conn"].closed:
-            try:
-                state["conn"] = db.connect(settings.database_url.get_secret_value())
-                db.init_schema(state["conn"])
-            except Exception as e:  # Postgres down: keep capturing JSONL, warn once
-                if not state["db_warned"]:
-                    console.print(f"[yellow]Postgres unavailable ({type(e).__name__}); JSONL only[/yellow]")
-                    state["db_warned"] = True
-                state["conn"] = None
-        return state["conn"]
+    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "ticks": 0}
+    pg = Reconnector(lambda: db.connect_ready("bazaar-monitor"), lambda m: console.print(f"[yellow]{m}[/yellow]"))
 
     def raise_alerts(alerts: list[Any]) -> None:
         mon.append_alerts(alerts_path, alerts)
@@ -475,7 +463,7 @@ def monitor(
                 me = team.me()
             except BazaarError as e:
                 console.print(f"tick {c.tick}: /me refused {e.code}")
-        cx = conn()
+        cx = pg.get() if db_enabled else None
         if cx is not None:
             try:
                 db.load_events(cx, new_events)
@@ -484,13 +472,11 @@ def monitor(
                     db.save_snapshot(cx, c.tick, me)
                 if alerts:
                     db.insert_alerts(cx, alerts)
-                if history is not None:
-                    db.load_events(cx, history)
-                    db.load_curves(cx, history)
-                    db.save_competitors(cx, intel.team_flows(history), c.tick)
+                if history is not None and not db.load_history(cx, history, c.tick):
+                    console.print(f"tick {c.tick}: curves/competitors left to the monitor with older history")
             except Exception as e:
                 console.print(f"[yellow]tick {c.tick}: DB write failed ({type(e).__name__}: {str(e)[:80]})[/yellow]")
-                state["conn"] = None
+                pg.drop()
         raise_alerts(alerts)
         gap = " [red]GAP POSSIBLE[/red]" if result.gap_possible else ""
         cash = (
@@ -595,14 +581,26 @@ def db_up() -> None:
     subprocess.run(["docker", "compose", "up", "-d", "--wait", "db"], cwd=REPO_ROOT, check=True)
 
 
-@db_app.command("init")
-def db_init() -> None:
-    """Create every table (idempotent)."""
+@db_app.command("check")
+def db_check() -> None:
+    """Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts."""
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
-        db.init_schema(conn)
-    console.print("[green]schema applied[/green]")
+    ok, lines = db.run_check()
+    for line in lines:
+        console.print(line, highlight=False, markup=False, soft_wrap=True)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@db_app.command("init")
+def db_init() -> None:
+    """Create every table (idempotent, safe while other processes are connected)."""
+    from bazaar_agent import db
+
+    with db.connect() as conn:
+        vector = db.init_schema(conn)
+    console.print("[green]schema applied[/green] · pgvector " + ("on" if vector else "off: embedding columns skipped"))
     db_tables()
 
 
@@ -611,7 +609,7 @@ def db_load(live: bool = typer.Option(True, help=LIVE_HELP)) -> None:
     """Load the captured feed into feed_events, tape and dealer_curves (idempotent)."""
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
+    with db.connect() as conn:
         counts = db.load_feed(conn, _events(live))
     console.print(f"[green]loaded[/green] {counts}")
 
@@ -623,7 +621,7 @@ def db_tables() -> None:
 
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as conn:
+    with db.connect() as conn:
         counts = db.table_counts(conn)
     t = Table(title="bazaar db")
     t.add_column("table")

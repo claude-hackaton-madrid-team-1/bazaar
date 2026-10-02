@@ -1,6 +1,19 @@
--- Bazaar memory schema (spec .ai/specs/01-spec.md §5). Idempotent: safe to re-run.
--- All ticks are game ticks. Embeddings are 384-d (local fastembed model, Phase 1).
-create extension if not exists vector;
+-- Bazaar memory schema (spec .ai/specs/01-spec.md §5). All ticks are game ticks.
+-- Idempotent and safe to re-run while other processes are connected (several laptops share one
+-- Railway Postgres): one transaction, serialized by an advisory lock, with a lock timeout so a
+-- busy table makes `init` fail fast instead of queueing every other session behind it.
+-- Works without pgvector (Railway's default image has none): the 384-d embedding columns (local
+-- fastembed model) are added at the end, only when the extension exists.
+set local lock_timeout = '15s';
+select pg_advisory_xact_lock(hashtext('bazaar_agent.schema'));
+
+-- pgvector when the server ships it. Always in `public`, never in a test schema that gets dropped.
+do $$
+begin
+  create extension if not exists vector with schema public;
+exception when others then
+  raise notice 'pgvector unavailable (%): embedding columns skipped', sqlerrm;
+end $$;
 
 -- Reference data
 create table if not exists cards (
@@ -9,7 +22,7 @@ create table if not exists cards (
 create table if not exists traders (
   id text primary key, kind text check (kind in ('dealer','team','bench','rival_alias')),
   name text, level int, traits jsonb, menu jsonb, unlock jsonb,
-  first_seen_tick int, last_seen_tick int);
+  first_seen_tick int, last_seen_tick int, status text, updated_tick int);
 
 -- Raw memory (append-only; the collector is the only writer)
 create table if not exists feed_events (
@@ -22,7 +35,7 @@ create table if not exists threads (
   opened_tick int, closed_tick int, closed_reason text, ours bool default false);
 create table if not exists messages (
   id bigint primary key, thread_id bigint, sender text, tick int, text text, price int,
-  offer jsonb, final bool, embedding vector(384));
+  offer jsonb, final bool);
 create index if not exists messages_thread on messages (thread_id, tick);
 create table if not exists offers (
   id bigint primary key, thread_id bigint, maker text, to_ text, venue text, give jsonb,
@@ -53,12 +66,12 @@ create table if not exists trader_behaviors (
   id bigserial primary key, trader_id text, thread_id bigint, tick int,
   event text check (event in ('open','counter','concede','hold','final','walk','deal','cooloff','lie_suspected')),
   our_price int, their_price int, step int, final bool, words_match_structure bool,
-  source text check (source in ('ours','feed')), embedding vector(384));
+  source text check (source in ('ours','feed')));
 create index if not exists trader_behaviors_trader on trader_behaviors (trader_id, tick);
 create table if not exists learnings (
   id bigserial primary key, scope text check (scope in ('trader','card','market','duel','bench')),
   subject text, claim text, stats jsonb, support_n int, confidence numeric, created_tick int,
-  superseded_by bigint references learnings(id), embedding vector(384));
+  superseded_by bigint references learnings(id));
 
 -- Decisions and execution
 create table if not exists intents (
@@ -78,9 +91,42 @@ create table if not exists outcomes (
   decision_id bigint primary key references decisions(id), realized_surplus numeric,
   ladder_share numeric, jev_right bool, recorded_tick int);
 
--- Monitoring agent (bazaar monitor): trader status and the raw announcements it saw.
-alter table traders add column if not exists status text;
-alter table traders add column if not exists updated_tick int;
+-- Monitoring agent (bazaar monitor): the announcements and trader changes it saw.
 create table if not exists alerts (
   id bigserial primary key, tick int, kind text, subject text, detail text,
   created_at timestamptz default now());
+
+-- One row per alert even when several monitors (several laptops) raise the same one. The first
+-- run removes the duplicates an older schema allowed, then adds the natural key.
+do $$
+begin
+  if to_regclass(format('%I.alerts_natural_key', current_schema())) is null then
+    delete from alerts a using alerts b
+     where a.id > b.id and a.tick is not distinct from b.tick and a.kind is not distinct from b.kind
+       and a.subject is not distinct from b.subject and a.detail is not distinct from b.detail;
+    create unique index alerts_natural_key on alerts (tick, kind, subject, md5(detail));
+  end if;
+end $$;
+
+-- Columns added after a table first shipped, and the pgvector columns. ALTER only what is missing:
+-- a re-run takes no table lock. Turning pgvector on later and re-running `init` adds the embeddings.
+do $$
+declare
+  vec text := (select format('%I.vector(384)', n.nspname) from pg_extension e
+                 join pg_namespace n on n.oid = e.extnamespace where e.extname = 'vector');
+  col record;
+begin
+  for col in
+    select c.tbl, c.name, c.type from (values
+      ('traders', 'status', 'text'),
+      ('traders', 'updated_tick', 'int'),
+      ('messages', 'embedding', vec),
+      ('trader_behaviors', 'embedding', vec),
+      ('learnings', 'embedding', vec)) as c(tbl, name, type)
+    where c.type is not null and not exists (
+      select 1 from information_schema.columns i
+       where i.table_schema = current_schema() and i.table_name = c.tbl and i.column_name = c.name)
+  loop
+    execute format('alter table %I add column %I %s', col.tbl, col.name, col.type);
+  end loop;
+end $$;
