@@ -1280,7 +1280,15 @@ def flatten_cmd(
     try:
         ledger = _ledger("flatten") if live else None
         out = flatten(
-            client, items, rec=rec, tick=now.tick, t_hours=now.t_hours, ledger=ledger, live=live, kill_switch=stops
+            client,
+            items,
+            rec=rec,
+            tick=now.tick,
+            t_hours=now.t_hours,
+            ledger=ledger,
+            live=live,
+            kill_switch=stops,
+            tick_seconds=now.tick_seconds,
         )
     finally:
         decisions.close()

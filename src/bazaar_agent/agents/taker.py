@@ -49,7 +49,7 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -685,4 +685,7 @@ class Taker:
         if not verdict.allowed:  # the kill switch holds: the bid stays open and its spend stays counted
             return
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
-            self.ledger.record("spend", clock.tick, clock.t_hours, -bid.price, bid.ref)
+            self.ledger.record(
+                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.tick_seconds)
+            )
+            run.offers = [o for o in run.offers if o.get("id") != bid.id]
