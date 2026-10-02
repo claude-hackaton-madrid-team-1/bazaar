@@ -365,6 +365,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | Fri 22:40 | `cdf0d11` |
 | [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | Fri 22:34 | `a7c09df` |
 | [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | Fri 22:31 | `7813244` |
 | [#38](../../pull/38) | fix: greet the dealer we are actually talking to | Fri 22:16 | `5894941` |
@@ -376,13 +377,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#32](../../pull/32) | feat: monitoring agent: feed, traders DB, /me snapshots, new-dealer alerts | Fri 21:38 | `da01693` |
 | [#31](../../pull/31) | fix: close the Greptile P1s on the live trading path | Fri 21:34 | `808dc3e` |
 | [#30](../../pull/30) | feat: GUARDRAILS.md rule book, enforced by the runtime and shown in the CLI | Fri 21:29 | `239bb72` |
-| [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
 | [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | `ogarciarevett/feat-railway-services` |
-| [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | `fix/duel-payload-shape` |
 
 <!-- BAZAAR:ACTIVITY:END -->
