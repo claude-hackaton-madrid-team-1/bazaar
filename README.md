@@ -300,6 +300,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | Fri 22:15 | `83007fb` |
 | [#36](../../pull/36) | ci: keep the root README current after every merge to main | Fri 22:08 | `a23f074` |
 | [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
 | [#34](../../pull/34) | feat: observability — trace negotiations, duels, monitor and CLI output to Arize Phoenix | Fri 22:03 | `ae5293b` |
@@ -311,12 +312,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
 | [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
 | [#27](../../pull/27) | docs: translate the team briefing to English | Fri 20:35 | `caaecba` |
-| [#25](../../pull/25) | docs: team briefing (slides + audio + rules + API) | Fri 20:18 | `5255396` |
 
 ### Open pull requests
 
-| PR | Title | Branch |
-|---|---|---|
-| [#37](../../pull/37) | feat: strategy engine, sell/bid offers, pack quota and Jev pack gate | `ogarciarevett/feat-strategy-engine` |
+_No open PRs (or `gh` unavailable)._
 
 <!-- BAZAAR:ACTIVITY:END -->
