@@ -224,11 +224,20 @@ def test_a_final_dealer_offer_inside_our_max_is_accepted_and_spends_the_slot(tmp
 def test_plan_conversation_ignores_an_offer_that_is_not_our_buy_and_walks_after_max_ticks():
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     trick = {"id": 9, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-02"]}, "want": {"cash": 5}}
-    dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14)
+    dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14, TICK)
     assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [LAV-08]" in dm.ignored
     conv.ticks = 14
-    assert plan_conversation(conv, {"status": "open"}, 14).move.kind == "walk"
-    assert plan_conversation(conv, {"status": "deal"}, 14).status == "deal"
+    assert plan_conversation(conv, {"status": "open"}, 14, TICK).move.kind == "walk"
+    assert plan_conversation(conv, {"status": "deal"}, 14, TICK).status == "deal"
+
+
+def test_an_accept_that_never_settles_stops_blocking_the_dealer_after_two_ticks():
+    conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
+    conv.accepted_tick, conv.accepted_price, conv.ticks = TICK, 20, 14
+    still_open = {"status": "open", "standing_offers": []}
+    assert plan_conversation(conv, still_open, 14, TICK + 1).move.reason == "accepted, waiting for settlement"
+    dm = plan_conversation(conv, still_open, 14, TICK + 2)
+    assert conv.accepted_tick is None and dm.move.kind == "walk"  # back on the clock: max_ticks applies again
 
 
 def test_meet_the_ask_bids_her_price_when_the_accept_slot_went_elsewhere():

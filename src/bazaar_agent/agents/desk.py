@@ -23,6 +23,8 @@ from bazaar_agent.agents.dealer import (
 )
 from bazaar_agent.strategy import Move as StrategyMove
 
+ACCEPT_SETTLE_TICKS = 2  # an accept settles on the next tick; still open after this many, it did not land
+
 
 @dataclass
 class Conversation:
@@ -66,13 +68,16 @@ class DeskMove:
         return self.conv.value - (self.ask or 0)
 
 
-def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: int) -> DeskMove:
+def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: int, tick: int) -> DeskMove:
     """The one move for this tick. `wait` when the thread is closed or our accept is settling."""
     status = str(thread.get("status") or "open")
     if status != "open":
         return DeskMove(conv, Move("wait", reason=f"thread {status}"), status=status)
-    if conv.accepted_tick is not None:
+    if conv.accepted_tick is not None and tick - conv.accepted_tick < ACCEPT_SETTLE_TICKS:
         return DeskMove(conv, Move("wait", reason="accepted, waiting for settlement"))
+    # An accept that never settled (the thread is still open) must not block this dealer forever. The
+    # accepted price stays: if that accept lands late, the deal is still recorded at what we agreed.
+    conv.accepted_tick = None
     ask, offer_id, final = latest_dealer_offer(thread, conv.dealer)
     newest = newest_dealer_offer(thread, conv.dealer)
     problem = offer_terms_problem(newest, conv.item) if newest is not None else None

@@ -427,7 +427,7 @@ class Taker:
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
             conv.ticks += 1
-            dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread)
+            dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread, run.snap.clock.tick)
             if dm.status != "open":
                 self._finished(run, conv, thread)
                 del self.convs[dealer]
