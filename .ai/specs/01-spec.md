@@ -96,7 +96,7 @@ under `vendor/bazaar-kit/` and is imported via `sys.path`, the way `tests/test_b
 | `config.py` | Load and validate env at startup: `BAZAAR_URL`, `BAZAAR_KEY`, `TYPESAFE_API_KEY`, `DATABASE_URL`, `DRY_RUN`, `PAUSED`. Fail fast if one is missing. |
 | `client.py` | The only door to the game. Wraps the SDK `Bazaar`/`Broker`, adds a token bucket per process, maps `BazaarError` codes to typed outcomes. Plan B raw HTTP lives here and nowhere else. |
 | `models.py` | Pydantic models for every response we depend on (`me`, `thread`, `offer`, `clock`, `book`, `duel`). External data is validated here, at the boundary. |
-| `collector.py` | One SSE stream (`/api/events/stream?scope=team`), `/api/feed` pagination by id to backfill gaps, `/api/me` + `/api/clock` once per tick. Writes raw rows only. |
+| `collector.py` | One SSE stream (`/api/events/stream?scope=team`), `/api/feed` read once per tick (no cursor: only the last 500 events, so gaps cannot be backfilled — capture continuously), `/api/me` + `/api/clock` once per tick. Writes raw rows only. |
 | `intel/` | The live game read as a trading system's order book (§7.8). `book.py` rebuilds the book per card and venue from `offer.listed` / cancels / expiries / settlements. `tape.py` keeps prints with last, VWAP and volume per card. `dealer_curves.py` reconstructs every dealer thread, ours and other teams', as ask → counter → final → fill. `competitors.py` profiles each team. |
 | `memory/` | `schema.sql` (migrations), `repo.py` (repository per table), `embed.py` (local embeddings), `retrieve.py` (SQL profile + vector top-k → compact RAG context). |
 | `learner.py` | On every closed thread / settlement / duel: recompute trader stats, write or supersede `learnings`, embed them. |

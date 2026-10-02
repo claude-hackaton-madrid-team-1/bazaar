@@ -75,14 +75,44 @@ def words(step: int, price: int) -> str:
     return KIND_WORDS[step % len(KIND_WORDS)].format(p=price)
 
 
+def newest_dealer_offer(thread: dict[str, Any], dealer: str) -> dict[str, Any] | None:
+    offers = [o for o in thread.get("standing_offers") or [] if o.get("maker") == dealer and o.get("status") == "open"]
+    return offers[-1] if offers else None
+
+
 def latest_dealer_offer(thread: dict[str, Any], dealer: str) -> tuple[int | None, int | None, bool]:
     """(ask, offer id, final) of the dealer's newest open structured offer."""
-    offers = [o for o in thread.get("standing_offers") or [] if o.get("maker") == dealer and o.get("status") == "open"]
-    if not offers:
+    o = newest_dealer_offer(thread, dealer)
+    if o is None:
         return None, None, False
-    o = offers[-1]
     cash = (o.get("want") or {}).get("cash") or (o.get("give") or {}).get("cash")
     return (int(cash) if cash else None), int(o["id"]), bool(o.get("final"))
+
+
+def requested_item(topic: dict[str, Any]) -> str | None:
+    """'LAV-03' or 'sobre_barrio' for a buy topic; None when the topic is not a plain buy."""
+    spec = topic.get("buy") if isinstance(topic.get("buy"), dict) else None
+    return str(spec.get("card") or spec.get("pack")) if spec and (spec.get("card") or spec.get("pack")) else None
+
+
+def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
+    """Why accepting this whole dealer offer would not be the trade we asked for (None = it is).
+
+    We accept an offer by id, which binds BOTH sides. A buy must give us the requested item and
+    nothing of ours may be in `want` except cash. Words persuade, structure binds.
+    """
+    give, want = offer.get("give") or {}, offer.get("want") or {}
+    if want.get("assets") or want.get("types") or want.get("cards"):
+        return "the offer also asks for our assets"
+    if give.get("cash"):
+        return "the offer gives cash on a buy"
+    if item is None:
+        return None
+    refs = [str(t).split(":", 1)[-1] for t in give.get("types") or []]
+    refs += [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
+    if refs != [item]:
+        return f"the offer gives {refs or 'nothing'} instead of exactly [{item}]"
+    return None
 
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
@@ -129,6 +159,7 @@ def negotiate(
     sleep = sleep or time.sleep
 
     neg = Negotiation(plan)
+    item = requested_item(topic)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
@@ -151,6 +182,11 @@ def negotiate(
             log(f"tick {clock.tick}: accepted, waiting for settlement")
             return
         ask, offer_id, final = latest_dealer_offer(thread, dealer)
+        newest = newest_dealer_offer(thread, dealer)
+        problem = offer_terms_problem(newest, item) if newest is not None else None
+        if problem:
+            log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
+            ask, offer_id, final = None, None, False
         move = decide(neg, ask, offer_id, final)
         if advisor is not None and action_budget_s(clock) > 4.0:
             move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id)
@@ -166,6 +202,11 @@ def negotiate(
             if denied:
                 log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
                 move = Move("walk", reason=f"guardrail: {denied}")
+        if move.kind in ("accept", "bid"):
+            fresh = Clock.model_validate(client.clock())  # the thread read and Jev may have used the tick
+            if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
+                log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
+                return
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
@@ -180,6 +221,11 @@ def negotiate(
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
 
     run_per_tick(client.clock, on_tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
+    if state["status"] == "open" and state["accepted"]:
+        # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
+        run_per_tick(client.clock, on_tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
+        if state["status"] == "open":
+            state["status"] = "accepted_pending"
     if state["status"] == "open":
         client.close_thread(tid)
         state["status"] = "timeout"

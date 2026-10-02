@@ -89,7 +89,15 @@ class FakeDealerClient:
         if self.accepted:
             self.status = "deal"
         elif 0 < n <= len(self.asks):
-            offers = [{"id": 500 + n, "maker": "abuela", "status": "open", "want": {"cash": self.asks[n - 1]}}]
+            offers = [
+                {
+                    "id": 500 + n,
+                    "maker": "abuela",
+                    "status": "open",
+                    "give": {"cash": 0, "types": ["card:LAV-03"]},
+                    "want": {"cash": self.asks[n - 1], "assets": [], "types": []},
+                }
+            ]
         return {"status": self.status, "standing_offers": offers}
 
     def say(self, tid, text, price):
@@ -161,3 +169,58 @@ def test_a_guardrail_denial_turns_the_move_into_a_walk_and_deals_are_reported():
         on_deal=lambda price, tick, t: deals.append(price),
     )
     assert deals == [9]
+
+
+def test_offer_terms_must_be_exactly_the_requested_item_for_cash_only():
+    from bazaar_agent.agents.dealer import offer_terms_problem, requested_item
+
+    real = {
+        "give": {"cash": 0, "assets": [], "types": ["card:LAV-06"]},
+        "want": {"cash": 29, "assets": [], "types": []},
+    }
+    assert offer_terms_problem(real, "LAV-06") is None
+    assert "instead of exactly" in offer_terms_problem(real, "LAV-05")
+    sneaky = {"give": {"types": ["card:LAV-06"]}, "want": {"cash": 9, "assets": [{"id": 3, "ref": "LAV-01"}]}}
+    assert "our assets" in offer_terms_problem(sneaky, "LAV-06")
+    swapped = {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 9}}
+    assert offer_terms_problem(swapped, "LAV-06")
+    assert requested_item({"buy": {"pack": "sobre_barrio"}}) == "sobre_barrio"
+    assert requested_item({"sell": {"assets": [1]}}) is None
+
+
+def test_a_mismatched_offer_is_never_accepted():
+    from bazaar_agent.agents.dealer import negotiate
+
+    client = FakeDealerClient(asks=[9, 9, 9])
+    client.thread = lambda tid, c=client: {  # she quotes 9 but for a different card
+        "status": "open",
+        "standing_offers": [
+            {"id": 777, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-01"]}, "want": {"cash": 9}}
+        ],
+    }
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=3,
+    )
+    assert client.accepted == [] and out.status == "timeout"
+
+
+def test_an_accept_on_the_last_tick_waits_for_settlement_instead_of_timing_out():
+    from bazaar_agent.agents.dealer import negotiate
+
+    client = FakeDealerClient(asks=[6])  # she asks 6 right after our first bid: we accept on tick 2 of 2
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    assert (client.accepted, client.closed, out.status, out.price) == ([501], False, "deal", 6)

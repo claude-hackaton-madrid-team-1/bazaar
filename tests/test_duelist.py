@@ -42,3 +42,14 @@ def test_two_issue_sessions_always_carry_days():
 def test_unreadable_or_done_duels_are_left_alone():
     assert duel_move({"done": True}, 1, 0).kind == "hold"
     assert duel_move({"role": "seller", "your_limit": None}, 1, 0).kind == "hold"
+
+
+def test_two_issue_accepts_price_in_the_worst_case_cost_of_days():
+    from bazaar_agent.agents.duelist import effective_price
+
+    d = duel(rival=None, issues=["price", "days"], your_days_weight=2.0)
+    d["rival_offer"] = {"price": 56, "days": 4}  # 56 looks inside a 50 cost, but 4 days may cost us 8
+    assert effective_price(d, 56) == 48
+    assert duel_move(d, tick=111, started_tick=100).kind == "offer"
+    d["rival_offer"] = {"price": 56}  # days missing: cannot value it, never accept
+    assert effective_price(d, 56) is None and duel_move(d, tick=111, started_tick=100).kind == "offer"
