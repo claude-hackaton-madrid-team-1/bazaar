@@ -164,8 +164,10 @@ class DuelTraces:
     @tm.never_raise
     def seen(self, duel: Mapping[str, Any], tick: int, move: Any) -> None:
         tracer = tm.tracer()
-        did = duel.get("id")
-        if tracer is None or not isinstance(did, int):
+        from bazaar_agent.agents.duelist import duel_id
+
+        did = duel_id(duel)
+        if tracer is None or did is None:
             return
         if did not in self._roots:
             values = {
@@ -182,7 +184,11 @@ class DuelTraces:
             f"duel tick {tick}",
             context=trace.set_span_in_context(self._roots[did]),
             attributes=tm.attributes(
-                {tm.KIND: tm.CHAIN, "bazaar.tick": tick, "bazaar.duel.deadline": duel.get("deadline")}
+                {
+                    tm.KIND: tm.CHAIN,
+                    "bazaar.tick": tick,
+                    "bazaar.duel.deadline": duel.get("deadline_tick", duel.get("deadline")),
+                }
             ),
         )
         self._ticks[did], self._last[did] = child, duel

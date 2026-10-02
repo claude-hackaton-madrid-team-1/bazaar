@@ -21,6 +21,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.setenv(name, "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
     monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path))
+    # An empty env var falls back to the repo's .env, so a developer's real keys would leak in: isolate.
+    monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
     monkeypatch.setattr(llm_cli.console, "width", 240)
     monkeypatch.setattr(llm_cli, "_public_clock", lambda settings: Clock(tick=300, tick_seconds=60, next_tick_in=40))
     return tmp_path
