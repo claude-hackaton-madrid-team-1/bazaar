@@ -2,4 +2,4 @@
 name = "bazaar-tui"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["textual>=0.80", "websockets>=12"]
+dependencies = ["websockets>=12"]

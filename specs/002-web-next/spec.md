@@ -14,7 +14,8 @@ Node is needed to build it, never to run it: `tui/serve.py` serves `web/out/` an
 events on `/events`, exactly as in 001. The event contract of 001 is unchanged.
 
 ```
-uv run --project tui tui/serve.py              # http://localhost:8777, serves web/out + mock stream
+uv run --project tui tui/serve.py              # http://localhost:8777, serves web/out + the monitor's real stream (spec 003)
+uv run --project tui tui/serve.py --mock       # same, with the mock game
 cd web && npm run dev                          # http://localhost:3000, reads ws://localhost:8777/events
 http://localhost:8777/?ws=wss://…              # any page, real stream
 ```

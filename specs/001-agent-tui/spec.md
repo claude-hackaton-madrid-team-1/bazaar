@@ -1,5 +1,7 @@
 # 001 · Agent TUI: a live terminal view of what our agent is doing
 
+> The Textual TUI was removed by [`specs/003-web-live-feed`](../003-web-live-feed/spec.md): the web view is the only screen.
+
 ## Why
 
 During the weekend we need to see, at a glance, what our agent is thinking, which negotiations it has

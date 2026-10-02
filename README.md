@@ -17,6 +17,8 @@ cp -n .env.example .env 2>/dev/null; $EDITOR .env   # BAZAAR_KEY=tk-... and TYPE
 
 uv run bazaar clock                       # tick, pace, limits, action budget left in this tick
 uv run bazaar monitor --notify           # KEEP RUNNING: feed + traders + /me snapshots + new-dealer alerts
+(cd web && npm ci && npm run build)       # once per web change: static export to web/out
+uv run --project tui tui/serve.py         # web view on http://localhost:8777, fed by the monitor (--mock: mock game)
 uv run bazaar traders                     # every dealer and team the monitor has seen
 uv run bazaar alerts                      # new dealers, levels going active, announcements
 uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads

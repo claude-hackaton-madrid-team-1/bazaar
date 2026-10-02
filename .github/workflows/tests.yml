@@ -23,7 +23,7 @@ jobs:
       - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
         run: uv run pytest tests -v -rs
       - name: Web server for the dashboard (tui/serve.py needs websockets)
-        run: uv run --with websockets pytest tests/test_tui_serve.py -v -rs
+        run: uv run --with websockets python -m pytest tests/test_tui_serve.py -v -rs
 
   web:
     runs-on: ubuntu-latest
