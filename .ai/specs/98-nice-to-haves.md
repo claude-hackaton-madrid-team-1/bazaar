@@ -55,6 +55,11 @@ events; every event type has its animation; every decision speaks one tagged lin
 least); works while the agents are in dry run; no key in the bundle; a 60-second screen recording
 for the pitch.
 
+### NICE TO HAVE · First eval target (Omar, 2026-10-03)
+The evals (#58) score every decision's online outcome. Picking ONE target to optimise first is not a
+blocker: Jev leaned toward duels (0.64 / 0.72, under its 0.75 bar). Revisit after Saturday's first
+sessions, with real outcomes in `bazaar evals report`.
+
 ### Throughput / scale
 - (none yet)
 

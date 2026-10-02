@@ -159,18 +159,17 @@ footer { color: var(--muted); font-size: 13px }
     <section>
       <h2>Waiting on you</h2>
       <div class="list">
-<div class="item"><span class="pill p-todo">blocked</span><b>Trust the bazaar-live folder</b><p>Run Claude once in its worktree and accept the trust prompt, so the live-show worker can start.</p></div>
+<div class="item"><span class="pill p-todo">blocked</span><b>Trust the bazaar-live folder</b><p>The trust prompt is waiting in the Orca tab of worktree feat-live-show-v1: choose "Yes, I trust this folder", then the live-show worker starts there.</p></div>
         <div class="item"><span class="pill p-todo">decision</span><b>Go live: BAZAAR_LIVE=1</b><p>Taker and maker trade the real game only after you set it on their Railway service.</p></div>
         <div class="item"><span class="pill p-todo">decision</span><b>Market Test venue + broker</b><p>Worth up to 30 points; blocked by the trading permission until you choose full or build-only.</p></div>
-        <div class="item"><span class="pill p-todo">decision</span><b>First eval target</b><p>Jev leaned toward duels (0.64 / 0.72) but stayed under its 0.75 bar.</p></div>
       </div>
     </section>
     <section>
       <h2>Being built now</h2>
       <div class="list">
 <div class="item"><span class="pill p-wip">worker</span><b>Agent runtime + bazaar-mcp</b><p>Runtime merged (#59). Now: the bazaar-mcp Railway service, its domain, bearer token and checks.</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>Evals</b><p>Online outcomes per decision, stored in Postgres and annotated on Phoenix traces.</p></div>
         <div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>A simulated market to test every agent live while the game is closed.</p></div>
+        <div class="item"><span class="pill p-wip">worker</span><b>Evals on Railway</b><p>Code merged (#58): online outcomes in Postgres + Phoenix annotations. Now: the bazaar-evals service.</p></div>
       </div>
     </section>
     <section>
@@ -180,6 +179,7 @@ footer { color: var(--muted); font-size: 13px }
         <div class="item"><span class="pill p-part">gap</span><b>Prompt-injection cap</b><p>The original rule says at most 200k of counterparty text per decision; today text is only quoted and escaped.</p></div>
         <div class="item"><span class="pill p-part">gap</span><b>10 s per offer, then learn</b><p>Tick budgets and a 3 s Jev timeout exist; a per-offer timeout feeding the learner does not.</p></div>
         <div class="item"><span class="pill p-todo">later</span><b>Bazaar Live show</b><p>Buyer and seller animated with Motion and voiced with TTS, in the bazaar-live repo.</p></div>
+        <div class="item"><span class="pill p-todo">later</span><b>First eval target</b><p>Nice to have: Jev leaned toward duels (0.64 / 0.72, under its 0.75 bar); revisit with Saturday's outcomes.</p></div>
       </div>
     </section>
   </div>
