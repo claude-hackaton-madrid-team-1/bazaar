@@ -8,7 +8,7 @@
 # SOURCES (hand-edited, the only files committed to git):
 #   .ai/context.md             project contract
 #   .ai/pipeline.md            GENERIC agent-skills lifecycle
-#   .ai/memory.md              LOCAL, gitignored per-dev log (referenced, never inlined)
+#   .ai/memory.md              shared, committed team log (referenced, never inlined)
 #   .ai/commands/<name>.md     canonical command defs (frontmatter `description` + body prompt)
 #   .ai/agents/<name>.md       canonical subagent defs (md + frontmatter)
 #   .ai/skills/<name>/SKILL.md canonical skills (+ bundled files)
@@ -55,7 +55,7 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------- contract docs
-# Seed the local, gitignored memory log from the committed template if absent.
+# Seed the shared memory log from the template if absent (it is committed once created).
 [ -f "$AI/memory.md" ] || cp "$AI/memory.example.md" "$AI/memory.md"
 
 # Command substitution strips trailing newlines — the analogue of JS .trimEnd()/.trim() here.
@@ -67,9 +67,9 @@ pipeline=$(cat "$AI/pipeline.md")
 memory_section=$(cat <<'EOF'
 ## Memory
 
-Shared working log: `.ai/memory.md` — LOCAL and gitignored (seed from
-`.ai/memory.example.md`; `sh scripts/sync-ai-docs.sh` seeds it for you). It is not inlined here;
-tools that resolve imports pull it in, and opencode reads it directly:
+Shared working log: `.ai/memory.md` — committed and shared by the whole team (seeded from
+`.ai/memory.example.md` if missing). It is not inlined here; tools that resolve imports pull it
+in, and opencode reads it directly. Never write a secret in it:
 
 @.ai/memory.md
 EOF

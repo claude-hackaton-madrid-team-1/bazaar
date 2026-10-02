@@ -1,6 +1,4 @@
-# Local, per-developer agent working log — seeded from .ai/memory.example.md by `sh scripts/sync-ai-docs.sh`.
-# Durable decisions go in commits / docs/adr, never here. See .ai/context.md "Memory protocol".
-.ai/memory.md
+# .ai/memory.md is COMMITTED (shared team log, see .ai/context.md "Memory protocol"). Never put secrets in it.
 
 # Secrets — never commit these.
 .env
@@ -47,3 +45,8 @@ node_modules/
 
 __pycache__/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+*.egg-info/
