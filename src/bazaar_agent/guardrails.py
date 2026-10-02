@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
@@ -37,6 +38,7 @@ class Guardrails(BaseModel):
     max_price_uncommon: int = 26
     max_price_rare: int = 80
     max_price_pack: int = 20
+    max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     block_buying_held_cards: bool = True
     max_accepts_per_tick: int = 1
@@ -67,6 +69,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
     "max_accepts_per_tick": "guardrails.check + ledger",
@@ -147,6 +150,11 @@ def load_guardrails(path: Path = GUARDRAILS_FILE) -> LoadedRules:
 # ---------------------------------------------------------------- ledger (shared by processes)
 
 
+def is_pack(item: str) -> bool:
+    """'sobre_barrio' is a pack; 'LAV-09' is a card and 'duel:12' is not an item we hold."""
+    return bool(item) and "-" not in item and ":" not in item
+
+
 class Ledger:
     """Append-only JSONL of committed spend and accepts, read by every process."""
 
@@ -167,6 +175,14 @@ class Ledger:
     def spent_since(self, t_hours: float) -> int:
         return sum(
             int(e.get("price", 0)) for e in self.entries() if e.get("kind") == "spend" and e["t_hours"] > t_hours
+        )
+
+    def packs_since(self, t_hours: float) -> Counter[str]:
+        """Packs bought after `t_hours`, by pack id (a pack spend carries the pack id as its item)."""
+        return Counter(
+            str(e.get("item"))
+            for e in self.entries()
+            if e.get("kind") == "spend" and e["t_hours"] > t_hours and is_pack(str(e.get("item") or ""))
         )
 
     def accepts_in_tick(self, tick: int) -> int:
@@ -207,6 +223,7 @@ class Context:
     spent_last_hour: int = 0
     accepts_this_tick: int = 0
     paused: bool = False
+    packs_last_hour: int = 0
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: Ledger, rules: Guardrails) -> Context:
@@ -222,6 +239,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: Ledger, 
         spent_last_hour=ledger.spent_since(t_hours - 1.0),
         accepts_this_tick=ledger.accepts_in_tick(tick),
         paused=(REPO_ROOT / rules.pause_file).exists(),
+        packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
     )
 
 
@@ -242,7 +260,9 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     accepting = action.kind in ("accept_buy", "accept_sell", "duel_accept")
     if buying and action.price is not None:
         cap = rules.max_price_for(action.rarity)
-        if cap is not None and action.price > cap:
+        if cap is None:
+            v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
+        elif action.price > cap:
             v.append(f"price {action.price} > max_price_{action.rarity} {cap}")
         if ctx.cash - action.price < rules.cash_floor:
             v.append(f"cash {ctx.cash} - {action.price} < cash_floor {rules.cash_floor}")
@@ -251,6 +271,11 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
                 f"{rules.max_spend_per_game_hour}"
             )
+    if buying and action.rarity == "pack" and ctx.packs_last_hour >= rules.max_packs_per_game_hour:
+        v.append(
+            f"{ctx.packs_last_hour} pack(s) bought this game hour (max_packs_per_game_hour "
+            f"{rules.max_packs_per_game_hour})"
+        )
     if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0:
         v.append(f"we already hold {action.item} (block_buying_held_cards)")
     if action.kind in ("sell", "accept_sell") and action.price is not None and action.your_value is not None:
