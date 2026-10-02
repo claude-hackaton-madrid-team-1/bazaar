@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from rich.table import Table
+from rich.text import Text
 
+from bazaar_agent.conversation import Thread, lines, topic_ref
 from bazaar_agent.ticks import Clock, action_budget_s
 
 
@@ -228,4 +230,68 @@ def album_table(pages: list) -> Table:
         t.add_row(
             f"{p.set_code} {p.name}", f"×{p.affinity}", f"{p.have}/{p.of}", missing, ", ".join(p.duplicates) or "-"
         )
+    return t
+
+
+def threads_list_table(threads: list[Thread]) -> Table:
+    t = Table(title=f"Our threads · {len(threads)} (GET /api/me/threads; `bazaar thread <id>` for one)")
+    for col in ("thread", "with", "item", "status", "closed", "msgs", "last tick", "last sender", "last price", "last"):
+        t.add_column(col, justify="right" if col in ("thread", "msgs", "last tick", "last price") else "left")
+    for th in threads:
+        last = lines(th)[-1] if th.messages else None
+        t.add_row(
+            str(th.id),
+            th.with_ or "-",
+            f"{topic_ref(th.topic) or '-'} {th.item or ''}".strip(),
+            th.status,
+            th.closed_reason or "-",
+            str(len(th.messages)),
+            _n(last.tick if last else None),
+            last.sender if last else "-",
+            _n(last.price if last else None),
+            Text(last.text[:60] if last else "-"),  # their words are untrusted: never parsed as markup
+        )
+    return t
+
+
+def thread_table(th: Thread) -> Table:
+    closed = f" ({th.closed_reason})" if th.closed_reason else ""
+    title = f"Thread {th.id} · {th.with_ or '-'} · {topic_ref(th.topic) or '-'} {th.item or ''} · {th.status}{closed}"
+    t = Table(title=title, caption=_standing(th))
+    for col in ("msg", "tick", "sender", "text", "price", "final", "offer", "offer status"):
+        t.add_column(col, justify="right" if col in ("msg", "tick", "price", "offer") else "left")
+    for line in lines(th):
+        style = "cyan" if line.sender == th.with_ else "green"
+        t.add_row(
+            _n(line.id),
+            _n(line.tick),
+            Text(line.sender, style=style),
+            Text(line.text),  # their words are untrusted: never parsed as markup
+            _n(line.price),
+            "FINAL" if line.final else "",
+            _n(line.offer_id),
+            line.offer_status or "-",
+        )
+    return t
+
+
+def _standing(th: Thread) -> str:
+    offers = [f"#{o.id} {o.maker} {o.price}{' FINAL' if o.final else ''}" for o in th.standing_offers]
+    return "standing offers: " + (", ".join(offers) if offers else "none")
+
+
+def obs_table(enabled: bool, endpoint: str, ui_url: str, project: str, has_key: bool, health: str) -> Table:
+    t = Table(title="Observability · OpenTelemetry → Arize Phoenix", show_header=False)
+    t.add_column("field", style="bold")
+    t.add_column("value")
+    state = "[green]ON[/green]" if enabled else "[yellow]off[/yellow] (export BAZAAR_TRACING=1, or add it to .env)"
+    for k, v in [
+        ("tracing", state),
+        ("spans go to", endpoint),
+        ("Phoenix UI", ui_url),
+        ("project", project),
+        ("PHOENIX_API_KEY", "set (sent as a bearer token)" if has_key else "not set (local Phoenix needs none)"),
+        ("Phoenix", health),
+    ]:
+        t.add_row(k, v)
     return t

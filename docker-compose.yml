@@ -1,4 +1,5 @@
 # Local memory store: Postgres 17 + pgvector. `uv run bazaar db up && uv run bazaar db init`.
+# Traces: Arize Phoenix (OpenTelemetry/OTLP). `uv run bazaar obs up`, then BAZAAR_TRACING=1.
 services:
   db:
     image: pgvector/pgvector:pg17
@@ -17,5 +18,24 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  phoenix:
+    image: arizephoenix/phoenix:version-20.19.0   # pinned, as the Phoenix docs advise
+    container_name: bazaar-phoenix
+    restart: unless-stopped
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data   # SQLite on the volume below: traces survive restarts
+    ports:
+      # Localhost only by default. To share it with teammates on the same network, run
+      # `PHOENIX_BIND=0.0.0.0 uv run bazaar obs up` (see README "Observability" first).
+      - "${PHOENIX_BIND:-127.0.0.1}:6006:6006"   # UI + OTLP/HTTP (/v1/traces)
+      - "${PHOENIX_BIND:-127.0.0.1}:4317:4317"   # OTLP/gRPC
+    volumes:
+      - bazaar-phoenix:/mnt/data
+    healthcheck:   # distroless image: no shell or curl, so Python's urllib does the probe
+      test: ["CMD", "/usr/bin/python3.13", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
 volumes:
   bazaar-pg:
+  bazaar-phoenix:

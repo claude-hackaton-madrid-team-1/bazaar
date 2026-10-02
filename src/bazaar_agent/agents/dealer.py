@@ -137,6 +137,32 @@ class Outcome:
     ticks: int
 
 
+class Observer:
+    """Watches one negotiation and never changes a move. This base does nothing (tracing off);
+    `traces.NegotiationTrace` overrides the hooks to send every step to Phoenix."""
+
+    def opened(self, thread_id: int) -> None:
+        """The thread exists."""
+
+    def wrap_tick(self, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
+        return on_tick
+
+    def thread_read(self, thread: dict[str, Any]) -> None:
+        """The thread as read this tick: messages, standing offers, status."""
+
+    def guardrail(self, move: Move, denied: str | None) -> None:
+        """A guard verdict on a move (denied is None when allowed)."""
+
+    def move(self, move: Move, said: str | None) -> None:
+        """The move we are about to send, and the words with it."""
+
+    def refused(self, error: Exception) -> None:
+        """The server refused our move."""
+
+    def finished(self, outcome: Outcome) -> None:
+        """The negotiation ended."""
+
+
 def negotiate(
     client: Any,
     dealer: str,
@@ -149,6 +175,7 @@ def negotiate(
     sleep: Callable[[float], None] | None = None,
     guard: Guard | None = None,
     on_deal: DealHook | None = None,
+    observer: Observer | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out."""
     import time
@@ -157,11 +184,13 @@ def negotiate(
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
     sleep = sleep or time.sleep
+    obs = observer or Observer()
 
     neg = Negotiation(plan)
     item = requested_item(topic)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
+    obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
     state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
 
@@ -170,6 +199,7 @@ def negotiate(
             return
         state["ticks"] += 1
         thread = client.thread(tid)
+        obs.thread_read(thread)
         state["status"] = thread.get("status", "open")
         if state["status"] != "open":
             log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
@@ -199,6 +229,7 @@ def negotiate(
         )
         if guard is not None and move.kind in ("accept", "bid"):
             denied = guard(move)
+            obs.guardrail(move, denied)
             if denied:
                 log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
                 move = Move("walk", reason=f"guardrail: {denied}")
@@ -207,6 +238,7 @@ def negotiate(
             if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
+        obs.move(move, words(len(neg.bids), move.price) if move.kind == "bid" and move.price is not None else None)
         try:
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
@@ -218,15 +250,19 @@ def negotiate(
                 client.close_thread(tid)
                 state["status"] = "walked"
         except BazaarError as e:
+            obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
 
-    run_per_tick(client.clock, on_tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
+    tick = obs.wrap_tick(on_tick)
+    run_per_tick(client.clock, tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
     if state["status"] == "open" and state["accepted"]:
         # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
-        run_per_tick(client.clock, on_tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
+        run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
             state["status"] = "accepted_pending"
     if state["status"] == "open":
         client.close_thread(tid)
         state["status"] = "timeout"
-    return Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]))
+    outcome = Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]))
+    obs.finished(outcome)
+    return outcome
