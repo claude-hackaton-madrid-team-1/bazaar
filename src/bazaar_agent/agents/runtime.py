@@ -53,20 +53,22 @@ def window_for(clock: Clock, started: float, now: Callable[[], float] = time.mon
 
 @dataclass(frozen=True)
 class JevAdvice:
-    """Jev's answer to `offer_is_worth_accepting`: advisory only, it never lifts a limit."""
+    """One Jev verdict (`offer_is_worth_accepting`, `duel_move`, ...): advisory only, it never lifts a limit."""
 
-    verdict: str  # "yes" | "no" | "undecided"
+    verdict: str  # a noul's "yes" | "no", a choice's option, or "undecided"
     value: float
     probabilities: Mapping[str, float] | None = None
     reason: str | None = None
+    digest: str | None = None  # the decision line's state digest (jev/log.py), for its outcome line later
 
     @property
     def decided(self) -> bool:
-        return self.verdict in ("yes", "no")
+        return self.verdict != "undecided"
 
     def as_dict(self) -> dict[str, Any]:
         probabilities = dict(self.probabilities) if self.probabilities is not None else None
-        return {"verdict": self.verdict, "value": self.value, "probabilities": probabilities, "reason": self.reason}
+        written = {"verdict": self.verdict, "value": self.value, "probabilities": probabilities, "reason": self.reason}
+        return written if self.digest is None else {**written, "digest": self.digest}
 
 
 JevFn = Callable[[dict[str, Any]], JevAdvice]

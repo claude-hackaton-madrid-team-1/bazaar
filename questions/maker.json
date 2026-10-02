@@ -1,0 +1,30 @@
+{
+  "about": "Bazaar market-maker questions for the Jev judge. Code computes the candidate prices and keeps only the legal ones (GUARDRAILS.md: never below our sell floor, never a bid above its cap or below the cash floor); Jev picks among them; `undecided` keeps today's price. A verdict never authorizes a listing on its own.",
+  "questions": {
+    "list_price_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `listing`, which price in `candidates` should we post: aggressive, fair, or quick_sale?",
+        "note": "Every candidate is already legal: an ask never below what the card is worth to us, a bid never above its worth minus our minimum surplus, its price cap, or what keeps cash above `cash_floor`. An offer that does not fill earns nothing and holds one of our open-offer slots until it expires; a fill at a better price earns more. Only value at our private values scores, never the number of trades. Never pick a label that is not in `candidates`."
+      },
+      "criteria": {
+        "aggressive": "The price best for us (the highest ask, the lowest bid): demand is strong or the card is scarce, and there is time for it to fill before the offer expires.",
+        "fair": "The middle price: a fair share of the surplus that should fill in reasonable time.",
+        "quick_sale": "The price best for the counterparty that still clears our minimum surplus: demand is thin, or the slot and the cash are worth more freed up soon."
+      }
+    },
+    "reprice_or_hold": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Our standing `offer` is still open and our target price moved to `new_price`. Should we cancel it and post the new price (true), or hold the current price (false)?",
+        "note": "A reprice spends one of our new listings this tick and restarts the offer's time on the board. Holding is asked only when the current price is still legal: never an ask below our sell floor, never a bid above its cap or its worth to us."
+      },
+      "criteria": {
+        "true": "The move is large, or the offer has stood long without filling, so the new price clearly fills better or earns more.",
+        "false": "The change is small or the offer is young, and the current price is still the better bet."
+      }
+    }
+  }
+}

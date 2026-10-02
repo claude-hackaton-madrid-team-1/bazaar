@@ -197,6 +197,25 @@ class DuelTraces:
         tm.add_event(child, "our_move", values)
 
     @tm.never_raise
+    def jev(self, duel_id: int, pick: Any) -> None:
+        """Jev's verdicts with their floats, and the move they led to, on the duel's tick span (`DuelPick`)."""
+        if duel_id not in self._ticks:
+            return
+        child = self._ticks[duel_id]
+        for question, advice in (("duel_move", pick.advice), ("rival_cares_about_days", pick.days)):
+            if advice is not None:
+                tm.add_event(child, "jev_verdict", {"question": question, **advice.as_dict()})
+        values = {
+            "default": pick.default.kind,
+            "chosen": pick.move.kind,
+            "price": pick.move.price,
+            "days": pick.move.days,
+            "legal": list(pick.legal),
+            "why": pick.why,
+        }
+        tm.add_event(child, "jev_choice", values)
+
+    @tm.never_raise
     def guardrail(self, duel_id: int, allowed: bool, violations: Iterable[str]) -> None:
         if duel_id in self._ticks:
             tm.add_event(self._ticks[duel_id], "guardrail", {"allowed": allowed, "violations": list(violations)})

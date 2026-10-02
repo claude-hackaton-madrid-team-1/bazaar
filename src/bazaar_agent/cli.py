@@ -409,11 +409,13 @@ def _jev_advisor(item: str, settings: Any, timeout_s: float = 3.0) -> Any:
 def duel_run(
     play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    jev: bool = typer.Option(True, help="Jev duel_move picks among the legal moves (undecided: today's move)"),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
@@ -423,42 +425,78 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
+    from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.words import WordsRequest
+    from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("duels")
+    duel_jev = _duel_jev(settings, rules) if jev else None
+    # Decision rows go to Postgres only when the ledger reached it: a dead host must not stall a duel tick.
+    decisions = DecisionLog(
+        settings.data_dir, _db_connect("bazaar-duels") if ledger.where.startswith("postgres") else None
+    )
+    rec = Recorder("duels", decisions, play, lambda line: None)  # the duel loop prints its own lines
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
     duel_words = llm_cli.words_for(settings, rules, template_duel_words)
 
-    def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> None:
+    def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
         try:
             if move.kind == "accept":
                 client.duel_accept(did)
+                if duel_jev is not None:
+                    duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
                 budget = max(0.0, send_by - time.monotonic())
                 request = WordsRequest(f"duel:{did}", move.price, sent.get(did, 0), None, rival_text(d), budget)
                 said = duel_words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
                 if time.monotonic() > send_by:
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
-                    return
+                    return "expired"
                 client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
             duel_traces.sent(did, move, said)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
+            return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
             duel_traces.refused(did, e)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
+            return "failed"
+
+    def record(
+        d: dict[str, Any], move: DuelMove, pick: DuelPick | None, tick: int, status: Status, guardrail: str = "allowed"
+    ) -> None:
+        """One `decisions` row per duel per tick: the state Jev read, its verdict and floats, what we did."""
+        offer = d.get("rival_offer")
+        rival = offer if isinstance(offer, dict) else {}
+        inputs = pick.state.get("duel", {}) if pick is not None else {}
+        inputs = inputs or {"role": d.get("role"), "our_limit": d.get("your_limit"), "rival_price": rival.get("price")}
+        if pick is not None and pick.days is not None:
+            inputs = {**inputs, "jev_days": pick.days.as_dict()}
+        rec.decide(
+            tick,
+            f"duel_{move.kind}",
+            f"duel {duel_id(d)} {move.kind} {move.price or ''}",
+            inputs=inputs,
+            reason=move.reason + (f"; {pick.why}" if pick is not None else ""),
+            guardrail=guardrail,
+            chosen=move.kind != "hold" and status in ("approved", "done"),
+            status=status,
+            jev=pick.advice if pick is not None else None,
+            move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
+        )
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
+        decisions.begin_tick(c.tick)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
             data = client.duels()
@@ -469,22 +507,37 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        live_ids = [did for did in map(duel_id, duels) if did is not None]
+        for live_id in live_ids:
+            first_seen.setdefault(live_id, c.tick)
+        picks: dict[int, DuelPick] = {}
+        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
+            endgame = rules.duel_endgame_ticks
+            left = lambda: send_by - time.monotonic()  # noqa: E731
+            try:
+                picks = duel_jev.pick(
+                    duels, c.tick, first_seen, anchor=anchor, floor=floor, endgame_ticks=endgame, left=left
+                )
+            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
+                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
         for d in duels:
             did = duel_id(d)
             if did is None:
                 continue
-            first_seen.setdefault(did, c.tick)
-            move = duel_move(
-                d,
-                c.tick,
-                first_seen[did],
-                anchor=anchor,
-                floor=floor,
-                endgame_ticks=rules.duel_endgame_ticks,
+            pick = picks.get(did)
+            move = (
+                pick.move
+                if pick is not None
+                else duel_move(
+                    d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=rules.duel_endgame_ticks
+                )
             )
             duel_traces.seen(d, c.tick, move)
+            if pick is not None:
+                duel_traces.jev(did, pick)
             if play and move.kind in ("accept", "offer") and time.monotonic() >= send_by:
                 console.print(f"  duel {did}: no time left in tick {c.tick}, {move.kind} next tick")
+                record(d, move, pick, c.tick, "expired")
                 continue
             if play and move.kind in ("accept", "offer"):
                 kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
@@ -500,25 +553,78 @@ def duel_run(
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
+                    record(d, move, pick, c.tick, "rejected", str(verdict))
                     continue
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
                 if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
                     console.print(f"  duel {did}: another process took the team's accept this tick")
+                    record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
                     continue
             # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
             console.print(
                 f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
-                f"deadline {duel_deadline(d)} -> {move.kind} {move.price or ''} ({move.reason})"
+                f"deadline {duel_deadline(d)} -> {move.kind} {move.price or ''} ({escape(move.reason)})"
+                + (f" · {escape(pick.why)}" if pick is not None else "")
             )
-            if play and move.kind != "hold":
-                send(d, did, move, c, send_by)
+            status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
+            record(d, move, pick, c.tick, status)
         duel_traces.end_tick(duel_id(d) for d in duels)
+        if duel_jev is not None:
+            try:
+                for line in duel_jev.outcomes.settle(live_ids, c.tick):
+                    console.print(f"  {escape(line)}")
+            except Exception as e:  # calibration is a side record: it never breaks the loop
+                console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
-    console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
+    console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''})")
     try:
         run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
     finally:
         duel_traces.close("stopped")
+        decisions.close()
+
+
+def _db_connect(app: str) -> Callable[[], Any]:
+    from bazaar_agent import db
+
+    return lambda: db.connect(app=app)
+
+
+def _jev_journal(settings: Any) -> Any:
+    """Every Jev call of the duel player and the maker, and its outcome, in `<data_dir>/jev-decisions/`."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.jev_journal import JOURNAL_DIRECTORY, JevJournal
+
+    return JevJournal(settings.data_dir / JOURNAL_DIRECTORY, lambda m: err_console.print(f"[dim]{escape(m)}[/dim]"))
+
+
+def _jev_fns(settings: Any, rules: Any, journal: Any, pack: str, *questions: str) -> list[Any]:
+    """One `JevFn` per question of `questions/<pack>`, sharing one journal and `jev_timeout_s`."""
+    from bazaar_agent.agents.jev_journal import question_fn
+
+    # Settings already read $TYPESAFE_API_KEY (env, then .env); "" never falls back to the environment again.
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else ""
+    path = REPO_ROOT / "questions" / pack
+    return [question_fn(path, q, api_key=key, timeout_s=rules.jev_timeout_s, journal=journal) for q in questions]
+
+
+def _duel_jev(settings: Any, rules: Any) -> Any:
+    """Jev `duel_move` + `rival_cares_about_days` (questions/duels.json) as the duel player's decision model."""
+    from bazaar_agent.agents.duel_jev import DAYS_QUESTION, MOVE_QUESTION, DuelJev
+
+    journal = _jev_journal(settings)
+    move_fn, days_fn = _jev_fns(settings, rules, journal, "duels.json", MOVE_QUESTION, DAYS_QUESTION)
+    return DuelJev(move_fn, days_fn, can_accept_early=rules.jev_can_accept_early, journal=journal)
+
+
+def _maker_jev(settings: Any, rules: Any) -> Any:
+    """Jev `list_price_choice` + `reprice_or_hold` (questions/maker.json) as the maker's decision model."""
+    from bazaar_agent.agents.maker_jev import PRICE_QUESTION, REPRICE_QUESTION, MakerJev
+
+    journal = _jev_journal(settings)
+    price_fn, reprice_fn = _jev_fns(settings, rules, journal, "maker.json", PRICE_QUESTION, REPRICE_QUESTION)
+    return MakerJev(price_fn, reprice_fn, journal=journal)
 
 
 # ---------------------------------------------------------------- guardrails
@@ -1239,6 +1345,7 @@ def agent_taker(
 def agent_maker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
 ) -> None:
@@ -1246,7 +1353,7 @@ def agent_maker(
     from bazaar_agent.agents.maker import Maker
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        return Maker(team, public, **kw)
+        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host)
 

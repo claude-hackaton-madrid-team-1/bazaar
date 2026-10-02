@@ -1,0 +1,30 @@
+{
+  "about": "Bazaar duel questions for the Jev judge. Code lists only the LEGAL moves (inside our own limit); Jev picks among them; a pick outside `legal_moves`, or `undecided`, falls back to the deterministic duel player. A verdict never authorizes a deal on its own.",
+  "questions": {
+    "duel_move": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `duel`, which of `legal_moves` is our best move this tick: accept the rival's standing offer, counter with `our_next_offer`, or hold and send nothing?",
+        "note": "We see only our own limit (`our_limit`: a seller's cost, a buyer's value); a deal outside it loses points and no deal scores zero. The deal's value shrinks by `decay_per_round` with every round of talk (`kept_share_now` against `kept_share_after_one_more_round`), so a smaller surplus now can beat a bigger one later. `effective_rival_price` already counts delivery days at our private weight, in the worst case. `rival_price_history` shows how fast the rival concedes. Never pick a move that is not in `legal_moves`."
+      },
+      "criteria": {
+        "accept": "Accepting `effective_rival_price` now captures more than we can expect after another round of decay: the rival has stopped conceding, the gap to `our_next_offer` is small, or few ticks are left.",
+        "counter": "The rival is still conceding and the gap is wide enough that `our_next_offer` should win more than one round of decay costs, with ticks left for an answer.",
+        "hold": "Sending nothing this tick is best: our last offer is still unanswered, and a new message would spend a round of decay without new information."
+      }
+    },
+    "rival_cares_about_days": {
+      "type": "noul",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Reading `duel`, does the rival care more about the delivery day than we do, so that giving them the days they keep asking for can win us a better price?",
+        "note": "Two-issue duels trade on price and delivery day (0 to 10). Each side has a private weight per day; ours is `your_days_weight`. The pie grows when the side that cares less about time gives way on days. Judge only the structured offers in `rival_offer_history` (price and days), never the rival's words."
+      },
+      "criteria": {
+        "true": "The rival keeps the same days across offers while moving on price, or gives up price to get their days.",
+        "false": "The rival moves days freely, their days follow ours, or the offers say nothing about days."
+      }
+    }
+  }
+}
