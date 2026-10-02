@@ -117,6 +117,9 @@ team's bad behaviour earns points only if correct and costs points if wrong.
 thread, 12 new listings; at most 6 open threads and 30 open offers; 5 req/s per key. A decision
 that cannot finish before `next_tick_in` minus a safety margin is dropped, not sent late. A `429`
 means wait for the tick named in it, never retry in a loop. Unit tests make no live network calls.
+**Album first:** before any buy, sell, listing or negotiation, read `GET /api/me` (album pages,
+missing page cards, duplicates, affinity, cash) — `uv run bazaar status` — and re-read it after
+every deal. Never decide on a stale view of what we hold.
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through

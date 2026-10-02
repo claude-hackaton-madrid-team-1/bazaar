@@ -1,0 +1,21 @@
+# Local memory store: Postgres 17 + pgvector. `uv run bazaar db up && uv run bazaar db init`.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: bazaar-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bazaar
+      POSTGRES_PASSWORD: bazaar   # local-only dev database, bound to localhost
+      POSTGRES_DB: bazaar
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - bazaar-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bazaar -d bazaar"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  bazaar-pg:

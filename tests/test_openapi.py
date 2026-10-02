@@ -7,16 +7,50 @@ METHODS = {"get", "post", "put", "patch", "delete"}
 OPEN_OPERATIONS = {
     ("get", p)
     for p in (
-        "/api/health", "/api/clock", "/api/catalog", "/api/leaderboard", "/api/feed", "/api/schedule",
-        "/api/dealers", "/api/dealers/{pid}", "/api/levels", "/api/venues", "/api/venues/{vid}/offers", "/{path}",
+        "/api/health",
+        "/api/clock",
+        "/api/catalog",
+        "/api/leaderboard",
+        "/api/feed",
+        "/api/schedule",
+        "/api/dealers",
+        "/api/dealers/{pid}",
+        "/api/levels",
+        "/api/venues",
+        "/api/venues/{vid}/offers",
+        "/{path}",
     )
 }
 ME_FIELDS = {
-    "id", "name", "cash", "level", "unlocked", "badges", "frozen", "affinity", "assets", "album",
-    "collection_value", "open_threads", "score", "tick", "tick_seconds", "venue",
+    "id",
+    "name",
+    "cash",
+    "level",
+    "unlocked",
+    "badges",
+    "frozen",
+    "affinity",
+    "assets",
+    "album",
+    "collection_value",
+    "open_threads",
+    "score",
+    "tick",
+    "tick_seconds",
+    "venue",
 }
 OFFER_FIELDS = {
-    "id", "maker", "to", "venue", "thread", "status", "give", "want", "expires_tick", "created_tick", "final",
+    "id",
+    "maker",
+    "to",
+    "venue",
+    "thread",
+    "status",
+    "give",
+    "want",
+    "expires_tick",
+    "created_tick",
+    "final",
 }
 
 

@@ -13,5 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - name: Tests, API calls replayed from tests/fixtures/api
-        run: uvx --with jsonschema pytest tests -v -rs
+      - name: Install the project and its dev tools (pyproject.toml + uv.lock)
+        run: uv sync --locked
+      - name: Lint and types
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+          uv run mypy src
+      - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
+        run: uv run pytest tests -v -rs
