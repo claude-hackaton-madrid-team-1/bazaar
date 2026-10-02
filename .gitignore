@@ -40,3 +40,7 @@
 # README embeds IS committed; the script and the intermediate asciinema cast are not.
 scripts/record-demo.sh
 docs/imgs/demo.cast
+
+# Jev decision model (vendor/jev-sdk): Bun deps and masked local decision logs.
+node_modules/
+.local/

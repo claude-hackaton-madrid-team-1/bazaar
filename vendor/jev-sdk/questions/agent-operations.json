@@ -1,0 +1,54 @@
+{
+  "about": "Generic repository decision questions. A verdict informs an operator but never authorizes an action.",
+  "questions": {
+    "task_size": {
+      "type": "choice",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Reading `request` and `plan`, how large is the work the owner authorized?",
+        "note": "Judge the shape of the work, not how hard it is. Count the phases the plan actually has, not the files a phase touches."
+      },
+      "criteria": {
+        "small": "One phase: a direct change, or one delegated writer, that ends in one pull request.",
+        "large_multi_phase": "An approved plan with more than one phase, where a later phase waits for an earlier one to be accepted.",
+        "unclear": "The text does not say enough to tell those two apart."
+      }
+    },
+    "finding_is_real": {
+      "type": "noul",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Does the code in `code` actually have the defect that `finding` claims?",
+        "note": "Judge only the claim against the code as given. A claim that needs code not shown, or that describes a style preference rather than a defect, is not real."
+      },
+      "criteria": {
+        "true": "The cited code has the described defect, and an input the code accepts would show it.",
+        "false": "The code does not have that defect, the claim is about taste, or the cited lines cannot show it."
+      }
+    },
+    "log_line_is_error": {
+      "type": "noul",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Is the deployed service line in `line` reporting a real error?",
+        "note": "Development must have zero error lines, so this separates a real failure from a line that only contains the word error, such as an error counter at zero, a retired name in a message, or a healthy shutdown."
+      },
+      "criteria": {
+        "true": "The line reports something that failed, refused, crashed, timed out or was dropped.",
+        "false": "The line is informational, a zero counter, an expected refusal that the service handled, or an ordinary lifecycle message."
+      }
+    },
+    "needs_owner": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `situation` and `next_step`, does the next step need the owner?",
+        "note": "The owner is the person. Needing the owner means needing an answer, a permission, a credential, a decision between real alternatives, or an action only a person can take in a third party console."
+      },
+      "criteria": {
+        "true": "The next step cannot start until the owner answers or acts.",
+        "false": "The agent can take the next step by itself with what it already has."
+      }
+    }
+  }
+}

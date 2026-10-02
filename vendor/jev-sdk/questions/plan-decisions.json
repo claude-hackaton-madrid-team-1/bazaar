@@ -1,0 +1,41 @@
+{
+  "about": "Generic repository decision questions. A verdict informs an operator but never authorizes an action.",
+  "questions": {
+    "finding_is_pre_existing": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Does the defect in `finding` already exist in `base_code`, before the change in `diff`?",
+        "note": "Judge the base code as given. A defect the change only moved, renamed or made easier to see is pre-existing; a defect the change created is not."
+      },
+      "criteria": {
+        "true": "The base code already has the defect, so the change only moved, renamed or exposed it.",
+        "false": "The base code does not have the defect: the change introduced it."
+      }
+    },
+    "options_are_exclusive": {
+      "type": "noul",
+      "stakes": "passive",
+      "instructions": {
+        "question": "Can exactly one of the alternatives in `alternatives` be the right answer to the decision in `decision`?",
+        "note": "Judge the alternatives against each other. Two that could both be taken, or one that contains another, cannot be told apart by a single choice. `alternatives` holds the real options only; leave the no-match option out, because it overlaps every other one by construction."
+      },
+      "criteria": {
+        "true": "Taking one option rules out every other one, and no option is a special case of another.",
+        "false": "Two options could both be taken, one option contains another, or the same situation satisfies more than one."
+      }
+    },
+    "report_proves_criterion": {
+      "type": "noul",
+      "stakes": "critical",
+      "instructions": {
+        "question": "Does the evidence in `evidence` prove the acceptance criterion in `criterion`?",
+        "note": "Proof is an observed result: a command with its output, a runtime readback, a measured number. A description of what was implemented, a passing unrelated check, a structural assertion about a file, or a plan to run something later is not proof of a behavioural criterion."
+      },
+      "criteria": {
+        "true": "The evidence is an observed result, and reading it answers the exact question the criterion asks.",
+        "false": "The evidence describes the work instead of showing a result, answers a different question, or was not actually run."
+      }
+    }
+  }
+}
