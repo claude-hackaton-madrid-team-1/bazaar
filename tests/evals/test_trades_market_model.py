@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bazaar_agent.evals.market import score_market_test
-from bazaar_agent.evals.model import JevCheck, day_of, label_for
+from bazaar_agent.evals.model import JevCheck, day_of, jev_question, label_for
 from bazaar_agent.evals.trades import Settlement, Valuation, jev_check, score_trade
 from tests.evals.conftest import OURS
 
@@ -73,3 +73,25 @@ def test_labels_and_days() -> None:
     openings = [(0, "fri"), (241, "sat"), (2000, "sun")]
     assert [day_of(t, openings) for t in (None, 0, 159, 241, 1999, 2500)] == [None, "fri", "fri", "sat", "sat", "sun"]
     assert day_of(5, []) is None
+
+
+@pytest.mark.parametrize(
+    ("agent", "kind", "question"),
+    [
+        ("duels", "duel_offer", "duel_move"),
+        ("maker", "post_ask", "list_price_choice"),
+        ("maker", "hold_ask", "reprice_or_hold"),
+        ("maker", "reprice_bid", "reprice_or_hold"),
+        ("taker", "accept_ask", "offer_is_worth_accepting"),
+        (None, None, "offer_is_worth_accepting"),
+    ],
+)
+def test_each_decision_maps_to_the_jev_question_its_agent_asks(
+    agent: str | None, kind: str | None, question: str
+) -> None:
+    assert jev_question(agent, kind) == question
+
+
+def test_a_maker_list_price_choice_cannot_be_judged_from_one_fill() -> None:
+    check = jev_check({"verdict": "aggressive"}, 12.0, "list_price_choice")
+    assert check == JevCheck("list_price_choice", "aggressive", None)

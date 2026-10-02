@@ -16,7 +16,7 @@ from bazaar_agent.evals import inputs, store
 from bazaar_agent.evals.dealers import learned_ranges, score_thread
 from bazaar_agent.evals.duels import score_duel
 from bazaar_agent.evals.market import score_market_test
-from bazaar_agent.evals.model import Outcome, day_of
+from bazaar_agent.evals.model import Outcome, day_of, jev_question
 from bazaar_agent.evals.phoenix import PhoenixAnnotator, annotation_payload, span_query
 from bazaar_agent.evals.trades import score_trade
 from bazaar_agent.intel import dealer_threads
@@ -52,7 +52,14 @@ def trade_outcomes(conn: psycopg.Connection, ours: str, since_tick: int | None) 
     for s in inputs.our_settlements(conn, ours, since_tick):
         link = inputs.linked_decision(conn, s, ours)
         value = inputs.valuation(conn, s, ours)
-        o = score_trade(s, ours, value, decision_id=link.id if link else None, jev=link.jev if link else None)
+        o = score_trade(
+            s,
+            ours,
+            value,
+            decision_id=link.id if link else None,
+            jev=link.jev if link else None,
+            jev_asked=jev_question(link.agent, link.kind) if link else None,
+        )
         if link is not None:
             o = replace(o, details={**o.details, "decision_agent": link.agent, "decision_tick": link.tick})
         out.append(o)

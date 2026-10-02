@@ -125,38 +125,46 @@ def _table(title: str, rows: list[dict[str, Any]], columns: tuple[str, ...]) -> 
 
 def render(report: Report) -> Group:
     parts: list[Any] = [
-        _table(
-            "Scorecard (outcomes per target and game day)",
-            report.scorecard,
-            (
-                "target",
-                "day",
-                "outcomes",
-                "scored",
-                "mean_score",
-                "worst_score",
-                "good",
-                "ok",
-                "bad",
-                "surplus",
-                "worst",
-            ),
-        )
-        if report.scorecard
-        else Text("Scorecard: no outcomes yet (run `bazaar evals run`)"),
-        _table(
-            "Dealer ladder (best three shares per level; a missing deal counts zero)",
-            report.ladder,
-            ("level", "dealers", "threads", "deals", "best3_share", "best3"),
-        )
-        if report.ladder
-        else Text("Dealer ladder: no dealer threads of ours yet"),
+        (
+            _table(
+                "Scorecard (outcomes per target and game day)",
+                report.scorecard,
+                (
+                    "target",
+                    "day",
+                    "outcomes",
+                    "scored",
+                    "mean_score",
+                    "worst_score",
+                    "good",
+                    "ok",
+                    "bad",
+                    "surplus",
+                    "worst",
+                ),
+            )
+            if report.scorecard
+            else Text("Scorecard: no outcomes yet (run `bazaar evals run`)")
+        ),
+        (
+            _table(
+                "Dealer ladder (best three shares per level; a missing deal counts zero)",
+                report.ladder,
+                ("level", "dealers", "threads", "deals", "best3_share", "best3"),
+            )
+            if report.ladder
+            else Text("Dealer ladder: no dealer threads of ours yet")
+        ),
         _table(
             "Worst 5 per target",
             report.worst,
             ("target", "subject", "score", "label", "day", "realized_surplus", "explanation"),
         ),
-        Text("Jev calibration (calls/decided from decisions; right/wrong once settled)", style="bold"),
+        Text(
+            "Jev calibration (calls/decided from decisions; right/wrong from the trades settled here. The duel"
+            " player and the maker journal their own outcomes: python -m bazaar_agent.jev report on their volume)",
+            style="bold",
+        ),
         Text(report_table(report.calibration).rstrip("\n")),
         _table(
             "Official numbers (newest /me snapshot)",

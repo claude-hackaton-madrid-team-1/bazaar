@@ -27,6 +27,17 @@ ANNOTATION_NAMES: dict[str, str] = {
 }
 
 
+def jev_question(agent: str | None, kind: str | None) -> str:
+    """The Jev question behind a decision's verdict (a `decisions.jev` row does not name it): the duel
+    player asks `duel_move`, the maker `list_price_choice` for a post and `reprice_or_hold` for a stale
+    offer, the taker `offer_is_worth_accepting` (questions/*.json)."""
+    if agent == "duels":
+        return "duel_move"
+    if agent == "maker":
+        return "list_price_choice" if (kind or "").startswith("post") else "reprice_or_hold"
+    return "offer_is_worth_accepting"
+
+
 def label_for(score: float) -> Label:
     return "good" if score >= GOOD else "ok" if score >= OK else "bad"
 

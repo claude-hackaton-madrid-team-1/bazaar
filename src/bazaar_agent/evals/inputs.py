@@ -13,6 +13,7 @@ import psycopg
 
 from bazaar_agent.evals.dealers import CurveRow
 from bazaar_agent.evals.duels import Closure
+from bazaar_agent.evals.model import jev_question
 from bazaar_agent.evals.trades import Settlement, Valuation
 from bazaar_agent.feed import Event
 from bazaar_agent.identity import valid_team_id
@@ -146,6 +147,7 @@ def _trade_cash(s: Settlement, ours: str) -> tuple[int, ...]:
 class LinkedDecision:
     id: int
     agent: str | None
+    kind: str
     tick: int | None  # its trace in Phoenix is `<agent> tick <tick>`
     jev: dict[str, Any] | None
 
@@ -156,7 +158,7 @@ def linked_decision(conn: psycopg.Connection, s: Settlement, ours: str) -> Linke
     if s.buyer == ours:
         rows = _rows(
             conn,
-            "select id, agent, tick, jev from decisions where kind = 'accept_ask' and status = 'done' "
+            "select id, agent, kind, tick, jev from decisions where kind = 'accept_ask' and status = 'done' "
             "and not coalesce(dry_run, false) and candidates->>'ref' = %s and tick between %s and %s "
             "order by tick desc, id desc limit 1",
             (s.ref, s.tick - DECISION_LINK_TICKS, s.tick),
@@ -164,15 +166,15 @@ def linked_decision(conn: psycopg.Connection, s: Settlement, ours: str) -> Linke
     else:
         rows = _rows(
             conn,
-            "select id, agent, tick, jev from decisions where kind = 'post_ask' and status = 'done' "
+            "select id, agent, kind, tick, jev from decisions where kind = 'post_ask' and status = 'done' "
             "and not coalesce(dry_run, false) and (candidates->>'asset_id')::bigint = any(%s) and tick <= %s "
             "order by tick desc, id desc limit 1",
             (list(s.asset_ids), s.tick),
         )
     if not rows:
         return None
-    decision_id, agent, tick, jev = rows[0]
-    return LinkedDecision(int(decision_id), agent, tick, dict(jev) if isinstance(jev, Mapping) else None)
+    decision_id, agent, kind, tick, jev = rows[0]
+    return LinkedDecision(int(decision_id), agent, str(kind), tick, dict(jev) if isinstance(jev, Mapping) else None)
 
 
 def latest_score(conn: psycopg.Connection) -> tuple[int, dict[str, Any]] | None:
@@ -181,10 +183,17 @@ def latest_score(conn: psycopg.Connection) -> tuple[int, dict[str, Any]] | None:
 
 
 def jev_calls(conn: psycopg.Connection) -> dict[str, tuple[int, int]]:
-    """Per Jev question: (calls, decided) from the agents' decisions."""
+    """Per Jev question: (calls, decided) from the agents' decisions. Any verdict but `undecided` is
+    decided: yes/no for a noul question, the chosen option for a choice question."""
     rows = _rows(
         conn,
-        "select coalesce(jev->>'question', 'offer_is_worth_accepting'), count(*), "
-        "count(*) filter (where jev->>'verdict' in ('yes', 'no')) from decisions where jev is not null group by 1",
+        "select agent, split_part(kind, '_', 1), count(*), "
+        "count(*) filter (where coalesce(jev->>'verdict', 'undecided') <> 'undecided') "
+        "from decisions where jev is not null group by 1, 2",
     )
-    return {str(q): (int(n), int(d)) for q, n, d in rows}
+    calls: dict[str, tuple[int, int]] = {}
+    for agent, kind, n, decided in rows:
+        q = jev_question(agent, kind)
+        before = calls.get(q, (0, 0))
+        calls[q] = (before[0] + int(n), before[1] + int(decided))
+    return calls

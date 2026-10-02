@@ -13,9 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from bazaar_agent.evals.model import JevCheck, Outcome, clamp01, label_for
-
-JEV_OFFER_QUESTION = "offer_is_worth_accepting"  # the only question the taker asks (cli._offer_jev)
+from bazaar_agent.evals.model import JevCheck, Outcome, clamp01, jev_question, label_for
 
 
 @dataclass(frozen=True)
@@ -43,14 +41,15 @@ class Valuation:
     after_tick: int | None = None
 
 
-def jev_check(jev: Mapping[str, Any] | None, gained: float) -> JevCheck | None:
-    """Whether a decided `offer_is_worth_accepting` verdict was right: yes pays when we gained."""
+def jev_check(jev: Mapping[str, Any] | None, gained: float, question: str | None = None) -> JevCheck | None:
+    """Whether the verdict behind the trade was right. A yes/no (`offer_is_worth_accepting`) is right
+    when it agrees with the gain; a choice (the maker's list price) cannot be judged from one fill."""
     if not jev or not isinstance(jev.get("verdict"), str):
         return None
     verdict = str(jev["verdict"])
-    question = str(jev.get("question") or JEV_OFFER_QUESTION)
+    asked = str(jev.get("question") or question or jev_question("taker", "accept_ask"))
     right = None if verdict not in ("yes", "no") else (verdict == "yes") == (gained > 0)
-    return JevCheck(question, verdict, right)
+    return JevCheck(asked, verdict, right)
 
 
 def score_trade(
@@ -60,6 +59,7 @@ def score_trade(
     *,
     decision_id: int | None = None,
     jev: Mapping[str, Any] | None = None,
+    jev_asked: str | None = None,
 ) -> Outcome:
     buying = s.buyer == ours
     if buying:
@@ -93,7 +93,7 @@ def score_trade(
     text = f"{verb} (worth {value:g} to us): {gained:+.1f} P at our private values."
     if gained < 0:
         text += " A loss: below our value."
-    return _done(base, score, text, gained, details, jev_check(jev, gained))
+    return _done(base, score, text, gained, details, jev_check(jev, gained, jev_asked))
 
 
 def _done(

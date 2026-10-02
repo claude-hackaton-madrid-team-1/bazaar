@@ -270,3 +270,22 @@ def test_phoenix_down_mid_pass_keeps_the_scores(seeded: psycopg.Connection) -> N
     annotator = PhoenixAnnotator(httpx.Client(base_url="http://x", transport=httpx.MockTransport(down)), "bazaar")
     summary = run_once(seeded, OURS, annotator=annotator, warn=warnings.append)
     assert summary.changed == 27 and summary.annotated == 0 and "retrying next pass" in warnings[0]
+
+
+def test_jev_calls_are_counted_per_question_each_agent_asks(seeded: psycopg.Connection) -> None:
+    from bazaar_agent.evals.inputs import jev_calls
+
+    seeded.execute(
+        "insert into decisions (tick, agent, kind, status, jev) values "
+        "(150, 'duels', 'duel_accept', 'done', '{\"verdict\": \"accept\"}'), "
+        "(151, 'duels', 'duel_offer', 'done', '{\"verdict\": \"undecided\"}'), "
+        "(152, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\"}'), "
+        "(153, 'maker', 'hold_ask', 'approved', '{\"verdict\": \"yes\"}')"
+    )
+    seeded.commit()
+    assert jev_calls(seeded) == {
+        "duel_move": (2, 1),
+        "list_price_choice": (1, 1),
+        "reprice_or_hold": (1, 1),
+        "offer_is_worth_accepting": (1, 1),
+    }
