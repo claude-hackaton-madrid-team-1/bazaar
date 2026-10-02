@@ -123,6 +123,9 @@ means wait for the tick named in it, never retry in a loop. Unit tests make no l
 **Album first:** before any buy, sell, listing or negotiation, read `GET /api/me` (album pages,
 missing page cards, duplicates, affinity, cash) — `uv run bazaar status` — and re-read it after
 every deal. Never decide on a stale view of what we hold.
+**Live services:** Taker https://bazaar-taker-production.up.railway.app (wss …/events) · Maker
+https://bazaar-maker-production.up.railway.app (wss …/events) · Phoenix
+https://phoenix-production-6aa3.up.railway.app — contracts in `docs/services.md`.
 **Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
 `guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
 to validate. `touch .local/PAUSE` stops every write at once.

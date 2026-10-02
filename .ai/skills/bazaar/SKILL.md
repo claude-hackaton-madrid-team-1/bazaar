@@ -7,6 +7,13 @@ description: "Operate Team 1's Bazaar trading agent through the `bazaar` Python 
 
 Everything goes through `uv run bazaar …` (source: `src/bazaar_agent/`). Python only.
 
+## Live services (public, read-only)
+
+- Taker: https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events
+- Maker: https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events
+- Phoenix: https://phoenix-production-6aa3.up.railway.app (project `bazaar`)
+- Contracts and examples: `docs/services.md`.
+
 ## Before you act
 
 0. `uv run bazaar status`: ALWAYS read `/api/me` first: album pages, missing page cards (with

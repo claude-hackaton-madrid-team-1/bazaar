@@ -8,6 +8,16 @@ verdict, and leaves execution to a separate runtime that only acts on structured
 **Python only** (3.12 + `uv`). The organisers' SDK is vendored in `vendor/bazaar-kit/` and used
 first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 
+## Live services
+
+| Service | URL |
+|---|---|
+| Taker | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` |
+| Maker | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` |
+| Phoenix | https://phoenix-production-6aa3.up.railway.app |
+
+Endpoints, event envelope and examples for the dashboard: [`docs/services.md`](docs/services.md).
+
 ## Start in two minutes
 
 ```sh
