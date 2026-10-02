@@ -324,9 +324,11 @@ def report_lines(report: CheckReport, target: Target) -> list[str]:
     pgvector = (
         f"on ({report.pgvector})"
         if report.pgvector
-        else "off: shipped, run `bazaar db init`"
-        if report.pgvector_shipped
-        else "off: this server has no pgvector (embedding columns skipped)"
+        else (
+            "off: shipped, run `bazaar db init`"
+            if report.pgvector_shipped
+            else "off: this server has no pgvector (embedding columns skipped)"
+        )
     )
     width = max((len(name) for name, _ in report.tables), default=0)
     tables = [f"  {name:<{width}}  {n:>7}" for name, n in report.tables]

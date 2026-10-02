@@ -95,14 +95,14 @@ Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan 
 `docs/api/openapi.json`) · pydantic v2 at every boundary · Postgres 17 + pgvector (docker compose
 locally, or the team's shared Railway Postgres via `DATABASE_URL`; pgvector optional) via psycopg 3,
 plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
-Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint + format) · mypy.
+Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint) + black (format) · mypy.
 NO TypeScript, NO Rust, NO bun/node at runtime (`vendor/jev-sdk` is reference only) · NO ORM ·
 NO LLM in the executor path · NO wall-clock scheduling (game ticks only).
 
 ## Definition of Done (all must pass)
 Tests green (`uv run pytest`) + coverage ≥ 80% on `src/bazaar_agent` logic (`uv run pytest --cov`) ·
 typecheck clean (`uv run mypy src`) · linter/formatter clean (`uv run ruff check . && uv run ruff
-format --check .`) · every external input validated at the boundary · no secrets in logs · new
+format --check . && uv run black --check src tests scripts`) · every external input validated at the boundary · no secrets in logs · new
 errors recorded in `.ai/memory.md` · generated agent docs in sync (`sh scripts/sync-ai-docs.sh`,
 enforced by the pre-commit hook) · README status block current (`python3
 scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Honest Implementation

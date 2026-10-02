@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
-# Python quality gate (fast): ruff lint + format check on our code. Skipped if uv is missing.
+# Python quality gate (fast): ruff lint + ruff/black format checks on our code. Skipped if uv is missing.
 set -eu
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 command -v uv >/dev/null 2>&1 || { echo "uv not found: skipping ruff gate" >&2; exit 0; }
 uv run --quiet ruff check src tests scripts
 uv run --quiet ruff format --check src tests scripts
+uv run --quiet black --check --quiet src tests scripts
