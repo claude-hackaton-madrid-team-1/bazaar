@@ -37,6 +37,9 @@ class Settings(BaseModel):
     bazaar_url: str = DEFAULT_URL
     bazaar_key: SecretStr | None = None
     typesafe_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
 
@@ -62,6 +65,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
         "bazaar_url": pick("BAZAAR_URL") or DEFAULT_URL,
         "bazaar_key": pick("BAZAAR_KEY"),
         "typesafe_api_key": pick("TYPESAFE_API_KEY"),
+        "anthropic_api_key": pick("ANTHROPIC_API_KEY"),
+        "openai_api_key": pick("OPENAI_API_KEY"),
+        "llm_runtime": pick("BAZAAR_LLM_RUNTIME"),
         "database_url": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):

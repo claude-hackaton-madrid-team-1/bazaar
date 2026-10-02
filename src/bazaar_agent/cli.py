@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -15,8 +17,9 @@ from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
+from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
-from bazaar_agent.ticks import Clock, run_per_tick
+from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
 feed_app = typer.Typer(no_args_is_help=True, help="Capture and inspect the public feed")
@@ -34,12 +37,15 @@ app.add_typer(obs_app, name="obs")
 console = Console()
 
 LIVE_HELP = "Merge the live feed window into the captured history"
-DUEL_WORDS = "Propongo este precio, creo que es justo para los dos."
 
 
 @app.callback()
-def _tracing(ctx: typer.Context) -> None:
-    """With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans."""
+def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTION) -> None:
+    """Global options. `--llm-runtime` pins the runtime LLM for this run (see RUNTIME.md).
+
+    With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans.
+    """
+    llm_cli.pin_runtime(llm_runtime)
     if tm.init_tracing("bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
@@ -213,7 +219,7 @@ def dealer_buy(
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate
+    from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide, negotiate, template_words
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -272,6 +278,7 @@ def dealer_buy(
             on_deal=on_deal,
             max_ticks=rules.dealer_max_ticks_per_thread,
             observer=observer,
+            words_fn=llm_cli.words_for(settings, rules, template_words),
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -333,8 +340,12 @@ def duel_run(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from rich.markup import escape
+
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duelist import append_jsonl, duel_move
+    from bazaar_agent.agents.duelist import DuelMove, append_jsonl, duel_move, rival_text, template_duel_words
+    from bazaar_agent.agents.words import WordsRequest
+    from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
     settings = load_settings()
@@ -342,9 +353,34 @@ def duel_run(
     ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     first_seen: dict[int, int] = {}
+    sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
+    duel_words = llm_cli.words_for(settings, rules, template_duel_words)
+
+    def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> None:
+        said: str | None = None
+        try:
+            if move.kind == "accept":
+                client.duel_accept(did)
+            elif move.price is not None:
+                budget = max(0.0, send_by - time.monotonic())
+                request = WordsRequest(f"duel:{did}", move.price, sent.get(did, 0), None, rival_text(d), budget)
+                said = duel_words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
+                if time.monotonic() > send_by:
+                    console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
+                    return
+                client.duel_say(did, said, price=move.price, days=move.days)
+                sent[did] = sent.get(did, 0) + 1
+            duel_traces.sent(did, move, said)
+            append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
+        except BazaarError as e:
+            console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            duel_traces.refused(did, e)
+            append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
 
     def on_tick(c: Clock) -> None:
+        send_by = time.monotonic() + action_budget_s(c)
+        anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
             data = client.duels()
         except BazaarError as e:
@@ -363,11 +399,14 @@ def duel_run(
                 d,
                 c.tick,
                 first_seen[did],
-                anchor=rules.duel_anchor,
-                floor=rules.duel_floor_margin,
+                anchor=anchor,
+                floor=floor,
                 endgame_ticks=rules.duel_endgame_ticks,
             )
             duel_traces.seen(d, c.tick, move)
+            if play and move.kind in ("accept", "offer") and time.monotonic() >= send_by:
+                console.print(f"  duel {did}: no time left in tick {c.tick}, {move.kind} next tick")
+                continue
             if play and move.kind in ("accept", "offer"):
                 kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
                 ctx = gr.Context(
@@ -385,23 +424,13 @@ def duel_run(
                     continue
                 if move.kind == "accept":
                     ledger.record("accept", c.tick, c.t_hours, 0, f"duel:{did}")
+            # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
             console.print(
-                f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {d.get('rival_offer')} "
+                f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
                 f"deadline {d.get('deadline')} -> {move.kind} {move.price or ''} ({move.reason})"
             )
-            if not play or move.kind == "hold":
-                continue
-            try:
-                if move.kind == "accept":
-                    client.duel_accept(did)
-                elif move.price is not None:
-                    client.duel_say(did, DUEL_WORDS, price=move.price, days=move.days)
-                duel_traces.sent(did, move, DUEL_WORDS if move.kind == "offer" else None)
-                append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
-            except BazaarError as e:
-                console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
-                duel_traces.refused(did, e)
-                append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
+            if play and move.kind != "hold":
+                send(d, did, move, c, send_by)
         duel_traces.end_tick(d.get("id") for d in duels)
 
     console.print(f"duels → {log_path} ({'PLAYING' if play else 'log only'})")
@@ -860,7 +889,10 @@ def strategy(
     now = Clock.model_validate(public.clock())
     personas = public.dealers()
     dealers_now = personas.get("personas") or personas.get("dealers") or []
-    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, loaded.params, rules)
+    from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+
+    params = steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, now.tick)
+    book = st.build_playbook(me, public.catalog(), _events(live), dealers_now, params, rules)
     ledger = gr.Ledger(settings.data_dir / "ledger.jsonl")
     ctx = committed_context(gr.context_from(me, now.tick, now.t_hours, ledger, rules), commitments)
     used = ledger.packs_since(now.t_hours - 1.0)
@@ -971,6 +1003,12 @@ def sell_cancel(
         _fail(f"cancel refused: {e.code} ({e.message[:80]})")
         return
     console.print(f"[green]cancelled offer {offer_id}[/green]")
+
+
+# ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
+# `bazaar llm`, `bazaar ask`, `bazaar steer` (and `--llm-runtime` in `_root`): see bazaar_agent/llm/cli.py.
+
+llm_cli.register(app)
 
 
 if __name__ == "__main__":

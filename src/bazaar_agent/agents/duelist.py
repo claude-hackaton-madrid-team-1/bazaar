@@ -13,9 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from bazaar_agent.agents.words import WordsRequest
+
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
 ENDGAME_TICKS = 2  # in the last ticks, any deal strictly inside our limit beats no deal
+DUEL_WORDS = "Propongo este precio, creo que es justo para los dos."
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,20 @@ def duel_move(
                 "accept", rival, reason="rival meets our target" if good_enough else "endgame, inside limit"
             )
     return DuelMove("offer", target, days, reason=f"concede toward limit ({left} ticks left)")
+
+
+def template_duel_words(request: WordsRequest) -> str:
+    """The default duel `WordsFn`: one fixed polite line (the price travels as the structured field)."""
+    return DUEL_WORDS
+
+
+def rival_text(duel: dict[str, Any]) -> str | None:
+    """The rival's latest words, read defensively (the duel shape is unverified). Untrusted input."""
+    offer = duel.get("rival_offer")
+    for text in (offer.get("text") if isinstance(offer, dict) else None, duel.get("rival_text")):
+        if isinstance(text, str) and text.strip():
+            return text
+    return None
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:

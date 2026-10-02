@@ -180,6 +180,27 @@ Phoenix runs on one machine. Teammates can reach it in either of two ways. Neith
    the environment, not from `.env`). This path is untested: check it against Arize's docs before
    relying on it.
 
+## Runtime LLM (talk to it, let it write the words, steer it)
+
+[`RUNTIME.md`](RUNTIME.md) configures it. Jev picks the model per move (`questions/runtime_model.json`,
+a probability per candidate; undecided → `runtime_model_default`), unless you pin one:
+`--llm-runtime` > `BAZAAR_LLM_RUNTIME` > RUNTIME.md `llm_runtime`. Aliases: `opus-5-5`,
+`sonnet-5-5`, `haiku-4-5`, `fable-5-1`, `gpt-6-1-sol` (any `claude-*` / `gpt-*` id passes through).
+Keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` in `.env`; without one, every LLM path falls back.
+
+```sh
+uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices
+uv run bazaar ask "buy LAV-09 under 90"              # strict intent → guardrail verdict → the command (never runs it)
+uv run bazaar --llm-runtime opus-5-5 ask "sell my spare SAL-03 for at least 8"
+uv run bazaar steer "be more aggressive with rares tonight"   # bounded deltas, clamped by GUARDRAILS.md,
+                                                     # applied by `bazaar strategy` and `duel run` until a tick
+uv run bazaar steer --show                           # what is steered now, and until which tick
+```
+
+With `llm_words` = true, `dealer buy --live` and `duel run --play` let the chosen model write each
+message; the price stays the structured field set by code, and any other number, a timeout or an
+error sends the template instead.
+
 ## How it fits together
 
 ```
@@ -277,17 +298,20 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers. |
+| `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which keys are set (never values), and Jev's last choices. |
+| `uv run bazaar ask` | Talk to the agent: sentence → strict intent → guardrail verdict → exact command. Dry run: never trades. |
+| `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] build-error — a rival's text with `[/red]` would crash `duel run --play`
+- [2026-10-02] gotcha — OpenAI's id is `gpt-6.1-sol` (dot), not `gpt-6-1-sol`
+- [2026-10-02] finding — Jev picks the runtime LLM decisively when the state has stakes and time
 - [2026-10-02] finding — strategy engine, first live ranking (tick 95): rares first, LAT-09 is our best sell
 - [2026-10-02] gotcha — typer 0.27 vendors click: `import click` fails
 - [2026-10-02] build-error — a CLI test with a frozen fake clock hung forever
 - [2026-10-02] gotcha — Phoenix's hosted cloud is gone; share a self-hosted Phoenix instead
 - [2026-10-02] gotcha — libpq echoes the password when it cannot parse DATABASE_URL
-- [2026-10-02] finding — Railway's default Postgres image ships pgvector, despite its docs
-- [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
-- [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
 
 <!-- BAZAAR:STATUS:END -->
 

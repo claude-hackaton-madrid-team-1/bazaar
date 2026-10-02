@@ -4,6 +4,7 @@
 Sources (the block changes only when one of them changes, so teammates' branches rarely clash):
   - .ai/specs/02-plan.md   -> "Task index" table
   - src/bazaar_agent/cli.py -> every `bazaar` command with its one-line help
+  - src/bazaar_agent/llm/cli.py -> the commands its `register()` adds (`app.command("name")(func)`)
   - .ai/memory.md          -> the latest log entry headings
 Run by .githooks/pre-commit.d/10-readme-status. `--check` exits 1 when README is stale.
 On a merge conflict inside the block: resolve either way, then rerun this script.
@@ -67,7 +68,25 @@ def cli_commands() -> str:
                 group, name = found
                 doc = (ast.get_docstring(node) or "").splitlines()[0] if ast.get_docstring(node) else ""
                 rows.append(f"| `uv run bazaar {group}{name}` | {doc} |")
-    return "| Command | What it does |\n|---|---|\n" + "\n".join(rows)
+    return "| Command | What it does |\n|---|---|\n" + "\n".join(rows + registered_commands())
+
+
+def registered_commands() -> list[str]:
+    """Commands a module adds with `app.command("name")(func)` inside `register()` (llm/cli.py)."""
+    path = ROOT / "src/bazaar_agent/llm/cli.py"
+    if not path.is_file():
+        return []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docs = {n.name: (ast.get_docstring(n) or "").split("\n")[0] for n in tree.body if isinstance(n, ast.FunctionDef)}
+    rows = []
+    for node in ast.walk(tree):
+        call = node.value if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) else None
+        inner = call.func if call is not None else None
+        if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "command"):
+            continue
+        if inner.args and isinstance(inner.args[0], ast.Constant) and call.args and isinstance(call.args[0], ast.Name):
+            rows.append(f"| `uv run bazaar {inner.args[0].value}` | {docs.get(call.args[0].id, '')} |")
+    return rows
 
 
 def memory_entries() -> str:
