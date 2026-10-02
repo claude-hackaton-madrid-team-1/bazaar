@@ -115,6 +115,9 @@ Schema: `src/bazaar_agent/sql/schema.sql` (spec §5).
 
 `uv run python -m bazaar_agent.jev judge --state <file|-> --questions questions/negotiation.json --log`.
 A verdict informs, never authorizes. `undecided` maps to the conservative move, never to yes.
+The duel player (`duel_move`, `rival_cares_about_days`) and the maker (`list_price_choice`,
+`reprice_or_hold`) ask Jev each tick among legal candidates only (`--no-jev` turns it off); calls and
+outcomes land in `.local/jev-decisions/`: `uv run python -m bazaar_agent.jev report --directory .local/jev-decisions`.
 
 ## SDK first, HTTP as Plan B
 

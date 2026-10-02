@@ -179,7 +179,7 @@ What you see in Phoenix:
 | Trace | Comes from | Inside |
 |---|---|---|
 | `negotiation` (AGENT) | `bazaar dealer buy --live` | one `tick N` child per tick with events `message` (every line in the thread, both sides, with price), `dealer_offer`, `jev_verdict` (verdict, value, probabilities, latency), `guardrail` (allowed, violations), `our_move` (kind, price, our words, reason), `console`, and `exception` with the stack when the server refuses a move. The root holds dealer, item, plan, outcome, price, ticks and the full transcript |
-| `duel` (AGENT) | `bazaar duel run` | one per duel id: role, limit, a `duel tick N` child per tick with the rival offer, our move, guardrail, refusals |
+| `duel` (AGENT) | `bazaar duel run` | one per duel id: role, limit, a `duel tick N` child per tick with the rival offer, our move, Jev's `jev_verdict` (floats) and `jev_choice` (default, chosen, legal moves, why), guardrail, refusals |
 | `monitor tick N` | `bazaar monitor` | new events, newest id, gap flag, dealer/team/level counts, our cash/level/score, the stream's state and lead over the poll; every `alert` and new or changed `trader` as an event; DB failures as exceptions (the tick goes on) |
 | `monitor stream` | `bazaar monitor` | one trace per live-stream burst between ticks: events received and new, first/last id, types, stream state; its `alert` events |
 | `feed.capture`, `duels tick N` | `bazaar feed capture`, `bazaar duel run` | one trace per tick, with what the command printed |
@@ -314,7 +314,7 @@ read from `.env`); on Railway that variable is set by hand, never in `.railway/r
 
 ```sh
 uv run bazaar agent taker            # dry run; --threads N dealer conversations (default 3), --no-jev
-uv run bazaar agent maker            # dry run
+uv run bazaar agent maker            # dry run; --no-jev keeps the strategy's prices
 uv run bazaar agent taker --port 8080   # also serve the read-only status (GET /health, /state, WS /events)
 ```
 
@@ -356,6 +356,33 @@ offers, the last 50 decisions with move, reason, strategy, Jev, guardrail and se
 there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
 (public read-only data). It runs on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
+
+### Jev decides: duels and the maker (spec §3 step 4, §7.1)
+
+Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
+`jev-1.13.0`, `TYPESAFE_API_KEY`) picks one with probability floats; the hard limits authorize.
+`undecided` (below the bar, no key, timeout, network, no tick budget) is **never a yes**: it keeps
+today's deterministic move. On by default; `--no-jev` turns it off.
+
+| Who | Question (pack) | Candidates (all legal) | `undecided` keeps |
+|---|---|---|---|
+| `duel run` | `duel_move` (`questions/duels.json`, choice) | accept the rival's offer only if strictly inside our limit after the worst-case cost of days (and `jev_can_accept_early`); counter at today's concession price, never past our limit; hold, not in the last `duel_endgame_ticks` (there an inside offer is the only move) | today's `duel_move` |
+| `duel run` (two-issue sessions) | `rival_cares_about_days` (noul) | `yes`: our counter carries the rival's own days, if our price still holds after them | days 5 |
+| `agent maker` | `list_price_choice` (`questions/maker.json`, choice) | `aggressive` / `fair` / `quick_sale` around the strategy's price, minus any the sell floor (page bonus included), the cash floor, the spend cap or the price cap refuses | the strategy's price |
+| `agent maker` | `reprice_or_hold` (noul) | hold a stale offer only while its old price is still legal | reprice |
+
+Per tick, Jev is asked only with ≥ 4 s of the tick left (`jev_min_budget_s`), once per duel and round
+or per listing and candidate set (cached), and with `jev_timeout_s` (3 s) per call. The duel player asks
+about every live duel at once on worker threads, so a duel accept still lands inside the taker's 2 s
+grace. Every verdict and its floats are on the `decisions` row (`jev`: verdict, value, probabilities,
+reason, digest; duels are `agent = duels`) and on the trace (`jev_verdict`, `jev_choice` events on the
+duel's tick span). Every call is also a masked line in `.local/jev-decisions/<day>.jsonl`; when a duel
+leaves `/api/duels`, or a live offer fills (right) or expires unfilled (wrong), its verdict gets an
+outcome line, so calibration per question reads:
+
+```sh
+uv run python -m bazaar_agent.jev report --directory .local/jev-decisions
+```
 
 ## Services and public URLs (start here for observability and the dashboard)
 
@@ -579,14 +606,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — rich swallowed "[jev accept (0.91)]" in a console line
+- [2026-10-03] finding — Jev on a real practice duel: leans accept, but under the design bar
 - [2026-10-03] gotcha — Railway IaC `preserve()` on a variable that does not exist yet is a no-op
 - [2026-10-03] gotcha — Agent SDK on the subscription: 4–7 s per call until MCP is off; structured output needs 2 turns
 - [2026-10-02] build-error — a ledger note on stdout broke `bazaar strategy --json`
 - [2026-10-02] gotcha — after 23:00 the doors close and every tick loop just waits
 - [2026-10-02] finding — first autonomous dry runs (tick 155): the taker would buy MAL-02 for 5, the maker would list 3 asks
 - [2026-10-02] build-error — one DNS failure killed the laptop monitor (Friday close, commuting)
-- [2026-10-02] gotcha — Railway has no 0 replicas; `railway config apply` can fail with exit 0
-- [2026-10-02] gotcha — `railway variable set` has no shared-variable flag; use `--stdin` for secrets
 
 <!-- BAZAAR:STATUS:END -->
 

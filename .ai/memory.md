@@ -197,3 +197,14 @@ does not read CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_AUTH_TOKEN outranks it: `ru
 `railway config plan` stays "already up to date" (changeSet empty, no diagnostics) with
 `CLAUDE_CODE_OAUTH_TOKEN: preserve()` on 3 services and no value set: declare first, set later with
 `railway variable set --stdin`, and the next apply keeps the value.
+
+### [2026-10-03] finding — Jev on a real practice duel: leans accept, but under the design bar
+Live `duel_move` (jev-1.13.0, 251–289 ms) on duel 131 at tick 141 (we sell at cost 40, rival bid 68 → 80,
+rounds 0): accept 0.82 / counter 0.17 / hold 0.01, confidence 0.74 < 0.75 → `undecided` → the player kept
+today's move (accept 80). A fixture `list_price_choice` (LAT-09 ask 68/59/50) came back `aggressive` 0.87.
+Choice verdicts often land just under 0.75: watch `python -m bazaar_agent.jev report` before lowering a bar.
+
+### [2026-10-03] build-error — rich swallowed "[jev accept (0.91)]" in a console line
+symptom: the duel line printed without the Jev reason → root cause: rich parses `[...]` as a markup tag,
+even around escaped text → fix: a ` · ` separator instead of brackets; `escape()` alone covers only the inside.
+

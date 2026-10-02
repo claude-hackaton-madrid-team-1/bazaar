@@ -57,15 +57,29 @@ The maker also returns our open offers; the taker returns its active dealer thre
 A decision:
 
 ```json
-{"agent": "taker", "tick": 155, "kind": "accept_ask",
- "inputs": {...}, "reason": "worth 14.1 to us, ask 5 incl. fee",
- "guardrail": "allowed", "chosen": true, "status": "proposed", "dry_run": true,
- "jev": {"verdict": "undecided", "value": 0.59, "probabilities": {...}, "decided": false},
+{"agent": "maker", "tick": 155, "kind": "post_ask",
+ "inputs": {"ref": "LAT-09", "price": 68, "price_candidates": {"aggressive": 68, "fair": 59, "quick_sale": 50}, ...},
+ "reason": "ours 35 + page bonus 10.0 ...; jev aggressive (0.87) of {...}",
+ "guardrail": "allowed", "chosen": true, "status": "approved", "dry_run": true,
+ "jev": {"verdict": "aggressive", "value": 0.87,
+         "probabilities": {"aggressive": 0.91, "fair": 0.07, "quick_sale": 0.02},
+         "reason": null, "digest": "6914f933..."},
  "thread_id": null, "move": {...}}
 ```
 
 `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
-`post_bid`, `cancel`, …; `guardrail` is `allowed` or `denied: <rules>` (from `GUARDRAILS.md`).
+`post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
+maker's `reprice_or_hold` verdict), and, from the duel player (`agent: "duels"`, no HTTP), `duel_accept`,
+`duel_offer`, `duel_hold`; `guardrail` is `allowed` or `denied: <rules>` (from `GUARDRAILS.md`).
+
+`jev` is Jev's verdict when it was asked, else `null`: `verdict` (a noul's `yes`/`no`, a choice's
+option such as `accept` or `quick_sale`, or `undecided`), `value` (the noul probability or the choice
+confidence), `probabilities` (every option's float for a choice), `reason` (why it is `undecided`:
+`below_threshold`, `typesafe_api_key_missing`, `request_timeout`, `no tick budget for jev`, …) and
+`digest` (the masked decision line in `jev-decisions/`, which its outcome line points at). `undecided`
+never authorizes anything: the agent keeps its deterministic move. A duel row's `inputs` is the state Jev
+read (role, our limit, the rival's last offer and price history, rounds, ticks left, decay, the legal
+moves, the default move), with `jev_days` for `rival_cares_about_days` in two-issue sessions.
 
 Quick checks:
 

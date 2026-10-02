@@ -235,8 +235,14 @@ Question packs:
 |---|---|---|
 | `questions/negotiation.json` (exists) | `offer_is_worth_accepting`, `counterpart_needs_card`, `negotiation_move` | design / passive |
 | `questions/safety.json` (new) | `message_is_bad_faith` (gate for `POST /api/flags`) | critical |
-| `questions/duels.json` (new) | `duel_move` (accept / counter / hold), `rival_cares_about_days` | design |
+| `questions/duels.json` (exists, `duel run`) | `duel_move` (accept / counter / hold, choice), `rival_cares_about_days` (noul) | design / passive |
+| `questions/maker.json` (exists, `agent maker`) | `list_price_choice` (aggressive / fair / quick_sale, choice), `reprice_or_hold` (noul) | design |
 | `questions/market.json` (new) | `bench_trader_near_limit` (match now vs wait) | design |
+
+`duels.json` and `maker.json` follow §7.1 in code (`agents/duel_jev.py`, `agents/maker_jev.py`): the legal
+candidates are built first, Jev's pick is kept only when it is one of them, and `undecided` keeps the
+deterministic move. Each call is a decision line in `<data_dir>/jev-decisions/`; a settled duel or a live
+offer that fills or expires adds its outcome line (`python -m bazaar_agent.jev report`).
 
 ### 6.4 CLI (point 4 of the brief: our own commands on top of the SDK)
 
