@@ -315,6 +315,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Open pull requests
 
-_No open PRs (or `gh` unavailable)._
+| PR | Title | Branch |
+|---|---|---|
+| [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | `ogarciarevett/feat-runtime-llm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
