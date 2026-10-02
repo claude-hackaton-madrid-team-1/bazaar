@@ -785,6 +785,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | Sat 01:45 | `c73ee77` |
 | [#67](../../pull/67) | docs: sync the plan's task index with the triaged GitHub issues | Sat 01:42 | `68aa1b7` |
 | [#66](../../pull/66) | docs: first eval target is a nice-to-have; evals merged | Sat 01:30 | `3f737f0` |
 | [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | Sat 01:29 | `c2f122b` |
@@ -796,7 +797,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
 | [#53](../../pull/53) | chore: the Jev questions that designed our evals | Sat 00:23 | `e5d770e` |
 | [#52](../../pull/52) | docs: re-read the vendor rules every phase; one key, one request budget | Sat 00:20 | `3b09a5b` |
-| [#51](../../pull/51) | feat: runtime LLM on the Claude subscription (Claude Agent SDK, no API key) | Sat 00:16 | `c895269` |
 
 ### Open pull requests
 
@@ -804,7 +804,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 |---|---|---|
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | `fix/state-no-private-values` |
 | [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
-| [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | `ogarciarevett/docs-architecture-runtime` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
 | [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 | [#60](../../pull/60) | fix(duels): keep two-issue duel offers strictly inside our limit (+ duel_inside_limit guardrail) | `fix/duel-offers-inside-limit` |
