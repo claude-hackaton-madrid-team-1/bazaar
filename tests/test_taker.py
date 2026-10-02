@@ -280,3 +280,38 @@ def test_a_cheaper_ask_replaces_our_open_bid(tmp_path):
     t.on_tick(clock())
     assert team.sent == [("accept", 1), ("cancel", 77)]
     assert ledger.spent_since(0) == 19 + 12 - 19  # the bid's spend is refunded
+
+
+def test_a_pack_thread_opens_only_on_jevs_yes_with_time_to_ask(tmp_path):
+    asked = []
+
+    def judge(state):
+        asked.append(state["pack"])
+        return "yes", 0.9
+
+    no_cards = [
+        d
+        for d in [
+            {
+                "id": "abuela",
+                "status": "active",
+                "level": 1,
+                "menu": {"sells": [{"pack": "sobre_barrio", "list_price": 26, "per_team_per_hour": 3}]},
+            }
+        ]
+    ]
+    team = FakeTeam()
+    t, lines, _ = taker(
+        tmp_path, team, FakePublic(dealers=no_cards), live=True, config=TakerConfig(max_dealer_threads=3)
+    )
+    t.pack_judge = judge
+    t.on_tick(clock())
+    assert asked == ["sobre_barrio"] and ("open_thread", "abuela", {"buy": {"pack": "sobre_barrio"}}) in team.sent
+
+    late = FakeTeam()
+    t2, _, _ = taker(
+        tmp_path / "b", late, FakePublic(dealers=no_cards), live=True, config=TakerConfig(max_dealer_threads=3)
+    )
+    t2.pack_judge = judge
+    t2.on_tick(clock(next_tick_in=5.0))  # 3 s of budget: no time for Jev, so no pack
+    assert asked == ["sobre_barrio"] and not [s for s in late.sent if s[0] == "open_thread"]

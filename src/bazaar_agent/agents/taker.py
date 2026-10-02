@@ -367,10 +367,12 @@ class Taker:
             return
         dealer_ids = {str(d.get("id")) for d in run.snap.dealers}
         ctx = self._ctx(run)
-        if self.pack_judge is not None:
+        if self.pack_judge is not None and run.window.left() >= self.config.jev_min_budget_s:
             used = self.ledger.packs_since(clock.t_hours - 1.0)
             slots = PackSlots(sum(used.values()), self.rules.max_packs_per_game_hour)
             book = gate_packs(book, self.pack_judge, slots, used, self.rules, clock.t_hours)
+        else:  # no Jev (or no time to ask it): a pack slot is never spent without its yes
+            book = replace(book, packs=())
         book = guarded_playbook(book, ctx, self.rules)
         moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
