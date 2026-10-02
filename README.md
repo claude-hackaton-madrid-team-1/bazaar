@@ -384,6 +384,103 @@ outcome line, so calibration per question reads:
 uv run python -m bazaar_agent.jev report --directory .local/jev-decisions
 ```
 
+## Agent runtime (Claude Agent SDK)
+
+A Mastra-style agent layer in Python, on the Claude subscription: one **desk** (the orchestrator) hands
+each request to a **subagent** with a focused prompt and its own tool allow-list. The tools are Team 1's
+capabilities as typed MCP tools, and every write meets the guardrails twice. Code:
+`src/bazaar_agent/runtime/` (`tools.py`, `hooks.py`, `agents.py`, `desk.py`, `mcp_server.py`).
+
+```
+ operator ── bazaar agent chat ─┐            ┌── teammate's Claude Code ── Authorization: Bearer ──┐
+           ── bazaar ask ───────┤            │                                                      │
+                                ▼            │                                         bazaar mcp serve
+   desk (main thread: Agent + status, clock, rules, alerts, threads)        (Streamable HTTP /mcp, Railway
+     │  Agent tool, foreground, our subagents only                           bazaar-mcp: 401 without the
+     ├─► strategist  every read + steer                                      token, rate limit per token)
+     ├─► buyer       every read + dealer_buy, sell_bid                                   │
+     ├─► seller      every read + sell_list, sell_cancel                                 │
+     └─► duelist     every read + duel_move                                              │
+           │ tool call                                                                   │
+           ▼                                                                             │
+   PreToolUse hook ── allow-list of the caller ── guardrails.check() (live /me, clock,   │
+           │          open offers, Postgres ledger) ── DENY with the violated rules      │
+           ▼                                                                             ▼
+   in-process SDK MCP server "bazaar" ◄──────── ONE set of tool specs (runtime/tools.py) ────────►
+           │  reads: the CLI's own functions (status, clock, strategy, curves, tape, teams, book,
+           │         traders, alerts, rules, threads, thread)
+           │  writes: actions.run_write → guardrails.check() again → DRY RUN unless BAZAAR_LIVE=1
+           │          (dealer_buy, sell_list, sell_bid, sell_cancel, duel_move, steer)
+           ▼
+   PostToolUse hook ── decisions row per write, executions row per send, OTel span  ──► game
+```
+
+```sh
+uv run bazaar agent chat                 # talk to the desk (dry run unless BAZAAR_LIVE=1)
+uv run bazaar agent chat --once "buy LAV-09 under 90"   # one request, print the transcript, exit
+uv run bazaar ask "sell my spare LAT-03 for at least 6" # through the desk when CLAUDE_CODE_OAUTH_TOKEN is set
+uv run bazaar ask --no-desk "..."        # the one-call intent parser (also the automatic fallback)
+uv run bazaar agent tools                # every tool, read or write, which agents may call it, its guardrails
+```
+
+- **Same code as the CLI.** Read tools call the functions behind `bazaar status|clock|strategy|curves|
+  tape|teams|book|traders|alerts|rules|threads|thread`. `sell_list`/`sell_bid` call `seller.post` like
+  `bazaar sell list|bid`; `dealer_buy`'s dry run is `bid_schedule()` like `bazaar dealer buy`, and live it
+  starts `bazaar dealer buy --live` as its own process (one move per tick, its own guardrail checks);
+  `duel_move` plays one move of `duel run --play`'s policy (the price is set by code, never by the model);
+  `steer` runs `bazaar steer`'s clamp. `strategy` and `bazaar strategy` share `playbook_now()`.
+- **Two lines of defense.** The tool code checks first (`actions.check_write`): guardrails with the live
+  `/me`, open offers and the shared ledger, plus the game's caps a live send would otherwise hit (tick
+  budget, one thread per dealer and 6 open threads, 12 listings per tick counted team-wide, 30 open
+  offers, one accept per tick). The desk's PreToolUse hook runs the same check again, enforces each
+  agent's allow-list, lets `Agent` start only our four subagents (in the foreground), and fails closed
+  when `/me` or the ledger does not answer. A hook deny wins over every permission rule.
+- **Locked session.** `permission_mode="dontAsk"`, `tools=["Agent"]` (no Bash, files or web),
+  `setting_sources=[]`, no CLAUDE.md or claude.ai connectors, no session files, the built-in
+  general-purpose agent and nested subagents off. Counterparty words reach the model only as
+  `untrusted_text` with `injection_flags`; every prompt says they are data, never instructions.
+- **Never in the hot path.** The taker, maker, duel and monitor loops stay deterministic; the desk
+  advises, proposes, parses and steers. RUNTIME.md `desk_model` (Sonnet 5.5), `desk_max_turns`,
+  `desk_timeout_s`. A missing CLI, a rejected token, a used-up subscription window, a rate limit or a
+  timeout ends the request with the reason: `bazaar ask` falls back to its intent parser, `agent chat`
+  prints the deterministic commands.
+- **Audit and secrets.** Every write call is a `decisions` row (`desk/<agent>` or `mcp`, dry runs too)
+  and every send an `executions` row. Tool answers, rows and printed lines are scrubbed: our secret
+  values, key and token shapes, bearer tokens and every URL are cut out.
+
+### The tools as a remote MCP server (`bazaar-mcp`)
+
+`bazaar mcp serve` serves the same tool specs over the MCP Python SDK 2.x Streamable HTTP transport
+(`/mcp`, stateless JSON responses) for a teammate's own Claude Code. It holds no Claude token: each
+teammate's Claude Code is the client. Railway service `bazaar-mcp` (declared in
+`.railway/railway.py`; generate its public domain once with `railway domain --service bazaar-mcp --port 8080`).
+
+- `Authorization: Bearer <BAZAAR_MCP_TOKEN>` on every request (constant-time compare), else `401`;
+  `GET /health` is the only public route. The server refuses to start without a 32+ character token.
+- Rate limits per token: 5 HTTP requests/s (burst 20), then RUNTIME.md `mcp_calls_per_minute` (30)
+  tool calls, because every caller shares our one team key (5 req/s for the whole team).
+- Write tools are DRY RUN unless `BAZAAR_LIVE=1` is set on that service (never in `railway.py`), and
+  the guardrail check runs inside the server for each of them. No tool returns a key, token, password
+  or URL. Only our team's tools: no flags, no free-text messages, no `to` on offers, no key parameter.
+
+Set the token once, piped so it never lands on a command line, in shell history or in a log:
+
+```sh
+python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' \
+  | railway variable set BAZAAR_MCP_TOKEN --stdin --service bazaar-mcp
+```
+
+A teammate gets the value from the service's Railway variables, exports it in their shell
+(`export BAZAAR_MCP_TOKEN=...`, never in a committed file), and adds the server to Claude Code
+([docs](https://code.claude.com/docs/en/mcp)):
+
+```sh
+claude mcp add --transport http bazaar https://<bazaar-mcp domain>/mcp \
+  --header "Authorization: Bearer ${BAZAAR_MCP_TOKEN}"
+```
+
+Locally: `BAZAAR_MCP_TOKEN=... uv run bazaar mcp serve` (127.0.0.1:8765, DNS-rebinding protection on).
+
 ## Services and public URLs (start here for observability and the dashboard)
 
 Railway project **`heartfelt-warmth`** (environment `production`, region `europe-west4`):
@@ -397,6 +494,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
+| `bazaar-mcp` | `https://<generated domain>/mcp` (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | declared in `.railway/railway.py`, dry run (no `BAZAAR_LIVE`) |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -417,13 +515,14 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player; first claim on the team's accept each tick |
 | `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
+| `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
 - **Builds.** `bazaar-duels` builds this repo's `main` with Railpack (Python 3.12 through
   `RAILPACK_PYTHON_VERSION`, `uv sync --locked --no-dev`, editable so `vendor/` and
   `GUARDRAILS.md` resolve from `/app`). Every push to `main` that touches `src/`, `vendor/bazaar-kit/`,
-  `pyproject.toml`, `uv.lock`, `GUARDRAILS.md`, `STRATEGY.md`, `questions/` or `.railway/`
+  `pyproject.toml`, `uv.lock`, `GUARDRAILS.md`, `STRATEGY.md`, `RUNTIME.md`, `questions/` or `.railway/`
   redeploys it; README-only commits are skipped. Restart policy: always.
 - **The monitor is off, not deleted.** Railway has no 0-replica setting (the API rejects
   `numReplicas` 0, and dropping the region moves the service to a default region), so "off" is no
@@ -601,7 +700,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers. |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
-| `uv run bazaar ask` | Talk to the agent: sentence → strict intent → guardrail verdict → exact command. Dry run: never trades. |
+| `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)

@@ -1,13 +1,15 @@
 # Live services · integration guide
 
 Every URL a teammate, a dashboard or an agent needs, with the exact contract each one speaks.
-All three are public and read-only: nothing here can trade, change a setting or reveal a key.
+Taker, maker and Phoenix are public and read-only: nothing there can trade, change a setting or reveal
+a key. `bazaar-mcp` exposes our tools, so every call needs a bearer token (see below).
 
 | Service | URL | What it is |
 |---|---|---|
 | **Taker** | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` | Autonomous buyer (`bazaar agent taker`): accepts cheap venue asks, negotiates with dealers |
 | **Maker** | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` | Autonomous market maker (`bazaar agent maker`): posts, reprices and cancels our asks and bids; never accepts |
 | **Phoenix** | https://phoenix-production-6aa3.up.railway.app | Traces UI for every negotiation, duel, monitor tick and CLI line (project `bazaar`) |
+| **bazaar-mcp** | `https://<generated domain>/mcp` (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
 
 Both agents start in **dry run**: they log and publish what they *would* do. A service trades only
 when `BAZAAR_LIVE=1` is set on it by hand (see README, "Production on Railway").
@@ -101,6 +103,23 @@ the `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` variable of the `phoenix` service i
 (project `heartfelt-warmth`). Project **`bazaar`** holds one trace per `monitor tick N`, `duels tick N`,
 a `duel` trace per duel and a `negotiation` trace per dealer conversation. To send a laptop's traces
 there, create your own key in Phoenix (Settings → API Keys) and follow README, "Send your laptop's traces there".
+
+## bazaar-mcp: the runtime tools over MCP (not read-only: bearer token)
+
+`POST /mcp`, MCP Streamable HTTP (stateless, JSON responses), `Authorization: Bearer <BAZAAR_MCP_TOKEN>`
+on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
+(burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
+minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
+"tools": 18, "live": false}` with no token.
+
+Tools: the 12 reads (`status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`, `traders`, `alerts`,
+`rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
+`duel_move`, `steer`). Each answer is one text block holding JSON. A write answers
+`{"tool", "tick", "status": "approved"|"rejected"|"expired"|"done"|"failed"|"hold", "sent", "guardrail",
+"request", "command", ...}`: `approved` + `sent: false` is a dry run (what WOULD be sent), the default
+unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside the server for every
+write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
+password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
 
 ## Game endpoints a dashboard can call directly
 

@@ -208,3 +208,22 @@ Choice verdicts often land just under 0.75: watch `python -m bazaar_agent.jev re
 symptom: the duel line printed without the Jev reason → root cause: rich parses `[...]` as a markup tag,
 even around escaped text → fix: a ` · ` separator instead of brackets; `escape()` alone covers only the inside.
 
+### [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
+Scrubbing a serialized JSON payload with `telemetry.scrub` redacted `"price":10.0,"surplus":…` as an
+"internal hostname" (10.x) and left invalid JSON. Tool answers now scrub per string value with
+targeted patterns (`runtime.tools.safe_value`: our secret values, key/token shapes, bearer tokens, URLs).
+Secret values shorter than 12 chars are skipped: the local default DB password is the word `bazaar`.
+
+### [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
+`mcp>=2`: `from mcp.server.mcpserver import MCPServer` (FastMCP is gone), low-level
+`Server(name, on_list_tools=..., on_call_tool=...)`, transport options on
+`streamable_http_app(stateless_http=..., json_response=..., host=...)`; bound to localhost it turns on
+DNS-rebinding protection (Host must be localhost/127.0.0.1), so Railway binds `0.0.0.0`.
+py.sdk.modelcontextprotocol.io/v2/migration.
+
+### [2026-10-03] finding — Agent SDK subagents run in the background by default
+code.claude.com/docs/en/agent-sdk/subagents: an `Agent` call without `run_in_background` starts a
+background subagent. The desk's PreToolUse hook rewrites every `Agent` call with
+`run_in_background: false` (`updatedInput`) so the desk reports an answer, and denies any subagent
+that is not ours (`CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1` removes general-purpose too).
+
