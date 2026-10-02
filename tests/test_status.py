@@ -153,7 +153,7 @@ def test_publishing_never_waits_on_the_server_or_a_stuck_client(served):
             await asyncio.sleep(0.2)
             started = time.perf_counter()
             for i in range(2000):
-                hub.decision(decision(i, inputs={"blob": "x" * 2000}))
+                hub.decision(decision(i, inputs={"ref": "x" * 2000}))
             return time.perf_counter() - started
 
     elapsed = asyncio.run(stuck_client_then_publish())
