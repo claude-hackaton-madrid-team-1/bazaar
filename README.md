@@ -317,6 +317,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#40](../../pull/40) | feat: real-time monitor over the live stream, with our team told apart | `ogarciarevett/feat-monitor-realtime` |
 | [#39](../../pull/39) | feat: runtime LLM layer (Jev picks the model, ask, words, steer) | `ogarciarevett/feat-runtime-llm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
