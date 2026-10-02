@@ -256,3 +256,20 @@ A view column `as right` is accepted, but `select right from eval_jev_calibratio
 `.railway/railway.py` is a named partial: a service it created and no longer declares is deleted.
 `bazaar-sim` is declared only on PR #55's branch, so a plan from main (or a branch without it) shows
 "- Delete service bazaar-sim". Never apply a plan with a destructive change nobody asked for.
+
+### [2026-10-03] gotcha — one IaC partial for every branch: applying main deletes what a branch applied
+`railway config plan` from main (after #59) said `Delete service bazaar-sim`: bazaar-sim is declared only
+in open PR #55's `.railway/railway.py` and was applied from that branch, and the partial
+`bazaar-runtime` owns every resource it created. Always plan first; until #55 merges, apply with a
+temporary `--file` = main + #55's `simulator()` (and its own BUILD), and only when the plan shows 0 destroys.
+
+### [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
+`assert elapsed < 2.0` failed at 2.065 s and 2.080 s on GitHub runners (PR #59 and docs-only PR #64); it
+passes locally in 0.2 s and on a rerun. A slow runner, not a regression: rerun the failed job.
+
+### [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
+`bazaar agent chat --once` on the subscription token: desk → buyer (foreground), then the hook denied
+`dealer_buy` (max 90 > `max_price_rare` 80) and `sell_bid 500`; the CLI hands the model
+`PreToolUse:mcp__bazaar__<tool> hook error: <reason>`. Nothing was sent; the rows are in `decisions`
+(`desk/buyer`, rejected). The desk answered in Spanish to an English request: tighten its language line.
+

@@ -765,14 +765,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
+- [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
+- [2026-10-03] gotcha — one IaC partial for every branch: applying main deletes what a branch applied
 - [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
 - [2026-10-03] gotcha — `right` is a reserved word in Postgres
 - [2026-10-03] build-error — dealer fills went to an abandoned older thread
 - [2026-10-03] finding — a finished duel's `result` is our surplus after decay; there is no pie or share
 - [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
-- [2026-10-03] finding — Agent SDK subagents run in the background by default
-- [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
-- [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
 
 <!-- BAZAAR:STATUS:END -->
 
