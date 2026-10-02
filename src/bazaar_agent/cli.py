@@ -1247,6 +1247,55 @@ def sell_cancel(
     console.print(f"[green]cancelled offer {offer_id}[/green]")
 
 
+@app.command("flatten")
+def flatten_cmd(
+    live: bool = typer.Option(False, help="Actually cancel (and close). Without it: dry run, nothing is sent"),
+    threads: bool = typer.Option(False, help="Also close our open threads (a dealer remembers a walk)"),
+) -> None:
+    """Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds."""
+    from bazaar_agent import db
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.flatten import flatten, offers_to_cancel, threads_to_close
+    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.decisions import DecisionLog
+
+    rules = _rules().rules
+    settings = load_settings()
+    client, me = _team_me()
+    try:
+        now = Clock.model_validate(client.clock())
+        items = offers_to_cancel(client.my_offers(), str(me.get("id") or ""))
+        items += threads_to_close(client.my_threads("open")) if threads else []
+    except BazaarError as e:
+        _fail(f"read refused: {e.code} ({e.status}); nothing sent")
+        return
+    stops = gr.kill_switch(rules)
+    if stops:
+        console.print(f"kill switch on ({'; '.join(stops)}): agents hold; only this flatten's cancels/closes go out")
+    else:
+        console.print(f"[yellow]kill switch off: the maker may post again; touch {rules.pause_file} first[/yellow]")
+    decisions = DecisionLog(settings.data_dir, lambda: db.connect(app="bazaar-flatten"), console.print)
+    decisions.begin_tick(now.tick)
+    rec = Recorder("flatten", decisions, live, lambda line: console.print(line, highlight=False))
+    try:
+        ledger = _ledger("flatten") if live else None
+        out = flatten(
+            client, items, rec=rec, tick=now.tick, t_hours=now.t_hours, ledger=ledger, live=live, kill_switch=stops
+        )
+    finally:
+        decisions.close()
+    offers = sum(1 for i in items if i.kind == "cancel")
+    plan = f"{offers} offer(s) to cancel" + (f", {len(items) - offers} thread(s) to close" if threads else "")
+    if not live:
+        console.print(f"[yellow]dry run[/yellow] {plan}. Add --live to send.")
+        return
+    console.print(f"flatten: {plan}; {len(out.done)} done, {len(out.failed)} refused, {len(out.left)} left")
+    for item, code in out.failed:
+        console.print(f"  refused {item.kind} {item.id} ({item.what}): {code}")
+    if out.left:
+        _fail(f"stopped by {out.stopped}: {len(out.left)} left; run `bazaar flatten --live` again next tick")
+
+
 # ---------------------------------------------------------------- autonomous agents (needs BAZAAR_KEY)
 
 PORT_HELP = "Serve the read-only status (GET /health, /state, WS /events) on this port; default $PORT, else off"
