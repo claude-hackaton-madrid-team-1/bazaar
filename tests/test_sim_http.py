@@ -269,6 +269,7 @@ def test_five_requests_per_second_per_key_with_bursts_of_twenty():
         (b"[1, 2]", 400),
         (b"x" * (64 * 1024 + 1), 413),
     ],
+    ids=["nan", "nine_levels", "number_too_big", "not_an_object", "over_64kb"],  # a 64 KB id breaks CI logs
 )
 def test_bodies_are_strict_json(server, body, status):
     url, _ = server
