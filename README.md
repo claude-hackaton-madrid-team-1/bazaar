@@ -785,6 +785,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | Sat 01:29 | `c2f122b` |
 | [#65](../../pull/65) | docs: architecture status after #57/#59, token no longer blocked | Sat 01:24 | `be99f75` |
 | [#63](../../pull/63) | chore: add black as the formatter, checked in CI | Sat 01:19 | `65dc0b5` |
 | [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | Sat 01:10 | `e75f4b9` |
@@ -796,7 +797,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#51](../../pull/51) | feat: runtime LLM on the Claude subscription (Claude Agent SDK, no API key) | Sat 00:16 | `c895269` |
 | [#50](../../pull/50) | docs: plan the nice-to-have Bazaar Live show | Sat 00:05 | `8e05ad6` |
 | [#49](../../pull/49) | docs: live service URLs and contracts in every doc | Sat 00:02 | `721f694` |
-| [#48](../../pull/48) | feat: autonomous taker and maker agents (dry run), shared Postgres ledger, read-only status | Fri 23:57 | `aca6fe1` |
 
 ### Open pull requests
 
@@ -806,7 +806,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
 | [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 | [#60](../../pull/60) | fix(duels): keep two-issue duel offers strictly inside our limit (+ duel_inside_limit guardrail) | `fix/duel-offers-inside-limit` |
-| [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | `ogarciarevett/feat-evals` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | `ogarciarevett/feat-bazaar-sim` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
