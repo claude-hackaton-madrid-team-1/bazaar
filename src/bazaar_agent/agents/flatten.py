@@ -84,13 +84,14 @@ def flatten(
     ledger: LedgerStore | None,
     live: bool,
     kill_switch: Sequence[str] = (),
-    pace_s: float = PACE_S,
-    sleep: Callable[[float], None] = time.sleep,
+    pace_s: float | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> Report:
     """Record every item as a decision; when `live`, send them one by one. The kill switch is NOT a
     reason to hold here (that is the point of flatten); it is only written in each decision row."""
     from bazaar_agent.sdk import BazaarError
 
+    pace_s, sleep = PACE_S if pace_s is None else pace_s, sleep or time.sleep
     guardrail = f"kill switch on ({'; '.join(kill_switch)}): operator flatten goes out" if kill_switch else "allowed"
     report = Report(list(items))
     for n, item in enumerate(items):
