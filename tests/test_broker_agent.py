@@ -12,7 +12,7 @@ from bazaar_agent import venue as vn
 from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_run
 from bazaar_agent.config import Settings
 from bazaar_agent.decisions import DecisionLog
-from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.guardrails import Guardrails, parse_guardrails
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import FakePublic, clock, rows
 from tests.test_matcher import bench_buy, bench_sell, book_buy, book_sell
@@ -259,6 +259,7 @@ def test_cli_broker_run_live_stays_build_only_and_sends_nothing(tmp_path, monkey
     monkeypatch.setattr(cli, "public_client", lambda s: FakePublic())
     monkeypatch.setattr(vn, "broker_client", lambda s: broker)
     monkeypatch.setattr(cli, "_db_connect", lambda app: None)
+    monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails("- `allow_venue_open` = false — build only"))
     result = CliRunner().invoke(cli.app, ["broker", "run", "--live", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "allow_venue_open = false" in " ".join(result.output.split())
