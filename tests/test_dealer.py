@@ -73,19 +73,26 @@ def test_an_opening_ask_below_our_start_is_countered_not_accepted():
     n = Negotiation(BidPlan(18, 1, 20))
     assert decide(n, 17, 5, False) == Move("bid", 16, reason="counter below her unconceded ask 17")
     n.bids.append(16)
-    assert decide(n, 17, 5, False).kind == "wait"  # she has not moved: never take her opening price
     assert decide(n, 16, 6, False) == Move("accept", 16, 6, "ask meets our next bid")  # she came down
+    wide = Negotiation(BidPlan(18, 3, 20))
+    assert decide(wide, 17, 5, False) == Move("bid", 14, reason="counter below her unconceded ask 17")
+    wide.bids.append(14)
+    assert decide(wide, 17, 5, False) == Move("bid", 15, reason="counter below her unconceded ask 17")
 
 
-def test_a_welcome_offer_is_never_taken_and_no_counter_left_means_wait():
-    # LAV-03: we bid 6 before her welcome 7, then took the 7 on the next tick (zero ladder share).
-    n = neg(bids=[6])
-    move = decide(n, 7, 9, False)
-    assert move.kind == "wait" and "unconceded 7" in move.reason
+def test_a_welcome_offer_is_never_taken_on_the_first_tick():
     assert decide(neg(start=6, max_price=12), 9, 9, False) == Move("bid", 6, reason="small distinct step up")
     assert decide(neg(start=10, step=2, max_price=12), 9, 9, False) == Move(
         "bid", 7, reason="counter below her unconceded ask 9"
     )
+
+
+def test_lav03_replay_takes_her_welcome_when_no_whole_price_is_left_between_us():
+    # The real LAV-03 thread: we bid 6, her non-final welcome ask is 7. Waiting would freeze the thread
+    # (she only moves when we move) and there is no range left between 6 and 7: take the 7.
+    n = Negotiation(BidPlan(6, 1, 9), [6])
+    assert decide(n, 7, 9, False) == Move("accept", 7, 9, "no room left between our 6 and her 7")
+    assert decide(neg(bids=[8], max_price=8), 8, 9, False).kind == "accept"  # spent at our max, her ask meets it
 
 
 def test_a_final_offer_is_still_taken_within_our_max_even_at_her_opening():
@@ -361,3 +368,20 @@ def test_a_busy_accept_slot_waits_for_the_next_tick_instead_of_walking():
     assert (client.closed, out.status, out.price, client.accepted) == (False, "deal", 9, [503])
     assert len(reserved) == 2 and reserved[0] < reserved[1]  # retried on a later tick, not walked
     assert reserved[-1] == client.accept_tick  # the slot is booked on the tick the accept is sent
+
+
+def test_negotiate_replays_lav03_and_takes_the_welcome_when_no_room_is_left():
+    from bazaar_agent.agents.dealer import negotiate
+
+    logs: list[str] = []
+    client = FakeDealerClient(asks=[7])  # we bid 6, then her non-final welcome ask is 7
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 9),
+        log=logs.append,
+        sleep=lambda _: None,
+    )
+    assert client.sent == [6] and (client.accepted, out.status, out.price) == ([501], "deal", 7)
+    assert any("→ accept 7 (no room left between our 6 and her 7)" in line for line in logs)

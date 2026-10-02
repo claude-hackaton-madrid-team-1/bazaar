@@ -4,7 +4,8 @@
 `negotiate()` runs it against the live thread. Rules learned from the feed (see `bazaar curves`): the
 dealer only moves when we move, the same price twice earns nothing, small steps earn small steps, and
 a `final` offer is take-it-or-walk. The ladder score is the share of the dealer's range we capture, so
-we never close at her opening ask: we take a non-final ask only after we countered it and she came down.
+we never close at her opening ask: we take a non-final ask only after we countered it and she came down,
+or when no whole price is left between our last bid and her ask (there is no range left to capture).
 Words persuade, structure binds: we read only the structured offers, never the dealer's text.
 """
 
@@ -89,13 +90,17 @@ class Negotiation:
         return self.countered and self.conceded
 
 
-def counter_below(neg: Negotiation, ask: int) -> Move:
+def counter_below(neg: Negotiation, ask: int, offer_id: int) -> Move:
     """Her ask is inside what we would pay, but she has not come down yet: bid strictly below it (a bid
-    at her ask would close at her opening price). The dealer matches our step, so we never step past it."""
+    at her ask would close at her opening price). The dealer matches our step, so we never step past it.
+    When no whole price is left between our last bid and her ask, waiting freezes the thread (she only
+    moves when we move) and there is no range left to capture: take her ask."""
+    if neg.bids and neg.bids[-1] + 1 >= ask:
+        return Move("accept", ask, offer_id, f"no room left between our {neg.bids[-1]} and her {ask}")
     last = neg.bids[-1] if neg.bids else 0
     price = max(1, last + 1, ask - neg.plan.step)
-    if price >= ask:
-        return Move("wait", reason=f"no counter left between our {last} and her unconceded {ask}")
+    if price >= ask:  # defensive: only reachable with no bids and her ask at 1
+        return Move("wait", reason=f"no counter left below her unconceded {ask}")
     return Move("bid", price, reason=f"counter below her unconceded ask {ask}")
 
 
@@ -107,7 +112,7 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
         if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
             if final or neg.may_close:
                 return Move("accept", ask, offer_id, "final within limit" if final else "ask meets our next bid")
-            return counter_below(neg, ask)
+            return counter_below(neg, ask, offer_id)
         if final:
             return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
     if nxt is None:

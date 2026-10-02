@@ -221,6 +221,20 @@ def test_a_final_dealer_offer_inside_our_max_is_accepted_and_spends_the_slot(tmp
     assert t.convs == {} and ledger.spent_since(0) == 21  # the deal is recorded as spend once it settles
 
 
+def test_a_desk_wait_is_logged_without_a_decision_row(tmp_path):
+    team = FakeTeam()
+    t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens thread 5000 and bids 18
+    offer = {"id": 801, "maker": "abuela", "status": "open", "final": True, "give": {"types": ["card:LAV-08"]}}
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    offer["want"] = {"cash": 21}
+    t.on_tick(at(team, TICK + 1))  # accepts the final 21; the thread stays open while it settles
+    decisions = len(rows(tmp_path))
+    t.on_tick(at(team, TICK + 2))
+    assert f"tick {TICK + 2} taker: abuela wait (accepted, waiting for settlement)" in lines
+    assert len(rows(tmp_path)) == decisions  # visible in the log, no decision row
+
+
 def test_plan_conversation_ignores_an_offer_that_is_not_our_buy_and_walks_after_max_ticks():
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     trick = {"id": 9, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-02"]}, "want": {"cash": 5}}

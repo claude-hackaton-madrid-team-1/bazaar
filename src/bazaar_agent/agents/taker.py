@@ -472,6 +472,8 @@ class Taker:
                 dm = meet_the_ask(dm)
             if dm.move.kind in ("bid", "walk"):
                 self._desk_send(run, dm, thread)
+            elif dm.move.kind == "wait":
+                self.log(f"tick {run.snap.clock.tick} taker: {dm.conv.dealer} wait ({dm.move.reason})")
 
     def _desk_send(self, run: _TickRun, dm: DeskMove, thread: dict[str, Any]) -> None:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
