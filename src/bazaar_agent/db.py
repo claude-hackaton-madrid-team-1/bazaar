@@ -346,7 +346,7 @@ def report_lines(report: CheckReport, target: Target) -> list[str]:
 def run_check(database_url: str | None = None) -> tuple[bool, list[str]]:
     """`bazaar db check`: (reachable, lines to print). No line ever carries the password."""
     try:
-        url = load_settings().require_database_url() if database_url is None else database_url
+        url = load_settings().require_database_url(database_url)
     except ConfigError as e:
         return False, [str(e)]
     try:

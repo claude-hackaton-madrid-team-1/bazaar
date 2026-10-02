@@ -180,7 +180,8 @@ def _sell_ref(offer: Offer, w: World) -> str | None:
 
 
 def _buy_ref(offer: Offer) -> str | None:
-    if not offer.give.cash or offer.give.assets or len(offer.want.types) != 1 or offer.want.cash:
+    """The card a plain bid wants: cash for exactly one card type and nothing else (a mixed bid never matches)."""
+    if not offer.give.cash or offer.give.assets or len(offer.want.types) != 1 or offer.want.cash or offer.want.assets:
         return None
     return offer.want.types[0].partition(":")[2]
 

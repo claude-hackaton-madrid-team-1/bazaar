@@ -539,3 +539,45 @@ def test_a_rival_answers_a_team_thread_with_a_counter_we_can_accept():
     market.accept(w, US, counter.id, {})
     m.step()
     assert w.asset(asset.id).owner == rival.id and w.state.threads[th.id].status == "deal"
+
+
+def test_a_mixed_bid_never_matches_a_single_card_ask():
+    m = manual_world()
+    w = m.world
+    vid, key = _venue(w, "board")
+    asset = next(a for a in w.holdings(THEM) if a.kind == "card")
+    extra = next(a for a in w.holdings("t04") if a.kind == "card")
+    ask = market.offer_from_input(w, THEM, {"venue": vid, "give": {"assets": [asset.id]}, "want": {"cash": 10}})
+    mixed = market.offer_from_input(
+        w, "t03", {"venue": vid, "give": {"cash": 30}, "want": {"cards": [asset.ref], "assets": [extra.id]}}
+    )
+    venue = broker.venue_for_broker(w, key)
+    assert venue is not None
+    refused("invalid", broker.match, w, venue, {"sell": ask.id, "buy": mixed.id, "price": 10})
+
+
+def test_a_named_copy_already_promised_is_asset_locked():
+    m = manual_world(limits={**LIMITS, "accepts_per_team_per_tick": 5})  # only the lock may refuse here
+    w = m.world
+    copy = a_card(w, US)
+    ref = w.asset(copy).ref
+    first = market.offer_from_input(w, THEM, {"give": {"cash": 5}, "want": {"cards": [ref]}})
+    second = market.offer_from_input(w, "t03", {"give": {"cash": 5}, "want": {"cards": [ref]}})
+    market.accept(w, US, first.id, {"assets": [copy]})
+    refused("asset_locked", market.accept, w, US, second.id, {"assets": [copy]})
+
+
+def test_a_pack_that_cannot_be_filled_grants_nothing():
+    m = manual_world()
+    w = m.world
+    th = threads.open_thread(w, US, {"with": "abuela", "topic": {"buy": {"pack": "sobre_barrio"}}})
+    m.step()
+    market.accept(w, US, dealer_offer(w, th.id)["id"], {})
+    m.step()
+    pack = next(a for a in w.holdings(US) if a.kind == "pack")
+    for card in catalog.cards().values():
+        w.state.minted[card.ref] = card.print_run  # everything is out of print
+    before = dict(w.state.minted), len(w.state.assets)
+    refused("sold_out", market.open_pack, w, US, pack.id)
+    assert (dict(w.state.minted), len(w.state.assets)) == before
+    assert w.asset(pack.id).owner == US

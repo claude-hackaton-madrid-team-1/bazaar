@@ -93,7 +93,7 @@ def connection_params(url: str, app: str = DEFAULT_APP) -> dict[str, str]:
 
 def connect(database_url: str | None = None, *, app: str = DEFAULT_APP) -> psycopg.Connection:
     """Open Postgres at `database_url`, or DATABASE_URL (env, then `.env`, then the local default)."""
-    url = load_settings().require_database_url() if database_url is None else database_url
+    url = load_settings().require_database_url(database_url)
     return psycopg.connect(make_conninfo(**connection_params(url, app)))
 
 

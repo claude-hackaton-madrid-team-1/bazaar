@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 
 import uvicorn
 
-from bazaar_sim.app import Sim, create_app
+from bazaar_sim.app import Sim, create_app, server_config
 from bazaar_sim.auth import Gate
 from bazaar_sim.store import MemoryStore
 from bazaar_sim.world import SimConfig, World
@@ -75,9 +75,7 @@ def running_sim(
         keepalive_s=keepalive_s,
     )
     port = free_port()
-    server = uvicorn.Server(
-        uvicorn.Config(create_app(sim, run_clock=run_clock), host="127.0.0.1", port=port, log_level="error")
-    )
+    server = uvicorn.Server(server_config(create_app(sim, run_clock=run_clock), "127.0.0.1", port))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10

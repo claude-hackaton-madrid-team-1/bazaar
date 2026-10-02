@@ -32,7 +32,7 @@ def serve(
     """Serve the simulator. Store: SIM_DATABASE_URL (sqlite/memory/postgres to bazaar_sim), else .local/sim."""
     import uvicorn
 
-    from bazaar_sim.app import build
+    from bazaar_sim.app import build, server_config
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
@@ -46,7 +46,7 @@ def serve(
         f"bazaar-sim on http://{host}:{port} · tick {sim.world.tick} every {sim.world.config.tick_seconds:g} s · "
         f"store {store.describe()} · admin token {admin} · keys sim-team1..sim-team{sim.world.config.player_teams}"
     )
-    uvicorn.run(application, host=host, port=port, log_level="warning", access_log=False, proxy_headers=True)
+    uvicorn.Server(server_config(application, host, port)).run()
 
 
 @app.command()

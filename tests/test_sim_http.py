@@ -385,3 +385,39 @@ def test_simconfig_from_env_clamps_values(monkeypatch):
     monkeypatch.setenv("SIM_PLAYER_TEAMS", "40")
     cfg = SimConfig.from_env()
     assert cfg.tick_seconds == 0.2 and cfg.player_teams == 12
+
+
+def test_a_client_sent_forwarded_address_cannot_dodge_the_wrong_key_lockout():
+    with running_sim(FAST) as (url, _):
+        codes = [
+            json.loads(raw(url, "/api/me", headers={"X-Team-Key": "nope", "X-Forwarded-For": f"10.0.0.{i}"})[2])[
+                "error"
+            ]
+            for i in range(24)
+        ]
+        assert "too_many_failures" in codes[20:]
+
+
+def test_the_trusted_proxy_header_names_the_client(monkeypatch):
+    monkeypatch.setenv("SIM_CLIENT_IP_HEADER", "x-real-ip")
+    with running_sim(FAST) as (url, _):
+        for i in range(24):  # each request from its own (proxy-reported) address: no lockout
+            body = raw(url, "/api/me", headers={"X-Team-Key": "nope", "X-Real-IP": f"10.0.1.{i}"})[2]
+            assert json.loads(body)["error"] == "bad_key"
+
+
+def test_a_reset_keeps_the_world_object_and_an_older_save_never_lands_after_it():
+    from bazaar_sim.app import Sim
+    from bazaar_sim.auth import Gate
+    from bazaar_sim.store import MemoryStore
+    from bazaar_sim.world import World
+
+    sim = Sim(world=World.create(QUIET), store=MemoryStore(), gate=Gate.from_rates(0, 20, 0), admin_token="t")
+    world = sim.world
+    world.advance()
+    stale = sim.snapshot()  # taken before the reset, written after it
+    assert sim.reset(None) is world and world.tick == 0
+    with sim.save_lock:
+        assert stale[2] <= sim.saved
+    sim.persist()
+    assert '"tick":0' in (sim.store.load() or "")

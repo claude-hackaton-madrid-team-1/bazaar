@@ -112,3 +112,21 @@ def test_simulated_play_keeps_its_files_out_of_the_real_data_dir(tmp_path, monke
     assert settings_for(tmp_path, monkeypatch).data_dir == REPO_ROOT / ".local"
     monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path / "mine"))
     assert settings_for(tmp_path, monkeypatch, BAZAAR_URL=SIM_URL).data_dir == tmp_path / "mine"
+
+
+def test_the_official_host_over_plain_http_gets_no_key_at_all(tmp_path, monkeypatch):
+    for key in ("tk-real-0042", "sim-team1"):
+        s = settings_for(tmp_path, monkeypatch, BAZAAR_URL="http://bazaar.causaprima.ai", BAZAAR_KEY=key)
+        with pytest.raises(ConfigError, match="https"):
+            s.require_team_key()
+
+
+def test_an_explicit_database_url_gets_the_same_guard(tmp_path, monkeypatch):
+    from bazaar_agent import db, pgconn
+
+    settings_for(tmp_path, monkeypatch, BAZAAR_URL=SIM_URL)
+    monkeypatch.setattr("bazaar_agent.config.REPO_ROOT", tmp_path)
+    with pytest.raises(ConfigError):
+        pgconn.connect(REAL_DB)
+    ok, lines = db.run_check(REAL_DB)
+    assert not ok and "railway" in lines[0]

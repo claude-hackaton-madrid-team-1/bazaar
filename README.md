@@ -824,6 +824,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
 - [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 - [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
 - [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
@@ -831,7 +832,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
 - [2026-10-03] gotcha — how bazaar-mcp was applied while bazaar-sim lives only on PR #55
 - [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
-- [2026-10-03] gotcha — `right` is a reserved word in Postgres
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,26 +54,41 @@ class Sim:
     streams: dict[str, int] = field(default_factory=dict)
     on_reset: Callable[[World], None] | None = None
 
-    def snapshot(self) -> tuple[str, int]:
+    generation: int = 0  # bumped by every reset: a save from before a reset never lands after it
+    saved: tuple[int, int] = (-1, -1)  # (generation, sequence) of the last snapshot written
+    sequence: int = 0
+    save_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def snapshot(self) -> tuple[str, int, tuple[int, int]]:
         with self.world.lock:
-            return self.world.state.model_dump_json(), self.world.tick
+            self.sequence += 1
+            return self.world.state.model_dump_json(), self.world.tick, (self.generation, self.sequence)
 
     def persist(self) -> None:
-        data, tick = self.snapshot()
-        try:
-            self.store.save(data, tick)
-        except Exception as e:  # a failed save must never stop the clock
-            log.warning("snapshot save failed at tick %s: %s", tick, type(e).__name__)
+        data, tick, stamp = self.snapshot()
+        with self.save_lock:
+            if stamp <= self.saved:
+                return  # a newer snapshot (or a reset) was written meanwhile
+            try:
+                self.store.save(data, tick)
+                self.saved = stamp
+            except Exception as e:  # a failed save must never stop the clock
+                log.warning("snapshot save failed at tick %s: %s", tick, type(e).__name__)
 
     def reset(self, seed: int | None) -> World:
-        config = self.world.config
-        if seed is not None:
-            config = SimConfig(**{**config.__dict__, "seed": seed})
-        self.world = World.create(config, self.world.now)
+        """A new world in the SAME `World` object, under its lock: a request either finishes on the old
+        state before the reset or runs on the new one, never on a discarded copy."""
+        world = self.world
+        with world.lock:
+            config = world.config if seed is None else SimConfig(**{**world.config.__dict__, "seed": seed})
+            fresh = World.create(config, world.now)
+            world.state, world.config, world.keys = fresh.state, fresh.config, fresh.keys
+            world.stream_only = []
+            self.generation += 1
         self.persist()
         if self.on_reset is not None:
-            self.on_reset(self.world)
-        return self.world
+            self.on_reset(world)
+        return world
 
 
 def load_world(store: Store, config: SimConfig) -> World:
@@ -88,9 +104,13 @@ def load_world(store: Store, config: SimConfig) -> World:
 
 
 def client_address(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
+    """The address the throttles count. A client-sent header is never trusted: only the one header a
+    trusted proxy sets, named by SIM_CLIENT_IP_HEADER (Railway's edge sets `X-Real-IP`), else the peer."""
+    header = os.environ.get("SIM_CLIENT_IP_HEADER", "").strip().lower()
+    if header:
+        value = request.headers.get(header)
+        if value:
+            return value.split(",")[-1].strip()[:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -447,7 +467,7 @@ def _sim_routes(app: FastAPI, sim: Sim) -> None:
         _public(sim, request)
         if request.query_params.get("full") in ("1", "true"):
             _admin(sim, request)
-            data, _ = sim.snapshot()
+            data, _, _ = sim.snapshot()
             return Response(data, media_type="application/json")
         with sim.world.lock:
             return JSONResponse(_summary(sim))
@@ -505,14 +525,14 @@ def _stream_route(app: FastAPI, sim: Sim) -> None:
 
 async def _events(sim: Sim, request: Request, holder: str, label: str) -> AsyncIterator[str]:
     try:
-        world = sim.world
+        world, generation = sim.world, sim.generation
         with world.lock:
             last_id, tick = world.state.counters.get("event", 0), world.tick
         yield f"event: hello\ndata: {json.dumps({'tick': tick, 'scope': label})}\n\n"
         loop = asyncio.get_running_loop()
         last_keepalive = loop.time()
         while not await request.is_disconnected():
-            if sim.world is not world:
+            if sim.generation != generation:
                 return  # the world was reset: the client reconnects to the new one
             with world.lock:
                 fresh = _since(world, last_id, label)
@@ -550,6 +570,14 @@ def _fallback_routes(app: FastAPI) -> None:
         if path.startswith("api/") or path.startswith("sim/"):
             raise not_found(f"route /{path}")
         return HTMLResponse(INDEX_HTML)
+
+
+def server_config(app: FastAPI, host: str, port: int) -> Any:
+    """uvicorn as the simulator runs everywhere (CLI and tests). `proxy_headers=False`: uvicorn must
+    not rewrite the client address from a client-sent X-Forwarded-For (see `client_address`)."""
+    import uvicorn
+
+    return uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, proxy_headers=False)
 
 
 def build(config: SimConfig | None = None, store: Store | None = None) -> tuple[FastAPI, Sim]:

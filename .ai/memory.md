@@ -288,3 +288,8 @@ Created with `create database bazaar_sim` (connected to `postgres`, never `railw
 applied there. Against a simulator our client refuses a database URL naming `railway`
 (`BAZAAR_SIM_DATABASE_URL`), and its files default to `.local/sim-client/`, never the real `.local/`.
 
+### [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+symptom: PR #55's `test` job failed with no summary right after `test_bodies_are_strict_json` →
+root cause: the 413 case's parameter (65 KB of "x") became the test id printed by `pytest -v`, and the
+log/step died there; locally and in a Linux container the suite passed → fix: `ids=[...]` short names.
+

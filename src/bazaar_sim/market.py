@@ -167,6 +167,8 @@ def _pick_copies(w: World, team_id: str, types: list[str], chosen: list[int]) ->
     for t in types:
         kind, _, ref = t.partition(":")
         named = [a for a in chosen if a not in picked and w.asset(a).ref == ref and w.asset(a).owner == team_id]
+        if named and named[0] in locked:
+            raise SimError("asset_locked", f"asset {named[0]} is promised in an accepted offer", 400)
         if named:
             picked.append(named[0])
             continue
@@ -453,7 +455,8 @@ def open_pack(w: World, team_id: str, aid: int) -> dict[str, Any]:
         raise SimError("asset_locked", f"asset {aid} is promised in an accepted offer", 400)
     pack = catalog.packs()[asset.ref]
     rng = w.rng("pack", aid)
-    pulled = [_roll(w, team_id, slot, rng) for slot in pack["slots"]]
+    refs = _draw(w, pack["slots"], rng)  # every slot drawn before anything is minted: all or nothing
+    pulled = [w.mint(ref, team_id, "pack") for ref in refs]
     asset.owner = "opened"
     asset.history.append({"from": team_id, "to": "opened", "tick": w.tick, "why": "opened"})
     luck = round(sum(catalog.cards()[a.ref].book for a in pulled) - float(pack["expected_book"]), 2)
@@ -470,14 +473,29 @@ def open_pack(w: World, team_id: str, aid: int) -> dict[str, Any]:
     return {"cards": [asset_view(w, team, counts, a) for a in pulled], "luck": luck}
 
 
-def _roll(w: World, team_id: str, slot: dict[str, float], rng: Any) -> Asset:
-    rarities, weights = zip(*slot.items(), strict=True)
-    rarity: str | None = rng.choices(rarities, weights=weights)[0]
+def _draw(w: World, slots: list[dict[str, float]], rng: Any) -> list[str]:
+    """One card ref per slot, counting the copies this pack already took, so a sold-out rarity gives
+    the next one down and a pack that cannot be filled is refused before any copy is minted."""
     released = catalog.released_sets()
-    while rarity is not None:
-        pool = [c.ref for c in catalog.cards().values() if c.rarity == rarity and c.set_code in released]
-        pool = [r for r in pool if w.mintable(r)]
-        if pool:
-            return w.mint(rng.choice(pool), team_id, "pack")
-        rarity = catalog.next_rarity_down(rarity)
-    raise SimError("sold_out", "every rarity is out of print", 400)
+    taken: dict[str, int] = {}
+    refs: list[str] = []
+    for slot in slots:
+        rarities, weights = zip(*slot.items(), strict=True)
+        rarity: str | None = rng.choices(rarities, weights=weights)[0]
+        while rarity is not None:
+            pool = [
+                c.ref
+                for c in catalog.cards().values()
+                if c.rarity == rarity
+                and c.set_code in released
+                and w.state.minted.get(c.ref, 0) + taken.get(c.ref, 0) < c.print_run
+            ]
+            if pool:
+                ref = str(rng.choice(pool))
+                taken[ref] = taken.get(ref, 0) + 1
+                refs.append(ref)
+                break
+            rarity = catalog.next_rarity_down(rarity)
+        if rarity is None:
+            raise SimError("sold_out", "every rarity is out of print", 400)
+    return refs

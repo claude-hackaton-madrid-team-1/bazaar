@@ -81,9 +81,11 @@ class Settings(BaseModel):
             return None
         return self.require_team_key()
 
-    def require_database_url(self) -> str:
-        """DATABASE_URL (BAZAAR_SIM_DATABASE_URL against a simulator), never the real db for simulated play."""
-        url = self.database_url.get_secret_value()
+    def require_database_url(self, url: str | None = None) -> str:
+        """DATABASE_URL (BAZAAR_SIM_DATABASE_URL against a simulator), never the real db for simulated play.
+
+        An explicit `url` gets the same check: no caller can put simulated data in the real database."""
+        url = self.database_url.get_secret_value() if url is None else url
         if self.simulator and database_name(url) == REAL_DATABASE:
             raise ConfigError(
                 f"BAZAAR_URL is a simulator but the database URL names the real `{REAL_DATABASE}` database: "
@@ -99,6 +101,8 @@ def is_official(url: str) -> bool:
 def check_key_for_url(url: str, key: str) -> None:
     """A sim key only to a simulator, the real key only to the real game. Messages never carry the key."""
     simulated = key.startswith(SIM_KEY_PREFIX)
+    if is_official(url) and urlsplit(url).scheme != "https":
+        raise ConfigError(f"BAZAAR_URL must be https://{OFFICIAL_HOST}: a team key never travels unencrypted.")
     if is_official(url) and simulated:
         raise ConfigError(
             f"BAZAAR_KEY is a simulator key ({SIM_KEY_PREFIX}...) but BAZAAR_URL is the real game ({OFFICIAL_HOST}): "
