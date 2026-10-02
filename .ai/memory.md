@@ -61,3 +61,12 @@ Our bid 6 → her ask 7 → accepted (3 ticks, `dealer buy LAV-03 --start 6 --ma
 ### [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 Bids 6→7→8→9, she accepted our 9 (no accept from us), so the old runner printed `price None`.
 Fixed: the deal hook falls back to our last bid and records spend in `.local/ledger.jsonl`.
+
+### [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
+`/api/levels`: `{"id": "chato", "kind": "persona", "state": "announced", "teaser": "«Better packs,
+friendly prices. If I like you.»"}`. Abuela ladder so far: LAV-03 7, LAV-04 9, LAV-05 9, LAV-06 22
+(4 negotiated deals; score 11.31, rank 10). `bazaar monitor --notify` alerts when it goes active.
+
+### [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
+By design (upstream parity) it does not load `.env`: run `set -a; . ./.env; set +a` first, or it
+returns `undecided (typesafe_api_key_missing)`. `bazaar dealer buy --jev` loads `.env` itself.

@@ -34,7 +34,9 @@ Kill switch: `touch .local/PAUSE` (remove the file to resume). Never bypass a de
 | Who is selling or bidding what? | `uv run bazaar book [--card LAV-04]` |
 | Dealer menus and traits | `uv run bazaar dealers` |
 
-The feed keeps only the last 500 events, so `uv run bazaar feed capture` must stay running.
+The feed keeps only the last 500 events, so the monitoring agent must stay running:
+`uv run bazaar monitor --notify` (feed → JSONL + Postgres, traders sync, /me snapshots, alerts on new
+dealers or levels). `uv run bazaar traders` and `uv run bazaar alerts` read what it found.
 Analyses read `.local/feed/feed.jsonl`; add `--live` to merge the current window.
 
 ## Our team (needs `BAZAAR_KEY` in `.env`)
