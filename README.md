@@ -483,6 +483,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | `ogarciarevett/railway-monitor-off` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
 <!-- BAZAAR:ACTIVITY:END -->
