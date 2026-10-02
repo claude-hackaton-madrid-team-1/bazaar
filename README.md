@@ -458,9 +458,9 @@ uv run bazaar agent tools                # every tool, read or write, which agen
 ### The tools as a remote MCP server (`bazaar-mcp`)
 
 `bazaar mcp serve` serves the same tool specs over the MCP Python SDK 2.x Streamable HTTP transport
-(`/mcp`, stateless JSON responses) for a teammate's own Claude Code. It holds no Claude token: each
+(`/mcp`, stateless JSON responses) for a teammate's own Claude Code: **https://bazaar-mcp-production.up.railway.app/mcp**. It holds no Claude token: each
 teammate's Claude Code is the client. Railway service `bazaar-mcp` (declared in
-`.railway/railway.py`; generate its public domain once with `railway domain --service bazaar-mcp --port 8080`).
+`.railway/railway.py`; its public domain was generated once with `railway domain --service bazaar-mcp --port 8080`).
 
 - `Authorization: Bearer <BAZAAR_MCP_TOKEN>` on every request (constant-time compare), else `401`;
   `GET /health` is the only public route (no mode, no game state). The server refuses to start without
@@ -484,12 +484,12 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' \
   | railway variable set BAZAAR_MCP_TOKEN --stdin --service bazaar-mcp
 ```
 
-A teammate gets the value from the service's Railway variables, exports it in their shell
+A teammate gets the value from the service's Railway variables (or the team lead's `.env`), exports it in their shell
 (`export BAZAAR_MCP_TOKEN=...`, never in a committed file), and adds the server to Claude Code
 ([docs](https://code.claude.com/docs/en/mcp)):
 
 ```sh
-claude mcp add --transport http bazaar https://<bazaar-mcp domain>/mcp \
+claude mcp add --transport http bazaar https://bazaar-mcp-production.up.railway.app/mcp \
   --header "Authorization: Bearer ${BAZAAR_MCP_TOKEN}"
 ```
 
@@ -550,7 +550,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
-| `bazaar-mcp` | `https://<generated domain>/mcp` (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | declared in `.railway/railway.py`, dry run (no `BAZAAR_LIVE`) |
+| `bazaar-mcp` | https://bazaar-mcp-production.up.railway.app/mcp (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | running, dry run (no `BAZAAR_LIVE`) |
 | `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
@@ -767,7 +767,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
 - [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
-- [2026-10-03] gotcha — one IaC partial for every branch: applying main deletes what a branch applied
+- [2026-10-03] gotcha — how bazaar-mcp was applied while bazaar-sim lives only on PR #55
 - [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
 - [2026-10-03] gotcha — `right` is a reserved word in Postgres
 - [2026-10-03] build-error — dealer fills went to an abandoned older thread

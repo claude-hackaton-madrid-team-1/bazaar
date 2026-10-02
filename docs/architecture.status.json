@@ -53,7 +53,7 @@
     },
     "llm_proposer": {
       "title": "LLM → Sonnet 5.5",
-      "status": "wip",
+      "status": "done",
       "lines": [
         {
           "text": "Claude via subscription ✓ (#51)"
@@ -75,7 +75,7 @@
           "note": true
         }
       ],
-      "mark": "◑"
+      "mark": "✓"
     },
     "jev": {
       "title": "JEV (decision / orchestrator)",
@@ -132,7 +132,7 @@
           "text": "bazaar-monitor off (CLI)"
         },
         {
-          "text": "sim · mcp · evals",
+          "text": "bazaar-mcp ✓ · sim, evals",
           "mark": "◑"
         },
         {
@@ -144,10 +144,10 @@
     },
     "llm_runtime": {
       "title": "LLM → Sonnet 5.5",
-      "status": "wip",
+      "status": "done",
       "lines": [
         {
-          "text": "Claude Agent SDK runtime",
+          "text": "Claude Agent SDK runtime (#59)",
           "mark": "✓"
         },
         {
@@ -155,15 +155,15 @@
           "mark": "✓"
         },
         {
-          "text": "buyer · seller · duelist",
+          "text": "desk + 4 subagents",
           "mark": "✓"
         },
         {
-          "text": "bazaar-mcp: service being created",
+          "text": "bazaar-mcp: live, bearer, dry run",
           "note": true
         }
       ],
-      "mark": "◑"
+      "mark": "✓"
     },
     "buy_sell": {
       "title": "BUY / SELL",
@@ -320,12 +320,6 @@
     {
       "status": "wip",
       "label": "worker",
-      "title": "Agent runtime + bazaar-mcp",
-      "body": "Runtime merged (#59). Now: the bazaar-mcp Railway service, its domain, bearer token and checks."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
       "title": "bazaar-sim",
       "body": "A simulated market to test every agent live while the game is closed."
     },
@@ -387,6 +381,12 @@
       "name": "Phoenix",
       "urls": [
         "https://phoenix-production-6aa3.up.railway.app"
+      ]
+    },
+    {
+      "name": "bazaar-mcp",
+      "urls": [
+        "https://bazaar-mcp-production.up.railway.app/mcp"
       ]
     }
   ]
