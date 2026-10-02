@@ -44,3 +44,6 @@ docs/imgs/demo.cast
 # Jev decision model (vendor/jev-sdk): Bun deps and masked local decision logs.
 node_modules/
 .local/
+
+__pycache__/
+.pytest_cache/
