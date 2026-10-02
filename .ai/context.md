@@ -94,6 +94,8 @@ Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan 
 via psycopg 3, plain SQL, no ORM · typer + rich CLI (`bazaar`) · fastembed (local embeddings) ·
 Jev through our Python port (`bazaar_agent.jev`) · pytest · ruff (lint + format) · mypy.
 NO TypeScript, NO Rust, NO bun/node at runtime (`vendor/jev-sdk` is reference only) · NO ORM ·
+ONE exception: the `web/` dashboard is Next.js + TypeScript, built to static files (`output: "export"`)
+and served by `tui/serve.py` — node at build time only, never in the agent ·
 NO LLM in the executor path · NO wall-clock scheduling (game ticks only).
 
 ## Definition of Done (all must pass)
