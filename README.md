@@ -472,6 +472,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | Fri 23:00 | `f46872e` |
 | [#44](../../pull/44) | docs: map every Railway service and public URL | Fri 22:44 | `d50bd8d` |
 | [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | Fri 22:42 | `2e5d7a5` |
 | [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | Fri 22:40 | `cdf0d11` |
@@ -483,14 +484,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
 | [#34](../../pull/34) | feat: observability — trace negotiations, duels, monitor and CLI output to Arize Phoenix | Fri 22:03 | `ae5293b` |
 | [#33](../../pull/33) | feat: shared Railway Postgres with DATABASE_URL alone | Fri 21:57 | `4c6726f` |
-| [#32](../../pull/32) | feat: monitoring agent: feed, traders DB, /me snapshots, new-dealer alerts | Fri 21:38 | `da01693` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
-| [#45](../../pull/45) | chore: turn the Railway monitor off; the monitor runs in the CLI on a laptop | `ogarciarevett/railway-monitor-off` |
 | [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
 <!-- BAZAAR:ACTIVITY:END -->
