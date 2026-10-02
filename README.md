@@ -802,6 +802,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | `fix/state-no-private-values` |
 | [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
 | [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | `ogarciarevett/docs-architecture-runtime` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
