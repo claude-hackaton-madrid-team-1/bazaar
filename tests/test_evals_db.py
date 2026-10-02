@@ -277,15 +277,18 @@ def test_jev_calls_are_counted_per_question_each_agent_asks(seeded: psycopg.Conn
 
     seeded.execute(
         "insert into decisions (tick, agent, kind, status, jev) values "
-        "(150, 'duels', 'duel_accept', 'done', '{\"verdict\": \"accept\"}'), "
-        "(151, 'duels', 'duel_offer', 'done', '{\"verdict\": \"undecided\"}'), "
-        "(152, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\"}'), "
-        "(153, 'maker', 'hold_ask', 'approved', '{\"verdict\": \"yes\"}')"
+        "(150, 'duels', 'duel_offer', 'done', '{\"verdict\": \"counter\", \"digest\": \"d1\"}'), "
+        "(151, 'duels', 'duel_offer', 'done', '{\"verdict\": \"counter\", \"digest\": \"d1\"}'), "
+        "(152, 'duels', 'duel_accept', 'done', '{\"verdict\": \"undecided\", \"digest\": \"d2\"}'), "
+        "(153, 'duels', 'duel_offer', 'done', '{\"verdict\": \"undecided\", \"reason\": \"no tick budget for jev\"}'), "
+        "(154, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\", \"digest\": \"m1\"}'), "
+        "(155, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\", \"reason\": \"cached\"}'), "
+        "(156, 'maker', 'hold_ask', 'approved', '{\"verdict\": \"yes\", \"digest\": \"m2\"}')"
     )
     seeded.commit()
     assert jev_calls(seeded) == {
-        "duel_move": (2, 1),
-        "list_price_choice": (1, 1),
+        "duel_move": (2, 1),  # d1 recorded on two ticks is one call; no budget is no call
+        "list_price_choice": (1, 1),  # the cached reuse is not a call
         "reprice_or_hold": (1, 1),
-        "offer_is_worth_accepting": (1, 1),
+        "offer_is_worth_accepting": (1, 1),  # the taker's verdict carries no digest
     }

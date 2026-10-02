@@ -182,17 +182,27 @@ def latest_score(conn: psycopg.Connection) -> tuple[int, dict[str, Any]] | None:
     return (int(rows[0][0]), dict(rows[0][1])) if rows and isinstance(rows[0][1], Mapping) else None
 
 
+# Our own reasons for a verdict no Jev call produced (agents.runtime, agents.duel_jev, agents.maker_jev).
+NOT_A_CALL = ("jev off", "no tick budget for jev", "jev answered after the tick budget", "cached")
+_JEV_CALLS = """
+with rows as (
+  select agent, split_part(kind, '_', 1) as kind, jev->>'digest' as digest,
+         coalesce(jev->>'verdict', 'undecided') <> 'undecided' as decided
+    from decisions
+   where jev is not null and (jev->>'digest' is not null or coalesce(jev->>'reason', '') <> all(%s)))
+select agent, kind, count(distinct digest) + count(*) filter (where digest is null),
+       count(distinct digest) filter (where decided) + count(*) filter (where digest is null and decided)
+  from rows group by agent, kind
+"""
+
+
 def jev_calls(conn: psycopg.Connection) -> dict[str, tuple[int, int]]:
-    """Per Jev question: (calls, decided) from the agents' decisions. Any verdict but `undecided` is
-    decided: yes/no for a noul question, the chosen option for a choice question."""
-    rows = _rows(
-        conn,
-        "select agent, split_part(kind, '_', 1), count(*), "
-        "count(*) filter (where coalesce(jev->>'verdict', 'undecided') <> 'undecided') "
-        "from decisions where jev is not null group by 1, 2",
-    )
+    """Per Jev question: (calls, decided). A call is one Jev-log digest: the duel player records a cached
+    verdict again every tick of an unchanged round, under the same digest. A row without a digest (the
+    taker keeps no Jev log) counts when Jev answered it, not when the verdict was reused or never asked.
+    Any verdict but `undecided` is decided: yes/no for a noul question, the option for a choice."""
     calls: dict[str, tuple[int, int]] = {}
-    for agent, kind, n, decided in rows:
+    for agent, kind, n, decided in _rows(conn, _JEV_CALLS, (list(NOT_A_CALL),)):
         q = jev_question(agent, kind)
         before = calls.get(q, (0, 0))
         calls[q] = (before[0] + int(n), before[1] + int(decided))
