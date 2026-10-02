@@ -182,9 +182,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - **Team memory is public:** `.ai/memory.md` is committed. Append findings, gotchas and build
   errors there (newest at the bottom). Never write a key or token in it.
-- **README stays current by itself:** the pre-commit hook runs `scripts/readme_status.py`, which
-  rebuilds the block below from the plan, the CLI and the memory log and stages README.md.
-  On a conflict inside the block, take either side and rerun `python3 scripts/readme_status.py`.
+- **README stays current by itself, in two places:**
+  - the pre-commit hook runs `scripts/readme_status.py` on every commit: it rebuilds the "Live status"
+    block (backlog from the plan, CLI commands, latest team memory) and stages README.md;
+  - CI on every push to `main` (`.github/workflows/readme.yml`) rebuilds that block on the merged
+    code and the "Activity" block (recent merges, open PRs), then commits it as `github-actions[bot]`.
+  On a conflict inside a block, take either side and rerun `python3 scripts/readme_status.py`.
+  Keep `.ai/specs/02-plan.md`'s task index current: it is what the backlog table shows.
 - **Backlog:** GitHub issues are the source of truth; the plan mirrors them.
 - **Never** push from an agent, never commit `.env`, one team key only.
 
@@ -197,25 +201,27 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | Task id | Title | Phase | Status |
 |---|---|---|---|
-| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | ✅ `bazaar monitor` (feed, traders, alerts, snapshots) |
-| [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ⬜ (blocked on P1) |
-| [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | ⬜ |
-| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22), score 11.3 |
-| [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | ⬜ |
-| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 `bazaar duel run --play` running, waiting for h2 |
-| N1 (new) | Memory schema + repository + Friday backfill | 1 | 🔵 schema + `db load` done |
-| N2 (new) | Intel: order book, tape, competitor profiles | 1 | ⬜ |
-| N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ |
-| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | ⬜ |
-| [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | ⬜ |
-| N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 first CLI + table commands done |
-| N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | 🔵 judge/mask/log/report done (135 tests, live parity); recorded-fixture parity test left |
-| N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ |
-| N7 (new) | Observability: OTel traces → Phoenix (negotiations, duels, monitor, console), `bazaar thread(s)` | 1 | 🔵 PR open (`obs up`, `obs status`, `thread 115`) |
-| [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Valuation, buy/sell lists | 1 | ⬜ |
-| [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ |
+| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | ✅ `bazaar monitor` (#32); real-time SSE + ours/theirs tagging 🔵 worker |
+| [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
+| [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | 🔵 tick loop + budget + `.local/PAUSE` done; cancel-open-offers kill switch ⬜ |
+| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
+| [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24) |
+| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 `bazaar duel run --play` running, waiting for practice duels |
+| N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
+| N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
+| N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ not started (after strategy + LLM) |
+| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | ⬜ not started (autonomous loop) |
+| [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); executor ⬜ |
+| N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
+| N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
+| N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ later |
+| N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
+| N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
+| N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
+| [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
+| [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | ⬜ |
-| [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | ⬜ |
+| [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | ⬜ |
 | [#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17) | Pitch + scoring tracker | 3 | ⬜ |
 
@@ -261,3 +267,31 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 
 <!-- BAZAAR:STATUS:END -->
+
+## Activity
+
+<!-- BAZAAR:ACTIVITY:START -->
+<!-- Generated by CI on every push to main (.github/workflows/readme.yml). Do not edit by hand. -->
+
+### Recently merged
+
+| PR | Title | Merged | Commit |
+|---|---|---|---|
+| [#35](../../pull/35) | fix: a failing tracing hook can never break a live negotiation | Fri 22:04 | `3bf4527` |
+| [#34](../../pull/34) | feat: observability — trace negotiations, duels, monitor and CLI output to Arize Phoenix | Fri 22:03 | `ae5293b` |
+| [#33](../../pull/33) | feat: shared Railway Postgres with DATABASE_URL alone | Fri 21:57 | `4c6726f` |
+| [#32](../../pull/32) | feat: monitoring agent: feed, traders DB, /me snapshots, new-dealer alerts | Fri 21:38 | `da01693` |
+| [#31](../../pull/31) | fix: close the Greptile P1s on the live trading path | Fri 21:34 | `808dc3e` |
+| [#30](../../pull/30) | feat: GUARDRAILS.md rule book, enforced by the runtime and shown in the CLI | Fri 21:29 | `239bb72` |
+| [#29](../../pull/29) | feat: bazaar CLI, feed capture, market intel, Postgres memory, Jev in Python, dealer negotiator | Fri 21:29 | `6218d83` |
+| [#28](../../pull/28) | docs: master plan, team contract and a self-updating README | Fri 21:24 | `f2640fe` |
+| [#26](../../pull/26) | docs(api): enriched OpenAPI 3.1 spec of the Bazaar API | Fri 20:58 | `b154e22` |
+| [#27](../../pull/27) | docs: translate the team briefing to English | Fri 20:35 | `caaecba` |
+| [#25](../../pull/25) | docs: team briefing (slides + audio + rules + API) | Fri 20:18 | `5255396` |
+| [#18](../../pull/18) | chore: add the official Bazaar Python SDK and starter kit | Fri 20:17 | `9d532bd` |
+
+### Open pull requests
+
+_No open PRs (or `gh` unavailable)._
+
+<!-- BAZAAR:ACTIVITY:END -->
