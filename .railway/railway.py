@@ -59,7 +59,15 @@ def runtime_env() -> dict:
     }
 
 
-def runtime(name: str, command: str, data: object, enabled: bool = True) -> object:
+def llm_env() -> dict:
+    """The runtime LLM on the Claude subscription (README "LLM on the Claude subscription"), for the
+    services that write negotiation words. The `claude-agent-sdk` wheel bundles the Claude Code CLI,
+    so the build needs nothing more. The value is the operator's `claude setup-token` token, set by
+    hand with `railway variable set ... --stdin`; unset, every LLM path falls back to its template."""
+    return {"CLAUDE_CODE_OAUTH_TOKEN": preserve()}
+
+
+def runtime(name: str, command: str, data: object, enabled: bool = True, llm: bool = False) -> object:
     """`enabled=False` declares no source: the service, its volume and variables stay, and no push
     can deploy it. Railway has no 0-replica setting (the minimum is 1), so this is how it is off."""
     return service(
@@ -70,7 +78,7 @@ def runtime(name: str, command: str, data: object, enabled: bool = True) -> obje
         deploy=ALWAYS,
         replicas={REGION: 1},
         volumeMounts={APP_DATA: data},
-        env=runtime_env(),
+        env={**runtime_env(), **(llm_env() if llm else {})},
     )
 
 
@@ -88,7 +96,7 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), "PORT": AGENT_PORT},
+        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT},
     )
 
 
@@ -123,7 +131,7 @@ def main(ctx=None):
     # enabled=True, `railway config apply` (it reconnects the repo and deploys main), and stop the
     # laptop monitor.
     monitor = runtime("bazaar-monitor", "monitor", monitor_data, enabled=False)
-    duels = runtime("bazaar-duels", "duel run --play", duels_data)
+    duels = runtime("bazaar-duels", "duel run --play", duels_data, llm=True)
     # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
     # (duels first; the maker never accepts). Both stay in DRY RUN until BAZAAR_LIVE=1 is set by hand.
     taker = agent("bazaar-taker", "agent taker", taker_data)
