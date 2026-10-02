@@ -380,6 +380,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Open pull requests
 
-_No open PRs (or `gh` unavailable)._
+| PR | Title | Branch |
+|---|---|---|
+| [#42](../../pull/42) | feat: always-on runtime on Railway (monitor, duels, Phoenix with auth) as code | `ogarciarevett/feat-railway-services` |
+| [#41](../../pull/41) | fix: read the live duel payload so the duel player actually plays | `fix/duel-payload-shape` |
 
 <!-- BAZAAR:ACTIVITY:END -->
