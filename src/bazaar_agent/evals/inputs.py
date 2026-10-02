@@ -84,24 +84,32 @@ def our_settlements(conn: psycopg.Connection, ours: str, since_tick: int | None)
     )
     out = []
     for event_id, tick, p in rows:
-        items = [i for i in p.get("items") or [] if isinstance(i, Mapping)]
-        if not items:
+        try:
+            found = _settlement(int(event_id), tick, p)
+        except (TypeError, ValueError):  # an unreadable feed payload is skipped, never the whole pass
             continue
-        first = items[0]
-        out.append(
-            Settlement(
-                settlement=int(p.get("settlement") or event_id),
-                tick=int(p.get("tick") or tick or 0),
-                venue=p.get("venue"),
-                buyer=str(first.get("to")),
-                seller=str(first.get("frm")),
-                ref=str(first.get("ref")),
-                asset_ids=tuple(int(i["id"]) for i in items if isinstance(i.get("id"), int)),
-                price=int(p.get("price") or 0),
-                fee=int(p.get("fee") or 0),
-            )
-        )
+        if found is not None:
+            out.append(found)
     return out
+
+
+def _settlement(event_id: int, tick: int | None, p: Mapping[str, Any]) -> Settlement | None:
+    raw = p.get("items")
+    items = [i for i in raw if isinstance(i, Mapping)] if isinstance(raw, list) else []
+    if not items:
+        return None
+    first = items[0]
+    return Settlement(
+        settlement=int(p.get("settlement") or event_id),
+        tick=int(p.get("tick") or tick or 0),
+        venue=p.get("venue"),
+        buyer=str(first.get("to")),
+        seller=str(first.get("frm")),
+        ref=str(first.get("ref")),
+        asset_ids=tuple(int(i["id"]) for i in items if isinstance(i.get("id"), int)),
+        price=int(p.get("price") or 0),
+        fee=int(p.get("fee") or 0),
+    )
 
 
 def _asset_value(assets: object, asset_ids: tuple[int, ...]) -> float | None:

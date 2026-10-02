@@ -34,10 +34,21 @@ class RunSummary:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
-def duel_outcomes(conn: psycopg.Connection, since_tick: int | None) -> list[Outcome]:
+def duel_outcomes(
+    conn: psycopg.Connection, since_tick: int | None, warn: Callable[[str], None] = lambda message: None
+) -> list[Outcome]:
+    """Every finished duel. One unreadable stored payload is skipped with a warning, never the whole pass."""
     closures = inputs.duel_closures(conn)
-    found = (score_duel(d, closures.get(d.get("duel", -1))) for d in inputs.duels(conn, since_tick))
-    return [o for o in found if o is not None]
+    out = []
+    for d in inputs.duels(conn, since_tick):
+        try:
+            found = score_duel(d, closures.get(d.get("duel", -1)))
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
+            warn(f"evals: duel {d.get('duel')!r} skipped, unreadable payload ({type(e).__name__})")
+            continue
+        if found is not None:
+            out.append(found)
+    return out
 
 
 def dealer_outcomes(conn: psycopg.Connection, ours: str, since_tick: int | None) -> list[Outcome]:
@@ -75,13 +86,18 @@ def market_outcomes(conn: psycopg.Connection, day: Callable[[int | None], str | 
     return [found] if found is not None else []
 
 
-def score_all(conn: psycopg.Connection, ours: str | None, since_tick: int | None = None) -> list[Outcome]:
+def score_all(
+    conn: psycopg.Connection,
+    ours: str | None,
+    since_tick: int | None = None,
+    warn: Callable[[str], None] = lambda message: None,
+) -> list[Outcome]:
     openings = inputs.day_openings(conn)
 
     def day(tick: int | None) -> str | None:
         return day_of(tick, openings)
 
-    found = duel_outcomes(conn, since_tick)
+    found = duel_outcomes(conn, since_tick, warn)
     if ours:
         found += dealer_outcomes(conn, ours, since_tick) + trade_outcomes(conn, ours, since_tick)
     found += market_outcomes(conn, day)
@@ -122,7 +138,7 @@ def run_once(
     annotator: PhoenixAnnotator | None = None,
     warn: Callable[[str], None] = lambda message: None,
 ) -> RunSummary:
-    outcomes = score_all(conn, ours, since_tick)
+    outcomes = score_all(conn, ours, since_tick, warn)
     changed = store.upsert_outcomes(conn, outcomes)
     notes = _notes(outcomes, ours)
     summary = RunSummary(ours, _count(outcomes), changed, notes=notes)

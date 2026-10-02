@@ -292,3 +292,33 @@ def test_jev_calls_are_counted_per_question_each_agent_asks(seeded: psycopg.Conn
         "reprice_or_hold": (1, 1),
         "offer_is_worth_accepting": (1, 1),  # the taker's verdict carries no digest
     }
+
+
+def test_one_unreadable_duel_never_stops_the_pass(seeded: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bazaar_agent.evals import run as run_module
+
+    real = run_module.score_duel
+
+    def flaky(duel: Any, closure: Any = None) -> Any:
+        if duel.get("duel") == 85:
+            raise TypeError("'int' object is not iterable")
+        return real(duel, closure)
+
+    monkeypatch.setattr(run_module, "score_duel", flaky)
+    warnings: list[str] = []
+    summary = run_once(seeded, OURS, warn=warnings.append)
+    assert summary.scored["duel"] == 19 and warnings == ["evals: duel 85 skipped, unreadable payload (TypeError)"]
+
+
+def test_an_unreadable_settlement_is_skipped(seeded: psycopg.Connection) -> None:
+    from bazaar_agent.evals.inputs import our_settlements
+
+    bad = {**TRADE_SETTLEMENT, "id": 900002, "payload": {**TRADE_SETTLEMENT["payload"], "price": "lots"}}
+    worse = {**TRADE_SETTLEMENT, "id": 900003, "payload": {**TRADE_SETTLEMENT["payload"], "items": 3}}
+    for e in (bad, worse):  # straight into the table: the monitor's own loader would refuse them
+        seeded.execute(
+            "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s)",
+            (e["id"], e["tick"], e["type"], e["actor"], json.dumps(e["payload"])),
+        )
+    seeded.commit()
+    assert [s.settlement for s in our_settlements(seeded, OURS, None)] == [500]

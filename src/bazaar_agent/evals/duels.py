@@ -36,26 +36,32 @@ def _num(value: object) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
+def _list(duel: Mapping[str, Any], key: str) -> list[Any]:
+    """A list field of a stored payload; anything else (a malformed import) reads as empty."""
+    value = duel.get(key)
+    return value if isinstance(value, list) else []
+
+
 def _worth(duel: Mapping[str, Any], price: float, days: object) -> float:
     """A price adjusted for delivery days in two-issue duels, as the duel player values it: the sign
     of `your_days_weight` is unverified, so days always count against us (duelist.effective_price)."""
     weight = _num(duel.get("your_days_weight"))
     n_days = _num(days)
-    if "days" not in (duel.get("issues") or []) or weight is None or n_days is None:
+    if "days" not in _list(duel, "issues") or weight is None or n_days is None:
         return price
     penalty = abs(weight) * n_days
     return price - penalty if duel.get("role") == "seller" else price + penalty
 
 
 def _rival_worths(duel: Mapping[str, Any]) -> list[float]:
-    offers = [m for m in duel.get("messages") or [] if isinstance(m, Mapping) and m.get("from") != OUR_SENDER]
+    offers = [m for m in _list(duel, "messages") if isinstance(m, Mapping) and m.get("from") != OUR_SENDER]
     if isinstance(duel.get("rival_offer"), Mapping):
         offers.append(duel["rival_offer"])
     return [_worth(duel, p, o.get("days")) for o in offers if (p := _num(o.get("price"))) is not None]
 
 
 def _played(duel: Mapping[str, Any]) -> bool:
-    mine = any(isinstance(m, Mapping) and m.get("from") == OUR_SENDER for m in duel.get("messages") or [])
+    mine = any(isinstance(m, Mapping) and m.get("from") == OUR_SENDER for m in _list(duel, "messages"))
     return mine or isinstance(duel.get("your_offer"), Mapping)
 
 
@@ -95,7 +101,7 @@ def score_duel(duel: Mapping[str, Any], closure: Closure | None = None) -> Outco
         "decay_kept": round(kept, 4),
         "rival_best": best,
         "played": _played(duel),
-        "issues": list(duel.get("issues") or []),
+        "issues": _list(duel, "issues"),
     }
     base = Outcome("duel", f"duel:{did}", None, "ok", "", tick, details=details)
     if status == "no_deal":
@@ -126,7 +132,7 @@ def _deal(base: Outcome, duel: Mapping[str, Any], role: str, limit: float, best:
         text = "Deal closed, price not known yet: `bazaar duel done` stores the finished duel."
         return _replace(base, None, "ok", text, result, base.details)
     worth = _worth(duel, price, duel.get("days"))
-    two_issue = "days" in (duel.get("issues") or [])
+    two_issue = "days" in _list(duel, "issues")
     # Price alone fixes our surplus; with delivery days only the API's `result` knows our day weight.
     raw = result / kept if two_issue and result is not None and kept > 0 else _surplus(role, limit, worth)
     after = result if result is not None else raw * kept

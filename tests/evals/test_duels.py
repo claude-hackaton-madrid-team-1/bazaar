@@ -110,6 +110,12 @@ def test_two_issue_duels_use_the_api_result_and_value_days_against_us() -> None:
     assert o.details["rival_best"] == 88.0  # 80 + 2 * 4: days count against us, as the player values them
 
 
+def test_malformed_nested_fields_read_as_empty() -> None:
+    odd = {"duel": 7, "role": "seller", "your_limit": 40, "status": "no_deal", "messages": 1, "issues": "price"}
+    o = score_duel({**odd, "rival_offer": "70"})
+    assert o is not None and (o.score, o.label, o.details["issues"]) == (0.0, "ok", [])
+
+
 @pytest.mark.parametrize("payload", [{}, {"duel": 4, "role": "judge", "your_limit": 3, "status": "deal"}])
 def test_unreadable_duels_are_skipped(payload: dict[str, Any]) -> None:
     assert score_duel(payload) is None
