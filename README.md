@@ -756,6 +756,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#63](../../pull/63) | chore: add black as the formatter, checked in CI | `chore/black-formatter` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
 | [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 | [#60](../../pull/60) | fix(duels): keep two-issue duel offers strictly inside our limit (+ duel_inside_limit guardrail) | `fix/duel-offers-inside-limit` |
