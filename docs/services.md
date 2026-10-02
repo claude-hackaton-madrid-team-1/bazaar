@@ -120,6 +120,48 @@ Tools: the 12 reads (`status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `
 unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside the server for every
 write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
 password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
+## Evals scorecard (Postgres)
+
+`bazaar-evals` (README "Evals") writes one `outcomes` row per settled duel, dealer thread, team trade or
+Market Test and keeps three views current. A dashboard reads them with plain SQL, or runs
+`uv run bazaar evals report --json`. Scores are 0..1; labels `good` (≥ 0.6) · `ok` (≥ 0.3) · `bad`.
+
+`outcomes` (key `(target, subject)`): `target` duel | dealer | trade | market_test · `subject`
+(`duel:85`, `thread:101`, `settlement:67`, `market_test:sat`) · `score` (null = settled, not scorable
+yet) · `label` · `explanation` · `details` jsonb (the numbers behind it) · `day` fri | sat | sun ·
+`recorded_tick` · `realized_surplus` (primas: duels after decay, trades at our values) · `ladder_share` ·
+`decision_id` · `jev_question` / `jev_verdict` / `jev_right` · `trace_id` / `span_id` / `annotated_at`
+(the Phoenix span it is attached to).
+
+```text
+eval_scorecard        target, day, outcomes, scored, mean_score, worst_score, good, ok, bad,
+                      surplus, worst (up to 5 subjects, worst first), last_tick
+eval_ladder           level, dealers, threads, deals, best3_share (best three, missing = 0), best3
+eval_jev_calibration  question, outcomes, decided, n_right, n_wrong, n_unknown
+```
+
+`bazaar evals report --json`:
+
+```json
+{
+  "scorecard": [{"target": "duel", "day": "fri", "outcomes": 20, "scored": 20, "mean_score": 0.279,
+                 "worst_score": 0.0, "good": 7, "ok": 5, "bad": 8, "surplus": 176.9,
+                 "worst": ["duel:119", "duel:120", "duel:131", "duel:132", "duel:147"], "last_tick": 163}],
+  "ladder": [{"level": 1, "dealers": "abuela", "threads": 5, "deals": 4, "best3_share": 0.733,
+              "best3": ["thread:99", "thread:101", "thread:110"]}],
+  "worst": [{"target": "dealer", "subject": "thread:187", "score": 0.0, "label": "bad", "day": "fri",
+             "recorded_tick": 104, "realized_surplus": null, "explanation": "No deal with chato ...",
+             "span_id": null}],
+  "jev_calibration": [{"question": "offer_is_worth_accepting", "calls": 1, "decided": 0, "undecided": 1,
+                       "right": 0, "wrong": 0, "unknown": 0}],
+  "official": {"tick": 159, "duel_points": 0.0, "ladder_points": 0.058, "negotiating": 8.34, "...": "..."},
+  "annotations": {"annotated": 14, "pending": 12, "no_span": 0}
+}
+```
+
+In Phoenix, each score is a span annotation on its trace: `duel_pie_share` on a `duel` root,
+`ladder_share` on a `negotiation` root, `trade_surplus` on the deciding `<agent> tick N` trace
+(annotator `CODE`, identifier `bazaar-evals`).
 
 ## Game endpoints a dashboard can call directly
 
@@ -133,4 +175,5 @@ stays server-side: a browser never holds the key.
 - **Postgres** (`iriguchi.proxy.rlwy.net:28880`, db `railway`): the shared memory. Credentials only in
   the Railway dashboard; never in chat, git or a browser.
 - **`bazaar-duels`**: the duel player, a background worker with no HTTP. Its traces are in Phoenix.
+- **`bazaar-evals`**: the evals loop, a worker with no HTTP. Its output is the Postgres scorecard above.
 - **The monitor**: runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision.
