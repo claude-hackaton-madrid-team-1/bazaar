@@ -1,4 +1,15 @@
+import json
+from pathlib import Path
+
 from bazaar_agent import monitor as mon
+from bazaar_agent.ticks import Clock
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "api"
+
+
+def body(name):
+    return json.loads((FIXTURES / name).read_text())["body"]
+
 
 DEALERS = {
     "personas": [
@@ -64,3 +75,29 @@ def test_a_level_going_active_is_reported_by_id():
         "chato",
         "announced → active: deal with him",
     )
+
+
+def test_a_tick_becomes_the_web_stream_hello_me_clock_then_the_feed():
+    clock = Clock.model_validate(body("get_api_clock.anon.json"))
+    me = body("get_api_me.team.json")
+    feed = body("get_api_feed_limit_20.anon.json")["events"][:3]
+    events = mon.web_events(clock, feed, me)
+    assert [e["type"] for e in events] == ["agent.hello", "agent.me", "clock"] + [e["type"] for e in feed]
+    assert events[3:] == feed
+    assert events[0]["payload"] == {"team": "t01", "name": "Team 1"}
+    assert events[1]["payload"] == me
+    assert events[2]["tick"] == 31 and events[2]["t"] == clock.t_hours
+    assert events[2]["payload"] == {"day": "fri", "tick_seconds": 60.0}
+    assert all(set(e) == {"id", "tick", "t", "type", "scope", "actor", "payload"} for e in events)
+
+
+def test_made_up_stream_ids_are_negative_and_unique_across_ticks():
+    me = body("get_api_me.team.json")
+    ids = [e["id"] for tick in (1, 2, 3) for e in mon.web_events(Clock(tick=tick), [], me)]
+    assert all(i < 0 for i in ids) and len(ids) == len(set(ids))
+
+
+def test_without_a_team_key_the_stream_has_no_hello_and_no_me():
+    feed = body("get_api_feed_limit_20.anon.json")["events"][:2]
+    events = mon.web_events(Clock(tick=5), feed, None)
+    assert [e["type"] for e in events] == ["clock"] + [e["type"] for e in feed]

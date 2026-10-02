@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from bazaar_agent.ticks import Clock
+
 Event = dict[str, Any]
 ALERT_EVENT_TYPES = ("announcement", "level", "persona", "dealer", "venue.opened", "schedule.fired", "day.")
 
@@ -118,6 +120,34 @@ def event_alerts(events: Iterable[Event]) -> list[Alert]:
             text = p.get("text") or p.get("note") or p.get("name") or json.dumps(p)[:160]
             out.append(Alert(int(e.get("tick") or 0), f"feed:{kind}", str(e.get("actor") or ""), str(text)))
     return out
+
+
+def web_events(clock: Clock, new_events: list[Event], me: dict[str, Any] | None) -> list[Event]:
+    """One tick in the web view's event contract (specs/003): clock, hello and /me, then the feed."""
+
+    def made_up(n: int, type_: str, payload: dict[str, Any]) -> Event:
+        return {
+            "id": -(clock.tick * 3 + n),
+            "tick": clock.tick,
+            "t": clock.t_hours,
+            "type": type_,
+            "scope": "team",
+            "actor": "",
+            "payload": payload,
+        }
+
+    out = []
+    if me is not None:
+        out += [made_up(1, "agent.hello", {"team": me.get("id"), "name": me.get("name")}), made_up(2, "agent.me", me)]
+    out.append(made_up(0, "clock", {"day": clock.today, "tick_seconds": clock.tick_seconds}))
+    return out + list(new_events)
+
+
+def append_stream(path: Path, events: Iterable[Event]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for e in events:
+            handle.write(json.dumps(e, separators=(",", ":"), ensure_ascii=False) + "\n")
 
 
 def append_alerts(path: Path, alerts: Iterable[Alert]) -> None:

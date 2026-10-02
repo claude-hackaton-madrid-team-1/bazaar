@@ -16,9 +16,9 @@ Every tick `bazaar monitor` appends to `.local/stream.jsonl` (one event per line
 
 | Event | From | Payload |
 |---|---|---|
-| `clock` | `GET /api/clock` | `{day, tick_seconds}`, envelope `tick` |
 | `agent.hello` | `GET /api/me` (needs `BAZAAR_KEY`) | `{team: me.id, name: me.name}` |
 | `agent.me` | `GET /api/me` (needs `BAZAAR_KEY`) | the `/me` body |
+| `clock` | `GET /api/clock` | `{day, tick_seconds}`, envelope `tick` |
 | every new feed event | `GET /api/feed` | unchanged |
 
 Feed ids are positive. Events the monitor makes up get negative ids, unique per tick, so they never

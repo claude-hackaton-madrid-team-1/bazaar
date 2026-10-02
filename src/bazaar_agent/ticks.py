@@ -34,6 +34,7 @@ class Clock(BaseModel):
     next_tick_in: float = 1.0
     paused: bool = False
     doors: str = "open"
+    today: str = ""
     t_hours: float = 0.0
     round: int | None = None
     round_name: str | None = None

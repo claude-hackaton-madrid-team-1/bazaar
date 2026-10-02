@@ -409,6 +409,7 @@ def monitor(
     public, store = public_client(settings), FeedStore(settings.feed_dir)
     team = team_client(settings) if settings.bazaar_key else None
     alerts_path = settings.data_dir / "alerts.jsonl"
+    stream_path = settings.data_dir / "stream.jsonl"
     state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "conn": None, "ticks": 0, "db_warned": False}
 
     def conn() -> Any:
@@ -492,6 +493,7 @@ def monitor(
                 console.print(f"[yellow]tick {c.tick}: DB write failed ({type(e).__name__}: {str(e)[:80]})[/yellow]")
                 state["conn"] = None
         raise_alerts(alerts)
+        mon.append_stream(stream_path, mon.web_events(c, new_events, me))
         gap = " [red]GAP POSSIBLE[/red]" if result.gap_possible else ""
         cash = (
             f" · cash {me.get('cash')} lvl {me.get('level')} score {(me.get('score') or {}).get('score')}" if me else ""
@@ -501,7 +503,9 @@ def monitor(
             f"{len(dealers_after)} dealers, {len(teams_after)} teams, {len(levels_after)} levels{cash}"
         )
 
-    console.print(f"monitor: feed → {store.path}, alerts → {alerts_path}, db {'on' if db_enabled else 'off'}")
+    console.print(
+        f"monitor: feed → {store.path}, alerts → {alerts_path}, web → {stream_path}, db {'on' if db_enabled else 'off'}"
+    )
     run_per_tick(public.clock, on_tick, max_ticks=max_ticks or None)
 
 

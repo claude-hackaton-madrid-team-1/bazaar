@@ -19,6 +19,7 @@ from mock import MockGame
 
 REPO = Path(__file__).resolve().parent.parent
 WEB_OUT = REPO / "web" / "out"
+STREAM = REPO / ".local" / "stream.jsonl"
 BUILD = "cd web && npm ci && npm run build"
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -37,6 +38,31 @@ CONTENT_TYPES = {
 STICKY = ("agent.hello", "agent.me", "clock", "agent.phase")
 
 
+class StreamFile:
+    def __init__(self, path):
+        self.path = Path(path)
+        self.offset = 0
+
+    def step(self):
+        try:
+            with self.path.open("rb") as f:
+                if f.seek(0, 2) < self.offset:
+                    self.offset = 0
+                f.seek(self.offset)
+                chunk = f.read()
+        except FileNotFoundError:
+            return []
+        complete = chunk[: chunk.rfind(b"\n") + 1]
+        self.offset += len(complete)
+        out = []
+        for line in complete.splitlines():
+            with contextlib.suppress(ValueError):
+                e = json.loads(line)
+                if isinstance(e, dict) and isinstance(e.get("type"), str):
+                    out.append(e)
+        return out
+
+
 class Hub:
     def __init__(self, game, speed, keep=500):
         self.game, self.speed = game, speed
@@ -47,7 +73,7 @@ class Hub:
 
     async def handler(self, ws):
         kept = {e["id"] for e in self.backlog}
-        replay = sorted((e for e in self.sticky.values() if e["id"] not in kept), key=lambda e: e["id"])
+        replay = [e for e in self.sticky.values() if e["id"] not in kept]
         for e in replay + list(self.backlog):
             await ws.send(json.dumps(e))
         self.clients.add(ws)
@@ -61,6 +87,7 @@ class Hub:
             for e in self.game.step():
                 self.backlog.append(e)
                 if e["type"] in STICKY:
+                    self.sticky.pop(e["type"], None)
                     self.sticky[e["type"]] = e
                 broadcast(self.clients, json.dumps(e))
             await asyncio.sleep(self.speed)
@@ -117,24 +144,30 @@ def missing_hint(root):
     return f"{shown} not found — run: {BUILD}"
 
 
-async def start(port=8777, seed=None, speed=0.35, host="127.0.0.1", root=WEB_OUT):
-    hub = Hub(MockGame(seed=seed), speed)
+async def start(source, port=8777, speed=0.5, host="127.0.0.1", root=WEB_OUT):
+    hub = Hub(source, speed)
     server = await serve(hub.handler, host, port, process_request=partial(static, Path(root)))
     hub.task = asyncio.create_task(hub.run())
     return server, hub
 
 
 async def main():
-    ap = argparse.ArgumentParser(description="Serve the web view and stream a mock Bazaar game on /events")
+    ap = argparse.ArgumentParser(description="Serve the web view and stream the game on /events")
     ap.add_argument("--port", type=int, default=8777)
-    ap.add_argument("--seed", type=int)
-    ap.add_argument("--speed", type=float, default=0.35, help="seconds per mock step")
+    ap.add_argument("--stream", type=Path, default=STREAM, help="the file `bazaar monitor` writes every tick")
+    ap.add_argument("--mock", action="store_true", help="play a mock game instead of the real one")
+    ap.add_argument("--seed", type=int, help="mock only")
+    ap.add_argument("--speed", type=float, help="seconds per step (mock 0.35, file poll 0.5)")
     args = ap.parse_args()
     hint = missing_hint(WEB_OUT)
     if hint:
         print(hint, file=sys.stderr)
-    server, hub = await start(args.port, args.seed, args.speed)
-    print(f"http://localhost:{args.port}   (events on ws://localhost:{args.port}/events)")
+    if args.mock:
+        source, speed, origin = MockGame(seed=args.seed), args.speed or 0.35, "mock game"
+    else:
+        source, speed, origin = StreamFile(args.stream), args.speed or 0.5, f"{args.stream} (run `uv run bazaar monitor`)"
+    server, hub = await start(source, args.port, speed)
+    print(f"http://localhost:{args.port}   (events on ws://localhost:{args.port}/events from {origin})")
     await server.serve_forever()
 
 

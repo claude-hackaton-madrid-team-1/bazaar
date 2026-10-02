@@ -42,12 +42,14 @@ def fetch(port, path):
 
 @unittest.skipIf(websockets is None, "websockets not installed")
 class ServeTest(unittest.TestCase):
-    def serving(self, check, settle=0.0):
+    def serving(self, check, settle=0.0, source=None):
+        from mock import MockGame  # noqa: UP026
         from serve import start
 
         async def run():
             with tempfile.TemporaryDirectory() as base:
-                server, hub = await start(port=0, seed=3, speed=0.005, root=fake_export(base))
+                game = source or MockGame(seed=3)
+                server, hub = await start(game, port=0, speed=0.005, root=fake_export(base))
                 port = server.sockets[0].getsockname()[1]
                 try:
                     await asyncio.sleep(settle)
@@ -124,6 +126,46 @@ class ServeTest(unittest.TestCase):
             self.assertIn("agent.me", [e["type"] for e in first])
 
         self.serving(check, settle=0.4)
+
+    def test_the_stream_file_replays_hello_first_then_streams_lines_as_they_complete(self):
+        from serve import StreamFile
+        from websockets.asyncio.client import connect
+
+        with tempfile.TemporaryDirectory() as base:
+            path = Path(base) / "stream.jsonl"
+            tick = [
+                envelope(-21, "agent.hello", {"team": "t01", "name": "Team 1"}),
+                envelope(-22, "agent.me", {"cash": 400}),
+                envelope(-23, "clock", {"day": "fri", "tick_seconds": 60}),
+                envelope(5000, "settlement", {"parties": ["t02", "t03"], "price": 9, "items": []}),
+            ]
+            later = json.dumps(envelope(5001, "offer.listed", {"venue": "rastro"}, tick=8))
+            path.write_text("".join(json.dumps(e) + "\n" for e in tick) + later[:20])
+
+            async def check(port):
+                async with connect(f"ws://127.0.0.1:{port}/events", max_queue=None) as ws:
+                    replay = [json.loads(await ws.recv()) for _ in range(len(tick))]
+                    self.assertEqual([e["id"] for e in replay], [-21, -22, -23, 5000])
+                    with path.open("a") as f:
+                        f.write(later[20:] + "\n")
+                    self.assertEqual(await asyncio.wait_for(ws.recv(), 2), later)
+
+            self.serving(check, settle=0.1, source=StreamFile(path))
+
+    def test_a_missing_stream_file_streams_nothing_until_the_monitor_writes_it(self):
+        from serve import StreamFile
+
+        with tempfile.TemporaryDirectory() as base:
+            path = Path(base) / "stream.jsonl"
+            source = StreamFile(path)
+            self.assertEqual(source.step(), [])
+            path.write_text(json.dumps(envelope(1, "clock", {})) + "\n")
+            self.assertEqual([e["id"] for e in source.step()], [1])
+            self.assertEqual(source.step(), [])
+
+
+def envelope(id_, type_, payload, tick=7):
+    return {"id": id_, "tick": tick, "t": 0.1, "type": type_, "scope": "public", "actor": "", "payload": payload}
 
 
 class MissingExportTest(unittest.TestCase):
