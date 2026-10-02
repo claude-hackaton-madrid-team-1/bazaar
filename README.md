@@ -16,7 +16,9 @@ uv sync                                   # Python deps
 cp -n .env.example .env 2>/dev/null; $EDITOR .env   # BAZAAR_KEY=tk-... and TYPESAFE_API_KEY=...
 
 uv run bazaar clock                       # tick, pace, limits, action budget left in this tick
-uv run bazaar feed capture                # KEEP RUNNING: the feed only holds the last 500 events
+uv run bazaar monitor --notify           # KEEP RUNNING: feed + traders + /me snapshots + new-dealer alerts
+uv run bazaar traders                     # every dealer and team the monitor has seen
+uv run bazaar alerts                      # new dealers, levels going active, announcements
 uv run bazaar curves --dealer abuela      # Abuela's concession curve from every team's threads
 uv run bazaar teams                       # the competition: flow, spend, inferred ×1.6 set
 uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams
@@ -81,10 +83,10 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | Task id | Title | Phase | Status |
 |---|---|---|---|
-| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | 🔵 capture running; `bazaar curves` done |
+| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | ✅ `bazaar monitor` (feed, traders, alerts, snapshots) |
 | [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ⬜ (blocked on P1) |
 | [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | ⬜ |
-| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | 🔵 live: LAV-03 bought at 7 (thread 99) |
+| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22), score 11.3 |
 | [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | ⬜ |
 | [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 `bazaar duel run --play` running, waiting for h2 |
 | N1 (new) | Memory schema + repository + Friday backfill | 1 | 🔵 schema + `db load` done |
@@ -117,6 +119,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
 | `uv run bazaar rules check` | Dry-run one action against the guardrails with our live /me, clock and ledger. |
+| `uv run bazaar monitor` | The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts. |
+| `uv run bazaar traders` | Every trader we know (dealers and teams) from the monitor's Postgres table, with status and level. |
+| `uv run bazaar alerts` | The latest alerts raised by the monitor: new dealers, level changes, announcements. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
 | `uv run bazaar db up` | Start Postgres + pgvector (docker compose, localhost:5433). |
@@ -126,13 +131,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-02] gotcha — `python -m bazaar_agent.jev` reads TYPESAFE_API_KEY only from the environment
+- [2026-10-02] finding — El Chato announced (next dealer), seen by the monitor at tick 76
 - [2026-10-02] finding — LAV-04 bought at 9 (thread 101, 5 ticks); Abuela accepted OUR bid
 - [2026-10-02] finding — first ladder deal: LAV-03 from Abuela at 7 P (thread 99, tick 55)
 - [2026-10-02] build-error — dealer loop re-handled one tick 14 times (thread 85 wasted)
 - [2026-10-02] finding — Jev runs in Python now; a thin state gets `undecided`, not yes
 - [2026-10-02] gotcha — `.env` has `TYPESAFE_API_KEY` but no `BAZAAR_KEY` yet
 - [2026-10-02] gotcha — zsh treats `echo ====` as a path expansion
-- [2026-10-02] build-error — DB test overwrote real dealer_curves rows
-- [2026-10-02] finding — the feed is an order book: dealer text, real team ids, fill prices
 
 <!-- BAZAAR:STATUS:END -->

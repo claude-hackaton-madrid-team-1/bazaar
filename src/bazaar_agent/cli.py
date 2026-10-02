@@ -391,6 +391,151 @@ def rules_check(
     )
 
 
+# ---------------------------------------------------------------- monitoring agent
+
+
+@app.command()
+def monitor(
+    db_enabled: bool = typer.Option(True, "--db/--no-db", help="Write to Postgres (JSONL capture always runs)"),
+    notify: bool = typer.Option(False, help="macOS notification on every alert"),
+    refresh_every: int = typer.Option(5, help="Rebuild dealer curves and competitor profiles every N ticks"),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+) -> None:
+    """The monitoring agent: per tick feed → JSONL + Postgres, traders sync, /me snapshot, new-trader alerts."""
+    from bazaar_agent import db
+    from bazaar_agent import monitor as mon
+
+    settings = load_settings()
+    public, store = public_client(settings), FeedStore(settings.feed_dir)
+    team = team_client(settings) if settings.bazaar_key else None
+    alerts_path = settings.data_dir / "alerts.jsonl"
+    state: dict[str, Any] = {"dealers": {}, "teams": {}, "levels": [], "conn": None, "ticks": 0, "db_warned": False}
+
+    def conn() -> Any:
+        if not db_enabled:
+            return None
+        if state["conn"] is None or state["conn"].closed:
+            try:
+                state["conn"] = db.connect(settings.database_url.get_secret_value())
+                db.init_schema(state["conn"])
+            except Exception as e:  # Postgres down: keep capturing JSONL, warn once
+                if not state["db_warned"]:
+                    console.print(f"[yellow]Postgres unavailable ({type(e).__name__}); JSONL only[/yellow]")
+                    state["db_warned"] = True
+                state["conn"] = None
+        return state["conn"]
+
+    def raise_alerts(alerts: list[Any]) -> None:
+        mon.append_alerts(alerts_path, alerts)
+        for a in alerts:
+            console.print(f"[bold red]ALERT[/bold red] tick {a.tick} {a.kind} {a.subject}: {a.detail}")
+            if notify:
+                subprocess.run(
+                    ["osascript", "-e", f'display notification "{a.subject}: {a.kind}" with title "Bazaar"'],
+                    check=False,
+                    capture_output=True,
+                )
+
+    def on_tick(c: Clock) -> None:
+        state["ticks"] += 1
+        newest_before = store.newest_id()
+        try:
+            window = public.feed_window(DEFAULT_WINDOW)
+        except BazaarError as e:
+            console.print(f"tick {c.tick}: feed refused {e.code}")
+            window = []
+        result = store.append(window, DEFAULT_WINDOW)
+        new_events = [e for e in window if newest_before is None or e["id"] > newest_before]
+        first = state["ticks"] == 1
+        history = list(store.events()) if first or state["ticks"] % refresh_every == 0 else None
+        try:
+            dealers_after = mon.dealer_snapshots(public.dealers())
+            levels_after = public.levels().get("levels") or []
+        except BazaarError as e:
+            console.print(f"tick {c.tick}: dealers/levels refused {e.code}")
+            dealers_after, levels_after = state["dealers"], state["levels"]
+        # Known teams win: most feed events carry no level, so a new snapshot must not overwrite one.
+        teams_after = {**mon.team_snapshots(history if first and history else new_events), **state["teams"]}
+        alerts = (
+            mon.detect_changes(
+                c.tick,
+                {**state["dealers"], **state["teams"]},
+                {**dealers_after, **teams_after},
+                state["levels"],
+                levels_after,
+            )
+            if not first
+            else []
+        )
+        alerts += mon.event_alerts(new_events)
+        state["dealers"], state["teams"], state["levels"] = dealers_after, teams_after, levels_after
+        me = None
+        if team is not None:
+            try:
+                me = team.me()
+            except BazaarError as e:
+                console.print(f"tick {c.tick}: /me refused {e.code}")
+        cx = conn()
+        if cx is not None:
+            try:
+                db.load_events(cx, new_events)
+                db.upsert_traders(cx, list(dealers_after.values()) + list(teams_after.values()), c.tick)
+                if me is not None:
+                    db.save_snapshot(cx, c.tick, me)
+                if alerts:
+                    db.insert_alerts(cx, alerts)
+                if history is not None:
+                    db.load_events(cx, history)
+                    db.load_curves(cx, history)
+                    db.save_competitors(cx, intel.team_flows(history), c.tick)
+            except Exception as e:
+                console.print(f"[yellow]tick {c.tick}: DB write failed ({type(e).__name__}: {str(e)[:80]})[/yellow]")
+                state["conn"] = None
+        raise_alerts(alerts)
+        gap = " [red]GAP POSSIBLE[/red]" if result.gap_possible else ""
+        cash = (
+            f" · cash {me.get('cash')} lvl {me.get('level')} score {(me.get('score') or {}).get('score')}" if me else ""
+        )
+        console.print(
+            f"{datetime.now():%H:%M:%S} tick {c.tick}: +{result.new} events (id {result.newest_id}){gap} · "
+            f"{len(dealers_after)} dealers, {len(teams_after)} teams, {len(levels_after)} levels{cash}"
+        )
+
+    console.print(f"monitor: feed → {store.path}, alerts → {alerts_path}, db {'on' if db_enabled else 'off'}")
+    run_per_tick(public.clock, on_tick, max_ticks=max_ticks or None)
+
+
+@app.command()
+def traders() -> None:
+    """Every trader we know (dealers and teams) from the monitor's Postgres table, with status and level."""
+    from rich.table import Table
+
+    from bazaar_agent import db
+
+    with db.connect(load_settings().database_url.get_secret_value()) as cx:
+        rows = cx.execute(
+            "select id, kind, name, status, level, first_seen_tick, last_seen_tick from traders order by kind, id"
+        ).fetchall()
+    t = Table(title=f"Traders · {len(rows)} (kept current by `bazaar monitor`)")
+    for col in ("id", "kind", "name", "status", "level", "first seen", "last seen"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(*["-" if v is None else str(v) for v in r])
+    console.print(t)
+
+
+@app.command()
+def alerts(limit: int = typer.Option(20, help="How many of the latest alerts")) -> None:
+    """The latest alerts raised by the monitor: new dealers, level changes, announcements."""
+    from bazaar_agent.monitor import read_alerts
+
+    rows = read_alerts(load_settings().data_dir / "alerts.jsonl", limit)
+    if not rows:
+        console.print("no alerts yet")
+    for a in rows:
+        console.print(f"tick {a['tick']} [bold]{a['kind']}[/bold] {a['subject']}: {a['detail']}")
+
+
 # ---------------------------------------------------------------- feed capture
 
 

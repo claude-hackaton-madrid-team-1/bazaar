@@ -77,3 +77,10 @@ create table if not exists executions (
 create table if not exists outcomes (
   decision_id bigint primary key references decisions(id), realized_surplus numeric,
   ladder_share numeric, jev_right bool, recorded_tick int);
+
+-- Monitoring agent (bazaar monitor): trader status and the raw announcements it saw.
+alter table traders add column if not exists status text;
+alter table traders add column if not exists updated_tick int;
+create table if not exists alerts (
+  id bigserial primary key, tick int, kind text, subject text, detail text,
+  created_at timestamptz default now());
