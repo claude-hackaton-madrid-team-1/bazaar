@@ -1,0 +1,842 @@
+{
+  "body": {
+    "events": [
+      {
+        "actor": "t06",
+        "id": 1150,
+        "payload": {
+          "kind": "persona",
+          "message": 294,
+          "offer": {
+            "created_tick": 30,
+            "expires_tick": 32,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 11,
+              "types": []
+            },
+            "id": 333,
+            "maker": "t06",
+            "status": "open",
+            "thread": 61,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "pack:sobre_barrio"
+              ]
+            }
+          },
+          "sender": "t06",
+          "team": "t06",
+          "text": null,
+          "thread": 61,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5,
+        "tick": 30,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1154,
+        "payload": {
+          "kind": "persona",
+          "message": 295,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "pack:sobre_barrio"
+              ]
+            },
+            "id": 334,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 12,
+            "to": "t15",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 17,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t15",
+          "text": "Let's meet in the middle, cariño: 17 P.",
+          "thread": 12,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1157,
+        "payload": {
+          "kind": "persona",
+          "message": 301,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:LAT-08"
+              ]
+            },
+            "id": 340,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 59,
+            "to": "t07",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 27,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t07",
+          "text": "Look, 27 P. My grandchildren would pay more!",
+          "thread": 59,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t09",
+        "id": 1160,
+        "payload": {
+          "kind": "persona",
+          "message": 305,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [
+                {
+                  "id": 284,
+                  "kind": "card",
+                  "print_run": 90,
+                  "rarity": "uncommon",
+                  "ref": "MAL-08",
+                  "serial": 7,
+                  "set": "MAL"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            },
+            "id": 343,
+            "maker": "t09",
+            "status": "open",
+            "thread": 54,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 20,
+              "types": []
+            }
+          },
+          "sender": "t09",
+          "team": "t09",
+          "text": null,
+          "thread": 54,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t14",
+        "id": 1163,
+        "payload": {
+          "kind": "persona",
+          "message": 306,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 5,
+              "types": []
+            },
+            "id": 344,
+            "maker": "t14",
+            "status": "open",
+            "thread": 62,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:LAV-04"
+              ]
+            }
+          },
+          "sender": "t14",
+          "team": "t14",
+          "text": null,
+          "thread": 62,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t07",
+        "id": 1166,
+        "payload": {
+          "kind": "persona",
+          "message": 307,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 18,
+              "types": []
+            },
+            "id": 345,
+            "maker": "t07",
+            "status": "open",
+            "thread": 59,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:LAT-08"
+              ]
+            }
+          },
+          "sender": "t07",
+          "team": "t07",
+          "text": null,
+          "thread": 59,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t15",
+        "id": 1169,
+        "payload": {
+          "kind": "persona",
+          "message": 308,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 9,
+              "types": []
+            },
+            "id": 346,
+            "maker": "t15",
+            "status": "open",
+            "thread": 12,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "pack:sobre_barrio"
+              ]
+            }
+          },
+          "sender": "t15",
+          "team": "t15",
+          "text": null,
+          "thread": 12,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1172,
+        "payload": {
+          "kind": "persona",
+          "message": 304,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:LAV-04"
+              ]
+            },
+            "id": 342,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 62,
+            "to": "t14",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 12,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t14",
+          "text": "Welcome, hijo! Look, Mural de la Esquina, 12 P. Made for beginners.",
+          "thread": 62,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1175,
+        "payload": {
+          "kind": "persona",
+          "message": 300,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 5,
+              "types": []
+            },
+            "id": 339,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 57,
+            "to": "t04",
+            "venue": null,
+            "want": {
+              "assets": [
+                {
+                  "id": 47,
+                  "kind": "card",
+                  "print_run": 300,
+                  "rarity": "common",
+                  "ref": "LAV-04",
+                  "serial": 2,
+                  "set": "LAV"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t04",
+          "text": "Look, 5 P. My grandchildren would pay more!",
+          "thread": 57,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1178,
+        "payload": {
+          "kind": "persona",
+          "message": 303,
+          "offer": null,
+          "sender": "abuela",
+          "team": "t06",
+          "text": "Oh, cariño, that I don't do. you bought enough of these this hour; come back later",
+          "thread": 61,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1181,
+        "payload": {
+          "kind": "persona",
+          "message": 297,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:LAV-07"
+              ]
+            },
+            "id": 336,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 51,
+            "to": "t10",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 25,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t10",
+          "text": "Oh, oh... 25 P, and only because you have a kind face. A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+          "thread": 51,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1184,
+        "payload": {
+          "kind": "persona",
+          "message": 302,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:MAL-06"
+              ]
+            },
+            "id": 341,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 60,
+            "to": "t17",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 29,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t17",
+          "text": "Welcome, hijo! Look, Tienda de Discos, 29 P. Made for beginners.",
+          "thread": 60,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1187,
+        "payload": {
+          "kind": "persona",
+          "message": 299,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 13,
+              "types": []
+            },
+            "id": 338,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 56,
+            "to": "t02",
+            "venue": null,
+            "want": {
+              "assets": [
+                {
+                  "id": 23,
+                  "kind": "card",
+                  "print_run": 300,
+                  "rarity": "common",
+                  "ref": "MAL-02",
+                  "serial": 2,
+                  "set": "MAL"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t02",
+          "text": "Let's meet in the middle, cariño: 13 P. A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+          "thread": 56,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1190,
+        "payload": {
+          "kind": "persona",
+          "message": 298,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 12,
+              "types": []
+            },
+            "id": 337,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 54,
+            "to": "t09",
+            "venue": null,
+            "want": {
+              "assets": [
+                {
+                  "id": 284,
+                  "kind": "card",
+                  "print_run": 90,
+                  "rarity": "uncommon",
+                  "ref": "MAL-08",
+                  "serial": 7,
+                  "set": "MAL"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t09",
+          "text": "Let's meet in the middle, cariño: 12 P.",
+          "thread": 54,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "abuela",
+        "id": 1193,
+        "payload": {
+          "kind": "persona",
+          "message": 296,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": true,
+            "give": {
+              "assets": [],
+              "cash": 16,
+              "types": []
+            },
+            "id": 335,
+            "maker": "abuela",
+            "status": "open",
+            "thread": 48,
+            "to": "t12",
+            "venue": null,
+            "want": {
+              "assets": [
+                {
+                  "id": 178,
+                  "kind": "card",
+                  "print_run": 90,
+                  "rarity": "uncommon",
+                  "ref": "LAV-06",
+                  "serial": 2,
+                  "set": "LAV"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            }
+          },
+          "sender": "abuela",
+          "team": "t12",
+          "text": "Look, 16 P. My grandchildren would pay more! Look, cariño, I can't go lower. This is my last offer. A little advice, cariño: a full page is worth much more than the loose cards. Swap your duplicates!",
+          "thread": 48,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t17",
+        "id": 1196,
+        "payload": {
+          "kind": "persona",
+          "message": 309,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 3,
+              "types": []
+            },
+            "id": 347,
+            "maker": "t17",
+            "status": "open",
+            "thread": 60,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:MAL-06"
+              ]
+            }
+          },
+          "sender": "t17",
+          "team": "t17",
+          "text": null,
+          "thread": 60,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t02",
+        "id": 1199,
+        "payload": {
+          "kind": "persona",
+          "message": 310,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [
+                {
+                  "id": 23,
+                  "kind": "card",
+                  "print_run": 300,
+                  "rarity": "common",
+                  "ref": "MAL-02",
+                  "serial": 2,
+                  "set": "MAL"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            },
+            "id": 348,
+            "maker": "t02",
+            "status": "open",
+            "thread": 56,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 21,
+              "types": []
+            }
+          },
+          "sender": "t02",
+          "team": "t02",
+          "text": null,
+          "thread": 56,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t04",
+        "id": 1202,
+        "payload": {
+          "kind": "persona",
+          "message": 311,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [
+                {
+                  "id": 47,
+                  "kind": "card",
+                  "print_run": 300,
+                  "rarity": "common",
+                  "ref": "LAV-04",
+                  "serial": 2,
+                  "set": "LAV"
+                }
+              ],
+              "cash": 0,
+              "types": []
+            },
+            "id": 349,
+            "maker": "t04",
+            "status": "open",
+            "thread": 57,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 15,
+              "types": []
+            }
+          },
+          "sender": "t04",
+          "team": "t04",
+          "text": null,
+          "thread": 57,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t13",
+        "id": 1205,
+        "payload": {
+          "kind": "persona",
+          "message": 312,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 19,
+              "types": []
+            },
+            "id": 350,
+            "maker": "t13",
+            "status": "open",
+            "thread": 41,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "card:MAL-06"
+              ]
+            }
+          },
+          "sender": "t13",
+          "team": "t13",
+          "text": null,
+          "thread": 41,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      },
+      {
+        "actor": "t08",
+        "id": 1208,
+        "payload": {
+          "kind": "persona",
+          "message": 313,
+          "offer": {
+            "created_tick": 31,
+            "expires_tick": 33,
+            "final": false,
+            "give": {
+              "assets": [],
+              "cash": 21,
+              "types": []
+            },
+            "id": 351,
+            "maker": "t08",
+            "status": "open",
+            "thread": 44,
+            "to": "abuela",
+            "venue": null,
+            "want": {
+              "assets": [],
+              "cash": 0,
+              "types": [
+                "pack:sobre_barrio"
+              ]
+            }
+          },
+          "sender": "t08",
+          "team": "t08",
+          "text": null,
+          "thread": 44,
+          "with": "abuela"
+        },
+        "scope": "public",
+        "t": 0.5167,
+        "tick": 31,
+        "type": "thread.message"
+      }
+    ]
+  },
+  "content_type": "application/json",
+  "status": 200
+}

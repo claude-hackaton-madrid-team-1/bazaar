@@ -1,0 +1,8 @@
+{
+  "body": {
+    "error": "bad_key",
+    "message": "unknown team key (header X-Team-Key)"
+  },
+  "content_type": "application/json",
+  "status": 401
+}

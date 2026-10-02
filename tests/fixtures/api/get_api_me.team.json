@@ -1,0 +1,266 @@
+{
+  "body": {
+    "affinity": {
+      "CHA": 1.0,
+      "LAT": 1.0,
+      "LAV": 1.0,
+      "MAL": 1.0,
+      "RET": 1.0,
+      "SAL": 1.0
+    },
+    "album": {
+      "filled": 14,
+      "pages": [
+        {
+          "complete": false,
+          "have": 3,
+          "master": false,
+          "name": "Lavapiés",
+          "of": 10,
+          "set": "LAV"
+        },
+        {
+          "complete": false,
+          "have": 3,
+          "master": false,
+          "name": "Malasaña",
+          "of": 10,
+          "set": "MAL"
+        },
+        {
+          "complete": false,
+          "have": 4,
+          "master": false,
+          "name": "La Latina",
+          "of": 10,
+          "set": "LAT"
+        },
+        {
+          "complete": false,
+          "have": 4,
+          "master": false,
+          "name": "Salamanca",
+          "of": 10,
+          "set": "SAL"
+        }
+      ],
+      "slots": 40
+    },
+    "assets": [
+      {
+        "id": 1,
+        "kind": "card",
+        "name": "Perrito con Abrigo",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "SAL-03",
+        "serial": 1,
+        "set": "SAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 2,
+        "kind": "card",
+        "name": "Escaparate de Serrano",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "SAL-01",
+        "serial": 1,
+        "set": "SAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 3,
+        "kind": "card",
+        "name": "La Corrala",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "LAV-01",
+        "serial": 1,
+        "set": "LAV",
+        "your_value": 1.0
+      },
+      {
+        "id": 4,
+        "kind": "card",
+        "name": "Vinilo de la Movida",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "MAL-01",
+        "serial": 1,
+        "set": "MAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 5,
+        "kind": "card",
+        "name": "Puesto del Rastro",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "LAT-02",
+        "serial": 1,
+        "set": "LAT",
+        "your_value": 1.0
+      },
+      {
+        "id": 6,
+        "kind": "card",
+        "name": "Café de Madrugada",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "MAL-05",
+        "serial": 1,
+        "set": "MAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 7,
+        "kind": "card",
+        "name": "Huevos Rotos",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "LAT-03",
+        "serial": 1,
+        "set": "LAT",
+        "your_value": 1.0
+      },
+      {
+        "id": 8,
+        "kind": "card",
+        "name": "Cartel de Conciertos",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "MAL-03",
+        "serial": 1,
+        "set": "MAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 9,
+        "kind": "card",
+        "name": "El Frutero de Argumosa",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "LAV-02",
+        "serial": 1,
+        "set": "LAV",
+        "your_value": 1.0
+      },
+      {
+        "id": 10,
+        "kind": "card",
+        "name": "Café en Goya",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "SAL-04",
+        "serial": 1,
+        "set": "SAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 11,
+        "kind": "card",
+        "name": "Escaparate de Serrano",
+        "print_run": 300,
+        "rarity": "common",
+        "ref": "SAL-01",
+        "serial": 2,
+        "set": "SAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 12,
+        "kind": "card",
+        "name": "La Galería",
+        "print_run": 90,
+        "rarity": "uncommon",
+        "ref": "SAL-06",
+        "serial": 1,
+        "set": "SAL",
+        "your_value": 1.0
+      },
+      {
+        "id": 13,
+        "kind": "card",
+        "name": "Las Vistillas",
+        "print_run": 90,
+        "rarity": "uncommon",
+        "ref": "LAT-08",
+        "serial": 1,
+        "set": "LAT",
+        "your_value": 1.0
+      },
+      {
+        "id": 14,
+        "kind": "card",
+        "name": "Samosas de la Plaza",
+        "print_run": 90,
+        "rarity": "uncommon",
+        "ref": "LAV-07",
+        "serial": 1,
+        "set": "LAV",
+        "your_value": 1.0
+      },
+      {
+        "id": 15,
+        "kind": "card",
+        "name": "San Isidro",
+        "print_run": 30,
+        "rarity": "rare",
+        "ref": "LAT-09",
+        "serial": 1,
+        "set": "LAT",
+        "your_value": 1.0
+      }
+    ],
+    "badges": [],
+    "cash": 400,
+    "collection_value": 1.0,
+    "frozen": false,
+    "id": "t01",
+    "level": 1,
+    "name": "Team 1",
+    "open_threads": [],
+    "score": {
+      "adjustments": [],
+      "album_filled": 14,
+      "album_slots": 40,
+      "badges": [],
+      "bench_efficiency": null,
+      "bench_points": null,
+      "bench_venue": null,
+      "deals": 0,
+      "duel_points": 0.0,
+      "frozen": false,
+      "ladder_points": 0.0,
+      "level": 1,
+      "luck": 0.0,
+      "luck_private": 0.0,
+      "market": 0.0,
+      "mm_points": 0.0,
+      "name": "Team 1",
+      "neg_points": 0.0,
+      "negotiating": 0.0,
+      "pages_complete": 0,
+      "rank": 14,
+      "rarest": {
+        "name": "San Isidro",
+        "print_run": 30,
+        "rarity": "rare",
+        "ref": "LAT-09",
+        "serial": 1
+      },
+      "score": 0.0,
+      "team": "t01",
+      "venue": null
+    },
+    "tick": 31,
+    "tick_seconds": 60.0,
+    "unlocked": [
+      "abuela"
+    ],
+    "venue": null
+  },
+  "content_type": "application/json",
+  "status": 200
+}
