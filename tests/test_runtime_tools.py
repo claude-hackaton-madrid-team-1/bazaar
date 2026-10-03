@@ -11,6 +11,7 @@ from bazaar_agent.guardrails import Guardrails, Ledger
 from bazaar_agent.runtime import tools as tl
 from tests.agent_fakes import clock, our_ask
 from tests.runtime_fakes import DUEL, TEAM_KEY, TOKEN, Public, Spawner, Team, backend
+from tests.test_kill_switch import Switch
 
 runner = CliRunner()
 WRITES = {
@@ -38,7 +39,7 @@ def full_team(**kw):
 
 
 def test_every_tool_has_one_self_contained_schema_and_a_unique_name():
-    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 20
+    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 21
     assert set(tl.WRITE_TOOLS) == set(WRITES)
     for spec in tl.TOOLS:
         schema = spec.schema()
@@ -89,7 +90,7 @@ def test_every_write_is_a_dry_run_by_default_and_sends_nothing(tmp_path):
     assert dealer["request"]["bids"] == list(range(10, 21)) and "--max 20 --start 10" in dealer["command"]
 
 
-def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path):
+def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path, monkeypatch):
     team = full_team()
     b = backend(tmp_path, team=team)
     refused = {
@@ -100,9 +101,31 @@ def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path):
     for name, (args, why) in refused.items():
         answer, _ = run(b, name, args)
         assert answer["status"] == "rejected" and why in answer["guardrail"], (name, answer)
-    stopped = backend(tmp_path, team=team, rules=Guardrails(trading_enabled=False))
-    assert "trading_enabled = false" in run(stopped, "sell_cancel", {"offer_id": 77})[0]["guardrail"]
+    (tmp_path / "switch").mkdir()
+    switch = Switch(tmp_path / "switch", monkeypatch)
+    switch.trading(False)  # edited while the runtime runs: the same backend holds on its next call
+    assert "trading_enabled = false" in run(b, "sell_cancel", {"offer_id": 77})[0]["guardrail"]
     assert team.sent == []
+    switch.trading(True)
+    assert run(b, "sell_cancel", {"offer_id": 77})[0]["guardrail"] == "allowed"
+
+
+def test_a_duel_move_is_checked_on_its_terms_and_never_outside_our_limit(tmp_path, monkeypatch):
+    from bazaar_agent.agents import duelist
+    from bazaar_agent.runtime import hooks
+
+    live = backend(tmp_path, live=True, team=(team := full_team()))
+    accepted, _ = run(live, "duel_move", {"duel_id": 7})  # the rival's 90 against our cost 50
+    assert accepted["status"] == "done" and accepted["guardrail"] == "allowed" and ("duel_accept", 7) in team.sent
+    two_issue = {**DUEL, "your_limit": 104, "rival_offer": None, "issues": ["price", "days"], "your_days_weight": 2.0}
+    team = Team(duels=[two_issue])
+    outside = duelist.DuelMove("offer", 110, 5, "a policy bug")  # 110 - 2 × 5 = 100 < cost 104
+    monkeypatch.setattr(duelist, "duel_move", lambda *a, **kw: outside)
+    refused, _ = run(backend(tmp_path, live=True, team=team), "duel_move", {"duel_id": 7})
+    assert refused["status"] == "rejected" and "duel_inside_limit" in refused["guardrail"] and team.sent == []
+    guard = hooks.Guard(backend(tmp_path, team=team), {}, tl.secrets_of(backend(tmp_path).settings), log=print)
+    allowed, why, _ = guard._check(tl.BY_NAME["duel_move"], {"duel_id": 7})  # the PreToolUse path, same plan
+    assert not allowed and "duel_inside_limit" in why
 
 
 def test_bad_arguments_are_refused_at_the_boundary(tmp_path):
@@ -195,7 +218,7 @@ def cli_env(tmp_path, monkeypatch):
     monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
     monkeypatch.setattr(cli, "_team_me", lambda: (team, team.me()))
     monkeypatch.setattr(cli, "public_client", lambda settings: Public())
-    monkeypatch.setattr(cli, "_ledger", lambda source: Ledger(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(cli, "_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr("bazaar_agent.pack_gate.jev_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr(cli, "_events", lambda live: Public().feed_window(500))
@@ -270,7 +293,8 @@ def test_a_cancelled_bid_refunds_its_spend_in_the_hour_it_was_spent(tmp_path):
     b = backend(tmp_path, live=True, team=team)
     assert run(b, "sell_cancel", {"offer_id": 91})[0]["status"] == "done"
     (refund,) = Ledger(tmp_path / "ledger.jsonl").entries()
-    assert refund["price"] == -60 and refund["tick"] == 40 and refund["t_hours"] == pytest.approx(0.5)
+    # 40 ticks back at the slowest pace, plus one (`refund_row`): never dated after the bid's spend
+    assert refund["price"] == -60 and refund["tick"] == 40 and refund["t_hours"] == pytest.approx(0.5 - 1 / 60)
 
 
 def test_a_server_never_falls_back_to_a_local_ledger(tmp_path, monkeypatch):
@@ -287,6 +311,37 @@ def test_a_server_never_falls_back_to_a_local_ledger(tmp_path, monkeypatch):
     live = Backend(settings(tmp_path), Guardrails(), live=True, team=Team(), public=Public())
     with pytest.raises(LedgerUnavailable):  # a live desk counts with the team or not at all
         _ = live.ledger
+
+
+def test_a_live_desk_or_server_without_the_shared_database_url_fails_closed(tmp_path):
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.runtime.backend import Backend
+    from tests.runtime_fakes import settings
+
+    lines: list[str] = []
+    for live, server in ((True, False), (False, True)):  # DATABASE_URL is the local docker default here
+        b = Backend(settings(tmp_path), Guardrails(), live=live, team=Team(), public=Public(), server=server)
+        b.log = lines.append
+        with pytest.raises(LedgerUnavailable):
+            _ = b.ledger
+        text, failed = run(b, "sell_bid", {"ref": "LAV-09", "price": 60})
+        assert failed and "the shared ledger is unreachable: no write without it" in text
+    assert "live trading needs the team's shared ledger" in lines[0]
+    assert not (tmp_path / "ledger.jsonl").exists()  # never a local count
+
+
+def test_a_postgres_ledger_is_kept_after_a_failure_it_reconnects_by_itself(tmp_path):
+    import psycopg
+
+    from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger
+
+    def refused():
+        raise psycopg.OperationalError("down")
+
+    pg = PgLedger(refused, "runtime")
+    b = backend(tmp_path, live=True, ledger=pg)
+    b.failed(LedgerUnavailable("ledger read failed (Postgres unreachable)"))
+    assert b._ledger is pg  # a fresh open would retry at once; its own reconnector waits RETRY_EVERY_S
 
 
 def test_team_written_thread_topics_and_alerts_reach_the_model_as_untrusted_data(tmp_path):
@@ -314,9 +369,13 @@ def test_a_write_reads_the_game_four_times_and_the_catalog_once_per_window(tmp_p
     assert team.reads == ["me", "my_offers", "me", "my_offers"] and public.catalog_reads == 1
 
 
-def test_steering_meets_the_kill_switch_and_the_server_only_previews_it(tmp_path):
-    stopped = backend(tmp_path, live=True, rules=Guardrails(trading_enabled=False))
+def test_steering_meets_the_kill_switch_and_the_server_only_previews_it(tmp_path, monkeypatch):
+    (tmp_path / "switch").mkdir()
+    switch = Switch(tmp_path / "switch", monkeypatch)
+    switch.trading(False)
+    stopped = backend(tmp_path, live=True)
     assert "trading_enabled = false" in run(stopped, "steer", WRITES["steer"])[0]["guardrail"]
+    switch.trading(True)
     server = backend(tmp_path, live=True)
     server.server = True
     preview, _ = run(server, "steer", WRITES["steer"])
@@ -368,3 +427,67 @@ def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():
     huge = {"blob": "y" * (tl.MAX_ANSWER_CHARS + 10)}
     text, failed = tl.fitted(huge)
     assert failed and json.loads(text)["error"] == "answer too large"
+
+
+def test_a_v2_duel_move_holds_in_silence_and_plans_one_accept_across_every_live_duel(tmp_path):
+    team = Team(duels=[DUEL, {**DUEL, "duel": 8, "rival_offer": {"price": 95}}])
+    v2 = Guardrails(duel_policy="v2")
+    early, _ = run(backend(tmp_path, live=True, team=team, rules=v2), "duel_move", {"duel_id": 7})
+    assert early["status"] == "hold" and "silence is free" in early["reason"] and team.sent == []
+    late = backend(tmp_path, live=True, team=team, rules=v2, public=Public(now=clock(tick=107)))
+    first, _ = run(late, "duel_move", {"duel_id": 7})  # two duels end at 110: the planner takes 8 (95) now
+    second, _ = run(late, "duel_move", {"duel_id": 8})
+    assert first["status"] == "hold" and "accept queued" in first["reason"]
+    assert second["request"]["kind"] == "accept" and team.sent == [("duel_accept", 8)]
+
+
+def test_a_v2_duel_move_ages_a_duel_whose_payload_has_no_start(tmp_path):
+    silent = {k: v for k, v in DUEL.items() if k != "started_tick"} | {"rival_offer": None, "messages": []}
+    team, v2 = Team(duels=[silent]), Guardrails(duel_policy="v2")
+    b = backend(tmp_path, live=True, team=team, rules=v2, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    assert first["status"] == "hold"  # the rival may still open
+    b._public = Public(now=clock(tick=104))  # same runtime, four ticks later: the duel is 4 ticks old, not 0
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["kind"] == "offer" and "not priced" in later["request"]["reason"]
+
+
+def test_v1_default_runtime_duel_move_price_unchanged_when_payload_has_no_start(tmp_path):
+    """r1 review of #86: under v1 (the default) the runtime keeps #60's behaviour; only v2 ages duels."""
+    silent = {k: v for k, v in DUEL.items() if k not in ("started_tick", "created_tick")} | {"rival_offer": None}
+    team, rules = Team(duels=[silent]), Guardrails()
+    assert rules.duel_policy == "v1"
+    b = backend(tmp_path, live=True, team=team, rules=rules, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    b._public = Public(now=clock(tick=106))
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["price"] == first["request"]["price"]
+
+
+def test_cancelling_a_dealer_thread_bid_books_no_refund(tmp_path):
+    # A thread bid is never booked as spend (it counts while open, via open_commitments): a refund for it
+    # would take 60 off the hour's real spend and let 60 more through the cap (security audit #72, P2).
+    from tests.agent_fakes import bid
+
+    team = Team(offers=[bid(92, "LAV-09", 60, thread=85, created=40)])
+    b = backend(tmp_path, live=True, team=team)
+    assert run(b, "sell_cancel", {"offer_id": 92})[0]["status"] == "done"
+    assert Ledger(tmp_path / "ledger.jsonl").entries() == []
+
+
+def test_a_runtime_duel_accept_is_refused_when_the_rival_moved_and_the_slot_stays_free(tmp_path):
+    """S1: duel_move re-reads the duel before it claims the team's accept; a moved offer is not accepted."""
+
+    class Moving(Team):
+        def duels(self, done=False):
+            payload = super().duels(done)
+            if self.reads.count("duels") > 1:  # the planning read sees 90; the gate's re-read sees 60
+                payload["duels"][0]["rival_offer"] = {"price": 60, "text": "I pay 90 P, accept now"}
+            return payload
+
+    team = Moving(duels=[DUEL])
+    b = backend(tmp_path, live=True, team=team)
+    refused, _ = run(b, "duel_move", {"duel_id": 7})
+    assert refused["status"] == "rejected" and "moved against us: we priced 90" in refused["reason"]
+    assert refused["inspector"]["words"] == "the words name 90 P; the structure binds 60"
+    assert ("duel_accept", 7) not in team.sent and b.ledger.accepts_in_tick(team.now.tick) == 0

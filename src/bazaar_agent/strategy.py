@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bazaar_agent import intel
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import (
+    LIFTED_RARITIES,
     Action,
     Context,
     Guardrails,
@@ -56,6 +57,9 @@ class StrategyParams(BaseModel):
     rare_fallback_price: int = Field(ge=1)
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
+    dealer_mints_unminted: bool = False  # optional line: a dealer sells (mints) a card nobody holds yet
+    # The one exception to "all required": 0 keeps today's behaviour for every caller that predates it.
+    chaser_min_p: float = Field(default=0.0, ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -248,9 +252,10 @@ def supply_of(m: Market, card: Card, params: StrategyParams) -> Supply:
     ours = m.held.get(card.ref, 0)
     mintable = card.minted < card.print_run
     where: Availability
-    if card.minted == 0:
+    dealer_sells = card.set_code in m.released and quote_for(m, card) is not None and mintable
+    if card.minted == 0 and not (params.dealer_mints_unminted and dealer_sells):
         where = "packs" if mintable and card.rarity in pack_rarities(m) else "none"
-    elif card.set_code in m.released and quote_for(m, card) is not None and mintable:
+    elif dealer_sells:
         where = "dealer"
     elif card.minted > ours:
         where = "teams"
@@ -415,6 +420,17 @@ def opening_ratio(m: Market) -> float | None:
     return min(ratios) if ratios else None
 
 
+def final_reach(rarity: str, value: float, top: int, rules: Guardrails, min_surplus: float) -> int | None:
+    """The most a dealer's FINAL offer may be taken at, when that is above our top bid (N14a): the rarity cap
+    lifted by `dealer_final_lift`, never above our value minus the minimum surplus. Cards only; None with
+    the lift off (today), for a pack, or when it adds nothing above `top`."""
+    cap = rules.final_cap_for(rarity)
+    if rules.dealer_final_lift <= 0 or rarity not in LIFTED_RARITIES or cap is None:
+        return None
+    reach = min(cap, math.floor(value - min_surplus))
+    return reach if reach > top else None
+
+
 def ladder_step(start: int, top: int, max_ticks: int) -> int:
     """The smallest raise that still reaches `top` before the thread times out (one bid per tick)."""
     return max(1, math.ceil((top - start) / max(1, max_ticks - 1)))
@@ -477,7 +493,8 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
-    if plan[1] < est.price:
+    reach = final_reach(card.rarity, case.value, plan[1], rules, params.min_buy_surplus) or plan[1]
+    if reach < est.price:  # nothing we bid nor a final we may take (dealer_final_lift) reaches the fills
         return f"{card.ref}: {quote.dealer} fills ~{est.price:g}, our max is {plan[1]} — cap below market"
     level = "level_unlock" if quote.dealer == m.newest_dealer else None
     scarce = "scarcity_first" if case.supply.scarce else None
@@ -545,6 +562,23 @@ def buy_move(m: Market, card: Card, params: StrategyParams, rules: Guardrails) -
     return dealer_buy(m, case, quote, params, rules) if quote else team_buy(m, case, params, rules)
 
 
+def ladder_alternates(m: Market, card: Card, primary: Move, params: StrategyParams, rules: Guardrails) -> list[Move]:
+    """level_ladder (N14a): with `dealer_final_lift` on, the other dealers that sell this card too, pricier ones
+    included. The ladder scores each dealer level's best three deals and a missing one is zero, so a pricier,
+    higher-level dealer is worth a thread on another card. Their own fills and the lifted cap decide whether
+    each one is a buy. With the lift off: none, as today."""
+    if rules.dealer_final_lift <= 0 or primary.source not in {q.dealer for q in m.quotes}:
+        return []
+    case = buy_case(m, card, params)
+    fits = [q for q in m.quotes if q.item == card.rarity and (q.sets is None or card.set_code in q.sets)]
+    out = []
+    for q in sorted(fits, key=lambda q: (q.list_price, q.dealer)):
+        alt = dealer_buy(m, case, q, params, rules) if q.dealer != primary.source else None
+        if isinstance(alt, Move):
+            out.append(replace(alt, strategy=_strategies(alt.strategy, "level_ladder")))
+    return out
+
+
 def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[list[Move], list[str]]:
     moves: list[Move] = []
     skipped: list[str] = []
@@ -554,6 +588,7 @@ def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[lis
         result = buy_move(m, card, params, rules)
         if isinstance(result, Move):
             moves.append(result)
+            moves.extend(ladder_alternates(m, card, result, params, rules))
         else:
             skipped.append(result)
     return moves, skipped
@@ -567,7 +602,8 @@ def _priced(asset: dict[str, Any]) -> bool:
 
 def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
-    (our your_value plus any page bonus that selling our only copy gives up)."""
+    (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
+    of a new page (`protect_page_sets`) is never offered."""
     copies: dict[str, dict[str, Any]] = {}
     for a in filter(_priced, assets):
         ref = str(a.get("ref"))
@@ -578,7 +614,7 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or not buyers:
+        if card is None or not buyers or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
             continue
         stake = bonus_at_stake(m, card, params)
         ours = float(asset["your_value"]) + stake
@@ -719,6 +755,28 @@ class Playbook:
     pack_slots: PackSlots | None = None  # set by gate_packs
 
 
+def map_chasers(
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    events: Sequence[intel.Event],
+    min_p: float,
+    fallback: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    """set -> the teams whose top set it is with probability at least `min_p`, from the rival affinity map
+    (`affinity.py`). When the map cannot be drawn (our multiplier count does not match the catalog's
+    sets), `fallback` (the team-flow chasers) stands."""
+    from bazaar_agent import affinity
+
+    sets = affinity.catalog_sets(catalog)
+    try:
+        amap = affinity.affinity_map(
+            events, sets, affinity.multipliers_from(me), catalog, exclude=[str(me.get("id") or "")]
+        )
+    except ValueError:
+        return fallback
+    return {s: tuple(sorted(c)) for s in sets if (c := amap.chasers(s, min_p))}
+
+
 def build_playbook(
     me: dict[str, Any],
     catalog: dict[str, Any],
@@ -728,6 +786,8 @@ def build_playbook(
     rules: Guardrails,
 ) -> Playbook:
     m = build_market(me, catalog, events, dealers)
+    if params.chaser_min_p > 0:
+        m = replace(m, chasers=map_chasers(me, catalog, events, params.chaser_min_p, m.chasers))
     buys, skipped = buy_moves(m, params, rules)
     quotas: dict[str, int] = {}
     for q in m.quotes:

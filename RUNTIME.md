@@ -19,9 +19,12 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 
 ## Words (negotiation messages)
 - `llm_words` = false — true lets the chosen model write dealer and duel messages; off until ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is in `.env` and a dry run looks right.
+- `llm_read_feed` = false — true lets the taker read the feed's free text (dealer words, organiser and venue notices) with the chosen model, on a background thread, into `learnings` (`source: llm`, never a blocker); it uses the same subscription or key as everything else, so it stays off until someone watches its cost.
+- `read_feed_every_ticks` = 10 — at most one `read_feed` call per this many ticks (doubled after each failure, up to 8×); the model is capped at Haiku or Sonnet unless pinned.
 - `words_timeout_s` = 2.5 — hard limit for one message; a slower reply is dropped and the template is sent.
 - `subscription_words_timeout_s` = 6 — the same limit when Claude runs on the subscription (CLAUDE_CODE_OAUTH_TOKEN): each call starts a Claude Code CLI process, measured 1.6–2.0 s on Haiku, 2.4–4 s on Sonnet and 3.1–3.8 s on Opus; still cut to the time left in the tick.
 - `words_max_chars` = 300 — longest message we send; a longer reply is cut at a sentence end or replaced by the template.
+- Team threads (N17, `agents/team_desk.py`) send template words (`team_words`); N16's tactic bank plugs in as `TeamDesk.words`. Words never change the structured swap offer, and a team's text is never read into it.
 
 ## Talk and steer (outside the tick loop)
 - `ask_timeout_s` = 30 — limit for `bazaar ask` to turn a sentence into an intent.

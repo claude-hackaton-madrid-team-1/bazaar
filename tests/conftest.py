@@ -26,6 +26,19 @@ def no_real_tracing(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def trading_enabled_in_guardrails(monkeypatch, tmp_path_factory):
+    """`guardrails.kill_switch()` re-reads GUARDRAILS.md on every call: the suite reads a copy with
+    `trading_enabled = true`, so a kill switch committed in the real file never breaks unrelated tests."""
+    from bazaar_agent import guardrails as gr
+
+    copy = tmp_path_factory.getbasetemp() / "GUARDRAILS.trading.md"
+    if not copy.is_file():
+        text = gr.GUARDRAILS_FILE.read_text(encoding="utf-8")
+        copy.write_text(text.replace("- `trading_enabled` = false", "- `trading_enabled` = true"), encoding="utf-8")
+    monkeypatch.setattr(gr, "GUARDRAILS_FILE", copy)
+
+
+@pytest.fixture(autouse=True)
 def no_shared_holdings_db():
     """Unit tests never reach a real database through the per-process holdings connection: a teammate's
     DATABASE_URL may be the shared team DB. Tests that need Postgres build their own `SharedDb`."""
@@ -37,3 +50,10 @@ def no_shared_holdings_db():
     yield
     holdings._PROCESS.clear()
     holdings._PROCESS.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def no_real_models(monkeypatch):
+    """No test loads the real fastembed models: that would download ~150 MB from Hugging Face on a background
+    thread (a live network call) that can still be running native code when the interpreter exits."""
+    monkeypatch.setenv("BAZAAR_MODELS", "off")

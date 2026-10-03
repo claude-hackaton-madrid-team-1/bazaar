@@ -14,6 +14,40 @@ Every mechanic reads the learner's lessons through the hybrid recall and writes 
 - [ ] 2. Packs: buy only when EV (with supply and the page bonus) beats the price; at most 3/hour.
 - [ ] 3. Supply map: scarcity per card from the 270 assets + opened packs feeds valuation.
 
+## N14b slice — packs, supply and new pages (coordinator brief, Sat 2026-10-03 05:00)
+Shipped as two PRs: the new-page re-rank first (El Retiro is live from 09:00), then supply + packs.
+- [ ] 4. New pages: a page released mid-game (El Retiro Sat 09:00 with a `sobre_barrio` + 150 P grant; Chamberí
+  Sun 09:00) is ranked by the running taker and maker the first tick `/api/me` shows it, no restart; the
+  maker/taker never sell our only copy of a card the new page needs (`protect_page_sets`, GUARDRAILS.md).
+  Zero-minted cards of the new set become dealer buys only behind `dealer_mints_unminted` (STRATEGY.md,
+  default false; ported from the night shift's B26, #129).
+- [ ] 5. Supply map: the 270 starting assets (ids 1–270, 18 hands × 15, block 1 = ours) plus every pack the
+  feed shows opened → copies and holders per card and set, stored in Postgres, read by valuation.
+- [ ] 6. Packs: buy a `sobre` only when its EV (page-bonus share, supply, our album need from `/api/me`) beats
+  the price (Abuela's floor ~17), at most 3 per game hour; decide open vs keep sealed (reusing, with credit,
+  Marius's B9 #109 / W7 #87 analysis of packs as inventory vs ladder cash). Kill flags keep today's behaviour.
+## Slice N14a: hard dealers (2026-10-03, worker ctx_1d501316eaea, stacked on N3 PR B #112)
+Covers criterion 1. This slice sets prices only: the words belong to N16 and the accept inspector to S1 (`agents/inspector.py`).
+- [ ] a. The taker builds a per-dealer plan from recall: the learned ladder policy (a `learnings` row,
+  kind `policy`), the dealer's curve (patience, opening ask, a bid it ignored) and the blockers. Every
+  `dealer_open` and `dealer_bid` row records which learning changed the bid (`changed_by`) and the lessons
+  recalled for that dealer (`recalled`). Neither key is on the public `/state` allow-list.
+- [ ] b. A dealer's final offer is its limit, and the dealer walks if we refuse it. `dealer_final_lift`
+  (GUARDRAILS, default 0 = today's behaviour) lets us accept a final, or bid exactly at it, up to the
+  rarity cap × (1 + lift). The accepted price never exceeds our value minus `min_buy_surplus`, the lift
+  applies to cards only (never packs), and our own bids still never pass the cap. With the lift on, the
+  patience play starts low enough that the dealer names its final before our bids run out: step 1, about
+  patience + 3 distinct bids (at least 9), and never below a bid the dealer ignored or 40 % of its opening ask.
+  Evidence: Chato's uncommon finals were 28, 29 and 29 for t03 (start 13, step 1).
+- [ ] c. L3-L5 readiness: every active dealer we have unlocked is planned the same way, with no hard-coded
+  dealer. An unknown dealer gets neutral words and the default patience. Trickster bait in a dealer thread
+  is never accepted and never bid into: a different card, a lower rarity, our assets wanted, cash given on
+  a buy, or a `final` bait on the wrong item (tests on the desk). Epics and legendaries cannot be bought
+  until they have a cap.
+- [ ] d. Simulator proof per dealer (Abuela, Chato) on our own port, with `scripts/sim_smoke.py` green.
+- Decision (coordinator, 05:40, Jev undecided at 0.31): ship `dealer_final_lift` = 0. Omar decides the value
+  around 08:00, using the replay numbers for 0.15 and 0.25 in the PR.
+
 ## Source (the original issue text, verbatim)
 
 ### #22 — [intel] Supply map: scan of the 270 cards and scarcity (no epics or legendaries)
