@@ -151,3 +151,43 @@ def test_a_standing_rival_offer_without_its_message_still_counts_as_priced():
     d = duel(limit=100, deadline=DEADLINE, ours=[(SEEN + 3, 150)], rival_offer={"price": 104, "days": 0})
     for tick in range(SEEN + 4, DEADLINE):
         assert duel_plan(d, tick, SEEN).move == duel_plan(d, tick, SEEN, LEGACY).move, tick
+
+
+def test_a_rival_offer_outside_our_limit_without_its_message_still_gets_the_floor():
+    """Review #215: the silent branch and the curve must agree on "the rival has not priced"."""
+    d = duel(limit=100, deadline=DEADLINE, ours=[(SEEN + 3, 150)], rival_offer={"price": 60, "days": 0})
+    move = duel_plan(d, DEADLINE - 1, SEEN).move
+    assert (move.kind, move.price) == ("offer", our_target(100, "seller", 1.0))
+
+
+def test_a_long_silent_duel_still_sends_the_floor_past_the_free_offers_cap():
+    d = duel(limit=100, deadline=SEEN + 30)
+    for tick in range(SEEN, SEEN + 30):
+        move = plan_moves([d], tick, {1: SEEN})[1]
+        if move.kind == "offer":
+            d["messages"].append({"tick": tick, "from": "you", "price": move.price, "days": None})
+    assert len(d["messages"]) == V2Params().free_offers + 1  # the cap holds, but for the floor itself
+    assert d["messages"][-1] == {"tick": SEEN + 29, "from": "you", "price": 105, "days": None}
+
+
+def test_at_lead_1_our_next_counter_never_steps_back_once_the_rival_starts_pricing():
+    rng = random.Random(31)
+    for _ in range(400):
+        role, limit = rng.choice(("seller", "buyer")), rng.randint(20, 250)
+        sent, d = play_silent(role, limit, upto=rng.randint(SEEN + 3, DEADLINE - 2))
+        last_tick = max(sent)
+        rival_tick = last_tick + rng.randint(0, 1)
+        bid = limit // 2 if role == "seller" else limit * 2
+        d["messages"].append({"tick": rival_tick, "from": "Rival Azul", "price": bid, "days": None})
+        d["rival_offer"] = {"price": bid, "days": 0}
+        for tick in range(rival_tick + 1, DEADLINE):
+            counter = counter_offer(d, tick, SEEN)
+            if counter.kind == "offer":
+                last = sent[last_tick].price
+                assert (counter.price <= last) if role == "seller" else (counter.price >= last), (role, limit, tick)
+
+
+def test_the_lead_is_a_guardrails_knob():
+    rules = gr.load_guardrails().rules
+    assert rules.duel_silent_floor_lead == 1 and V2Params.from_rules(rules).silent_floor_lead == 1
+    assert "duel_silent_floor_lead" in gr.ENFORCED_BY
