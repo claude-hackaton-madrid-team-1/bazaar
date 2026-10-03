@@ -22,14 +22,16 @@ def test_a3_dealer_takes_our_bid_booked_once_at_our_bid(tmp_path):
     team = FakeTeam()
     t, _, ledger = make_taker(tmp_path, team, FakePublic())
     t.on_tick(at(team, TICK))  # opens 5000, bids 18
-    t.on_tick(at(team, TICK + 1))  # no answer yet: bids 19
-    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18), ("say", 5000, 19)]
+    t.on_tick(at(team, TICK + 1))  # no answer yet: main bids 19, #140 waits for her first ask
+    says = [s for s in team.sent if s[0] == "say"]
+    assert says[0] == ("say", 5000, 18) and len(says) in (1, 2)
     assert _spend_rows(ledger) == []  # a thread bid is not booked when said
-    dealer_took_our_bid(team, 5000, 5003, "LAV-08", 19)
+    last = says[-1][2]
+    dealer_took_our_bid(team, 5000, 5003, "LAV-08", last)
     t.on_tick(at(team, TICK + 2))
     t.on_tick(at(team, TICK + 3))
     rows = [(e["price"], e["item"]) for e in _spend_rows(ledger)]
-    assert rows == [(19, "LAV-08")], f"expected one spend row of 19, got {rows}"
+    assert rows == [(last, "LAV-08")], f"expected one spend row of {last}, got {rows}"
 
 
 class _LostReply(FakeTeam):
