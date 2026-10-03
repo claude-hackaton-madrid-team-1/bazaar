@@ -79,7 +79,7 @@ def test_the_lift_turns_a_chato_skip_into_the_patience_play():
     assert plan.changed_by == [
         "learning policy chato card:uncommon @t150: skip lifted: 4 of 6 fills at or under the final cap 29",
         "curve chato card:uncommon (final after ~6 bids, opens 33): ladder 26→26 step 1 → 18→26 step 1",
-        "dealer_final_lift 0.15: take a final up to 29 (our bids stay at or under 26)",
+        "dealer_final_lift 0.15: take a final up to 29 after 4 bids (our bids stay at or under 26)",
     ]
     assert "a final up to 29" in plan.move.reason
 
@@ -155,9 +155,10 @@ def test_openings_never_open_two_threads_for_one_card_in_the_same_tick():
 
 def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lift_is_skipped():
     rare = replace(chato_move(value=157.0, ladder=(80, 80, 1)), ref="LAV-10", rarity="rare", price=91.0)
-    plan = plan_dealer_buy(rare, None, None, LIFT, SURPLUS, room=83)  # cash 353 - floor 270
+    rares = CurveStats("chato", "card:rare", 15, (82, 89, 90, 91, 93), (97,) * 15, 4, 5.0, 1.5, None, (201, 219))
+    plan = plan_dealer_buy(rare, None, rares, LIFT, SURPLUS, room=83)  # cash 353 - floor 270
     assert plan.move is None and plan.skip == "cash: what we may still commit is below chato card:rare fills ~91"
-    assert plan_dealer_buy(rare, None, None, LIFT, SURPLUS, room=120).final_max == 92
+    assert plan_dealer_buy(rare, None, rares, LIFT, SURPLUS, room=120).final_max == 92
     uncommon = plan_dealer_buy(chato_move(), skip_policy(), CURVE, LIFT, SURPLUS, room=83)
     assert uncommon.final_max == 29
     tight = plan_dealer_buy(chato_move(), None, CURVE, LIFT, SURPLUS, room=27)  # his fills ~28: out of reach
@@ -166,3 +167,12 @@ def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lif
     assert plan_dealer_buy(chato_move(), None, CURVE, LIFT, SURPLUS, room=20).skip == tight.skip
     assert plan_dealer_buy(chato_move(), skip_policy(), CURVE, LIFT, SURPLUS, room=27).skip.startswith("skip: 0 of 6")
     assert plan_dealer_buy(chato_move(), None, CURVE, OFF, SURPLUS, room=0).move == chato_move()  # lift off: today
+
+
+def test_no_price_history_means_no_lift_for_that_dealer():
+    # security audit #158 P1-2: an unknown dealer (an L4 trickster) gets no final above the cap
+    unknown = replace(chato_move(), source="trileros")
+    plan = plan_dealer_buy(unknown, None, None, LIFT, SURPLUS, room=100)
+    assert plan.move == unknown and plan.final_max is None and plan.notes == ()
+    empty = CurveStats("trileros", "card:uncommon", 3, (), (40,), 0, None, None, None, (1, 2, 3))
+    assert plan_dealer_buy(unknown, None, empty, LIFT, SURPLUS, room=100).final_max is None

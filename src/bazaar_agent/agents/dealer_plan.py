@@ -38,6 +38,7 @@ PATIENCE_MARGIN = 3
 MIN_PLAY_BIDS = 9  # at least this many distinct bids: Chato's slowest Friday final came after 8 (the simulator's: 9)
 MIN_OPEN_SHARE = 0.4  # never open below this share of the dealer's opening ask (t03 opened 13 of 33: answered)
 MIN_TOP_SHARE = 0.5  # with no opening ask known (no curve yet), never open below this share of our own top
+LIFTED_FINAL_MIN_BIDS = 4  # a final above our top is taken only after this many bids (Friday's earliest: 4)
 MIN_FINAL_SHARE = 0.2  # a learned skip is lifted only when this share of the fills sits at or under final_max
 Ladder3 = tuple[int, int, int]  # (start, top, step), as `strategy.Move.ladder`
 
@@ -129,11 +130,14 @@ def plan_dealer_buy(
     cls = price_class(mv.ref)
     if mv.ladder is None or cls is None:
         return DealerPlan(mv)
+    # The lift only for a dealer and class with price history (fills seen): an unknown dealer (an L4 trickster)
+    # never gets a final above the cap on its first conversations.
+    history = bool(curve is not None and curve.fills) or bool(policy is not None and policy.fills)
     ladder, notes, reasons = mv.ladder, list[Note](), list[str]()
     if policy is not None:
         planned, why = policy.plan(ladder)
         if planned is None:
-            final_max = _reach(mv, ladder[1], rules, min_surplus, room)
+            final_max = _reach(mv, ladder[1], rules, min_surplus, room) if history else None
             if final_max is None or policy.deal_share(final_max) < MIN_FINAL_SHARE:
                 return DealerPlan(None, skip=why)
             under = sum(1 for f in policy.fills if f <= final_max)
@@ -145,8 +149,8 @@ def plan_dealer_buy(
                 notes.append(Note("policy", _policy_ref(policy), changed, policy.text()))
             ladder = planned
             reasons.append(why)
-    final_max = _reach(mv, ladder[1], rules, min_surplus, room)
-    lifted = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus) is not None
+    final_max = _reach(mv, ladder[1], rules, min_surplus, room) if history else None
+    lifted = history and final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus) is not None
     if lifted and room is not None and mv.price > max(ladder[1], final_max or 0):
         return DealerPlan(None, skip=f"cash: what we may still commit is below {mv.source} {cls} fills ~{mv.price:g}")
     if final_max is not None:
@@ -157,7 +161,9 @@ def plan_dealer_buy(
             notes.append(Note("curve", ref, f"ladder {fmt(ladder)} → {fmt(played)}"))
             ladder = played
         lift = f"dealer_final_lift {rules.dealer_final_lift:g}"
-        effect = f"take a final up to {final_max} (our bids stay at or under {ladder[1]})"
+        effect = (
+            f"take a final up to {final_max} after {LIFTED_FINAL_MIN_BIDS} bids (our bids stay at or under {ladder[1]})"
+        )
         notes.append(Note("final_lift", lift, effect))
         reasons.append(f"a final up to {final_max} ({lift})")
     if ladder == mv.ladder and not reasons:

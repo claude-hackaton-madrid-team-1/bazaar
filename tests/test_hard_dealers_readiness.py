@@ -100,12 +100,13 @@ def test_an_unknown_level_3_dealer_is_planned_like_any_other_and_never_above_the
     assert all(s[2] <= 26 for s in team.sent if s[0] == "say")
 
 
-def test_with_the_lift_an_unknown_dealer_gets_the_default_patience_play(tmp_path):
+def test_with_the_lift_an_unknown_dealer_without_fills_gets_no_lifted_final(tmp_path):
     team = FakeTeam(me={**deepcopy(ME), "unlocked": ["coleccionista"]})
-    taker(tmp_path, team, [COLECCIONISTA], lift=0.15).on_tick(clock())
+    cheaper = deepcopy(COLECCIONISTA)
+    cheaper["menu"]["sells"][0]["list_price"] = 25
+    taker(tmp_path, team, [cheaper], lift=0.15).on_tick(clock())
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
-    assert row["inputs"]["final_max"] == 29
-    assert row["inputs"]["changed_by"][0].startswith("default patience for coleccionista (5 bids)")
+    assert row["inputs"]["final_max"] is None and row["inputs"]["changed_by"] == []  # no price history: as today
 
 
 def test_a_vault_legendary_is_never_bought_without_a_cap(tmp_path):

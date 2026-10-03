@@ -77,12 +77,16 @@ def test_the_lift_opens_chato_on_the_patience_play_and_takes_his_final_above_the
     assert row["inputs"]["final_max"] == 29 and row["inputs"]["plan"] == "18→26 step 1"
     assert row["inputs"]["changed_by"] == [
         "default patience for chato (5 bids): ladder 26→26 step 1 → 18→26 step 1",
-        "dealer_final_lift 0.15: take a final up to 29 (our bids stay at or under 26)",
+        "dealer_final_lift 0.15: take a final up to 29 after 4 bids (our bids stay at or under 26)",
     ]
+    for k in range(1, 4):  # bids 19, 20, 21: a lifted final is taken only after 4 of ours
+        team.now = clock(tick=TICK + k)
+        t.on_tick(team.now)
+    assert [s[2] for s in team.sent if s[0] == "say"] == [18, 19, 20, 21]
     team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [final(801, 29)]}
-    team.now = clock(tick=TICK + 1)
+    team.now = clock(tick=TICK + 4)
     t.on_tick(team.now)
-    assert team.sent[-1] == ("accept", 801) and ledger.accept_items(TICK + 1) == ["LAV-08"]
+    assert team.sent[-1] == ("accept", 801) and ledger.accept_items(TICK + 4) == ["LAV-08"]
     (accept,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
     assert accept["guardrail"] == "allowed" and accept["inputs"]["changed_by"] == row["inputs"]["changed_by"]
 
@@ -212,3 +216,30 @@ def test_a_cash_skip_is_recorded_once_while_the_cash_moves(tmp_path):
     t.on_tick(team.now)
     skips = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
     assert len(skips) == 1 and skips[0]["reason"].startswith("cash: what we may still commit is below chato")
+
+
+def test_a_lifted_final_named_after_one_bid_is_not_taken(tmp_path):
+    # security audit #158 P1-2: a dealer's `final: true` alone must not raise our ceiling
+    team = FakeTeam(me=CHATO_ME)
+    t, _, _ = taker(tmp_path, team, lift=0.25)
+    t.on_tick(clock())  # opens and bids 18
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [final(801, 32)]}
+    team.now = clock(tick=TICK + 1)
+    t.on_tick(team.now)
+    assert ("accept", 801) not in team.sent and team.sent[-1] == ("close_thread", 5000)
+    (walk,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_walk"]
+    assert "a lifted final needs 4" in walk["reason"]
+
+
+def test_two_commitments_in_one_tick_never_take_cash_below_the_floor(tmp_path):
+    # security audit #158 P2-1: every check of a tick saw the cash read at its start. A dealer that takes our
+    # bid settles in the same tick, so two bids (or an accept and a bid) must fit the cash above the floor.
+    team = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"], "cash": 300})  # 30 above the floor
+    two_dealer_taker(tmp_path, team, threads=3).on_tick(clock())
+    assert len([s for s in team.sent if s[0] == "open_thread"]) == 2
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 25)]  # 25 + 10 > 30: the second is refused
+    (walk,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_walk"]
+    assert "cash_floor" in walk["reason"]
+    roomy = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"], "cash": 310})  # 40 above: both fit
+    two_dealer_taker(tmp_path / "roomy", roomy, threads=3).on_tick(clock())
+    assert [s for s in roomy.sent if s[0] == "say"] == [("say", 5000, 25), ("say", 5001, 10)]

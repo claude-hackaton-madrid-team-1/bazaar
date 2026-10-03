@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -101,8 +102,11 @@ def get(path: str, keyed: bool = False) -> dict:
 
 
 def port_busy() -> bool:
+    """Anything that answers, even with an HTTP error (404, a 429), holds the port: only a refused connect is free."""
     try:
         get("/api/health")
+        return True
+    except urllib.error.HTTPError:
         return True
     except OSError:
         return False
@@ -115,6 +119,9 @@ def wait_for_sim(server: subprocess.Popen[bytes], log: Path) -> None:
             fail(f"bazaar-sim exited with code {server.returncode} before answering", log.read_text(errors="replace"))
         try:
             if get("/api/health").get("ok"):
+                time.sleep(0.5)  # ours, not another simulator that won the port: ours must still be running
+                if server.poll() is not None:
+                    fail(f"bazaar-sim exited with code {server.returncode}: 127.0.0.1:{PORT} answers for someone else")
                 return
         except OSError:
             pass

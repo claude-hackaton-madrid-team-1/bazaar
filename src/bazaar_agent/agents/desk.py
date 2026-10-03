@@ -89,9 +89,10 @@ def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: 
 def meet_the_ask(dm: DeskMove) -> DeskMove:
     """Our accept slot went elsewhere this tick: offer exactly her ask instead (inside our max, or her final
     inside `final_max`), so the dealer can accept OUR offer. Only when it is a new, higher price; else wait."""
-    last = dm.conv.neg.bids[-1] if dm.conv.neg.bids else 0
+    bids = dm.conv.neg.bids
+    last = bids[-1] if bids else 0
     ask, plan = dm.ask, dm.conv.neg.plan
-    if ask is not None and last < ask <= (plan.final_cap if dm.final else plan.max_price):
+    if ask is not None and last < ask and (plan.takes_final(ask, len(bids)) if dm.final else ask <= plan.max_price):
         what = "final" if dm.final and ask > plan.max_price else "ask"
         return DeskMove(dm.conv, Move("bid", ask, reason=f"accept slot used: meet her {what}"), ask, dm.final)
     return DeskMove(dm.conv, Move("wait", reason="accept slot used this tick"), ask, dm.final, offer_id=dm.offer_id)

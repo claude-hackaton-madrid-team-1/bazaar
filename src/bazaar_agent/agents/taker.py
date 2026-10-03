@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bazaar_agent.agents.dealer import Move, Negotiation, WordsFn, apply_advice, bid_words, template_words
-from bazaar_agent.agents.dealer_plan import DealerPlan, plan_dealer_buy
+from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
@@ -50,7 +50,9 @@ from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
+from bazaar_agent.intel import dealer_threads
 from bazaar_agent.learn.blockers import Blocks
+from bazaar_agent.learn.curves import curve_stats
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
@@ -276,6 +278,10 @@ class _TickRun:
     accepted: list[AcceptProposal] = field(default_factory=list)
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
     plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
+    # What this tick already committed, for every later check of the same tick (the snapshot's cash and offers
+    # are from its start): thread id or ("board", offer id) -> primas; dealer accepts also count as spend.
+    committed: dict[object, int] = field(default_factory=dict)
+    committed_spend: int = 0
 
 
 class Taker:
@@ -369,14 +375,20 @@ class Taker:
         )
 
     def _ctx(self, run: _TickRun, *, skip_thread: int | None = None, skip_offer: int | None = None) -> Context:
-        """Live guardrail context; our open offers count, except the thread or bid this move replaces."""
+        """Live guardrail context; our open offers count, except the thread or bid this move replaces, and so does
+        what this tick already committed (a dealer that takes our bid settles in the same tick)."""
         kept = [
             o
             for o in run.offers
             if (skip_thread is None or o.get("thread") != skip_thread)
             and (skip_offer is None or o.get("id") != skip_offer)
+            and o.get("thread") not in run.committed  # replaced by this tick's bid or accept in that thread
         ]
-        return guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        cash = sum(price for key, price in run.committed.items() if key != skip_thread)
+        if not cash and not run.committed_spend:
+            return ctx
+        return replace(ctx, cash=ctx.cash - cash, spent_last_hour=ctx.spent_last_hour + run.committed_spend)
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
@@ -468,6 +480,8 @@ class Taker:
             return moves
         last = getattr(learner, "last", None)  # the last pass's curves (none before the first pass)
         curves = last.curves if last is not None else {}
+        if not curves and self.rules.dealer_final_lift > 0:  # no pass yet: this tick's feed window is the history
+            curves = curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
         kept: list[StrategyMove] = []
         skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
         for mv in moves:
@@ -504,7 +518,7 @@ class Taker:
         tick = run.snap.clock.tick
         dp = run.plans.get((op.dealer, op.item))
         if dp is not None and dp.final_max is not None:
-            op = replace(op, plan=replace(op.plan, final_max=dp.final_max))
+            op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""
@@ -667,6 +681,8 @@ class Taker:
             thread_id=conv.thread_id,
             move={"kind": move.kind, "price": move.price},
         )
+        if status == "approved" and move.kind == "bid":
+            run.committed[conv.thread_id] = int(move.price or 0)  # this thread's bid, for the tick's later checks
         if status != "approved" or not self.live:
             return
         if move.kind == "walk":
@@ -785,6 +801,9 @@ class Taker:
             thread_id=skip_thread,
             move={"accept": p.offer_id, "price": p.price},
         )
+        run.committed[skip_thread if p.desk is not None else ("board", p.offer_id)] = p.price
+        if p.desk is not None:  # a board accept's spend is in the ledger once sent; a dealer deal's only at its close
+            run.committed_spend += p.price
         if not self.live:
             return True
         if (

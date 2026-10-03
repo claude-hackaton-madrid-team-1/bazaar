@@ -49,3 +49,11 @@ def test_the_cli_prints_each_lift_and_the_deals_it_would_take(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "lift 0.25 chato card:uncommon: thread 253 at 28, thread 228 at 31" in result.output
     assert "lift 0 chato" not in result.output  # no deal at lift 0: nothing listed
+
+
+def test_a_lift_outside_the_guardrails_bound_is_refused():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        finals_rows([T253], Guardrails(), [3.0])

@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -49,7 +50,8 @@ from bazaar_agent.ticks import run_per_tick
 
 lift, ticks, out, DEALERS = float(sys.argv[1]), int(sys.argv[2]), Path(sys.argv[3]), set(sys.argv[4].split(","))
 settings = load_settings()
-rules = load_guardrails().rules.model_copy(update={"dealer_final_lift": lift})
+base = load_guardrails().rules
+rules = type(base).model_validate({**base.model_dump(), "dealer_final_lift": lift})  # 0-0.5, as GUARDRAILS.md
 params = load_strategy().params
 team, public = team_client(settings), public_client(settings)
 
@@ -116,8 +118,11 @@ def child_env(data_dir: Path, env_file: Path) -> dict[str, str]:
 
 
 def port_busy() -> bool:
+    """Anything that answers, even with an HTTP error (404, a 429), holds the port: only a refused connect is free."""
     try:
         get("/api/health")
+        return True
+    except urllib.error.HTTPError:
         return True
     except OSError:
         return False
@@ -149,6 +154,9 @@ def serve(log: Path) -> subprocess.Popen[bytes]:
             raise SystemExit(f"bazaar-sim exited with code {server.returncode}: see {log}")
         try:
             if get("/api/clock").get("tick", -1) >= 1:  # Chato opens at tick 1
+                time.sleep(0.5)  # ours, not another worker's that won the port: ours must still be running
+                if server.poll() is not None:
+                    raise SystemExit(f"bazaar-sim exited with code {server.returncode}: {SIM} is someone else's")
                 return server
         except OSError:
             pass

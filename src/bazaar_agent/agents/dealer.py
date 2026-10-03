@@ -37,6 +37,7 @@ class BidPlan:
     step: int
     max_price: int
     final_max: int | None = None
+    lift_after: int = 0  # a final above `max_price` is taken only after this many of our bids (N14a)
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
@@ -47,6 +48,12 @@ class BidPlan:
     @property
     def final_cap(self) -> int:
         return self.max_price if self.final_max is None else self.final_max
+
+    def takes_final(self, ask: int, bids: int) -> bool:
+        """A final we take: inside our top, or inside `final_max` once we have bid `lift_after` times (a dealer
+        that names a high "final" before haggling is not given the lifted cap: Friday's earliest real one came
+        after 4 bids)."""
+        return ask <= self.max_price or (ask <= self.final_cap and bids >= self.lift_after)
 
 
 @dataclass(frozen=True)
@@ -74,10 +81,13 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
-        if final and ask <= neg.plan.final_cap:
+        if final and neg.plan.takes_final(ask, len(neg.bids)):
             return Move("accept", ask, offer_id, "final within limit")
         if not final and ask <= neg.plan.max_price and (nxt is None or ask <= nxt):
             return Move("accept", ask, offer_id, "ask meets our next bid")
+        if final and ask <= neg.plan.final_cap:
+            early = f"final {ask} above our top {neg.plan.max_price} after {len(neg.bids)} bid(s)"
+            return Move("walk", reason=f"{early}: a lifted final needs {neg.plan.lift_after}")
         if final:
             return Move("walk", reason=f"final {ask} above our limit {neg.plan.final_cap}")
     if nxt is None:

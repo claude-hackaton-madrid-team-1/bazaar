@@ -61,3 +61,14 @@ def test_meet_the_ask_meets_a_final_inside_final_max_but_no_plain_ask_above_the_
     plain = DeskMove(c, Move("accept", 28, 9), 28, False, offer_id=9)
     assert meet_the_ask(plain).move.kind == "wait"
     assert meet_the_ask(DeskMove(conv(), Move("accept", 29, 9), 29, True, offer_id=9)).move.kind == "wait"
+
+
+def test_a_lifted_final_needs_lift_after_bids_but_a_final_inside_the_top_never_does():
+    early = Negotiation(BidPlan(18, 1, 26, 29, lift_after=4), [18])
+    assert decide(early, 29, 7, True).kind == "walk"
+    assert "a lifted final needs 4" in decide(early, 29, 7, True).reason
+    assert decide(early, 25, 7, True).kind == "accept"  # inside our top: as today
+    late = Negotiation(BidPlan(18, 1, 26, 29, lift_after=4), [18, 19, 20, 21])
+    assert decide(late, 29, 7, True).kind == "accept"
+    c = Conversation("chato", "LAV-08", "uncommon", 45, "r", early, 187, TICK)
+    assert meet_the_ask(DeskMove(c, Move("accept", 29, 9), 29, True, offer_id=9)).move.kind == "wait"

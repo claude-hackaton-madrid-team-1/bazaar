@@ -16,7 +16,9 @@ from statistics import mean
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from bazaar_agent.agents.dealer_plan import patience_ladder
@@ -59,7 +61,7 @@ def finals_rows(
     curves = curve_stats(threads)
     out: list[FinalsRow] = []
     for lift in lifts:
-        lifted = rules.model_copy(update={"dealer_final_lift": lift})
+        lifted = Guardrails.model_validate({**rules.model_dump(), "dealer_final_lift": lift})  # 0-0.5, as the file
         for (who, cls), stats in sorted(curves.items()):
             rarity = cls.split(":", 1)[1] if cls.startswith("card:") else ""
             if (dealer and who != dealer) or rarity not in LIFTED_RARITIES or stats.floor is None:
@@ -123,9 +125,10 @@ def finals(
 
     settings_rules = load_guardrails().rules
     events = _events(False)
-    rows = finals_rows(
-        dealer_threads(events, None), settings_rules, lift or DEFAULT_LIFTS, dealer
-    )  # every team's threads
+    try:  # every team's threads
+        rows = finals_rows(dealer_threads(events, None), settings_rules, lift or DEFAULT_LIFTS, dealer)
+    except ValidationError:
+        raise typer.BadParameter("each --lift must be from 0 to 0.5, as dealer_final_lift in GUARDRAILS.md") from None
     table = Table(
         title=f"dealer finals replayed on {len(events)} feed events (a model: pessimistic, same for every lift)"
     )
@@ -147,8 +150,8 @@ def finals(
         prices = r.prices
         table.add_row(
             f"{r.lift:g}",
-            r.dealer,
-            r.price_class,
+            escape(r.dealer),
+            escape(r.price_class),
             f"{r.cap} → {r.final_cap}",
             str(r.ladder),
             str(r.threads),
@@ -163,7 +166,7 @@ def finals(
         for r in rows:
             if r.deals:
                 deals = ", ".join(f"thread {t} at {p}" for t, p in r.deals)
-                console.print(f"lift {r.lift:g} {r.dealer} {r.price_class}: {deals}")
+                console.print(f"lift {r.lift:g} {escape(r.dealer)} {escape(r.price_class)}: {deals}")
 
 
 def register(app: typer.Typer) -> None:
