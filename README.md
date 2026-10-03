@@ -986,7 +986,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
 - [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
 - [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
-- [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 
 <!-- BAZAAR:STATUS:END -->
 
