@@ -913,3 +913,10 @@ unprintable characters, those fillers, and the characters rich measures 0 wide b
 modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself would wrap to column 0)
 (`flags_cli.printable`).
 
+
+### [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
+`team_swap_jev_gate = true` (N17-enable): every swap proposal and every accept of a team's offer needs Jev
+`team_swap_worth_it` to say a decided yes at 0.75. `agent taker --no-jev`, a missing `TYPESAFE_API_KEY` on the
+service (judge answers `undecided`), a Jev timeout or a tick with < `jev_min_budget_s` left all mean no swap
+(fail closed, a `rejected` decision row with the verdict). The cash we add to swaps is booked as `team:<card>`
+spend rows (`team_swap_max_cash_per_hour` sums them), still counted in `max_spend_per_game_hour`.

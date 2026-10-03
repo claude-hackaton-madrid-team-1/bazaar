@@ -29,7 +29,7 @@ from typing import Any
 
 from bazaar_agent import affinity as af
 from bazaar_agent.agents.market import Venue
-from bazaar_agent.agents.runtime import Recorder
+from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
 from bazaar_agent.agents.seller import Swap, open_commitments
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.decisions import Status
@@ -56,6 +56,8 @@ TOPIC = {"trade": "cards"}  # public with the thread: never the card we want
 REST_TICKS = 20  # after a walk, the team is left alone this long (no reopening every few ticks)
 DEAD = ("cancelled", "expired", "failed")  # an offer of ours in one of these will never settle: its spend comes back
 CHECK_TICKS = 10  # how long an offer whose end we have not seen is re-read before its spend is simply kept
+TEAM_SPEND = "team:"  # the item prefix of the cash we add to swaps: `team_swap_max_cash_per_hour` sums these rows
+JEV_QUESTION = "team_swap_worth_it"  # questions/team_swaps.json
 
 
 def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | None:
@@ -89,13 +91,35 @@ def free_copies(
     return [int(a["id"]) for a in sorted(free, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))]
 
 
+def desk_copy(me: dict[str, Any], ref: str) -> int | None:
+    """The one copy of `ref` the team desk may give, when we hold two or more: the cheapest to us (then the
+    lowest id), from /me alone, so the maker (another process) knows it without a shared read and never lists
+    it (`maker_may_list`). None: a single copy (never given) or none."""
+    copies = [a for a in me.get("assets") or [] if a.get("ref") == ref and isinstance(a.get("id"), int)]
+    if len(copies) < 2:
+        return None
+    return int(min(copies, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))["id"])
+
+
+def maker_may_list(me: dict[str, Any], ref: str, asset_id: int | None, rules: Guardrails) -> bool:
+    """While team threads are on, the maker leaves the desk its swap copy: with exactly two copies it lists
+    neither (one listed would leave the desk a single free copy, which it never gives), with three or more it
+    never lists the desk's copy (`desk_copy`). Off, or a single copy: the maker lists as before."""
+    if not rules.team_threads_enabled:
+        return True
+    held = sum(1 for a in me.get("assets") or [] if a.get("ref") == ref)
+    return held != 2 and (asset_id is None or asset_id != desk_copy(me, ref))
+
+
 def spare_copy(
     me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str, thread: int | None = None
 ) -> int | None:
     """The copy we would give: only a DUPLICATE (two free copies at least), so a swap never takes the last copy
-    a page of ours needs (N17 spec, criterion 1), and never a copy already in one of our asks."""
+    a page of ours needs (N17 spec, criterion 1), never a copy already in one of our asks, and only the desk's
+    own copy (`desk_copy`), which the maker never lists: the two never promise one asset in the same tick."""
     free = free_copies(me, offers, us, ref, thread)
-    return free[0] if len(free) >= 2 else None
+    mine = desk_copy(me, ref)
+    return mine if len(free) >= 2 and mine in free else None
 
 
 def spare(me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str) -> bool:
@@ -169,6 +193,7 @@ class DeskView:
     window_open: Callable[[], bool]
     listing_cap: int = 12  # /api/clock limits.offers_per_team_per_tick, shared with the maker (a thread offer counts)
     max_tick_seconds: float = 60.0  # /api/clock: dates a refund in the hour of its spend (`refund_row`)
+    jev: Callable[[dict[str, Any]], JevAdvice] = no_jev  # `team_swap_worth_it`, inside the taker's tick budget
 
 
 @dataclass
@@ -297,7 +322,7 @@ class TeamDesk:
         bid is (`seller.post_swap`, the maker): it lives in the shared ledger, so no restart, settlement timing
         or desk turned off can lose it. A team-thread offer is therefore not counted again as thread cash."""
         if self.live and self.ledger is not None and cash > 0:
-            self.ledger.record("spend", v.tick, v.t_hours, cash, ref)
+            self.ledger.record("spend", v.tick, v.t_hours, cash, f"{TEAM_SPEND}{ref}")
 
     def _refund(self, v: DeskView, offer: dict[str, Any]) -> None:
         """Give back the spend of an offer of ours that will never settle (we cancelled it, its thread closed, it
@@ -306,7 +331,9 @@ class TeamDesk:
         if not isinstance(oid, int) or oid in self.refunded or cash <= 0 or not self.live or self.ledger is None:
             return
         self.refunded.add(oid)
-        ref = next(iter(str(t).split(":")[-1] for t in (offer.get("want") or {}).get("cards") or []), "team swap")
+        ref = TEAM_SPEND + next(
+            iter(str(t).split(":")[-1] for t in (offer.get("want") or {}).get("cards") or []), "swap"
+        )
         created = offer.get("created_tick")
         self.ledger.record(
             *refund_row(cash, ref, created if isinstance(created, int) else None, v.tick, v.t_hours, v.max_tick_seconds)
@@ -361,9 +388,11 @@ class TeamDesk:
         for planned in trades:
             named = offer.give_assets[0] if len(offer.give_assets) == 1 and not offer.give_refs else None
             free = free_copies(v.me, v.offers, v.us, planned.refs[0], tid)
-            if len(free) < 2 or (named is not None and named not in free):
-                continue  # only a free duplicate leaves, never the last copy or one in an ask
-            trade = replace(planned, asset_id=named if named is not None else free[0])
+            copy = spare_copy(v.me, v.offers, v.us, planned.refs[0], tid) if named is None else named
+            reserved = copy is not None and not maker_may_list(v.me, planned.refs[0], copy, self.rules)
+            if len(free) < 2 or copy not in free or not reserved:
+                continue  # only a free duplicate the maker never lists leaves: never the last copy or one in an ask
+            trade = replace(planned, asset_id=copy)
             if not is_the_planned_swap(offer, trade):
                 continue
             fee = venue.fee(
@@ -535,14 +564,20 @@ class TeamDesk:
             if copy is None or copy in used:
                 continue
             trade = replace(planned, asset_id=copy)
-            verdict = self._guard(v, trade, cash_at(trade, 0, self.ladder), None)
+            cash = cash_at(trade, 0, self.ladder)
+            verdict = self._guard(v, trade, cash, None)
             if not verdict.allowed:
                 self.log(f"tick {v.tick} team desk: not opening with {trade.counterparty}: {verdict}")
                 continue
-            self._open_one(v, trade)
+            ok, advice, why = self.jev_gate(v, trade, cash, 0, None, 0)
+            if not ok:
+                self._jev_refused(v, "team_open", trade, None, why, advice)
+                self.rest_until[trade.counterparty] = v.tick + (REST_TICKS if advice and advice.decided else 3)
+                return  # one Jev question per opening tick
+            self._open_one(v, trade, advice)
             return  # one opening per tick
 
-    def _open_one(self, v: DeskView, trade: Trade) -> None:
+    def _open_one(self, v: DeskView, trade: Trade, advice: JevAdvice | None = None) -> None:
         what = f"open a swap thread with {trade.counterparty}: {trade.refs[0]} for {trade.refs[1]}"
         status: Status = "approved" if v.window_open() else "expired"
         did = self.rec.decide(
@@ -555,6 +590,7 @@ class TeamDesk:
             chosen=status == "approved",
             status=status,
             move={"kind": "team_open", "venue": HOUSE_VENUE},  # public: never the team (a private thread)
+            jev=advice,
         )
         if status != "approved" or not self.live:
             return
@@ -570,7 +606,7 @@ class TeamDesk:
         talk = Talk(int(body["id"]), trade.counterparty, trade, v.tick)
         self.talks[talk.thread_id] = talk
         self._payloads[talk.thread_id] = {}
-        self._propose(v, talk)
+        self._propose(v, talk, advice)  # the opening's own verdict: Jev is not asked twice for one proposal
 
     # ------------------------------------------------------------ sends
 
@@ -586,7 +622,20 @@ class TeamDesk:
         fair = judge(trade, cash, 0, self.rules, repeat=self.deals[trade.counterparty] > 0)
         if not fair.ok:
             problems.append(fair.reason)
+        if (over := self._over_cash_cap(v, -cash)) is not None:
+            problems.append(over)
         return Verdict(not problems, tuple(dict.fromkeys(problems)), halted)
+
+    def _over_cash_cap(self, v: DeskView, add: int) -> str | None:
+        """`team_swap_max_cash_per_hour`: the cash we add to swaps in the last game hour (the shared ledger's
+        `team:` spend rows, refunds netted) plus this one. None when it fits, or when we add no cash."""
+        if add <= 0:
+            return None
+        spent = self.ledger.spent_since(v.t_hours - 1.0, TEAM_SPEND) if self.ledger is not None else 0
+        cap = self.rules.team_swap_max_cash_per_hour
+        if spent + add > cap:
+            return f"swap cash {add} + {spent} this hour > team_swap_max_cash_per_hour {cap}"
+        return None
 
     def guard_accept(self, v: DeskView, a: SwapAccept) -> Verdict:
         """Taking their offer: our copy leaves at what we receive, and the cash we pay (their ask plus the fee:
@@ -597,8 +646,91 @@ class TeamDesk:
         if swap is None:
             return Verdict(False, ("our copy or the card's value is unknown",))
         verdicts = [check(x, v.ctx(a.thread_id), self.rules) for x in swap.actions()]
-        problems = tuple(dict.fromkeys(p for x in verdicts for p in x.violations))
+        over = self._over_cash_cap(v, a.offer.cash_out + a.fee - a.offer.cash_in)
+        problems = tuple(dict.fromkeys([*(p for x in verdicts for p in x.violations), *([over] if over else [])]))
         return Verdict(not problems, problems, any(x.halted for x in verdicts))
+
+    # ------------------------------------------------------------ the Jev gate
+
+    def jev_gate(
+        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int
+    ) -> tuple[bool, JevAdvice | None, str]:
+        """Jev `team_swap_worth_it` on a swap every rule already allows: only a decided yes at or above
+        `team_swap_jev_min_confidence` sends. Undecided, no, a timeout (`jev_timeout_s` makes it undecided), no
+        tick budget, or an error: nothing is sent (fail closed). Off (`team_swap_jev_gate = false`): allowed."""
+        if not self.rules.team_swap_jev_gate:
+            return True, None, "jev gate off"
+        try:
+            advice = v.jev(self.swap_state(v, trade, cash, fee, thread, step))
+        except Exception as e:  # noqa: BLE001 — a Jev failure refuses the swap, never the tick
+            return False, None, f"jev failed ({type(e).__name__}): not sent"
+        bar = self.rules.team_swap_jev_min_confidence
+        if advice.verdict == "yes" and advice.value >= bar:
+            return True, advice, f"jev yes ({advice.value:.2f})"
+        why = advice.reason or ""
+        return (
+            False,
+            advice,
+            f"jev {advice.verdict} ({advice.value:.2f} < {bar:g} or not yes{', ' + why if why else ''})",
+        )
+
+    def swap_state(
+        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int
+    ) -> dict[str, Any]:
+        """What Jev reads: both cards at official and private values, the cash leg, the fee we pay (an accept),
+        both gains at our values and their share, and the history with this team."""
+        give_ref, get_ref = trade.refs[0], trade.refs[1]
+        ctx = v.ctx(thread)
+        mine: dict[str, Any] = next((a for a in v.me.get("assets") or [] if a.get("id") == trade.asset_id), {})
+        held_give = int(ctx.held.get(give_ref, 0))
+
+        def official(ref: str, held: int) -> float | None:
+            return None if ctx.values is None else ctx.values.value(ref, v.tick, held)
+
+        verdict = judge(trade, cash, fee, self.rules, repeat=self.deals[trade.counterparty] > 0)
+        total = verdict.ours + verdict.theirs
+        plan = self._plan
+        return {
+            "swap": {
+                "give": {
+                    "card": give_ref,
+                    "copies_held": held_give,
+                    "official_value": official(give_ref, max(0, held_give - 1)),  # the copy that leaves
+                    "private_value": mine.get("your_value"),
+                },
+                "get": {
+                    "card": get_ref,
+                    "copies_held": int(ctx.held.get(get_ref, 0)),
+                    "official_value": official(get_ref, int(ctx.held.get(get_ref, 0))),
+                    "private_value": None if plan is None else plan.worth.get(get_ref),
+                },
+                "cash": cash,
+                "fee": fee,
+                "our_gain": round(verdict.ours, 2),
+                "their_gain": round(verdict.theirs, 2),
+                "their_share": round(verdict.theirs / total, 3) if total > 0 else None,
+                "kind": "accept" if fee else "propose",
+            },
+            "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
+            "cash_above_floor": ctx.cash - self.rules.cash_floor,
+        }
+
+    def _jev_refused(
+        self, v: DeskView, kind: str, trade: Trade, thread: int | None, why: str, advice: JevAdvice | None
+    ) -> None:
+        self.rec.decide(
+            v.tick,
+            kind,
+            f"swap with {trade.counterparty} not sent: {why}",
+            inputs=self._inputs(trade, thread),
+            reason=why,
+            guardrail="allowed",
+            chosen=False,
+            status="rejected",
+            thread_id=thread,
+            move={"kind": kind},
+            jev=advice,
+        )
 
     def _swap(self, v: DeskView, trade: Trade, cash: int) -> Swap | None:
         if trade.asset_id is None:
@@ -623,7 +755,7 @@ class TeamDesk:
             notional=trade.volume,
         )
 
-    def _propose(self, v: DeskView, talk: Talk) -> None:
+    def _propose(self, v: DeskView, talk: Talk, advice: JevAdvice | None = None) -> None:
         cash = cash_at(talk.trade, talk.step, self.ladder)
         verdict = self._guard(v, talk.trade, cash, talk.thread_id)
         if verdict.halted:
@@ -638,6 +770,12 @@ class TeamDesk:
                 f"tick {v.tick} team desk: this tick's {v.listing_cap} listings are used; thread {talk.thread_id} waits"
             )
             return
+        if advice is None:
+            ok, advice, why = self.jev_gate(v, talk.trade, cash, 0, talk.thread_id, talk.step)
+            if not ok:
+                self._jev_refused(v, "team_offer", talk.trade, talk.thread_id, why, advice)
+                self._walk(v, talk, why)  # fail closed: no unjudged proposal, and no Jev question every tick
+                return
         status: Status = "approved" if v.window_open() else "expired"
         what = f"swap proposal {talk.step + 1} to {talk.team} on thread {talk.thread_id}: {terms}"
         did = self.rec.decide(
@@ -651,6 +789,7 @@ class TeamDesk:
             status=status,
             thread_id=talk.thread_id,
             move={"kind": "team_offer"},  # public: never the cards or cash of a private thread
+            jev=advice,
         )
         if status != "approved":
             return

@@ -50,7 +50,18 @@ class _SimTeam:
         return self._call(market.accept, self.w, self.us, oid, {"assets": assets} if assets else {})
 
 
-def _run_desk(tmp_path, enabled: bool, ticks: int = 40):
+def _jev_yes(state):
+    """A stub Jev that says a confident yes (the real one is a network call: never in a unit test)."""
+    from bazaar_agent.agents.runtime import JevAdvice
+
+    _jev_yes.states.append(state)
+    return JevAdvice("yes", 0.95)
+
+
+_jev_yes.states = []
+
+
+def _run_desk(tmp_path, enabled: bool, ticks: int = 40, jev=_jev_yes):
     from bazaar_agent.agents.market import venues_from
     from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.team_desk import DeskView, TeamDesk
@@ -89,9 +100,12 @@ def _run_desk(tmp_path, enabled: bool, ticks: int = 40):
             in_use=len(mine),
             ctx=lambda thread, me=me: context_from(me, w.tick, 1.0, ledger, rules),
             window_open=lambda: True,
+            jev=jev,
         )
         taken = set()
         for a in desk.proposals(view):  # the taker would rank it; here it is the only candidate
+            if not desk.jev_gate(view, a.trade, a.offer.net_cash, a.fee, a.thread_id, 0)[0]:
+                continue  # as the taker's `_accept_swap`: only Jev's confident yes takes their offer
             client.accept(a.offer.offer_id, a.pick)
             desk.accepted(a, w.tick)
             taken.add(a.thread_id)
@@ -120,3 +134,28 @@ def test_our_desk_closes_swaps_with_the_rivals_and_only_ever_gives_duplicates(tm
 def test_with_the_desk_off_we_open_no_team_thread(tmp_path):
     w, _, lines = _run_desk(tmp_path, enabled=False, ticks=10)
     assert not [t for t in w.state.threads.values() if t.kind == "team" and t.team == US] and lines == []
+
+
+def test_every_swap_we_send_or_take_was_judged_by_jev(tmp_path):
+    _jev_yes.states.clear()
+    w, _, lines = _run_desk(tmp_path, enabled=True)
+    asked = {s["swap"]["kind"] for s in _jev_yes.states}
+    deals = [t for t in w.state.threads.values() if t.kind == "team" and t.team == US and t.status == "deal"]
+    assert deals and "propose" in asked, "\n".join(lines[-20:])
+    assert all(s["swap"]["give"]["copies_held"] >= 2 for s in _jev_yes.states)  # only duplicates are ever asked
+
+
+def test_an_undecided_jev_sends_no_swap_in_the_simulator(tmp_path):
+    from bazaar_agent.agents.runtime import JevAdvice
+
+    asked = []
+
+    def undecided(state):
+        asked.append(state)
+        return JevAdvice("undecided", 0.6, reason="below_threshold")
+
+    w, before, lines = _run_desk(tmp_path, enabled=True, jev=undecided)
+    ours = [t for t in w.state.threads.values() if t.kind == "team" and t.team == US]
+    swaps = [e for e in w.state.events if e.type == "settlement" and US in (e.payload.get("parties") or [])]
+    assert asked and ours == [] and swaps == [] and dict(w.held_counts(US)) == before
+    assert any("jev undecided" in line for line in lines)

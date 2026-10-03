@@ -88,7 +88,7 @@ from bazaar_agent.agents.seller import (
     unsettled_accepts,
 )
 from bazaar_agent.agents.tactics import private_numbers
-from bazaar_agent.agents.team_desk import DeskView, SwapAccept, TeamDesk
+from bazaar_agent.agents.team_desk import TEAM_SPEND, DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
 from bazaar_agent.evals.dealers import price_class
@@ -447,8 +447,10 @@ class Taker:
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
         bluff: TacticBook | None = None,
+        swap_jev: JevFn = no_jev,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
+        self.swap_jev = swap_jev  # Jev `team_swap_worth_it`: the team desk sends a swap only on its decided yes
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
         self.jev, self.pack_judge, self.words_fn, self.now = jev, pack_judge, words_fn, now
         self.config = config or TakerConfig()
@@ -674,13 +676,14 @@ class Taker:
             window_open=run.window.open,
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
             max_tick_seconds=snap.clock.max_tick_seconds,
+            jev=lambda state: self._ask_jev(run, state, self.swap_jev),
         )
 
-    def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
+    def _ask_jev(self, run: _TickRun, state: dict[str, Any], jev: JevFn | None = None) -> JevAdvice:
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         run.jev_calls += 1
-        return self.jev(state)
+        return (jev or self.jev)(state)
 
     # ------------------------------------------------------------ (a) boards
 
@@ -1652,6 +1655,13 @@ class Taker:
             self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on thread {a.thread_id}: {gate.reason}")
             self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
             return False
+        ok, advice, why = self.team_desk.jev_gate(view, a.trade, a.offer.net_cash, a.fee, a.thread_id, 0)
+        if not ok:  # Jev `team_swap_worth_it`: only a decided yes takes a team's offer (fail closed)
+            self._skip(run, p, why, "rejected", advice, gate)
+            return False
+        if not view.window_open():  # Jev may have taken seconds: never sent late
+            self._skip(run, p, "the tick ended before the send", "expired", advice, gate)
+            return False
         pay = a.offer.cash_out + a.fee
         if not self._slot(run, p, pay, f"team:{a.thread_id}", limit, gate):
             return False
@@ -1667,6 +1677,7 @@ class Taker:
             status="approved",
             thread_id=a.thread_id,
             move={"kind": "team_accept"},  # public: never their offer id (a private thread)
+            jev=advice,
         )
         if self.live:
             if not self.team_desk.clear_before_accept(view, a, did):  # our own offer there goes first
@@ -1682,7 +1693,7 @@ class Taker:
             if body is None and not self.rec.maybe_landed:
                 return True  # the reserved slot stays spent, as for a buy
             if pay > 0:  # accepted, or maybe landed: booked (fail safe for the caps)
-                self.ledger.record("spend", clock.tick, clock.t_hours, pay, a.trade.refs[1])
+                self.ledger.record("spend", clock.tick, clock.t_hours, pay, f"{TEAM_SPEND}{a.trade.refs[1]}")
         self.team_desk.accepted(a, clock.tick)
         self._commit(run, pay, a.trade.refs[1], a.thread_id, a.offer.team, pay)
         run.offers.append(  # our copy is promised too: later checks this tick never offer it again

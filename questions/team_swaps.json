@@ -1,0 +1,17 @@
+{
+  "about": "Bazaar team-swap questions for the Jev judge (N17). Code builds the swap, prices it and checks it first (GUARDRAILS.md: our minimum surplus, the fairness band, the official value cap, the cash floor and the hourly swap cash cap); only a swap every rule allows is asked. A verdict never authorizes a trade on its own, and anything but a decided yes sends nothing.",
+  "questions": {
+    "team_swap_worth_it": {
+      "type": "noul",
+      "stakes": "critical",
+      "instructions": {
+        "question": "Reading `swap`, should we send this card swap with another team (post our proposal, or accept theirs)?",
+        "note": "`swap.give` is our copy that leaves and `swap.get` the card we receive, each with `official_value` (GET /api/me/value: the value the scorer counts, null when it could not be read) and `private_value` (our model). `swap.cash` is what we add (negative) or receive (positive), `fee` what we pay as the accepting side. `our_gain` and `their_gain` are at our private values; `their_share` is their part of the pie. `history` is how many swaps already settled with this team and how far this thread has conceded. The score counts value at official values, never the number of trades; a swap that hands a team most of the value counts for nothing (fair play), and a lost copy that a page of ours needs costs its page bonus."
+      },
+      "criteria": {
+        "true": "We clearly gain at official values (what we receive plus their cash beats what we give plus our cash and the fee), the split is fair to both teams, and nothing in `swap` looks wrong (a null official value, a card we already hold, a lopsided share).",
+        "false": "The gain at official values is thin or negative, an official value is missing, the share is lopsided either way, or a repeat deal with the same team looks like feeding."
+      }
+    }
+  }
+}

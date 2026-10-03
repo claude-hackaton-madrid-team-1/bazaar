@@ -72,6 +72,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
+from bazaar_agent.agents.team_desk import maker_may_list
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
     Action,
@@ -130,6 +131,47 @@ def targets_from(book: Playbook) -> list[Target]:
         if mv.action == "bid" and mv.limit > 0
     ]
     return sorted(asks + bids, key=lambda t: -t.score)
+
+
+def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guardrails) -> list[Target]:
+    """Asks that leave the team desk its swap copy (`team_desk.maker_may_list`): an ask on the desk's copy moves
+    to the cheapest other copy when it costs us no more, else it is dropped, and at most `held - 2` copies of a
+    card are asked, so the desk keeps the two free copies `spare_copy` needs; bids are untouched."""
+    targets = list(targets)
+    asked = {t.asset_id for t in targets if t.side == "ask"}
+    held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
+    room = {ref: n - 2 for ref, n in held.items() if n >= 2} if rules.team_threads_enabled else {}
+    kept: list[Target] = []
+    for t in targets:
+        if t.side == "ask" and not maker_may_list(me, t.ref, t.asset_id, rules):
+            moved = _other_copy(t, me, rules, asked)
+            if moved is None:
+                continue
+            t = moved
+        if t.side == "ask" and t.ref in room:
+            if room[t.ref] <= 0:
+                continue
+            room[t.ref] -= 1
+        kept.append(t)
+    return kept
+
+
+def _other_copy(t: Target, me: dict[str, Any], rules: Guardrails, asked: set[int | None]) -> Target | None:
+    """The ask moved to our cheapest other listable copy of its card, if that copy costs us no more."""
+    others = [
+        a
+        for a in me.get("assets") or []
+        if a.get("ref") == t.ref
+        and isinstance(a.get("id"), int)
+        and a["id"] not in asked
+        and a.get("your_value") is not None
+        and maker_may_list(me, t.ref, a["id"], rules)
+    ]
+    best = min(others, key=lambda a: (float(a["your_value"]), int(a["id"])), default=None)
+    if best is None or float(best["your_value"]) > t.value:
+        return None
+    asked.add(int(best["id"]))
+    return replace(t, asset_id=int(best["id"]))
 
 
 def _covered_by(t: Target, offers: Iterable[OpenOffer]) -> bool:
@@ -329,6 +371,7 @@ class Maker:
             ),
         )
         targets = [t for t in targets_from(book) if not _covered_by(t, by_hand)]
+        targets = _leave_desk_copy(targets, snap.me, self.rules)  # the team desk keeps its swap copy (N17)
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")

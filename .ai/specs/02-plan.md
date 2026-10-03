@@ -158,6 +158,8 @@ Phase 1 ✅ triage of Marius's #79 / #98 / #101 (`/pr-review` + `security-audito
   `BAZAAR_BLUFF`, untrusted text escaped. · **Acceptance:** spec criterion 8.
 - N17-7 — `bazaar swaps` (read-only plan, `--json`), decisions kinds, `/state` allow-list unchanged.
   · **Acceptance:** spec criterion 10.
+- N17-enable — Jev gate per swap, the maker leaves the desk its spare copy, hourly swap cash cap, flag on.
+  · **Acceptance:** N17-spec "N17-enable" criteria 1-5.
 - N17-8 — Simulator end to end: `tests/test_team_threads_sim.py` (one swap settled, one feeding offer
   refused, the inbound idle thread closed) and a team-threads step in `scripts/sim_smoke.py`; docs
   (GUARDRAILS.md, STRATEGY.md, RUNTIME.md, `docs/architecture.status.json`), `.ai/memory.md`,
