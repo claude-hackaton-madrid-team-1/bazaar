@@ -131,13 +131,15 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 ## Q&A
 
 Marius takes the second question onward. Use `docs/pitch/qa.md` (14 answers), with two corrections: the red team is **168** cases, not 129;
-and any number in an answer must exist in `claims.md`. Add three likely questions that the old kit does not answer:
+and any number in an answer must exist in `claims.md`. Add five likely questions that the old kit does not answer:
 
 | Question | Short answer | Claim |
 |---|---|---|
 | "Did you test the hostile case on a real LLM?" | "Not live. The hook is tested against a desk that obeys the injection, with a fake backend; a live LLM obeying hostile text is on our not-covered list." | C25 |
 | "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; the real Duels result is {{C41, or 'not in yet'}}." | C35, C41 |
-| "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54 |
+| "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54, C56 |
+| "Does your agent lie?" | "Only in the words, never in the structured offer, and never with our real limit. It is switched on since Saturday morning; we have no live example to show yet." | C64 |
+| "Did you make a market?" | "Our own venue was switched on on Saturday morning; {{it opened at tick N / it has not opened yet}}. At tick 160 our market score was 0." | C70 |
 
 ## Rehearsal and logistics
 
