@@ -24,6 +24,7 @@ from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_fr
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
+ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer than this
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -85,7 +86,11 @@ def _row_event(row: tuple[Any, ...]) -> Event:
 
 class MarketFeed:
     """Feed events for the strategy: the shared `feed_events` table (the monitor writes it) when Postgres
-    answers, else this machine's captured JSONL; the public live window is merged in every tick."""
+    answers, else this machine's captured JSONL; the public live window is merged in every tick.
+
+    `archive=True` (the taker on Railway) also writes the window it just read into `feed_events`, so the
+    shared archive keeps growing while the laptop monitor sleeps: the window holds ~20 ticks, and an event
+    that leaves it unarchived is gone for good. Same dedupe-safe insert as the monitor; no extra game call."""
 
     def __init__(
         self,
@@ -93,8 +98,10 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self._archive, self._archive_failed = archive, False
         self._conn: psycopg.Connection | None = None
         self._events: dict[int, Event] = {}
         self._newest_db = 0
@@ -129,16 +136,42 @@ class MarketFeed:
         return True
 
     def events(self) -> list[Event]:
-        if not self._from_db() and self._store is not None and not self._loaded_store:
+        from_db = self._from_db()
+        if not from_db and self._store is not None and not self._loaded_store:
             for event in self._store.events():
                 self._events.setdefault(event["id"], event)
             self._loaded_store = True
+        window: list[Event] = []
         try:
-            for event in self._read_window(DEFAULT_WINDOW):
+            window = self._read_window(DEFAULT_WINDOW)
+            for event in window:
                 self._events[event["id"]] = event
         except Exception as e:
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
+        if self._archive and from_db:
+            self._archive_window(window)
         return [self._events[i] for i in sorted(self._events)]
+
+    def _archive_window(self, window: list[Event]) -> None:
+        """Write the window's events Postgres does not hold yet (bounded; a failure only logs)."""
+        from bazaar_agent.db import insert_events
+
+        fresh = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
+        if not fresh or self._conn is None:
+            return
+        try:
+            with self._conn.transaction():
+                self._conn.execute(f"set local statement_timeout = {ARCHIVE_TIMEOUT_MS}")
+                with self._conn.cursor() as cur:
+                    insert_events(cur, fresh)
+        except Exception as e:
+            if not self._archive_failed:
+                self._log(f"feed: archiving the window failed ({type(e).__name__}); trading goes on")
+            self._archive_failed = True
+            return
+        if self._archive_failed:
+            self._log("feed: archiving the window again")
+        self._archive_failed = False
 
 
 @dataclass(frozen=True)
@@ -194,6 +227,7 @@ class Recorder:
     ) -> None:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
+        self.last_error: Any = None  # the BazaarError of the last refused send (code, message, extra)
 
     def decide(
         self,
@@ -290,9 +324,11 @@ class Recorder:
         """Send one request; None when the server refused it (logged, recorded, the loop goes on)."""
         from bazaar_agent.sdk import BazaarError
 
+        self.last_error = None
         try:
             response = call()
         except BazaarError as e:
+            self.last_error = e
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

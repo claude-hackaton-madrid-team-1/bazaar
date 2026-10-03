@@ -48,10 +48,13 @@ from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
+from bazaar_agent.learn.blockers import Blocks
+from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
+from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -257,6 +260,7 @@ class _TickRun:
     started: float  # monotonic time the tick's work began (the clock was read just before)
     jev_calls: int = 0
     accepted: list[AcceptProposal] = field(default_factory=list)
+    blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
 
 
 class Taker:
@@ -279,12 +283,14 @@ class Taker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
+        learner: LiveLearner | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
         self.jev, self.pack_judge, self.words_fn, self.now = jev, pack_judge, words_fn, now
         self.config = config or TakerConfig()
         self.sleep = sleep
+        self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -311,6 +317,8 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        if self.learner is not None:
+            run.blocks = self.learner.blocks(snap.events, snap.us, clock)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
@@ -321,6 +329,8 @@ class Taker:
         self._converse(run, desk)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
+        if self.learner is not None:
+            self.learner.flush()
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"
@@ -376,8 +386,35 @@ class Taker:
         book = guarded_playbook(book, ctx, self.rules)
         moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
+        moves = self._unblocked(run, moves, busy)
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
+
+    def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """Drop the dealer buys a learned blocker stops (cooloff, quota, sold out, locked), so the thread goes
+        to the next dealer instead of a refusal. One `dealer_skip` row per blocked dealer and tick."""
+        if not run.blocks:
+            return moves
+        kept: list[StrategyMove] = []
+        skipped: dict[str, tuple[StrategyMove, str]] = {}
+        for mv in moves:
+            stop = run.blocks.stops(mv.source, mv.ref)
+            if stop is None:
+                kept.append(mv)
+            elif mv.source not in busy and mv.source not in skipped:
+                skipped[mv.source] = (mv, stop.text)
+        for dealer, (mv, why) in skipped.items():
+            self.rec.decide(
+                run.snap.clock.tick,
+                "dealer_skip",
+                f"skip {dealer} for {mv.ref}: {why}",
+                inputs={"dealer": dealer, "item": mv.ref, "score": mv.score, "blocker": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return kept
 
     def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> None:
         tick = run.snap.clock.tick
@@ -417,6 +454,8 @@ class Taker:
             {"with": op.dealer, "topic": topic},
             lambda: self.team.open_thread(op.dealer, topic=topic),
         )
+        if body is None and self.learner is not None and self.rec.last_error is not None:
+            self.learner.refused(op.dealer, self.rec.last_error, run.snap.us, run.snap.clock, op.item)
         if body is not None and isinstance(body.get("id"), int):
             self.convs[op.dealer] = Conversation(
                 op.dealer, op.item, op.rarity, op.value, op.reason, Negotiation(op.plan), int(body["id"]), tick
@@ -457,6 +496,8 @@ class Taker:
         price = conv.accepted_price or (conv.neg.bids[-1] if conv.neg.bids else None)
         if status == "deal" and price is not None and self.live:
             self.ledger.record("spend", tick, run.snap.clock.t_hours, int(price), conv.item)
+        if self.learner is not None:
+            self.learner.thread_closed(thread, run.snap.us, run.snap.clock)
         self.log(
             f"tick {tick} taker: thread {conv.thread_id} with {conv.dealer} {status} "
             f"({thread.get('closed_reason') or '-'}) price {price if status == 'deal' else '-'}"
