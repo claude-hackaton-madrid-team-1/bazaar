@@ -355,14 +355,19 @@ def dealer_buy(
     def checked(move: Any) -> str | None:
         c = Clock.model_validate(client.clock())
         ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
+        # The accept quota is no reason to walk: `reserve` claims it atomically on the tick the accept
+        # is sent, and a full quota makes the accept wait for the next tick.
+        ctx = replace(ctx, accepts_this_tick=0)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
-        if verdict.allowed and move.kind == "accept":
-            limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-            if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
-                return "another process took the team's accept this tick (shared ledger)"
-            tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return None if verdict.allowed else "; ".join(verdict.violations)
+
+    def reserve(move: Any, c: Clock) -> bool:
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+            return False
+        tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
+        return True
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         try:
@@ -386,6 +391,7 @@ def dealer_buy(
             max_ticks=rules.dealer_max_ticks_per_thread,
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
+            reserve=reserve,
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(

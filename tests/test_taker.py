@@ -221,14 +221,37 @@ def test_a_final_dealer_offer_inside_our_max_is_accepted_and_spends_the_slot(tmp
     assert t.convs == {} and ledger.spent_since(0) == 21  # the deal is recorded as spend once it settles
 
 
+def test_a_desk_wait_is_logged_without_a_decision_row(tmp_path):
+    team = FakeTeam()
+    t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens thread 5000 and bids 18
+    offer = {"id": 801, "maker": "abuela", "status": "open", "final": True, "give": {"types": ["card:LAV-08"]}}
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    offer["want"] = {"cash": 21}
+    t.on_tick(at(team, TICK + 1))  # accepts the final 21; the thread stays open while it settles
+    decisions = len(rows(tmp_path))
+    t.on_tick(at(team, TICK + 2))
+    assert f"tick {TICK + 2} taker: abuela wait (accepted, waiting for settlement)" in lines
+    assert len(rows(tmp_path)) == decisions  # visible in the log, no decision row
+
+
 def test_plan_conversation_ignores_an_offer_that_is_not_our_buy_and_walks_after_max_ticks():
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     trick = {"id": 9, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-02"]}, "want": {"cash": 5}}
-    dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14)
+    dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14, TICK)
     assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [LAV-08]" in dm.ignored
     conv.ticks = 14
-    assert plan_conversation(conv, {"status": "open"}, 14).move.kind == "walk"
-    assert plan_conversation(conv, {"status": "deal"}, 14).status == "deal"
+    assert plan_conversation(conv, {"status": "open"}, 14, TICK).move.kind == "walk"
+    assert plan_conversation(conv, {"status": "deal"}, 14, TICK).status == "deal"
+
+
+def test_an_accept_that_never_settles_stops_blocking_the_dealer_after_two_ticks():
+    conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
+    conv.accepted_tick, conv.accepted_price, conv.ticks = TICK, 20, 14
+    still_open = {"status": "open", "standing_offers": []}
+    assert plan_conversation(conv, still_open, 14, TICK + 1).move.reason == "accepted, waiting for settlement"
+    dm = plan_conversation(conv, still_open, 14, TICK + 2)
+    assert conv.accepted_tick is None and dm.move.kind == "walk"  # back on the clock: max_ticks applies again
 
 
 def test_meet_the_ask_bids_her_price_when_the_accept_slot_went_elsewhere():
@@ -255,9 +278,13 @@ def test_jev_yes_accepts_a_dealer_ask_early_but_never_above_the_max(tmp_path):
         "give": {"types": ["card:LAV-08"]},
         "want": {"cash": 21},
     }
-    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    opening = {**offer, "id": 801, "want": {"cash": 22}}  # inside our max, so Jev is asked
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [opening]}
     t.on_tick(at(team, TICK + 1))
-    assert team.sent[-1] == ("accept", 802)  # 21 <= max 22: Jev may close early
+    assert team.sent[-1] == ("say", 5000, 19)  # Jev's yes on her opening ask is overridden: we counter
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    t.on_tick(at(team, TICK + 2))
+    assert team.sent[-1] == ("accept", 802)  # she came down to 21 <= max 22: Jev may close early
 
 
 def test_a_read_refusal_skips_the_tick_without_sending(tmp_path):
