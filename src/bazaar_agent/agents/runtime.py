@@ -145,6 +145,34 @@ class MarketFeed:
         return [self._events[i] for i in sorted(self._events)]
 
 
+def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
+    """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
+    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+
+
+class PageWatch:
+    """The album pages one agent has seen since it started. The playbook is rebuilt from `/api/me` every
+    tick, so a page released mid-game (El Retiro Saturday, Chamberí Sunday) is ranked the first tick it
+    shows up, without a restart; this only says so once, in the log."""
+
+    def __init__(self) -> None:
+        self.seen: frozenset[str] | None = None
+
+    def new(self, me: Mapping[str, Any]) -> tuple[str, ...]:
+        """Pages in this `/api/me` that the agent had not seen: none on its first tick."""
+        pages = album_pages(me)
+        fresh = () if self.seen is None else tuple(sorted(pages - self.seen))
+        self.seen = pages if self.seen is None else self.seen | pages
+        return fresh
+
+
+def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str, Any]) -> str:
+    return (
+        f"tick {tick} {agent}: new page(s) {', '.join(fresh)} in /api/me: ranked on "
+        f"{len(album_pages(me))} pages from this tick, no restart"
+    )
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """One tick's view, read album first: `/api/me` before anything is decided."""

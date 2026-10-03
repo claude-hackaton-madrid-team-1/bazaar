@@ -44,9 +44,11 @@ from bazaar_agent.agents.market import OpenOffer, Side, best_venue, our_open_off
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
+    new_page_line,
     read_snapshot,
     window_for,
 )
@@ -208,6 +210,7 @@ class Maker:
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
@@ -223,6 +226,8 @@ class Maker:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
         mine, total = our_open_offers(snap.offers, snap.us)
         stops = kill_switch(self.rules)
         if stops:
