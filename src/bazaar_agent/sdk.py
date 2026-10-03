@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,7 @@ __all__ = [
     "TeamBazaar",
     "TrackedBazaar",
     "public_client",
+    "read_once_more_after_429",
     "team_client",
 ]
 
@@ -39,6 +41,10 @@ TEAM_TIMEOUT_S = 4.0  # a keyed call that has not answered by then will not make
 TEAM_READ_RETRIES = 2  # GET network errors only, and only while ticks are slower than FAST_TICK_S
 TEAM_RETRIES = TEAM_READ_RETRIES  # a /me may take (TEAM_RETRIES + 1) x TEAM_TIMEOUT_S (`holdings.ME_BUDGET_S`)
 FAST_TICK_S = 15.0
+RATE_LIMIT_WAIT_S = 1.2  # the wait before the one re-read of a 429 when the server names none
+RATE_LIMIT_WAIT_MAX_S = 5.0  # a longer hint: the read waits for the next tick instead
+RATE_LIMIT_MIN_LEFT_S = 8.0  # the re-read goes only while this much of the tick's budget is left after the wait
+RETRY_HINT_KEYS = ("retry_after", "retry_after_s", "retry_in")
 log = logging.getLogger(__name__)
 
 
@@ -78,6 +84,42 @@ def _tell(hook: WriteHook, method: str, path: str, phase: str) -> None:
         hook(method, path, phase)
     except Exception as e:  # the holdings are a cache: losing one bump costs at most holdings_max_age_s
         log.warning("holdings: write hook failed (%s)", type(e).__name__)
+
+
+def rate_limit_wait_s(error: BazaarError) -> float:
+    """The server's wait for a `rate_limited` refusal (seconds, from its body), else RATE_LIMIT_WAIT_S."""
+    for key in RETRY_HINT_KEYS:
+        hint = error.extra.get(key)
+        if isinstance(hint, (int, float)) and not isinstance(hint, bool) and math.isfinite(hint) and hint > 0:
+            return float(hint)
+    return RATE_LIMIT_WAIT_S
+
+
+def read_once_more_after_429(
+    read: Callable[[], Any],
+    left_s: Callable[[], float],
+    *,
+    sleep: Callable[[float], None] | None = None,
+    on_retry: Callable[[BazaarError, float], None] | None = None,
+) -> Any:
+    """`read()`, sent at most once more after a `rate_limited` refusal: after the server's wait (or 1.2 s), and only
+    while `left_s()` (the tick's budget) still holds RATE_LIMIT_MIN_LEFT_S after that wait. Never a loop (RULES.md:
+    a 429 means wait): the second refusal, any other refusal or a short tick raises as the first read would.
+
+    For a read whose lost tick costs points (an unanswered duel scores 0); our services wake at staggered offsets
+    (BAZAAR_TICK_OFFSET_S), so 1.2 s later the key's bucket has refilled."""
+    try:
+        return read()
+    except BazaarError as error:
+        if error.code != "rate_limited":
+            raise
+        wait = rate_limit_wait_s(error)
+        if wait > RATE_LIMIT_WAIT_MAX_S or left_s() - wait < RATE_LIMIT_MIN_LEFT_S:
+            raise
+        if on_retry is not None:
+            on_retry(error, wait)
+        (sleep or time.sleep)(wait)
+    return read()
 
 
 def public_client(settings: Settings) -> PublicBazaar:

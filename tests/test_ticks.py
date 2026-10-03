@@ -162,6 +162,23 @@ def test_the_opt_in_stagger_wakes_later_but_never_past_forty_percent_of_the_tick
     assert seconds_until_next_tick(clock(paused=True), 4.0) == PAUSED_POLL_S
 
 
+def test_the_stagger_never_wakes_later_than_ten_seconds_into_a_tick():
+    slow = clock(tick_seconds=60.0, next_tick_in=40.0)  # 40 % of 60 s would allow 24 s
+    assert seconds_until_next_tick(slow, 30.0) == 40.0 + AFTER_TICK_S + 10.0
+    assert seconds_until_next_tick(clock(tick_seconds=30.0, next_tick_in=20.0), 7.5) == 20.0 + AFTER_TICK_S + 7.5
+
+
+def test_run_per_tick_wakes_the_offset_after_the_tick_and_keeps_the_rest_of_the_tick_for_work():
+    import pytest
+
+    # Saturday pace, the maker's 5 s: after tick 646 it sleeps to the boundary plus 5 s, and tick 647 then starts
+    # with 25 s left, well inside the action budget (the burst at the boundary is the other services').
+    clocks = iter([{"tick": 646, "tick_seconds": 30, "next_tick_in": 20}, {"tick": 647, "tick_seconds": 30}])
+    slept: list[float] = []
+    run_per_tick(lambda: next(clocks), lambda c: None, max_ticks=2, sleep=slept.append, start_offset_s=5.0)
+    assert len(slept) == 1 and slept[0] == pytest.approx(20.0 + AFTER_TICK_S + 5.0, abs=0.05)
+
+
 def test_the_stagger_is_off_unless_the_service_sets_it():
     import pytest
 

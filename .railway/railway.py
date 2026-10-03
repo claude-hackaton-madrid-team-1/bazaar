@@ -60,6 +60,8 @@ def runtime_env() -> dict:
         "COLUMNS": "200",  # rich wraps at 80 columns without a terminal: one log line per tick
         "BAZAAR_KEY": preserve(),
         "TYPESAFE_API_KEY": preserve(),
+        # set by hand per service (README "Live services": duels 0, taker 2.5, maker 5, mcp 7.5); kept by every apply
+        "BAZAAR_TICK_OFFSET_S": preserve(),
     }
 
 
