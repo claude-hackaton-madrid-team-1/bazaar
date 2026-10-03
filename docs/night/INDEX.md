@@ -16,7 +16,7 @@ Where the reports live:
 
 | ID | What | Verdict | PR(s) → state now | Branch | Report | Code |
 |---|---|---|---|---|---|---|
-| W1a | Realistic Market Test bench simulator | GO as a tool; stall + 0.15 unreachable (oracle +0.03–0.06 p50); live rule is `quote` | #77 ready (merged with main 3 Oct) | `night/w1a-bench-sim` | #77 branch | #77 (open) |
+| W1a | Realistic Market Test bench simulator | GO as a tool; stall + 0.15 unreachable (oracle +0.03–0.06 p50); live rule is `quote` | #77 ready for review (main merged into the branch 3 Oct; not on main) | `night/w1a-bench-sim` | #77 branch | #77 (open) |
 | W1b | Bench broker edge for our venue | NO-GO for stall + 0.15; edge ≥ stall | #84 open (stacked on #71) | `night/w1b-broker-edge` | #84 branch | #84 (open); has `broker probe` without `--auto` |
 | W2a | Duel rival zoo + replay harness on real payloads | GO (harness); independent v2 gate | #80 closed → taken over by #151 (open) | `night/w2a-duel-zoo` | #151 and branch | #151 (open) |
 | W2b | Duel policy v2 ("silence is free") | GO: 1.42× / 1.55×, 0 outside | #86 closed → taken over by #150 (merged 06:50) | `night/w2b-duel-v2` | main | main (default still v1) |
