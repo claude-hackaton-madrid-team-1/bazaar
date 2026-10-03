@@ -225,29 +225,35 @@ def test_a_save_waits_at_most_the_statement_timeout_behind_another_writer(databa
 
 
 @pytest.mark.integration
-def test_the_schema_grants_the_matrix_to_every_role_that_reads_the_feed(database_url, schema):  # noqa: F811
+def test_the_schema_grants_the_matrix_once_to_the_readers_of_our_decisions(database_url, schema):  # noqa: F811
     from bazaar_agent import db
 
     if not describe(database_url).is_local_default:
         pytest.skip("roles are cluster-wide: only on the local docker Postgres")
-    role = f"bazaar_pytest_ro_{secrets.token_hex(4)}"
+    ro, feed_only = (f"bazaar_pytest_ro_{secrets.token_hex(4)}" for _ in range(2))
     conn = open_in(database_url, schema)
     conn.autocommit = True
-    created = False
+    created: list[str] = []
     can = "select has_table_privilege(%s, %s, 'SELECT')"
     try:
+        db.init_schema(conn)  # a fresh database: no read-only role yet, the grant is marked done
+        for role in (ro, feed_only):
+            conn.execute(sql.SQL("create role {}").format(sql.Identifier(role)))
+            created.append(role)
+        conn.execute(sql.SQL("grant select on decisions to {}").format(sql.Identifier(ro)))
+        conn.execute(sql.SQL("grant select on feed_events to {}").format(sql.Identifier(feed_only)))
+        conn.execute("comment on table team_matrix_summary is null")  # as when the matrix tables are new
         db.init_schema(conn)
-        conn.execute(sql.SQL("create role {}").format(sql.Identifier(role)))
-        created = True
-        conn.execute(sql.SQL("grant select on feed_events to {}").format(sql.Identifier(role)))
-        assert conn.execute(can, (role, "team_matrix")).fetchone()[0] is False
-        db.init_schema(conn)
-        db.init_schema(conn)  # a re-run finds nothing missing
+        db.init_schema(conn)  # a re-run is a no-op
         for table in ("team_matrix", "team_matrix_summary"):
-            assert conn.execute(can, (role, table)).fetchone()[0] is True
-        assert conn.execute(can, (role, "venue_broker_keys")).fetchone()[0] is False  # only the matrix
+            assert conn.execute(can, (ro, table)).fetchone()[0] is True
+            assert conn.execute(can, (feed_only, table)).fetchone()[0] is False  # the public feed is no anchor
+        assert conn.execute(can, (ro, "venue_broker_keys")).fetchone()[0] is False  # only the matrix
+        conn.execute(sql.SQL("revoke select on team_matrix_summary from {}").format(sql.Identifier(ro)))
+        db.init_schema(conn)  # the next process start
+        assert conn.execute(can, (ro, "team_matrix_summary")).fetchone()[0] is False  # a revoke stays revoked
     finally:
-        if created:
+        for role in created:
             conn.execute(sql.SQL("drop owned by {}").format(sql.Identifier(role)))
             conn.execute(sql.SQL("drop role {}").format(sql.Identifier(role)))
         conn.close()

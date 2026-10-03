@@ -337,7 +337,11 @@ class Maker:
         self._tried: dict[int, set[tuple[str, int]]] = {}
         self._ranked: dict[int, str] = {}
         # Jev gates new sell threads (SG1, `dealer_sell_duplicates_worth_it`); no Jev = no new sell thread.
-        gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks) if strategy_jev else None
+        gate = (
+            StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks, rules.risk_posture)
+            if strategy_jev
+            else None
+        )
         self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate)
 
     def on_tick(self, clock: Clock) -> None:
@@ -892,11 +896,12 @@ class Maker:
             return "no venue we may trade on"
         return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)
 
-    def _teams(self, ref: str) -> dict[str, Any]:
+    def _teams(self, ref: str, tick: int) -> dict[str, Any]:
         """For one card: the teams that hold it spare or miss it for a page (top 5 each), from the team matrix the
-        taker's sentinel stores (`team_matrix_store.LatestMatrix`); nothing until one was read."""
-        m = self.latest_matrix.matrix if self.latest_matrix is not None else None
-        return {} if m is None else {"market_teams": {"card": {ref: m.card(ref)}}}
+        taker's sentinel stores (`team_matrix_store.LatestMatrix`); nothing until one was read, or when it is
+        older than `MAX_AGE_TICKS`."""
+        m = self.latest_matrix.current(tick) if self.latest_matrix is not None else None
+        return {} if m is None else {"market_teams": {"tick": m.tick, "card": {ref: m.card(ref)}}}
 
     def _jev_context(self, run: _MakerRun) -> dict[str, Any]:
         cash = int(run.snap.me.get("cash") or 0)
@@ -925,7 +930,10 @@ class Maker:
                 if p >= t.min_price and self._allowed(run, replace(t, price=p), venue)
             }
             state = listing_state(
-                t, candidates, legal, {**self._jev_context(run), "venue": venue, **self._teams(t.ref)}
+                t,
+                candidates,
+                legal,
+                {**self._jev_context(run), "venue": venue, **self._teams(t.ref, run.snap.clock.tick)},
             )
             label, advice, why = self.jev.choose_price(t, candidates, legal, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: today's price
@@ -938,7 +946,7 @@ class Maker:
         if self.jev is None:
             return False, None
         tick = run.snap.clock.tick
-        state = reprice_state(offer, t, tick, {**self._jev_context(run), **self._teams(offer.ref)})
+        state = reprice_state(offer, t, tick, {**self._jev_context(run), **self._teams(offer.ref, tick)})
         try:
             hold, advice = self.jev.should_hold(offer, t, self.rules, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: reprice as today

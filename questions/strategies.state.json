@@ -1,19 +1,109 @@
 {
-  "as_of": {"day": "Saturday", "tick": 670, "source": "read-only: /api/me, /api/catalog, /api/dealers, /api/feed?limit=500, /api/me/value (scratch plan with agents.ladder_probe)"},
-  "cash": 81, "cash_floor": 50, "cash_room": 31, "spent_last_hour": 0, "level": 3,
-  "score_parts": {"negotiating": 17.7, "duel_points": 15, "ladder_points": 0.02, "market": 7.5},
-  "ladder": {"our_dealer_deals_in_feed_window": {}, "taker_dealer_threads_since_tick_443": 0},
+  "as_of": {
+    "day": "Saturday",
+    "tick": 670,
+    "source": "read-only: /api/me, /api/catalog, /api/dealers, /api/feed?limit=500, /api/me/value (scratch plan with agents.ladder_probe)"
+  },
+  "cash": 81,
+  "cash_floor": 50,
+  "cash_room": 31,
+  "spent_last_hour": 0,
+  "level": 3,
+  "score_parts": {
+    "negotiating": 17.7,
+    "duel_points": 15,
+    "ladder_points": 0.02,
+    "market": 7.5
+  },
+  "ladder": {
+    "our_dealer_deals_in_feed_window": {},
+    "taker_dealer_threads_since_tick_443": 0
+  },
   "probe": [],
   "probe_note": "pre-plan: abuela RET-01 common, opening 12, lowest fill 10 (last 500 events); official value of RET-01 is 7, below her lowest fill, so no probe is planned (a top below her lowest fill would walk). Chato: uncommons open 33, our RET uncommon official ~18; Pilar sells only sobre_oro (504).",
   "duplicates": [
-    {"card": "SAL-01", "copies": 3, "your_value": 1.3}, {"card": "SAL-03", "copies": 2, "your_value": 3.2},
-    {"card": "LAV-04", "copies": 2, "your_value": 4.0}, {"card": "LAV-05", "copies": 2, "your_value": 4.0},
-    {"card": "LAV-06", "copies": 2, "your_value": 10.0}, {"card": "MAL-02", "copies": 2, "your_value": 2.8},
-    {"card": "MAL-08", "copies": 2, "your_value": 6.9}, {"card": "LAT-02", "copies": 2, "your_value": 1.2},
-    {"card": "SAL-10", "copies": 2, "note": "rare; Pilar bid 61 -> 71 FINAL, walked twice (our floor 85)"}
+    {
+      "card": "SAL-01",
+      "copies": 3,
+      "your_value": 1.3
+    },
+    {
+      "card": "SAL-03",
+      "copies": 2,
+      "your_value": 3.2
+    },
+    {
+      "card": "LAV-04",
+      "copies": 2,
+      "your_value": 4.0
+    },
+    {
+      "card": "LAV-05",
+      "copies": 2,
+      "your_value": 4.0
+    },
+    {
+      "card": "LAV-06",
+      "copies": 2,
+      "your_value": 10.0
+    },
+    {
+      "card": "MAL-02",
+      "copies": 2,
+      "your_value": 2.8
+    },
+    {
+      "card": "MAL-08",
+      "copies": 2,
+      "your_value": 6.9
+    },
+    {
+      "card": "LAT-02",
+      "copies": 2,
+      "your_value": 1.2
+    },
+    {
+      "card": "SAL-10",
+      "copies": 2,
+      "note": "rare; Pilar bid 61 -> 71 FINAL, walked twice (our floor 85)"
+    }
   ],
-  "dealer_bids_seen": {"abuela_commons_final": "5-6", "chato_uncommon_final_LAV-06": 14, "pilar_SAL-10": "61 -> 71 FINAL"},
-  "rules": {"min_surplus": 2, "final_min_first_ask_share": 0.5, "retry_game_hours": 1.0, "dealer_gap_ticks": 6, "taker_window_ticks": 20, "one_sell_thread_at_a_time": true},
-  "history": {"sat_12_45": "the desk reopened a sell thread with Abuela for one card 4 times (ticks 509-530) and blocked the taker; dealer_sell_enabled was turned off", "now_fixed_by": ["retry_game_hours", "dealer_gap_ticks", "taker_window_ticks", "each new thread needs this Jev yes"]},
-  "dealer_sell_enabled": false
+  "dealer_bids_seen": {
+    "abuela_commons_final": "5-6",
+    "chato_uncommon_final_LAV-06": 14,
+    "pilar_SAL-10": "61 -> 71 FINAL"
+  },
+  "rules": {
+    "min_surplus": 2,
+    "final_min_first_ask_share": 0.5,
+    "retry_game_hours": 1.0,
+    "dealer_gap_ticks": 6,
+    "taker_window_ticks": 20,
+    "one_sell_thread_at_a_time": true
+  },
+  "history": {
+    "sat_12_45": "the desk reopened a sell thread with Abuela for one card 4 times (ticks 509-530) and blocked the taker; dealer_sell_enabled was turned off",
+    "now_fixed_by": [
+      "retry_game_hours",
+      "dealer_gap_ticks",
+      "taker_window_ticks",
+      "each new thread needs this Jev yes"
+    ]
+  },
+  "dealer_sell_enabled": false,
+  "risk_posture": "aggressive (Omar, Sat 15:50): we are rank ~8 and must risk to reach the podium",
+  "score_decoder": {
+    "ladder": "we are last (proxy 0.38); Pilar's level-3 slots are empty; best three deals per level count",
+    "trade_term": "capped",
+    "venue_term": "0 trades between other teams on v19"
+  },
+  "pilar_salamanca_fever_game_hours": "9.15-11.15",
+  "dealer_sell_targets": {
+    "pilar": [
+      "LAV-06",
+      "MAL-08",
+      "SAL-10"
+    ],
+    "abuela": "commons"
+  }
 }

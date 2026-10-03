@@ -199,14 +199,20 @@ def last_trades(events: Iterable[Mapping[str, Any]], limit: int = TRADES) -> dic
         p = e.get("payload")
         if e.get("type") != "settlement" or not isinstance(p, dict):
             continue
-        price = p.get("price")
+        price, tick = p.get("price"), e.get("tick")
+        price = price if isinstance(price, int) and not isinstance(price, bool) and 0 <= price < 10**6 else "?"
+        tick = tick if isinstance(tick, int) and not isinstance(tick, bool) and 0 <= tick < 10**7 else "?"
         for item in p.get("items") or []:
             if not isinstance(item, dict) or item.get("kind", "card") != "card":
                 continue
-            ref, frm, to = str(item.get("ref") or "")[:16], str(item.get("frm") or "")[:24], str(item.get("to") or "")
-            for team, verb, other in ((to, "bought", f"from {frm}"), (frm, "sold", f"to {to[:24]}")):
+            ref, frm, to = (str(item.get(k) or "") for k in ("ref", "frm", "to"))
+            if not (SAFE_ID.fullmatch(ref) and len(ref) <= 16):
+                continue  # every line is built from ids we validate: no free text from a payload
+            for team, verb, other in ((to, "bought", frm), (frm, "sold", to)):
                 if SAFE_ID.fullmatch(team) and len(out[team]) < limit:
-                    out[team].append(f"t{e.get('tick')} {verb} {ref} {price} {other}")
+                    side = "from" if verb == "bought" else "to"
+                    who = other if SAFE_ID.fullmatch(other) and len(other) <= 24 else "?"
+                    out[team].append(f"t{tick} {verb} {ref} {price} {side} {who}")
     return out
 
 
@@ -268,6 +274,8 @@ def build_matrix(
     """The matrix from what the taker already holds: `supply` = `strategy.Market.supply`, `our_held` / `released` /
     `chasers` = the same Market's, `standings` = the rank watch's snapshots per team (oldest first)."""
     pages = page_cards(catalog, released)
+    sets = {str(s.get("id")) for s in catalog.get("sets") or []}
+    chasers = {code: ts for code, ts in chasers.items() if code in sets}  # a set code can come from a team's topic
     held, share = holdings(supply)
     held.pop(us, None)
     cells = cells_of(held, share, pages)

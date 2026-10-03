@@ -349,6 +349,23 @@ create table if not exists leaderboard_snapshots (
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
 
+-- Other teams' set multipliers (AF1, `team_affinity.py`): what a team SAID in a team thread (untrusted words,
+-- parsed; `quote` is their scrubbed message, at most 200 characters) and what we INFERRED from the feed
+-- (`affinity.affinity_map`: the likeliest multiplier and its probability). One row per team, set and source.
+create table if not exists team_affinity (
+  team text not null, set_code text not null, multiplier numeric not null,
+  source text not null check (source in ('said','inferred')), confidence numeric, tick int not null,
+  thread_id bigint, quote text check (char_length(quote) <= 200), updated_at timestamptz not null default now(),
+  primary key (team, set_code, source));
+-- DataGrip and bazaar-live: per team and set, the stated multiplier beside the inferred one.
+create or replace view team_affinity_board as
+  select coalesce(s.team, i.team) as team, coalesce(s.set_code, i.set_code) as set_code,
+         s.multiplier as said, s.confidence as said_confidence, s.tick as said_tick, s.thread_id, s.quote,
+         i.multiplier as inferred, i.confidence as inferred_confidence, i.tick as inferred_tick
+  from (select * from team_affinity where source = 'said') s
+  full join (select * from team_affinity where source = 'inferred') i
+    on i.team = s.team and i.set_code = s.set_code;
+
 -- The team matrix (`team_matrix.py`, kept by `team_matrix_store.py`): every team × card we can place and one
 -- summary per team, as the news sentinel last built them. A save replaces its world's rows in one transaction, so
 -- each world holds exactly one matrix. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
@@ -361,24 +378,27 @@ create table if not exists team_matrix_summary (
   rival bool not null, rival_why text, wants text, has_for_us text, last_trades text, us text, tick int not null,
   primary key (world, team));
 
--- Every role that reads `feed_events` (the teammates' read-only logins, `readonly_user.sql`) reads the matrix too:
--- their default privileges cover only tables created by the role that ran that file. Only a missing grant is made
--- (a re-run writes no catalog row), and a grant that fails never stops a process from starting.
+-- The read-only logins (`readonly_user.sql`) read the matrix: granted ONCE, to every role that reads our private
+-- `decisions` table (never the public feed's readers), then the table is marked so a later deliberate REVOKE stays
+-- revoked (`readonly_user.sql` re-run grants it again on purpose). A grant that fails or times out is a notice:
+-- it never stops a process from starting.
 do $$
 declare
   r record;
 begin
+  if coalesce(obj_description(to_regclass(format('%I.team_matrix_summary', current_schema())), 'pg_class'), '')
+     = 'read-only grants made' then
+    return;
+  end if;
   for r in
     select distinct g.grantee::text as role from information_schema.role_table_grants g
-     where g.table_schema = current_schema() and g.table_name = 'feed_events' and g.privilege_type = 'SELECT'
+     where g.table_schema = current_schema() and g.table_name = 'decisions' and g.privilege_type = 'SELECT'
        and g.grantee::text not in (current_user::text, 'PUBLIC')
   loop
-    if not (has_table_privilege(r.role, format('%I.team_matrix', current_schema()), 'SELECT')
-            and has_table_privilege(r.role, format('%I.team_matrix_summary', current_schema()), 'SELECT')) then
-      execute format('grant select on %I.team_matrix, %I.team_matrix_summary to %I',
-                     current_schema(), current_schema(), r.role);
-    end if;
+    execute format('grant select on %I.team_matrix, %I.team_matrix_summary to %I',
+                   current_schema(), current_schema(), r.role);
   end loop;
-exception when others then
+  execute format('comment on table %I.team_matrix_summary is %L', current_schema(), 'read-only grants made');
+exception when query_canceled or others then
   raise notice 'team matrix grants skipped (%)', sqlerrm;
 end $$;

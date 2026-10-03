@@ -10,6 +10,7 @@ error is logged once, Postgres is retried every `RETRY_EVERY` calls, and the in-
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any
@@ -74,6 +75,7 @@ class TeamMatrixStore:
         self._conn: psycopg.Connection | None = None
         self._skip = 0  # calls left to skip before Postgres is tried again
         self._failed: set[str] = set()
+        self._saving = threading.Lock()  # one background save at a time (`save_later`)
 
     def _db(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
@@ -91,6 +93,22 @@ class TeamMatrixStore:
             return None
         self._conn = conn
         return conn
+
+    def save_later(self, m: TeamMatrix) -> bool:
+        """`save` on a background thread, one at a time: a link that hangs holds that thread, never the caller's
+        tick (Postgres' statement timeout is server-side). While a save still runs, this matrix is skipped (the
+        next window brings a newer one). Returns whether a save was started."""
+        if not self._saving.acquire(blocking=False):
+            return False
+
+        def run() -> None:
+            try:
+                self.save(m)
+            finally:
+                self._saving.release()
+
+        threading.Thread(target=run, name="team-matrix-save", daemon=True).start()
+        return True
 
     def save(self, m: TeamMatrix) -> int:
         """Replace this world's matrix with `m` in one transaction; returns the cells written (0 without Postgres or
@@ -171,20 +189,39 @@ def _summary(r: Sequence[Any]) -> Summary:
                    (why or "rival") if rival else None, wants or "", has_for_us or "", last_trades or "")  # fmt: skip
 
 
+MAX_AGE_TICKS = 30  # an older stored matrix is not handed to a decider as current
+
+
 class LatestMatrix:
     """The latest stored matrix, for a process that does not build it (the maker): reloaded at most every
-    `every` ticks, called after the tick's sends; keeps the last good one through a failed read. Never raises."""
+    `every` ticks on a background thread (a hung link never holds the tick), keeping the last good one through a
+    failed read; `current(tick)` drops one older than `MAX_AGE_TICKS` (the taker stopped saving). Never raises."""
 
-    def __init__(self, store: TeamMatrixStore, every: int = 10) -> None:
-        self.store, self.every = store, every
+    def __init__(self, store: TeamMatrixStore, every: int = 10, background: bool = True) -> None:
+        self.store, self.every, self.background = store, every, background
         self.matrix: TeamMatrix | None = None
         self._at: int | None = None
+        self._loading = threading.Lock()
 
     def refresh(self, tick: int) -> None:
         if self._at is not None and tick - self._at < self.every:
             return
+        if not self._loading.acquire(blocking=False):
+            return  # the last read is still running
         self._at = tick
+        if self.background:
+            threading.Thread(target=self._load, name="team-matrix-load", daemon=True).start()
+        else:
+            self._load()
+
+    def _load(self) -> None:
         try:
             self.matrix = self.store.load() or self.matrix
         except Exception:  # noqa: BLE001 — advice only: keep the last good matrix
-            return
+            pass
+        finally:
+            self._loading.release()
+
+    def current(self, tick: int) -> TeamMatrix | None:
+        m = self.matrix
+        return m if m is not None and tick - m.tick <= MAX_AGE_TICKS else None

@@ -56,7 +56,7 @@ def ctx(held: dict[str, int]) -> gr.Context:
 
 def test_the_committed_guardrails_protect_el_retiro_and_chamberi():
     rules = gr.load_guardrails().rules
-    assert gr.set_codes(rules.protect_page_sets) == ("RET", "CHA")
+    assert {"RET", "CHA"} <= set(gr.set_codes(rules.protect_page_sets))
     assert rules.protects("RET-01", "common", 1) and rules.protects("CHA-09", "rare", 1)
     assert not gr.Guardrails().protects("RET-01", "common", 1)  # the model default is today's behaviour
 
@@ -260,3 +260,11 @@ def test_one_running_taker_ranks_the_new_page_the_tick_it_appears(tmp_path):
     opened = [r for r in rows(tmp_path) if r["kind"] == "dealer_open"]
     assert [(r["tick"], r["inputs"]["dealer"], r["inputs"]["item"]) for r in opened] == [(101, "abuela", "RET-01")]
     assert "tick 101 taker: new page(s) RET in /api/me: ranked on 3 pages from this tick, no restart" in lines
+
+
+def test_the_committed_file_protects_the_last_copy_of_every_page():
+    """Omar's rule after selling SAL-07 (Sat 3 Oct, score 28.25 -> 23.98): no set is ever unprotected."""
+    from bazaar_agent.guardrails import load_guardrails, set_codes
+
+    rules = load_guardrails().rules
+    assert set(set_codes(rules.protect_page_sets)) >= {"LAV", "SAL", "MAL", "RET", "LAT", "CHA"}

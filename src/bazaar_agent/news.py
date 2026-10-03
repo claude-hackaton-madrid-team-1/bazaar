@@ -270,13 +270,14 @@ class NewsSentinel:
     ) -> list[NewsItem]:
         """`clock`: the tick's `ticks.Clock` (t_hours, tick_seconds) for lead times; `us`: our team id (never a
         rival of ours); `market`: the tick's `strategy.Market` (its supply map feeds the team matrix)."""
-        if market is not None:
-            self._matrix_tick(tick, events, catalog, market, us)
         try:
             return self._run(tick, events, catalog, clock, us)
         except Exception as e:  # noqa: BLE001 — logging only: the sentinel never breaks a tick
             self._once(f"tick {tick} news: skipped ({type(e).__name__})")
             return []
+        finally:
+            if market is not None:  # after this tick's read: the window's leaderboard is in the rank watch
+                self._matrix_tick(tick, events, catalog, market, us)
 
     def _run(
         self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], clock: Any, us: str | None
@@ -315,22 +316,22 @@ class NewsSentinel:
     def _matrix_tick(
         self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], market: Any, us: str | None
     ) -> None:
-        """Rebuild the team matrix once per read window (after the window's reads, so the leaderboard is fresh)
-        and store it; never raises."""
+        """Rebuild the team matrix once per read window, on the tick its last read (the leaderboard) is done or the
+        window ended early on a failed read, and hand it to the store's background writer; never raises."""
         due = self.matrix is None or tick - self.matrix.tick >= self.every
-        if not due or (self._due and self.matrix is not None):  # wait for the window's last read
+        if not due or self._due:  # the window's reads are still running: wait for the leaderboard
             return
         try:
             self.matrix = build_matrix(
                 tick, us or str(getattr(market, "us", "") or ""), catalog, getattr(market, "supply", None),
                 getattr(market, "held", {}), getattr(market, "released", ()), getattr(market, "chasers", {}),
-                self.ranks.snapshots, events,
+                self.ranks.trail, events,
             )  # fmt: skip
         except Exception as e:  # noqa: BLE001 — the matrix is advice: a bug in it never costs the tick
             self._once(f"tick {tick} team matrix: skipped ({type(e).__name__})")
             return
         if self.matrix_store is not None:
-            self.matrix_store.save(self.matrix)
+            self.matrix_store.save_later(self.matrix)  # its own thread: a hung link never holds the taker
 
     def _schedule_tick(self, tick: int, clock: Any) -> bool:
         t_hours, seconds = getattr(clock, "t_hours", None), getattr(clock, "tick_seconds", None)
