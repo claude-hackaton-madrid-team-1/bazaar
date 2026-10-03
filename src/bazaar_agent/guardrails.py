@@ -135,6 +135,7 @@ class Guardrails(BaseModel):
     protect_page_sets: str = "none"
     open_sealed_packs: bool = False
     news_signals_enabled: bool = False
+    persona_model_enabled: bool = True
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
     team_threads_enabled: bool = False
@@ -230,6 +231,7 @@ ENFORCED_BY: dict[str, str] = {
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
+    "persona_model_enabled": "agents.persona_desk via taker._persona_shaped + agents.dealer_sell_desk (ranking)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",

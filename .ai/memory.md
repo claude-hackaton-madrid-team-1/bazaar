@@ -924,3 +924,10 @@ modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself 
 `app._clock_loop` had no try/except: a raising rival (or a failed world save) killed the background task, the world
 froze at that tick and every health check still answered ok. #178 holds a raising rival for the tick and makes the loop
 log a failed tick or save and go on (the tick counter moves first, so a failure never retries in a hot loop).
+
+### [2026-10-03] finding — the published traits predict Friday's dealer limits within 5 % (N19)
+Limit ≈ list × (1 + 0.25 × (shrewdness − generosity)): Abuela uncommon 22 (fills p50 22.5), packs 23 (21-22), Chato
+uncommon 30 (29-30), rare 89 (89.5-90.5). Opening ≈ list × (1.12 + 0.17 × shrewdness). The patience trait barely
+moves the bids before a final (4-6 for both). Replayed on Friday's threads (tests/test_persona_replay.py), the trait
+prior's ladder scores the same share as the learned one (Abuela uncommon 0.402 = 0.402, packs 0.471 vs 0.465, Chato
+uncommon 0.467 = 0.467, rare 0.476 vs 0.467). Step 1 beat step 2 on Abuela (0.40 vs 0.33).
