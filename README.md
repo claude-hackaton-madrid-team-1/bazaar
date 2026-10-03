@@ -928,14 +928,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+- [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
 - [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
 - [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
 - [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
-- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -346,3 +346,15 @@ for the rounded `t_hours`); an unknown created tick books no refund in the windo
 `DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
 real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
 address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.
+
+### [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
+All 1,024 dealer offers in the captured feed have `expires_tick - created_tick = 2` (security audit of #72).
+After a kill-switch hold of 2+ ticks there is no standing ask, and `decide()` bid up to her OPENING ask, which
+she took (a deal that scores nothing). Fix: `Negotiation.bid_cap()` keeps a bid below her opening until she
+came down; with no bid left below it, we walk and reopen lower.
+
+### [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+Fail safe but costly: at 30 s ticks a bid cancelled more than ~30 min after it was posted gets a refund dated
+outside the hour while its spend still counts (at 15 s, after ~15 min), so repriced bids can eat the 150 cap.
+The exact fix is to date the refund at the matching spend row's `t_hours` (a ledger lookup by offer id);
+left for after #62's ledger rewrite lands.
