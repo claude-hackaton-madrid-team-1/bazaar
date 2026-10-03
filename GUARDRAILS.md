@@ -28,6 +28,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `block_buying_held_cards` = true — never buy a page card we already hold; duplicates are worth 0.25× or less to us.
 - `holdings_from_db` = false — true: answer /me from the shared Postgres snapshot while it is provably current (same tick, no write of ours since, no thread message this tick, young enough). Ships false (every reader calls /api/me itself; snapshots are still written) until 15+ minutes of live snapshots are proven fresh against /api/me; the flip to true is its own one-line PR.
 - `holdings_max_age_s` = 5.0 — a snapshot older than this is never a decision input, whatever else holds: it bounds what we cannot see coming (a dealer accepting our standing bid between two of our sends).
+- `protect_page_sets` = RET,CHA — never sell (list, or accept a bid with) our only copy of a page card of these sets: the new pages (El Retiro Saturday, Chamberí Sunday) need every card we pull, and nobody can price them yet; a duplicate may still be sold; `none` turns it off.
 
 ## Ticks and limits
 - `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker never accepts).
