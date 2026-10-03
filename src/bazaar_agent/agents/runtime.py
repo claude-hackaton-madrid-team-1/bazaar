@@ -291,7 +291,8 @@ class Recorder:
         from bazaar_agent.sdk import BazaarError
 
         try:
-            response = call()
+            with tm.tool_span(method, {"bazaar.agent": self.agent, "bazaar.decision.id": decision_id}):
+                response = call()
         except BazaarError as e:
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")

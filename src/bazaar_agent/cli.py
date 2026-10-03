@@ -467,7 +467,8 @@ def duel_run(
         said: str | None = None
         try:
             if move.kind == "accept":
-                client.duel_accept(did)
+                with duel_traces.tool(did, "duel_accept"):
+                    client.duel_accept(did)
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
@@ -477,7 +478,8 @@ def duel_run(
                 if time.monotonic() > send_by:
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
                     return "expired"
-                client.duel_say(did, said, price=move.price, days=move.days)
+                with duel_traces.tool(did, "duel_say"):
+                    client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
             duel_traces.sent(did, move, said)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
@@ -610,7 +612,7 @@ def duel_run(
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
     console.print(f"duels → {log_path} + Postgres duels ({mode})")
     try:
-        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
+        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick, agent=True), max_ticks=max_ticks or None)
     finally:
         duel_traces.close("stopped")
         decisions.close()
@@ -1337,7 +1339,9 @@ def _run_agent(
     log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
     try:
         read_clock = watched_clock(team.clock, name, log, hub)
-        run_per_tick(read_clock, traces.per_tick(f"{name} tick", agent.on_tick), max_ticks=max_ticks or None)
+        run_per_tick(
+            read_clock, traces.per_tick(f"{name} tick", agent.on_tick, agent=True), max_ticks=max_ticks or None
+        )
     finally:
         decisions.close()
 

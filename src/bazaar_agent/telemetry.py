@@ -16,12 +16,14 @@ Attribute names follow OpenInference (`openinference.span.kind`, `input.value`, 
 from __future__ import annotations
 
 import atexit
+import contextvars
 import io
 import json
 import logging
 import os
 import re
 import sys
+import time
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -64,6 +66,10 @@ KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
 AGENT = OpenInferenceSpanKindValues.AGENT.value
 CHAIN = OpenInferenceSpanKindValues.CHAIN.value
 GUARDRAIL = OpenInferenceSpanKindValues.GUARDRAIL.value
+EVALUATOR = OpenInferenceSpanKindValues.EVALUATOR.value
+TOOL = OpenInferenceSpanKindValues.TOOL.value
+LLM = OpenInferenceSpanKindValues.LLM.value
+SESSION = SpanAttributes.SESSION_ID
 INPUT = SpanAttributes.INPUT_VALUE
 INPUT_MIME = SpanAttributes.INPUT_MIME_TYPE
 OUTPUT = SpanAttributes.OUTPUT_VALUE
@@ -73,7 +79,12 @@ JSON_MIME = "application/json"
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _SECRET_NAME = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD)\Z", re.IGNORECASE)
 _TEAM_KEY = re.compile(r"\btk-[A-Za-z0-9_-]{6,}")
+# A private number (our limit, cost, value, ceiling) next to its name, in prose, a repr or JSON: cut out by pattern.
+_PRIVATE_NUMBER = re.compile(
+    r"(\b\w*(?:limit|max|cost|value|worth|floor)\w*\b[\"']?\s*[:=]?\s*)-?\d+(?:\.\d+)?", re.IGNORECASE
+)
 _LOG = logging.getLogger(__name__)
+_SESSION: contextvars.ContextVar[str | None] = contextvars.ContextVar("bazaar_session", default=None)
 
 type SpanValue = str | bool | int | float | list[str] | list[int]
 
@@ -257,11 +268,17 @@ def shutdown_tracing() -> None:
 
 def scrub(text: str) -> str:
     """DB passwords cut out (`pgconn.redact`: libpq can echo one), our secret values and team-key
-    shapes cut out, then the Jev masking."""
+    shapes cut out, then the Jev masking. Used by the audit tables too, so it keeps our numbers."""
     text = redact_db_passwords(text, _RT.database_url)
     for secret in _RT.secrets:
         text = text.replace(secret, JEV_REDACTION)
     return mask_text(_TEAM_KEY.sub(JEV_REDACTION, text))
+
+
+def scrub_for_span(text: str) -> str:
+    """`scrub`, and a number named like a limit, cost or value is cut out too: our private numbers must not
+    reach Phoenix in a console line, a log string or a decision line."""
+    return scrub(_PRIVATE_NUMBER.sub(lambda m: m.group(1) + JEV_REDACTION, text))
 
 
 def _is_int(value: object) -> bool:
@@ -277,13 +294,13 @@ def attributes(values: Mapping[str, object]) -> dict[str, SpanValue]:
         if isinstance(value, bool | int | float):
             out[key] = value
         elif isinstance(value, str):
-            out[key] = scrub(value)
+            out[key] = scrub_for_span(value)
         elif isinstance(value, list | tuple) and all(_is_int(v) for v in value):
             out[key] = [int(v) for v in value]
         elif isinstance(value, list | tuple) and all(isinstance(v, str) for v in value):
-            out[key] = [scrub(v) for v in value]
+            out[key] = [scrub_for_span(v) for v in value]
         else:
-            out[key] = scrub(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+            out[key] = scrub_for_span(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
     return out
 
 
@@ -301,26 +318,70 @@ def _start(name: str, kind: str, values: Mapping[str, object] | None, root: bool
     from opentelemetry.context import Context
 
     return _RT.tracer.start_span(
-        name, context=Context() if root else None, attributes=attributes({KIND: kind, **(values or {})})
+        name, context=Context() if root else None, attributes=attributes({KIND: kind, **_in_session(values)})
     )
+
+
+def _in_session(values: Mapping[str, object] | None) -> dict[str, object]:
+    """`values` plus the session of the block we are in (an explicit `session.id` wins)."""
+    session = _SESSION.get()
+    return {**({SESSION: session} if session else {}), **(values or {})}
+
+
+def current_session() -> str | None:
+    return _SESSION.get()
+
+
+@contextmanager
+def session_scope(session_id: str | None) -> Iterator[None]:
+    """Spans started in the block carry `session.id` (contextvars: worker threads that copy the context too)."""
+    if not session_id:
+        yield
+        return
+    token = _SESSION.set(session_id)
+    try:
+        yield
+    finally:
+        _SESSION.reset(token)
 
 
 @contextmanager
 def span(
-    name: str, kind: str = CHAIN, values: Mapping[str, object] | None = None, *, root: bool = False
+    name: str,
+    kind: str = CHAIN,
+    values: Mapping[str, object] | None = None,
+    *,
+    root: bool = False,
+    session: str | None = None,
 ) -> Iterator[Span]:
-    """A span made current for the block (a child of the current one unless `root`). Off: a no-op
-    span. An exception from the block is recorded (scrubbed, with its stack) and re-raised."""
-    started = _start(name, kind, values, root)
-    if started is None:
-        yield trace.INVALID_SPAN
-        return
-    with trace.use_span(started, end_on_exit=True, record_exception=False, set_status_on_exception=False):
+    """A span made current for the block (a child of the current one unless `root`), in `session` when
+    given. Off: a no-op span. An exception from the block is recorded (scrubbed, with its stack) and
+    re-raised."""
+    with session_scope(session):
+        started = _start(name, kind, values, root)
+        if started is None:
+            yield trace.INVALID_SPAN
+            return
+        with trace.use_span(started, end_on_exit=True, record_exception=False, set_status_on_exception=False):
+            try:
+                yield started
+            except BaseException as exc:
+                record_failure(started, exc)
+                raise
+
+
+@contextmanager
+def tool_span(name: str, values: Mapping[str, object] | None = None, *, session: str | None = None) -> Iterator[Span]:
+    """A TOOL span for one request sent to the game: method, `bazaar.ok`, the error code when refused.
+    No request body and no price: what was sent is in the `decisions` and `executions` tables."""
+    with span(f"tool {name}", TOOL, {"tool.name": name, **(values or {})}, session=session) as current:
         try:
-            yield started
+            yield current
         except BaseException as exc:
-            record_failure(started, exc)
+            code = getattr(exc, "code", None)
+            set_attributes(current, {"bazaar.ok": False, "bazaar.error.code": code if isinstance(code, str) else None})
             raise
+        set_attributes(current, {"bazaar.ok": True})
 
 
 @never_raise
@@ -358,32 +419,39 @@ def record_failure(target: Span, exc: BaseException) -> None:
             }
         ),
     )
-    target.set_status(Status(StatusCode.ERROR, scrub(f"{type(exc).__name__}: {exc}")[:300]))
+    target.set_status(Status(StatusCode.ERROR, scrub_for_span(f"{type(exc).__name__}: {exc}")[:300]))
 
 
 @never_raise
 def record_jev(result: JudgeResult, question: str) -> None:
-    """A `jev_verdict` event on the current span: verdict, value, probabilities, latency, model."""
+    """An EVALUATOR span for one Jev call, a child of the current span and backdated by its latency:
+    question, verdict, value, threshold, probabilities, latency, model. The masked state Jev saw is NOT
+    recorded: it holds our limits and values."""
     verdict = result.verdicts.get(question)
-    if verdict is None:
+    if verdict is None or _RT.tracer is None:
         return
-    event(
-        "jev_verdict",
-        {
-            "question": question,
-            "verdict": verdict.verdict,
-            "decided": verdict.decided,
-            "value": verdict.value,
-            "value_kind": verdict.value_kind,
-            "threshold": verdict.threshold,
-            "leaning": verdict.leaning,
-            "margin": verdict.margin,
-            "reason": verdict.reason,
-            "probabilities": dict(verdict.probabilities) if verdict.probabilities is not None else None,
-            "latency_ms": result.latency_ms,
-            "model": result.model,
-        },
-    )
+    ended = time.time_ns()
+    started = ended - int(max(0, result.latency_ms) * 1_000_000)
+    probabilities = dict(verdict.probabilities) if verdict.probabilities is not None else None
+    values = {
+        KIND: EVALUATOR,
+        INPUT: question,
+        OUTPUT: verdict.verdict,
+        "bazaar.jev.question": question,
+        "bazaar.jev.verdict": verdict.verdict,
+        "bazaar.jev.decided": verdict.decided,
+        "bazaar.jev.value": verdict.value,
+        "bazaar.jev.value_kind": verdict.value_kind,
+        "bazaar.jev.threshold": verdict.threshold,
+        "bazaar.jev.leaning": verdict.leaning,
+        "bazaar.jev.margin": verdict.margin,
+        "bazaar.jev.reason": verdict.reason,
+        "bazaar.jev.probabilities": probabilities,
+        "bazaar.jev.latency_ms": result.latency_ms,
+        "bazaar.jev.model": result.model,
+    }
+    jev_span = _RT.tracer.start_span(f"jev {question}", start_time=started, attributes=attributes(_in_session(values)))
+    jev_span.end(end_time=ended)
 
 
 @never_raise

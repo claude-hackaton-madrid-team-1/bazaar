@@ -24,6 +24,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from bazaar_agent import telemetry as tm
 from bazaar_agent.agents.duelist import (
     DuelMove,
     duel_deadline,
@@ -366,6 +367,12 @@ class DuelOutcomes:
 # ---------------------------------------------------------------- the player's Jev
 
 
+def _in_duel_session(did: int, fn: JevFn, state: dict[str, Any]) -> JevAdvice:
+    """One Jev call inside the duel's trace session, so its EVALUATOR span groups with that duel."""
+    with tm.session_scope(f"duel:{did}"):
+        return fn(state)
+
+
 class DuelJev:
     """Asks Jev about every live duel at once each tick and returns each duel's chosen move."""
 
@@ -457,7 +464,8 @@ class DuelJev:
             return []
         pool = ThreadPoolExecutor(max_workers=len(todo), thread_name_prefix="duel-jev")
         futures: list[Future[JevAdvice]] = [
-            pool.submit(contextvars.copy_context().run, fn, state) for _, _, fn, state, _ in todo
+            pool.submit(contextvars.copy_context().run, _in_duel_session, did, fn, state)
+            for did, _, fn, state, _ in todo
         ]
         wait(futures, timeout=max(0.0, left()))
         pool.shutdown(wait=False, cancel_futures=True)
