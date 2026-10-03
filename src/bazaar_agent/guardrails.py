@@ -948,6 +948,10 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
+        named = [c.ref if (c := ctx.cards.copy(a)) is not None else None for a in action.assets]
+        if named != refs:
+            v.append(f"the Workshop's copies {list(action.assets)} are not the cards {refs} in our /me")
     if not v and rules.max_score_loss_per_move > 0 and not ctx.ranking:
         v.extend(_taller_impact(action, refs, ctx, rules))
     return v

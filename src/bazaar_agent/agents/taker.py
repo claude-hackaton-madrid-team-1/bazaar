@@ -97,7 +97,7 @@ from bazaar_agent.agents.seller import (
 from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.taller import LEVEL_ID as TALLER_LEVEL
-from bazaar_agent.agents.taller import action_item, craft, free_counts, pulled, rank_triples
+from bazaar_agent.agents.taller import action_item, craft, free_counts, pulled, rank_triples, sell_thread_assets
 from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving
 from bazaar_agent.agents.trickster import note as forgiving_note
@@ -699,12 +699,12 @@ class Taker:
         taken = {p.swap.thread_id for p in run.accepted if p.swap is not None}
 
         def converse() -> list[SwapAccept]:
-            self.team_desk.converse(view, taken)
+            self.team_desk.converse(run.team_view or view, taken)  # the Workshop may have promised copies
             return []
 
+        self._workshop(run, threads)  # before the team desk posts: a crafted copy is never also promised in a swap
         self._team_desk("converse", converse)
         self._open_pack(run, market)
-        self._taller(run)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
@@ -960,24 +960,36 @@ class Taker:
 
     # ------------------------------------------------------------ (d) the Workshop (taller, SA1)
 
-    def _taller(self, run: _TickRun) -> None:
+    def _workshop(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
+        """The Workshop step never costs the taker its tick (a malformed catalog or menu skips it)."""
+        try:
+            self._taller(run, threads)
+        except (BazaarError, LedgerUnavailable):
+            raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
+        except Exception as e:  # noqa: BLE001 — fail closed for the Workshop only
+            self.log(f"tick {run.snap.clock.tick} taker: Workshop skipped ({type(e).__name__})")
+
+    def _taller(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
         """At most one Workshop craft a tick (`agents/taller.py`), behind `taller_enabled`, and only once the news
         sentinel's last `/api/levels` read shows the level active (`level_watch`: no request of ours). Free spares
-        only: copies an open offer of ours gives, or a sell of this or the last tick may still take, are never in.
-        A triple kept back is recorded once; the next tick re-reads /me (album first)."""
-        clock = run.snap.clock
+        only. Busy, never crafted: a copy an open offer of ours gives (board, thread, a swap accepted this tick), a
+        copy a sell thread of ours is about, every copy of a card a live team-desk talk may give, and every copy of a
+        card with an accept of this or the last tick (the maker's dealer sells reserve the card ref). It runs before
+        the team desk posts, and the crafted copies are then promised in this tick's offers, so the desk never gives
+        one. A triple kept back is recorded once; the next tick re-reads /me (album first)."""
+        clock, us = run.snap.clock, run.snap.us
         if not self.rules.taller_enabled or self.news is None or self.news.levels.active(TALLER_LEVEL) is not True:
             return
         if clock.tick < self._taller_rest_until:
             return
         self._crafts = [h for h in self._crafts if h > clock.t_hours - 1.0]
-        sold = {
-            int(item[5:])
-            for t in (clock.tick - 1, clock.tick)
-            for item in self.ledger.accept_items(t)
-            if item.startswith("sell:") and item[5:].isdigit()
-        }
-        busy = set(open_commitments(run.offers, run.snap.us).listed) | sold
+        items = [item for t in (clock.tick - 1, clock.tick) for item in self.ledger.accept_items(t)]
+        sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
+        refs = {item for item in items if ":" not in item and "-" in item}  # a card accepted: its copies may move
+        refs |= {talk.trade.refs[0] for talk in self.team_desk.talks.values() if talk.trade.refs}
+        held = [a for a in run.snap.me.get("assets") or [] if isinstance(a, dict) and isinstance(a.get("id"), int)]
+        busy = set(open_commitments(run.offers, us).listed) | sold | sell_thread_assets(threads)
+        busy |= {int(a["id"]) for a in held if str(a.get("ref")) in refs}
         triples = rank_triples(run.snap.me, run.snap.catalog, run.snap.dealers, busy)
         if not triples:
             return
@@ -1018,6 +1030,11 @@ class Taker:
             self._taller_rest_until = clock.tick + 10
             return
         self._crafts.append(clock.t_hours)  # a craft that may have landed counts toward the hour (fail safe)
+        gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
+                for s in t.spares]}}  # fmt: skip
+        run.offers.append(gone)  # later checks this tick (the team desk's posts too) never give a crafted copy
+        if run.team_view is not None and run.team_view.offers is not run.offers:
+            run.team_view = replace(run.team_view, offers=[*run.team_view.offers, gone])
         self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
 
     # ------------------------------------------------------------ (b) the dealer desk

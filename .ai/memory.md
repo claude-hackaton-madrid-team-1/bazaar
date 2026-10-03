@@ -1152,3 +1152,10 @@ deadline tick, so the floor (progress 1.0) was never sent: in Duels I our last s
 our limit. Compressing the curve to end earlier (#215 first cut) also lowered D − 3/D − 2, the ticks every Duels I
 silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
 `duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.
+
+### [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+Every copy of a card in /me carries the same `your_value`, so the team desk's `desk_copy` (cheapest, then lowest id)
+and the Workshop's kept copy (most valued, then lowest id) are the same asset: a swap posted in the tick gives #1 while
+the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
+every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
+crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.
