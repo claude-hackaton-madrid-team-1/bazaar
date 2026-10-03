@@ -254,15 +254,17 @@ create index if not exists cards_set on cards (set_code, rarity);
 -- Our /api/me as our processes read it: one row per team and game tick (the server's tick in /me). A
 -- row is a decision input only while it is provably current (holdings.py: same tick, same epoch, young,
 -- no thread message of ours this tick); otherwise the reader calls /api/me and upserts the newer view.
+-- `world` is "real" or "sim:<host:port>": a simulator's tick and team ids (sim-team1 is t01 too) never
+-- answer for the real game, even in a shared database.
 create table if not exists me_snapshots (
-  team text not null, tick int not null, epoch bigint not null, digest text not null,
+  world text not null, team text not null, tick int not null, epoch bigint not null, digest text not null,
   read_at timestamptz not null, read_by text not null,
   cash int, level int, cards jsonb, duplicates jsonb, packs jsonb, pages jsonb, affinity jsonb,
   score jsonb, me jsonb not null,
-  primary key (team, tick));
+  primary key (world, team, tick));
 -- The version every state-changing send of ours bumps, before and after it goes (`sdk.TrackedBazaar`):
--- a snapshot read under an older epoch is stale. One scope ('us') for every team in the database: a
--- send may only ever invalidate more, never less. `thread_message_at` is our last thread message: a dealer
+-- a snapshot read under an older epoch is stale. One scope per world (every team of that world): a send
+-- may only ever invalidate more, never less. `thread_message_at` is our last thread message: a dealer
 -- may still answer and accept it, so a snapshot of that tick is not trusted.
 create table if not exists holdings_state (
   scope text primary key, epoch bigint not null default 0, written_at timestamptz,

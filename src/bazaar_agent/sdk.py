@@ -74,5 +74,5 @@ def team_client(settings: Settings, *, track: bool = True) -> Bazaar:
     every send bumps the shared holdings epoch (`holdings.process_tracker`), for every process alike."""
     from bazaar_agent import holdings
 
-    hook = holdings.process_tracker() if track else None
+    hook = holdings.process_tracker(settings) if track else None
     return TrackedBazaar(settings.bazaar_url, settings.require_team_key(), on_write=hook, wait_on_tick=False, retries=2)

@@ -33,7 +33,7 @@ def no_shared_holdings_db():
 
     saved = dict(holdings._PROCESS)
     holdings._PROCESS.clear()
-    holdings._PROCESS.update({"name": "pytest", "db": holdings.SharedDb(None)})
+    holdings._PROCESS.update({"name": "pytest", "db": holdings.SharedDb(None), "writer_db": holdings.SharedDb(None)})
     yield
     holdings._PROCESS.clear()
     holdings._PROCESS.update(saved)

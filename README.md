@@ -266,13 +266,21 @@ payload). The others answer from that row **only while it is provably current**:
 |---|---|---|
 | tick | it was read in the reader's current game tick (the server's `tick` in `/me`, exactly) | live read |
 | epoch | no send of ours, from any process, started or finished since it was read: every request that can move cards or cash bumps `holdings_state.epoch` before it goes and after it returns (`sdk.TrackedBazaar`, in every `team_client()`; duel moves and flags move nothing) | live read |
-| calm | no thread message of ours went out this tick (a dealer may still answer and accept, and that settles at once) | live read |
+| calm | no thread message of ours went out this tick (conservative: Friday's feed shows dealer answers and their settlements at the tick boundary, 27 of 27) | live read |
 | age | it is younger than `holdings_max_age_s` (GUARDRAILS.md, 5 s): the backstop for what we cannot see coming | live read |
 
-Any doubt is a live read (and every live read is stored): Postgres down, no clock, team id not known
-yet, a row that does not validate, a lock wait over 3 s. One reader at a time reads `/me` for the team
+The row must also match itself (its payload names our team, its tick and its digest), and it belongs to
+one **world**: `real`, or `sim:<host:port>` for a simulator (whose `sim-team1` is `t01` too), so a
+simulator never answers for the game even in a shared database; a simulator writes the world-less tables
+(`cards`, the evals' `snapshots`) only in a database of its own (`BAZAAR_SIM_DATABASE_URL`).
+
+Any doubt is a live read (and every live read is stored): Postgres not connected yet, no clock, a clock
+less than 1 s from its tick's end, team id not known yet, a row that does not match, a send of this
+process whose bump was lost, a lock wait over 3 s. One reader at a time reads `/me` for the team
 (`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two. After a deal
-(our accept, or a dealer thread that ended in a deal) the acting agent bumps the epoch and re-reads `/me`.
+(our accept, or a dealer thread that ended in a deal) the acting agent books it, bumps the epoch and
+re-reads `/me`. **Nothing here delays a send**: the write tracker has its own connection, opened in a
+background thread, never inline, and waits at most 0.2 s for it (a lost bump is caught up by the next one).
 `holdings_from_db = false` in GUARDRAILS.md turns the shared answers off (snapshots are still written).
 
 ```sh

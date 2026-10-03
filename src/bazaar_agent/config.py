@@ -63,6 +63,7 @@ class Settings(BaseModel):
     claude_code_oauth_token: SecretStr | None = None  # `claude setup-token`: Claude models on the subscription
     llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
+    sim_database: bool = False  # BAZAAR_SIM_DATABASE_URL is the database: one of the simulator's own
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
 
@@ -198,6 +199,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
     sim_db = data.pop("database_url_sim")
     if sim_db and simulated:
         data["database_url"] = sim_db
+        data["sim_database"] = True
     return Settings.model_validate(data)
 
 

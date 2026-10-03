@@ -51,9 +51,13 @@ key's 5 req/s, so the shared snapshot cuts `/api/me` calls without ever deciding
 - GUARDRAILS.md: `holdings_from_db` (kill switch for the shared answers), `holdings_max_age_s`.
 
 ## Risks & assumptions
-- Highest risk: a stored snapshot served after a change we did not cause or see (a dealer accepting our
-  standing bid asynchronously). Mitigated by the calm rule (no cache in a tick with a thread message of
-  ours), the after-deal re-read, and the 5 s age backstop; `holdings_from_db = false` turns it off.
+- Highest risk: a stored snapshot served after a change we did not cause or see. Friday's feed shows dealer
+  answers and their settlements at the tick boundary (27/27, pr-reviewer on #105), which the tick rule covers;
+  the calm rule (no cache in a tick with a thread message of ours), the after-deal re-read and the 5 s age
+  are the backstops; `holdings_from_db = false` turns it off.
+- A send must never wait for the holdings: the tracker has its own connection, opened in the background,
+  and a 0.2 s lock budget (review of #105: the first version could hold a send for seconds).
+- A simulator sharing a database with the game: rows carry their world (review of #105).
 - A lost epoch bump (Postgres blip during a send) is bounded by the age backstop; the send itself is never
   blocked by the tracker.
 - One epoch for every team in the database: in a simulator database with several sim teams, a send by one

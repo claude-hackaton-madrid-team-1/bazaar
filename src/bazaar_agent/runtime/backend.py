@@ -183,7 +183,9 @@ class Backend:
                 if self._shared_holdings:
                     hd.name_process("mcp" if self.server else "runtime")
                     remember = partial(remember_team_id, self.settings.data_dir)
-                    self._holdings = hd.for_process(lambda: self.team.me(), self.rules, team=team, on_team=remember)
+                    self._holdings = hd.for_process(
+                        lambda: self.team.me(), self.rules, self.settings, team=team, on_team=remember
+                    )
                 else:
                     reader = "mcp" if self.server else "runtime"
                     self._holdings = hd.Holdings(
@@ -333,13 +335,16 @@ def holdings(b: Backend) -> dict[str, Any]:
 
 def cards(b: Backend, set_code: str | None = None, rarity: str | None = None, ref: str | None = None) -> dict[str, Any]:
     """The card catalog from Postgres (`cards`, kept by the agents and this server), else `/api/catalog`."""
-    from bazaar_agent import catalog_db
+    import psycopg
 
-    with b.holdings.shared.session() as conn:
+    from bazaar_agent import catalog_db
+    from bazaar_agent.holdings import READ_LOCK_TIMEOUT_S
+
+    with b.holdings.shared.session(READ_LOCK_TIMEOUT_S) as conn:
         if conn is not None:
             try:
                 rows = catalog_db.read_cards(conn, set_code, rarity, ref)
-            except Exception as e:  # the catalog is public: the live read below still answers
+            except psycopg.Error as e:  # the catalog is public: the live read below still answers
                 b.holdings.shared.failed(e)
                 rows = []
             if rows:

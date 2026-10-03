@@ -66,19 +66,36 @@ def test_a_payload_that_does_not_validate_is_never_parsed():
     assert hd.parse_me(None) is None
 
 
+ME_100 = {**ME, "tick": 100}
+
+
 def stored(**kw):
-    base = {"tick": 100, "epoch": 4, "digest": "d", "read_by": "maker", "me": deepcopy(ME), "age_s": 1.0,
-            "epoch_now": 4, "messaged": False}  # fmt: skip
+    me = kw.pop("me", deepcopy(ME_100))
+    parsed = hd.parse_me(me)
+    base = {"tick": 100, "epoch": 4, "digest": hd.digest(parsed) if parsed else "d", "read_by": "maker", "me": me,
+            "age_s": 1.0, "epoch_now": 4, "messaged": False}  # fmt: skip
     return Stored(**{**base, **kw})
 
 
 def test_the_verdict_names_the_first_rule_a_snapshot_breaks():
-    assert hd.verdict(None, 5.0) == "no snapshot this tick"
-    assert hd.verdict(stored(), 5.0) == "fresh"
-    assert hd.verdict(stored(epoch_now=5), 5.0) == "a write of ours since it was read"
-    assert hd.verdict(stored(messaged=True), 5.0) == "a thread message of ours this tick"
-    assert hd.verdict(stored(age_s=5.5), 5.0) == "older than 5 s"
-    assert hd.verdict(stored(me={"id": "nobody"}), 5.0) == "stored payload unreadable"
+    assert hd.verdict(None, "t01", 5.0) == "no snapshot this tick"
+    assert hd.verdict(stored(), "t01", 5.0) == "fresh"
+    assert hd.verdict(stored(epoch_now=5), "t01", 5.0) == "a write of ours since it was read"
+    assert hd.verdict(stored(messaged=True), "t01", 5.0) == "a thread message of ours this tick"
+    assert hd.verdict(stored(age_s=5.5), "t01", 5.0) == "older than 5 s"
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        stored(me={"id": "nobody"}),  # does not validate
+        stored(me={**ME_100, "id": "t07"}),  # another team's payload under our key
+        stored(me={**ME_100, "tick": 1}),  # its payload says another tick
+        stored(digest="forged"),  # the digest does not match the payload
+    ],
+)
+def test_a_row_that_does_not_match_itself_is_never_served(row):
+    assert hd.verdict(row, "t01", 5.0) == "stored row does not match itself"
 
 
 def test_into_tick_counts_from_the_tick_start_with_slack():
@@ -101,8 +118,9 @@ def test_without_postgres_every_read_is_live_and_says_why():
     reads = Reads()
     h = Holdings(reads, SharedDb(None), reader="taker", rules=Guardrails(), team="t01")
     read = h.me(clock())
-    assert (read.source, read.why, read.tick, read.epoch, reads.calls) == ("live", "postgres unavailable", 100, None, 1)
-    assert read.line() == "/me live (postgres unavailable)"
+    why = "postgres busy or not connected"
+    assert (read.source, read.why, read.tick, read.epoch, reads.calls) == ("live", why, 100, None, 1)
+    assert read.line() == f"/me live ({why})"
     assert h.counts["live"] == 1 and h.counts["db"] == 0
 
 
@@ -114,6 +132,23 @@ def test_no_clock_unknown_team_or_the_kill_switch_read_live():
     assert unknown.team == "t01"  # learned from /me: the next read may use the database
     off = Holdings(reads, SharedDb(None), reader="t", rules=Guardrails(holdings_from_db=False), team="t01")
     assert off.me(clock()).why == "holdings_from_db = false"
+
+
+def test_a_clock_about_to_end_its_tick_or_a_lost_bump_reads_live():
+    h = Holdings(Reads(), SharedDb(None), reader="t", rules=Guardrails(), team="t01")
+    assert h.me(clock(next_tick_in=0.5)).why == "the tick is about to end"
+    assert h.me(clock(next_tick_in=3.0), clock_read_at=h._now() - 2.5).why == "the tick is about to end"
+    tracker = hd.WriteTracker(SharedDb(None), "taker")
+    tracker("POST", "/api/offers/9/accept", "before")  # no connection: the bump is lost
+    lost = Holdings(Reads(), SharedDb(None), reader="t", rules=Guardrails(), team="t01", tracker=tracker)
+    assert tracker.missed and lost.me(clock()).why == "a send of ours was not recorded"
+
+
+def test_key_shaped_values_are_redacted_wherever_they_sit():
+    raw = {**ME_100, "venue": {"broker": "bk_live_SECRET_000", "name": "v"}, "badges": ["tk-team1-abcdef01"]}
+    clean = hd.without_secrets(raw)
+    assert clean["venue"] == {"broker": "[redacted]", "name": "v"} and clean["badges"] == ["[redacted]"]
+    assert clean["assets"] == ME["assets"]
 
 
 def test_no_key_shaped_field_is_ever_answered():
@@ -221,9 +256,76 @@ def test_the_write_tracker_without_postgres_counts_a_failure_and_returns():
 
 
 def test_naming_the_process_renames_its_tracker():
-    tracker = hd.process_tracker()
+    from bazaar_agent.config import Settings
+
+    tracker = hd.process_tracker(Settings())
     hd.name_process("maker")
-    assert tracker.writer == "maker" and hd.process_tracker() is tracker
+    assert tracker.writer == "maker" and hd.process_tracker(Settings()) is tracker and tracker.world == "real"
+
+
+def test_the_world_keeps_a_simulator_apart_from_the_game():
+    from bazaar_agent.config import LOCAL_SIM_URL, Settings
+
+    assert hd.scope_of(Settings()) == hd.Scope("real", True)
+    sim = hd.scope_of(Settings(simulated=True, bazaar_url=LOCAL_SIM_URL))
+    assert sim.world == "sim:127.0.0.1:8765" and not sim.shared_tables  # no `cards` / evals rows in a shared db
+    own = hd.scope_of(Settings(simulated=True, bazaar_url=LOCAL_SIM_URL, sim_database=True))
+    assert own.shared_tables
+
+
+def test_the_write_tracker_never_waits_long_for_a_busy_connection():
+    import threading
+    import time
+
+    shared = SharedDb(None)
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with shared.session():
+            held.set()
+            release.wait(5)
+
+    threading.Thread(target=hold, daemon=True).start()
+    held.wait(2)
+    tracker = hd.WriteTracker(shared, "mcp")
+    started = time.monotonic()
+    tracker("POST", "/api/offers/9/accept", "before")
+    waited = time.monotonic() - started
+    release.set()
+    assert waited < hd.HOOK_LOCK_TIMEOUT_S + 0.15 and tracker.missed
+
+
+def test_a_background_connection_is_never_opened_by_the_caller():
+    import threading
+    import time
+
+    opened_in = []
+    ready = threading.Event()
+
+    class Conn:
+        closed = False
+        autocommit = False
+
+        def execute(self, *a):
+            return None
+
+    def connect():
+        opened_in.append(threading.current_thread().name)
+        ready.set()
+        return Conn()
+
+    shared = SharedDb(connect, inline=False)
+    with shared.session(0.2) as first:
+        assert first is None  # the caller got no connection and did not wait for one
+    assert ready.wait(2)
+    second = None
+    for _ in range(100):  # the background thread hands the connection over
+        with shared.session(0.2) as conn:
+            second = conn
+        if second is not None:
+            break
+        time.sleep(0.02)
+    assert second is not None and opened_in == ["holdings-connect"]
 
 
 # ---------------------------------------------------------------- the catalog
@@ -298,6 +400,24 @@ def spied_taker(tmp_path, team, public, live, config=None):
     t = Taker(team, public, live=live, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
               config=config or TakerConfig(max_dealer_threads=0), holdings=spy, **kw)  # fmt: skip
     return t, spy, lines
+
+
+def test_a_failed_re_read_after_an_accept_never_loses_the_books(tmp_path):
+    from http.client import IncompleteRead
+
+    from tests.agent_fakes import FakePublic, FakeTeam, ask
+
+    team = FakeTeam()
+    t, spy, lines = spied_taker(tmp_path, team, FakePublic(boards={"rastro": [ask(2, "LAV-08", 20, asset=901)]}), True)
+
+    def broken(clock, what):
+        raise IncompleteRead(b"")
+
+    spy.after_deal = broken
+    t.on_tick(clock())
+    assert team.sent == [("accept", 2)] and t.ledger.spent_since(0) == 22  # booked before the re-read
+    assert any("/me re-read after accept of offer 2 failed (IncompleteRead)" in line for line in lines)
+    assert any("taker: 1 accept candidate(s), 1 taken" in line for line in lines)  # the tick went on
 
 
 def test_the_taker_decides_from_the_holdings_and_re_reads_after_a_live_accept(tmp_path):

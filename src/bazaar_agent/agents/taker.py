@@ -631,13 +631,13 @@ class Taker:
             is None
         ):
             return True  # the reserved slot stays spent: an accept that may have landed is never retried
-        self._after_deal(run, f"accept of offer {p.offer_id}")
         if p.desk is not None:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
         else:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
             if p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
+        self._after_deal(run, f"accept of offer {p.offer_id}")  # after the books: a failed re-read loses nothing
         return True
 
     def _after_deal(self, run: _TickRun, what: str) -> None:
@@ -647,8 +647,9 @@ class Taker:
         tick = run.snap.clock.tick
         try:
             run.snap = run.snap.with_me(self.holdings.after_deal(run.snap.clock, what))
-        except BazaarError as e:
-            self.log(f"tick {tick} taker: /me re-read after {what} refused {e.code}; the next tick reads it")
+        except Exception as e:  # any failure (a refusal, a dropped connection): the next tick reads /me again
+            code = e.code if isinstance(e, BazaarError) else type(e).__name__
+            self.log(f"tick {tick} taker: /me re-read after {what} failed ({code}); the next tick reads it")
             return
         self.log(f"tick {tick} taker: {what}: {run.snap.holdings.line() if run.snap.holdings else '/me re-read'}")
 

@@ -15,7 +15,7 @@ import pytest
 from bazaar_agent import catalog_db
 from bazaar_agent import holdings as hd
 from bazaar_agent.guardrails import Guardrails
-from bazaar_agent.holdings import Holdings, SharedDb, WriteTracker
+from bazaar_agent.holdings import REAL, Holdings, Scope, SharedDb, WriteTracker
 from tests.agent_fakes import clock
 from tests.test_db import database_url, open_in, schema  # noqa: F401  (fixtures)
 from tests.test_strategy import CATALOG, ME
@@ -84,6 +84,49 @@ def test_the_stored_row_never_holds_the_broker_key(opener):
         (me,) = conn.execute("select me from me_snapshots where team = 't01'").fetchone()
         assert "starter_broker_key" not in me and "bk_live_SECRET_000" not in str(me)
     assert "starter_broker_key" not in reader(opener, game, "maker").me(clock(tick=TICK)).me
+
+
+def test_a_simulator_snapshot_never_answers_for_the_real_game(opener):
+    game = Game()
+    sim = Holdings(game.me, SharedDb(opener), reader="taker", rules=Guardrails(), team="t01",
+                   scope=Scope("sim:127.0.0.1:8765", False))  # fmt: skip
+    sim.me(clock(tick=TICK))  # sim-team1 is t01 too, at the same tick number
+    real = reader(opener, game, "mcp").me(clock(tick=TICK))
+    assert (real.source, real.why, game.calls) == ("live", "no snapshot this tick", 2)
+    with SharedDb(opener).session() as conn:
+        worlds = conn.execute("select world from me_snapshots order by world").fetchall()
+    assert worlds == [("real",), ("sim:127.0.0.1:8765",)]
+
+
+def test_a_simulator_in_a_shared_database_writes_no_world_less_table(opener):
+    game = Game()
+    sim = Holdings(game.me, SharedDb(opener), reader="taker", rules=Guardrails(), team="t01",
+                   scope=Scope("sim:127.0.0.1:8765", False))  # fmt: skip
+    sim.me(clock(tick=TICK))
+    with SharedDb(opener).session() as conn:
+        assert conn.execute("select count(*) from snapshots").fetchone() == (0,)
+        assert conn.execute("select count(*) from me_snapshots").fetchone() == (1,)
+
+
+def test_a_forged_row_is_never_a_decision_input(opener):
+    game = Game()
+    reader(opener, game).me(clock(tick=TICK))
+    with SharedDb(opener).session() as conn:
+        conn.execute("update me_snapshots set me = jsonb_set(me, '{cash}', '5000')")
+    forged = reader(opener, game, "maker").me(clock(tick=TICK))
+    assert (forged.source, forged.why, forged.me["cash"]) == ("live", "stored row does not match itself", ME["cash"])
+
+
+def test_a_lost_bump_is_caught_up_by_the_next_one(opener):
+    game = Game()
+    shared = SharedDb(opener)
+    reader(opener, game).me(clock(tick=TICK))
+    tracker = WriteTracker(shared, "taker")
+    tracker.missed = True  # a send went out while Postgres was away
+    tracker("POST", "/api/offers", "after")
+    with shared.session() as conn:
+        assert hd.current_epoch(conn, "real") == 2  # the catch-up bump plus this one
+    assert not tracker.missed
 
 
 def test_a_row_from_a_reset_world_never_hides_the_current_tick(opener):
@@ -181,12 +224,13 @@ def test_two_writers_in_one_tick_never_move_the_row_backwards(opener):
     shared = SharedDb(opener)
     newer = deepcopy({**ME, "tick": TICK, "cash": 380})
     with shared.session() as conn:
-        save(conn, parse_me(newer), newer, TICK, 5, "taker", 0.0)
-        save(conn, parse_me(ME), {**ME, "tick": TICK}, TICK, 4, "maker", 0.0)  # read under an older epoch
+        assert save(conn, REAL, parse_me(newer), newer, TICK, 5, "taker", 0.0)
+        old = {**ME, "tick": TICK}
+        assert not save(conn, REAL, parse_me(old), old, TICK, 4, "maker", 0.0)  # read under an older epoch
         row = conn.execute("select epoch, cash, read_by from me_snapshots where team = 't01' and tick = %s", (TICK,))
         assert row.fetchone() == (5, 380, "taker")
         evals = conn.execute("select cash from snapshots where tick = %s", (TICK,)).fetchone()
-        assert evals is not None
+        assert evals == (380,)  # the evals row follows the winning snapshot, never the older one
 
 
 def test_the_catalog_is_stored_and_never_rolls_back(opener):

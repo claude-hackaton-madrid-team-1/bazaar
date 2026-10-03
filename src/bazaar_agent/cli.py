@@ -257,10 +257,11 @@ def _holdings_read(settings: Settings, from_db: bool = True) -> Any:
     except BazaarError:
         clock = None  # unknown tick: a live read
     team_id = resolve_team_id(settings.team_id, settings.data_dir, None)
+    rules = _rules().rules
     if not from_db:
-        return hd.Holdings(team.me, SharedDb(None), reader="cli", rules=_rules().rules).me(clock)
+        return hd.Holdings(team.me, SharedDb(None), reader="cli", rules=rules, scope=hd.scope_of(settings)).me(clock)
     remember = partial(remember_team_id, settings.data_dir)
-    return hd.for_process(team.me, _rules().rules, team=team_id, on_team=remember).me(clock)
+    return hd.for_process(team.me, rules, settings, team=team_id, on_team=remember, inline=True).me(clock)
 
 
 def _team_read(read: Callable[[Any], Any]) -> Any:
@@ -1365,6 +1366,7 @@ def _run_agent(
         holdings=hd.for_process(
             team.me,
             rules,
+            settings,
             team=resolve_team_id(settings.team_id, settings.data_dir, None),
             on_team=partial(remember_team_id, settings.data_dir),
         ),

@@ -8,15 +8,21 @@ while it is provably current. A stored snapshot is a decision input only when AL
 1. tick  — it was read in the reader's current game tick (the server's `tick` in /me);
 2. epoch — no state-changing send of ours, from any process, started or finished since it was read
            (`holdings_state.epoch`, bumped before AND after every such send by `sdk.TrackedBazaar`);
-3. calm  — no thread message of ours went out this tick: a dealer may still answer and accept it,
-           and that settles at once;
+3. calm  — no thread message of ours went out this tick. Friday's feed shows a dealer's answer, and the
+           settlement of a deal, at the tick boundary (27 of 27), so this is the conservative case: an
+           answer inside the tick would settle at once;
 4. age   — it is younger than `holdings_max_age_s` (GUARDRAILS.md): the backstop for what we cannot
            see coming.
 
-Anything unknown is a live read: no Postgres, no clock, no team id yet, an unreadable row, a lock wait
-that timed out, or `holdings_from_db = false`. One process at a time reads `/me` for the team
-(`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two; every live
-read is upserted, so the table always holds the newest view any of our processes has seen.
+The row must also match itself (its payload names our team, its tick and its digest), and it belongs to
+one world ("real" or "sim:<host>"): a simulator never answers for the game. Anything unknown is a live
+read: no Postgres yet, no clock, a tick about to end, no team id yet, a row that does not match, a send of
+ours whose bump was lost, a lock wait that timed out, or `holdings_from_db = false`. One process at a
+time reads `/me` for the team (`pg_advisory_xact_lock`), so two agents that start a tick together make one
+call, not two; every live read is upserted, so the table holds the newest view any of our processes saw.
+
+Nothing here may delay a send: the write tracker has its own connection, never opens one inline (a
+background thread does), and waits at most `HOOK_LOCK_TIMEOUT_S` for it; readers never hold it.
 """
 
 from __future__ import annotations
@@ -33,11 +39,13 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import psycopg
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from bazaar_agent.catalog_db import CatalogSync, save_catalog
+from bazaar_agent.config import Settings
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.identity import valid_team_id
 from bazaar_agent.ticks import Clock
@@ -46,9 +54,11 @@ LOCK_TIMEOUT_MS = 3000  # wait this long for another process's /me read, then re
 STATEMENT_TIMEOUT_MS = 5000
 IDLE_IN_TX_TIMEOUT_MS = 20000  # a reader that hangs mid-read never holds the team's lock longer
 TICK_SLACK_S = 2.0  # a thread message this close before our clock's tick start still counts as this tick
+TICK_END_MARGIN_S = 1.0  # a clock this close to its tick's end is not trusted to name the current tick
 CONNECT_TIMEOUT_S = 3  # a laptop off the network answers live in 3 s, not the default 10
 RETRY_AFTER_S = 30.0  # Postgres unreachable: live reads only, for this long, before trying it again
-SCOPE = "us"  # one epoch for every team in the database: a write may only ever invalidate MORE
+HOOK_LOCK_TIMEOUT_S = 0.2  # the write tracker never holds a send longer than this
+READ_LOCK_TIMEOUT_S = 1.0  # another thread of this process is reading /me: read it live instead
 NO_HOLDINGS_EFFECT = ("/api/duels", "/api/flags")  # sends that move no card and no cash
 
 Source = Literal["db", "live"]
@@ -98,15 +108,23 @@ class MePayload(BaseModel):
 
 
 SECRET_FIELD = re.compile(r"key|token|secret|password", re.IGNORECASE)
+# Values shaped like a team key, a broker key or an API key, wherever they sit (`runtime.tools.KEY_SHAPES`).
+SECRET_VALUE = re.compile(
+    r"\b(?:tk-[A-Za-z0-9_-]{6,}|bk_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{16,}|[a-z][a-z0-9]{1,20}_(?:ak|bk)_[A-Za-z0-9_-]{8,})"
+)
+REDACTED = "[redacted]"
 
 
 def without_secrets(value: Any) -> Any:
     """`/api/me` carries `starter_broker_key` once our free stall exists: no field named like a key, token,
-    secret or password is ever stored or answered (read it from a live `team.me()` when you need it)."""
+    secret or password, and no value shaped like a key, is ever stored or answered (read the broker key
+    from a live `team.me()` when you need it)."""
     if isinstance(value, dict):
         return {k: without_secrets(v) for k, v in value.items() if not SECRET_FIELD.search(str(k))}
     if isinstance(value, list):
         return [without_secrets(v) for v in value]
+    if isinstance(value, str) and SECRET_VALUE.search(value):
+        return REDACTED
     return value
 
 
@@ -183,6 +201,28 @@ class MeRead:
         return f"/me live ({self.why})"
 
 
+# ---------------------------------------------------------------- which game, and what a process may write
+
+
+@dataclass(frozen=True)
+class Scope:
+    """`world` keys the snapshots and the epoch ("real", or "sim:<host:port>"). `shared_tables`: whether this
+    process may write the tables that have no world (the evals' `snapshots`, `cards`): the real game always,
+    a simulator only in a database of its own (BAZAAR_SIM_DATABASE_URL)."""
+
+    world: str = "real"
+    shared_tables: bool = True
+
+
+REAL = Scope()
+
+
+def scope_of(settings: Settings) -> Scope:
+    if not settings.simulator:
+        return REAL
+    return Scope(f"sim:{urlsplit(settings.bazaar_url).netloc or '?'}", settings.sim_database)
+
+
 # ---------------------------------------------------------------- SQL (plain, no ORM)
 
 
@@ -198,22 +238,23 @@ class Stored:
     messaged: bool
 
 
-def stored(conn: psycopg.Connection, team: str, tick: int, into_tick_s: float) -> Stored | None:
-    """The snapshot of `team` at exactly `tick`, with the state it is judged against. Exactly: a row from a
-    higher tick is a simulator world that was reset, or a reader whose clock lags (then it reads live)."""
+def stored(conn: psycopg.Connection, world: str, team: str, tick: int, into_tick_s: float) -> Stored | None:
+    """The snapshot of `team` at exactly `tick` in `world`, with the state it is judged against. Exactly: a row
+    from a higher tick is a simulator world that was reset, or a reader whose clock lags (it reads live)."""
     row = conn.execute(
         "select s.tick, s.epoch, s.digest, s.read_by, s.me, "
         "extract(epoch from clock_timestamp() - s.read_at)::float8, coalesce(h.epoch, 0), "
-        "coalesce(h.thread_message_at > clock_timestamp() - make_interval(secs => %s), false) "
-        "from me_snapshots s left join holdings_state h on h.scope = %s "
-        "where s.team = %s and s.tick = %s",
-        (into_tick_s, SCOPE, team, tick),
+        "coalesce(h.thread_message_at > clock_timestamp() - make_interval(secs => %(into)s), false) "
+        "from me_snapshots s left join holdings_state h on h.scope = s.world "
+        "where s.world = %(world)s and s.team = %(team)s and s.tick = %(tick)s",
+        {"into": into_tick_s, "world": world, "team": team, "tick": tick},
     ).fetchone()
     return Stored(*row) if row else None
 
 
-def verdict(row: Stored | None, max_age_s: float) -> str:
-    """'fresh', or why the stored snapshot is not a decision input (rules 2-4; rule 1 is the query's)."""
+def verdict(row: Stored | None, team: str, max_age_s: float) -> str:
+    """'fresh', or why the stored snapshot is not a decision input (rules 2-4, then the row's own integrity:
+    its payload names our team, its tick and its digest; rule 1 is the query's)."""
     if row is None:
         return "no snapshot this tick"
     if row.epoch != row.epoch_now:
@@ -222,17 +263,18 @@ def verdict(row: Stored | None, max_age_s: float) -> str:
         return "a thread message of ours this tick"
     if row.age_s > max_age_s:
         return f"older than {max_age_s:g} s"
-    if parse_me(row.me) is None:
-        return "stored payload unreadable"
+    me = parse_me(row.me)
+    if me is None or me.id != team or (me.tick is not None and me.tick != row.tick) or digest(me) != row.digest:
+        return "stored row does not match itself"
     return "fresh"
 
 
-def current_epoch(conn: psycopg.Connection) -> int:
-    row = conn.execute("select epoch from holdings_state where scope = %s", (SCOPE,)).fetchone()
+def current_epoch(conn: psycopg.Connection, world: str) -> int:
+    row = conn.execute("select epoch from holdings_state where scope = %s", (world,)).fetchone()
     return int(row[0]) if row else 0
 
 
-def bump(conn: psycopg.Connection, kind: WriteKind, what: str, writer: str) -> None:
+def bump(conn: psycopg.Connection, world: str, kind: WriteKind, what: str, writer: str) -> None:
     """A send of ours: every snapshot read before now is stale; a thread message also clouds this tick."""
     conn.execute(
         "insert into holdings_state (scope, epoch, written_at, thread_message_at, last_write, last_writer) "
@@ -241,67 +283,88 @@ def bump(conn: psycopg.Connection, kind: WriteKind, what: str, writer: str) -> N
         "written_at = excluded.written_at, "
         "thread_message_at = coalesce(excluded.thread_message_at, holdings_state.thread_message_at), "
         "last_write = excluded.last_write, last_writer = excluded.last_writer",
-        {"scope": SCOPE, "thread": kind == "thread", "what": what[:120], "writer": writer[:40]},
+        {"scope": world, "thread": kind == "thread", "what": what[:120], "writer": writer[:40]},
     )
 
 
-def save(conn: psycopg.Connection, me: MePayload, raw: dict[str, Any], tick: int, epoch: int, read_by: str,
-         latency_s: float) -> None:  # fmt: skip
-    """Upsert the snapshot (a newer epoch, or the same epoch read later, wins) and the evals' `snapshots` row."""
+def save(conn: psycopg.Connection, scope: Scope, me: MePayload, raw: dict[str, Any], tick: int, epoch: int,
+         read_by: str, latency_s: float) -> bool:  # fmt: skip
+    """Upsert the snapshot: a newer epoch, or the same epoch read later, wins; True when this row won. Only
+    then, and only when the scope may, the evals' `snapshots` row of the tick follows it."""
     s = summary(me)
-    conn.execute(
-        "insert into me_snapshots (team, tick, epoch, digest, read_at, read_by, cash, level, cards, duplicates, "
-        "packs, pages, affinity, score, me) values (%s, %s, %s, %s, clock_timestamp() - make_interval(secs => %s), "
-        "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (team, tick) do update set epoch = excluded.epoch, "
-        "digest = excluded.digest, read_at = excluded.read_at, read_by = excluded.read_by, cash = excluded.cash, "
-        "level = excluded.level, cards = excluded.cards, duplicates = excluded.duplicates, packs = excluded.packs, "
-        "pages = excluded.pages, affinity = excluded.affinity, score = excluded.score, me = excluded.me "
+    written = conn.execute(
+        "insert into me_snapshots (world, team, tick, epoch, digest, read_at, read_by, cash, level, cards, "
+        "duplicates, packs, pages, affinity, score, me) values (%s, %s, %s, %s, %s, "
+        "clock_timestamp() - make_interval(secs => %s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "on conflict (world, team, tick) do update set epoch = excluded.epoch, digest = excluded.digest, "
+        "read_at = excluded.read_at, read_by = excluded.read_by, cash = excluded.cash, level = excluded.level, "
+        "cards = excluded.cards, duplicates = excluded.duplicates, packs = excluded.packs, pages = excluded.pages, "
+        "affinity = excluded.affinity, score = excluded.score, me = excluded.me "
         "where excluded.epoch > me_snapshots.epoch "
         "or (excluded.epoch = me_snapshots.epoch and excluded.read_at >= me_snapshots.read_at)",
         (
-            me.id, tick, epoch, digest(me), latency_s, read_by, round(me.cash), me.level, json.dumps(s["cards"]),
-            json.dumps(s["duplicates"]), json.dumps(s["packs"]), json.dumps(s["pages"]), json.dumps(me.affinity),
-            json.dumps(me.score), json.dumps(raw),
+            scope.world, me.id, tick, epoch, digest(me), latency_s, read_by, round(me.cash), me.level,
+            json.dumps(s["cards"]), json.dumps(s["duplicates"]), json.dumps(s["packs"]), json.dumps(s["pages"]),
+            json.dumps(me.affinity), json.dumps(me.score), json.dumps(raw),
         ),
-    )  # fmt: skip
-    conn.execute(
-        "insert into snapshots (tick, cash, level, assets, album, score) values (%s, %s, %s, %s, %s, %s) "
-        "on conflict (tick) do update set cash = excluded.cash, level = excluded.level, "
-        "assets = excluded.assets, album = excluded.album, score = excluded.score",
-        (
-            tick,
-            round(me.cash),
-            me.level,
-            json.dumps(raw.get("assets")),
-            json.dumps(raw.get("album")),
-            json.dumps(me.score),
-        ),
-    )
+    ).rowcount == 1  # fmt: skip
+    if written and scope.shared_tables:
+        conn.execute(
+            "insert into snapshots (tick, cash, level, assets, album, score) values (%s, %s, %s, %s, %s, %s) "
+            "on conflict (tick) do update set cash = excluded.cash, level = excluded.level, "
+            "assets = excluded.assets, album = excluded.album, score = excluded.score",
+            (tick, round(me.cash), me.level, json.dumps(raw.get("assets")), json.dumps(raw.get("album")),
+             json.dumps(me.score)),
+        )  # fmt: skip
+    return written
 
 
-# ---------------------------------------------------------------- one connection per process
+# ---------------------------------------------------------------- connections that never hold up a send
 
 
 class SharedDb:
-    """A lazy autocommit connection for the holdings, reopened after a failure; None while Postgres is down.
-    One lock serialises every use: the MCP server answers tools from several threads."""
+    """A lazy autocommit connection, reopened after a failure; None while Postgres is down or busy.
 
-    def __init__(self, connect: Callable[[], psycopg.Connection] | None, now: Callable[[], float] = time.monotonic):
-        self._connect, self._now = connect, now
+    One lock serialises its use (the MCP server answers tools from several threads); `session(timeout)`
+    gives up after `timeout` and answers None. `inline=False`: the caller's thread never opens the
+    connection, a background thread does (`warm`), so no caller waits for a connect or the schema."""
+
+    def __init__(
+        self,
+        connect: Callable[[], psycopg.Connection] | None,
+        now: Callable[[], float] = time.monotonic,
+        *,
+        inline: bool = True,
+    ) -> None:
+        self._connect, self._now, self.inline = connect, now, inline
         self._conn: psycopg.Connection | None = None
         self._down_until = 0.0
+        self._warming = False
         self.lock = threading.RLock()
 
     @contextmanager
-    def session(self) -> Iterator[psycopg.Connection | None]:
-        with self.lock:
+    def session(self, timeout_s: float | None = None) -> Iterator[psycopg.Connection | None]:
+        if not self.lock.acquire(timeout=-1 if timeout_s is None else timeout_s):
+            yield None
+            return
+        try:
             yield self._get()
+        finally:
+            self.lock.release()
 
     def _get(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
             return self._conn
         if self._connect is None or self._now() < self._down_until:
             return None
+        if not self.inline:
+            self.warm()
+            return None
+        self._conn = self._open()
+        return self._conn
+
+    def _open(self) -> psycopg.Connection | None:
+        assert self._connect is not None
         try:
             conn = self._connect()
             conn.autocommit = True
@@ -311,8 +374,26 @@ class SharedDb:
             log.warning("holdings: Postgres unavailable (%s); /api/me is read live", type(e).__name__)
             self._down_until = self._now() + RETRY_AFTER_S
             return None
-        self._conn = conn
         return conn
+
+    def warm(self) -> None:
+        """Open the connection in a background thread, once at a time; nobody waits for it."""
+        if self._connect is None or self._warming or (self._conn is not None and not self._conn.closed):
+            return
+        self._warming = True
+        threading.Thread(target=self._warm, name="holdings-connect", daemon=True).start()
+
+    def _warm(self) -> None:
+        try:
+            conn = self._open()
+            with self.lock:
+                if conn is not None and (self._conn is None or self._conn.closed):
+                    self._conn, conn = conn, None
+            if conn is not None:
+                with contextlib.suppress(Exception):
+                    conn.close()
+        finally:
+            self._warming = False
 
     def failed(self, error: BaseException) -> None:
         log.warning("holdings: Postgres error (%s); reconnecting later", type(error).__name__)
@@ -324,32 +405,38 @@ class SharedDb:
 
 
 class WriteTracker:
-    """`on_write` for `sdk.TrackedBazaar`: bumps the epoch before a send goes and after it returns."""
+    """`on_write` for `sdk.TrackedBazaar`: bumps the epoch before a send goes and after it returns. On its own
+    connection, never opened inline, waited for at most HOOK_LOCK_TIMEOUT_S. A lost bump sets `missed`: this
+    process's reader then reads live, and the next bump that goes through bumps once more first."""
 
-    def __init__(self, shared: SharedDb, writer: str) -> None:
-        self.shared, self.writer = shared, writer
+    def __init__(self, shared: SharedDb, writer: str, world: str = REAL.world) -> None:
+        self.shared, self.writer, self.world = shared, writer, world
         self.bumps = 0
         self.failures = 0
+        self.missed = False
 
     def __call__(self, method: str, path: str, phase: str) -> None:
         kind = write_kind(method, path)
         if kind is None:
             return
-        with self.shared.session() as conn:
+        with self.shared.session(HOOK_LOCK_TIMEOUT_S) as conn:
             if conn is None:
-                self.failures += 1
+                self.failures, self.missed = self.failures + 1, True
                 return
             try:
-                bump(conn, kind, f"{method.upper()} {path} ({phase})", self.writer)
+                if self.missed:
+                    bump(conn, self.world, "trade", "catch-up: a bump of this process was lost", self.writer)
+                    self.missed = False
+                bump(conn, self.world, kind, f"{method.upper()} {path} ({phase})", self.writer)
             except psycopg.Error as e:
-                self.failures += 1
+                self.failures, self.missed = self.failures + 1, True
                 self.shared.failed(e)
                 return
         self.bumps += 1
 
 
-# One holdings connection per process, shared by the write tracker and the reader. Opened lazily, with
-# the schema applied once (`db.connect_ready`), so a CLI command that never writes never connects.
+# The per-process registry: one reader connection (schema applied once, `db.connect_ready`) and one writer
+# connection (plain `db.connect`) for the write tracker, both opened in the background.
 _PROCESS: dict[str, Any] = {"name": "bazaar"}
 
 
@@ -361,20 +448,31 @@ def name_process(name: str) -> None:
         tracker.writer = name
 
 
-def process_db() -> SharedDb:
+def process_db(inline: bool = False) -> SharedDb:
     shared = _PROCESS.get("db")
     if shared is None:
         from bazaar_agent import db
 
         shared = SharedDb(lambda: db.connect_ready(f"bazaar-holdings-{_PROCESS['name']}", CONNECT_TIMEOUT_S))
         _PROCESS["db"] = shared
+    shared.inline = shared.inline and inline
+    if not shared.inline:
+        shared.warm()
     return shared  # type: ignore[no-any-return]
 
 
-def process_tracker() -> WriteTracker:
+def process_tracker(settings: Settings) -> WriteTracker:
     tracker = _PROCESS.get("tracker")
     if tracker is None:
-        tracker = WriteTracker(process_db(), str(_PROCESS["name"]))
+        shared = _PROCESS.get("writer_db")
+        if shared is None:
+            from bazaar_agent import db
+
+            app = f"bazaar-writes-{_PROCESS['name']}"
+            shared = SharedDb(lambda: db.connect(app=app, connect_timeout_s=CONNECT_TIMEOUT_S), inline=False)
+            _PROCESS["writer_db"] = shared
+        tracker = WriteTracker(shared, str(_PROCESS["name"]), scope_of(settings).world)
+        shared.warm()  # open now, while the process reads: its first send finds the connection ready
         _PROCESS["tracker"] = tracker
     return tracker  # type: ignore[no-any-return]
 
@@ -382,23 +480,37 @@ def process_tracker() -> WriteTracker:
 def for_process(
     read_me: Callable[[], dict[str, Any]],
     rules: Guardrails,
+    settings: Settings,
+    *,
     team: str | None = None,
     on_team: Callable[[str], None] | None = None,
+    inline: bool = False,
 ) -> Holdings:
-    """The reader for this process, on the same connection as its write tracker, writing the catalog too.
+    """The reader for this process: its own connection (opened inline only for a one-shot CLI command), the
+    write tracker's `missed` flag, the catalog writer when the scope may write `cards`.
     `team`: our id when known (BAZAAR_TEAM_ID or `.local/team_id`); `on_team` caches one a live read learns."""
-    shared = process_db()
-    name = str(_PROCESS["name"])
-    return Holdings(read_me, shared, reader=name, rules=rules, team=team, catalog=catalog_sync(shared), on_team=on_team)
+    scope = scope_of(settings)
+    shared = process_db(inline)
+    return Holdings(
+        read_me,
+        shared,
+        reader=str(_PROCESS["name"]),
+        rules=rules,
+        team=team,
+        catalog=catalog_sync(shared) if scope.shared_tables else None,
+        on_team=on_team,
+        scope=scope,
+        tracker=process_tracker(settings),
+    )
 
 
 def catalog_sync(shared: SharedDb) -> CatalogSync:
     """`cards` written from a catalog this process already read; Postgres down = retried at the next read."""
 
     def write(catalog: dict[str, Any], tick: int) -> int:
-        with shared.session() as conn:
+        with shared.session(READ_LOCK_TIMEOUT_S) as conn:
             if conn is None:
-                raise ConnectionError("postgres unavailable")
+                raise ConnectionError("postgres busy or not connected")
             try:
                 return save_catalog(conn, catalog, tick)
             except psycopg.Error as e:
@@ -430,32 +542,36 @@ class Holdings:
         team: str | None = None,
         catalog: CatalogSync | None = None,
         on_team: Callable[[str], None] | None = None,
+        scope: Scope = REAL,
+        tracker: WriteTracker | None = None,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._read_me, self.shared, self.reader, self.rules, self._now = read_me, shared, reader, rules, now
         self.team = valid_team_id(team)
         self.catalog = catalog
         self.on_team = on_team  # called when a live read names our team (first time, or a corrected id)
+        self.scope, self.tracker = scope, tracker
         self.counts: Counter[str] = Counter()  # "db" (calls saved), "live" (calls made), "live:<why>"
 
     def me(self, clock: Clock | None, *, clock_read_at: float | None = None, live_because: str | None = None) -> MeRead:
-        """Album first. `live_because` forces a live read (after a deal); the answer is stored either way."""
-        reason = live_because or self._skip_reason(clock)
+        """Album first. `live_because` forces a live read (after a deal); the answer is stored either way.
+        `clock_read_at`: this object's `now()` when `clock` was read (default: just now)."""
+        elapsed = self._now() - clock_read_at if clock_read_at is not None else 0.0
+        reason = live_because or self._skip_reason(clock, elapsed)
         if reason is not None or clock is None:
             return self._live(clock, reason or "no clock")
-        elapsed = self._now() - clock_read_at if clock_read_at is not None else 0.0
-        with self.shared.session() as conn:
+        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
             if conn is None:
-                return self._live(clock, "postgres unavailable")
+                return self._plain(clock, "postgres busy or not connected")
             return self._from_db(conn, clock, into_tick_s(clock, elapsed))
 
     def after_deal(self, clock: Clock | None, what: str) -> MeRead:
         """A deal of ours (sent, or seen settled): bump the epoch, so no process trusts an older snapshot,
         then re-read /me and store it (album first: re-read after every deal)."""
-        with self.shared.session() as conn:
+        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
             if conn is not None:
                 try:
-                    bump(conn, "trade", f"deal: {what}", self.reader)
+                    bump(conn, self.scope.world, "trade", f"deal: {what}", self.reader)
                 except psycopg.Error as e:
                     self.shared.failed(e)
         return self.me(clock, live_because=f"after {what}")
@@ -469,13 +585,17 @@ class Holdings:
         except Exception as e:  # reference data: a missed write is retried at the next read
             log.warning("holdings: catalog not stored (%s)", type(e).__name__)
 
-    def _skip_reason(self, clock: Clock | None) -> str | None:
+    def _skip_reason(self, clock: Clock | None, elapsed: float) -> str | None:
         if not self.rules.holdings_from_db:
             return "holdings_from_db = false"
         if clock is None:
             return "no clock"
+        if clock.next_tick_in - elapsed < TICK_END_MARGIN_S:
+            return "the tick is about to end"
         if self.team is None:
             return "team id not known yet"
+        if self.tracker is not None and self.tracker.missed:
+            return "a send of ours was not recorded"
         return None
 
     def _from_db(self, conn: psycopg.Connection, clock: Clock, into: float) -> MeRead:
@@ -487,30 +607,31 @@ class Holdings:
                 return found
             with conn.transaction():  # one reader per team: the others wait, then find its row
                 conn.execute(f"set local lock_timeout = {LOCK_TIMEOUT_MS}")
-                conn.execute(  # per schema: a test schema never contends with the live tables
+                conn.execute(  # per schema and world: a test schema never contends with the live tables
                     "select pg_advisory_xact_lock(hashtext(current_schema() || %s))",
-                    (f":bazaar_agent.holdings:{self.team}",),
+                    (f":bazaar_agent.holdings:{self.scope.world}:{self.team}",),
                 )
                 found, why = self._fresh(conn, clock, into)
                 if found is not None:
                     return found
-                got = self._read_and_store(conn, clock, current_epoch(conn), why)
+                got = self._read_and_store(conn, clock, current_epoch(conn, self.scope.world), why)
                 return got
         except psycopg.errors.LockNotAvailable:
             return self._live_unlocked(conn, clock, "waited too long for another reader")
         except psycopg.Error as e:
             self.shared.failed(e)
-            return got if got is not None else self._live(clock, "postgres error", store=False)
+            return got if got is not None else self._plain(clock, "postgres error")
 
     def _fresh(self, conn: psycopg.Connection, clock: Clock, into: float) -> tuple[MeRead | None, str]:
         """The stored snapshot when every rule holds, else None and the first rule it breaks."""
         assert self.team is not None
-        row = stored(conn, self.team, clock.tick, into)
-        why = verdict(row, self.rules.holdings_max_age_s)
+        row = stored(conn, self.scope.world, self.team, clock.tick, into)
+        why = verdict(row, self.team, self.rules.holdings_max_age_s)
         if row is None or why != "fresh":
             return None, why
         self.counts["db"] += 1
-        return MeRead(row.me, "db", row.tick, row.age_s, row.epoch, row.digest, row.read_by, why), why
+        me = without_secrets(row.me)
+        return MeRead(me, "db", row.tick, row.age_s, row.epoch, row.digest, row.read_by, why), why
 
     def _read_and_store(self, conn: psycopg.Connection, clock: Clock | None, epoch: int, why: str) -> MeRead:
         """/me from the game, then the upsert in a savepoint: a failed write never loses the read."""
@@ -523,15 +644,13 @@ class Holdings:
         if me is not None and read.tick is not None:
             try:
                 with conn.transaction():
-                    save(conn, me, raw, read.tick, epoch, self.reader, latency)
+                    save(conn, self.scope, me, raw, read.tick, epoch, self.reader, latency)
             except psycopg.Error as e:
                 log.warning("holdings: snapshot not stored (%s)", type(e).__name__)
         return read
 
-    def _live(self, clock: Clock | None, why: str, *, store: bool = True) -> MeRead:
-        if not store:
-            return self._plain(clock, why)
-        with self.shared.session() as conn:
+    def _live(self, clock: Clock | None, why: str) -> MeRead:
+        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
             if conn is None:
                 return self._plain(clock, why)
             return self._live_unlocked(conn, clock, why)
@@ -539,7 +658,7 @@ class Holdings:
     def _live_unlocked(self, conn: psycopg.Connection, clock: Clock | None, why: str) -> MeRead:
         """A live read stored under the epoch read BEFORE it (a send in between makes it stale at once)."""
         try:
-            epoch = current_epoch(conn)
+            epoch = current_epoch(conn, self.scope.world)
         except psycopg.Error as e:
             self.shared.failed(e)
             return self._plain(clock, why)

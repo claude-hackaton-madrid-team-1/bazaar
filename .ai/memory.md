@@ -369,3 +369,16 @@ row (age minutes) won over the fresh tick-1 row → fix: match the reader's tick
 symptom: `read: /me live (team id not known yet)` on every run → root cause: the CLI process learns our team
 id from its own first `/me` and exits; nothing cached it → fix: a live read that names our team calls
 `identity.remember_team_id` (`.local/team_id`, per target), and a live read that disagrees corrects it.
+
+### [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
+symptom: in bazaar-mcp an `accept()` waited 2.8 s behind another thread's slow `/me`, and a first send waited
+15 s for `schema.sql`'s lock → root cause: the reader and the write tracker shared one connection and one
+lock held across HTTP, and the hook connected inline with `connect_ready` → fix: the tracker has its own
+connection (plain `db.connect`) opened by a background thread, a 0.2 s lock budget, and a lost bump sets
+`missed` (this process reads live; the next bump catches up). Also: the taker books an accept's spend
+BEFORE the `/me` re-read (a failed re-read once skipped the spend row), and snapshot rows carry their world.
+
+### [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
+pr-reviewer on #105: 27/27 replies to a team bid came one tick later, and 37/40 of those settlements landed
+at the boundary, before her message. A tick-start `/me` already sees the deal; the holdings' calm rule is
+conservative, not required.

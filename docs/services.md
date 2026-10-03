@@ -176,13 +176,14 @@ updated_tick}]}`.
 
 ## Holdings and catalog tables (Postgres)
 
-`me_snapshots` (key `(team, tick)`): `epoch`, `digest` (etag of cash, level, assets and album counts),
+`me_snapshots` (key `(world, team, tick)`; `world` is `real` or `sim:<host:port>`): `epoch`, `digest` (etag of cash, level, assets and album counts),
 `read_at`, `read_by` (taker | maker | mcp | cli | runtime), `cash`, `level`, `cards`, `duplicates`, `packs`,
 `pages`, `affinity`, `score`, `me` (the whole `/api/me` payload). A newer epoch, or the same epoch read
-later, wins; a row never moves backwards. `holdings_state` (one row, scope `us`): `epoch`, `written_at`,
+later, wins; a row never moves backwards. `holdings_state` (one row per world, key `scope`): `epoch`, `written_at`,
 `thread_message_at`, `last_write`, `last_writer`. `cards` (key `id`, the card ref): `set_code`,
 `set_name`, `name`, `rarity`, `book`, `print_run`, `minted`, `released`, `page`, `hidden`, `updated_tick`.
-The evals' `snapshots` (one row per tick) is written by the same reads.
+The evals' `snapshots` (one row per tick) follows the winning `me_snapshots` row of the real game (or of a
+simulator in its own database).
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
