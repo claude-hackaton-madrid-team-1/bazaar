@@ -198,3 +198,22 @@ def test_the_table_never_names_the_top_set_as_its_runner_up():
     console.print(affinity_table(af.AffinityMap({"t02": tie})))
     row = next(line for line in console.export_text().splitlines() if "t02" in line)
     assert "│ B " in row and "│ A 0.50" in row
+
+
+def test_the_strategy_takes_its_chasers_from_the_map_only_when_asked():
+    from bazaar_agent import strategy
+    from tests.test_strategy import CATALOG, DEALERS, EVENTS, ME, PARAMS, RULES
+
+    # t16 buys two cheap LAV commons (team flows: LAV) and pays 120 for a book-70 LAT rare: only the top
+    # multiplier explains that price, so the map says LAT
+    t16 = [settle(100 + i, "abuela", "t16", ["LAV-01"], 8, tick=10 + i, persona="abuela") for i in range(2)]
+    t16 += [settle(110, "t07", "t16", ["LAT-09"], 120, tick=20)]
+    events = EVENTS + t16
+    today = strategy.build_playbook(ME, CATALOG, events, DEALERS, PARAMS, RULES)
+    on = strategy.build_playbook(ME, CATALOG, events, DEALERS, PARAMS.model_copy(update={"chaser_min_p": 0.5}), RULES)
+    flows = {mv.ref: mv.counterparties for mv in today.sells}
+    mapped = {mv.ref: mv.counterparties for mv in on.sells}
+    assert "t16" not in flows.get("LAT-09", ()) and "t16" in mapped["LAT-09"]
+    m = strategy.build_market(ME, CATALOG, events, DEALERS)
+    bad = {**ME, "affinity": {"LAV": 1.6}}  # one multiplier for three sets: no map, the flows stand
+    assert strategy.map_chasers(bad, CATALOG, events, 0.5, m.chasers) == m.chasers
