@@ -210,10 +210,9 @@ def _who(side: str, to: str | None, frm: str | None) -> str | None:
 
 
 def _counterparty(who: str | None) -> str | None:
-    """The model's counterparty: anyone (no --to/--from) or a team id is a team trade, anything else a dealer."""
-    if who is None:
-        return mi.ANY_TEAM
-    return who if mi.is_team(who) else None
+    """The model's counterparty: anyone (no --to/--from) or a team id is a team trade, anything else a dealer
+    (`move_impact.is_team`), named in the reason."""
+    return mi.ANY_TEAM if who is None else who
 
 
 def _sale(
