@@ -1260,7 +1260,6 @@ def duel_run(
         our_duel_messages,
         rival_offer,
         rival_text,
-        send_with_one_retry,
         spoke_this_tick,
         template_duel_words,
     )
@@ -1320,7 +1319,6 @@ def duel_run(
         try:
             if move.kind == "accept":
                 with duel_traces.tool(did, "duel_accept"):
-                    # ponytail: no accept retry without server-side conditional acceptance of the judged offer.
                     client.duel_accept(did)
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
@@ -1337,11 +1335,7 @@ def duel_run(
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
                     return "expired"
                 with duel_traces.tool(did, "duel_say"):
-                    body, _ = send_with_one_retry(
-                        lambda: client.duel_say(did, said, price=move.price, days=move.days),
-                        lambda: send_by - time.monotonic(),
-                        client=client,
-                    )
+                    body = client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
                 if choice is not None:
                     price, offer = rival_offer(d)

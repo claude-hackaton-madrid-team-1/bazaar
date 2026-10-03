@@ -694,10 +694,9 @@ time-critical: do them directly, no team fan-out.
   Coverage measured 92%; its approvals setup lock timeout passed on isolated retry, as recorded in memory.
   Unverified: the full suite's skipped test and expected failures. Could-not-do: none for this fix.
 
-### SU1 — Sunday guardrails and bounded duel retries ([spec](SU1-spec.md))
-- Preserve approved rarity caps and tick-based dealer-sell breaker expiry from PR #265.
-- Address both reviews: message-only retry within the original tick deadline, timeout bound, refusal
-  handling and retained accept reservation; regression tests for tick expiry and changed rival terms.
-- In parallel, count retries in request/burst budgets and exercise the actual CLI loop.
-- Merge origin/main, regenerate docs, run the final-commit gate and private simulator smoke, update the
-  PR with the Honest Implementation Report, then push the feature branch.
+### SU1 — Sunday guardrails ([spec](SU1-spec.md))
+- Keep the uncommon ceiling at 30 and rare ceiling at 105, with independent official-value enforcement.
+- Keep the dealer-sell watchdog breaker's 40-game-tick expiry and fresh-evidence tests.
+- Restore duel sending, its tests and request budgets to origin/main.
+- Review the retained changes in parallel, regenerate docs, run the final-head gate and private simulator
+  smoke, push only the feature branch, and update PR #265 with the Honest Implementation Report.
