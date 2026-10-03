@@ -606,6 +606,9 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   fill range (none seen: only bid), on every accept path (decide, meet_ask, Jev early accept, restart adoption,
   `dealer buy`). Abuela publishes strictness 0.1 but her FINAL is real: `trickster_max_strictness` ships at 0.
   · **Acceptance:** tests/test_trickster_final.py.
+- TF1 follow-up (#228 reviews): `bazaar dealer buy` leaves our own fills out of a trickster's range (our team id from
+  BAZAAR_TEAM_ID, `.local/team_id` or one /me read; unknown: nothing opened) and refuses a dealer missing from
+  `/api/dealers`. · **Acceptance:** tests/test_trickster_final.py (`test_dealer_buy_*`).
 - SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
   opens, not when it is planned. ❌ not done yet.
 

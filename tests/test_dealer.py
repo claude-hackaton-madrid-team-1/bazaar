@@ -13,6 +13,8 @@ from bazaar_agent.agents.dealer import (
     words,
 )
 
+ABUELA_LISTED = [{"id": "abuela", "kind": "dealer", "level": 1, "status": "active"}]  # /api/dealers
+
 
 def neg(start=6, step=1, max_price=10, bids=(), opened=None):
     """`opened=(ask, bids_sent_before_it)`: her opening ask, already seen and countered."""
@@ -258,7 +260,7 @@ def live_dealer_buy(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     monkeypatch.setattr(cli, "_rarity_of", lambda item: "common")
-    monkeypatch.setattr(cli, "_dealer_personas", lambda settings: [])  # no /api/dealers read: today's plan
+    monkeypatch.setattr(cli, "_dealer_personas", lambda settings: ABUELA_LISTED)  # listed, not forgiving
     monkeypatch.setattr("time.sleep", lambda seconds: None)
     return cli, client
 

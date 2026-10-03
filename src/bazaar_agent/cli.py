@@ -890,7 +890,7 @@ def dealer_buy(
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
-    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan)  # a trickster's FINAL is not its limit
+    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan, client)  # a trickster's FINAL is not its limit
 
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, the thread stays open, next tick decides again):
@@ -1149,11 +1149,14 @@ def _dealer_personas(settings: Any) -> list[dict[str, Any]]:
     return [d for d in body.get("personas") or body.get("dealers") or [] if isinstance(d, dict)]
 
 
-def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any) -> Any:
+def _forgiving_plan(
+    settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any, client: Any
+) -> Any:
     """`dealer buy`'s plan against a forgiving dealer (agents/trickster.py): its FINAL is not its limit. Its persona
-    comes from `/api/dealers`: unreadable, nothing is opened (fail closed: a fake final could be taken as a limit).
-    Its fills come from the feed history the agents read (`_history`): none, and its asks are never taken (we only
-    bid). Every other dealer's plan comes back unchanged."""
+    comes from `/api/dealers`: unreadable, or the dealer not listed there, and nothing is opened (fail closed: a fake
+    final could be taken as a limit). Its fills come from the feed history the agents read (`_history`), OTHER teams'
+    only, as in the taker: our team id comes from BAZAAR_TEAM_ID, `.local/team_id` or one /me read, and unknown means
+    nothing is opened. No fill known: its asks are never taken (we only bid). Every other dealer's plan is unchanged."""
     from rich.markup import escape
 
     from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving, note
@@ -1164,14 +1167,20 @@ def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: s
         persona = parse_personas(_dealer_personas(settings)).get(dealer)
     except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
         _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
-    if persona is None or not is_forgiving(persona, rules):
+    if persona is None:
+        _fail(f"refusing to trade: {dealer} is not listed in /api/dealers: is its FINAL its limit?")
+        return plan  # not reached: `_fail` exits
+    if not is_forgiving(persona, rules):
         return plan
+    us = resolve_team_id(settings.team_id, settings.data_dir, client.me, lambda m: console.print(escape(m)))
+    if us is None:  # our own buys would count in its range (#228 review: our 63 made 63 acceptable)
+        _fail(f"refusing to trade: our team id is unknown, so our own fills cannot be left out of {dealer}'s range")
     try:
         events = _history(None, live=True)
     except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
         console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
         events = []
-    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules)
+    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules, us)
     console.print(escape(f"{dealer} forgives (kind {persona.kind}): {note(shaped)}"))
     return shaped
 
