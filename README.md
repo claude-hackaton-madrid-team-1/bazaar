@@ -871,6 +871,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#90](../../pull/90) | docs: learner / auto-evolve (P0) and real-time holdings in the plan and roadmap | Sat 03:02 | `a79f601` |
 | [#88](../../pull/88) | feat: Linear-style roadmap timeline (Fri 2 → Sun 4, freeze Sun 06:00, deadline Sun 14:00) | Sat 02:57 | `90b15c2` |
 | [#82](../../pull/82) | feat: timed roadmap on the architecture page | Sat 02:37 | `16552b7` |
 | [#83](../../pull/83) | chore: make the agent harness Claude-only and remove unused files | Sat 02:34 | `e91a8de` |
@@ -882,13 +883,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | Sat 01:45 | `c73ee77` |
 | [#67](../../pull/67) | docs: sync the plan's task index with the triaged GitHub issues | Sat 01:42 | `68aa1b7` |
 | [#66](../../pull/66) | docs: first eval target is a nice-to-have; evals merged | Sat 01:30 | `3f737f0` |
-| [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | Sat 01:29 | `c2f122b` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#90](../../pull/90) | docs: learner / auto-evolve (P0) and real-time holdings in the plan and roadmap | `docs/plan-learner-holdings` |
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | `ogarciarevett/feat-feed-reader-rag` |
 | [#87](../../pull/87) | feat(plan): page economics and the cash plan (W7, read-only) | `night/w7-page-economics` |
 | [#86](../../pull/86) | Night W2b: duel policy v2 behind duel_policy = v1 (silence is free, one accept per tick) | `night/w2b-duel-v2` |
