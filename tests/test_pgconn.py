@@ -71,9 +71,13 @@ def test_reconnector_survives_an_outage_and_reopens_after_a_drop():
             raise result
         return result
 
-    pg = pgconn.Reconnector(open_conn, notes.append)
-    assert pg.get() is None and pg.get() is None
+    clock = [0.0]
+    pg = pgconn.Reconnector(open_conn, notes.append, now=lambda: clock[0])
+    assert pg.get() is None
+    clock[0] += pgconn.RETRY_EVERY_S
+    assert pg.get() is None
     assert notes == ["Postgres unavailable (OSError); JSONL only until it is back"]  # warned once
+    clock[0] += pgconn.RETRY_EVERY_S
     first = pg.get()
     assert isinstance(first, FakeConn) and pg.get() is first and notes[-1] == "Postgres reconnected"
     pg.drop()  # what the monitor does after a failed write
@@ -83,6 +87,21 @@ def test_reconnector_survives_an_outage_and_reopens_after_a_drop():
     second.closed = True  # the server dropped it: the next get() reopens without a drop()
     third = pg.get()
     assert third is not None and third is not second and not outcomes
+
+
+def test_reconnector_tries_a_down_postgres_at_most_once_per_window():
+    attempts: list[float] = []
+    clock = [100.0]
+
+    def down():
+        attempts.append(clock[0])
+        raise OSError("timeout")  # a black-holed host: each real attempt can take connect_timeout (10 s)
+
+    pg = pgconn.Reconnector(down, lambda m: None, retry_every_s=15.0, now=lambda: clock[0])
+    for step in range(10):  # a monitor or a ledger calling every 2 s during an outage
+        clock[0] = 100.0 + 2 * step
+        assert pg.get() is None
+    assert attempts == [100.0, 116.0] and pg.down
 
 
 def test_check_reports_unreachable_without_the_password(monkeypatch):
@@ -119,3 +138,10 @@ def test_cli_db_check_exits_nonzero_and_never_prints_the_password(monkeypatch):
     result = CliRunner().invoke(app, ["db", "check"])
     assert result.exit_code == 1
     assert PASSWORD not in result.output and "unreachable" in result.output
+
+
+def test_a_socket_that_stops_answering_is_bounded_by_default_and_the_url_still_wins():
+    from bazaar_agent.pgconn import connection_params
+
+    assert connection_params("postgresql://u:pw@db.example.com/x")["tcp_user_timeout"] == "10000"
+    assert connection_params("postgresql://u:pw@db.example.com/x?tcp_user_timeout=3000")["tcp_user_timeout"] == "3000"

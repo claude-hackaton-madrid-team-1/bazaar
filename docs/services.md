@@ -29,7 +29,7 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 
 ```json
 {"ok": true, "agent": "taker", "mode": "dry",
- "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "tick": null, "last_tick_at": null,
+ "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "ledger": "shared", "tick": null, "last_tick_at": null,
  "doors": "closed", "paused": true, "next_opens": "2026-10-03T09:00:00+02:00",
  "tick_seconds": 60.0, "server_tick": 159}
 ```
@@ -37,6 +37,8 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 - `mode`: `dry` or `live`.
 - `target`: where the agent's requests go: `{"mode": "real", "url": "https://bazaar.causaprima.ai"}`, or
   `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` (README "Simulator").
+- `ledger`: the guardrail ledger it counts on: `shared` (the team's Postgres), `down` (a live agent sends
+  nothing until it answers, then resumes by itself), or `local file` (dry run or simulator only). No host.
 - `tick`, `last_tick_at`: the last game tick the agent handled.
 - `doors`, `paused`, `next_opens`, `tick_seconds`, `server_tick`: the game clock as the agent sees it.
   The tick length changes every day (60 s Friday, 30 s Saturday, 15 s Sunday) and the organisers may move it.

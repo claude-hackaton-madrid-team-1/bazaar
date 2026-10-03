@@ -77,7 +77,7 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
@@ -225,16 +225,17 @@ class Maker:
             snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
-        if self.market is not None:  # the bench first: a broker without our reads still matches the bench
-            self.market.on_tick(clock, snap, window)
-        if snap is None:
-            return
         try:
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down, our venue's included
+            if self.market is not None:  # the bench first: a broker without our reads still matches the bench
+                self.market.on_tick(clock, snap, window)
+            if snap is None:
+                return
             self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} maker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} maker: {e}; no further write this tick (fail closed)")
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock

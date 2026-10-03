@@ -215,6 +215,28 @@ def test_switch_off_or_closed_window_opens_nothing(tmp_path):
     assert team.opened == []
 
 
+def test_switched_off_the_keeper_touches_nothing_even_for_a_venue_we_run(tmp_path):
+    """allow_venue_open = false: no opening, no key vault read or mark and no broker, even when the lists show a
+    venue we run (one opened by hand) at an hour where it would otherwise open or broker."""
+    team, broker = Team(), FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    k = keeper(tmp_path, team, store={("", "v09"): (KEY, 300)}, broker=broker, allow_venue_open=False)
+
+    class SpyVault:
+        def __init__(self):
+            self.used: list[str] = []
+
+        def __getattr__(self, name):  # any vault call (load, save, mark, claim) is recorded, then refused
+            self.used.append(name)
+            raise AttributeError(name)
+
+    k.vault = vault = SpyVault()
+    ran = snap(venues=(RASTRO, ours()), venue={"venue": "v09", "status": "open"})
+    late = snap(tick=401, t_hours=7.0, cash=900)
+    for s in (ran, late):
+        k.on_tick(s.clock, s, window())
+    assert vault.used == [] and team.opened == [] and broker.sent == [] and k.made == []
+
+
 # ---------------------------------------------------------------- the key and the broker afterwards
 
 

@@ -123,6 +123,8 @@ class VenueKeeper:
 
     def on_tick(self, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
         """Never raises: a bug or an outage here must not cost the maker its tick."""
+        if not self.rules.allow_venue_open:
+            return  # switched off: no opening, no key vault read or mark, no broker (every match is refused anyway)
         try:
             venue = self._venue(clock, snap)
             if venue is not None and snap is not None:
