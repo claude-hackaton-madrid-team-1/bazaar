@@ -1,6 +1,6 @@
 # B4 · Rival profiles and the opportunity scanner (night of 3 Oct 2026)
 
-- Draft PR on `night/b4-rival-scanner`, stacked on #79 (`night/w4-trade-desk`).
+- Written for draft PR #98 (`night/b4-rival-scanner`); the work landed through the takeover PR #138, stacked on #137 (the #79 takeover).
 - Read-only: nothing touched the live game.
 - Data: the public feed from the shared DB (ticks 0–159) and our `/me` at tick 149, unchanged at tick 159.
 
@@ -44,7 +44,7 @@ I scored every offer by another team once, with our current album. This is an ap
 | | Friday |
 |---|---|
 | Plain offers by other teams | 702 |
-| With surplus for us and allowed | 91 offers (cards relisted many times): **8 distinct cards, +160.8 P at the best price each** |
+| With surplus for us and allowed | 91 offers (cards relisted many times): **8 distinct cards** (the surplus at our values is kept out of the repo) |
 | Taken by other teams first | 3 offers, 3, 4 and 5 ticks after listing (t10, t17, t04) |
 | The two big ones | two rare asks well below our value. Rivals took them 3 and 5 ticks after they were listed |
 | Left untaken (expired or cancelled) | 88 offers, mostly cheap commons and uncommons |
@@ -93,9 +93,9 @@ What to do with these profiles:
 
 ## Decisions for Marius
 
-1. **Run the taker live from 09:00, scanning every tick.** On Friday it would have caught the two rare snipes that rivals took within 3–5 ticks (the largest surplus of the day).
+1. **(Superseded: the taker already runs live on Railway; any change goes through the coordinator.)** Scan every tick. On Friday it would have caught the two rare snipes that rivals took within 3–5 ticks (the largest surplus of the day).
    - Its buys use the same cash above `cash_floor` as W4's bids and W3's ladder. Decide the split: the taker takes standing offers that fill at once, while W4's addressed bids fill about 6 % of the time on Friday's evidence.
-2. **Turn on `bazaar agent taker --accept-bids`** (default off). The taker then also sells into standing bids that beat our loss by `sell_min_surplus`, through the same guardrails, duel grace and accept quota.
+2. **`--accept-bids` stays OFF** (takeover decision, #138) until the reviews' open items are closed: the maker does not read the taker's `sell:` reservations yet, and `venues_from` drops `pending_fee` (#110). The taker then also sells into standing bids that beat our loss by `sell_min_surplus`, through the same guardrails, duel grace and accept quota.
 3. **Price caps:** 6 of the 13 morning opportunities are blocked by them (five uncommons above 26, one common above 12). Values unchanged tonight.
 4. **At 09:00:** run `uv run bazaar opportunities --live` (reads only) next to `uv run bazaar trade-plan --live`.
 
