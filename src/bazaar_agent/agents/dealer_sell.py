@@ -16,6 +16,7 @@ the copy's `your_value`, rounded up, is the least it may be). Pure functions, no
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -68,8 +69,12 @@ def decide_sell(sale: Sale, bid: int | None, offer_id: int | None, final: bool) 
 
 
 def _mirrored_reason(reason: str) -> str:
+    """decide()'s reason in real prices: every mirrored number back to primas, buy words to sale words."""
+    reason = re.sub(r"\d+", lambda m: str(MIRROR - int(m[0])) if int(m[0]) > MIRROR // 2 else m[0], reason)
     return (
         reason.replace("small distinct step up", "small distinct step down")
+        .replace("between our", "between our ask")
+        .replace(" and her ", " and its bid ")
         .replace("counter below her unconceded ask", "counter above its unraised bid")
         .replace("ask meets our next bid", "bid meets our next ask")
         .replace("no higher bid left inside our limit", "no lower ask left above our floor")

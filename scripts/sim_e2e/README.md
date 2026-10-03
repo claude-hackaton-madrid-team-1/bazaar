@@ -10,3 +10,4 @@ run them with pytest. The numbers in `docs/night/w3-ladder.md` came from these r
 - `test_w3_desk_chato.py`: the desk with Chato first (`ladder_level_deals` 3, `chato:uncommon=31`). Run: `W3_MERGED=… W3_OUT=… W3_LOG=…`.
 
 `W3_MERGED` is a public feed capture (JSONL), loaded so the desk has Friday's floors.
+- `test_b3_sell.py`: `bazaar dealer sell --live` of two duplicates to Abuela. Run: `W3_OUT=…`.

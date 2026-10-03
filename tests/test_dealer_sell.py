@@ -162,3 +162,8 @@ def test_a_final_bid_below_our_floor_walks():
     client = FakeBuyingDealer(opening=10, limit=11, final_at=2)
     out = sell(client)
     assert out.status == "walked" and client.accepted == [] and min(client.asks) >= 12
+
+
+def test_reasons_speak_in_real_prices():
+    move = decide_sell(sale(asks=(16, 15, 14)), 13, 3, False)
+    assert move.reason == "no room left between our ask 14 and its bid 13"
