@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -739,3 +740,32 @@ b11_jitter025 = single(B11_PRESETS["jitter025"])
 b11_eg1_share03_jitter025 = single(B11_PRESETS["eg1_share03_jitter025"])
 b11_eg1_share05_jitter025 = single(B11_PRESETS["eg1_share05_jitter025"])
 b11_eg0_share03_jitter025 = single(B11_PRESETS["eg0_share03_jitter025"])
+
+
+# ---------------------------------------------------------------- B7: who moves first within a tick
+
+
+def tick_order(duels: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Within-tick order on real payloads: in every tick where both we and the rival priced, whose message comes first
+    in the duel's (chronological) `messages`. Per duel too: some rivals answer after us every tick, others move first.
+    """
+    total = {"we_first": 0, "rival_first": 0}
+    per_duel: dict[int, tuple[int, int]] = {}
+    for d in duels:
+        rival, by_tick = d.get("rival"), defaultdict(list)
+        for m in d.get("messages") or []:
+            if isinstance(m, Mapping) and m.get("price") is not None and isinstance(m.get("tick"), int):
+                by_tick[m["tick"]].append(
+                    "us" if m.get("from") == OUR_SENDER else "rival" if m.get("from") == rival else "?"
+                )
+        ours = theirs = 0
+        for who in by_tick.values():
+            if "us" in who and "rival" in who:
+                first = next(w for w in who if w in ("us", "rival"))
+                ours, theirs = ours + (first == "us"), theirs + (first == "rival")
+        if ours or theirs:
+            per_duel[int(d["duel"])] = (ours, theirs)
+            total["we_first"] += ours
+            total["rival_first"] += theirs
+    shared = total["we_first"] + total["rival_first"]
+    return {**total, "we_first_share": total["we_first"] / shared if shared else 0.0, "per_duel": per_duel}
