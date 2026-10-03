@@ -143,3 +143,10 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 **Where things are:** `_night/STATUS.md` (log) · `_night/REVIEWS.md` (r1) · `_night/BITES.md` (r2, X1–X29) ·
 `_night/BACKLOG.md` · `_night/FOR_OGARCIAREVETT.md` (relays for Omar's coordinator) · PR #154 `docs/night/` (salvaged
 reports) · w8's earlier draft with more detail: `_night/MORNING.w8-0606.md`.
+
+## r1 late additions (06:36)
+- **#162 shared ledger (P0, takes over #62):** MERGEABLE with 2 conditions.
+  - (1) Before the 09:00 deploy: with no client-side query deadline, a frozen Postgres blocks every live writer's per-tick ledger ping for more than 60 s. Fix: a bounded worker thread (as in holdings.py) plus tcp_user_timeout.
+  - (2) r1's ledger Protocol patch (REVIEWS.md "## PR #62") is not carried. #141/#142 `release_accept` and #137 `hands_off_ids` use the removed `self._conn`, so a refused accept or the maker raises AttributeError after merge. Whoever lands second ports them.
+- **#161 (#72 follow-up):** HOLD. HIGH: a dealer accept that /me already shows as paid no longer counts toward the hourly spend cap (proof: 21 + 12 sent under cap 30). One-line fix: drop the synthetic commit only for board accepts.
+- Proofs: _night/r1_proof_pr161_desk_spend.py and _night/r1_probe162_freeze.py.
