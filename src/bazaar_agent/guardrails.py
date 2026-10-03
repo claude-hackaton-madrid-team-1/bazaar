@@ -48,6 +48,9 @@ class GuardrailsError(ValueError):
     """GUARDRAILS.md has an unknown rule id or a bad value. The runtime refuses to start."""
 
 
+LIFTED_RARITIES = frozenset({"common", "uncommon", "rare"})  # cards a dealer's final may be taken above the cap
+
+
 class Guardrails(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -59,6 +62,7 @@ class Guardrails(BaseModel):
     max_price_uncommon: int = 26
     max_price_rare: int = 80
     max_price_pack: int = 20
+    dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     block_buying_held_cards: bool = True
@@ -131,6 +135,14 @@ class Guardrails(BaseModel):
             "pack": self.max_price_pack,
         }.get(rarity or "")
 
+    def final_cap_for(self, rarity: str | None) -> int | None:
+        """The most a dealer's FINAL offer on a card may be taken at: the rarity cap lifted by
+        `dealer_final_lift`. A pack keeps its cap; None when the rarity has no cap (never bought)."""
+        cap = self.max_price_for(rarity)
+        if cap is None or rarity not in LIFTED_RARITIES:
+            return cap
+        return math.floor(round(cap * (1 + self.dealer_final_lift), 6))
+
 
 # Which code enforces each rule: shown by `bazaar rules`, kept honest by a test.
 ENFORCED_BY: dict[str, str] = {
@@ -142,6 +154,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
@@ -428,6 +441,7 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    final: bool = False  # a dealer's final offer (take it or it walks): its cap is `final_cap_for` (N14a)
     limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
     role: str | None = None  # duels: "seller" | "buyer"
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
@@ -531,10 +545,12 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     accepting = action.kind in ("accept_buy", "accept_sell", "duel_accept")
     if buying and action.price is not None:
         cap = rules.max_price_for(action.rarity)
-        if cap is None:
+        top = rules.final_cap_for(action.rarity) if action.final and action.kind != "buy" else cap
+        if cap is None or top is None:
             v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
-        elif action.price > cap:
-            v.append(f"price {action.price} > max_price_{action.rarity} {cap}")
+        elif action.price > top:
+            lifted = f"dealer final cap {top} (max_price_{action.rarity} {cap} lifted)" if top > cap else ""
+            v.append(f"price {action.price} > {lifted or f'max_price_{action.rarity} {cap}'}")
         if ctx.cash - action.price < effective_cash_floor(rules, ctx):
             v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
         if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
