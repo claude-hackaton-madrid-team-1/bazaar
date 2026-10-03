@@ -1,6 +1,6 @@
 # Evidence to capture before scores freeze
 
-Draft as of Sat 3 Oct, ~06:00 Madrid. Every command is taken from `src/bazaar_agent/cli.py` and the schema on `origin/main` at 9206093
+Draft as of Sat 3 Oct, ~06:00 Madrid. Every command is taken from `src/bazaar_agent/cli.py` and the schema on `origin/main` as of Saturday 06:00
 (read, not run). Where something is on an open PR or unconfirmed it says so. **Run `uv run bazaar db tables` first**: it shows which
 tables actually have rows.
 
