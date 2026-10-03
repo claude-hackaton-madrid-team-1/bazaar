@@ -54,11 +54,11 @@ log = logging.getLogger(__name__)
 _warned: set[str] = set()
 
 
-def _warn_once(message: str) -> None:
+def _warn_once(message: str, exc_info: bool = False) -> None:
     """Settings are read every tick: say what is wrong once, not once per duel per tick."""
     if message not in _warned:
         _warned.add(message)
-        log.warning(message)
+        log.warning(message, exc_info=exc_info)
 
 
 def styles() -> tuple[str, ...]:
@@ -315,7 +315,7 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
     try:
         act = LIVE_RIVALS[style](view)
     except Exception as e:  # noqa: BLE001 - a broken rival holds: the shared clock never stops (#151 review)
-        _warn_once(f"duel rival style {style!r} raised {type(e).__name__}: it holds instead")
+        _warn_once(f"duel rival style {style!r} raised {type(e).__name__}: it holds instead", exc_info=True)
         return
     ours = duel.your_offer
     if act.kind == "accept" and ours is not None:

@@ -491,3 +491,23 @@ def test_an_exploiter_never_asks_above_the_games_max_price():
                          two_issues=False, decay=0.06, params={}, messages=(), our_offer=None, its_offer=None,
                          rng=random.Random(1), other_limit=40)  # fmt: skip
     assert ex._squeeze_price(view, 20_000_000.0, 0.1) <= zoo.MAX_PRICE
+
+
+def test_the_price_cap_never_pushes_a_seller_onto_its_own_limit():
+    # #151 delta review P3: with a limit at the cap, min(MAX_PRICE, ...) asked exactly the limit (not strictly above).
+    from bazaar_sim import duel_exploit as ex
+
+    view = zoo.RivalView(tick=5, started_tick=0, deadline_tick=12, role="seller", limit=zoo.MAX_PRICE, days_weight=None,
+                         two_issues=False, decay=0.06, params={}, messages=(), our_offer=None, its_offer=None,
+                         rng=random.Random(1), other_limit=40)  # fmt: skip
+    assert ex._squeeze_price(view, 20_000_000.0, 0.1) > zoo.MAX_PRICE  # its own limit first, the cap second
+
+
+def test_a_broken_rival_is_logged_once_with_its_traceback(monkeypatch, caplog):
+    monkeypatch.setenv(duels.STYLES_ENV, "convex")
+    monkeypatch.setitem(duels.LIVE_RIVALS, "convex", lambda view: 1 / 0)
+    m = manual_world(duel_first_tick=1, duel_ticks=6)
+    with caplog.at_level("WARNING", logger="bazaar_sim.duels"):
+        m.step(4)
+    records = [r for r in caplog.records if "convex" in r.getMessage()]
+    assert len(records) == 1 and records[0].exc_info is not None
