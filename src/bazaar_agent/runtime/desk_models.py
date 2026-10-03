@@ -40,7 +40,7 @@ SUBAGENT_ROLES: tuple[DeskRole, ...] = tuple(role for role in ROLES if role != "
 _NOT_PRICES = re.compile(
     r"\b[A-Za-z]{3}-\d{1,3}\b"  # card codes: LAV-09
     r"|#\d+(?:/\d+)?"  # copy numbers and ids: #7/30, #12
-    r"|\b(?:threads?|ticks?|duels?|offers?|assets?|ids?|teams?|levels?|pages?|rounds?|days?)\s*#?\s*\d+",
+    r"|\b(?:threads?|ticks?|duels?|offers?|assets?|ids?|teams?|levels?|pages?|rounds?|days?)[\s#]{0,4}\d+",
     re.IGNORECASE,
 )
 _PRICE = re.compile(r"\b(\d+)(?:p|primas)?\b", re.IGNORECASE)  # whole numbers only: t07 or 1.5e3 do not count
@@ -55,8 +55,8 @@ FAMILY_ENV: Mapping[str, str] = {
 
 def value_at_risk(text: str) -> int:
     """The largest price-like number in the request (`buy LAV-09 under 90` → 90, `thread 1234` → 0)."""
-    numbers = [int(n) for n in _PRICE.findall(_NOT_PRICES.sub(" ", text))]
-    return min(max(numbers, default=0), MAX_RISK)
+    digits = _PRICE.findall(_NOT_PRICES.sub(" ", text))
+    return min(max((int(n) if len(n) <= 5 else MAX_RISK for n in digits), default=0), MAX_RISK)
 
 
 def family_of(model_id: str) -> str | None:
@@ -185,8 +185,8 @@ class DeskModelPicker:
 
     def pick(self, text: str) -> DeskModels:
         clock = self._read_clock()
-        situation = request_situation(text, clock.tick_seconds if clock else 60.0, self.timeout_s)
         try:
+            situation = request_situation(text, clock.tick_seconds if clock else 60.0, self.timeout_s)
             return DeskModels(self.chooser.choose_roles(situation, ROLES, clock.tick if clock else None))
         except Exception as e:  # a choice-log write failed, say: the request still runs, on the defaults
             self._log(f"desk models: role defaults ({type(e).__name__})")

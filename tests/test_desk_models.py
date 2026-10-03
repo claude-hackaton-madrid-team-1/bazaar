@@ -2,7 +2,7 @@
 
 Covers the RUNTIME.md lines, `ModelChooser.choose_roles()` (decided, undecided, timeout, keyless, pinned,
 one call per request, cache reuse), the picker, the SDK options per subagent, and the session rules
-(a changed subagent model starts a new session; an orchestrator-only change switches in place).
+(one conversation keeps one session: the hook carries each subagent's model, the orchestrator switches in place).
 """
 
 import asyncio
@@ -211,6 +211,10 @@ def test_value_at_risk_reads_prices_not_card_codes():
     assert value_at_risk("sell my spare SAL-03 for at least 8P") == 8
     assert value_at_risk("what is our status?") == 0 and value_at_risk("LAV-09 or lav-10") == 0
     assert value_at_risk("bid 99999999999") == 10_000  # a long digit run (a pasted key?) is clamped
+    assert value_at_risk("x " + "9" * 5000) == 10_000  # never int() on it: Python refuses 4300+ digits
+    started = time.monotonic()
+    assert value_at_risk("thread" + " " * 20000 + "7 for 45") == 45  # no quadratic backtracking
+    assert time.monotonic() - started < 0.2
     assert value_at_risk("status of thread 1234") == 0 and value_at_risk("team t07 at tick 155 offered 40") == 40
     assert value_at_risk("sell #7/30 for 12P") == 12 and value_at_risk("duel 12 round 3 price 55") == 55
 

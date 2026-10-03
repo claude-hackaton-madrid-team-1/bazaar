@@ -176,8 +176,9 @@ Spec: [`N15-spec.md`](./N15-spec.md). Files: `llm/{config,chooser,cli}.py`, `run
 - Step 2 — `ModelChooser.choose_roles()`: pin → cache → ONE Jev call for the uncached roles → per-role default.
   · **Acceptance:** fake-Jev tests: decided, undecided, timeout, keyless, pinned, one call per request, cache reuse.
 - Step 3 — `runtime/desk_models.py` (request situation, picker) + per-subagent `AgentDefinition.model` +
-  the hook strips `model` on `Agent` + `Desk` re-plans before each request. · **Acceptance:** SDK options
-  carry each role's id; the scripted desk run logs the choices; a changed subagent choice starts a new session.
+  the hook sets each subagent's per-call model (family alias pinned to our id) + `Desk` re-plans before each
+  request. · **Acceptance:** SDK options carry each role's id; the scripted desk run logs the choices; one
+  conversation keeps one session while each request runs its own models.
 - Step 4 — `bazaar llm` desk section, README, RUNTIME.md, architecture boxes. · **Acceptance:** CLI test +
   regenerated html; dry desk run on `BAZAAR_SIM=local` shows the chosen models.
 
