@@ -370,3 +370,60 @@ def from_rows(rows: Iterable[Sequence[Any]]) -> list[Conversation]:
         c.turns = [Turn(int(tick), bool(d), price, bool(final)) for tick, d, price, final in turns]
         out.append(c)
     return out
+
+
+UNLOCK_DEALS = 3  # Friday: L2 opened to every team with 3 negotiated Abuela deals (t02, t04, t08, t16 at exactly 3)
+
+
+@dataclass(frozen=True)
+class Level:
+    """A dealer level as the feed showed it: announced (a teaser), then activated (how it works)."""
+
+    dealer: str
+    name: str
+    teaser: str
+    announced_tick: int | None
+    activated_tick: int | None
+    how: str | None
+    opens_to_all_in_hours: float | None
+    unlocked: tuple[tuple[str, int, str], ...]  # (team, tick, why)
+
+
+def levels(events: Iterable[Event]) -> list[Level]:
+    """Every `level.announced` / `level.activated` / `level.unlocked` in the feed, per dealer."""
+    info: dict[str, dict[str, Any]] = {}
+    unlocked: dict[str, list[tuple[str, int, str]]] = defaultdict(list)
+    for e in events:
+        kind, p = e.get("type"), e.get("payload") or {}
+        if kind in ("level.announced", "level.activated"):
+            dealer = str(p.get("level") or p.get("persona") or "?")
+            d = info.setdefault(dealer, {"name": p.get("name") or dealer, "teaser": p.get("teaser") or ""})
+            d["announced" if kind == "level.announced" else "activated"] = int(e.get("tick", 0))
+            if kind == "level.activated":
+                d["how"], d["open_in"] = p.get("how"), p.get("opens_to_all_in_hours")
+        elif kind == "level.unlocked":
+            dealer = str(p.get("persona") or p.get("level") or "?")
+            unlocked[dealer].append((str(p.get("team")), int(e.get("tick", 0)), str(p.get("why") or "")))
+    return [
+        Level(
+            dealer,
+            str(d["name"]),
+            str(d["teaser"]),
+            d.get("announced"),
+            d.get("activated"),
+            d.get("how"),
+            d.get("open_in"),
+            tuple(unlocked.get(dealer, [])),
+        )
+        for dealer, d in info.items()
+    ]
+
+
+def negotiated_deals(convs: Iterable[Conversation], team: str) -> dict[str, int]:
+    """Our deals per dealer that count toward unlocking the next level: closed at a price other than the
+    dealer's opening (Friday: t15's three deals at Abuela's opening never unlocked El Chato)."""
+    out: dict[str, int] = defaultdict(int)
+    for c in convs:
+        if c.team == team and c.fill is not None and c.fill != c.opening:
+            out[c.dealer] += 1
+    return dict(out)

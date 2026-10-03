@@ -212,3 +212,33 @@ def test_replaying_each_real_conversation(real):
     results = [play(plan, e) for c in mine if (e := episode_from(c))]
     s = summarise(results)
     assert s.runs == 37 and s.mean_share >= 0.85 and s.repeated == 0
+
+
+def test_levels_from_the_feed_and_the_deals_that_count_toward_the_next_one():
+    from bazaar_agent.ladder import levels, negotiated_deals
+
+    teaser = "«Better packs, friendly prices. If I like you.»"
+    events = [
+        {"type": "level.announced", "tick": 71, "payload": {"level": "chato", "name": "El Chato", "teaser": teaser}},
+        {
+            "type": "level.activated",
+            "tick": 98,
+            "payload": {
+                "level": "chato",
+                "name": "El Chato",
+                "how": "he buys uncommon and rare cards",
+                "opens_to_all_in_hours": 1.0,
+            },
+        },
+        {
+            "type": "level.unlocked",
+            "tick": 98,
+            "payload": {"team": "t01", "persona": "chato", "why": "4 deals with abuela"},
+        },
+    ]
+    (lv,) = levels(events)
+    assert (lv.dealer, lv.announced_tick, lv.activated_tick, lv.opens_to_all_in_hours) == ("chato", 71, 98, 1.0)
+    assert lv.unlocked == (("t01", 98, "4 deals with abuela"),) and "buys" in (lv.how or "")
+    at_opening = Conversation(1, "t01", "abuela", "buy", "LAV-03", 0, turns=[Turn(0, True, 7)], fill=7)
+    haggled = Conversation(2, "t01", "abuela", "buy", "LAV-04", 0, turns=[Turn(0, True, 12)], fill=9)
+    assert negotiated_deals([at_opening, haggled], "t01") == {"abuela": 1}

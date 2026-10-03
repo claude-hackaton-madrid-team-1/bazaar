@@ -146,3 +146,36 @@ def plan(
     for n in doc["notes"]:
         console.print(f"[dim]{n}[/dim]")
     console.print(f"wrote {out}")
+
+
+@app.command("levels")
+def levels_cmd(
+    team: str = typer.Option("t01", help="Our team id (deals that count toward the next level)"),
+) -> None:
+    """Dealer levels from the captured feed: announced, activated (how), who unlocked, our progress."""
+    from bazaar_agent.ladder import UNLOCK_DEALS, levels, negotiated_deals
+
+    events = load_events(FeedStore(load_settings().feed_dir))
+    convs = conversations(events)
+    ours = negotiated_deals(convs, team)
+    table = Table(title=f"Dealer levels · {len(events)} feed events")
+    for col in ("dealer", "announced", "activated", "open to all in", "unlocked teams", f"{team} unlocked", "how"):
+        table.add_column(col)
+    for lv in levels(events):
+        mine = next((f"tick {t} ({why})" for who, t, why in lv.unlocked if who == team), "-")
+        table.add_row(
+            f"{lv.name} ({lv.dealer})",
+            str(lv.announced_tick if lv.announced_tick is not None else "-"),
+            str(lv.activated_tick if lv.activated_tick is not None else "-"),
+            f"{lv.opens_to_all_in_hours:g} h" if lv.opens_to_all_in_hours is not None else "-",
+            str(len(lv.unlocked)),
+            mine,
+            (lv.how or lv.teaser)[:80],
+        )
+    console.print(table)
+    for dealer, n in sorted(ours.items()):
+        left = max(0, UNLOCK_DEALS - n)
+        console.print(
+            f"{team}: {n} negotiated deal(s) with {dealer}"
+            + (f", {left} more to unlock its next level" if left else "")
+        )
