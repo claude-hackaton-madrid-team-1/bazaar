@@ -20,7 +20,7 @@ Nothing here touched the live game; the shared Postgres was read with read-only 
 |---|---|---|---|---|
 | X7 | One tick can breach `cash_floor`; three dealer thread bids can fill at one boundary for 240 P vs the 150 cap | high | main | fixed by #72 (tests XPASS there) |
 | X11 | A dropped Postgres connection silently stops the live duel player | high | main | fixed by #62 |
-| X5-B1 | v1 two-issue offers at days = 5 unvalued: 10 of 16 ticks outside our limit at \|w\| = 4 | blocker | main | fixed by #60/#86 |
+| X5-B1 | v1 two-issue offers at days = 5 unvalued: 10 of 16 ticks outside our limit at abs(weight) = 4 if the days weight counts against us (sign unverified, probe P7) | blocker | main | fixed by #60/#86 |
 | X15 | An expired maker bid is reposted and its spend booked again: 130 P booked for one 65 P bid after 2 TTLs; in the simulator the ledger overbooked 70–140 P per 240-tick run on main | high | main, #72 | fixed on the takeover chain (#142) |
 | X3 | A redeploy orphans the taker's dealer threads: never driven or closed; a dealer-side deal is never booked. Sim sweep on the rehearsal (#72 in): every redeploy run under-booked 10–65 P, 6/10 really paid 152–160 P in a game hour | high | main, #72 | fixed on #140 (sweep: 0 flags in 20 runs on #143) |
 | X16 | Every merge touching `src/**` (and other watched paths) redeploys the live duels/taker/maker mid-play | high | config | ops: merge windows |
