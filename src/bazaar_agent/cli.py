@@ -100,7 +100,7 @@ def _events(live: bool) -> list[Event]:
     window = public_client(settings).feed_window(DEFAULT_WINDOW) if live else None
     events = load_events(store, window)
     if not events:
-        console.print("[yellow]no captured feed yet: reading the live window[/yellow]")
+        err_console.print("[yellow]no captured feed yet: reading the live window[/yellow]")  # stdout stays JSON
         events = load_events(store, public_client(settings).feed_window(DEFAULT_WINDOW))
     return events
 
@@ -233,10 +233,10 @@ def _history(events_file: str | None, live: bool) -> list[Event]:
 
     settings = load_settings()
     window = public_client(settings).feed_window if live else (lambda limit: [])
-    feed = MarketFeed(window, FeedStore(settings.feed_dir), _db_connect("bazaar-intel"), lambda m: console.print(m))
+    feed = MarketFeed(window, FeedStore(settings.feed_dir), _db_connect("bazaar-intel"), err_console.print)
     events = feed.events()
-    if not events:
-        console.print("[yellow]no feed history (no DB, no capture): reading the live window[/yellow]")
+    if not events:  # notes go to stderr: `affinity --json` / `trade-plan --json` keep stdout pure JSON
+        err_console.print("[yellow]no feed history (no DB, no capture): reading the live window[/yellow]")
         return _events(live=True)
     return events
 
