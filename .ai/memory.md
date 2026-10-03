@@ -349,3 +349,16 @@ at 0 bps we pick exactly the stall's traders (tests/test_matcher.py, 200 benches
 symptom: the keeper logged "opening refused locked" and retried 10 ticks later → root cause: the simulator
 unlocks El Chato (level 2, needed for a venue) at `chato_open_ticks`, never at tick 0 → fix: advance one tick
 first (`/sim/tick`). `locked` stays a retryable refusal in the keeper (a level can arrive later).
+
+### [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
+symptom: (review round 2) after one failed connect, `KeyVault.ready()` never succeeded again, so the h6.5
+opening would never come → root cause: the backoff raised, every caller's `except` re-armed the backoff,
+so it never ran out → fix: a call skipped by the backoff raises `_Skipped`, which never re-arms it
+(`venue.KeyVault._failed`; test `test_one_postgres_blip_never_locks_the_vault_out_for_good`).
+
+### [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
+The kit's `Bazaar.me()` docstring: /me carries `starter_broker_key` while we have the free starter stall;
+opening our own venue replaces the stall (RULES.md). `guardrails.runs_venue` reads it that way (the bond
+reserve stays, our opening is not blocked). Unverified live: if the key stays after we open, the floor stays
+370 all game; set `venue_bond_reserve = 0` then. The broker-key table is `venue_broker_keys` (target, venue):
+#84 still creates an older `venue_keys` shape, which nothing reads.

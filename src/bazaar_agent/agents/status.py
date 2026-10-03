@@ -124,7 +124,7 @@ def public_execution(row: dict[str, Any]) -> dict[str, Any]:
         "method": row.get("method"),
         "request": {} if private else _pick(row.get("request"), REQUEST_FIELDS),
         "ok": row.get("error_code") is None,
-        "error_code": row.get("error_code"),
+        "error_code": None if private else row.get("error_code"),  # `locked` or a cash refusal tells rivals too much
         "created_id": created if isinstance(created, int) and not private else None,
     }
 

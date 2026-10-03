@@ -297,7 +297,11 @@ def runs_venue(me: dict[str, Any]) -> bool:
     venue replaces the stall (RULES.md), so a venue named next to that key is the stall. The same answer
     drives the bond reserve and the refusal of a second opening."""
     venue = me.get("venue")
-    if not venue or me.get("starter_broker_key"):
+    if not venue:
+        return False
+    if isinstance(venue, dict) and venue.get("starter") is False:  # said outright: ours, whatever the key says
+        return str(venue.get("status") or "open") in ("open", "closing")
+    if me.get("starter_broker_key"):
         return False
     if isinstance(venue, str):
         return True

@@ -189,3 +189,8 @@ def test_a_venue_named_next_to_a_starter_broker_key_is_the_free_stall(venue):
     assert gr.effective_cash_floor(planned, c) == 370
     assert gr.check(gr.Action("venue_open"), c, planned).allowed
     assert not gr.check(gr.Action("buy", "LAV-09", "rare", 40), c, planned).allowed  # 360 < 370
+
+
+def test_a_me_venue_marked_starter_false_is_ours_whatever_the_stall_key_says():
+    me = {"venue": {"venue": "v09", "status": "open", "starter": False}, "starter_broker_key": "bk_" + "Stale0ne"}
+    assert gr.runs_venue(me) is True

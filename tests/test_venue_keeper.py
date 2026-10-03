@@ -371,3 +371,50 @@ def test_an_unsent_opening_stays_off_the_public_status(tmp_path):
     k = keeper(tmp_path, Team(), hub=hub)
     k.on_tick(snap(cash=300).clock, snap(cash=300), window())  # refused by the floor: nothing sent
     assert hub.state()["decisions"] == [] and rows(tmp_path)[0]["status"] == "rejected"
+
+
+@pytest.mark.parametrize(("error", "kept"), [("http_502", True), ("bad_response", True), ("locked", False)])
+def test_a_claim_is_kept_when_the_opening_may_have_landed(tmp_path, error, kept):
+    status = {"http_502": 502, "bad_response": 0, "locked": 403}[error]
+    store = {}
+    k = keeper(tmp_path, Team(refuse=BazaarError(error, "", status)), store=store)
+    k.on_tick(snap().clock, snap(), window())
+    assert (("", "_claim") in store) is kept and k.held_claim is kept
+
+
+def test_a_venue_we_run_without_its_key_counts_as_opened_and_is_never_followed_by_another(tmp_path):
+    store, lines = {}, []
+    k = keeper(tmp_path, Team(), store=store, lines=lines)
+    s = snap(venues=(RASTRO, ours()))  # an opening whose answer was lost: the venue is there, no key
+    k.on_tick(s.clock, s, window())
+    assert store == {("", "v09"): ("", 400)} and k.made == []
+    team = Team()
+    fresh = keeper(tmp_path / "restart", team, store=store)  # it closed later; a restarted maker
+    gone = snap(tick=500, venue={"venue": "v09", "status": "closed"})
+    fresh.on_tick(gone.clock, gone, window())
+    assert team.opened == [] and fresh.final == "opened_before"
+
+
+def test_a_process_that_claims_after_another_saved_its_venue_backs_off(tmp_path, monkeypatch):
+    store, team = {}, Team()
+    k = keeper(tmp_path, team, store=store)
+    answers = iter([False, True])  # before the claim: nothing opened; after it: another process just saved
+    monkeypatch.setattr(vn.KeyVault, "opened_before", lambda self: next(answers))
+    k.on_tick(snap().clock, snap(), window())
+    assert team.opened == [] and k.final == "opened_before" and store == {}
+
+
+def test_a_refused_opening_never_shows_its_error_code_on_the_public_status(tmp_path):
+    hub = StatusHub("maker", True)
+    k = keeper(tmp_path, Team(refuse=BazaarError("insufficient_cash", "", 400)), hub=hub)
+    k.on_tick(snap().clock, snap(), window())
+    assert "insufficient_cash" not in "\n".join(hub.replay())
+
+
+def test_we_run_a_venue_but_me_still_shows_the_stall_key_says_so(tmp_path):
+    lines = []
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, lines=lines)
+    s = snap(venues=(RASTRO, ours()), venue={"venue": "v09", "status": "open"})
+    s = Snapshot(s.clock, {**s.me, "starter_broker_key": "bk_" + "Stale0ne"}, s.offers, {}, [], s.venues, [])
+    k.on_tick(s.clock, s, window())
+    assert any("set venue_bond_reserve = 0" in line for line in lines)
