@@ -509,7 +509,8 @@ class Taker:
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
-        cash_room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        floor = effective_cash_floor(self.rules, ctx)  # the floor check() applies, bond reserve included (#71)
+        cash_room = min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
         moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
         # The card of every DEALER thread of ours is busy, this process's or another's (security #158 r2 P3-B):
         # with the lift on, two dealers may sell one card. Only threads with a dealer: we wrote their topic; a

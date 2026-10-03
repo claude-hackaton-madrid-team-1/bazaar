@@ -37,9 +37,9 @@ class FakeLearner:
         return False
 
 
-def taker(tmp_path, team, *, lift=0.0, learner=None, lessons=None, dealers=None):
+def taker(tmp_path, team, *, lift=0.0, learner=None, lessons=None, dealers=None, **rules):
     lines: list[str] = []
-    kw = {**parts(tmp_path, dealer_final_lift=lift), "feed": MarketFeed(lambda n: deepcopy(EVENTS))}
+    kw = {**parts(tmp_path, dealer_final_lift=lift, **rules), "feed": MarketFeed(lambda n: deepcopy(EVENTS))}
     t = Taker(
         team,
         FakePublic(dealers=dealers or [CHATO], events=EVENTS),
@@ -218,6 +218,18 @@ def test_a_cash_skip_is_recorded_once_while_the_cash_moves(tmp_path):
     t.on_tick(team.now)
     skips = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
     assert len(skips) == 1 and skips[0]["reason"].startswith("cash: what we may still commit is below chato")
+
+
+def test_the_cash_room_keeps_the_venue_bond_reserve_like_check_does(tmp_path):
+    # review #158 r4 P2: the planner's room used `cash_floor` alone, so with a venue planned it aimed at finals
+    # that check() refuses under `effective_cash_floor` (#71). Floor 100 + reserve 273: 27 left, below his fills
+    # (~28.5); with `cash_floor` alone the room was 150 and the plan took a final of 29 (400 - 29 < 373).
+    team = FakeTeam(me={**CHATO_ME, "cash": 400})
+    t, _, _ = taker(tmp_path, team, lift=0.15, cash_floor=100, allow_venue_open=True, venue_bond_reserve=273)
+    t.on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "open_thread"]
+    (skip,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    assert skip["reason"].startswith("cash: what we may still commit is below chato")
 
 
 def test_a_lifted_final_named_after_one_bid_is_not_taken(tmp_path):
