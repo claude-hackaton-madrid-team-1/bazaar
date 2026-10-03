@@ -11,7 +11,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Kill switch
 - `trading_enabled` = true — false HOLDS: our processes send nothing to the game (no bids, accepts, posts, duel moves, and also no cancels, thread closes or walks); reads continue, open offers and threads stay exactly as they are, and agents resume where they were when it is true again. Read again every tick: an edit counts without a restart.
-- `pause_file` = .local/PAUSE — if this file exists, the same hold (`touch .local/PAUSE` to hold all agents at once, delete it to resume).
+- `pause_file` = .local/PAUSE — if this file exists, the same hold for the processes run from that checkout (`touch .local/PAUSE` holds the agents started there, delete it to resume; another checkout or worktree, and each Railway service, has its own: README "Pause writes").
 - Pause holds, it never flattens. To empty the book (before the doors close overnight, after a bad run) pause first, then run `uv run bazaar flatten --live`: it cancels every open offer of ours (add `--threads` to also close our open threads, a walk dealers remember). Its cancels and closes are the only writes sent while the kill switch is on; one paced pass that stops on a 429 and says what is left.
 
 ## Money

@@ -311,6 +311,23 @@ a fresh-context sub-agent that merges the PR onto current main, runs the gate an
 Tonight's manual reviews in that shape caught a test that only failed after merging with main (#62) and
 leaks of our limits on the public `/state` (#69).
 
+### [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
+It serves `bazaar-sim` on 127.0.0.1:8765 (memory world, 2 s ticks) and runs our CLI with BAZAAR_SIM=local:
+status, a negotiated dealer buy, two live ticks of taker and maker, duel moves, the monitor's SSE, the key
+guard and the BAZAAR_URL fail-fast. `scripts/sim_guard/sitecustomize.py` (on every child's PYTHONPATH) raises
+on any non-loopback connect or DNS lookup; a dead proxy backs it up; children get an allow-listed env and an
+empty BAZAAR_ENV_FILE. A step fails on Traceback, "tick loop:" or " refused ". ~20 s locally.
+Deployed sim verified 02:10: tick 12→13 in 11 s, store `bazaar_sim`; live buy LAV-03 at 8 (thread 7, 4 ticks).
+
+### [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
+symptom: `bazaar-monitor` (no source, `enabled=False`) RUNNING since Fri 23:14 UTC, holding one of the
+key's six SSE slots → root cause: Railway redeploys a service's last image whenever an apply changes its
+config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` watch patterns
+(deployment reason `redeploy`, patchId `iac-change-set/…`) → fix: `railway down --service bazaar-monitor`,
+then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
+`bazaar-evals` (service deleted): the file declares no service we do not run, and
+tests/test_railway_iac.py fails on a service without a source.
+
 ### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 `GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
 `cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)

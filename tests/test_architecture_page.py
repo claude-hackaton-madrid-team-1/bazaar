@@ -56,17 +56,42 @@ DATA = {
     "being_built": [{"status": "wip", "label": "worker", "title": "Evals", "body": "Online."}],
     "not_started": [{"status": "part", "label": "gap", "title": "Learner", "body": "Fills tables."}],
     "links": [{"name": "Taker", "urls": ["https://a.example", "wss://a.example/events"]}],
-    "roadmap": [
-        {
-            "when": "Sat 09:00-13:00",
-            "title": "Morning",
-            "events": ["09:21 Market Test <1>"],
-            "items": [
-                {"priority": "P0", "status": "wip", "text": "Fix `#61` <now>", "owner": "Marius"},
-                {"priority": "P2", "status": "done", "text": "Sim gate"},
-            ],
-        }
-    ],
+    "timeline": {
+        "start": "2026-10-03T09:00",
+        "end": "2026-10-03T21:00",
+        "closed": [["2026-10-03T19:00", "2026-10-03T21:00"]],
+        "markers": [{"at": "2026-10-03T18:00", "kind": "deadline", "label": "Deadline <18>"}],
+        "events": [{"at": "2026-10-03T10:00", "label": "MT", "title": "Market <Test>"}],
+        "lanes": [
+            {
+                "name": "Trading <live>",
+                "bars": [
+                    {
+                        "title": "Fix `#61` <now>",
+                        "start": "2026-10-03T09:00",
+                        "end": "2026-10-03T12:00",
+                        "status": "wip",
+                        "priority": "P0",
+                        "owner": "Marius",
+                    },
+                    {
+                        "title": "Overlap",
+                        "start": "2026-10-03T10:00",
+                        "end": "2026-10-03T11:00",
+                        "status": "done",
+                        "priority": "P2",
+                    },
+                    {
+                        "title": "After",
+                        "start": "2026-10-03T12:00",
+                        "end": "2026-10-03T15:00",
+                        "status": "todo",
+                        "priority": "P1",
+                    },
+                ],
+            }
+        ],
+    },
 }
 
 
@@ -124,35 +149,113 @@ def test_committed_page_is_current() -> None:
     assert ap.main(["--check"]) == 0
 
 
-def test_roadmap_renders_each_slot_with_priority_status_and_owner() -> None:
+def test_timeline_places_bars_on_the_axis_and_escapes_text() -> None:
     page = ap.render_page(DATA, PLAN, TEMPLATE)
-    assert "Sat 09:00-13:00" in page and "<b>Morning</b>" in page
-    assert '<p class="events">⏱ 09:21 Market Test &lt;1&gt;</p>' in page
-    assert '<span class="prio P0">P0</span><span class="pill p-wip">doing</span>' in page
-    assert "Fix <code>#61</code> &lt;now&gt;" in page and " · Marius" in page
-    assert '<span class="pill p-done">done</span><span>Sim gate</span>' in page  # no owner, no separator
-
-
-def test_every_roadmap_field_is_escaped() -> None:
-    evil = "<script>x</script>"
-    phase = {
-        "when": evil,
-        "title": evil,
-        "events": [evil],
-        "items": [{"priority": "P1", "status": "todo", "text": evil, "owner": evil}],
+    assert 'class="tl-bar wip" style="left:0.0%;width:25.0%;top:4px"' in page  # 09:00-12:00 of 09:00-21:00
+    assert 'class="tl-bar done" style="left:8.333%;width:8.334%;top:34px"' in page  # overlap -> second row
+    assert 'class="tl-bar todo" style="left:25.0%;width:25.0%;top:4px"' in page  # starts when the first ends
+    assert "Trading &lt;live&gt;" in page
+    lane = {
+        "name": "x",
+        "bars": [
+            {
+                "title": "Fix `#61` <now>",
+                "start": "2026-10-03T09:00",
+                "end": "2026-10-03T21:00",
+                "status": "todo",
+                "priority": "P1",
+            }
+        ],
     }
-    out = ap.render_roadmap([phase])
-    assert "<script>" not in out and out.count("&lt;script&gt;") == 5
+    one = ap.render_timeline({"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [lane]})
+    assert "Fix <code>#61</code> &lt;now&gt;" in one
+    assert "Deadline &lt;18&gt;" in page and "Market &lt;Test&gt;" in page
+    assert 'class="tl-closed" style="left:83.333%;width:16.667%"' in page
+    assert "<script>" not in re.sub(r"<script>\s*\(function \(\) \{.*?</script>", "", page, flags=re.S)
 
 
-def test_roadmap_events_must_be_a_list() -> None:
+def test_timeline_rejects_bad_input() -> None:
+    lane = {
+        "name": "x",
+        "bars": [
+            {"title": "t", "start": "2026-10-03T09:00", "end": "2026-10-03T10:00", "status": "todo", "priority": "P9"}
+        ],
+    }
+    base = {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [lane]}
+    with pytest.raises(SystemExit):  # unknown priority
+        ap.render_timeline(base)
+    lane["bars"][0]["priority"] = "P1"
+    lane["bars"][0]["end"] = "2026-10-04T10:00"
+    with pytest.raises(SystemExit):  # outside the axis
+        ap.render_timeline(base)
+    lane["bars"][0]["end"] = "2026-10-03T08:00"
+    with pytest.raises(SystemExit):  # ends before it starts (and outside)
+        ap.render_timeline(base)
+    lane["bars"][0]["end"] = "2026-10-03T10:00"
     with pytest.raises(SystemExit):
-        ap.render_roadmap([{"when": "x", "title": "y", "events": "09:00 open", "items": []}])
-
-
-def test_roadmap_is_optional_and_rejects_unknown_priorities() -> None:
-    without = {k: v for k, v in DATA.items() if k != "roadmap"}
-    assert "No roadmap yet" in ap.render_page(without, PLAN, TEMPLATE)
-    bad = {"when": "x", "title": "y", "items": [{"priority": "P9", "status": "todo", "text": "z"}]}
+        ap.render_timeline({**base, "markers": [{"at": "2026-10-03T10:00", "kind": "party", "label": "x"}]})
     with pytest.raises(SystemExit):
-        ap.render_roadmap([bad])
+        ap.render_timeline({**base, "end": "2026-10-03T08:00"})
+
+
+def test_a_narrow_bar_label_pushes_the_next_bar_down() -> None:
+    bars = [
+        {
+            "title": "A long title that cannot fit",
+            "start": "2026-10-03T09:00",
+            "end": "2026-10-03T09:30",
+            "status": "todo",
+            "priority": "P1",
+        },
+        {"title": "Next", "start": "2026-10-03T09:45", "end": "2026-10-03T20:00", "status": "todo", "priority": "P1"},
+    ]
+    out = ap.render_timeline(
+        {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [{"name": "x", "bars": bars}]}
+    )
+    assert 'class="tl-bar todo out"' in out and "top:34px" in out  # the label of the first occupies row 1
+
+
+def test_hostile_text_never_breaks_out_of_the_timeline() -> None:
+    evil = "\"'><script>alert(1)</script><img src=x onerror=alert(2)>"
+    tl = {
+        "start": "2026-10-03T09:00",
+        "end": "2026-10-03T21:00",
+        "markers": [{"at": "2026-10-03T18:00", "kind": "deadline", "label": evil}],
+        "events": [{"at": "2026-10-03T10:00", "label": evil, "title": evil}],
+        "lanes": [
+            {
+                "name": evil,
+                "bars": [
+                    {
+                        "title": evil,
+                        "start": "2026-10-03T09:00",
+                        "end": "2026-10-03T12:00",
+                        "status": "todo",
+                        "priority": "P1",
+                        "owner": evil,
+                    }
+                ],
+            }
+        ],
+    }
+    out = ap.render_timeline(tl)
+    assert "<script" not in out and "<img" not in out and "onerror=alert(2)>" not in out
+
+
+def test_timeline_rejects_offsets_bad_stamps_bad_bands_and_bad_ticks() -> None:
+    base = {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": []}
+    for bad in (
+        {**base, "start": "2026-10-03T09:00+05:00"},
+        {**base, "end": "not a time"},
+        {**base, "closed": [["2026-10-03T12:00", "2026-10-03T10:00"]]},
+        {**base, "tick_hours": 0},
+        {**base, "tick_hours": 0.5},
+        {**base, "tick_hours": "3"},
+    ):
+        with pytest.raises(SystemExit):
+            ap.render_timeline(bad)
+
+
+def test_timeline_is_optional() -> None:
+    without = {k: v for k, v in DATA.items() if k != "timeline"}
+    assert "No timeline yet" in ap.render_page(without, PLAN, TEMPLATE)

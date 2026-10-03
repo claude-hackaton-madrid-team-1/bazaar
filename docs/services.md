@@ -13,9 +13,13 @@ one of our private numbers (see "Public by design"). Phoenix is read-only behind
 | **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
 | **Simulator** | https://bazaar-sim-production-1d48.up.railway.app | A simulated Bazaar (`bazaar-sim`): the organiser API's routes and shapes, keys `sim-team1`…`sim-team8`, for testing agents and the dashboard while the game is closed |
 
-Both agents start in **dry run**: they log what they *would* do and publish only its outline (no prices,
-see "Public by design"). A service trades only when `BAZAAR_LIVE=1` is set on it by hand (see README,
-"Production on Railway").
+Both agents are **LIVE since Sat 2026-10-03 01:45 Madrid**: `BAZAAR_LIVE=1` is set by hand on
+`bazaar-taker` and `bazaar-maker` (they trade from the 09:00 opening), and `GET /health` says
+`"mode": "live"`. Without that variable an agent is a dry run: it logs what it *would* do and publishes
+only its outline (no prices, see "Public by design"). To stop one: first its kill switch, which holds
+at once (`railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`; each service has its own),
+then `railway variable delete BAZAAR_LIVE --service bazaar-taker` (it redeploys in dry run). Neither
+withdraws our open offers: `bazaar sell cancel` does (README, "Production on Railway").
 
 ## Taker and maker: HTTP
 
@@ -153,7 +157,7 @@ write; every write call is a `decisions` row with agent `mcp`. Answers never car
 password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
 ## Evals scorecard (Postgres)
 
-`bazaar-evals` (README "Evals") writes one `outcomes` row per settled duel, dealer thread, team trade or
+The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
 Market Test and keeps three views current. A dashboard reads them with plain SQL, or runs
 `uv run bazaar evals report --json`. Scores are 0..1; labels `good` (≥ 0.6) · `ok` (≥ 0.3) · `bad`.
 
@@ -211,10 +215,23 @@ status`. A dashboard can point its base URL there to develop against live-lookin
 take `X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). The taker's,
 maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. README, "Simulator".
 
+## Bazaar Live (the show)
+
+`bazaar-live` (repo [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)): the
+buyer and the seller at a Rastro stall, acting out and voicing every public move. Its public URL is the
+Railway-generated domain of service `bazaar-live` (generated once by hand; listed in its README).
+
+- The page reads only the taker's and maker's public `/health`, `/state` and `WS /events` above, from
+  the browser, and keeps only the public fields; it sends nothing to the agents or the game and holds no
+  team key. `?mock=1` plays recorded fixtures when the doors are closed.
+- Its own server answers `GET /health` (`{ok, service, tts}`), `GET /api/tts/providers` and
+  `POST /api/tts`: a proxy to ElevenLabs / Gemini TTS with the keys server-side (`ELEVENLABS_API_KEY`,
+  `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
+  (`Origin`), under per-address and global rate limits and a daily character budget.
+
 ## Not public
 
 - **Postgres** (`iriguchi.proxy.rlwy.net:28880`, db `railway`): the shared memory. Credentials only in
   the Railway dashboard; never in chat, git or a browser.
 - **`bazaar-duels`**: the duel player, a background worker with no HTTP. Its traces are in Phoenix.
-- **`bazaar-evals`**: the evals loop, a worker with no HTTP. Its output is the Postgres scorecard above.
 - **The monitor**: runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision.

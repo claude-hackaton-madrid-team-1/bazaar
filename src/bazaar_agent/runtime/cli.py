@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from bazaar_agent.config import REPO_ROOT, Settings, load_settings, read_env_file
+from bazaar_agent.config import Settings, env_file_path, load_settings, read_env_file
 from bazaar_agent.guardrails import Guardrails, GuardrailsError, load_guardrails
 from bazaar_agent.llm.config import RuntimeConfig, RuntimeConfigError, load_runtime
 from bazaar_agent.llm.models import UnknownModelError, pinned_model, resolve
@@ -225,7 +225,7 @@ def _mcp_token() -> str | None:
     """BAZAAR_MCP_TOKEN from the environment (Railway), else `.env`. Never printed."""
     from bazaar_agent.runtime.mcp_server import TOKEN_VARIABLE
 
-    return os.environ.get(TOKEN_VARIABLE) or read_env_file(REPO_ROOT / ".env").get(TOKEN_VARIABLE)
+    return os.environ.get(TOKEN_VARIABLE) or read_env_file(env_file_path()).get(TOKEN_VARIABLE)
 
 
 def mcp_serve(

@@ -728,7 +728,8 @@ def rules_show() -> None:
     stops = kill_switch(loaded.rules, loaded.path)
     state = f"[red]ON, holding[/red] ({'; '.join(stops)})" if stops else "[green]off, trading enabled[/green]"
     console.print(
-        f"Kill switch: {state}. touch {loaded.rules.pause_file} to hold: nothing is sent, not even cancels or closes"
+        f"Kill switch: {state}. touch {loaded.rules.pause_file} to hold the processes run from this checkout: "
+        "nothing is sent, not even cancels or closes"
     )
 
 
