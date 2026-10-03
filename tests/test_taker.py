@@ -487,3 +487,20 @@ def test_a_refused_walk_whose_close_did_land_still_reopens_lower(tmp_path):
     her(team, 5000, dealer_ask(800, 19))
     t.on_tick(at(team, TICK + 1))
     assert t.convs == {} and t.reopen_at == {("abuela", "LAV-08"): 17} and ledger.spent_since(0) == 0
+
+
+def test_a_rate_limited_walk_sends_nothing_more_this_tick(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class Limited(FakeTeam):
+        def close_thread(self, tid):
+            raise BazaarError("rate_limited", "slow down", 429)
+
+    team = Limited()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    her(team, 5000, dealer_ask(800, 19))
+    before = len(team.reads)
+    t.on_tick(at(team, TICK + 1))
+    assert team.reads[before:].count("thread 5000") == 1  # the tick's own read only: no re-read after the 429
+    assert set(t.convs) == {"abuela"}  # kept: the walk is decided again next tick

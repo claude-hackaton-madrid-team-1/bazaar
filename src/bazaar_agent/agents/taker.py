@@ -630,7 +630,9 @@ class Taker:
         """Our close was refused: read the thread again. Ended (a deal that landed first): wrap it up, its
         spend booked; ended without a deal after she held her opening (our close landed, its answer was
         lost): reopen lower as after any held walk. Still open (or unreadable): keep the conversation; the
-        next tick decides again."""
+        next tick decides again. A rate limit is no reason to send one more request now: wait for the tick."""
+        if self.rec.last_code in ("rate_limited", "wait_for_tick", "too_many_requests"):
+            return
         try:
             after = self.team.thread(conv.thread_id)
         except BazaarError as e:

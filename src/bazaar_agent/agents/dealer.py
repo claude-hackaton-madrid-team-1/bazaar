@@ -465,19 +465,25 @@ def negotiate(
         state["held"] += 1
         return True
 
+    def ended(thread: dict[str, Any], clock: Clock) -> bool:
+        """Take the thread's status; when it ended, say so and book a deal's price (`on_deal`)."""
+        state["status"] = thread.get("status", "open")
+        if state["status"] == "open":
+            return False
+        log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
+        if state["status"] == "deal":
+            state["price"] = settled_price(thread) or state["price"] or (neg.bids[-1] if neg.bids else None)
+            if on_deal is not None and state["price"] is not None:
+                on_deal(int(state["price"]), clock.tick, clock.t_hours)
+        return True
+
     def on_tick(clock: Clock) -> None:
         if state["status"] != "open":
             return
         state["ticks"] += 1
         thread = client.thread(tid)
         obs.thread_read(thread)
-        state["status"] = thread.get("status", "open")
-        if state["status"] != "open":
-            log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
-            if state["status"] == "deal":
-                state["price"] = settled_price(thread) or state["price"] or (neg.bids[-1] if neg.bids else None)
-                if on_deal is not None and state["price"] is not None:
-                    on_deal(int(state["price"]), clock.tick, clock.t_hours)
+        if ended(thread, clock):
             return
         if hold(f"tick {clock.tick}"):  # a held tick does not count toward max_ticks
             return
@@ -564,8 +570,12 @@ def negotiate(
     if state["status"] == "open" and holding(f"after {max_ticks} ticks"):
         state["status"] = "held"  # the kill switch is on: the thread stays open, never closed
     elif state["status"] == "open":
-        client.close_thread(tid)
-        state["status"] = "timeout"
+        try:
+            client.close_thread(tid)
+            state["status"] = "timeout"
+        except BazaarError as e:  # her "Deal!" may have landed since our last read: never leave it unbooked
+            log(f"timeout close of thread {tid} refused ({e.code}): reading it again")
+            ended(client.thread(tid), Clock.model_validate(client.clock()))
     outcome = Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]), state["reopen"])
     obs.finished(outcome)
     return outcome

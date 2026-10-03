@@ -198,6 +198,7 @@ class Recorder:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
         self,
@@ -296,11 +297,11 @@ class Recorder:
         spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
-        self.maybe_landed = False
+        self.maybe_landed, self.last_code = False, None
         try:
             response = call()
         except BazaarError as e:
-            self.maybe_landed = e.code in MAYBE_LANDED
+            self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

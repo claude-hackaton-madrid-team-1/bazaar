@@ -571,3 +571,34 @@ def test_at_our_max_we_wait_for_her_answer_before_walking():
     assert decide(n, 17, 5, False) == Move("wait", reason="her answer to our max bid is not in yet")
     n.awaiting_reply = False
     assert decide(n, 17, 5, False) == Move("walk", reason="no higher bid left inside our limit")
+
+
+def test_a_refused_timeout_close_books_a_deal_that_landed_first():
+    # pr-reviewer #72 round 3 (P2): her "Deal!" to our last bid lands between our last read and the timeout
+    # close; the close is refused. Before: `dealer buy` died with a traceback and the deal was never booked.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class LateDeal(FakeDealerClient):
+        def close_thread(self, tid):
+            self.status = "deal"
+            raise BazaarError("thread_closed", "thread 85 is deal", 400)
+
+        def thread(self, tid):
+            if self.status == "deal":
+                return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 8}}}]}
+            return super().thread(tid)
+
+    booked: list[int] = []
+    client = LateDeal(asks=[30] * 20)
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=3,
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert (out.status, out.price, booked) == ("deal", 8, [8])
