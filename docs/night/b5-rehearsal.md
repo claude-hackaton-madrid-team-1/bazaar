@@ -22,7 +22,7 @@ contradicts the 02:30 decision (no venue, no `cash_floor` change tonight). Once 
 the LIVE maker opens a board venue at h6.5 by itself.
 
 ## Merge order (frozen heads, 04:00–04:25) and what each step needs
-| # | PR @ head | conflicts (all resolved additively; details in the merge commits) | needs this fix-up |
+| # | PR @ head | conflicts (all resolved additively; every hunk in `docs/night/b5-rehearsal-resolutions.md`) | needs this fix-up |
 |---|---|---|---|
 | 1 | #60 @ c6ccda4 | none | |
 | 2 | #62 @ 90e0fea | README, cli.py (duel send site, agent banner) | drop #62's unused `kind` (F841) |
@@ -114,6 +114,10 @@ separate commit on this branch (`git log --first-parent`), so it can be cherry-p
 - **Tick window.** At 3 s ticks the keeper's paced matches (0.2 s each, before the maker's offers) dropped 3 matches
   at the tick edge (5 sent). At 4 s ticks, 0 were dropped; at 30 s ticks, 0. Watch Sunday's 15 s ticks with many
   bench pairs.
+- **Without Postgres the venue never opens, but its reserve still binds** (10-tick run, `--db ""`). The keeper logs
+  "skip opening our venue … denied: Postgres cannot hold the broker key: not opening" each time, while every
+  purchase still keeps 370 (`cash_floor` 100 + `venue_bond_reserve` 270). With #71 merged and the shared
+  Postgres unreachable at h6.5, 270 P stays frozen until Postgres answers.
 - **r2's X15 (expired maker bids counted twice) was not exercised.** After the venue opened (cash ~100), the
   maker could not afford a bid, so none expired. Its bite is still open (below).
 
@@ -149,11 +153,13 @@ Re-run the rehearsal on the new heads before merging: `scripts/rehearsal/rehears
 Wave-2 PRs #89, #91–#119, #121–#130 (B-items, r1/r2, the teammates' feed reader, the holdings DB, and so on):
 outside this rehearsal's frozen scope. For #100 (B12, on #81), its author's re-apply notes after #72: `may_close` →
 `may_take`; `counter_below` targets `ask - neg.base_step`; `reopen_start` reads a jittered `bids[0]`.
-Pass 1 (old #71/#72 heads, 4 fix-ups) is kept as `night/b5-rehearsal-pass1`.
+Pass 1 (old #71/#72 heads, 4 fix-ups) is kept as `night/b5-rehearsal-pass1`. This branch also carries
+`.ai/memory.md` entries from #71's and #72's own commits; no rehearsal commit touches that file.
 
 ## What Marius must decide
 1. #71 as it stands: auto-opening a real venue at h6.5 with `cash_floor` 100 (vs. the 02:30 decision).
 2. #62 before merging: every LIVE Railway service needs `DATABASE_URL` set to the shared Postgres, otherwise
    taker/maker/duels exit at start ("refusing to trade"). #71's opening also needs Postgres (the claim and the vault).
+   Without it, the venue never opens and its 270 P reserve stays frozen (shown on the simulator).
 3. Fold the fix-ups into the second PR of each pair (table above), or merge this branch's fix-up commits.
 
