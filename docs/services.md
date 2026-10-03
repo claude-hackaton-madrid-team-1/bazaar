@@ -75,7 +75,7 @@ probabilities) still goes to the Postgres `decisions` table and to Phoenix, both
 | `type` | When | `payload` |
 |---|---|---|
 | `agent.tick` | once per game tick the agent handles | `{mode}` |
-| `agent.decision` | every move the agent proposes, sent or not | a decision (below) |
+| `agent.decision` | every move the agent proposes, cut down unless sent; unsent accepts are not published | a decision (below) |
 | `agent.execution` | every request the agent actually sends to the game | `{agent, decision_id, tick, method, request, ok, error_code, created_id}` |
 
 A decision, as published:
@@ -83,7 +83,7 @@ A decision, as published:
 ```json
 {"agent": "taker", "decision_id": 4180, "tick": 155, "kind": "dealer_bid",
  "chosen": true, "status": "approved", "dry_run": false, "sent": "sending", "thread_id": 812,
- "guardrail": "allowed", "jev": {"verdict": "yes"},
+ "guardrail": "allowed", "jev": null,
  "inputs": {"dealer": "abuela", "thread": 812, "item": "LAV-08", "her_ask": 30, "final": false},
  "move": {"kind": "bid", "price": 21}}
 ```
@@ -91,21 +91,22 @@ A decision, as published:
 - `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict).
-- `status` is `approved` (sent, or would be in a dry run), `rejected` or `expired`; `sent` is
-  `would-send`, `sending` or `not sent`.
-- `guardrail` is only a label: `allowed`, `denied` or `-` (the rules it broke are in the `decisions` table).
-- `jev` is `{verdict}` when Jev was asked (a noul's `yes`/`no`, a choice's option such as `quick_sale`, or
-  `undecided`), else `null`. `undecided` never authorizes anything.
-- `inputs` keeps only `dealer`, `thread`, `item`, `ref`, `card`, `rarity`, `side`, `venue`, `offer_id`,
-  `maker`, `ask` / `her_ask` (the counterparty's price), `fee` and `final`, read from the row's inputs
-  (and from their `offer` / `listing` part for the maker's Jev rows). Our own `price` and the `move`
-  (`{kind, price}`, `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`,
-  `{hold}`, `{reprice, price}`) appear only on an `approved` row of a live agent: a price we never sent
-  stays private.
-- A row that was not sent (`rejected`, `expired`, a skipped accept, and every dry-run row) is cut down
-  further: `{agent, tick, kind, status, guardrail, jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
-  No counterparty, offer id, ask or price: otherwise a rival could list a card and learn from our
-  `skip ... accept quota` or dry-run `would accept` row that its ask sat below our value.
+- `status` is `approved`, `rejected` or `expired`. `sent` and `dry_run` are only on a **sent** row (see below),
+  where `sent` is `sending`; read the agent's `mode` (`dry` or `live`) from `agent.tick` or `/health`.
+- `guardrail` is `allowed` on a sent row and `-` on every other: a denial would name the limit we hit.
+- `jev` is always `null`: a Jev label (`quick_sale`) next to a listed price marks our walk-away price. The key
+  stays so readers keep working; the verdicts are in the `decisions` table.
+- A row is **sent** only when it is `approved`, `chosen` and from a live agent. Only a sent row shows `inputs`
+  `dealer`, `thread`, `item`, `ref`, `card`, `rarity`, `side`, `venue`, `offer_id`, `maker`, `ask` / `her_ask`
+  (the counterparty's price), `fee`, `final` and our own `price`, and the `move` (`{kind, price}`,
+  `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`, `{hold}`). Nested values
+  (`topic`, `give`, `want`) keep only card, pack and cash keys.
+- Any other row is **not published at all**: `rejected`, `expired`, every dry-run row, an unsent accept (it would
+  say the ask sat below our value), a `hold_*` row, and a maker `reprice_*` row (approved but not chosen: its
+  price is the strategy's target). Even their kind and status would say which limit or quota bound us, so a dry
+  agent publishes only `agent.tick`.
+- `agent.execution.error_code` is `null` or `refused`: the game's codes (`insufficient_cash`, `persona_quota`,
+  `rate_limited`) name our cash and quota, and stay in the `decisions` table.
 - An execution shows the `request` we sent (`offer`, `thread`, `with`, `topic`, `price`, `give`, `want`,
   `venue`), whether it worked (`ok`, `error_code`) and the id it created (`created_id`), not the
   game's answer body.

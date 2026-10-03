@@ -478,8 +478,8 @@ server's answer or refusal code. Without Postgres they go to `.local/agents/*.js
 **Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
 `GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
 the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
-offers, the last 50 decisions with kind, card, counterparty, the move sent, Jev verdict, guardrail label and
-sent/would-send), and
+offers, the last 50 decisions: kind, card, counterparty and the move only for a row actually sent; unsent accepts are
+not published, `jev` is always null; read `mode` from `/health` or `agent.tick`), and
 `WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
 `{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
 `agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
@@ -927,6 +927,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
@@ -934,7 +935,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
 - [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
 - [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
-- [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
 
 <!-- BAZAAR:STATUS:END -->
 
