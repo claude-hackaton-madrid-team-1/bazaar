@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from functools import partial
-from typing import Any
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -493,6 +493,56 @@ def rivals(
         typer.echo(json.dumps(rows, indent=2, default=str))
         return
     console.print(render.rivals_table(list(found.values())))
+
+
+@app.command()
+def buyers(
+    cards: Annotated[
+        list[str] | None, typer.Option("--card", help="Rank buyers for this card (repeat); default: our duplicates")
+    ] = None,
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    board_file: str | None = typer.Option(None, "--leaderboard", help="/api/leaderboard from a file; else the API"),
+    scan: bool = typer.Option(True, help="Read the stored card scan from Postgres (holders of each card)"),
+    save: bool = typer.Option(False, "--save", help="Store the ranking in Postgres (team_buyer_rank)"),
+    as_json: bool = typer.Option(False, "--json", help="Print card -> ranked rows as JSON"),
+) -> None:
+    """Read-only: the other teams ranked as buyers of each card (willingness, interest, need, rivals, blocks)."""
+    from dataclasses import asdict
+
+    from rich.markup import escape
+
+    from bazaar_agent import buyers_db as bd
+    from bazaar_agent import db
+
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and board_file) else public_client(load_settings())
+    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    board = _payload_file(board_file) if board_file else public.leaderboard()  # type: ignore[union-attr]
+    events = _history(events_file, live)
+    stored, note = bd.stored_scan(lambda: db.connect(app="bazaar-buyers", connect_timeout_s=3)) if scan else ([], None)
+    if note:
+        err_console.print(f"[yellow]{escape(note)}[/yellow]")
+    picked = cards or bd.duplicates(me)
+    if not picked:
+        err_console.print("no card to rank (no duplicates in /api/me; pass --card)")
+    ranked = bd.rank_cards(picked, me=me, catalog=catalog, events=events, board=board, scan=stored)
+    if as_json:
+        typer.echo(json.dumps({c: [asdict(r) for r in rows] for c, rows in ranked.items()}, indent=2))
+    else:
+        for card, rows in ranked.items():
+            console.print(bd.table(card, rows) if rows else f"{escape(card)}: not in the catalog")
+    if save:
+        tick = int(me.get("tick") or max((int(e.get("tick") or 0) for e in events), default=0))
+        try:
+            with db.connect_ready("bazaar-buyers") as conn:
+                n = bd.save(conn, ranked, tick)
+        except Exception as e:  # noqa: BLE001 (printed redacted: a connect error can echo the password)
+            err_console.print(f"[red]not saved: {escape(bd.safe_error(e))}[/red]")
+            raise typer.Exit(1) from None
+        err_console.print(f"saved {n} rows for {len(ranked)} cards to Postgres (team_buyer_rank)")
 
 
 @app.command()

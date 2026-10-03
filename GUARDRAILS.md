@@ -96,6 +96,10 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `dealer_sell_open_above_top` = 1.6 — our opening ask on a sell thread: this × the highest bid that dealer gave any team for that rarity (`dealer_curves`, sell rows); never below our floor.
 - `dealer_sell_rounds` = 5 — our asks reach that dealer's typical fill in about this many steps down (finals came after 4-7 dealer bids).
 
+## Who we sell to
+- `buyer_rank_enabled` = false — the maker addresses (`to`) each ask it already decided to post to the best buyer from `buyers.rank_buyers` (what that team paid for the set and rarity, its interest in the set, whether it misses the card), never to a podium rival (top 5, or up to 3 ranks above us) and never to a top-5 team the card would complete a page for below 1.5 × our value; price, caps and `check()` are unchanged. Ships false: an addressed ask can be taken by one team only (on Friday 6 % of addressed copies sold against 19 % of public ones), so it changes who may buy, not only who is picked. `uv run bazaar buyers` shows the ranking.
+- `buyer_rank_fallback_ticks` = 6 — an ask the buyer rank addressed that is still unfilled after this many ticks is cancelled and posted for anyone at the same price; the maker never addresses one copy to the same team twice at one price.
+
 ## Words (N16)
 - `bluff_enabled` = true — our messages may bluff in their TEXT (tactics learned per counterparty against a plain-words control; Abuela gets kindness, labeling and calibrated questions only); false, or BAZAAR_BLUFF set to anything but 1/true/on/yes on a service, sends today's words. A tactic never changes a structured price, days or accept.
 

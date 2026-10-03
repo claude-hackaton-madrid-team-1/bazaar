@@ -328,3 +328,10 @@ create table if not exists supply_cards (
 create table if not exists supply_sets (
   set_code text primary key, released bool, pages_possible int, bottleneck jsonb, our_have int,
   page_cards int, packs_opened int, updated_tick int);
+
+-- Buyer ranking (`bazaar buyers --save`): per card, every other team as a buyer, best first (`position`),
+-- with the reasons (`buyers.rank_buyers`). A save replaces the rows of the cards it ranks.
+create table if not exists team_buyer_rank (
+  card text not null, team text not null, position int, rank int, willing numeric, interest numeric,
+  missing bool, expected numeric, rival text, blocked bool, why text, updated_tick int,
+  primary key (card, team));
