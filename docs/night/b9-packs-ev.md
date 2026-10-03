@@ -4,22 +4,29 @@ Draft PR on `night/b9-packs-ev`, stacked on W7's `night/w7-page-economics` (#87)
 - **Inputs:** Friday's public feed (local capture merged with the shared DB, read-only, ticks 0–159), our tick-149 `/me` (aggregates only here), the catalog fixture, and W4's chaser map (#79, P(top set) ≥ 0.5).
 - **Recompute:** `uv run bazaar plan packs` (read-only; every input can come from a file).
 
-## Verdict: no. Pack cash loses to ladder deals at the margin.
+## Verdict: no. Buy no packs from Abuela on Saturday.
+**The operational reasons come first. They decide it on their own:**
+1. **The cap:** Abuela's pack thread wants a median of 22 P, while `max_price_pack` is 20. Only 3 of Friday's 22 fills in her usual regime were at 20 or below, so a pack thread rarely fills.
+2. **The conversation slot:** a pack thread takes our one Abuela conversation, which the best three deals need (W3: 3 commons at 09:00–09:06).
+3. **The allotment:** she sells 3 packs per hour, and they count against the same `max_spend_per_game_hour`.
+
+**At the margin, in round points per prima, a pack also loses where it counts:**
+
 | use of cash | round points per prima | source |
 |---|---|---|
-| Abuela best three (W3, share ~0.95) | **0.044** | W7 §4, W5 ladder model |
-| three Chato uncommons (needs `dealer_price_caps = chato:uncommon=31`) | 0.021 | W7 §4 |
-| W4's seven trades, model fills (+80 P) | 0.016–0.049 | W7 §4 |
-| W4's seven trades at Friday's fill rates (+4.8 P) | 0.001–0.003 | W4 §3 |
+| Abuela best three (W3, share ~0.95) | **0.044** | W7 §4, W5 ladder model (Friday constant) |
+| three Chato uncommons (needs `dealer_price_caps = chato:uncommon=31`) | 0.021 | W7 §4 (Friday constant) |
+| W4's trades, model fills (+24.4 P on ~58 P) | 0.007–0.021 | W4 #79, 04:00 head |
+| W4's trades at Friday's fill rates (+1.5 P) | 0.0004–0.0013 | W4 #79, 04:00 head |
 | a 4th Abuela deal (outside the best three) | **0** | RULES.md: best three per level |
-| **one `sobre_barrio` at 20 P, cards resold at Friday's fill rates** | **0.0012–0.0036** | this model |
-| one `sobre_barrio` at 20 P, every chased card sold (optimistic what-if) | 0.006–0.017 | this model |
+| **one `sobre_barrio` at 22 P, cards resold at Friday's fill rates** | **0.0011–0.0033** | this model |
+| one `sobre_barrio`, every chased card sold (optimistic what-if) | 0.005–0.015 | this model |
 
-- **At Friday's liquidity** a pack is worth **12–37× less per prima** than the ladder's best three.
-- **In the optimistic what-if** (every card whose set has a chaser sells), it is still **2.6–7.8× less**.
-- **After the best three** the ladder's own marginal is 0, so spare cash should be compared with the Chato caps or W4's trades. A pack loses to both, except W4 at Friday's fill rates, where both are near zero.
-- **Packs cannot even be bought today.** Abuela's pack limits sit at 20–24 against `max_price_pack` 20, so most threads never fill (W3: deal rate 0.12 on the replays).
-- **As a ladder deal**, a pack (share ~0.90 uncapped) never displaces a common (~0.975) from Abuela's best three.
+- **Against the ladder's best three,** a pack is **13–40× worse per prima** at Friday's liquidity and 3–9× worse in the optimistic what-if.
+- **Against the Chato uncommons** (if the cap is lifted) it is also worse.
+- **Against W4's trades at Friday's fill rates** it is level or slightly ahead: both are near zero. W4 at model fills is ahead.
+- **Spare cash:** W7's ~88 P sits idle anyway. The case for keeping it for the Chato caps or the venue decision rests on the three operational reasons above, not on this margin.
+- **As a ladder deal,** a pack (share ~0.90 uncapped) never displaces a common (~0.975) from Abuela's best three.
 
 ## Why a pack scores so little
 A pack scores only two ways. First, as a dealer deal: its ladder share, if it is among the best three, which it never is. Second, through its cards sold to other teams: the trade surplus `price − our private value` (W7 §1). Holding cards, pack luck and cash score nothing.
@@ -45,7 +52,7 @@ A pack scores only two ways. First, as a dealer deal: its ladder share, if it is
 | scored resale surplus if every chased card sells (W4's map) | 6.8 P |
 | cash back from resale at the tape's fill rates | 2.6 P |
 
-Only cards worth less to us than their net sale (price − El Rastro's 5 % + 1 P) are listed; the rest are kept. With Friday's four sets: 1.81 P, and 8.5 P in the what-if. At the uncapped median price of 22 P the per-prima figures are 10 % lower.
+Only cards worth less to us than their net sale (price − El Rastro's 5 % + 1 P) are listed; the rest are kept. With Friday's four sets: 1.81 P, and 8.5 P in the what-if. Silver packs (Chato, median paid 181) are just as unbuyable under the cap.
 
 ## What to do with packs on Saturday (consistent with W7's cash plan)
 1. **Buy none from Abuela.** W7's spare ~88 P is better held for the Chato caps (W3 #81) or the venue decision (W7 decision C).

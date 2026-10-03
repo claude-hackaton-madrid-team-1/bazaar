@@ -1219,9 +1219,9 @@ def plan_packs(
     params = _strategy().params
     tape = pk.tape_by_rarity(events, {c.ref: c.rarity for c in m.cards.values()})
     pool = [s.strip() for s in sets.split(",") if s.strip()] or list(m.released)
-    basis = "given"
+    basis, buyable = "given", True
     if price is None:
-        price, basis = pk.expected_price(pk.pack_fills(events, pack), _rules().rules.max_price_pack)
+        price, basis, buyable = pk.expected_price(pk.pack_fills(events, pack), _rules().rules.max_price_pack)
     if price is None:
         _fail(f"{pack}: {basis}")
         return
@@ -1236,6 +1236,7 @@ def plan_packs(
         out = {
             "pack": pk.summary_row(value),
             "price_basis": basis,
+            "buyable": buyable,
             "chaser_what_if": pk.summary_row(what_if),
             "tape": {r: {"listed": t.listed, "sold": t.sold, "median": t.median_price} for r, t in tape.items()},
             "uses": [
@@ -1245,6 +1246,10 @@ def plan_packs(
         typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
         return
     console.print(f"{pack} from sets {', '.join(pool)} · price {price:g} P ({basis})")
+    if not buyable:
+        console.print(
+            f"[yellow]{pack} is not buyable under GUARDRAILS.md today: valued at the median for the record[/]"
+        )
     for t in sorted(tape.values(), key=lambda t: t.rarity):
         console.print(
             f"  team tape {t.rarity}: {t.sold} sold of {t.listed} listed ({t.fill_rate:.0%}), median {t.median_price}"

@@ -207,8 +207,8 @@ def uses_of_cash(packs: Sequence[PackValue]) -> list[Use]:
     out = [
         Use("Abuela best three (W3, ~0.95 share)", 54, 2.4, 2.4, "Friday constant: W7 §4 / W5 ladder model"),
         Use("three Chato uncommons (needs chato:uncommon=31)", 87, 1.8, 1.8, "Friday constant: W7 §4"),
-        Use("W4's seven trades (+80 P expected surplus)", 82, 80 * low, 80 * high, "Friday constant: W7 §4"),
-        Use("W4's seven trades at Friday's fill rates (+4.8 P)", 82, 4.8 * low, 4.8 * high, "Friday constant: W4 §3"),
+        Use("W4's trades (+24.4 P expected surplus)", 58, 24.4 * low, 24.4 * high, "constant: W4 #79, 04:00 head"),
+        Use("W4's trades at Friday's fill rates (+1.5 P)", 58, 1.5 * low, 1.5 * high, "constant: W4 #79, 04:00 head"),
         Use("a 4th+ Abuela deal (outside the best three)", 22, 0.0, 0.0, "RULES.md: best three per level"),
     ]
     for p in packs:
@@ -235,14 +235,17 @@ def pack_fills(events: Iterable[intel.Event], pack: str) -> list[int]:
     return [t.fill_price for t in threads if t.opening_ask == regime and t.fill_price is not None]
 
 
-def expected_price(fills: Sequence[float], cap: int | None) -> tuple[float | None, str]:
-    """What a pack costs: the median of what teams paid, or `cap` when lower (W3). None: no fill seen."""
+def expected_price(fills: Sequence[float], cap: int | None) -> tuple[float | None, str, bool]:
+    """(price, basis, buyable): the median of what teams paid. A cap below that median does not make the
+    pack cheaper: it makes it (mostly) unbuyable, valued at the median for the record. None: no fill seen."""
     if not fills:
-        return None, "no fill seen: pass --price"
+        return None, "no fill seen: pass --price", False
     mid = float(median(fills))
     if cap is not None and cap < mid:
-        return float(cap), f"capped at {cap} (median limit {mid:g}: most threads would not fill)"
-    return mid, f"median limit {mid:g}"
+        under = sum(1 for f in fills if f <= cap)
+        why = f"median paid {mid:g}; NOT buyable under the cap {cap}: {under} of {len(fills)} fills were at or under it"
+        return mid, why, False
+    return mid, f"median paid {mid:g}", True
 
 
 def summary_row(p: PackValue) -> dict[str, Any]:

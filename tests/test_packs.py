@@ -57,11 +57,11 @@ def test_a_card_worth_more_to_us_than_its_sale_is_kept_not_sold():
     assert first_copy.keep_value > 16 and first_copy.scored == 0.0
 
 
-def test_the_price_is_the_regime_median_or_the_cap_and_none_without_fills():
-    assert pk.expected_price([21, 22, 23], cap=26) == (22.0, "median limit 22")
-    assert pk.expected_price([], cap=20) == (None, "no fill seen: pass --price")
-    price, basis = pk.expected_price([21, 22, 23], cap=20)
-    assert price == 20 and "capped at 20" in basis
+def test_the_price_is_the_median_and_a_lower_cap_makes_it_unbuyable_not_cheaper():
+    assert pk.expected_price([21, 22, 23], cap=26) == (22.0, "median paid 22", True)
+    price, basis, buyable = pk.expected_price([17, 21, 22, 23], cap=20)
+    assert (price, buyable) == (21.5, False) and "1 of 4 fills were at or under it" in basis
+    assert pk.expected_price([], cap=20) == (None, "no fill seen: pass --price", False)
 
 
 def test_cash_uses_put_the_ladder_best_three_far_ahead_of_packs():
