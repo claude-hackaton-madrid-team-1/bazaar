@@ -88,6 +88,7 @@ def run_chaos(
     rules: Guardrails | None = None,
     threads: int = 3,
     start_cash: int | None = None,
+    start_hours: float = 0.0,
 ) -> ChaosReport:
     rules = rules or load_guardrails().rules
     strategy = load_strategy()
@@ -98,6 +99,9 @@ def run_chaos(
         if start_cash is not None:
             with sim.world.lock:
                 sim.world.team(US).cash = start_cash
+        if start_hours:
+            with sim.world.lock:  # e.g. 6.4: just before a game-hour trigger (the venue at h6.5)
+                sim.world.state.clock.t_seconds = start_hours * 3600
         ledger = Ledger(tmp / "ledger.jsonl")
         log = report.log.append
 
