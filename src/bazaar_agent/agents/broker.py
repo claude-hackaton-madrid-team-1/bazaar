@@ -227,8 +227,9 @@ class BenchSessions:
             session.refused += 1
         elif (key := (str(m.sell.id), str(m.buy.id))) not in session.matched:
             session.matched.add(key)
-            session.pairs, session.surplus = session.pairs + 1, session.surplus + (
-                m.surplus if surplus is None else surplus
+            session.pairs, session.surplus = (
+                session.pairs + 1,
+                session.surplus + (m.surplus if surplus is None else surplus),
             )
 
 

@@ -240,8 +240,7 @@ def main() -> int:
     rec = send_once(broker, sell, buy, price, log)
     if rec.get("event") == "sent":
         print(
-            "QUEUED by the server: the quotes were NOT checked at POST time. "
-            "Read /api/me after the session (--after)."
+            "QUEUED by the server: the quotes were NOT checked at POST time. Read /api/me after the session (--after)."
         )
         if args.watch:
             watch(broker, sell, buy, log)
