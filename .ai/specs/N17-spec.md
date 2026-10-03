@@ -126,6 +126,25 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
    `/state` and `/events` stay allow-listed: no values, limits, counterparties or reasons (#69, #121).
 10. **CLI:** `bazaar swaps` (read-only plan: candidates, prices, fairness, budget, refusals; `--json`).
 
+11. **Lessons from the triage of #79 / #98 / #101 (2026-10-03), built in from the start:**
+    - **Strict shapes:** a counter is read only when every key on both sides is one of `cash`, `assets`,
+      `types`, `cards`, its `want.assets` names only the copy we offered, and its `give.assets` match the
+      card it claims. Main's `market.parse_offer` bid branch never checks `want.assets` (security-auditor
+      on #98, P1): N17 must not reuse it unchanged.
+    - **Fees:** price a leg at the higher of the venue's current fee and a `pending_fee` that is due by the
+      leg's settle tick (#101 P1, #98 P2: `venues_from` drops `pending_fee` today).
+    - **Free copies only:** a duplicate is spare only after we subtract copies in our open offers and the
+      `sell:` / `team:` / `hands-off:` reservations. The page bonus at stake is computed from the free
+      count, not the held count (#98 P1: selling a "spare" copy whose twin sits in an ask costs the bonus).
+    - **Counterparty exposure:** #79's `trade_book` skips every thread offer; team-thread offers must
+      count toward that team's share (#79 P2). Turning `max_counterparty_share` on also needs #79's
+      public-offer exposure fixed first: one public 68 P ask blocks every taker accept at base 200 (verified).
+    - **Ranked accept:** a counter is ranked against board asks before the slot is taken; nothing grabs
+      the accept first (#101 P1: an arb exit starved a rare worth 145.6 asked at 12).
+    - **Ledger outage holds the tick:** when `reserve_accept` or the ledger cannot answer, the desk sends
+      nothing that tick (never a concession in place of the hold; #79 P2 on `dealer.py`).
+    - **Clean JSON:** `bazaar swaps --json` writes notes to stderr only (`.ai/memory.md` gotcha, #79 P2).
+
 ## Non-goals
 - No new Railway service, no new SSE stream, no LLM in the decision path (words only).
 - No cash-only legs in this task: selling a duplicate for cash to one team is #79's addressed ask;
@@ -137,8 +156,10 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
 1. Finder: on a fixture (`/api/me`, catalog, feed events, boards) it returns ranked triples; it gives
    only duplicates (never the last copy, never a reserved, offered, duel or hands-off copy) and wants
    only missing page cards of released sets. Unit tests.
-2. Pricing: shapes A/B/C priced from the estimated need; the concession ladder never crosses our floor.
-   Table tests, including one case where their need flips the shape from B to C.
+2. Pricing: shapes A/B/C priced from the estimated need; the concession ladder never crosses our floor;
+   fees at the higher of the current and the due `pending_fee`; the page bonus from the free copy count.
+   Table tests, including one case where their need flips the shape from B to C and one where a twin
+   copy sits in our ask.
 3. Fairness: a "feeding" proposal (their share above the max), a loss for us, a repeat
    whole-value deal and a per-counterparty breach are each refused with a reason. Tests.
 4. Guardrails: every send goes through `guardrails.check()`: the duplicate as a sale at what we
@@ -149,9 +170,11 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
 5. Budgets: ≤ `team_threads_max_open` threads, the dealer reserve kept, 1 message per thread per tick,
    our messages per thread ≤ the cap, offers per tick within the listing budget, an idle inbound thread
    closed after `team_thread_idle_ticks`, nothing sent after the tick window. Fake clock + fake client tests.
-6. Accept path: a counter is accepted only after `reserve_accept`, after duels; the deal is read from
-   `standing_offers` (a counter whose words lie about the price is judged on its structure); the copy
-   handed over is the least valuable unreserved one. Tests.
+6. Accept path: a counter is accepted only after `reserve_accept`, after duels, and only when it ranks
+   above every board ask that tick; the deal is read from `standing_offers` (a counter whose words lie
+   about the price is judged on its structure); a counter with an unknown key or a `want.assets` beyond
+   the copy we offered is refused; a ledger outage holds the tick; the copy handed over is the least
+   valuable free one. Tests.
 7. One standing offer per thread and per wanted card; a replaced offer is cancelled before the new one
    is posted. Test.
 8. Words: a words function cannot change the offer; counterparty text with `[/red]` or an injection
