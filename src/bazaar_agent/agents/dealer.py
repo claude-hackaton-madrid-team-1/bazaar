@@ -329,7 +329,8 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move, int], str | None]  # (move, our thread id) → a deny reason, or None when allowed
-Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
+# (accept, its clock) → True: the team's accept slot is ours; False: taken; None (or `Hold`): unreadable, hold the tick
+Reserve = Callable[[Move, Any], bool | None]
 Inspect = Callable[[dict[str, Any], Move], str | None]  # the accept gate on this tick's thread: a refusal, or None
 
 
@@ -471,7 +472,8 @@ def negotiate(
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
     always the structured `price` of the message, set here. `guard(move, thread id)` may deny a bid or an
     accept (the move becomes a walk). `reserve` claims the team's accept slot on the same tick the accept
-    is sent; a slot already taken means we bid her ask instead (`meet_ask`), never walk.
+    is sent; a slot already taken means we bid her ask instead (`meet_ask`), never walk; a slot that cannot be
+    read (`None`: the shared ledger is down) holds the tick.
 
     `kill_switch` on means HOLD: reads go on, nothing is sent (no bid, accept, walk or close), the thread
     stays open, and a held tick does not count toward `max_ticks`, so the negotiation resumes where it
@@ -658,11 +660,14 @@ def negotiate(
             if move.kind == "accept" and hold(f"tick {clock.tick}, before reserving the accept slot"):
                 return  # never take the team's accept slot (the duel player's too) while the switch is on
             try:
-                reserved = move.kind != "accept" or reserve is None or reserve(move, fresh)
+                slot = reserve(move, fresh) if move.kind == "accept" and reserve is not None else True
             except Hold as e:
                 log(f"tick {clock.tick}: HOLD accept {move.price}: {e} → nothing sent, deciding next tick")
                 return
-            if not reserved:
+            if slot is None:  # the shared ledger cannot answer: send nothing, never a bid it could not book
+                log(f"tick {fresh.tick}: the team's accept slot cannot be read → hold this tick")
+                return
+            if not slot:
                 move = meet_ask(neg, ask)  # same price the guard allowed: the dealer may accept OUR offer
                 log(f"tick {fresh.tick}: the team's accept slot is taken this tick → {move.kind} {move.price or ''}")
                 if move.kind != "bid":

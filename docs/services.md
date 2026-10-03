@@ -97,7 +97,9 @@ A decision, as published:
  "move": {"kind": "bid", "price": 21}}
 ```
 
-- `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+- `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
+  default, `--accept-bids`), `team_open` / `team_offer` / `team_walk` / `team_accept` (the taker's swap
+  threads with other teams, N17: off by default, `team_threads_enabled`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict), and `broker_match` / `venue_open` from our venue's broker (`agent:
   "broker"`, inside the maker's tick loop): a sent one shows only its kind and status, no inputs or move.

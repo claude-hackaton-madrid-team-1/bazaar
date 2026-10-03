@@ -236,6 +236,11 @@ def run_smoke(env: dict[str, str]) -> None:
         lambda: bazaar(env, "agent", "maker", "--live", "--no-jev", "--max-ticks", "2"),
         lambda o: "target: SIMULATOR" in o and o.count("action(s)") == 2 and "· LIVE" in o,
     )
+    step(  # N17: the team desk's plan over HTTP, read-only (the desk itself is off: team_threads_enabled)
+        "swaps --json (team-thread plan, read-only)",
+        lambda: bazaar(env, "swaps", "--json"),
+        lambda o: o.lstrip().startswith("["),  # stdout first: pure JSON, notes on stderr
+    )
     ids, left = duel_ticks_left()
     duel_out = step(
         f"duel run --play, {left} ticks to the deadline",
