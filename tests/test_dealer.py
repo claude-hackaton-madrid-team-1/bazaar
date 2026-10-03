@@ -894,3 +894,38 @@ def test_an_accept_whose_settle_reads_fail_is_still_booked_on_the_way_out():
         on_deal=lambda price, tick, t_hours: booked.append(price),
     )
     assert (out.status, booked) == ("deal", [9])
+
+
+def test_a_cut_connection_on_the_last_read_never_crashes_dealer_buy():
+    # pr-reviewer #161 (P3): http.client.IncompleteRead is not an OSError, so the SDK lets it through.
+    import http.client
+
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class CutAfterClose(FakeDealerClient):
+        def close_thread(self, tid):
+            self.cut = True
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            if getattr(self, "cut", False):
+                raise http.client.IncompleteRead(b"")
+            return super().clock()
+
+        def thread(self, tid):
+            if getattr(self, "cut", False):
+                raise http.client.IncompleteRead(b"")
+            return super().thread(tid)
+
+    lines: list[str] = []
+    out = negotiate(
+        CutAfterClose(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    assert out.status == "open" and any("unreadable (IncompleteRead)" in line for line in lines)

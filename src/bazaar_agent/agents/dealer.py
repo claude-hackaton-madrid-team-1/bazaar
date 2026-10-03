@@ -486,8 +486,9 @@ def negotiate(
         crash the caller: an unreadable thread or a failed booking is said loudly, with the thread id."""
         try:
             thread = client.thread(tid)
-        except BazaarError as e:
-            log(f"thread {tid} unreadable ({e.code}): check it by hand, a deal there would be unbooked")
+        except Exception as e:  # a refusal, or a cut connection the SDK lets through (IncompleteRead)
+            code = e.code if isinstance(e, BazaarError) else type(e).__name__
+            log(f"thread {tid} unreadable ({code}): check it by hand, a deal there would be unbooked")
             return
         try:
             ended(thread, clock)
@@ -610,9 +611,11 @@ def negotiate(
             if move.kind == "accept" and move.offer_id is not None:
                 client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
+                state["walk_reopen"] = False  # a later timeout close is not that refused walk
             elif move.kind == "bid" and move.price is not None and text is not None:
                 client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
+                state["walk_reopen"] = False  # a later timeout close is not that refused walk
             elif move.kind == "walk":
                 state["walk_reopen"] = move.reopen
                 state["status"] = close("walked", clock)

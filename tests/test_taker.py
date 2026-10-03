@@ -551,30 +551,3 @@ def test_a_rest_walk_whose_close_answer_was_lost_still_rests_the_item(tmp_path):
     for n in range(1, 4):
         t.on_tick(at(team, TICK + n))
     assert t.cooling == {("abuela", "LAV-08"): 1.5 + 1.0} and "abuela" not in t.convs
-
-
-def test_a_me_reread_that_already_shows_the_accept_paid_counts_its_cash_once(tmp_path):
-    # pr-reviewer #72 round 7 (P3): _commit books the accept as an open offer, then _after_deal swaps in a
-    # fresh /me. If that /me already shows the 12 paid, the same cash was counted twice and a legal bid of 18
-    # later in the tick was denied. Cash 310: one count leaves 298 - 18 = 280 >= 270; two leave 268.
-    from bazaar_agent.holdings import MeRead
-
-    class PaidAtOnce:
-        def __init__(self, team):
-            self.team = team
-
-        def me(self, clock, clock_read_at=None):
-            return MeRead(self.team.me(), "live", clock.tick, 0.0, None, "d", "test", "fresh")
-
-        def observe_catalog(self, tick, catalog):
-            return None
-
-        def after_deal(self, clock, what):
-            return MeRead({**self.team.me(), "cash": 310 - 12}, "live", clock.tick, 0.0, None, "d", "test", "deal")
-
-    team = FakeTeam(me={**ME, "cash": 310})
-    public = FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]})
-    t, lines, _ = taker(tmp_path, team, public, live=True, config=TakerConfig(max_dealer_threads=3))
-    t.holdings = PaidAtOnce(team)
-    t.on_tick(clock())
-    assert ("accept", 1) in team.sent and ("say", 5000, 18) in team.sent, lines[-5:]

@@ -769,12 +769,9 @@ class Taker:
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
         self._commit(run, p.price, p.ref, skip_thread)
-        cash_before = int(run.snap.me.get("cash") or 0)
+        # If /me already shows the accept paid, its cash counts twice for the rest of the tick: kept on purpose. It
+        # only ever denies, and a same-tick cash drop from another process cannot be told apart from this deal.
         self._after_deal(run, f"accept of offer {p.offer_id}")  # after the books: a failed re-read loses nothing
-        if int(run.snap.me.get("cash") or 0) <= cash_before - p.price:  # /me already shows it paid: count it once
-            committed = [o for o in run.offers if o.get("id") == -1 and o.get("thread") == skip_thread]
-            if committed:
-                run.offers.remove(committed[-1])
         return True
 
     def _after_deal(self, run: _TickRun, what: str) -> None:
