@@ -759,9 +759,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
   Keep `.ai/specs/02-plan.md`'s task index current: it is what the backlog table shows.
 - **Architecture page is generated too:** `scripts/architecture_page.py` renders `docs/architecture.html`
   from `docs/architecture.status.json` (box statuses, lists, links; edit the JSON, never the HTML) plus the
-  plan's task index, in the same hook and CI job. The **roadmap** is `roadmap` in that JSON: one entry per time slot with
-  `when`, `title`, optional `events` (the organisers' schedule) and `items` of `{priority: P0-P3, status: done|wip|partial|todo,
-  text, owner?}` (the page shows `wip` as "doing"). Git hooks and CI cannot publish claude.ai artifacts, so
+  plan's task index, in the same hook and CI job. The **roadmap** is `timeline` in that JSON (a Linear-style view): `start`/`end` of the axis and
+  `markers` (`freeze`/`deadline`) as Madrid times `YYYY-MM-DDTHH:MM`, `closed` door bands, the organisers' `events`, and
+  `lanes` of `bars` `{title, start, end, status: done|wip|partial|todo, priority: P0-P3, owner?}`; overlapping bars stack. Git hooks and CI cannot publish claude.ai artifacts, so
   after every merge that changes `docs/architecture.html`, the coordinator republishes it to
   https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39.
 - **Every PR is reviewed before it merges (Greptile is disabled):** run `/pr-review <PR number>`. The
