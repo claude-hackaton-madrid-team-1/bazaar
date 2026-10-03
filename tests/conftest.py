@@ -23,3 +23,17 @@ def spans():
 def no_real_tracing(monkeypatch):
     """A teammate's BAZAAR_TRACING=1 in .env must never make the suite export to a real Phoenix."""
     monkeypatch.setenv("BAZAAR_TRACING", "0")
+
+
+@pytest.fixture(autouse=True)
+def no_shared_holdings_db():
+    """Unit tests never reach a real database through the per-process holdings connection: a teammate's
+    DATABASE_URL may be the shared team DB. Tests that need Postgres build their own `SharedDb`."""
+    from bazaar_agent import holdings
+
+    saved = dict(holdings._PROCESS)
+    holdings._PROCESS.clear()
+    holdings._PROCESS.update({"name": "pytest", "db": holdings.SharedDb(None), "writer_db": holdings.SharedDb(None)})
+    yield
+    holdings._PROCESS.clear()
+    holdings._PROCESS.update(saved)
