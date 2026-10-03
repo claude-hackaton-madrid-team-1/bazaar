@@ -12,10 +12,13 @@ and **#145** (new sets, two defaults ON) were merged without the default decisio
 (stall finding fixed, process blocker remains). #150 is mergeable with one call to make.
 
 ## TL;DR
-0. **Live on `main` now, merged overnight with defaults ON:** #89 (the taker learns dealer blockers: `BAZAAR_LEARN` on
-   unless a service sets `BAZAAR_LEARN=0`), #145 (`protect_page_sets = RET,CHA`, `supply_scarcity`), #91 (evals in the
-   tick loop). r1 asked for all three to default off. **Decide before 09:00** (§3.5); the quick off switch for #89 is
-   `BAZAAR_LEARN=0` on `bazaar-taker`.
+0. **Live on `main` now, merged overnight with defaults ON:** the learner stack **#89 + #96 + #112** (06:26–06:46: the
+   taker learns dealer blockers and skips them, learned ladders and class skips, and recalled "lessons" added to
+   Jev's state for the duel, maker and taker moves), #145 (`protect_page_sets = RET,CHA`, `supply_scarcity`), #91
+   (evals in the tick loop). r1 asked for all of them to default off. **Decide before 09:00** (§3.5).
+   `BAZAAR_LEARN=0` on `bazaar-taker` stops **only the taker's learning**; the lessons wrapping of Jev is
+   unconditional on `main` (`cli.py` `_duel_jev`, `_maker_jev`, `agent_taker`: `with_lessons(...)`, no flag). Jev
+   still picks only among the legal moves code builds, but the lessons can steer which one.
 1. **One merge authority.** ogarciarevett's coordinator triaged the night: it closed most night PRs and opened takeovers
    (#137–#162), and merged some over r1's findings. Agree with Omar at 08:30 who merges today. Every merge to `main`
    redeploys the live agents, so **freeze at 08:50**.
@@ -23,8 +26,8 @@ and **#145** (new sets, two defaults ON) were merged without the default decisio
    and #68's content (06:15), #60 → #150, #62 → #162, #71 must not merge as is. The new batch is in §3.1.
 3. **Clock column at 08:55:** `GET /api/clock` → `t_hours` ≈ 4.0 (jump) or ≈ 2.65 (resume; Friday froze at h2.65).
    If it resumes, every game-hour event slips 1 h 21 min, Duels I included.
-4. **Don't merge:** #71 (opens a venue at h6.5 and drops `cash_floor` 270 → 100/370 with no human step), the rest of
-   the learner stack #96/#112 and #131 (`BAZAAR_LEARN` on by default; #131 bluffs at dealers), #157/#158 until fixed, #159 (duplicate of #150).
+4. **Don't merge:** #71 (opens a venue at h6.5 and drops `cash_floor` 270 → 100/370 with no human step), #131
+   (bluffs at dealers by default; the rest of the learner stack is already merged), #157/#158 until fixed, #159 (duplicate of #150).
 5. **Before Duels I:** #150 (duel stack v2) with its one call (commit 6b56719, §3.4) and the duel settings card. The
    numbers: v2 scores **1.50×** v1 at 15 s ticks in the end-to-end sim, 0 closes outside the limit, and v1 loses 11
    accepts to the 1/tick cap (v2 none).
@@ -77,7 +80,7 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 | #93 (inspector) | [#146](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/146) → [#152](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/152) | mergeable, flags stay off | after the batch |
 | #62 (shared ledger) | [#162](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/162) | review in progress | check `DATABASE_URL` on every live Railway service before it merges |
 | #129 (new sets) | #145 (merged) / #155 | merged with 2 defaults ON | decide `protect_page_sets = RET,CHA` and `supply_scarcity` (on now) |
-| – (ogarciarevett's learner) | #89 (merged 06:26) / #96 / #112 / #131 | #89 live with `BAZAAR_LEARN` on; the rest DO NOT MERGE | `BAZAAR_LEARN=0` on `bazaar-taker` unless you keep learning on purpose |
+| – (ogarciarevett's learner) | #89, #96, #112 (merged 06:26–06:46) / #131 (open) | live with learning on; #131 DO NOT MERGE | `BAZAAR_LEARN=0` on `bazaar-taker` (taker only); for the Jev lessons wrapping you need a revert or a gating patch |
 | #81 #87 #92 #94 #100 #101 #109 #119 #120 #122 #125 #127 #132 #134 | reports in [#154](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/154) (docs) | – | read §1; #120's rehearsal branch `night/b5-rehearsal` has the 12-PR integration (0 crashes in 580 live sim ticks) |
 | #106 (B13 wake at the opening) | – | merged 05:07 | nothing |
 
@@ -97,10 +100,11 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 4. **#150's call:** commit 6b56719 changes the *default* v1 two-issue play when Jev is on (the offer jumps by |w| × days;
    proved only without Jev). **Gate it to v2.** Duel settings: **`duel_policy = v2`, `duel_endgame_min_share 0.3`,
    `duel_endgame_ticks 1`, `duel_days_auto` OFF**. Merge #150 before Duels I, outside a duel wave.
-5. **Merged with defaults ON overnight:** #89 (learning taker: learned dealer blockers make the taker skip dealers),
-   #145 (`protect_page_sets = RET,CHA`, `supply_scarcity`) and #91 (evals in the tick loop). **Decide on each before
-   09:00**; r1 recommended defaults off. **#89: set `BAZAAR_LEARN=0` on `bazaar-taker`** unless you want it learning
-   in the first live hour.
+5. **Merged with defaults ON overnight:** the learner stack #89/#96/#112, #145 (`protect_page_sets = RET,CHA`,
+   `supply_scarcity`) and #91 (evals in the tick loop). **Decide on each before 09:00**; r1 recommended defaults off.
+   **Set `BAZAAR_LEARN=0` on `bazaar-taker`** unless you want it learning in the first live hour. The Jev lessons
+   wrapping (duels, maker, taker) has no switch: if you want it off before Duels I, it takes a revert of #96/#112 or a
+   one-line gate on `BAZAAR_LEARN` in `_lessons()`; ask Omar which, since his coordinator merged it.
 6. **`min_buy_surplus` 2 → 4** (STRATEGY.md): **yes** (B28: never worse in any replay).
 7. **Sunday:** no MCP/desk loops and no extra `dealer buy` during 15 s ticks (budget). Turn on the stagger per Railway
    service (`BAZAAR_TICK_OFFSET_S`: duels 0, monitor 0.5, taker 2, maker 4) once #78 or #128 is merged.
@@ -150,3 +154,7 @@ reports) · w8's earlier draft with more detail: `_night/MORNING.w8-0606.md`.
   - (2) r1's ledger Protocol patch (REVIEWS.md "## PR #62") is not carried. #141/#142 `release_accept` and #137 `hands_off_ids` use the removed `self._conn`, so a refused accept or the maker raises AttributeError after merge. Whoever lands second ports them.
 - **#161 (#72 follow-up):** HOLD. HIGH: a dealer accept that /me already shows as paid no longer counts toward the hourly spend cap (proof: 21 + 12 sent under cap 30). One-line fix: drop the synthetic commit only for board accepts.
 - Proofs: _night/r1_proof_pr161_desk_spend.py and _night/r1_probe162_freeze.py.
+- **06:46 r1:** #96 and #112 are ALSO merged to main (04:43-04:45Z).
+  - The live taker now replaces dealer ladders with learned ones and can skip whole price classes. That is default-on through BAZAAR_LEARN.
+  - Lessons wrap Jev's binding moves in duels, maker and taker. The ~152 MB models warm in every agent process, and our past duel limits go to Jev.
+  - BAZAAR_LEARN=0 on bazaar-taker turns off the taker's part. The duels and maker wrapping is not tied to it; verify that on main.
