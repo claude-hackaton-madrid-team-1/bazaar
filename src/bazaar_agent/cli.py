@@ -3051,7 +3051,8 @@ def agent_maker(
     from bazaar_agent.learn.venues import VenueNotices
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        market = _venue_keeper(team, settings, kw) if venue else None
+        matrix = _latest_matrix(kw, settings)  # one read of the taker's matrix for the maker and our notice
+        market = _venue_keeper(team, settings, kw, matrix) if venue else None
         notices = VenueNotices(kw["log"]) if learn else None
         jev_ = _maker_jev(settings, kw["rules"]) if jev else None
         sell_market = None  # the dealer sell desk's dealers and curves: Postgres when shared, else API + feed
@@ -3068,7 +3069,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
-            latest_matrix=_latest_matrix(kw, settings),
+            latest_matrix=matrix,
             **kw,
         )
 
@@ -3078,11 +3079,12 @@ def agent_maker(
 # ---------------------------------------------------------------- our venue and its broker (#11, #12)
 
 
-def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
-    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
+def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any], matrix: Any = None) -> Any:
+    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key); its notice
+    names the cards in the team matrix the maker reads (`matrix`: a LatestMatrix, or None)."""
     from bazaar_agent import db
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_GAME_HOURS, VenueKeeper
+    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_TICKS, VenueKeeper
 
     return VenueKeeper(
         team,
@@ -3095,7 +3097,8 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
-        announce_every_game_hours=ANNOUNCE_EVERY_GAME_HOURS,
+        announce_every_ticks=ANNOUNCE_EVERY_TICKS,
+        matrix=matrix.current if matrix is not None else None,
     )
 
 
