@@ -69,8 +69,10 @@ def spans(events: Iterable[Event], last_tick: int | None = None) -> list[Span]:
                 parsed = replace(parsed, rarity=rarity)
             expires = parsed.expires_tick if isinstance(parsed.expires_tick, int) else horizon
             rows[parsed.id] = Span(parsed, t, min(expires, horizon), "expired" if expires < horizon else "open")
-        elif e.get("type") == "offer.cancelled" and isinstance(p.get("offer"), int):
-            s = rows.get(p["offer"])
+        elif e.get("type") == "offer.cancelled":
+            oid = p.get("offer")
+            oid = oid.get("id") if isinstance(oid, dict) else oid  # observed: the bare id; a dict is read too
+            s = rows.get(oid) if isinstance(oid, int) else None
             if s is not None and s.start <= t < s.end:
                 s.end, s.how = t, "cancelled"
         elif e.get("type") == "settlement" and p.get("venue"):
@@ -90,7 +92,8 @@ def _fill(rows: Iterable[Span], p: dict[str, Any], item: dict[str, Any], t: int)
         and s.offer.maker == item.get("to")
         and s.offer.price == p.get("price")
     ]
-    for s in asks[:1] + sorted(bids, key=lambda s: s.start)[:1]:
+    # one settled item took one offer: the ask that gave this copy, else the oldest matching bid
+    for s in asks[:1] or sorted(bids, key=lambda s: s.start)[:1]:
         s.end, s.how = t, "filled"
 
 
@@ -104,6 +107,8 @@ def venues_by_tick(events: Iterable[Event], last_tick: int) -> list[dict[str, Ve
             mech = str((p.get("rules") or {}).get("mechanism") or "board")
             bps, per_card = int(p.get("fee_bps") or 0), int(p.get("fee_per_card") or 0)
             v = Venue(str(p["venue"]), str(p.get("owner") or ""), bps, per_card, "open", mech, 0, False)
+        elif e.get("type") == "venue.closed" and p.get("venue") in known:
+            v = replace(known[p["venue"]], status="closed")
         elif e.get("type") == "venue.fee_changed" and p.get("venue") in known:
             v = replace(
                 known[p["venue"]], fee_bps=int(p.get("fee_bps") or 0), fee_per_card=int(p.get("fee_per_card") or 0)
@@ -115,7 +120,7 @@ def venues_by_tick(events: Iterable[Event], last_tick: int) -> list[dict[str, Ve
     out, now = [], {"rastro": RASTRO}
     for t in range(last_tick + 1):
         for v in changes.get(t, []):
-            now = {**now, v.id: v}
+            now = {k: x for k, x in {**now, v.id: v}.items() if x.status == "open"}
         out.append(now)
     return out
 
@@ -137,8 +142,9 @@ class PairStats:
     ask: BoardOffer
     bid: BoardOffer
     gross: int
-    net: int
+    net: int  # the best net it reached (fees can change while it stands)
     ticks: list[int] = field(default_factory=list)  # ticks the pair crossed by at least min_net
+    nets: dict[int, int] = field(default_factory=dict)  # tick -> net that tick
     executable: list[int] = field(default_factory=list)  # ... and the bid still stood the next tick
 
 
@@ -173,13 +179,15 @@ def crossing_study(
             if c.net < min_net:
                 continue
             ps = pairs.setdefault(key, PairStats(c.ask, c.bid, c.gross, c.net))
+            ps.net, ps.gross = max(ps.net, c.net), max(ps.gross, c.gross)
             ps.ticks.append(t)
+            ps.nets[t] = c.net
             if end[c.bid.id] > t + 1:
                 ps.executable.append(t)
     # one accept per tick: the ask at t and the bid at t + 1 take two slots; one card fills one bid
     busy: set[int] = set()
     used: set[int] = set()
-    scheduled: list[PairStats] = []
+    scheduled: list[tuple[PairStats, int]] = []
     for ps in sorted(pairs.values(), key=lambda p: (min(p.executable or [10**9]), -p.net)):
         if ps.ask.id in used or ps.bid.id in used:
             continue
@@ -187,7 +195,7 @@ def crossing_study(
         if slot is not None:
             busy |= {slot, slot + 1}
             used |= {ps.ask.id, ps.bid.id}
-            scheduled.append(ps)
+            scheduled.append((ps, slot))
     lasted = sorted(len(p.ticks) for p in pairs.values())
     median = float(lasted[len(lasted) // 2]) if lasted else 0.0
     return CrossingStudy(
@@ -197,7 +205,7 @@ def crossing_study(
         len(pairs),
         sum(1 for p in pairs.values() if p.executable),
         len(scheduled),
-        sum(p.net for p in scheduled),
+        sum(p.nets[t] for p, t in scheduled),
         median,
         tuple(sorted(pairs.values(), key=lambda p: -p.net)[:10]),
     )

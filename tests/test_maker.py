@@ -235,13 +235,13 @@ def test_no_new_ask_for_a_card_with_a_pending_arbitrage_exit(tmp_path):
     # LAT-03 was just bought to resell: the taker hands a copy to a standing bid, so the maker lists none
     team = FakeTeam()
     m, lines = maker(tmp_path, team, live=True, arb_enabled=True)
-    m.ledger.record("spend", TICK - 1, 1.5 - 60 / 3600, 3, "arb:LAT-03:2")
+    m.ledger.record("spend", TICK - 1, 1.5 - 60 / 3600, 3, "arb:LAT-03:4:77:v02:9:t06:t17")  # asset 4
     m.on_tick(clock())
     assert not [s for s in posted(team) if s[1].get("assets") == [4]]
     assert any("not listing LAT-03 (asset 4): an arbitrage exit is pending" in line for line in lines)
     # with the switch off (the default) the ledger is not even read for it, and the ask goes up as today
     team = FakeTeam()
     m, _ = maker(tmp_path / "off", team, live=True)
-    m.ledger.record("spend", TICK - 1, 1.5 - 60 / 3600, 3, "arb:LAT-03:2")
+    m.ledger.record("spend", TICK - 1, 1.5 - 60 / 3600, 3, "arb:LAT-03:4:77:v02:9:t06:t17")
     m.on_tick(clock())
     assert [s for s in posted(team) if s[1].get("assets") == [4]]

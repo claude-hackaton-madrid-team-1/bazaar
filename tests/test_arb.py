@@ -217,3 +217,25 @@ def test_cli_scan_reads_files_and_sends_nothing(tmp_path):
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     assert "Arbitrage scan" in result.output and "only reads" in result.output
+
+
+def test_a_cancel_as_a_dict_one_offer_per_fill_and_a_closed_venue():
+    events = [
+        {"id": 1, "tick": 0, "type": "venue.opened", "payload": {"venue": "v02", "owner": "t12", "fee_bps": 0}},
+        an_ask(2, 1, 10, "t06", "MAL-04", 9, 500),
+        a_bid(3, 1, 11, "t02", "MAL-04", 9),  # t02 also bids 9: its accept of the ask must not end this bid
+        a_bid(4, 1, 12, "t17", "MAL-04", 12),
+        {"id": 5, "tick": 2, "type": "offer.cancelled", "payload": {"offer": {"id": 12}}},
+        {
+            "id": 6,
+            "tick": 3,
+            "type": "settlement",
+            "payload": {"venue": "rastro", "price": 9, "items": [{"id": 500, "ref": "MAL-04", "to": "t02"}]},
+        },
+        {"id": 7, "tick": 4, "type": "venue.closed", "payload": {"venue": "v02"}},
+    ]
+    rows = {s.offer.id: s for s in st.spans(events)}
+    assert (rows[12].end, rows[12].how) == (2, "cancelled")
+    assert (rows[10].how, rows[11].how) == ("filled", "open")
+    fees = st.venues_by_tick(events, 5)
+    assert "v02" in fees[3] and "v02" not in fees[4]

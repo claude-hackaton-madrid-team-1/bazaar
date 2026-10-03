@@ -104,7 +104,7 @@ ENFORCED_BY: dict[str, str] = {
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "arb_enabled": "guardrails.check (Action.held_buy = arb) + agents.taker arbitrage legs",
     "arb_min_net_spread": "guardrails.check (Action.exit_net, re-read before the accept)",
-    "arb_max_inventory_p": "guardrails.check (Context.arb_inventory from the ledger's arb: spend rows)",
+    "arb_max_inventory_p": "guardrails.check (Context.arb_inventory: the ledger's arb: rows whose copy is in /me)",
     "dup_buy_enabled": "guardrails.check (Action.held_buy = dup) + agents.taker duplicate asks",
     "dup_min_surplus": "guardrails.check (Action.next_copy_value − all-in price)",
     "dup_max_spend_per_hour": "guardrails.check (Context.dup_spent_last_hour from the ledger's dup: spend rows)",
@@ -418,7 +418,7 @@ class Context:
     stops: tuple[str, ...] | None = None
     # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
     trades: TradeBook | None = None
-    arb_inventory: int = 0  # primas in arbitrage buys whose extra copy we still hold (`arb_inventory`)
+    arb_inventory: int = 0  # primas in arbitrage buys whose copy we still hold (`arb_inventory`)
     dup_spent_last_hour: int = 0  # primas of duplicate buys this game hour (`dup:` spend rows)
 
 
@@ -444,7 +444,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
         stops=kill_switch(rules),
         # Read only when the switch is on: with both off, a tick costs the ledger nothing more than before.
-        arb_inventory=arb_inventory(ledger.spend_rows(ARB_TAG, -1.0), held) if rules.arb_enabled else 0,
+        arb_inventory=arb_inventory(ledger.spend_rows(ARB_TAG, -1.0), card_assets(me)) if rules.arb_enabled else 0,
         dup_spent_last_hour=(
             sum(price for _, price, _ in ledger.spend_rows(DUP_TAG, t_hours - 1.0)) if rules.dup_buy_enabled else 0
         ),
@@ -456,23 +456,50 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
 ARB_TAG, DUP_TAG = "arb:", "dup:"
 
 
-def arb_item(ref: str, held_before: int) -> str:
-    """The spend row's item for an arbitrage buy: `arb:LAV-03:1` = bought while we held 1 copy."""
-    return f"{ARB_TAG}{ref}:{held_before}"
+@dataclass(frozen=True)
+class ArbRow:
+    """An arbitrage buy as its ledger spend row records it: the exact copy bought (`asset`), the exit bid
+    (id, venue, price) and both makers. The row outlives the process: the inventory, the ring guard and a
+    pending exit are rebuilt from it after a restart."""
+
+    ref: str
+    asset: int
+    bid: int
+    venue: str
+    bid_price: int
+    seller: str  # the ask's maker
+    buyer: str  # the exit bid's maker
+
+    def item(self) -> str:
+        fields = (self.ref, self.asset, self.bid, self.venue, self.bid_price, self.seller, self.buyer)
+        return ARB_TAG + ":".join(str(f) for f in fields)
+
+    @classmethod
+    def parse(cls, item: str) -> ArbRow | None:
+        parts = item.removeprefix(ARB_TAG).split(":")
+        if len(parts) != 7 or not all(parts[i].isdigit() for i in (1, 2, 4)):
+            return None
+        ref, asset, bid, venue, price, seller, buyer = parts
+        return cls(ref, int(asset), int(bid), venue, int(price), seller, buyer)
 
 
 def dup_item(ref: str) -> str:
     return f"{DUP_TAG}{ref}"
 
 
-def arb_inventory(rows: Iterable[tuple[str, int, int]], held: dict[str, int]) -> int:
-    """Primas still tied up in arbitrage: every `arb:REF:n` buy while we hold more than n copies of REF.
-    Its exit (or any later sale of the copy) closes it; a copy we keep because the exit vanished stays
-    counted, so `arb_max_inventory_p` bounds what is stuck too. A malformed row counts (fail closed)."""
+def card_assets(me: dict[str, Any]) -> set[int]:
+    """The asset ids of the cards we hold, from `/api/me`."""
+    return {int(a["id"]) for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)}
+
+
+def arb_inventory(rows: Iterable[tuple[str, int, int]], assets: set[int]) -> int:
+    """Primas still tied up in arbitrage: every `arb:` buy whose copy (its asset id) is still ours. Its exit, or
+    any later sale of that copy, closes it; a copy kept because the exit vanished stays counted, so
+    `arb_max_inventory_p` bounds what is stuck too. A malformed row counts (fail closed)."""
     total = 0
     for item, price, _ in rows:
-        ref, _, before = item.removeprefix(ARB_TAG).rpartition(":")
-        if not before.isdigit() or held.get(ref, 0) > int(before):
+        row = ArbRow.parse(item)
+        if row is None or row.asset in assets:
             total += max(0, price)
     return total
 

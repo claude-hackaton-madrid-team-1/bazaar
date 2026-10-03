@@ -86,20 +86,36 @@ def test_duplicate_still_meets_every_other_rule():
     assert "cash_floor" in str(gr.check(dup(price=15), ctx(cash=280), ON))
 
 
-def test_arb_inventory_counts_buys_whose_extra_copy_we_still_hold():
-    rows = [("arb:LAV-01:1", 10, 5), ("arb:LAV-01:2", 12, 6), ("arb:MAL-04:0", 7, 7), ("arb:junk", 4, 8)]
-    # LAV-01: 2 held → the buy at 1 copy is still open, the buy at 2 copies was sold; MAL-04 sold; junk counts
-    assert gr.arb_inventory(rows, {"LAV-01": 2}) == 10 + 4
-    assert gr.arb_inventory(rows, {"LAV-01": 3, "MAL-04": 1}) == 10 + 12 + 7 + 4
+def row(ref="LAV-01", asset=900, bid=2):
+    return gr.ArbRow(ref, asset, bid, "v02", 16, "t06", "t17").item()
+
+
+def test_an_arb_row_round_trips_through_the_ledger_item():
+    item = row()
+    assert item == "arb:LAV-01:900:2:v02:16:t06:t17"
+    assert gr.ArbRow.parse(item) == gr.ArbRow("LAV-01", 900, 2, "v02", 16, "t06", "t17")
+    assert gr.ArbRow.parse("arb:LAV-01:1") is None and gr.ArbRow.parse("arb:LAV-01:x:2:v02:16:t06:t17") is None
+
+
+def test_arb_inventory_counts_the_copies_bought_that_we_still_hold():
+    rows = [(row(asset=900), 10, 5), (row(asset=901), 12, 6), (row("MAL-04", 902), 7, 7), ("arb:junk", 4, 8)]
+    # 900 still ours, 901 sold by its exit, 902 sold later by the maker; a malformed row counts (fail closed)
+    assert gr.arb_inventory(rows, {900, 1, 2}) == 10 + 4
+    # another LAV-01 copy coming in (a pack, a page buy) never revives a closed row: identity, not counts
+    assert gr.arb_inventory(rows, {900, 777}) == 10 + 4
+    assert gr.arb_inventory(rows, {900, 901, 902}) == 10 + 12 + 7 + 4
 
 
 def test_the_ledger_feeds_the_context_only_when_a_switch_is_on(tmp_path: Path):
     ledger = gr.Ledger(tmp_path / "ledger.jsonl")
-    ledger.record("spend", 5, 0.5, 10, gr.arb_item("LAV-01", 1))
+    ledger.record("spend", 5, 0.5, 10, row(asset=900))
     ledger.record("spend", 6, 0.2, 9, gr.dup_item("LAV-09"))  # more than an hour before t = 1.6
     ledger.record("spend", 60, 1.5, 15, gr.dup_item("LAV-09"))
     ledger.record("spend", 60, 1.5, 7, "LAV-03")
-    me = {"cash": 384, "assets": [{"kind": "card", "ref": "LAV-01"}, {"kind": "card", "ref": "LAV-01"}]}
+    me = {
+        "cash": 384,
+        "assets": [{"kind": "card", "ref": "LAV-01", "id": 1}, {"kind": "card", "ref": "LAV-01", "id": 900}],
+    }
     on = gr.context_from(me, 70, 1.6, ledger, ON)
     assert (on.arb_inventory, on.dup_spent_last_hour, on.spent_last_hour) == (10, 15, 22)
     off = gr.context_from(me, 70, 1.6, ledger, REAL)

@@ -76,7 +76,7 @@ def test_arbitrage_buys_now_and_exits_with_priority_next_tick(tmp_path):
     t, _, ledger = taker(tmp_path, team, public, live=True, **ARB)
     t.on_tick(at(team, TICK))
     assert team.sent == [("accept", 1)]
-    assert ledger.spend_rows("arb:", 0) == [("arb:LAV-01:1", 7, TICK)]  # 5 + fee 2, bought holding one copy
+    assert ledger.spend_rows("arb:", 0) == [("arb:LAV-01:900:2:v02:16:t06:t17", 7, TICK)]  # 5 + fee 2, copy 900
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r.get("chosen")]
     assert row["inputs"]["held_buy"] == "arb" and row["inputs"]["net"] == 9 and row["inputs"]["legs"] == [-3.0, 12.0]
     # next tick the card is ours: the exit takes the accept first, handing over the copy worth least to us
@@ -172,3 +172,43 @@ def test_dry_run_arbitrage_sends_nothing(tmp_path):
     t.on_tick(at(team, TICK))
     assert team.sent == [] and ledger.spend_rows("arb:", 0) == []
     assert any("WOULD accept LAV-01" in line for line in lines) and "LAV-01" in t.exits
+
+
+def test_the_exit_hands_over_exactly_the_copy_it_bought(tmp_path):
+    # our original LAV-01 is worth less to us than the bought copy in /me (as if the page bonus moved):
+    # the exit still sells asset 900, never the original
+    team, public = FakeTeam(), FakePublic(boards=crossing_boards())
+    t, _, _ = taker(tmp_path, team, public, live=True, **ARB)
+    t.on_tick(at(team, TICK))
+    me = with_second_copy()
+    me["assets"][0]["your_value"] = 1.0  # asset 1, the original
+    team._me = me
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[1:] == [("accept", 2, [900])]
+
+
+def test_another_copy_arriving_is_not_mistaken_for_the_bought_one(tmp_path):
+    # the arbitrage copy has not settled, but a different LAV-01 (a pack) shows up: no exit is sent
+    team, public = FakeTeam(), FakePublic(boards=crossing_boards())
+    t, _, _ = taker(tmp_path, team, public, live=True, **ARB)
+    t.on_tick(at(team, TICK))
+    me = deepcopy(ME)
+    me["assets"].append({"id": 777, "kind": "card", "ref": "LAV-01", "rarity": "common", "your_value": 4.0})
+    team._me = me
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent == [("accept", 1)] and "LAV-01" in t.exits
+
+
+def test_a_restarted_taker_rebuilds_the_exit_and_the_ring_guard_from_the_ledger(tmp_path):
+    team, public = FakeTeam(), FakePublic(boards=crossing_boards())
+    first, _, _ = taker(tmp_path, team, public, live=True, **ARB)
+    first.on_tick(at(team, TICK))
+    team._me = with_second_copy()
+    second, _, _ = taker(tmp_path, team, public, live=True, **ARB)  # a new process, the same ledger
+    second.on_tick(at(team, TICK + 1))
+    assert team.sent == [("accept", 1), ("accept", 2, [900])]
+    # the same two makers cross again: the ledger remembers the pair, so no second round trip
+    team._me = deepcopy(ME)
+    third, _, _ = taker(tmp_path, team, public, live=True, **ARB)
+    third.on_tick(at(team, TICK + 2))
+    assert team.sent == [("accept", 1), ("accept", 2, [900])]
