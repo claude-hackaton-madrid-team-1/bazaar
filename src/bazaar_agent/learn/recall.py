@@ -31,6 +31,7 @@ RRF_K = 60
 CANDIDATES = 600  # hard-filtered learnings the lexical leg ranks
 LEG_TOP = 40  # each leg's ranking depth
 RERANK_TOP = 12  # fused learnings the cross-encoder reads
+BM25_FLOOR = 5.0  # BM25-only fallback: Friday's 34 lessons scored 7.5-23.5 for relevant queries, <= 4.5 otherwise
 MIN_SCORE = 0.0  # cross-encoder relevance floor (ms-marco logit; calibrated on real lessons, see README)
 DEFAULT_BUDGET_S = 0.8  # far inside a 15 s tick; a slower answer is dropped
 QUOTE_MAX = 5
@@ -68,7 +69,7 @@ class Hit:
 @dataclass(frozen=True)
 class Recalled:
     hits: tuple[Hit, ...] = ()
-    status: str = "ok"  # ok | no_candidates | models_loading | timeout | error:<Type>
+    status: str = "ok"  # ok | bm25_only (no reranker yet) | no_candidates | timeout | error:<Type>
     elapsed_ms: float = 0.0
     candidates: int = 0
     legs: dict[str, int] = field(default_factory=dict)  # how many each leg ranked
@@ -137,7 +138,10 @@ class HybridRecall:
             found = Recalled(status=f"error:{type(e).__name__}")
         if found.status not in ("ok", "no_candidates") and found.status not in self._warned:
             self._warned.add(found.status)
-            self.log(f"learnings: recall {found.status}; deciding without lessons")
+            if found.status == "bm25_only":
+                self.log("learnings: the reranker is not ready; recall is BM25-only (lexical floor) until it is")
+            else:
+                self.log(f"learnings: recall {found.status}; deciding without lessons")
         return replace(found, elapsed_ms=round((time.monotonic() - started) * 1000, 1))
 
     def search(self, query: Query) -> Recalled:
@@ -158,7 +162,8 @@ class HybridRecall:
             return Recalled(status="no_candidates", candidates=len(pool))
         by_key = {lr.key(): lr for lr in pool}
         keys = list(by_key)
-        lexical = [keys[i] for i in self._index(keys, by_key).ranked(query.text, LEG_TOP)]
+        index = self._index(keys, by_key)
+        lexical = [keys[i] for i in index.ranked(query.text, LEG_TOP)]
         vector = self.models.embed_query(query.text)
         cosines: dict[str, float] = {}
         if vector is not None:
@@ -180,8 +185,10 @@ class HybridRecall:
         top = sorted(fused, key=lambda k: (-fused[k], -by_key[k].tick, k))[:RERANK_TOP]
         legs = {"bm25": len(lexical), "vector": len(semantic), "fused": len(top)}
         scores = self.models.rerank(query.text, [doc_text(by_key[k]) for k in top])
-        if scores is None:
-            return Recalled(status="models_loading", candidates=len(pool), legs=legs)
+        if scores is None:  # no reranker (loading, or the download failed): BM25 alone, above a lexical floor
+            raw = dict(zip(keys, index.scores(query.text), strict=True))
+            lex = [Hit(by_key[k], raw[k], 0.0, i, None) for i, k in enumerate(lexical, start=1) if raw[k] >= BM25_FLOOR]
+            return Recalled(tuple(lex[: query.k]), "bm25_only", 0.0, len(pool), legs)
         lex_rank = {k: i for i, k in enumerate(lexical, start=1)}
         vec_rank = {k: i for i, k in enumerate(semantic, start=1)}
         hits = [
@@ -222,8 +229,6 @@ class Lessons:
         tick: int | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            if not self.recall.models.ready:
-                return []
             bucket = None if tick is None else tick // LESSONS_CACHE_TICKS
             key = (text, subjects, subject_kind, bucket)
             if key in self._cache:
@@ -232,8 +237,8 @@ class Lessons:
                 text, subjects=subjects, subject_kind=subject_kind, tick=tick, k=self.k, budget_s=self.budget_s
             )
             found = self.recall.recall(query)
-            quoted = found.as_quoted(self.k) if found.status == "ok" else []
-            if found.status in ("ok", "no_candidates"):  # a timeout or an error is not cached: retried next call
+            quoted = found.as_quoted(self.k) if found.status in ("ok", "bm25_only") else []
+            if found.status in ("ok", "no_candidates"):  # BM25-only, a timeout or an error is retried next call
                 if len(self._cache) > 256:
                     self._cache.clear()
                 self._cache[key] = quoted

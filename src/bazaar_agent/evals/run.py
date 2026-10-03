@@ -43,7 +43,7 @@ def duel_outcomes(
     for d in inputs.duels(conn, since_tick):
         try:
             found = score_duel(d, closures.get(d.get("duel", -1)))
-        except (TypeError, ValueError, KeyError, AttributeError) as e:
+        except (TypeError, ValueError, KeyError, AttributeError, ArithmeticError) as e:  # 1e400 → OverflowError
             warn(f"evals: duel {d.get('duel')!r} skipped, unreadable payload ({type(e).__name__})")
             continue
         if found is not None:

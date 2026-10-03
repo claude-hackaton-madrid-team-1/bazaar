@@ -137,7 +137,7 @@ def test_hard_filters_drop_other_teams_expired_and_unwanted_kinds_and_subjects()
 
 def test_no_lessons_while_the_models_load_and_on_any_failure():
     loading = recall_over(CHATO, models=FakeModels(ready=False))
-    assert loading.search(Query("chato LAV-08", team=US)).status == "models_loading"
+    assert loading.search(Query("chato LAV-08", team=US)).status == "bm25_only"
     assert loading.recall(Query("chato LAV-08", team=US)).hits == ()
     broken = recall_over(CHATO, models=FakeModels(fail=True))
     out = broken.recall(Query("chato LAV-08", team=US))
@@ -409,3 +409,20 @@ def test_a_claim_edited_while_it_was_embedded_is_embedded_again(database_url, sc
     assert row == (True, True)  # the stale vector was not written
     assert store.embed_missing(FakeModels().embed) == 1
     store.close()
+
+
+def test_without_the_reranker_recall_is_bm25_only_above_a_lexical_floor():
+    filler = [lesson("abuela", f"abuela common filler lesson number {i} for SAL-0{i % 5}", tick=i) for i in range(40)]
+    logged: list[str] = []
+    r = recall_over(CHATO, *filler, models=FakeModels(ready=False))
+    r.log = logged.append
+    found = r.recall(Query("buy LAV-08 uncommon from chato, his ask 33", team=US, tick=120))
+    assert found.status == "bm25_only" and found.hits[0].learning == CHATO and found.hits[0].score >= 5.0
+    assert r.recall(Query("weather in Paris tomorrow", team=US, tick=120)).hits == ()
+    r.recall(Query("chato LAV-08", team=US, tick=120))
+    assert logged == ["learnings: the reranker is not ready; recall is BM25-only (lexical floor) until it is"]
+    from bazaar_agent.learn.recall import Lessons
+
+    lessons = Lessons(r)
+    assert lessons("buy LAV-08 uncommon from chato", tick=120)[0]["about"] == "chato"
+    assert lessons._cache == {}  # BM25-only answers are not cached: the reranker may be ready next call

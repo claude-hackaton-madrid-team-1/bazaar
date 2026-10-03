@@ -319,3 +319,16 @@ def test_a_where_on_a_number_matches_in_postgres_as_in_memory(database_url, sche
     assert [lr.detail["thread"] for lr in hits] == [115]
     store.close()
     reader.close()
+
+
+def test_a_duel_with_an_overflowing_number_is_skipped_not_the_whole_pass(monkeypatch):
+    from bazaar_agent.evals import inputs
+    from bazaar_agent.evals.run import duel_outcomes
+
+    huge = {"duel": 9, "role": "seller", "your_limit": 10**400, "status": "no_deal", "rounds": 0}
+    fine = {"duel": 10, "role": "seller", "your_limit": 40, "status": "no_deal", "rounds": 0}
+    monkeypatch.setattr(inputs, "duel_closures", lambda conn: {})
+    monkeypatch.setattr(inputs, "duels", lambda conn, since: [huge, fine])
+    warned: list[str] = []
+    found = duel_outcomes(None, None, warned.append)  # type: ignore[arg-type]
+    assert [o.subject for o in found] == ["duel:10"] and "OverflowError" in warned[0]

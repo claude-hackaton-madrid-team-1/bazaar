@@ -50,6 +50,7 @@ class PassResult:
     outcomes: int = 0
     lessons: int = 0
     behaviours: int = 0  # trader_behaviors rows offered (inserted only when new)
+    written: int = 0  # learnings new or changed this pass (sent to the store)
     embedded: int = 0
     curves: dict[tuple[str, str], CurveStats] = field(default_factory=dict)
     policies: dict[Key, LadderPolicy] = field(default_factory=dict)
@@ -193,6 +194,7 @@ def learn_once(
         tick,
         outcomes=len(outcomes),
         lessons=sum(1 for lr in learned if lr.kind == "lesson"),
+        written=len(pending),
         behaviours=len(rows),
         embedded=embedded,
         curves=curves,
@@ -278,10 +280,11 @@ class OutcomeLearner:
             self._fail("pass", e)
             result = PassResult(tick, error=type(e).__name__)  # never str(e): a connect error may echo the URL
         self.last = result
-        if result.error is None and (result.lessons or result.embedded):
+        if result.error is None and (result.written or result.embedded):  # quiet when nothing changed
             self.log(
-                f"learner: tick {tick}: {result.outcomes} outcomes → {result.lessons} lessons, "
-                f"{len(result.curves)} dealer curves, {result.embedded} embedded ({result.elapsed_s:g} s)"
+                f"learner: tick {tick}: {result.outcomes} outcomes → {result.lessons} lessons "
+                f"({result.written} written), {len(result.curves)} dealer curves, {result.embedded} embedded "
+                f"({result.elapsed_s:g} s)"
             )
         return result
 
