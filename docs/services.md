@@ -1,8 +1,9 @@
 # Live services · integration guide
 
 Every URL a teammate, a dashboard or an agent needs, with the exact contract each one speaks.
-Taker, maker and Phoenix are public and read-only: nothing there can trade, change a setting or reveal
-a key. `bazaar-mcp` exposes our tools, so every call needs a bearer token (see below).
+Taker and maker are public and read-only: nothing there can trade, change a setting, or reveal a key or
+one of our private numbers (see "Public by design"). Phoenix is read-only behind its own login.
+`bazaar-mcp` exposes our tools, so every call needs a bearer token (see below).
 
 | Service | URL | What it is |
 |---|---|---|
@@ -12,8 +13,9 @@ a key. `bazaar-mcp` exposes our tools, so every call needs a bearer token (see b
 | **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
 | **Simulator** | https://bazaar-sim-production-1d48.up.railway.app | A simulated Bazaar (`bazaar-sim`): the organiser API's routes and shapes, keys `sim-team1`…`sim-team8`, for testing agents and the dashboard while the game is closed |
 
-Both agents start in **dry run**: they log and publish what they *would* do. A service trades only
-when `BAZAAR_LIVE=1` is set on it by hand (see README, "Production on Railway").
+Both agents start in **dry run**: they log what they *would* do and publish only its outline (no prices,
+see "Public by design"). A service trades only when `BAZAAR_LIVE=1` is set on it by hand (see README,
+"Production on Railway").
 
 ## Taker and maker: HTTP
 
@@ -39,10 +41,22 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 
 ```json
 {"agent": "taker", "mode": "dry", "tick": 171, "t_hours": 2.4, "team": "t01",
- "last_tick_at": "...", "decisions": [ /* the last 50 decisions, newest last */ ]}
+ "last_tick_at": "...", "threads": [ /* taker */ ], "decisions": [ /* the last 50 decisions, newest last */ ]}
 ```
 
-The maker also returns our open offers; the taker returns its active dealer threads.
+The taker returns its active dealer threads, `{dealer, thread, item, ticks, opened_tick, accepted_price}`;
+the maker returns our open board offers, `{id, side, ref, price, venue, expires_tick, created_tick}`, and
+`posted_this_tick` (card refs).
+
+## Public by design: what these routes never show
+
+There is no token (a browser page reads `/events` directly, so a token would ship in its JS), so the data
+itself must be safe to publish. `/state` and `/events` show what an agent **did**, never **why in numbers**:
+no card value, max price, bid ladder, surplus, score, cash, guardrail limit or affinity, and no `reason`
+or console line (they spell those numbers out). The filter is an allow-list in
+`src/bazaar_agent/agents/status.py` (`public_decision`, `public_execution`, `public_view`): a field added
+to a decision later stays private until someone lists it there. The full row (inputs, reason, line, Jev's
+probabilities) still goes to the Postgres `decisions` table and to Phoenix, both private.
 
 ## Taker and maker: WebSocket `/events`
 
@@ -58,34 +72,46 @@ The maker also returns our open offers; the taker returns its active dealer thre
 |---|---|---|
 | `agent.tick` | once per game tick the agent handles | `{mode}` |
 | `agent.decision` | every move the agent proposes, sent or not | a decision (below) |
-| `agent.execution` | every request the agent actually sends to the game | `{decision_id, tick, sdk_method, request, response, error_code}` |
+| `agent.execution` | every request the agent actually sends to the game | `{agent, decision_id, tick, method, request, ok, error_code, created_id}` |
 
-A decision:
+A decision, as published:
 
 ```json
-{"agent": "maker", "tick": 155, "kind": "post_ask",
- "inputs": {"ref": "LAT-09", "price": 68, "price_candidates": {"aggressive": 68, "fair": 59, "quick_sale": 50}, ...},
- "reason": "ours 35 + page bonus 10.0 ...; jev aggressive (0.87) of {...}",
- "guardrail": "allowed", "chosen": true, "status": "approved", "dry_run": true,
- "jev": {"verdict": "aggressive", "value": 0.87,
-         "probabilities": {"aggressive": 0.91, "fair": 0.07, "quick_sale": 0.02},
-         "reason": null, "digest": "6914f933..."},
- "thread_id": null, "move": {...}}
+{"agent": "taker", "decision_id": 4180, "tick": 155, "kind": "dealer_bid",
+ "chosen": true, "status": "approved", "dry_run": false, "sent": "sending", "thread_id": 812,
+ "guardrail": "allowed", "jev": {"verdict": "yes"},
+ "inputs": {"dealer": "abuela", "thread": 812, "item": "LAV-08", "her_ask": 30, "final": false},
+ "move": {"kind": "bid", "price": 21}}
 ```
 
-`kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
-`post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
-maker's `reprice_or_hold` verdict), and, from the duel player (`agent: "duels"`, no HTTP), `duel_accept`,
-`duel_offer`, `duel_hold`; `guardrail` is `allowed` or `denied: <rules>` (from `GUARDRAILS.md`).
+- `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+  `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
+  maker's `reprice_or_hold` verdict).
+- `status` is `approved` (sent, or would be in a dry run), `rejected` or `expired`; `sent` is
+  `would-send`, `sending` or `not sent`.
+- `guardrail` is only a label: `allowed`, `denied` or `-` (the rules it broke are in the `decisions` table).
+- `jev` is `{verdict}` when Jev was asked (a noul's `yes`/`no`, a choice's option such as `quick_sale`, or
+  `undecided`), else `null`. `undecided` never authorizes anything.
+- `inputs` keeps only `dealer`, `thread`, `item`, `ref`, `card`, `rarity`, `side`, `venue`, `offer_id`,
+  `maker`, `ask` / `her_ask` (the counterparty's price), `fee` and `final`, read from the row's inputs
+  (and from their `offer` / `listing` part for the maker's Jev rows). Our own `price` and the `move`
+  (`{kind, price}`, `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`,
+  `{hold}`, `{reprice, price}`) appear only on an `approved` row of a live agent: a price we never sent
+  stays private.
+- A row that was not sent (`rejected`, `expired`, a skipped accept, and every dry-run row) is cut down
+  further: `{agent, tick, kind, status, guardrail, jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
+  No counterparty, offer id, ask or price: otherwise a rival could list a card and learn from our
+  `skip ... accept quota` or dry-run `would accept` row that its ask sat below our value.
+- An execution shows the `request` we sent (`offer`, `thread`, `with`, `topic`, `price`, `give`, `want`,
+  `venue`), whether it worked (`ok`, `error_code`) and the id it created (`created_id`), not the
+  game's answer body.
 
-`jev` is Jev's verdict when it was asked, else `null`: `verdict` (a noul's `yes`/`no`, a choice's
-option such as `accept` or `quick_sale`, or `undecided`), `value` (the noul probability or the choice
-confidence), `probabilities` (every option's float for a choice), `reason` (why it is `undecided`:
-`below_threshold`, `typesafe_api_key_missing`, `request_timeout`, `no tick budget for jev`, …) and
-`digest` (the masked decision line in `jev-decisions/`, which its outcome line points at). `undecided`
-never authorizes anything: the agent keeps its deterministic move. A duel row's `inputs` is the state Jev
-read (role, our limit, the rival's last offer and price history, rounds, ticks left, decay, the legal
-moves, the default move), with `jev_days` for `rival_cares_about_days` in two-issue sessions.
+The duel player (`agent: "duels"`, kinds `duel_accept`, `duel_offer`, `duel_hold`) has no HTTP and
+publishes nothing here: its rows, with the state Jev read (role, our limit, the rival's offers, rounds,
+the legal moves), are in the `decisions` table only. In that table `jev` is the full verdict: `value`
+(the noul probability or the choice confidence), `probabilities`, `reason` (why it is `undecided`:
+`below_threshold`, `request_timeout`, `no tick budget for jev`, …) and `digest` (the masked decision
+line in `jev-decisions/`, which its outcome line points at).
 
 Quick checks:
 

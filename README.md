@@ -422,12 +422,15 @@ server's answer or refusal code. Without Postgres they go to `.local/agents/*.js
 **Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
 `GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
 the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
-offers, the last 50 decisions with move, reason, strategy, Jev, guardrail and sent/would-send), and
+offers, the last 50 decisions with kind, card, counterparty, the move sent, Jev verdict, guardrail label and
+sent/would-send), and
 `WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
 `{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
 `agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
 there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
-(public read-only data). It runs on its own thread: publishing from the tick loop is an append and a
+(public read-only data), so only an allow-listed public view is published: never our card values, max
+prices, bid ladders, surplus, cash, limits or reasons (`docs/services.md`, "Public by design"). It runs
+on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
 
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
