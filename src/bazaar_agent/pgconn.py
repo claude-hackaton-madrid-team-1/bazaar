@@ -26,6 +26,7 @@ CONNECT_DEFAULTS = {
     "keepalives_idle": "30",
     "keepalives_interval": "10",
     "keepalives_count": "3",
+    "tcp_user_timeout": "10000",  # an open socket that stops answering (dead proxy, Wi-Fi drop) errors in 10 s
 }
 DEFAULT_APP = "bazaar-cli"
 MASK = "***"

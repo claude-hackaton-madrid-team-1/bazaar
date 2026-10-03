@@ -119,3 +119,43 @@ def test_a_live_maker_sends_nothing_while_postgres_is_down_then_posts_once_it_is
     maker.on_tick(clock(tick=TICK + 1))
     assert ("list_offer", {"cash": 65}, {"cards": ["LAV-09"]}, "rastro") in team.sent  # the bid it held back
     assert ledger.spent_since(0) == 65
+
+
+def test_a_password_with_a_raw_at_sign_is_never_logged_and_never_counts_as_shared(tmp_path):
+    from bazaar_agent.ledger_pg import LedgerNotShared
+
+    lines: list[str] = []
+    url = "postgresql://bazaar:se@cretpw@db.example.com:5432/railway"  # libpq reads "cretpw@db.example.com"
+    with pytest.raises(LedgerNotShared) as refused_live:
+        open_ledger(tmp_path, source="taker", live=True, database_url=url, game_url=DEFAULT_URL, connect=refused)
+    open_ledger(tmp_path, source="taker", database_url=url, game_url=DEFAULT_URL, connect=refused, log=lines.append)
+    assert "cretpw" not in str(refused_live.value) and "cretpw" not in " ".join(lines)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:SEC/RETPW@x.proxy.rlwy.net:12345/railway",  # libpq reads user + half the password as host
+        "postgresql://u:pw@localhost,shared.example.com:5432/railway",  # a host list that tries this machine first
+        "postgresql://u:pw@shared.example.com:5432/railway?hostaddr=127.0.0.1",
+        "postgresql://u:pw@127.1:5432/railway",
+        "postgresql://u:pw@2130706433:5432/railway",
+        "postgresql://u:pw@0x7f000001:5432/railway",
+        "postgresql://u:pw@my-laptop.local:5432/railway",
+        "postgresql://u:pw@postgres:5432/railway",  # a compose service name
+    ],
+)
+def test_a_url_that_may_reach_this_machine_or_leak_its_password_is_never_shared(tmp_path, url):
+    from bazaar_agent.ledger_pg import LedgerNotShared
+
+    with pytest.raises(LedgerNotShared) as refused_live:
+        open_ledger(tmp_path, source="taker", live=True, database_url=url, game_url=DEFAULT_URL, connect=refused)
+    assert "RETPW" not in str(refused_live.value) and "SEC" not in str(refused_live.value)
+
+
+def test_railway_hosts_are_shared(tmp_path):
+    for url in (SHARED, "postgresql://u:pw@shuttle.proxy.rlwy.net:41234/railway"):
+        ledger = open_ledger(
+            tmp_path, source="taker", live=True, database_url=url, game_url=DEFAULT_URL, connect=refused
+        )
+        assert isinstance(ledger, PgLedger) and "(shared, counted across every machine)" in ledger.where

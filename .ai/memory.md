@@ -476,3 +476,10 @@ reconnecting `PgLedger` → `['refused', 'refused']` and no file, and two proces
 A live taker/maker pings the ledger before its tick's first write (`ensure_writable`), `/health` carries
 `ledger: shared|down|local file`, and `dealer buy` HOLDS on a ledger blip (no walk). DATABASE_URL must be the
 shared Postgres on every live service, or the process exits at start ("refusing to trade").
+
+### [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
+`postgresql://u:SEC@RETPW@x.proxy.rlwy.net:12345/railway` parses to host `RETPW@x.proxy.rlwy.net`, and
+`u:SEC/RETPW@...` to host `u:SEC`: a `host:port` log label then prints a piece of the password (#162 reviews).
+`ledger_pg._target` now labels only a plain host/IP/socket with a numeric port; anything else is "unparseable",
+never shared (a live process refuses it). Percent-encode passwords. Also never shared: host lists, `hostaddr`,
+`127.1`/`2130706433`/`0x7f000001`, `*.local`, single-label names (compose services).

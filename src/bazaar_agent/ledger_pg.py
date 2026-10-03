@@ -16,6 +16,7 @@ Postgres when it answers.
 from __future__ import annotations
 
 import ipaddress
+import re
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -24,6 +25,7 @@ from typing import TypeVar
 from urllib.parse import urlsplit
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 
 from bazaar_agent.guardrails import Ledger, LedgerStore, is_pack
 from bazaar_agent.pgconn import RETRY_EVERY_S, DatabaseUrlError, Reconnector, Target, describe
@@ -227,6 +229,7 @@ class FallbackLedger:
 
 
 LOCAL_HOSTS = ("localhost", "host.docker.internal", "gateway.docker.internal")  # this machine, seen from docker
+NUMERIC_HOST = re.compile(r"[0-9.]+|0x[0-9a-f]+")  # 127.1, 2130706433, 0x7f000001: libpq reads them as IPv4
 
 
 def is_shared(target: Target) -> bool:
@@ -234,21 +237,30 @@ def is_shared(target: Target) -> bool:
     host = target.host.strip("[]").rstrip(".").lower()
     if target.is_local_default or not host or host.startswith("/"):  # "/..." is a Unix socket
         return False
-    if host in LOCAL_HOSTS or host.endswith(".localhost"):
+    if host in LOCAL_HOSTS or host.endswith((".localhost", ".local")):  # this machine, or mDNS on its LAN
         return False
     try:
         address = ipaddress.ip_address(host)
-    except ValueError:
-        return True  # a host name: Railway's proxy or private network
+    except ValueError:  # a host name (Railway's proxy or private network), not one label (a compose service)
+        return "." in host and NUMERIC_HOST.fullmatch(host) is None
     return not (address.is_loopback or address.is_private or address.is_link_local or address.is_unspecified)
 
 
+PLAIN_HOST = re.compile(r"/[\w./-]*|\[?[0-9A-Za-z.:-]+\]?")  # a name, an IP literal, or a Unix socket directory
+
+
 def _target(database_url: str) -> tuple[Target | None, str]:
-    """Where the URL points, as a log-safe label (host and port only, never a credential)."""
+    """Where the URL points, as a log-safe label (host and port only, never a credential). A host or port
+    libpq read out of a mangled URL (a raw "@" or "/" in the password) may hold part of the password: such
+    a URL is never labelled and never shared. So is a host list or a `hostaddr` (it may dial this machine)."""
+    unsafe = None, "an unparseable DATABASE_URL (percent-encode the password)"
     try:
         target = describe(database_url)
-    except DatabaseUrlError:
-        return None, "an unparseable DATABASE_URL"
+        extra = conninfo_to_dict(database_url)
+    except (DatabaseUrlError, psycopg.Error):
+        return unsafe
+    if not PLAIN_HOST.fullmatch(target.host) or not target.port.isdigit() or "hostaddr" in extra:
+        return unsafe
     return target, f"{target.host}:{target.port}"
 
 

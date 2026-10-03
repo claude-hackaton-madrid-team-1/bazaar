@@ -323,7 +323,7 @@ class Taker:
         except BazaarError as e:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} taker: {e}; no further write this tick (fail closed)")
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock

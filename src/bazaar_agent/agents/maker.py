@@ -219,7 +219,7 @@ class Maker:
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} maker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} maker: {e}; no further write this tick (fail closed)")
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock
