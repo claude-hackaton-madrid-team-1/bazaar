@@ -135,6 +135,7 @@ negotiates well.
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [TL1](TL1-spec.md) (new) | El Taller (Omar's hard rule, Sat 19:37): the taker feeds three FREE spare copies of one rarity (commons first, never a last copy of any card) into `POST /api/taller` at most once per tick, behind `taller_enabled`, `max_copies_kept`, `max_taller_per_game_hour` and `guardrails.check()`; the maker posts no new ask for a spare common; `bazaar taller [ids] [--live]` | 0 | 🟡 PR (feat/taller) |
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -625,6 +626,14 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 3 — the Workshop: `agents/taller.py`, `guardrails.check` action `taller` (`taller_enabled` false,
   `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
   **Acceptance:** tests/test_taller.py; full gate + sim smoke.
+
+### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
+- Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
+  · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
+  tests/test_guardrails.py; full gate.
+- Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
+  would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
+  sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
 
 ## Parallel-work notes
 

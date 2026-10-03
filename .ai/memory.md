@@ -1151,3 +1151,10 @@ it back from Abuela (21) restored the page, not the points. While we led in neg_
 kind passes every file-ledger test and fails live with `CheckViolation` (`LedgerUnavailable`: the process stops writing
 for the tick). Found by the #236 reviews before any live use. El Taller books `spend` at price 0 with item `taller:<refs>`
 and counts by prefix (`count_since(kind, t_hours, prefix)`); a new kind needs a migration plus a `PgLedger` test.
+
+### [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
+v2's free offers to a rival that never priced ran `our_target(elapsed / total)`, and the runner never sends on the
+deadline tick, so the floor (progress 1.0) was never sent: in Duels I our last silent offer (D − 1) stayed ~9 % off
+our limit. Compressing the curve to end earlier (#215 first cut) also lowered D − 3/D − 2, the ticks every Duels I
+silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
+`duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.
