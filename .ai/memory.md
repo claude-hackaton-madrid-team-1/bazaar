@@ -675,6 +675,19 @@ ids and ticks dropped): the 58 events (settlements, offers, thread messages with
 identical, and the run passes with a dead Phoenix on 127.0.0.1:6006. A span used to carry `bazaar.duel.limit` and
 `bazaar.plan.max` in clear: both are gone.
 
+### [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
+Friday's feed, Chato's uncommons: t03 started at 13, stepped by 1 and took finals of 28/29/29 (threads 253, 234,
+275). The big steppers paid 31-32 (228, 268). His finals came after 4-8 team bids (median 6), Abuela's after 4-9.
+Repeating our top price brought a final in only 1 of 11 threads, so the patience play makes the ladder long
+enough (at least 9 distinct bids) instead of holding at the top. `bazaar dealer finals` replays it: lift 0.15
+closes 4 of 12 Chato uncommon threads at 28-29 and 11 of 15 rares (mean 88); lift 0.25 closes 11 of 12 and 15 of 15.
+
+### [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
+A run that restarts the simulator resumes the old world (tick 149, our cash at the floor), which looks like
+someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time, as `scripts/sim_smoke.py` does.
+Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
+an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
+
 ### [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
 symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squashed onto #72's round-3 head: thread
 40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that
