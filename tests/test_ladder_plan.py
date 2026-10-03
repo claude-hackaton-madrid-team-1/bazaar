@@ -153,3 +153,19 @@ def test_a_later_slot_never_blocks_an_earlier_one_on_cash(real):
     first = [(s["wall"], s["dealer"]) for s in doc["schedule"][:2]]
     assert first == [("09:00:00", "abuela"), ("09:00:00", "chato")]
     assert doc["what_if_caps"] == {"chato:card:uncommon": 31}
+
+
+def test_refs_go_to_a_dealer_that_can_plan_their_rarity_best_share_first(plans):
+    refs = [("LAV-08", "uncommon"), ("SAL-02", "common"), ("LAV-09", "rare"), ("SAL-05", "common")]
+    targets = default_targets(plans, DEFAULT_QUOTAS, refs=refs)
+    named = [(t.dealer, t.price_class, t.ref) for t in targets if t.ref]
+    # commons (0.97+) before the uncommon (0.94); the rare has no plan anywhere: listed, then blocked
+    assert named[:3] == [
+        ("abuela", "card:common", "SAL-02"),
+        ("abuela", "card:common", "SAL-05"),
+        ("abuela", "card:uncommon", "LAV-08"),
+    ]
+    sched = schedule(plans, targets, DEFAULT_QUOTAS, RULES, cash=503)
+    assert [s.target.ref for s in sched.slots] == ["SAL-02", "SAL-05", "LAV-08"]
+    assert ("chato", "card:rare") in [(d, c) for d, c, _ in sched.blocked]
+    assert ("chato", "card:rare", "LAV-09") in named  # Chato sells rares: blocked by the cap, not unknown

@@ -60,7 +60,7 @@ Inputs: cash 353 at the open plus the 150 grant at 09:03 (tick 6), `cash_floor` 
 | 09:00–10:00 | 8 (09:00 → 09:21, every 3 min) | 135 P | 112 P |
 | 10:00–10:30 | 6 (10:00 → 10:15) | 98 P | 81 P |
 
-The cash floor binds: 503 − 270 = 233 P, all of it reserved. If each slot frees the difference between its max and the price it actually closed at, about 40 P more is available. Blocked, with numbers: Chato uncommon, Chato rare, Chato silver pack, Abuela pack. Card refs are left blank on purpose: at 09:00 run `uv run bazaar ladder plan --cash <cash> --refs <missing cards from bazaar strategy>`.
+The cash floor binds: 503 − 270 = 233 P, all of it reserved. If each slot frees the difference between its max and the price it actually closed at, about 40 P more is available. Blocked, with numbers: Chato uncommon, Chato rare, Chato silver pack, Abuela pack. Card refs are blank in this file on purpose. `ladder_plan.page_cards.json` fills them with the page cards W7 (#87) lists for us: SAL-02 and SAL-05 (commons) at 09:00 and 09:03, then LAV-08, SAL-07, SAL-08, MAL-06 and MAL-07 (uncommons) from 09:06 to 09:18, and MAL-08 at 10:00, when the 150 P/hour cap frees up. That is 8 deals, about 150 P expected and 174 P reserved, so the cash floor still holds. Each ref goes to a dealer that can plan its rarity, the highest-share refs first.
 
 What-if (`ladder_plan.what_if_chato_31.json`, plan only, GUARDRAILS.md unchanged): with Chato's uncommon cap at 31, Chato and Abuela both start at 09:00. That gives 5 Chato and 5 Abuela slots in the window, with an expected Chato share of 0.69 in the model, 0.83 on the replays and 1.00 in the simulator.
 

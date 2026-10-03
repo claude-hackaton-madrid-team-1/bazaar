@@ -301,15 +301,17 @@ def default_targets(
     hours: int = 1,
     refs: Sequence[tuple[str, str]] = (),
 ) -> list[Target]:
-    """First every dealer's best three deals (highest level first: its deals also unlock the next
-    level early), each in that dealer's highest-share class; then the album fill, dealers interleaved,
-    each rotating through its classes up to its deals per hour × `hours`. `refs` are (ref, rarity)
-    pairs handed out to card slots of that rarity, in order. Classes we cannot plan for are listed once
-    so the schedule reports them as blocked."""
-    pool: dict[str, list[str]] = {}
-    for ref, rarity in refs:
-        pool.setdefault(RARITY_CLASS.get(rarity, ""), []).append(ref)
+    """What to buy, in order. Without `refs`: every dealer's best three deals first (highest level
+    first: its deals also unlock the next level early), each in that dealer's highest-share class; then
+    the album fill, dealers interleaved, each rotating through its classes up to its deals per hour ×
+    `hours`. With `refs` ((ref, rarity) pairs, e.g. the missing page cards from `bazaar strategy`): each
+    ref goes to the highest-level dealer that has a plan for its rarity, that dealer's three
+    highest-share refs first, then the rest in the given order. Classes we cannot plan for are listed
+    once so the schedule reports them as blocked."""
     dealers = sorted(quotas, key=lambda d: -quotas[d].level)
+    blocked = [Target(d, c) for (d, c), cp in sorted(plans.items()) if cp.choice.plan is None]
+    if refs:
+        return _ref_targets(plans, dealers, refs) + blocked
     best: list[tuple[str, str]] = []
     fill: dict[str, list[str]] = {}
     for dealer in dealers:
@@ -326,11 +328,28 @@ def default_targets(
         for d in fill
         if i < len(fill[d])
     ]
-    out = []
-    for dealer, cls in best + rest:
-        out.append(Target(dealer, cls, pool[cls].pop(0) if pool.get(cls) else None))
-    out += [Target(d, c) for (d, c), cp in sorted(plans.items()) if cp.choice.plan is None]
-    return out
+    return [Target(dealer, cls) for dealer, cls in best + rest] + blocked
+
+
+def _ref_targets(
+    plans: Mapping[tuple[str, str], ClassPlan], dealers: Sequence[str], refs: Sequence[tuple[str, str]]
+) -> list[Target]:
+    def share(t: Target) -> float:
+        bt = plans[(t.dealer, t.price_class)].backtest
+        return bt.mean_share if bt else 0.0
+
+    placed: list[Target] = []
+    for ref, rarity in refs:
+        cls = RARITY_CLASS.get(rarity, "")
+        dealer = next((d for d in dealers if (cp := plans.get((d, cls))) and cp.choice.plan is not None), None)
+        dealer = dealer or next((d for d in dealers if (d, cls) in plans), None)  # blocked: say by whom
+        placed.append(Target(dealer or (dealers[-1] if dealers else ""), cls, ref))
+    plannable = [t for t in placed if (cp := plans.get((t.dealer, t.price_class))) and cp.choice.plan is not None]
+    first: list[Target] = []
+    for dealer in dealers:
+        mine = sorted((t for t in plannable if t.dealer == dealer), key=share, reverse=True)[:3]
+        first += mine
+    return first + [t for t in placed if t not in first]
 
 
 def plan_document(
