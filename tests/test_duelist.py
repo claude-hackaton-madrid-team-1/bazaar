@@ -84,3 +84,10 @@ def test_the_live_payload_is_read_and_played():
     assert duel_move({**LIVE, "rival_offer": {"price": 110, "days": 0}}, tick=143, started_tick=132).kind == "accept"
     assert duel_done({**LIVE, "status": "done"}) and duel_done({**LIVE, "result": "deal"})
     assert duel_id({"id": 7}) == 7 and duel_id({"duel": True}) is None
+
+
+def test_our_duel_messages_counts_our_own_lines_only():
+    from bazaar_agent.agents.duelist import our_duel_messages
+
+    duel = {"messages": [{"from": "you"}, {"from": "Rival Plata"}, {"from": "you"}, "odd"]}
+    assert our_duel_messages(duel) == 2 and our_duel_messages({}) == 0 and our_duel_messages({"messages": "x"}) == 0

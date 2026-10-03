@@ -113,4 +113,7 @@ No team-to-team thread wiring (we run none today; the bank supports `team` count
 - "Next counterparty move" is read at our next observation of the conversation (the next tick): a reply that
   lands later is scored as a hold.
 - `flag.raised` payload shape is unverified (`message` id assumed, as the simulator emits); no flag ever seen
-  against us yet.
+  against us yet. Anyone reading the public feed may flag our dealer messages: two flags turn every tactic off
+  toward that dealer for the day. That fails safe (plain words), and a wrong flag costs the flagger.
+- The tie-break seed is secret per process (`BAZAAR_BLUFF_SEED` fixes it for a simulator run): with a public
+  seed, someone holding our code could read a skipped tactic as a hint of our limit.

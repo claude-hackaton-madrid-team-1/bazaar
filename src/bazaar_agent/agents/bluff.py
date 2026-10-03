@@ -27,6 +27,7 @@ import hashlib
 import math
 import os
 import re
+import secrets
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -38,6 +39,8 @@ from bazaar_agent.learn.model import SUBJECT_PATTERN, Learning
 
 ENV = "BAZAAR_BLUFF"
 ON_VALUES = frozenset({"", "1", "true", "on", "yes"})  # anything else turns the tactics off (fail closed)
+OFF_VALUES = frozenset({"0", "false", "off", "no", "n", "none", "disabled"})  # shown as set; any other: unrecognised
+SEED_ENV = "BAZAAR_BLUFF_SEED"  # a fixed tie-break seed for a reproducible run; unset: a secret one per process
 PLAIN = "plain"  # the control arm: today's words, no tactic; every tactic is learned against it
 REWARDS = {"toward": 1.0, "held": 0.0, "away": -0.5, "deal": 1.0, "walked": -1.0, "no_deal": -0.5}
 FAST_BONUS = 0.5  # a deal within FAST_MESSAGES of our tactic messages: rounds saved
@@ -49,6 +52,8 @@ MUTE_AFTER = 2  # penalties in one day before every tactic to that counterparty 
 EXPLORE = 1.0  # UCB1 exploration weight
 RECENT_TICKS = 5  # a cooloff or strike this soon after a tactic message is blamed on that message
 FLAG_WINDOW_TICKS = 60  # a flag event older than this (a feed replayed after a restart) teaches nothing new
+FEED_WINDOW = 200  # feed events a loop without its own feed reads for strikes and flags
+FEED_RETRY_TICKS = 5  # after a failed feed read, the next one waits this many ticks
 LOAD_LIMIT = 2000
 LOAD_EVERY = 5  # ticks between reads of the other processes' tactic lessons (our own are in memory at once)
 SEEN_EVENTS_MAX = 20_000  # feed event ids remembered against double counting (the window is 500)
@@ -62,9 +67,16 @@ def enabled(rules: Guardrails | None, env: Mapping[str, str] | None = None) -> t
     if rules is not None and not rules.bluff_enabled:
         return False, "bluff_enabled = false"
     raw = (env if env is not None else os.environ).get(ENV, "").strip().lower()
-    if raw not in ON_VALUES:
-        return False, f"{ENV}={raw[:16]}"
-    return True, "on"
+    if raw in ON_VALUES:
+        return True, "on"
+    return False, f"{ENV}={raw}" if raw in OFF_VALUES else f"{ENV} unrecognised: off"  # never echo an odd value
+
+
+def default_seed(env: Mapping[str, str] | None = None) -> int:
+    """`BAZAAR_BLUFF_SEED` when set (a reproducible simulator run), else a secret per process: with a public seed,
+    someone holding our code could replay our tie-breaks and read a skipped tactic as a hint of our limit."""
+    raw = (env if env is not None else os.environ).get(SEED_ENV, "").strip()
+    return int(raw) if raw.lstrip("-").isdigit() else secrets.randbits(64)
 
 
 def message_id(body: object) -> int | None:
@@ -204,6 +216,10 @@ def _text(tactic: str, c: Choice, language: str) -> str | None:
     return text if text is not None and not leaks(text, c.avoid, c.price) else None
 
 
+def _int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _tie(seed: int, cp: Counterparty, conversation: str, step: int, tactic: str) -> str:
     return hashlib.sha256(f"{seed}|{cp.label}|{conversation}|{step}|{tactic}".encode()).hexdigest()
 
@@ -214,7 +230,13 @@ def _reward(learning: Learning) -> tuple[str, float, int | None, str] | None:
     tactic, reward = d.get("tactic"), d.get("reward")
     if learning.kind != "tactic" or (tactic not in BY_ID and tactic != PLAIN):
         return None
-    if isinstance(reward, bool) or not isinstance(reward, int | float) or not math.isfinite(reward):
+    if isinstance(reward, bool) or not isinstance(reward, int | float):
+        return None
+    try:
+        reward = float(reward)
+    except OverflowError:  # an absurd stored number: not a lesson
+        return None
+    if not math.isfinite(reward):
         return None
     day = d.get("day")
     return str(tactic), float(reward), day if isinstance(day, int) else None, str(d.get("result") or "")
@@ -231,6 +253,7 @@ class TacticBook:
     rules: Guardrails | None = None
     env: Mapping[str, str] | None = None
     log: Callable[[str], None] = lambda message: None
+    off_reason: str | None = None  # set by the caller to turn tactics off for this process (e.g. no team id)
     day: int = 0
     tick: int = 0
     lessons: dict[str, Learning] = field(default_factory=dict)
@@ -247,6 +270,8 @@ class TacticBook:
     _seen_events: set[int] = field(default_factory=set)
     _outcomes: set[str] = field(default_factory=set)  # every lesson's outcome id: a replayed event adds nothing
     _loaded_tick: int | None = None
+    _last_sent_tick: int | None = None  # our latest tactic message, in this process
+    _feed_retry_tick: int | None = None  # a failed feed read waits until this tick
     _failed: set[str] = field(default_factory=set)
 
     # ---------------------------------------------------------------- per tick
@@ -259,6 +284,8 @@ class TacticBook:
             self.store.begin_tick(tick)
 
     def enabled(self) -> tuple[bool, str]:
+        if self.off_reason is not None:
+            return False, self.off_reason
         return enabled(self.rules, self.env)
 
     # ---------------------------------------------------------------- the choice
@@ -298,7 +325,8 @@ class TacticBook:
             return replace(base, reason=f"bluff off ({why})")
         arms = self.arms(cp)
         penalties = sum(a.penalties_today for a in arms.values())
-        if penalties >= MUTE_AFTER:
+        if penalties >= MUTE_AFTER or (PLAIN in arms and arms[PLAIN].penalties_today):
+            # two penalties, or one after our plain words (the price upset them, not a lie): plain words all day
             return replace(base, reason=f"muted today ({penalties} penalties)")
         fits = [
             t
@@ -339,6 +367,7 @@ class TacticBook:
             return
         conv = choice.conversation
         self.pending.pop(conv, None)
+        self._last_sent_tick = tick
         sent = _Sent(choice, their_price, their_offer, tick, self.day, message)
         self.pending[conv] = self.last[conv] = sent
         self.counts[conv] = self.counts.get(conv, 0) + 1
@@ -386,8 +415,12 @@ class TacticBook:
         """Feed events that punish a tactic: `persona.cooloff` / `persona.strike` for us soon after a tactic
         message to that dealer, and `flag.raised` on one of our tactic messages."""
         for e in events:
+            if not isinstance(e, Mapping):
+                continue
             eid, payload = e.get("id"), e.get("payload")
-            if not isinstance(eid, int) or eid in self._seen_events or not isinstance(payload, Mapping):
+            if not isinstance(eid, int) or isinstance(eid, bool) or eid in self._seen_events:
+                continue
+            if not isinstance(payload, Mapping):
                 continue
             self._seen_events.add(eid)
             kind = e.get("type")
@@ -402,9 +435,9 @@ class TacticBook:
         """A bad-faith flag on one of our tactic messages: once per message, and only a recent one (a feed
         replayed after a restart must not re-date yesterday's flag to today)."""
         mid = payload.get("message", payload.get("message_id"))
-        if not isinstance(mid, int) or isinstance(mid, bool) or mid not in self.messages:
+        if not _int(mid) or mid not in self.messages:
             return
-        if isinstance(event_tick, int) and tick - event_tick > FLAG_WINDOW_TICKS:
+        if not isinstance(event_tick, int) or isinstance(event_tick, bool) or tick - event_tick > FLAG_WINDOW_TICKS:
             return
         cp, tactic, conv, step = self.messages[mid]
         if f"tactic:{conv}:{step}:flag" in self._outcomes:
@@ -412,10 +445,26 @@ class TacticBook:
         self._lesson(cp, tactic, conv, step, "flag", PENALTY, tick, self.day, "", f"{step}:flag", mid)
         self.log(f"bluff: a team flagged our message {mid} ({tactic} to {cp.id})")
 
-    def wants_events(self) -> bool:
-        """Whether a loop that does not read the feed for itself should read it after its sends: we have tactic
-        messages a strike or a flag could be about."""
-        return bool(self.last or self.messages)
+    def wants_events(self, tick: int) -> bool:
+        """Whether a loop without a feed of its own should read one this tick: tactics on, a tactic message of
+        ours recent enough for a strike or a flag to be about it, and no feed failure still backing off."""
+        if not self.enabled()[0] or self._last_sent_tick is None or tick - self._last_sent_tick > FLAG_WINDOW_TICKS:
+            return False
+        return self._feed_retry_tick is None or tick >= self._feed_retry_tick
+
+    def read_events(self, read: Callable[[int], Iterable[Mapping[str, Any]]] | None, tick: int) -> None:
+        """Read the keyless feed (`read(limit)`) for strikes and flags when it can matter. A failure backs off
+        FEED_RETRY_TICKS ticks and is logged once. Never raises."""
+        if read is None or not self.wants_events(tick):
+            return
+        try:
+            events = list(read(FEED_WINDOW))
+        except Exception as e:  # advisory: the loop trades exactly as before without it
+            self._feed_retry_tick = tick + FEED_RETRY_TICKS
+            self._fail("feed read", e)
+            return
+        self._feed_retry_tick = None
+        self.events(events, self.us, tick)
 
     def _punish_dealer(self, dealer: str, result: str, tick: int) -> None:
         conv = self.recent.get(Counterparty.dealer(dealer).label) if dealer else None
@@ -533,7 +582,7 @@ class TacticBook:
             try:
                 if learning.source == "outcome":
                     self._add(learning)
-            except (TypeError, ValueError, KeyError) as e:  # one odd row never stops a process at start
+            except Exception as e:  # one odd row never stops a process at start
                 self._fail("load row", e)
         return len(found)
 

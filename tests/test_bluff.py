@@ -140,7 +140,9 @@ def test_a_flag_on_one_of_our_tactic_messages_disables_it_for_that_counterparty(
     b = book()
     c = b.choose(RIVAL, "sell", "duel:9", 0, 90)
     b.sent(c, their_price=70, their_offer=1, tick=100, message=4242)
-    b.events([{"id": 9, "type": "flag.raised", "payload": {"team": "t05", "message": 4242}}], US, 102)
+    b.events([{"id": 8, "type": "flag.raised", "payload": {"team": "t05", "message": 4242}}], US, 102)
+    assert b.lessons == {}  # a malformed event without a tick cannot be dated: ignored
+    b.events([{"id": 9, "type": "flag.raised", "tick": 101, "payload": {"team": "t05", "message": 4242}}], US, 102)
     assert b.arms(RIVAL)[c.tactic].off_today() is not None
     assert all(b.choose(RIVAL, "sell", "duel:9", s, 90).tactic != c.tactic for s in range(1, 10))
 
@@ -220,7 +222,8 @@ def test_neutral_closes_and_our_own_walk_teach_nothing():
         (Guardrails(bluff_enabled=False), {}, "bluff_enabled = false"),
         (Guardrails(), {ENV: "0"}, f"{ENV}=0"),
         (Guardrails(), {ENV: " off "}, f"{ENV}=off"),
-        (Guardrails(), {ENV: "disabled"}, f"{ENV}=disabled"),  # an unknown value turns them off (fail closed)
+        (Guardrails(), {ENV: "disabled"}, f"{ENV}=disabled"),
+        (Guardrails(), {ENV: "[/red]tk-not-a-key"}, f"{ENV} unrecognised: off"),  # fail closed, never echoed
     ],
 )
 def test_the_kill_switches_turn_every_tactic_off(rules, env, why):
@@ -462,3 +465,63 @@ def test_the_plain_control_arm_is_todays_words_and_wins_where_lying_does_not_pay
         b.sent(c, their_price=33, their_offer=1000 + i, tick=200 + 2 * i)
         b.observe("thread:1", their_price=31 if c.tactic == PLAIN else 35, their_offer=2000 + i, tick=201 + 2 * i)
     assert [b.choose(CHATO, "buy", f"thread:{n}", 1, 30, their_price=33).tactic for n in range(2, 6)] == [PLAIN] * 4
+
+
+def test_a_penalty_after_our_plain_words_mutes_the_counterparty_for_the_day():
+    b = book()
+    plain = Choice(CHATO, "buy", "thread:1", 1, 30, PLAIN, "forced", their=33)
+    b.sent(plain, their_price=33, their_offer=1, tick=100)
+    b.ended("thread:1", status="closed", closed_reason="cooloff", tick=101)  # the price upset him, not a lie
+    nxt = b.choose(CHATO, "buy", "thread:2", 0, 30)
+    assert nxt.tactic is None and "muted" in nxt.reason  # plain words all day, never only bluffs
+
+
+def test_the_feed_is_read_only_when_it_can_matter_and_backs_off_after_a_failure():
+    from bazaar_agent.agents.bluff import FEED_RETRY_TICKS
+
+    calls: list[int] = []
+
+    def broken(limit):  # type: ignore[no-untyped-def]
+        calls.append(limit)
+        raise TimeoutError("feed hung")
+
+    lines: list[str] = []
+    b = book(log=lines.append)
+    b.read_events(broken, 100)
+    assert calls == []  # no tactic message yet: nothing a strike or a flag could be about
+    b.sent(b.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33), their_price=33, their_offer=1, tick=100)
+    for tick in range(101, 101 + FEED_RETRY_TICKS + 1):
+        b.read_events(broken, tick)
+    assert len(calls) == 2  # tick 101, then again only after the back-off
+    assert lines == ["bluff: feed read failed (TimeoutError); tactics go on from memory"]
+    off = book(env={ENV: "0"})
+    off.sent(Choice(CHATO, "buy", "thread:1", 1, 30, "low_need", "forced"), their_price=33, their_offer=1, tick=100)
+    off.read_events(broken, 101)
+    assert len(calls) == 2  # tactics off: no read at all
+
+
+def test_the_seed_is_secret_per_process_unless_fixed_for_a_reproducible_run():
+    from bazaar_agent.agents.bluff import SEED_ENV, default_seed
+
+    assert default_seed({SEED_ENV: "42"}) == 42 and default_seed({SEED_ENV: "-3"}) == -3
+    assert default_seed({}) != default_seed({})  # 64 random bits each time
+
+
+def test_an_absurd_stored_reward_or_odd_row_never_stops_a_load():
+    store = LearningStore()
+    good = book(store=store)
+    c = good.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33)
+    good.sent(c, their_price=33, their_offer=1, tick=100)
+    good.observe("thread:1", their_price=31, their_offer=2, tick=101)
+    good.flush()
+    (row,) = store.recall(None, {"tactic"}, None, team=US)
+    store.remember([row.model_copy(update={"detail": {**row.detail, "outcome": "x:1", "reward": 10**400}})])
+    store.remember([row.model_copy(update={"detail": {**row.detail, "outcome": "x:2", "step": "two", "message": 9}})])
+    fresh = book(store=store)
+    assert fresh.load() == 3 and fresh.arms(CHATO)[c.tactic].n == 2  # the absurd reward is skipped, not raised
+
+
+def test_an_off_reason_turns_every_tactic_off():
+    b = book(off_reason="our team id is unknown")
+    c = b.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33)
+    assert c.tactic is None and "team id is unknown" in c.reason

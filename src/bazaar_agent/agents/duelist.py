@@ -134,6 +134,14 @@ def rival_offer(duel: dict[str, Any]) -> tuple[int | None, int | None]:
     return _rival_price(duel), oid if isinstance(oid, int) and not isinstance(oid, bool) else None
 
 
+def our_duel_messages(duel: dict[str, Any]) -> int:
+    """How many messages we already sent in this duel, from the duel's own list (`from: "you"`)."""
+    messages = duel.get("messages")
+    return (
+        sum(1 for m in messages if isinstance(m, dict) and m.get("from") == "you") if isinstance(messages, list) else 0
+    )
+
+
 def duel_choice(book: TacticBook | None, duel: dict[str, Any], did: int, move: DuelMove, step: int) -> Choice | None:
     """The bluff tactic for an OFFER's text (N16). An accept or a hold gets none: an accept that is already good
     is sent as it is, never delayed or replaced by a bluff. The price and days stay the move's own."""

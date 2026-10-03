@@ -594,14 +594,16 @@ offer. It never writes an accept, so an accept is never delayed by a bluff.
 - **Chooser** (`agents/bluff.py`): one deterministic bandit (UCB1) per counterparty: each dealer, duel
   rival and team. A `plain` arm (today's words, no tactic) is the control every tactic is measured
   against. Each arm is tried once, then the one with the best learned value wins. Ties are broken by a
-  seeded hash, so the simulator and the tests are reproducible.
+  seeded hash. The seed is secret per process; set `BAZAAR_BLUFF_SEED` for a reproducible simulator run.
 - **Learning:** every scored message becomes a `tactic` row in `learnings` (`source = outcome`). The
   scores: their next price moved toward us +1, held 0, moved away −0.5, deal +1 (+0.5 within 3
   messages), they walked −1. A message still unanswered when we send the next one scores nothing. A
   cooloff, a strike or a flag on our message scores −10 and turns that tactic off for that counterparty
   for the rest of the day. Two penalties in a day mute every tactic to it. Three tries with no gain turn
-  a tactic off for the day. The taker reads strikes and flags from its feed. `duel run` and
-  `dealer buy` read the keyless feed after their sends. A flag can only be matched when the game's
+  a tactic off for the day. A penalty after our plain words also mutes that counterparty: the price
+  upset them, not a lie. The taker reads strikes and flags from its feed. `dealer buy` reads the
+  keyless feed (2 s, no retry) at the start of each tick, before that tick's message. `duel run`
+  reads it after its sends. A flag can only be matched when the game's
   answer to our send carries our message id; that is unverified on the real game. N3's recall never
   returns `tactic` rows, so they never reach Jev or the words context.
 - **Private:** the tactic id and why it was picked go to the decision row under input keys that

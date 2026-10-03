@@ -106,16 +106,29 @@ def _ledger(source: str) -> Any:
     )
 
 
-def _tactic_book(rules: Any, store: Any, us: str | None, log: Callable[[str], None]) -> Any:
+def _tactic_book(
+    rules: Any, store: Any, us: str | None, log: Callable[[str], None], off_reason: str | None = None
+) -> Any:
     """The words' bluff tactics (N16), learned per counterparty in the N3 store (`store` None: memory only).
-    Tactic lessons are read once here, before the first tick; later reads happen after each tick's sends."""
-    from bazaar_agent.agents.bluff import TacticBook
+    Tactic lessons are read once here, before the first tick; later reads happen after each tick's sends. The
+    tie-break seed is secret per process unless BAZAAR_BLUFF_SEED fixes it (a reproducible simulator run)."""
+    from bazaar_agent.agents.bluff import TacticBook, default_seed
 
-    book = TacticBook(store=store, us=us, rules=rules, log=log)
+    book = TacticBook(store=store, us=us, rules=rules, log=log, seed=default_seed(), off_reason=off_reason)
     on, why = book.enabled()
     loaded = book.load()
     log(f"bluff tactics {'on' if on else 'OFF (' + why + ')'} · {loaded} tactic lesson(s) loaded")
     return book
+
+
+FEED_READ_TIMEOUT_S = 2.0  # the bluff book's keyless feed read: short, never retried, it must not stall a tick
+
+
+def _feed_reader(settings: Any) -> Callable[[int], list[Event]]:
+    """`feed_window(limit)` without a key, a 2 s timeout and no retry: for the loops without a feed of their own."""
+    from bazaar_agent.sdk import PublicBazaar
+
+    return PublicBazaar(settings.bazaar_url, timeout=FEED_READ_TIMEOUT_S, retries=0).feed_window
 
 
 def _learning_store(app: str, log: Callable[[str], None]) -> Any:
@@ -374,10 +387,9 @@ def dealer_buy(
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
     us = _our_team_id(client)
     shared = ledger.where.startswith("postgres")
-    bluff = _tactic_book(
-        rules, _learning_store("bazaar-dealer-buy", console.print) if shared else None, us, console.print
-    )
-    public = public_client(settings)  # keyless: strikes and flags on our tactics, after each send
+    store = _learning_store("bazaar-dealer-buy", console.print) if shared else None
+    # Without our team id a strike for us cannot be recognised: no tactics then, today's words only.
+    bluff = _tactic_book(rules, store, us, console.print, None if us else "our team id is unknown")
     with traces.trace_negotiation(dealer, topic, plan) as observer:
         out = negotiate(
             client,
@@ -392,7 +404,7 @@ def dealer_buy(
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             bluff=bluff,
-            events=public.feed_window,
+            events=_feed_reader(settings),
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -468,6 +480,7 @@ def duel_run(
         duel_id,
         duel_move,
         observe_duel,
+        our_duel_messages,
         rival_offer,
         rival_text,
         template_duel_words,
@@ -502,7 +515,7 @@ def duel_run(
     say = lambda m: console.print(escape(m))  # noqa: E731
     book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say)
     chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
-    public = public_client(settings)  # keyless feed reads: a flag on one of our duel tactics
+    feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -512,7 +525,8 @@ def duel_run(
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
-                choice = duel_choice(book, d, did, move, sent.get(did, 0))  # the text only (N16)
+                step = max(sent.get(did, 0), our_duel_messages(d))  # a restarted runner still knows the step
+                choice = duel_choice(book, d, did, move, step)  # the text only (N16)
                 if choice is not None:
                     chosen[did] = choice
                 budget = max(0.0, send_by - time.monotonic())
@@ -668,10 +682,7 @@ def duel_run(
         if store.read_finished(duels):
             save_finished(c.tick)
         if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
-            try:
-                book.events(public.feed_window(200), us, c.tick)
-            except Exception as e:  # the feed is advisory here: the duels go on without it
-                console.print(f"  bluff: feed unavailable ({type(e).__name__})")
+            book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
         book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
 
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"

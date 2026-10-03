@@ -221,7 +221,7 @@ def duel_cli(monkeypatch, tmp_path):
     client = TextDuels([{**LIVE, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}])
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
-    monkeypatch.setattr(cli, "public_client", lambda settings: Feed())
+    monkeypatch.setattr(cli, "_feed_reader", lambda settings: Feed().feed_window)
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
     client.feed = Feed
@@ -274,9 +274,49 @@ def test_duel_run_reads_a_flag_on_our_tactic_message_after_its_sends(duel_cli, m
     assert "bluff: a team flagged our message 777" in " ".join(result.output.split())
 
 
-def test_dealer_buy_reads_a_strike_after_its_send_and_turns_that_tactic_off():
-    book = on()
-    strike = {"id": 5, "type": "persona.strike", "tick": 100, "payload": {"persona": "chato", "team": "t01"}}
+class TimedDealer(TextDealer):
+    """Records the tick of each bid, so a fake feed can show a strike only after the bid that drew it."""
+
+    def __init__(self, asks):
+        super().__init__(asks)
+        self.bid_ticks: list[int] = []
+
+    def tick(self) -> int:
+        return 100 + self.reads // self.reads_per_tick
+
+    def say(self, tid, text, price):
+        self.bid_ticks.append(self.tick())
+        super().say(tid, text, price)
+
+
+def test_dealer_buy_blames_a_strike_on_the_message_that_drew_it():
+    book, lines = on(), []
+    client = TimedDealer([30, 29, 28])
+    strike = {"id": 5, "type": "persona.strike", "payload": {"persona": "chato", "team": "t01"}}
+
+    def feed(limit):  # Chato answers the first bid with a strike that shows from the next tick on
+        first = client.bid_ticks[0] if client.bid_ticks else None
+        return [{**strike, "tick": first}] if first is not None and client.tick() > first else []
+
+    negotiate(
+        client,
+        "chato",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 12),
+        log=lines.append,
+        sleep=lambda _: None,
+        bluff=book,
+        events=feed,
+    )
+    first = [line.split("words tactic ")[1].split(" ")[0] for line in lines if "words tactic " in line][0]
+    (penalty,) = [lr for lr in book.lessons.values() if lr.detail["result"] == "strike"]
+    assert penalty.detail["tactic"] == first and penalty.detail["step"] == 0  # the guilty message, not the next one
+    assert book.arms(CHATO_CP)[first].off_today() is not None
+
+
+def test_dealer_buy_without_feed_or_with_tactics_off_never_reads_it():
+    reads: list[int] = []
+    book = TacticBook(env={ENV: "0"}, us="t01")
     negotiate(
         TextDealer([30, 29, 28]),
         "chato",
@@ -285,7 +325,6 @@ def test_dealer_buy_reads_a_strike_after_its_send_and_turns_that_tactic_off():
         log=lambda _: None,
         sleep=lambda _: None,
         bluff=book,
-        events=lambda limit: [strike],
+        events=lambda limit: reads.append(limit) or [],
     )
-    (penalty,) = [lr for lr in book.lessons.values() if lr.detail["result"] == "strike"]
-    assert book.arms(CHATO_CP)[penalty.detail["tactic"]].off_today() is not None
+    assert reads == []
