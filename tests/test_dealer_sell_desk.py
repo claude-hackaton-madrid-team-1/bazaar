@@ -10,7 +10,7 @@ from bazaar_agent.agents.accept_gate import dealer_gate
 from bazaar_agent.agents.dealer_sell import ask_schedule, latest_dealer_bid, sell_topic
 from bazaar_agent.agents.inspector import CardIndex
 from bazaar_agent.agents.maker import Maker
-from bazaar_agent.agents.runtime import Recorder
+from bazaar_agent.agents.runtime import JevAdvice, Recorder
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check
 from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
@@ -211,7 +211,11 @@ def test_a_protected_only_copy_is_never_a_candidate():
 # ---------------------------------------------------------------- the maker's switch
 
 
-def maker(tmp_path, team, *, live, **rules):
+def jev_yes(name, state):
+    return JevAdvice("yes", 0.9)
+
+
+def maker(tmp_path, team, *, live, strategy_jev=jev_yes, **rules):
     lines: list[str] = []
     public = FakePublic(dealers=DEALERS)
     m = Maker(
@@ -221,6 +225,7 @@ def maker(tmp_path, team, *, live, **rules):
         log=lines.append,
         now=lambda: 1000.0,
         sell_market=lambda snap: MARKET,
+        strategy_jev=strategy_jev,
         **parts(tmp_path, **rules),
     )
     return m, lines
@@ -561,3 +566,21 @@ def test_a_walked_card_comes_back_after_the_retry_window_or_when_our_floor_drops
     late = clock().model_copy(update={"t_hours": 2.5})
     assert sell_desk._retry_ok(cand, late)
     assert sell_desk._retry_ok(desk.Candidate(**{**cand.__dict__, "dealer": "chato"}), clock())
+
+
+def test_an_llm_gate_answer_that_used_up_the_tick_opens_nothing_late(tmp_path, monkeypatch):
+    """BAZAAR_DECIDER=llm (LD1, #213 security round 2): the open_thread waits for the next tick when the gate's
+    ask ran past the maker's live window, whatever the tick-start snapshot said."""
+    monkeypatch.setenv("BAZAAR_DECIDER", "llm")
+    now = [1000.0]
+
+    def slow_yes(name, state):
+        now[0] += 39.5  # the snapshot said 40 s left; the answer leaves 0.5 s, then the window closes
+        now[0] += 1.0
+        return JevAdvice("yes", 0.9)
+
+    team = FakeTeam(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, strategy_jev=slow_yes, dealer_sell_enabled=True)
+    m.now = lambda: now[0]
+    m.on_tick(clock())
+    assert opened(team) == []

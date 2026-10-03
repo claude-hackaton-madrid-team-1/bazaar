@@ -541,6 +541,28 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 4 — find out whether a duel accept counts against `accepts_per_team_per_tick`. · 🚫 unknown from the data
   (never observed either way); live probe proposed in the PR, a human runs it.
 
+### SG1 — Jev-gated strategy pack + guardrail review ([spec](SG1-spec.md))
+- Step 1 — guardrail review: one Jev question per rule that may block points (`questions/guardrail_review.json`,
+  live state in `questions/guardrail_review.state.json`); apply only decided changes, cite each verdict in its
+  GUARDRAILS.md line. · **Acceptance:** `uv run bazaar rules` loads; every reviewed line names its verdict.
+- Step 2 — `agents/strategy_gate.py` + `questions/strategies.json`: a strategy runs only on a decided yes, asked
+  again every `strategy_jev_refresh_ticks`, every answer a `strategy_gate` row. · **Acceptance:** tests/test_strategy_gate.py.
+- Step 3 — (a) ladder probe in the taker (`agents/ladder_probe.py`): one small dealer buy per dealer per game hour,
+  top ≤ official value, cap, cash room, ≥ `ladder_probe_min_share` of her range, never below her lowest fill.
+  · **Acceptance:** tests/test_ladder_probe.py.
+- Step 4 — (b) dealer sells: Jev gate on new sell threads, no thread with a dealer the taker wanted
+  (`dealer_sell_taker_window_ticks`), a final taken only at ≥ max(floor, 0.5 × first ask). · **Acceptance:**
+  tests/test_strategy_gate.py (maker section).
+- Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
+  key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+
+### LD1 — BAZAAR_DECIDER: Claude Opus instead of Jev, behind an env switch ([spec](LD1-spec.md))
+- Step 1 — `jev/decider.py` (switch, timeout, `needed_budget_s`) and the `judge()` branch. · **Acceptance:** unset
+  asks Jev only; `llm` never calls TypeSafe (tests/jev/test_decider.py).
+- Step 2 — `llm/decider.py`: masked prompt, structured answers in Jev's shape, cache, call cap, timeout. ·
+  **Acceptance:** verdict parity and failure tests.
+- Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
+  **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
 ### AF1 — Ask other teams their multipliers (said vs inferred)
 Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_desk.py`, `agents/taker.py`, `cli.py`,
 `render.py`, `sql/schema.sql`, `tests/test_team_affinity.py`, `tests/test_readonly_user.py`.

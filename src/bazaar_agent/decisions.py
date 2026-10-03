@@ -276,6 +276,40 @@ class DecisionLog:
                 out.append((int(tick), str(kind), asset_id, _int(value)))
         return out
 
+    def wanted_dealers(self, agent: str, since_tick: int) -> set[str]:
+        """The dealers `agent` (the taker) wanted since `since_tick`: a live `dealer_open` (not rejected) or
+        `ladder_probe` row (`dealer`), or a `dealer_skip` because another process's thread held that dealer
+        (`blocked_dealer` with `busy_thread`). Postgres and this machine's JSONL are both read; an unreadable
+        store adds nothing."""
+        found: set[str] = set()
+        conn = self._db()
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "select coalesce(candidates->>'dealer', candidates->>'blocked_dealer') from decisions "
+                    "where agent = %s and dry_run is not true and tick >= %s and ((kind = 'dealer_open' and status <> "
+                    "'rejected') or kind = 'ladder_probe' or (kind = 'dealer_skip' and candidates ? 'busy_thread'))",
+                    (agent, since_tick),
+                ).fetchall()
+                found |= {str(r[0]) for r in rows if r[0]}
+            except psycopg.Error as e:
+                self._failed("wanted dealers read", e)
+        path = self.dir / "decisions.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+        except OSError:
+            lines = []
+        for r in _live_rows(lines, agent):
+            inputs, tick = _inputs(r), _int(r.get("tick"))
+            wanted = r.get("kind") == "ladder_probe" or (
+                r.get("kind") == "dealer_open" and r.get("status") != "rejected"
+            )
+            wanted = wanted or (r.get("kind") == "dealer_skip" and "busy_thread" in inputs)
+            dealer = inputs.get("dealer") or inputs.get("blocked_dealer")
+            if wanted and tick is not None and tick >= since_tick and dealer:
+                found.add(str(dealer))
+        return found
+
     def first_tick(self, agent: str, kind: str, owner: str) -> int | None:
         """The earliest tick of a live `kind` row by `agent` that `owner` wrote (`writer()`), in Postgres or this
         machine's JSONL (None: no row or an unreadable store)."""
