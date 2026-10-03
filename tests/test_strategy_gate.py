@@ -152,3 +152,26 @@ def test_every_state_jev_reads_carries_the_risk_posture(tmp_path):
     rec = Recorder("taker", DecisionLog(tmp_path), True, lambda line: None)
     StrategyGate(ask, rec, 10, "aggressive").allows(LADDER_PROBE, 100, lambda: {"cash": 81})
     assert seen == [{"cash": 81, "risk_posture": "aggressive"}]
+
+
+def test_an_llm_decider_asks_the_dealer_sell_gate_only_with_its_timeout_of_the_tick_left(tmp_path, monkeypatch):
+    """BAZAAR_DECIDER=llm (LD1): a due ask with 5 s left would block the tick for the LLM's timeout, so it waits;
+    under Jev the same tick asks as before."""
+    from types import SimpleNamespace
+
+    from bazaar_agent.agents.dealer_sell_desk import SellDesk
+
+    def desk():
+        g, asked = gate(tmp_path, [JevAdvice("yes", 0.9)], refresh=10)
+        return SimpleNamespace(gate=g, gate_state=lambda snap: {"cash": 300}), asked
+
+    snap = SimpleNamespace(clock=SimpleNamespace(tick=100, next_tick_in=5.0))
+    jev_desk, jev_asked = desk()
+    assert SellDesk.gate_on(jev_desk, snap) is True and len(jev_asked) == 1
+    monkeypatch.setenv("BAZAAR_DECIDER", "llm")
+    llm_desk, llm_asked = desk()
+    assert SellDesk.gate_on(llm_desk, snap) is False and llm_asked == []
+    roomy = SimpleNamespace(clock=SimpleNamespace(tick=100, next_tick_in=20.0))
+    assert SellDesk.gate_on(llm_desk, roomy) is True and len(llm_asked) == 1
+    stale, stale_asked = desk()  # the snapshot says 20 s, the maker's live window 2 s: no ask
+    assert SellDesk.gate_on(stale, roomy, left=lambda: 2.0) is False and stale_asked == []

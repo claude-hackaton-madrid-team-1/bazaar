@@ -1065,3 +1065,9 @@ v19 stays open for the benches). Undecided, so kept: dealer_sell_enabled (0.41),
 duplicates_reserve (list_duplicates 0.60, was 0.87 in a looser earlier ask), podium_venue_rule (avoid_unless_2x
 0.74, one hundredth under the bar). Strategy gates: ladder_probe 0.36, dealer_sell 0.70 (leaning yes). A verdict is
 asked once and applied as given; re-asking until it says yes would launder the bar.
+
+### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
+Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
+7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
+and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
+third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.

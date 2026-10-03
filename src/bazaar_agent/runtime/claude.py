@@ -66,6 +66,8 @@ LOCKED_ENV: Mapping[str, str] = {
     # The CLI reads hostile text (the feed reader) and needs none of our other secrets: blank them.
     "BAZAAR_KEY": "",
     "BAZAAR_SIM_KEY": "",
+    "BAZAAR_BROKER_KEY": "",
+    "PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD": "",
     "DATABASE_URL": "",
     "BAZAAR_SIM_DATABASE_URL": "",
     "TYPESAFE_API_KEY": "",

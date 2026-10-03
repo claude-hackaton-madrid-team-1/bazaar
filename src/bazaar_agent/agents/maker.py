@@ -429,7 +429,7 @@ class Maker:
         locked = {o.asset_id for o in [*mine, *by_hand] if o.asset_id is not None}
         locked |= {t.asset_id for t in targets if t.side == "ask" and t.asset_id is not None}
         self._run = run
-        self.sell_desk.on_tick(snap, params, locked)
+        self.sell_desk.on_tick(snap, params, locked, window.left)
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"

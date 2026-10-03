@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.jev import JevUsageError, JudgeResult, Verdict, judge, load_questions
+from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.llm.config import DeskRole, RuntimeConfig, RuntimeConfigError
 from bazaar_agent.llm.models import Pin
 
@@ -255,7 +256,7 @@ class ModelChooser:
         if cached is not None:
             return cached
         timeout = self._timeout(budget_s)
-        if timeout < MIN_JEV_BUDGET_S:
+        if timeout < MIN_JEV_BUDGET_S or (budget_s is not None and budget_s < needed_budget_s(MIN_JEV_BUDGET_S)):
             return self._default(situation, tick, f"no time for Jev ({timeout:.1f}s left)")
         choice = self._ask_jev(situation, tick, timeout)
         if tick is not None:

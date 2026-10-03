@@ -61,6 +61,8 @@ def decision_line(
         "kind": "decision",
         "at": at,
         "model": result.model,
+        # BAZAAR_DECIDER=llm only: a Jev line keeps the upstream format, key for key.
+        **({"decider": "llm"} if result.model.startswith("llm:") else {}),
         "latencyMs": result.latency_ms,
         "stateDigest": state_digest,
         "callDigest": call_digest(state_digest, masked.questions.keys()),
