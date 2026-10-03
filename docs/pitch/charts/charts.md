@@ -47,7 +47,7 @@ Two panels.
 
 ## 3. Exploiter rivals: who gets squeezed
 
-- **Claim:** against a rival that reads our limit, v1 keeps only 7 % of the pie and silent endgame-accept 2 %, while v2 keeps 16 %, and v2 leaks its limit half as often (0 % readable by tick 3 vs 96 % for v1).
+- **Claim:** against a rival that reads our limit, v1 keeps only 7 % of the pie and silent endgame-accept 2 %, while v2 keeps 16 %, and v2 leaks its limit far less (0 % readable by tick 3, about 40 % by tick 6, vs 96 % for v1).
 - **Type:** grouped bar chart. Groups = rival (honest zoo, squeezer, oracle squeezer, oracle that never backs off); bars = policy (v1, v2, endgame accept; optionally the eg1_share05 mitigation in a muted colour).
 - **x:** rival. **y:** score = share × kept (fraction of the pie after decay, 0 for no deal). Secondary (tooltip or a second small panel): `pie_share_in_deals` and `deal_rate`. Leak panel (small bar or table): `readable_by_tick_3/6/9` = share of honest-zoo duels where our first k ticks hold ≥ 2 priced offers to extrapolate our floor from (0–1); `median_floor_error_*` = |estimate − limit| / limit among those (an aggregate error, no limit value).
 - **Data:** `03_exploiters.csv`, long format: filter `metric` (`share_x_kept`, `pie_share_in_deals`, `deal_rate`, `mean_P`, `readable_by_tick_k`, `median_floor_error_by_tick_k`).
@@ -56,12 +56,12 @@ Two panels.
 
 ## 4. Ladder: Abuela uncommons, today's ladder vs the W3 plan
 
-- **Claim:** starting Abuela uncommons at her median floor (21 → 25 instead of 17 → 26) lifts our share from 0.84 to 0.95 in the model and from 0.80 to 0.97 on real replays, at a 0.99 deal rate.
+- **Claim:** starting Abuela uncommons at her median floor (W3's plan) instead of today's low opening lifts our share from 0.84 to 0.95 in the model and from 0.80 to 0.97 on real replays, at a 0.99 deal rate.
 - **Type:** dumbbell (or paired bar) chart per class, today → W3, with a marker for what real teams got on Friday. Headline: the abuela uncommon row.
 - **x:** share of the price range captured = (opening − price) / (opening − that conversation's limit), 0–1. **y:** dealer class (abuela uncommon, common, pack; optional chato rows).
 - **Data:** `04_ladder.csv` (model share, deal rate, fill within 8 ticks, fill at 2 ticks per round, replay share at the top and bottom of each limit bracket, real teams' share).
 - **Source:** `night/w3-ladder:docs/night/w3-ladder.md`, "Backtest: the real decide() (#61) against dealers fitted to these threads" table. Fitted on 273 public dealer threads (all teams, Friday ticks 0–159).
-- **Caveats:** shares are scored against each thread's secret limit, bracketed by what the dealer countered and took (the organisers' "price range" is unknown). Chato rows rest on 6 and 9 closed threads and need cap changes (today's caps block them). Commons are already at the ceiling (0.98 → 0.975, no gain). The #55 simulator's Abuela waits 10 rounds before her final (Friday's real one waited 5), so the simulator shows no gain from starting high. Pack rows need `max_price_pack` lifted above 20.
+- **Caveats:** shares are scored against each thread's secret limit, bracketed by what the dealer countered and took (the organisers' "price range" is unknown). Chato rows rest on 6 and 9 closed threads and need cap changes (today's caps block them). Commons are already at the ceiling (0.98 → 0.975, no gain). The #55 simulator's Abuela waits 10 rounds before her final (Friday's real one waited 5), so the simulator shows no gain from starting high. Pack rows need the pack price cap raised (a guardrail change).
 
 ## 5. Market Test: how much better than the free stall can a broker be?
 
@@ -101,7 +101,7 @@ Two panels.
 - **x:** wall-clock time (Sat 3 Oct 09:00 → Sun 4 Oct 15:00, CEST). **y:** event (ordered by game hour).
 - **Data:** `08_saturday_clock.csv` (events with a slot in at least one column; `status` = scheduled | overdue | never).
 - **Source:** `night/b6-saturday-playbook:docs/night/saturday-schedule.json`, `events[].slots.jump` / `.resume` (built from the organisers' `/api/schedule` and `/api/clock`; anchors: jump t = 4.0 at 09:00, resume t = 2.65 at 09:00).
-- **Caveats:** these are expected times under each anchor, not observed ones; gate G0 at 08:55 (`bazaar clock`) picks the column, and the live feed wins over both. Under resume: h3's Market Test lands at 09:21 (B2 says it still counts for Friday), h17 falls on Sunday 09:21 (after the 23:00 close), Duels I starts at 12:51, the same time PR #71's venue keeper opens (h6.5), and the Sunday finale events (h22.8–24.0) never happen before the 15:00 close. Game hour 4.0 has 4 rows at the same wall time (round, set release, day opens); collapse them into one label. Sunday Market Tests run at 15 s ticks (16 ticks = 4 min).
+- **Caveats:** these are expected times under each anchor, not observed ones; gate G0 at 08:55 (`bazaar clock`) picks the column, and the live feed wins over both. Under resume: h3's Market Test lands at 09:21 (B2 says it still counts for Friday), h17 falls on Sunday 09:21 (after the 23:00 close), Duels I starts at 12:51, the same time PR #71's venue keeper opens (h6.5), and the Sunday finale events (h22.8–24.0) never happen before the 15:00 close. Game hour 4.0 has 3 rows (round, set release, day opens), at the same wall time under jump only; collapse them into one label. Sunday Market Tests run at 15 s ticks (16 ticks = 4 min).
 
 ## 9. (Optional) Friday's public market: where trades actually settled
 

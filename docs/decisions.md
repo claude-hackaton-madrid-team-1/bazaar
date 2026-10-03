@@ -2,7 +2,7 @@
 
 The decision log issue #16 asks for. Every strategy or architecture decision, in order, with its date, the decision,
 why we made it, the evidence, the outcome and a link. Times are Madrid (Europe/Madrid, UTC+2). GitHub timestamps,
-which are in UTC, have been converted.
+which are in UTC, have been converted. **As of Sat 3 Oct, ~06:30.**
 
 **Status:** `decided` = merged, or stated by Marius or the team · `proposed` = a draft PR or report that is waiting
 for Marius · `rejected` = considered and turned down · `killed` = dropped on purpose, with the reason.
@@ -18,7 +18,7 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
 
 - **18:50 · Treat the pitch as 40 % of the score, and keep a decision log from day one** · `decided` · Marius
   Why: in the kickoff, "that's the 40 % for us". RULES.md then gave the split: Negotiating 30 + Market 30 + Judges 40 ("your ideas and your craft").
-  Evidence: kickoff transcript (17:44 of audio, whisper), RULES.md in the kit. Outcome: #16 and the #17 tracker opened at 19:52; this file is the log.
+  Evidence: kickoff transcript (judging quote at [11:02], whisper), RULES.md in the kit. Outcome: #16 and the #17 tracker opened at 19:52; this file is the log.
   Link: #6, #16, #17.
 
 - **19:58 · Build on the organisers' kit (Python SDK vendored byte for byte); Python-only stack** · `decided` · Marius
@@ -111,10 +111,10 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
 - **03:02 · Learner / auto-evolve is P0; memory is Postgres only (Jev 1.0: no graph DB)** · `decided` (plan, #90, #95) / `proposed` (code: #89, #96, #111, #112) · Omar
   Outcome: r1 says the defaults must be off. `BAZAAR_LEARN` is on by default, so the live taker would start skipping dealers, and #96 adds about 350 MB of RAM to the live taker.
 
-## Saturday 3 October, night shift (02:30–05:00, nine autonomous sessions plus two reviewers)
+## Saturday 3 October, night shift (02:30–05:00, about 15 builder sessions plus a reviewer, a bite hunter and an orchestrator)
 
 - **02:30 · Rules of the night** · `decided` · Marius
-  Open PRs stay unmerged, and night work stacks on their branches. Each workstream runs in its own session and ends as a DRAFT PR plus a report. Nothing goes live. No venue opening and no `cash_floor` change tonight. Duel policy v2 ships only behind a parameter whose default is today's policy.
+  Open PRs stay unmerged, and night work stacks on their branches. Each workstream runs in its own session and ends as a DRAFT PR plus a report. Nothing goes live. No venue opening and no `cash_floor` change tonight. (Held until ~05:00; see "After 05:00" for the first merges.) Duel policy v2 ships only behind a parameter whose default is today's policy.
   Scope: these rules bind the night sessions; day-side PRs (the coordinator's and Omar's) kept merging (#73, #75, #85, #88, #90, #95, #99, #104, #121). Link: `_night/PLAN.md`.
 
 - **02:30 · Killed: dealer prompt injection, mirror-duel learning, eggs, fee tuning, polishing the LLM's words; flags stay off** · `killed` · Marius / orchestrator
@@ -125,24 +125,24 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
   Evidence: exact on all 8 real practice deals. v1 counters every tick (7–8 rounds per deal, ~30 % of surplus lost). On the 12 unanswered duels, accepting the rival's best would have made ~195 P (16.3 per duel), against 176.9 P on the 14 we played (12.6 per duel).
 
 - **02:20 → 03:08 · Duel policy v2, "silence is free": anchor once, hold while the rival concedes, at most 2 priced offers, decay-aware accept, always strictly inside the limit** · `proposed` · night w2b (w2a built the harness)
-  Evidence: W2a gate 5/5. v2 makes 1.42× v1 at decay 0.06/0.08 and 1.55× at 0.08/0.10. One-clock replay of the real duels: 178.4 vs 121.7 P. With the shared accept slot (6 duels): 1.33×. 0 outside-limit closes in more than 150k fuzzed moves (r1).
+  Evidence: W2a gate 5/5. v2 makes 1.42× v1 at decay 0.06/0.08 and 1.55× at 0.08/0.10. One-clock replay of the real duels: 178.4 vs 121.7 P. With the shared accept slot (6 duels): 1.33×. 0 outside-limit closes on 14,400 × 6 arena duels, and 0 guardrail refusals on 108,702 fuzzed planner moves (r1).
   B7 (#130): on real payloads we price first in 55 % of shared ticks; under that mix v2 still makes 1.38–1.51×. Link: #86, #80, #130.
 
 - **03:12 · Endgame exploitability: a rival that infers our limit can squeeze us in the last tick → B11 mitigations** · `decided` (the study, Marius) / `proposed` (the settings) · night w2a + w2b
-  Evidence: by tick 3, v1 reveals its limit to within 6 % in 96 % of duels. With `duel_endgame_min_share 0.3` + `duel_endgame_ticks 1`, an exploiter's pie share goes 0.19 → 0.30 (W2a, 3 seeds); against honest rivals the result stays ≥ 0.996× and the deal rate ≥ 0.975×, with 0 outside the limit. We do worse against an oracle that never backs off (0.150 → 0.134).
+  Evidence: by tick 3, v1 reveals its limit to within 6 % in 96 % of duels. With B11's endgame settings (in #150), an exploiter's pie share goes 0.19 → 0.30 (W2a, 3 seeds); against honest rivals the result stays ≥ 0.996× and the deal rate ≥ 0.975×, with 0 outside the limit. We do worse against an oracle that never backs off (0.150 → 0.134).
   Link: #97, #103.
 
 - **02:30 → 04:17 · Two-issue days: keep #60's worst-case weight until a real Duels II payload confirms the sign; `duel_days_auto` stays OFF** · `proposed` · orchestrator (PLAN fact 3), night w2a (B8), r1
   Why: the text that gives the sign of days came from our own simulator. Real practice payloads have `days_meaning: null`.
-  Evidence: with the right sign, v2 gains 3–10 % per two-issue duel. Flipped on without evidence, 7–11 % of duels close outside our limit. r1 found 3 HIGH issues in #113's latch. Link: #60, #113, #117.
+  Evidence: with the right sign, v2 gains 3–10 % per two-issue duel. Flipped on without evidence, 7–11 % of duels close outside our limit. r1 found 3 HIGH issues in #113's latch; all were fixed and r1 closed the review at 04:30. Link: #60, #113, #117.
 
 - **02:37 → 03:54 · Market Test: our broker's edge over the free stall is small, so being open matters more than the matching margin** · `proposed` · night w1a, w1b, b1, b2
   Evidence: in the bench, even the oracle beats the stall by only +0.03–0.06 (p50), so the plan's "stall + 0.15" bar is a no-go. #71's keeper as shipped (exact matching) scores the same as the stall; with the edge policy, +0.17. A venue at 09:00 vs stall only: +0.19 final points (break-even at ~6 % broker downtime).
   Organic market-making is a no-go as a points source: 0 of 739 public offers sat on team venues. Link: #77, #84, #94, #92.
 
-- **03:14–03:43 · #71 rewritten from build-only to live: the maker opens a 0 bps board venue at game hour 6.5; `cash_floor` 270 → 100 plus a 270 P reserve** · `proposed` · Omar, Jev `open_noon` (0.82)
+- **03:14–03:23 · #71 rewritten from build-only to live: the maker opens a 0 bps board venue at game hour 6.5; `cash_floor` 270 → 100 plus a 270 P reserve** · `proposed` · Omar, Jev `open_noon` (0.82)
   Why: market is 30 of the 100 points, and ours is 0.
-  Outcome: this contradicts the 02:30 decision. r1: DO NOT MERGE AS IS (1 blocker; HIGHs: one Postgres blip locks the key vault out for the day, and an open whose answer is lost leaves no broker key). If the clock resumes, h6.5 = 12:51, the same tick Duels I starts. Link: #71.
+  Outcome: this contradicts the 02:30 decision. r1: DO NOT MERGE AS IS. The key-vault lockout HIGH was fixed at head 1696789 (04:35); still open: the process blocker, and two mediums (a failed mark can open a second venue; a failed key save is never retried). The original 03:46 HIGH (a starter stall in `/me` drops the floor to 100 and the reserve gets spent) is in REVIEWS.md. If the clock resumes, h6.5 = 12:51, the same tick Duels I starts. Link: #71.
 
 - **04:07 · One venue proposal (B20): open at 09:03 (h4.05) as insurance; a board venue with the edge broker only if the maker logs it at 09:00, otherwise auto; `cash_floor` 50 optional** · `proposed` · night b20, endorsed by b2
   Why: the free starter stall should already earn 0.5 per session (unverified until `/me` after h5). Under floor 270, a venue needs 540 P; we hold 353 + a 150 P grant. Link: #118, #92.
@@ -152,7 +152,7 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
   Link: #102 (playbook, `bazaar timeline`), #122 (`bazaar cockpit`, a read-only operator screen).
 
 - **02:23 → 04:14 · Ladder: bid from a floor table per dealer × rarity, with seeded jitter available; Chato and packs are a no-go under today's caps** · `proposed` · night w3, b12 (Marius asked for unpredictable bids), b21
-  Evidence: Abuela's uncommon share is 0.945 (model) / 0.973 (real replay), against 0.84 / 0.80 today, with 0 repeated prices. The L2 unlock takes 3 negotiated buys from the previous dealer (sales and opening-price deals don't count). Jitter keeps ≥ 0.95× of the share and cuts rivals' exact-hit rate 1.00 → 0.72 (off by default).
+  Evidence: Abuela's uncommon share is 0.945 (model) / 0.973 (real replay), against 0.84 / 0.80 today, with 0 repeated prices. The L2 unlock takes 3 negotiated buys from the previous dealer (opening-price deals don't count; whether sales count is unverified: r1 04:30, B25 04:33). Jitter keeps ≥ 0.95× of the share and cuts rivals' exact-hit rate 1.00 → 0.72 (off by default).
   Link: #81, #100, #119. Open: relaxing Chato's uncommon cap (`dealer_price_caps`).
 
 - **02:13 → 03:53 · Trade desk: a per-counterparty cap (≤ 25 % of planned volume, "never feed another team") and a rival affinity map from the feed** · `proposed` · night w4, b4
@@ -179,7 +179,7 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
   Evidence: 0 flags on Friday's 1,022 honest dealer offers, but r1 found honest phrasings that still get flagged, so precision is unproven. Link: #93.
 
 - **04:16 · Dress rehearsal and merge order** · `proposed` · night b5, r1
-  Evidence: all 12 PRs integrated at frozen heads, with 9 cross-PR fix-ups; 2,746 tests green. Merge #72 with a merge commit (it bundles #61 + #68). Squash-merge #79, #98 and #101, because earlier commits held private numbers.
+  Evidence: all 12 PRs integrated at frozen heads, with 10 cross-PR fix-ups; 2,746 tests green. Merge #72 with a merge commit (it bundles #61 + #68). Squash-merge #79, #98 and #101, because earlier commits held private numbers.
   Link: #120 (DO NOT MERGE), `docs/night/r1-reviewer.md`.
 
 - **04:28 · Sunday readiness: no agent crashes when a set is released mid-game; a guarded switch for dealer buys of a brand-new set** · `proposed` · night b26
@@ -187,21 +187,39 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
 
 ---
 
+## After 05:00: first merges and the PR triage
+
+- **05:07 and 05:51 · #106 (wake at the announced opening, bite X4) and #105 (holdings and catalog in Postgres) merged** · `decided` · Omar
+  Each merge redeployed the live taker, maker and duels (X16). #106 makes the 09:00 restart step unnecessary. #105 was merged with r1's default-on blocker still open in its last review (REVIEWS.md); check its default on the live services. Link: #106, #105.
+- **05:40–05:46 · Coordinator triage: night PRs closed and replaced by takeover PRs** · `decided` · coordinator session
+  The night drafts above link to their original PRs; where to find each one now:
+
+  | Closed | Now in |
+  |---|---|
+  | #60, #86, #103, #113, #115, #117, #130 (duels) | #150 |
+  | #80, #97 (duel zoo, exploiters) | #151 |
+  | #79 (trade desk) | #137 |
+  | #98 (rival scanner) | #138 |
+  | #114, #116, #126, #133, #110 (bite fixes) | #140, #141, #142, #143, #144 |
+  | #81, #87, #92, #94, #100, #109, #119, #122, #125, #127, #129 | closed; reports salvaged in #154 |
+  | #101 (arbitrage) | closed 04:40, no takeover |
+
+  Still open as they were: #61, #62, #68, #71, #72, #78, #102. Link: #150, #151, #154.
+
 ## Open decisions for Saturday morning
 
 1. **08:55, G0 clock column.** Resume (09:00 = h2.65, Duels I 12:51) or jump (h4, Duels I 11:30). Check with `bazaar clock` and `bazaar timeline --from-api --compare`, then on the feed 09:01–09:05 (#102).
 2. **Merges before 09:00** (each one redeploys taker, maker and duels):
    - #72 with a merge commit, then close #61 and #68 (fixes X7: a same-tick breach of the floor and the cap);
    - #62, plus r1's patch if #79 also lands;
-   - #106 (wake at the opening), or restart the services just after 09:00:00;
    - #60 before Duels II at the latest, and before Duels I if v2 goes in.
-3. **Duels I policy.** Either v1, plus #115 so its forced accepts go before Jev, or v2 (#86 → #103 → #130, B27 consolidation) with B11's `min_share 0.3` and `endgame_ticks 1`. `duel_days_auto` stays off until a real Duels II payload shows the sign.
+3. **Duels I policy.** Either v1, plus #115 so its forced accepts go before Jev, or v2 (#86 → #103 → #130, B27 consolidation) with B11's endgame settings (#150, the takeover of #60/#86/#103/#113/#115/#130). `duel_days_auto` stays off until a real Duels II payload shows the sign.
 4. **Venue.**
    - Options: #71 as is (r1: do not merge as is), B20's 09:03 opening (auto unless the edge broker is live), or no venue.
    - With it, `cash_floor` (270 / 100 / 50). Whatever the choice, one broker per venue: no laptop broker next to the Railway keeper.
 5. **Under resume, the 83 P before the grant.** Ladder best three first (they count for Friday's round too) or the venue. Not both.
 6. **G5, Chato.** Relax his uncommon cap and set `ladder_level_deals` (#81, #119): +2.82 round points, and probably an early L3.
-7. **Omar's PRs whose new behaviour is on by default.** #89 and #96 (`BAZAAR_LEARN`), #91 (evals), #105 (holdings from the DB) and #111 (LLM feed reader): turn the default off before any merge (r1).
+7. **Omar's PRs whose new behaviour is on by default.** #89 and #96 (`BAZAAR_LEARN`), #91 (evals), and #111 (LLM feed reader): turn the default off before any merge (r1). #105 (holdings from the DB) was merged at 05:51 with that blocker still open in r1's last review: check its default on the live services.
 8. **Hand trades against the live maker** (X19: it cancels any board offer it did not post). Send thread swaps only, or put the maker in dry run while hand offers stand, but never around a Market Test if the maker runs our broker.
 9. **Packs.** Nothing opens them, so open them by hand (`open_pack`). B9 says buy none: turn off the taker's pack gate?
 10. **Expired-bid phantom spend (X15).** Merge #126 in a window, or watch the taker's `max_spend_per_game_hour` refusals.

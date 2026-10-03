@@ -1,9 +1,9 @@
 class,plan,model_share,model_deal_rate,fill_within_8_ticks,fill_within_8_ticks_at_2_ticks_per_round,replay_share_limit_top,replay_share_limit_bottom,real_teams_share_friday
-abuela uncommon,today 17->26,0.84,0.946,0.919,0.134,0.8,0.854,0.838
-abuela uncommon,W3 21->25,0.945,0.994,0.994,0.847,0.973,0.888,0.838
-abuela common,today 7->12,0.984,1.0,1.0,0.906,0.96,0.959,0.96
-abuela common,W3 8->11,0.975,0.994,0.994,0.994,0.96,0.943,0.96
-abuela pack,today 17->20,0.421,0.432,0.432,0.325,0.118,0.603,0.647
-abuela pack,W3 uncapped 20->24,0.901,0.959,0.959,0.818,0.933,0.838,0.647
-chato uncommon,W3 uncapped 27->31,0.69,0.832,0.832,0.676,0.833,0.56,1.0
-chato rare,W3 uncapped 89->93,0.756,0.997,0.997,0.975,0.948,0.618,0.889
+abuela uncommon,today,0.84,0.946,0.919,0.134,0.8,0.854,0.838
+abuela uncommon,W3 plan,0.945,0.994,0.994,0.847,0.973,0.888,0.838
+abuela common,today,0.984,1.0,1.0,0.906,0.96,0.959,0.96
+abuela common,W3 plan,0.975,0.994,0.994,0.994,0.96,0.943,0.96
+abuela pack,today,0.421,0.432,0.432,0.325,0.118,0.603,0.647
+abuela pack,W3 plan (cap change needed),0.901,0.959,0.959,0.818,0.933,0.838,0.647
+chato uncommon,W3 plan (cap change needed),0.69,0.832,0.832,0.676,0.833,0.56,1.0
+chato rare,W3 plan (cap change needed),0.756,0.997,0.997,0.975,0.948,0.618,0.889
