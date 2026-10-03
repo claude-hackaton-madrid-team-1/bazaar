@@ -157,7 +157,7 @@ class VenueKeeper:
         # BAZAAR_BENCH_POLICY / BAZAAR_BENCH_GUARD_MARGIN (Railway, set by hand; default exact) pick how the broker
         # matches the Market Test; the edge says so at start (the venue runbooks look for this line)
         self.broker_config = bench_config_from_env(broker_config or BrokerConfig(pace_s=0.2), log=log)
-        if self.broker_config.bench_policy == "edge":
+        if self.broker_config.bench_policy != "exact":
             log(f"venue keeper: broker bench {bench_text(self.broker_config)}")
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
