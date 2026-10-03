@@ -250,7 +250,23 @@ def unnamed_settling(ledger: Any, tick: int) -> str | None:
     return f"accept {', '.join(unnamed)} still settling may hand over a copy we cannot name" if unnamed else None
 
 
-def received_value(catalog: Mapping[str, Any], rarity: str) -> float | None:
-    """What a pull of `rarity` is worth to us, for the score impact's credit: its book value (none: no credit)."""
-    book = ((catalog.get("rarities") or {}).get(rarity) or {}).get("book")
-    return float(book) if isinstance(book, int | float) and not isinstance(book, bool) and book > 0 else None
+def busy_copies(
+    me: Mapping[str, Any],
+    offers: Iterable[Mapping[str, Any]],
+    threads: Iterable[Any],
+    ledger: Any,
+    tick: int,
+    talk_refs: Iterable[str] = (),
+) -> set[int]:
+    """Copies never crafted, for the taker and `bazaar taller` alike: in an open (or accepted, settling) offer of
+    ours (board, thread), in a sell thread of ours, in a `sell:` accept of this or the last tick, and every copy of a
+    card an accept of those ticks (a card ref: a dealer sell) or a live team-desk talk (`talk_refs`) may move."""
+    from bazaar_agent.agents.seller import open_commitments
+
+    items = [item for t in (tick - 1, tick) for item in ledger.accept_items(t)]
+    sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
+    refs = {item for item in items if ":" not in item and "-" in item} | set(talk_refs)
+    held = [a for a in me.get("assets") or [] if isinstance(a, Mapping) and isinstance(a.get("id"), int)]
+    busy = set(open_commitments([dict(o) for o in offers], str(me.get("id") or "")).listed)
+    busy |= sold | sell_thread_assets(threads)
+    return busy | {int(a["id"]) for a in held if str(a.get("ref")) in refs}

@@ -2383,7 +2383,8 @@ def taller_cmd(
 
     The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch, the
     hourly cap shared with every process (the shared ledger, booked before the send) and the hold on an accept still
-    settling that cannot name its copy. Dry run by default."""
+    settling that cannot name its copy. Unlike the taker it does not wait for a duel deadline or a Market Test
+    (`bazaar deploy-guard` says when). Dry run by default."""
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
@@ -2393,7 +2394,13 @@ def taller_cmd(
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     rules, ledger, ctx, commitments = _sell_context(client, me, live)
-    busy = set(commitments.listed)
+    try:  # the taker's busy set: offers, sell threads, accepts of this and the last tick (no team-desk memory here)
+        threads = (client.my_threads("open") or {}).get("threads") or []
+        busy = set(commitments.listed) | tl.busy_copies(me, _my_offers(client), threads, ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    except BazaarError as e:
+        _fail(f"our offers or threads could not be read ({escape(str(e.code))}): nothing sent")
     public = public_client(load_settings())
     catalog = public.catalog()
     if not assets:
@@ -2409,10 +2416,7 @@ def taller_cmd(
     rarities = {str((tl.cards_of(catalog).get(ref) or {}).get("rarity")) for ref in refs}
     if len(rarities) != 1:
         _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
-    rarity = rarities.pop()
-    to = tl.next_rarity(rarity, tl.rarity_order(catalog))
-    gain = tl.received_value(catalog, to) if to else None
-    action = gr.Action("taller", ",".join(refs), rarity, your_value=gain, assets=tuple(assets))
+    action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
     try:  # the shared ledger: every process's crafts this hour, and accepts still settling (fail closed)
         done, hold = tl.crafts_last_hour(ledger, ctx.t_hours), tl.unnamed_settling(ledger, ctx.tick)
     except LedgerUnavailable as e:

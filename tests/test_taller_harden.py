@@ -101,16 +101,20 @@ def test_the_taker_waits_for_the_guards_next_safe_tick_near_a_duel_deadline(tmp_
 # ---------------------------------------------------------------- the score impact credits the card received
 
 
-def test_the_score_impact_credits_the_card_a_craft_brings():
+def test_the_score_impact_credits_nothing_for_the_card_a_craft_brings():
+    """A pull is luck and never scores: team-bought copies given at 0 stay refused, whatever the result is worth."""
     rules = Guardrails(taller_enabled=True, max_score_loss_per_move=0.001)
-    ours = me(*FREE)
     bought = mi.Facts("t01", {a: mi.Origin("team", "t05", 4, 50) for a in (2, 3, 5)})  # team-bought copies
-    base = ctx(cards=mi.our_cards(ours), impact=bought, sellable={"LAV-01": 3, "SAL-01": 2})
-    plain = Action("taller", "SAL-01,LAV-01,LAV-01", "common", assets=(5, 2, 3))
-    assert "max_score_loss_per_move" in str(check(plain, base, rules))  # copies given, nothing received: refused
-    gain = tl.received_value(CATALOG, "uncommon")  # 25: what a pull of the result's rarity is worth to us
-    assert check(replace(plain, your_value=gain), base, rules).allowed  # 25 received > 9.3 given
-    assert tl.received_value({}, "uncommon") is None  # no book: no credit (fail closed)
+    base = ctx(cards=mi.our_cards(me(*FREE)), impact=bought, sellable={"LAV-01": 3, "SAL-01": 2})
+    craft = Action("taller", "SAL-01,LAV-01,LAV-01", "common", your_value=25.0, assets=(5, 2, 3))
+    assert "max_score_loss_per_move" in str(check(craft, base, rules))
+    from_packs = replace(base, impact=mi.Facts("t01", {}))  # copies from packs or crafts: no neg_points move
+    assert check(craft, from_packs, rules).allowed
+
+
+def test_a_kept_back_triple_rests_ten_ticks_without_requests(tmp_path):
+    team, _ = run_taker(tmp_path, news=News(LEVELS), live=False, ticks=11, taller_enabled=True)
+    assert crafts(team) == [] and team.reads.count("duels") == 2  # ticks 100 and 110 only
 
 
 # ---------------------------------------------------------------- `bazaar taller --live` by hand

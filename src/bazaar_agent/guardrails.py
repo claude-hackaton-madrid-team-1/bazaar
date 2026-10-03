@@ -1017,24 +1017,22 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
 
 def _taller_impact(action: Action, refs: list[str], ctx: Context, rules: Guardrails) -> list[str]:
     """`max_score_loss_per_move` for a craft: each copy given away at 0 and no ladder deal (`move_impact`: a copy a
-    team trade brought us costs its your_value in neg_points), less the card it brings: `action.your_value`, the
-    value to us of a card of the result's rarity (the caller's estimate; None credits nothing), at the same k.
-    Fails closed: unread origins count as team copies, and copies not named one by one, or with no value, refuse."""
+    team trade brought us costs its your_value in neg_points). The card a craft brings is credited nothing: a pull is
+    luck and never scores (RULES.md), so it adds no neg_points. Fails closed: unread origins count as team copies,
+    and copies not named one by one, or with no value, refuse."""
     from bazaar_agent import impact_board
 
     if len(action.assets) != len(refs):
         return ["the Workshop's copies are not named one by one: their score impact cannot be estimated"]
     facts = ctx.impact if ctx.impact is not None else impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
-    total, k = 0.0, None
+    total = 0.0
     for asset, ref in zip(action.assets, refs, strict=True):
         impact = move_impact.sell_impact(
             ctx.cards, ref, action.rarity, 0, None, facts, rules.score_per_neg_point_fallback, 0.0, asset
         )
         if impact.score is None:
             return [f"score impact of giving {ref} #{asset} cannot be estimated (max_score_loss_per_move)"]
-        total, k = total + impact.score, impact.k
-    if action.your_value is not None and action.your_value > 0 and k is not None:
-        total += action.your_value * k  # the card the craft brings
+        total += impact.score
     if total < -rules.max_score_loss_per_move:
         return [f"score impact {total:+.2f} < -{rules.max_score_loss_per_move:g} (max_score_loss_per_move)"]
     return []

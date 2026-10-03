@@ -107,13 +107,12 @@ from bazaar_agent.agents.taller import LEVEL_ID as TALLER_LEVEL
 from bazaar_agent.agents.taller import (
     action_item,
     book_craft,
+    busy_copies,
     craft,
     crafts_last_hour,
     free_counts,
     pulled,
     rank_triples,
-    received_value,
-    sell_thread_assets,
     unnamed_settling,
 )
 from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
@@ -1104,6 +1103,8 @@ class Taker:
                 self._taller_notes.add(note)
                 self.log(f"tick {clock.tick} taker: Workshop waits: {hold}")
             return
+        if kill_switch(self.rules):  # `check` holds it anyway: no request for a craft that cannot go
+            return
         try:
             guard = deploy_guard.verdict(self.team.duels(), self.team.schedule(), clock.model_dump(), self.rules)
             if not guard.safe:
@@ -1125,12 +1126,13 @@ class Taker:
             self._ctx(run), sellable=free_counts(me, busy), taller_last_hour=done, taller_hold=hold,
             cards=move_impact.our_cards(me),
         )  # fmt: skip
-        gain = received_value(run.snap.catalog, t.to_rarity)
-        action = Action("taller", action_item(t), t.rarity, your_value=gain, assets=tuple(t.asset_ids))
+        action = Action("taller", action_item(t), t.rarity, assets=tuple(t.asset_ids))
         verdict = check(action, ctx, self.rules)
         status: Status = "approved" if verdict.allowed else "rejected"
         if status == "approved" and not run.window.open():
             status = "expired"
+        if status != "approved" or not self.live:  # kept back or a dry run: no reads for it again before then
+            self._taller_rest_until = clock.tick + 10
         note = (action_item(t), str(verdict))
         if (status != "approved" or not self.live) and note in self._taller_notes:
             return  # a triple kept back (or a dry run) is said once, not every tick
@@ -1172,17 +1174,8 @@ class Taker:
     def _taller_busy(
         self, run: _TickRun, me: dict[str, Any], offers: list[dict[str, Any]], threads: list[dict[str, Any]]
     ) -> set[int]:
-        """Copies never crafted: in an open offer of ours (board, thread, a swap accepted this tick), a sell thread of
-        ours, a sell accept of this or the last tick, and every copy of a card an accept or a live team-desk talk may
-        move."""
-        clock = run.snap.clock
-        items = [item for t in (clock.tick - 1, clock.tick) for item in self.ledger.accept_items(t)]
-        sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
-        refs = {item for item in items if ":" not in item and "-" in item}  # a card accepted: its copies may move
-        refs |= {talk.trade.refs[0] for talk in self.team_desk.talks.values() if talk.trade.refs}
-        held = [a for a in me.get("assets") or [] if isinstance(a, dict) and isinstance(a.get("id"), int)]
-        busy = set(open_commitments(offers, run.snap.us).listed) | sold | sell_thread_assets(threads)
-        return busy | {int(a["id"]) for a in held if str(a.get("ref")) in refs}
+        talks = [talk.trade.refs[0] for talk in self.team_desk.talks.values() if talk.trade.refs]
+        return busy_copies(me, offers, threads, self.ledger, run.snap.clock.tick, talks)
 
     # ------------------------------------------------------------ (b) the dealer desk
 
