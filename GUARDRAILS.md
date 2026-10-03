@@ -34,7 +34,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `protect_page_sets` = RET,CHA — never sell (list, or accept a bid with) our only copy of a page card of these sets: the new pages (El Retiro Saturday, Chamberí Sunday) need every card we pull, and nobody can price them yet; a duplicate may still be sold; `none` turns it off.
 
 ## Ticks and limits
-- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker never accepts).
+- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker accepts only on a dealer sell thread, `dealer_sell_enabled`).
 - `dealer_max_ticks_per_thread` = 14 — close a dealer conversation after this many ticks without a deal.
 
 ## Jev
@@ -88,6 +88,12 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `team_swap_min_surplus` = 3 — our least gain on a swap, at our private values, after the fee we pay.
 - `team_swap_max_their_share` = 0.6 — never hand a team more than this share of a swap's expected pie (no feeding, RULES.md fair play).
 - `team_swap_max_our_share` = 0.85 — a repeat deal with the same team never hands us more than this share of the pie either.
+
+## Selling to dealers
+- `dealer_sell_enabled` = false — the maker sells spare copies (a duplicate, or a set we hold no boost in; never a protected card) to a dealer that buys their rarity, one sell thread at a time, only with a dealer we have no open thread with: our ask starts above the dealer's observed fills and steps down, never below our value + `sell_min_surplus` (STRATEGY.md); a dealer's final is taken only at or above that floor, else we walk. False: the maker never opens a sell thread. `uv run bazaar dealer sell` (by hand) does not read it.
+- `dealer_sell_max_per_game_hour` = 4 — sell threads the maker opens per game hour in all (this process); each dealer is also held to its own `menu.deals_per_team_per_hour` (from `traders` / `/api/dealers`; that quota is shared with our buys, which are not counted here yet).
+- `dealer_sell_open_above_top` = 1.6 — our opening ask on a sell thread: this × the highest bid that dealer gave any team for that rarity (`dealer_curves`, sell rows); never below our floor.
+- `dealer_sell_rounds` = 5 — our asks reach that dealer's typical fill in about this many steps down (finals came after 4-7 dealer bids).
 
 ## Words (N16)
 - `bluff_enabled` = true — our messages may bluff in their TEXT (tactics learned per counterparty against a plain-words control; Abuela gets kindness, labeling and calibrated questions only); false, or BAZAAR_BLUFF set to anything but 1/true/on/yes on a service, sends today's words. A tactic never changes a structured price, days or accept.
