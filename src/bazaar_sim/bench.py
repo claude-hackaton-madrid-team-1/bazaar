@@ -124,8 +124,9 @@ def preset(name: str) -> BenchPreset:
 
 
 def make_traders(rng: random.Random, p: BenchPreset, run: int = 1) -> list[BenchTrader]:
-    """Sellers on even slots, buyers on odd ones. Every trader draws the same seven numbers whatever the preset,
-    so two presets with one seed share their limits and quotes and differ only in patience and firmness."""
+    """Sellers on even slots, buyers on odd ones. Outside `legacy` (the static preset draws two numbers a trader, as
+    #55 did) every trader draws the same seven numbers whatever the preset, so two such presets with one seed share
+    their limits and quotes and differ only in patience and firmness."""
     spread = p.spread
     traders = []
     for k in range(p.traders):

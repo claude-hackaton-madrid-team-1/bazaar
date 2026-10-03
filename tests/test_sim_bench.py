@@ -64,7 +64,8 @@ def test_two_presets_with_one_seed_share_limits_and_quotes():
     assert [(t.limit, t.quote) for t in normal] == [(t.limit, t.quote) for t in hard[:10]]
 
 
-def test_the_static_preset_is_the_first_simulators_book_draw_for_draw_and_the_default():
+def test_the_static_preset_is_the_first_simulators_book_draw_for_draw_and_the_default(monkeypatch):
+    monkeypatch.delenv("SIM_BENCH_PRESET", raising=False)
     for seed in range(50):
         rng, old = random.Random(seed), []
         for k in range(10):  # the generator #55 shipped

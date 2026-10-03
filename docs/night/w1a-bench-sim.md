@@ -8,6 +8,7 @@ Night shift of 3–4 Oct 2026. Branch `night/w1a-bench-sim`, draft PR #77, stack
 
 ```python
 from bazaar_sim.bench import HARD, NORMAL, make_book, simulate, stall_policy
+
 r = simulate(policy, NORMAL, seed=7, rule="quote")  # policy(book) -> [(sell, buy, price), ...]
 r.efficiency, r.stall, r.oracle, r.points(), r.refused, r.max_requests_per_tick
 ```
