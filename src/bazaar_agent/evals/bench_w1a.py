@@ -20,16 +20,17 @@ import importlib
 import json
 import statistics
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field, replace
+from typing import Any, Literal
 
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, ProbeStats, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, plan_matches, quotes_from
 from bazaar_agent.evals.bench import MAX_SENDS, greedy_plan
 
 POLICIES = ("stall", "greedy", "exact", "edge", "edge_limit")
 READS = {"edge_limit": 3}  # book reads per tick; 1 for the others
+EDGE_CROSS: dict[str, Literal["quote", "limit"]] = {"edge_limit": "limit"}
 # W1a's sensitivity corners: (arrival spread, shade ×, relax); None keeps the preset's value.
 VARIANTS: dict[str, dict[str, Any]] = {
     "default": {},
@@ -52,11 +53,16 @@ class BookPolicy:
 
     name: str
     preset: str
+    config: EdgeConfig | None = None
+    probes: ProbeStats | None = None  # shared across sessions, as one broker process keeps them
     edge: BenchEdge = field(init=False)
     pending: list[Match] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.edge = BenchEdge(PRIORS[self.preset], EdgeConfig(cross="limit" if self.name == "edge_limit" else "quote"))
+        config = self.config or EdgeConfig(cross="limit" if self.name == "edge_limit" else "quote")
+        self.edge = BenchEdge(PRIORS[self.preset], config)
+        if self.probes is not None:
+            self.edge.probes = self.probes
 
     def __call__(self, book: dict[str, Any]) -> list[Pair]:
         if self.name == "stall":
@@ -111,7 +117,10 @@ def run(
     rules: Sequence[str] = ("quote", "limit"),
     variants: Sequence[str] = ("default",),
     names: Sequence[str] = POLICIES,
+    edge_config: EdgeConfig | None = None,
 ) -> list[W1aRow]:
+    """Every policy on `seeds` books per preset × variant × rule. The edge's probe statistics carry over from one
+    session to the next (one broker process), its trader models do not."""
     bench = _bench()
     rows = []
     for preset_name in presets:
@@ -119,9 +128,15 @@ def run(
             preset = bench.preset(preset_name).variant(**VARIANTS[variant])
             for rule in rules:
                 for name in names:
+                    probes = ProbeStats()
+                    config = None if edge_config is None else replace(edge_config, cross=EDGE_CROSS.get(name, "quote"))
                     results = [
                         bench.simulate(
-                            BookPolicy(name, preset_name), preset, seed, rule=rule, reads_per_tick=READS.get(name, 1)
+                            BookPolicy(name, preset_name, config, probes),
+                            preset,
+                            seed,
+                            rule=rule,
+                            reads_per_tick=READS.get(name, 1),
                         )
                         for seed in range(seeds)
                     ]

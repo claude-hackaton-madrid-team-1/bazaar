@@ -104,7 +104,7 @@ def test_a_refused_limit_probe_is_remembered_by_the_edge(tmp_path):
     a.on_tick(clock())
     ((sell, buy, price),) = broker.sent
     assert (sell, buy) == ("b5-0", "b5-1") and not 58 >= price >= 62
-    assert a.edge.refused == {("b5-0", "b5-1"): [price]} and a.edge.probes["refused"] == 1
+    assert a.edge.refused == {("b5-0", "b5-1"): [price]} and a.edge.probes.refused == 1
 
 
 def test_quote_mode_never_sends_a_non_crossing_bench_pair(tmp_path):

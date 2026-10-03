@@ -19,7 +19,7 @@ probe, off by default; a refused pair is not proposed again until one of its quo
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Any, Literal
@@ -36,9 +36,12 @@ class EdgeConfig:
     # (the prescient bound in the tournament: a pair held is never lost, and a later trader may need one of them).
     hold_known: bool = True
     cross: Literal["quote", "limit"] = "quote"  # "limit": also propose non-crossing pairs (a probe, see above)
-    min_accept: float = 0.5  # "limit": propose a non-crossing pair only with at least this chance of acceptance
+    min_accept: float = 0.2  # "limit": propose a non-crossing pair only with at least this chance of acceptance
     tries_per_pair: int = 3  # "limit": refused prices remembered per pair; a pair refused this often is dropped
-    give_up_after: int = 6  # "limit": this many refusals and no non-crossing pair accepted: the server checks quotes
+    # "limit": stop probing once no probe was ever accepted and that had less than this chance if the server
+    # checked limits (the product of each refused probe's predicted refusal chance): the server checks quotes.
+    give_up_below: float = 0.01
+    give_up_after: int = 8  # ... and never before this many refusals
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,25 @@ class Candidate:
     price: int
     weight: float  # estimated true surplus (× the acceptance chance for a non-crossing pair)
     crossing: bool
+    chance: float = 1.0  # predicted acceptance (1 for a crossing pair)
+
+
+@dataclass
+class ProbeStats:
+    """What the limit probes have shown so far, over every bench run one broker process sees."""
+
+    sent: int = 0
+    refused: int = 0
+    accepted: int = 0
+    all_refused: float = 1.0  # P(every probe so far refused | the server checks limits), while none was accepted
+
+    def record(self, accepted: bool, chance: float) -> None:
+        self.sent += 1
+        if accepted:
+            self.accepted += 1
+        else:
+            self.refused += 1
+            self.all_refused *= 1 - min(max(chance, 0.0), 1.0)
 
 
 def _run(quote: Quote) -> str:
@@ -78,7 +100,8 @@ class BenchEdge:
     models: dict[str, TraderModel] = field(default_factory=dict)
     first_tick: dict[str, int] = field(default_factory=dict)  # bench run -> the first tick it showed
     refused: dict[tuple[str, str], list[int]] = field(default_factory=dict)  # non-crossing pair -> prices refused
-    probes: dict[str, int] = field(default_factory=lambda: {"sent": 0, "refused": 0, "accepted": 0})
+    probes: ProbeStats = field(default_factory=ProbeStats)
+    chances: dict[tuple[str, str, int], float] = field(default_factory=dict)  # a proposed probe -> its predicted chance
 
     def __post_init__(self) -> None:
         if self.probe_prior is None:
@@ -88,7 +111,8 @@ class BenchEdge:
     def probing(self) -> bool:
         """Non-crossing pairs are proposed: `cross = "limit"`, and the server has not refused all of them so far."""
         p = self.probes
-        return self.config.cross == "limit" and (p["accepted"] > 0 or p["refused"] < self.config.give_up_after)
+        settled = p.refused >= self.config.give_up_after and p.all_refused < self.config.give_up_below
+        return self.config.cross == "limit" and (p.accepted > 0 or not settled)
 
     def observe(self, quotes: Iterable[Quote], tick: int, expiries: Mapping[str, int] | None = None) -> None:
         """One book read: every bench quote updates (or starts) its trader's model. `expiries` (offer id -> last
@@ -112,8 +136,7 @@ class BenchEdge:
         pair is priced on what is left of the limit bands (`_best_price`)."""
         if m.sell.price <= m.price and m.price + m.fee <= m.buy.price:
             return  # a crossing pair: a refusal only means it was taken or gone, nothing to learn
-        self.probes["sent"] += 1
-        self.probes["accepted" if accepted else "refused"] += 1
+        self.probes.record(accepted, self.chances.pop((str(m.sell.id), str(m.buy.id), m.price), self.config.min_accept))
         if not accepted:
             self.refused.setdefault((str(m.sell.id), str(m.buy.id)), []).append(m.price)
 
@@ -165,6 +188,8 @@ class BenchEdge:
             hold = urgency < self.config.hold_below or (known and urgency < 1.0 and self.config.hold_known)
             if endgame or not hold or not cand.crossing:  # a probe is never held
                 out.append((1.0 if endgame else urgency, Match(sells[r], buys[c], cand.price, fee.of(cand.price))))
+                if not cand.crossing:
+                    self.chances[(str(sells[r].id), str(buys[c].id), cand.price)] = cand.chance
         return out
 
     def _candidate(self, s: Quote, b: Quote, fee: Fee) -> Candidate | None:
@@ -181,38 +206,46 @@ class BenchEdge:
         if chance < self.config.min_accept:
             return None
         gain = buyer.limit(self.probe_prior) - seller.limit(self.probe_prior)
-        return Candidate(seller, buyer, price, chance * gain, False) if gain > 0 else None
+        if gain <= 0:
+            return None
+        # what giving up weighs: the lower of the wide and the preset prior's chance, so that a wide prior's optimism
+        # on a narrowly shaded bench never makes a few refusals look like proof that the server checks quotes
+        cautious = min(chance, _acceptance(seller, buyer, fee, tried, self.prior)(price))
+        return Candidate(seller, buyer, price, chance * gain, False, cautious)
 
     @staticmethod
     def _best_price(
         seller: TraderModel, buyer: TraderModel, fee: Fee, tried: Sequence[int] = (), prior: BenchPrior | None = None
     ) -> tuple[int, float]:
         """The whole price most likely to be at least the seller's cost and, fee included, at most the buyer's value,
-        given that every price in `tried` was refused (each refusal rules out "cost ≤ p and value ≥ p + fee(p)").
-
-        Cost and value are independent and uniform on their bands, so P(accept at p) is a product and the refused
-        region is a union of such products: inclusion–exclusion over the (few) refused prices is exact."""
-
-        def mass(prices: Sequence[int]) -> float:  # P(cost ≤ min p and value ≥ max(p + fee(p))): all accept
-            top = max(p + fee.of(p) for p in prices)
-            return seller.p_limit_below(min(prices), prior) * buyer.p_limit_above(top, prior)
-
-        def free(extra: Sequence[int]) -> float:  # P(every price in `extra` accepts and no refused one would)
-            total = 0.0
-            for k in range(len(tried) + 1):
-                for subset in combinations(tried, k):
-                    total += (-1) ** k * (mass([*extra, *subset]) if extra or subset else 1.0)
-            return total
-
-        left = free(())
-        if left <= 1e-9:
-            return (0, 0.0)
+        given that every price in `tried` was refused (each refusal rules out "cost ≤ p and value ≥ p + fee(p))."""
+        chance = _acceptance(seller, buyer, fee, tried, prior)
         lo, hi = int(seller.band(prior)[0]), int(buyer.band(prior)[1]) + 1
         best = (lo, 0.0)
         for price in range(max(1, lo), max(lo, hi) + 1):
-            if price in tried:
-                continue
-            chance = free((price,)) / left
-            if chance > best[1]:
-                best = (price, chance)
+            if price not in tried and (c := chance(price)) > best[1]:
+                best = (price, c)
         return best
+
+
+def _acceptance(
+    seller: TraderModel, buyer: TraderModel, fee: Fee, tried: Sequence[int], prior: BenchPrior | None
+) -> Callable[[int], float]:
+    """P(a match at `price` is accepted | every price in `tried` was refused), as a function of the price.
+
+    Cost and value are independent and uniform on their bands, so P(accept at p) is a product and the refused
+    region is a union of such products: inclusion–exclusion over the (few) refused prices is exact."""
+
+    def mass(prices: Sequence[int]) -> float:  # P(cost ≤ min p and value ≥ max(p + fee(p))): all accept
+        top = max(p + fee.of(p) for p in prices)
+        return seller.p_limit_below(min(prices), prior) * buyer.p_limit_above(top, prior)
+
+    def free(extra: Sequence[int]) -> float:  # P(every price in `extra` accepts and no refused one would)
+        total = 0.0
+        for k in range(len(tried) + 1):
+            for subset in combinations(tried, k):
+                total += (-1) ** k * (mass([*extra, *subset]) if extra or subset else 1.0)
+        return total
+
+    left = free(())
+    return lambda price: 0.0 if left <= 1e-9 else free((price,)) / left

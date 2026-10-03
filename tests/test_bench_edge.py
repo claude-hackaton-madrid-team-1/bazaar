@@ -5,7 +5,7 @@ import random
 
 import pytest
 
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, ProbeStats
 from bazaar_agent.agents.bench_model import PRIORS, BenchPrior, TraderModel
 from bazaar_agent.agents.matcher import Fee, Quote
 
@@ -92,26 +92,38 @@ def test_a_refused_probe_is_repriced_then_dropped():
     assert edge.refused == {("b3-0", "b3-1"): [first.price, second.price]}
 
 
-def test_probing_stops_after_refusals_with_no_acceptance_and_one_acceptance_keeps_it_on():
-    edge = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit", give_up_after=2))
-    for k in range(2):
+def test_probing_stops_once_all_refusals_have_become_unlikely_and_one_acceptance_keeps_it_on():
+    edge = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit", give_up_below=0.001, give_up_after=4))
+    k = 0
+    while edge.probing:
         (m,) = plan(edge, [ask(10 + 2 * k, 62), bid(11 + 2 * k, 58)])
         edge.note_sent(m, accepted=False)
-    assert not edge.probing and plan(edge, [ask(20, 62), bid(21, 58)]) == []
-    kept = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit", give_up_after=2))
+        k += 1
+    assert 4 <= k < 20 and edge.probes.refused == k and edge.probes.all_refused < 0.001
+    assert plan(edge, [ask(90, 62), bid(91, 58)]) == []
+    kept = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit", give_up_below=0.001, give_up_after=4))
     (m,) = plan(kept, [ask(0, 62), bid(1, 58)])
     kept.note_sent(m, accepted=True)
-    for k in range(3):
+    for k in range(12):
         (m,) = plan(kept, [ask(10 + 2 * k, 62), bid(11 + 2 * k, 58)])
         kept.note_sent(m, accepted=False)
-    assert kept.probing
+    assert kept.probing and kept.probes.accepted == 1
+
+
+def test_probe_stats_multiply_the_predicted_refusal_chances():
+    stats = ProbeStats()
+    stats.record(False, 0.5)
+    stats.record(False, 0.4)
+    stats.record(True, 0.3)
+    assert (stats.sent, stats.refused, stats.accepted) == (3, 2, 1)
+    assert stats.all_refused == pytest.approx(0.5 * 0.6)
 
 
 def test_a_crossing_refusal_teaches_nothing():
     edge = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit"))
     (m,) = plan(edge, [ask(0, 30), bid(1, 60)])
     edge.note_sent(m, accepted=False)
-    assert edge.refused == {} and edge.probes["sent"] == 0
+    assert edge.refused == {} and edge.probes.sent == 0
 
 
 @pytest.mark.parametrize("seed", range(25))
