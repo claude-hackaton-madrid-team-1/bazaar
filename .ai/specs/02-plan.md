@@ -680,6 +680,20 @@ time-critical: do them directly, no team fan-out.
 - Unread sales are skipped on a simulator target (`guardrails.simulator_target`), and a tape more than 3 ticks behind
   is unread on the real game (fail closed). · **Acceptance:** tests/test_no_buyback.py; sim smoke green.
 
+### M1 — PR #263 venue claim regression
+- Scope: M1 venue opening and broker storage. Reproduce a one-shot claim falsely counting as a venue;
+  exclude the literal `_once:` prefix from real-venue queries; run the venue tests and repository gates.
+- Acceptance: claim-only storage leaves `opened_before()` false; a real venue, including a keyless marker,
+  makes it true; loading skips one-shot rows. Evidence: `tests/test_venue.py::test_one_shot_claims_do_not_count_as_opened_venues`.
+- Implementation and independent query/test review ran in parallel; the regression failed before the fix
+  (`2 failed, 22 deselected`) and the focused suite passed afterward (`97 passed in 2.70s`).
+- Honest Implementation Report: all three criteria verified by the SQL regression above; 3/3, 100%.
+  Final full gate: `5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.
+  Static gates: `All checks passed!`; `671 files already formatted`; `443 files would be left unchanged.`;
+  `Success: no issues found in 206 source files`. All gates unset DATABASE_URL, BAZAAR_SIM and BAZAAR_ENV_FILE.
+  Coverage measured 92%; its approvals setup lock timeout passed on isolated retry, as recorded in memory.
+  Unverified: the full suite's skipped test and expected failures. Could-not-do: none for this fix.
+
 ### SU1 — Sunday guardrails and bounded duel retries ([spec](SU1-spec.md))
 - Preserve approved rarity caps and tick-based dealer-sell breaker expiry from PR #265.
 - Address both reviews: message-only retry within the original tick deadline, timeout bound, refusal
