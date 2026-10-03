@@ -18,7 +18,7 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
 - **Saturday's bench result: 6 of 6 sessions at exactly the stall (bench_points 0.500).** Our broker made 25 pairs; the server answered every one `{"queued": true, "settles_at_tick": T+1}`, with 0 refusals (`executions`). The `edge` setting was live in the environment for h11, but it never overrode exact: all 6 h11 pairs carry the exact reason string. No team beat the stall all day: every team above 7.50 on the board has trades on its venue.
 - **Organic flow on v19 was zero.** Since tick 612 no other team listed anything on v19, so it had 0 listings, 0 trades and 0 traders. 37 generic notices on Saturday drew no response. The venues that fill run on *addressed* listings and resident buyers (v07: 390 of its 552 listings were addressed), not on fees, because every venue already charges 0. Our venue's name cannot change (PATCH sets the fee only). The two new levers, the MM2 "wanted cards" notice (#238) and the venue invite inside swap proposals (#251), merged at 23:25 and have never run live.
 - **Sunday expected value (final leaderboard points; ranges, not promises):**
-  - Book A (probe): **+1.1 to +2.7** if the server checks hidden limits, with probability P(limit) between 0.4 and 0.6. The low end assumes per-session bench averaging, the high end the round-average reading fitted on Saturday. If the server checks quotes, the probe gains 0. Cash at risk 0; worst case about −0.03 per session.
+  - Book A (probe): **+1.1 to +2.7 expected**. That figure is already weighted by P(limit) 0.4–0.6 and by P(sessions above the stall | limit) ≈ 0.5. If the server checks hidden limits, the probe is worth +2.8 to +4.5; if it checks quotes, 0. The low end assumes per-session bench averaging, the high end the round-average reading fitted on Saturday. Cash at risk 0; worst case about −0.03 per session.
   - Book B (organic on v19): +0.6 to +1.3 (estimate; v19's measured base rate is 0).
   - Book C (our quoting): about +0.2 final (+0.33 on the board) per 10 P of surplus on a sale. **New measurement:** one team sale (LAT-10, tick 1304) showed that gains do count, at k ≈ 0.033 board per neg_point, against 0.048 on the loss side.
 - **Before anything else at 09:00:** read `/api/clock` and `/api/schedule`. The schedule pins "Sunday opens" and "Round 3 starts" at t 16.65, while the clock froze at 13.367. If round 3 starts at the 09:00 opening, the two remaining round-2 benches (h14.65, h15) change rounds or never run, and every round-2 number above moves. Then:
@@ -281,7 +281,7 @@ Cash at risk: 0. Inventory: none. We are never a party.
 
 | # | Recommendation | Expected (final) | Concrete change | Risk |
 |---|---|---|---|---|
-| R1 | **Keep `BAZAAR_BENCH_POLICY=probe` on bazaar-maker**, and touch nothing in the §3.0 windows | +1.1 to +2.7 if limits rule; 0 otherwise | none (already live). Leave the probe caps alone: a cap change is code + redeploy. At 09:00, run the §3.0 clock check before anything else | Tail risk that organisers read non-crossing matches as rule-breaking (RULES.md:84, bond cut and the venue scores 0 afterwards). The first live run is the hard test |
+| R1 | **Keep `BAZAAR_BENCH_POLICY=probe` on bazaar-maker**, and touch nothing in the §3.0 windows | +1.1 to +2.7 expected (+2.8 to +4.5 if limits rule, 0 if quotes rule) | none (already live). Leave the probe caps alone: a cap change is code + redeploy. At 09:00, run the §3.0 clock check before anything else | Tail risk that organisers read non-crossing matches as rule-breaking (RULES.md:84, bond cut and the venue scores 0 afterwards). The first live run is the hard test |
 | R2 | **Open the auto hedge venue before the first Sunday bench**, by hand, outside the windows | Removes the probe's ≤ −0.03 per session downside; may add organic if its name draws routers (unverified) | `uv run bazaar venue open --mechanism auto --live` (GUARDRAILS.md:98 already allows 2), with a parseable name ≤ 40 chars, e.g. "0 % fee · auto-cross every tick" | 20 P spent, 250 P bond locked until close + cooldown. Unverified whether a second venue's organic counts for us, or whether `bench_venue` switches. Opening it is a live write; no redeploy |
 | R3 | **One resident-bidder invite (hand, 09:05)** and near-miss notices only when a live gap ≤ 5 P exists | +0.6 to +1.3 (estimate) | `POST /api/threads {"with": <buyer>, "venue": "v19"}` + 1 message; `uv run bazaar venue announce "<text>" --live` (§3.2 templates) | Uses a thread slot shared with dealer threads. Fair play: invitation only |
 | R4 | **Ask the organisers in person at 09:00** whether a bench match priced inside both hidden limits is accepted when the quotes do not cross | De-risks R1 | none | Free. Do not wait for the answer |
@@ -322,7 +322,7 @@ Numbers that hold up, each with its source in §2:
 
 **Do not claim:**
 - that we beat the stall (unproven until a probe settles);
-- "+4.5" on its own (it is +1.1 to +2.7 expected, and only if limits rule);
+- "+4.5" on its own (it is +1.1 to +2.7 expected: +2.8 to +4.5 if limits rule, 0 if quotes rule);
 - that the wanted notice works (never run live).
 
 If a probe settles on Sunday, the claim becomes "first team above the stall", which shows on the public board as market 7.50 → ≈ 15 under reading B.
