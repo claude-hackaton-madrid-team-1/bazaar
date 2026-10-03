@@ -358,3 +358,14 @@ importing `bazaar_agent.cli`) and serve the sim elsewhere. `scripts/sim_smoke.py
 Two smokes started together both see 8765 free; one sim fails to bind and that smoke's CLI steps talk to the
 OTHER worktree's simulator with the same `sim-team1` key (seen: `thread_exists: one open conversation per
 dealer` in the dealer-buy step). Not a code failure: rerun when `lsof -iTCP:8765 -sTCP:LISTEN` is empty.
+
+### [2026-10-03] build-error — a reset simulator world's rows hid the current tick from the holdings
+symptom: after a sim restart every `/me` read was `live (older than 5 s)` and the agents never shared one →
+root cause: the freshness query took the newest row with `tick >= current`, and the previous world's tick-19
+row (age minutes) won over the fresh tick-1 row → fix: match the reader's tick exactly
+(`test_a_row_from_a_reset_world_never_hides_the_current_tick`). It failed safe (live), never stale.
+
+### [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
+symptom: `read: /me live (team id not known yet)` on every run → root cause: the CLI process learns our team
+id from its own first `/me` and exits; nothing cached it → fix: a live read that names our team calls
+`identity.remember_team_id` (`.local/team_id`, per target), and a live read that disagrees corrects it.
