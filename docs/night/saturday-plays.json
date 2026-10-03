@@ -81,7 +81,7 @@
       "id": "G1c",
       "when": "before 09:00",
       "question": "BAZAAR_LEARN on bazaar-taker?",
-      "check": "railway variable list --service bazaar-taker: #89 (merged 06:24) makes the live taker skip dealers under learned blockers unless BAZAAR_LEARN=0; over-blocking risks: a card persona_quota refusal blocks that dealer's packs for the hour, an unseen sold_out blocks the whole dealer for the hour. #145 (merged) keeps our only copy of any RET/CHA page card from being sold (protect_page_sets = RET,CHA)",
+      "check": "railway variable list --service bazaar-taker: #89 (merged 06:24) makes the live taker skip dealers under learned blockers unless BAZAAR_LEARN=0; over-blocking risks: a card persona_quota refusal blocks that dealer's packs for the hour, an unseen sold_out blocks the whole dealer for the hour. #145 (merged) keeps our only copy of any RET/CHA page card from being sold (protect_page_sets = RET,CHA); since #96/#112, BAZAAR_LEARN also controls ladder evolution (learned ladders replace dealer ladders, whole price classes can be skipped); NOT covered by it: with_lessons wraps Jev's moves in duels, maker and the taker's offer advice regardless (only --no-jev removes it)",
       "then": "Marius decides on/off",
       "owner": "Marius"
     },
