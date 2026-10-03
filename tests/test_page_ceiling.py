@@ -18,6 +18,7 @@ from bazaar_agent import guardrails as gr
 from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide
 from bazaar_agent.agents.dealer import Move as DMove
 from bazaar_agent.agents.dealer_plan import plan_dealer_buy
+from bazaar_agent.agents.desk import openings
 from bazaar_agent.agents.persona_desk import shape
 from bazaar_agent.agents.taker import official_top
 from bazaar_agent.agents.trickster import forgiving_plan
@@ -224,3 +225,30 @@ def test_a_card_an_open_offer_wants_is_refused_with_its_own_reason():
         "we already hold LAV-01 (block_buying_held_cards)"
         in gr.check(gr.Action("buy", "LAV-01", "common", 5), ctx, rules).violations
     )
+
+
+# ---------------------------------------------------------------- what we may still commit (review P1-1)
+
+
+@pytest.mark.parametrize(
+    ("cash", "spent", "top"),
+    [(400, 0, 95), (90, 0, 85), (400, 170, 80), (40, 0, None)],  # room: none binds; cash; the hour's spend; < start
+)
+def test_a_page_completer_is_ranked_and_opened_within_what_we_may_still_commit(cash: int, spent: int, top: int | None):
+    rules = RULES.model_copy(update={"cash_floor": 5, "max_spend_per_game_hour": 250})
+    book = strategy.build_playbook(me_missing("LAV-09"), CATALOG, FILLS, [CHATO], PARAMS, rules)
+    ctx = gr.Context(cash=cash, held={}, tick=5, t_hours=1.0, spent_last_hour=spent, breakers=frozenset())
+    mv = next(m for m in strategy.guarded(book, ctx, rules).buys if m.ref == "LAV-09" and m.source == "chato")
+    (opening,) = [o for o in openings([mv], set(), set(), 3)] or [None]
+    if top is None:  # cash above the floor below the lowest fill: denied, as before
+        assert opening is None and mv.guardrail.startswith("denied")
+        return
+    assert mv.guardrail == "allowed" and opening is not None and opening.plan.start == 48
+    assert (mv.limit, opening.plan.max_price) == (top, top) and f"--max {top}" in mv.command
+
+
+def test_the_official_value_cap_also_lowers_a_lifted_final():
+    lifted = BidPlan(48, 1, 70, final_max=99, lift_after=4)
+    ctx = gr.Context(cash=400, held={}, tick=5, t_hours=1.0, values=Values(77.0))  # type: ignore[arg-type]
+    top = official_top(lifted, "LAV-09", ctx, gr.Guardrails())
+    assert top == 77 and (lifted.capped(77).max_price, lifted.capped(77).final_max) == (70, 77)

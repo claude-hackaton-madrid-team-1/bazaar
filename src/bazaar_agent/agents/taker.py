@@ -443,15 +443,15 @@ def _topic_kind(thread: dict[str, Any]) -> str:
 
 
 def official_top(plan: BidPlan, item: str, ctx: Context, rules: Guardrails) -> int | None:
-    """A dealer ladder's top lowered to the official value cap (`official_value_margin`), when that sits below the
-    plan's top and still at or above its start: a bid above it would be refused and walk the thread. Only the value
-    the open's own check already read (no request). None: nothing to lower."""
+    """A dealer ladder's top (and a lifted final's cap) lowered to the official value cap (`official_value_margin`),
+    when that sits below them and still at or above the start: a bid or an accept above it would be refused and walk
+    the thread. Only the value the open's own check already read (no request). None: nothing to lower."""
     held = ctx.held.get(item, 0)
     official = ctx.values.cached(item, ctx.tick, held) if ctx.values is not None else None
     if official is None:
         return None
     top = math.floor(official - rules.official_value_margin + 1e-9)
-    return top if plan.start <= top < plan.max_price else None
+    return top if plan.start <= top < max(plan.max_price, plan.final_max or 0) else None
 
 
 def _conversation(conv: Conversation) -> str:

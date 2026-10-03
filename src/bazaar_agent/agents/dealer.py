@@ -83,9 +83,10 @@ class BidPlan:
 
     def capped(self, top: int) -> BidPlan:
         """This plan with nothing above `top`: our bids, a final we take and a forgiving dealer's ask we take."""
-        final_max = None if self.final_max is None else top
+        max_price = min(self.max_price, top)
+        final_max = None if self.final_max is None else max(max_price, min(self.final_max, top))
         accept_max = None if self.accept_max is None else min(self.accept_max, top)
-        return replace(self, max_price=top, final_max=final_max, accept_max=accept_max)
+        return replace(self, max_price=max_price, final_max=final_max, accept_max=accept_max)
 
     def accepts(self, ask: int) -> bool:
         """We may take this ask, or meet it with a bid (the same deal). Always, except with a forgiving dealer: then

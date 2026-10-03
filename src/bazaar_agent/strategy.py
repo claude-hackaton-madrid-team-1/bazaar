@@ -32,6 +32,7 @@ from bazaar_agent.guardrails import (
     RuleLine,
     action_kind,
     check,
+    effective_cash_floor,
     parse_md_config,
 )
 from bazaar_agent.guardrails import validated as validated_model
@@ -941,6 +942,20 @@ def build_playbook(
     )
 
 
+def within_room(mv: Move, ctx: Context, rules: Guardrails) -> Move:
+    """A page completer's raised top lowered to what we may still commit (cash above the floor, the hour's spend
+    left), never below its start: ranked at its top, a completer we can afford to open would otherwise be denied
+    where the old fill top was allowed. Every bid is still checked when it is sent. Any other move: unchanged."""
+    if not mv.completes_page or mv.ladder is None:
+        return mv
+    start, top, step = mv.ladder
+    room = min(ctx.cash - effective_cash_floor(rules, ctx), rules.max_spend_per_game_hour - ctx.spent_last_hour)
+    if not start <= room < top:
+        return mv
+    command = dealer_command(mv.ref, mv.source, start, room, step)
+    return replace(mv, ladder=(start, room, step), limit=room, command=command, reason=f"{mv.reason}; top {room}: room")
+
+
 def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[int] = frozenset()) -> Playbook:
     """Every move with the verdict GUARDRAILS.md would give it now (strategy proposes, guardrails dispose).
     `listed` holds assets already in our open offers: listing one again is refused. A ranking check: the
@@ -950,6 +965,7 @@ def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[i
     def verdict(mv: Move) -> Move:
         if not mv.command:
             return mv
+        mv = within_room(mv, ctx, rules)
         if mv.asset_id is not None and mv.asset_id in listed:
             return replace(mv, guardrail=f"denied: asset {mv.asset_id} is already in one of our open offers")
         your_value = mv.value if mv.side == "sell" else None
