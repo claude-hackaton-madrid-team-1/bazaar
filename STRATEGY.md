@@ -42,3 +42,9 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `max_moves` = 12 — how many ranked moves to show per side.
 - `ladder_floor_quantile` = 0 — 0 keeps the lowest-fill dealer ladder; above 0 a dealer card buy opens 2 under that quantile of the limits every team's conversations closed at and stops 2 over it (`bazaar ladder floors`; 0.5 is the W3 plan).
 - `ladder_level_deals` = 0 — 0 buys each card from the cheapest dealer; above 0 the newest dealer gets card buys (when its ladder fits our caps and value) until we closed this many deals with it (counted over the whole feed held, not per day): the ladder counts each level's best three, and they unlock the next level early.
+- `dealer_jitter_start_spread` = 0 — 0 opens every dealer thread at the plan's start; above 0 the first bid drops a random 0..this many primas under it (B12: our dealer bids are public, a fixed ladder is predictable).
+- `dealer_jitter_jump_share` = 0 — below the plan's start, the chance that a raise is a jump (base + 1..`dealer_jitter_jump_max`) instead of the base step; a jump lands at most on the start.
+- `dealer_jitter_band_jump_share` = 0 — the same chance from the plan's start up, where a jump past the dealer's secret limit gives back ladder share (`docs/night/b12-dealer-jitter.md`).
+- `dealer_jitter_jump_max` = 3 — the largest raise a jump may take.
+- `dealer_min_step_pct` = 0.02 — with any jitter on, no raise is smaller than this share of the plan's max (our stand-in for book): the dealer never moves faster than our last step, and a smaller step earns nothing.
+- `dealer_jitter_seed` = 0 — 0 draws a fresh seed per process (a committed seed plus the public thread id would replay our bids); any other value fixes the draws, for tests and simulations.

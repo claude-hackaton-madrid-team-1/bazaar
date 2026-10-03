@@ -22,6 +22,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from bazaar_agent import intel
+from bazaar_agent.agents.dealer import StepJitter, make_jitter
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import (
     Action,
@@ -59,6 +60,12 @@ class StrategyParams(BaseModel):
     max_moves: int = Field(ge=1)
     ladder_floor_quantile: float = Field(ge=0, le=1)
     ladder_level_deals: int = Field(ge=0, le=8)
+    dealer_jitter_start_spread: int = Field(ge=0, le=10)
+    dealer_jitter_jump_share: float = Field(ge=0, le=1)
+    dealer_jitter_band_jump_share: float = Field(ge=0, le=1)
+    dealer_jitter_jump_max: int = Field(ge=1, le=20)
+    dealer_min_step_pct: float = Field(ge=0, le=0.2)
+    dealer_jitter_seed: int = Field(ge=0)
 
 
 @dataclass(frozen=True)
@@ -445,6 +452,19 @@ def opening_ratio(m: Market) -> float | None:
 def ladder_step(start: int, top: int, max_ticks: int) -> int:
     """The smallest raise that still reaches `top` before the thread times out (one bid per tick)."""
     return max(1, math.ceil((top - start) / max(1, max_ticks - 1)))
+
+
+def dealer_jitter(params: StrategyParams, max_price: int) -> StepJitter | None:
+    """The seeded step jitter for one dealer plan (B12), or None while every `dealer_jitter_*` knob is 0."""
+    return make_jitter(
+        start_spread=params.dealer_jitter_start_spread,
+        jump_share=params.dealer_jitter_jump_share,
+        band_jump_share=params.dealer_jitter_band_jump_share,
+        jump_max=params.dealer_jitter_jump_max,
+        min_step_pct=params.dealer_min_step_pct,
+        seed=params.dealer_jitter_seed,
+        max_price=max_price,
+    )
 
 
 def dealer_command(item: str, dealer: str, start: int, top: int, step: int = 1) -> str:

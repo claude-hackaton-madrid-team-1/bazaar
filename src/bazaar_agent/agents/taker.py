@@ -51,7 +51,16 @@ from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, ch
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
-from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
+from bazaar_agent.strategy import (
+    Market,
+    PackSlots,
+    Playbook,
+    StrategyParams,
+    build_market,
+    build_playbook,
+    buy_case,
+    dealer_jitter,
+)
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -418,9 +427,9 @@ class Taker:
             lambda: self.team.open_thread(op.dealer, topic=topic),
         )
         if body is not None and isinstance(body.get("id"), int):
-            self.convs[op.dealer] = Conversation(
-                op.dealer, op.item, op.rarity, op.value, op.reason, Negotiation(op.plan), int(body["id"]), tick
-            )
+            tid = int(body["id"])
+            neg = Negotiation(replace(op.plan, jitter=dealer_jitter(run.params, op.plan.max_price)), salt=str(tid))
+            self.convs[op.dealer] = Conversation(op.dealer, op.item, op.rarity, op.value, op.reason, neg, tid, tick)
 
     def _desk_moves(self, run: _TickRun) -> list[tuple[DeskMove, dict[str, Any]]]:
         out = []

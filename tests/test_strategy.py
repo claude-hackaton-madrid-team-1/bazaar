@@ -127,6 +127,12 @@ PARAMS = strategy.StrategyParams(
     max_moves=12,
     ladder_floor_quantile=0.0,
     ladder_level_deals=0,
+    dealer_jitter_start_spread=0,
+    dealer_jitter_jump_share=0.0,
+    dealer_jitter_band_jump_share=0.0,
+    dealer_jitter_jump_max=3,
+    dealer_min_step_pct=0.02,
+    dealer_jitter_seed=0,
 )
 RULES = Guardrails()
 

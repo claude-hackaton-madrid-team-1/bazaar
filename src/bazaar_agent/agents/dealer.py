@@ -11,6 +11,9 @@ Words persuade, structure binds: we read only the structured offers, never the d
 
 from __future__ import annotations
 
+import math
+import os
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -31,12 +34,85 @@ KIND_WORDS = (
 
 
 @dataclass(frozen=True)
+class StepJitter:
+    """Seeded random bid steps for one plan (B12). Our dealer bids are public in the feed, so a fixed
+    `start, start + step, ...` ladder tells anyone reading it our next price.
+
+    The first bid drops a random 0..`start_spread` under the plan's start. Each later step is the base
+    step (`max(plan.step, min_step)`: the dealer never moves faster than our last step, and a step below
+    `min_step` earns nothing) or, with some probability, a jump drawn uniformly from base + 1..`jump_max`.
+    Below the plan's start (the bottom of the limit band the plan was built around) jumps come with
+    `jump_share` and are clipped to land at most on the start; from the start up they come with
+    `band_jump_share`, where a jump past the dealer's limit gives back share. Every draw is a pure
+    function of (seed, the thread's salt, the bid index), so deciding twice on the same state sends the
+    same bid. The plan's hard rules are untouched: strictly rising, never above `max_price`.
+    """
+
+    seed: int
+    start_spread: int = 0
+    jump_share: float = 0.0
+    band_jump_share: float = 0.0
+    jump_max: int = 3
+    min_step: int = 1
+
+    def __post_init__(self) -> None:
+        shares = (self.jump_share, self.band_jump_share)
+        if self.start_spread < 0 or self.jump_max < 1 or self.min_step < 1 or not all(0 <= p <= 1 for p in shares):
+            raise ValueError(f"bad jitter: {self}")
+
+    def _rng(self, salt: str, index: int) -> random.Random:
+        return random.Random(f"{self.seed}:{salt}:{index}")
+
+    def first_bid(self, plan: BidPlan, salt: str) -> int:
+        return max(1, plan.start - self._rng(salt, 0).randint(0, self.start_spread))
+
+    def step(self, plan: BidPlan, salt: str, index: int, last: int) -> int:
+        """The raise after our `index`-th bid (1-based), which was `last`."""
+        rng, base = self._rng(salt, index), max(plan.step, self.min_step)
+        below = last < plan.start
+        if self.jump_max <= base or rng.random() >= (self.jump_share if below else self.band_jump_share):
+            return base
+        jump = rng.randint(base + 1, self.jump_max)
+        return max(base, min(jump, plan.start - last)) if below else jump
+
+
+def make_jitter(
+    *,
+    start_spread: int,
+    jump_share: float,
+    band_jump_share: float,
+    jump_max: int,
+    min_step_pct: float,
+    seed: int,
+    max_price: int,
+) -> StepJitter | None:
+    """The jitter for a plan whose max is `max_price`, or None when every knob is off (today's ladder).
+    `min_step` is `min_step_pct` of the max, our stand-in for the item's book (the max sits at or above
+    the dealer's list price for every class we buy, so the minimum is never too small). Seed 0 draws a
+    seed once per process: a committed seed plus the public thread id would let anyone replay our bids."""
+    if start_spread <= 0 and jump_share <= 0 and band_jump_share <= 0:
+        return None
+    return StepJitter(
+        seed or PROCESS_SEED,
+        start_spread=start_spread,
+        jump_share=jump_share,
+        band_jump_share=band_jump_share,
+        jump_max=jump_max,
+        min_step=max(1, math.ceil(min_step_pct * max_price - 1e-9)),
+    )
+
+
+PROCESS_SEED = int.from_bytes(os.urandom(8), "big") or 1  # never logged: it would make our bids replayable
+
+
+@dataclass(frozen=True)
 class BidPlan:
     """Our side of one conversation. `max_price` is the hard limit: never pay above it."""
 
     start: int
     step: int
     max_price: int
+    jitter: StepJitter | None = None  # None: the fixed `start, start + step, ...` ladder
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
@@ -58,13 +134,17 @@ class Negotiation:
     opening_ask: int | None = None  # the dealer's first structured ask we saw
     lowest_ask: int | None = None
     bids_at_opening: int = 0  # bids we had sent when her opening ask appeared; later ones are counters
+    salt: str = ""  # the thread id once it is open: each thread draws its own jittered steps
 
     def next_bid(self) -> int | None:
         """A strictly higher price than our last bid, capped at the limit; None when spent."""
+        plan, jitter = self.plan, self.plan.jitter
         if not self.bids:
-            return self.plan.start
-        nxt = min(self.plan.max_price, self.bids[-1] + self.plan.step)
-        return nxt if nxt > self.bids[-1] else None
+            return plan.start if jitter is None else jitter.first_bid(plan, self.salt)
+        last = self.bids[-1]
+        step = plan.step if jitter is None else jitter.step(plan, self.salt, len(self.bids), last)
+        nxt = min(plan.max_price, last + step)
+        return nxt if nxt > last else None
 
     def see_ask(self, ask: int | None) -> None:
         """Note the dealer's standing ask. Idempotent: seeing the same ask twice changes nothing."""
@@ -324,6 +404,7 @@ def negotiate(
     item = requested_item(topic)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
+    neg.salt = str(tid)
     obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
     state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
