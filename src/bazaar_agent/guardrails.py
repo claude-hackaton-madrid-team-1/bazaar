@@ -33,6 +33,7 @@ GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
 PRINCIPLE_LINE = re.compile(r"^- (?!`)(?P<text>.+)$")
 SET_CODE = re.compile(r"^[A-Z]{3}$")
+CARD_REF = re.compile(r"^[A-Z]{3}-\d{2}$")
 OFF_PAGE_RARITIES = ("epic", "legendary")  # RULES.md: on top of the page; any other rarity counts as a page card
 NO_SETS = ("", "none", "-")
 
@@ -57,6 +58,17 @@ def set_codes(value: str) -> tuple[str, ...]:
     if bad:
         raise ValueError(f"not a set code: {', '.join(bad)} (use e.g. RET,CHA or none)")
     return codes
+
+
+def card_refs(value: str) -> tuple[str, ...]:
+    """'lat-10, SAL-01' -> ('LAT-10', 'SAL-01'); 'none' -> (). An entry that is not a card ref is refused."""
+    if value.strip().lower() in NO_SETS:
+        return ()
+    refs = tuple(r.strip().upper() for r in value.split(",") if r.strip())
+    bad = [r for r in refs if not CARD_REF.fullmatch(r)]
+    if bad:
+        raise ValueError(f"not a card ref: {', '.join(bad)} (use e.g. LAT-10 or none)")
+    return refs
 
 
 class GuardrailsError(ValueError):
@@ -156,6 +168,7 @@ class Guardrails(BaseModel):
         return _dealer_ids(self.flag_dealers)
 
     protect_page_sets: str = "none"
+    protect_page_exceptions: str = "none"  # card refs `protect_page_sets` lets us sell as a last copy
     open_sealed_packs: bool = False
     card_release_boost_enabled: bool = False
     card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
@@ -222,11 +235,20 @@ class Guardrails(BaseModel):
         set_codes(value)
         return value
 
+    @field_validator("protect_page_exceptions")
+    @classmethod
+    def _known_card_refs(cls, value: str) -> str:
+        card_refs(value)
+        return value
+
     def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
         """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
-        counts as a page card (fail closed); a duplicate may still be sold."""
+        counts as a page card (fail closed); a duplicate may still be sold. A card named in
+        `protect_page_exceptions` is never protected (that card only, not its set)."""
         code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
         page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
+        if ref.strip().upper() in card_refs(self.protect_page_exceptions):
+            return False
         return copies <= 1 and page_card and code in set_codes(self.protect_page_sets)
 
     def max_price_for(self, rarity: str | None) -> int | None:
@@ -303,6 +325,7 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "protect_page_exceptions": "guardrails.Guardrails.protects (check + every sell planner that asks it)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",

@@ -616,6 +616,11 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
   tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
 
+### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
+- Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
+  · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
+  tests/test_guardrails.py; full gate.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)
