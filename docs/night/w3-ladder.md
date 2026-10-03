@@ -73,13 +73,13 @@ What-if (`ladder_plan.what_if_chato_31.json`, plan only, GUARDRAILS.md unchanged
 ## Constraints (reported, not changed)
 | cap | value | the market it meets | effect |
 |---|---|---|---|
-| `max_price_uncommon` | 26 | Chato uncommon limits 28–32 (sim 27–30) | 0 Chato uncommon buys. A deal rate of 0.83 needs a cap of 31. |
-| `max_price_rare` | 80 | Chato rare limits 82–93 (p25 90) | 0 Chato rare buys. 0.84 needs 90; 0.997 needs 93. |
+| `max_price_uncommon` | 26 | Chato uncommon limits 28–32 (sim 27–30) | 0 Chato uncommon buys. A deal rate of 0.83 needs a cap of 31: `dealer_price_caps = chato:uncommon=31`. |
+| `max_price_rare` | 80 | Chato rare limits 82–93 (p25 90) | 0 Chato rare buys. 0.84 needs 90; 0.997 needs 93 (`chato:rare=93`). |
 | `max_price_pack` | 20 | Abuela pack limits p25 21, p50 22 | Deal rate 0.43 in the model, 0.12 on the replays (today's 17→20). 0.81 needs 22; 0.89 needs 23; 0.96 needs 24. |
 | `cash_floor` | 270 | 233 P spendable 09:00–10:30 | Caps the window at about 14 Abuela deals. |
 
 ## What Marius must decide
-1. **Chato (L2 ladder and early L3).** Either (a) a Chato-only uncommon cap of about 31, as a new guardrail parameter whose default keeps 26 (not built tonight), or (b) selling duplicates to Chato. He bids 13 and goes to 15–16 for an uncommon, and 39 → 46 for a rare. `agents/dealer.py` is buy-only today (`offer_terms_problem` refuses an offer that gives cash), so (b) needs a sell negotiation. It is also unverified that a sale counts for the ladder or for unlocking.
+1. **Chato (L2 ladder and early L3).** Either (a) set `dealer_price_caps = chato:uncommon=31` in GUARDRAILS.md. That rule is new in this PR and defaults to `none`, so nothing changes until it is set. It applies to Chato only, so Abuela and team buys keep 26. Or (b) sell duplicates to Chato. He bids 13 and goes to 15–16 for an uncommon, and 39 → 46 for a rare. `agents/dealer.py` is buy-only today (`offer_terms_problem` refuses an offer that gives cash), so (b) needs a sell negotiation. It is also unverified that a sale counts for the ladder or for unlocking.
 2. **Turn W3 on in the runtime:** set `ladder_floor_quantile = 0.5` in STRATEGY.md. The default 0 keeps today's ladder. The desk then opens Abuela uncommons at 21 instead of 17.
 3. **Packs:** keep `max_price_pack` 20 and buy no packs from Abuela, or lift it to 22–24 (deal rate 0.81–0.96).
 
