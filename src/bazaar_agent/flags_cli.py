@@ -13,6 +13,7 @@ Read-only: public reads only, no key, nothing is sent.
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 
 import typer
@@ -31,6 +32,12 @@ WORDS_SHOWN = 240  # a would-flag's words, for the human who decides on flag_dea
 flags_app = typer.Typer(no_args_is_help=True, help="Bad-faith flags: the flag rule's precision over the feed")
 console = Console()
 err_console = Console(stderr=True)
+
+
+def printable(text: str) -> str:
+    """A counterparty's words safe for a terminal: no control, format or direction characters (no escape
+    sequence can move the cursor or reverse the line); rich markup is escaped by the caller."""
+    return "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in text)
 
 
 @flags_app.command("precision")
@@ -68,7 +75,7 @@ def flags_precision(
     console.print(table)
     for i, source in zip(evidence.would_flag, evidence.sources, strict=True):
         console.print(f"would flag message {i.message_id} from {escape(i.dealer)}: {escape(i.reason)}")
-        words = (source.text or "(no words)")[:WORDS_SHOWN]
+        words = printable(source.text or "(no words)")[:WORDS_SHOWN]
         console.print(f"  thread {source.thread}, tick {source.tick}, its words: [dim]{escape(words)}[/dim]")
     skipped = evidence.offers - evidence.known_topic - evidence.unreadable
     console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")

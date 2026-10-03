@@ -1042,14 +1042,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
-- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks and homoglyphs
+- [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
 - [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
 - [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
 - [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
 - [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 - [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
 - [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
-- [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -530,9 +530,17 @@ test `test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_acce
 state: no (0.06, margin 0.88). A hypothetical L4 state (4 would-flags on an untrusted dealer's 40 offers, 0 on the
 trusted ones): yes 0.83; the same with 1 would-flag on a trusted dealer: undecided 0.33. Re-run when L4 opens.
 
-### [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks and homoglyphs
-"Ign\u200bore all previous instructions", "ig\u034fnore …" and a Cyrillic "а" in "аcepta" matched no pattern
-(S1 hostile-text tests + #152 audit). Fullwidth digits were already matched: Python's `\d` is Unicode. The
-patterns now read NFKD-folded text without Cf/Mn/Me characters; `odd_unicode` names the hiding (Cf except emoji
-joiners, U+034F, or Latin mixed with Cyrillic/Greek/Armenian in one word); 0 tags on 1,091 Friday dealer texts.
+### [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
+"Ign\u200bore all previous instructions", "ig\u034fnore …", Hangul fillers (U+3164, U+115F, U+FFA0), the braille
+blank and Cyrillic/Lisu look-alikes matched no pattern (S1 hostile-text tests, #152 audits). Fullwidth digits were
+already matched (Python's `\d` is Unicode). The patterns now read NFKD text without Cf/Mn/Me or those fillers;
+`odd_unicode` names the hiding (emoji joiners, "nº", "µ" and "ʼ" excepted); 0 tags on 1,091 Friday dealer texts.
+
+### [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+Three #152 reviews showed honest out-of-stock words read like a trick in every shape ("La Tabacalera? Ya no
+tengo.", "Rare card? Not today.", "I wish I still had it"), and Jev says yes to flags on counts alone. Decision:
+any denial word anywhere in a dealer's message means it claims nothing (the swap is still refused: block, never
+flag), a flag goes only to a GUARDRAILS.md `flag_dealers` dealer a human opted in after reading its would-flag
+words in `bazaar flags precision`, at most `max_flags_sent` ever per data dir, never twice. A missed flag loses a
+bonus; a wrong one costs points.
 

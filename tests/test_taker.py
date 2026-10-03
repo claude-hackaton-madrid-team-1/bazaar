@@ -716,3 +716,36 @@ def test_a_rate_limited_flag_keeps_one_decision_row_and_is_tried_again_on_the_ne
     assert [e["error_code"] for e in flags] == ["rate_limited", None] and {e["decision_id"] for e in flags} == {
         row["id"]
     }
+
+
+def test_a_flag_denied_first_and_sent_later_is_booked_on_a_new_approved_row(tmp_path, monkeypatch):
+    """#152 review r3 P3: the guard denies a flag (a kill switch went on mid-tick), then allows it: the send
+    is booked on a new approved row, never on the denied one."""
+    from bazaar_agent.agents import taker as taker_module
+    from bazaar_agent.guardrails import Verdict
+
+    real, denials = taker_module.check, []
+
+    def check_once_denied(action, ctx, rules):
+        if action.kind == "flag" and not denials:
+            denials.append(action)
+            return Verdict(False, ("kill switch: .local/PAUSE exists",))
+        return real(action, ctx, rules)
+
+    monkeypatch.setattr(taker_module, "check", check_once_denied)
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=True)
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))  # denied: decided, not sent
+    t.on_tick(at(team, TICK + 2))  # allowed: sent
+    assert [s[:2] for s in team.sent if s[0] == "flag"] == [("flag", 9001)]
+    flag_rows = [r for r in rows(tmp_path) if r.get("kind") == "flag"]
+    assert [(r["status"], r["chosen"]) for r in flag_rows] == [("rejected", False), ("approved", True)]
+    assert "kill switch" in flag_rows[0]["guardrail"]
+    (execution,) = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+    assert execution["decision_id"] == flag_rows[1]["id"]  # booked on the approved row

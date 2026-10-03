@@ -126,6 +126,14 @@ SENTENCE_NEGATION = re.compile(
     r"(?:\b(?:no|not|never|nothing|none|cannot|nunca|ni|sin|ningun[oa]?|ningún|nada|tampoco)\b|n't\b)"
 )
 SENTENCE_END = re.compile(r"[.!?\n]")
+# A message that denies or regrets anything anywhere ("La Tabacalera? Ya no tengo.", "Rare card? Not today.",
+# "Se me ha terminado", "I wish I still had it") makes no claim at all: honest out-of-stock words come in
+# every shape, and a wrong flag costs points while a missed one only loses a bonus (S1 #152 review r3).
+MESSAGE_DENIAL = re.compile(
+    SENTENCE_NEGATION.pattern
+    + r"|\b(?:nobody|no one|nadie|wish|ojal[aá]|sold|gone|went|lost|terminad[oa]s?|termin[oó]|acabad[oa]s?"
+    r"|acab[oó]|agotad[oa]s?|vend[ií]|vendid[oa]s?|perd[ií]|sorry|lo siento|unfortunately|lamentablemente)\b"
+)
 
 
 def _sentence(low: str, start: int, end: int) -> str:
@@ -313,7 +321,10 @@ def _words_claim(
     text: str, asked: str, bound: list[str], bound_worth: float, bound_rank: int, cards: CardIndex
 ) -> str | None:
     """The words claim something better than the structure binds: the card we asked for, a dearer card,
-    or a higher rarity. None when they do not (or say nothing about the item)."""
+    or a higher rarity. None when they do not, say nothing about the item, or deny anything anywhere
+    (MESSAGE_DENIAL: precision over recall)."""
+    if MESSAGE_DENIAL.search(text.lower()):
+        return None
     named = cards.mentioned(text)
     if any(i.ref in bound for i in named):
         return None  # the words name what the structure binds: the substitution is disclosed, not a trick

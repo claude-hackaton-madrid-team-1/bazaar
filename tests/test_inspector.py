@@ -305,11 +305,12 @@ def test_honest_out_of_stock_words_block_but_never_flag(text):
     assert inspect_offer(o, topic, text, CARDS, message_id=12).verdict == "block"
 
 
-def test_one_denied_mention_never_hides_a_claim_in_another():
-    """Review r2 P2: 'No X like mine anywhere! X for you' still claims X."""
+def test_any_denial_anywhere_in_the_message_means_no_claim_the_trick_is_still_refused():
+    """Precision over recall (#152 review r3): 'No X like mine anywhere! X for you' is refused (block), not
+    flagged: a denial word anywhere in a message is enough to stay silent."""
     o = offer({"types": ["card:LAV-03"]}, {"cash": 21})
     text = "No Teatro Valle-Inclán like mine anywhere! Teatro Valle-Inclán for you, 21 P."
-    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "flag"
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "block"
 
 
 @pytest.mark.parametrize(
@@ -400,3 +401,22 @@ def test_a_torn_last_line_is_ended_before_the_next_flag_is_appended(tmp_path):
     book.remember(80, "y")
     again = FlagBook.from_rules(Guardrails(), path)
     assert set(again.sent) == {77, 80} and again.skipped == 1 and again.landed == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera? Ya no tengo. Este, 12.",
+        "Rare card? Not today. This one for 12.",
+        "La Tabacalera... se me ha terminado. Te doy este por 12.",
+        "Nobody has LAV-06 this week. Here, 12 P.",
+        "LAV-06, ya la vendí. Este por 12.",
+        "My last La Tabacalera went yesterday. 12 P for this.",
+        "I wish I still had La Tabacalera! This one, 12.",
+    ],
+)
+def test_honest_words_with_the_denial_in_another_sentence_never_flag(text):
+    """#152 review r3 P2: the denial need not share the card's sentence."""
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    topic = {"buy": {"rarity": "rare", "set": "LAV"}} if "Rare" in text else {"buy": {"card": "LAV-06"}}
+    assert inspect_offer(o, topic, text, CARDS, message_id=17).verdict == "block"
