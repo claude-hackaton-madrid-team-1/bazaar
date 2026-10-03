@@ -938,3 +938,9 @@ and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms +
 Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
 sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
 measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
+
+### [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
+`bazaar_team_ro` (#184): CONNECT to every database, TEMP and EXECUTE on `pg_advisory_lock` come from PUBLIC, so a
+role-only revoke does nothing (the RO role could take our ledger's advisory lock and stall accepts; documented).
+`alter default privileges ... grant select on tables` also covers a later secret table or a view over one: the
+script creates `venue_broker_keys` first, then revokes it. `pg_stats` hides columns the role cannot read.

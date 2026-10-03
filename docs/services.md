@@ -352,7 +352,8 @@ only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is neve
   never in chat or git. Limits: the role is cluster-wide and PUBLIC still lets it connect to the server's other
   databases (`bazaar_sim`, `postgres`) and create temp tables; a session may turn its read-only default and
   timeouts off (the privileges still refuse every write); and PUBLIC's `pg_advisory_lock` lets it take our
-  writers' lock keys, which would stall accepts (they fail closed). Hand the URL only to teammates. A new
-  secret table must be added to `readonly_user.SECRET_TABLES_DDL` and revoked in `sql/readonly_user.sql`.
+  writers' lock keys, which would stall accepts (they fail closed). Hand the URL only to teammates. Any new
+  table or view that exposes a secret (default privileges grant SELECT on it) must be added to
+  `readonly_user.SECRET_TABLES_DDL` and revoked in `sql/readonly_user.sql`, then the command re-run.
 - **`bazaar-duels`**: the duel player, a background worker with no HTTP. Its traces are in Phoenix.
 - **The monitor**: runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision.
