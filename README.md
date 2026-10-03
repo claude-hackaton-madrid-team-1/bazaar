@@ -964,6 +964,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#99](../../pull/99) | chore: pr-reviewer enforces the pipeline artifacts (spec, plan, honest report) | `chore/pr-reviewer-pipeline` |
+| [#98](../../pull/98) | feat(rivals): rival behaviour profiles + read-only opportunity scanner (B4) | `night/b4-rival-scanner` |
 | [#97](../../pull/97) | Night B11 (w2a): exploiter rivals that read our limit and squeeze our endgame | `night/b11-exploiters` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
 | [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
@@ -982,7 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | `fix/cash-spend-accounting` |
 | [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
 | [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
-| [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
-| [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 
 <!-- BAZAAR:ACTIVITY:END -->
