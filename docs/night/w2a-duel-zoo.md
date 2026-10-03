@@ -2,7 +2,7 @@
 
 Night shift of 3–4 Oct 2026. Branch `night/w2a-duel-zoo`, draft PR #80, stacked on #55 (`ogarciarevett/feat-bazaar-sim`).
 Refs #5, #7. Every number below is in [w2a-duel-zoo-tables.md](w2a-duel-zoo-tables.md), except where marked (n = 200; v1 = PR #60's `duel_move`,
-v2 = W2b's `duel_v2` @ 1d7cc26: `plan_moves` where duels share accepts, `single_duel_move` elsewhere; the gate reads the same 1.420 / 1.550 at bb3f30d). Offline only: nothing touched the live game.
+v2 = W2b's `duel_v2` @ 4417c54: `plan_moves` where duels share accepts, `single_duel_move` elsewhere). Offline only: nothing touched the live game.
 
 ## What it is
 
@@ -30,7 +30,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 | Classifier on its own styles, silent | linear 200/200, convex 198/200, one_shot 200/200, no_show 200/200; holdout vs v1 147/200 |
 | Realism (median, zoo vs real) | final gap toward us: linear 0.38 vs 0.39, one-shot 0.18 vs 0.11, tit-for-tat 0.25 vs 0.22, holdout 0.34 vs 0.36 (fraction of our limit) |
 | Noise | sd of mean P/duel over 5 seeds: 0.07 (v1) to 0.14 (v2); sd of the v2/v1 lift 0.005 |
-| Gates | 860 tests pass; ruff, black, mypy clean |
+| Gates | 861 tests pass; ruff, black, mypy clean |
 
 ## What the zoo says
 
@@ -44,9 +44,9 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 1. **Talking is what decays the result.** v1 averages 6.85 rounds per deal (0.94^6.85 keeps 65 %). The real practice shows the same: we scored 0 P on the 12 duels we never answered, and the oracle on them is 195 P.
 2. **Pure silence is not enough.** Silent endgame-accept fails 3 of 5 checks at 0.06/0.08. Against tit-for-tat its deal rate is 0.49 vs v1's 0.99, and against one-shots (half of them still listen) it is 0.77 vs v1's 0.88. v2 talks about once per deal and keeps both deal rates (0.999 and 0.895).
 3. **Two-issue duels.** This branch's v1 (`days=5`) closes outside our limit in 70 of 2,800 two-issue duels: 23 signed, 47 worst case (not in the tables; `scripts/duel_zoo.py --policy v1` without `PYTHONPATH` runs this branch's agent). PR #60's v1 closes 0, and so does v2 in 14,400 duels. **#60 should land.**
-4. **Independent gate of W2b's v2 @ 1d7cc26: GO at every decay pair.**
+4. **Independent gate of W2b's v2 @ 4417c54: GO at every decay pair.**
    - Lift 1.420 at 0.06/0.08, 1.550 at 0.08/0.10, 1.483 at 0.06/0.10. Seeds 1–5 at 0.06/0.08 read 1.427–1.439 (sd 0.005).
-   - The other 4 checks pass in every pair. Silent endgame-accept fails 3 of 5.
+   - The other 4 checks pass in every pair: 0 outside-limit closes in 14,400 distinct duels. The signed and worst-case two-issue grids are now drawn apart; r1's review found them identical, which made them 9,600 distinct duels. Silent endgame-accept fails 3 of 5.
    - Two earlier v2 commits sat on or under the bar at 0.06/0.08 (8116b2c: 1.388, seeds 1.394–1.408). The current head added free descending offers to quiet rivals and fixed the one-shot gap: 24.4 vs v1's 23.7 P/duel, where it was 21.9.
 5. **Robust to the zoo's assumptions, less so to tick order.**
    - Pinning any one assumption gives a v2/v1 lift of 1.29–1.44 (9 rows in the tables), including conceders and holdouts that never accept (1.44).
@@ -56,7 +56,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
    - Silent endgame-accept collapses: in batches of 6, 19.2 → 9.5 P/duel; on the replay of the 12 duels on one clock, 185 → 140 P.
    - v1 is unaffected: it accepts when its target is met, which spreads its accepts over the duel.
    - v2's planner (`plan_moves`) queues its accepts early, so the cap costs it nothing. But planning for a shared deadline costs v2 about 4 % against isolated duels: 19.92 → 19.15 P/duel in batches of 6 at decay 0.06.
-   - Lift in batches of 6: 1.27 at 0.06, 1.39 at 0.08, 1.53 at 0.10, or 1.45 for the 0.08/0.10 pair.
+   - Lift in batches of 6 (flat 6-style mix): 1.27 at 0.06, 1.39 at 0.08 and 1.53 at 0.10. That is 1.33 for the gate's 0.06/0.08 pair (below 1.4) and 1.45 for 0.08/0.10. On the practice mix: 1.08 / 1.13 / 1.22.
    - Replay with the cap: v2 178.4 P vs v1 121.7. On W2b's earlier commit a170148 this harness gave 176.4, exactly the figure from W2b's own arena.
 
 ## Caveats (stated, not fixed)
@@ -73,7 +73,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 
 ## What Marius must decide
 
-1. **Whether v2 ships as the default.** It is GO on all five checks at every decay pair here, and it survives the shared accept budget (lift 1.45 at 0.08/0.10 with 6 duels per deadline). The open risk is the within-tick order (lift 1.34 if we move first), which the morning probe below settles. Any one-duel-at-a-time policy that waits for the endgame (like silent endgame-accept) must not ship: the accept cap halves it.
+1. **Whether v2 ships as the default.** It is GO on all five checks at every decay pair here. With 6 duels per deadline and one accept per tick, its lift is 1.45 at 0.08/0.10 but 1.33 at 0.06/0.08, and 1.08–1.22 on the practice mix, so the margin over v1 shrinks when deadlines cluster. The open risk is the within-tick order (lift 1.34 if we move first), which the morning probe below settles. Any one-duel-at-a-time policy that waits for the endgame (like silent endgame-accept) must not ship: the accept cap halves it.
 2. **Whether to keep the live-sim rounds/decay fix** in #55 (verified on all 26 payloads).
 3. **A morning probe**, in the next real duel session: does a silent rival's standing offer stay acceptable, and is the within-tick order the sim's?
 

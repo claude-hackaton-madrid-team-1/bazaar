@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -62,3 +63,12 @@ def test_a_check_with_no_duels_of_its_styles_does_not_pass():
     gate = duel_gate.go_no_go(duel_zoo.endgame_accept, duel_zoo.accept_first_inside, n=3, styles=("linear",))
     one_shot = next(c for c in gate.checks if c.name == "deals_one_shot")
     assert not one_shot.passed and one_shot.detail.startswith("not run") and not gate.go
+
+
+def test_the_outside_limit_check_plays_distinct_duels_under_each_days_truth():
+    signed = duel_zoo.scenarios(n=5, two_issues=True, days_truth="signed")
+    worst = duel_zoo.scenarios(n=5, two_issues=True, days_truth="worst")
+    assert len({(s.limit, s.rival_limit, s.days_weight) for s in signed + worst}) > len(signed) * 1.5
+    price_only = duel_zoo.scenarios(n=5)
+    same = [replace(sc, days_truth="signed") for sc in duel_zoo.scenarios(n=5, days_truth="worst")]
+    assert price_only == same  # price-only grids draw the same duels whatever the label

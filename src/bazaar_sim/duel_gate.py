@@ -4,8 +4,9 @@
       mean_result     the candidate's mean result (P after decay) ≥ 1.4 × the baseline's
       deals_conceders its deal rate ≥ the baseline's against conceders (linear, convex, tit_for_tat, sim)
       deals_one_shot  its deal rate ≥ 0.9 × the baseline's against one-shot rivals
-    outside_limit     0 closes outside our limit, over the grid above plus the same grid in two-issue
-                      sessions with days valued signed and at the worst case (3 × 4,800 = 14,400 duels at n=200)
+    outside_limit     0 closes outside our limit, over the grid above plus two two-issue grids, one with our days
+                      valued signed and one at the worst case, each drawn apart (3 × 4,800 = 14,400 distinct duels
+                      at n=200, above the plan's 10,000)
     replay            its conservative replay on the 12 unanswered practice duels beats the baseline's
 
 Every check is reported with its value and threshold, so a no-go says by how much.

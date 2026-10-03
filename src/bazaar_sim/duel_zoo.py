@@ -705,7 +705,8 @@ def scenarios(
         for role in roles:
             for decay in decays:
                 for ticks in duel_ticks:
-                    rng = random.Random(f"{seed}:{style}:{role}:{decay}:{ticks}:{two_issues}")
+                    truth = f":{days_truth}" if two_issues else ""  # the two days truths draw distinct duels
+                    rng = random.Random(f"{seed}:{style}:{role}:{decay}:{ticks}:{two_issues}{truth}")
                     for _ in range(n):
                         out.append(
                             draw_scenario(
