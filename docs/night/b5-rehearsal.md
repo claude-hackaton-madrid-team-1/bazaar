@@ -55,6 +55,16 @@ separate commit on this branch (`git log --first-parent`), so it can be cherry-p
 | — | #71 × #72/#87, #62 × #78 | test-only | tests that read the committed `cash_floor` 270 (#72, #87), or run `duel run --play` without a shared ledger (#78) | in the merges |
 | low | #71 × #79 | low | `trade-plan`'s `Context` has no `has_venue`: after the venue opens it still plans against 370, not 100 (conservative) | not fixed |
 
+**Review of the fix-ups** (an independent agent, 633 targeted tests + mypy):
+- One confirmed bug, low severity, in F1: a ledger-outage hold could fire on a later tick when `negotiate`
+  returned early. It is fixed in 9a51731, where a hold expires with its own tick.
+- No other bugs. Every `Action(` call is keyword-safe; with the free-slot read failing to 0, no duel accept is
+  booked; `venue_close` is still blocked by the kill switch alone.
+- Known limits:
+  - A dealer-buy *guard-time* outage still walks, as #62 chose.
+  - If a v2 pre-booking commits but its reply is lost, that duel loses its accept for the tick (#86).
+  - `sell list/bid` raise if the live ledger drops after it opened (from #62).
+
 ## Rehearsal on a local simulator
 **Harness** (`scripts/rehearsal/`: `rehearse.py`, `run_agent.py`, `analyze.py`).
 - `bazaar_sim` serves on a free `[::1]` port. 127.0.0.1's ephemeral ports were exhausted by other sessions'
