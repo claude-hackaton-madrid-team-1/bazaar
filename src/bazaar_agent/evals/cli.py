@@ -110,12 +110,13 @@ def _held_targets(conn: psycopg.Connection) -> set[str]:
 
 
 def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_json: bool) -> None:
-    from bazaar_agent.evals.inline import IDLE_SESSION_TIMEOUT
+    from bazaar_agent.evals.inline import IDLE_SESSION_TIMEOUT, STATEMENT_TIMEOUT_MS
     from bazaar_agent.evals.run import run_once
 
     # Like the agents: a laptop that sleeps mid-pass loses its session, and the locks with it.
     conn.execute(f"set idle_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
     conn.execute(f"set idle_in_transaction_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+    conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")
     conn.commit()
     annotator = None
     try:
@@ -126,12 +127,16 @@ def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_js
         annotator = _annotator(phoenix)
         summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn, targets=targets)
     finally:
-        if annotator is not None:
-            annotator.close()
-        conn.execute("select pg_advisory_unlock_all()")
-        conn.execute("reset idle_session_timeout")  # the --every-ticks connection idles between passes
-        conn.execute("reset idle_in_transaction_session_timeout")
-        conn.commit()
+        conn.rollback()  # an aborted transaction must not hide the error or keep the locks
+        try:
+            if annotator is not None:
+                annotator.close()
+        finally:
+            conn.execute("select pg_advisory_unlock_all()")
+            conn.execute("reset idle_session_timeout")  # the --every-ticks connection idles between passes
+            conn.execute("reset idle_in_transaction_session_timeout")
+            conn.execute("reset statement_timeout")
+            conn.commit()
     if as_json:
         console.print_json(json.dumps(summary.__dict__, default=list))
         return
@@ -166,7 +171,7 @@ class TickGate:
             if seen != self.seen or (self.phoenix and _pending(self.conn) > 0):
                 self.run_pass(self.conn)
                 self.seen = seen
-        except psycopg.Error:
+        except Exception:  # any error: ending the session releases every evals lock it took
             self.conn.close()
             self.conn = None
             raise

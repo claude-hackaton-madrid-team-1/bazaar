@@ -483,3 +483,25 @@ def test_evals_run_json_stays_pure_json_when_a_kind_is_busy(cli_db: None, databa
     holder.close()
     assert ran.exit_code == 0
     assert json.loads(ran.stdout)["scored"] == {"dealer": 6, "trade": 1}
+
+
+def test_a_failing_annotator_close_still_unlocks_and_the_loop_drops_its_session(
+    cli_db: None, database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Closing:
+        def find(self, query: Any) -> list[Any]:
+            return []
+
+        def close(self) -> None:
+            raise UnicodeEncodeError("ascii", "", 0, 1, "a non-ASCII key")
+
+    monkeypatch.setattr(evals_cli, "_annotator", lambda phoenix: Closing())
+    gate = evals_cli.TickGate(1, lambda conn: evals_cli._pass(conn, None, True, False), phoenix=True)
+    from bazaar_agent.ticks import Clock
+
+    with pytest.raises(UnicodeEncodeError):
+        gate(Clock.model_validate({"tick": 1, "next_tick_in": 20, "tick_seconds": 30}))
+    assert gate.conn is None  # the loop dropped its session
+    other = open_in(database_url, schema)
+    assert [lock(other, a) for a in ("duels", "taker", "maker")] == [True, True, True]
+    other.close()
