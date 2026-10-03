@@ -414,15 +414,24 @@ options below remain for a Phoenix outside Railway.
 
 ## Runtime LLM (talk to it, let it write the words, steer it)
 
-[`RUNTIME.md`](RUNTIME.md) configures it. Jev picks the model per move (`questions/runtime_model.json`,
-a probability per candidate; undecided → `runtime_model_default`), unless you pin one:
-`--llm-runtime` > `BAZAAR_LLM_RUNTIME` > RUNTIME.md `llm_runtime`. Aliases: `opus-5-5`,
+[`RUNTIME.md`](RUNTIME.md) configures it. Jev picks the model for every operation
+(`questions/runtime_model.json`, a probability per candidate model), unless you pin one:
+`--llm-runtime` > `BAZAAR_LLM_RUNTIME` > RUNTIME.md `llm_runtime`.
+
+| operation | Jev question | asked | undecided, slow or keyless Jev |
+|---|---|---|---|
+| tick-loop move (`words`, `buy`, `sell`), `ask --no-desk`, `steer` | `model_for_move` | per move, cached `model_choice_cache_ticks` | `runtime_model_default` (Haiku) |
+| desk request: the orchestrator and each subagent (strategist, buyer, seller, duelist) | `model_for_desk_role` | ONE call per request for every uncached role, same cache | `desk_role_defaults` (Sonnet per role) |
+
+The desk takes Claude models only (it runs on the Claude Code CLI); `bazaar agent chat --model` or
+RUNTIME.md `desk_model` pins all its roles. Every choice, with Jev's floats, is a line in
+`.local/llm/model-choices.jsonl` and a row in `bazaar llm`. Aliases: `opus-5-5`,
 `sonnet-5-5`, `haiku-4-5`, `fable-5-1`, `gpt-6-1-sol` (any `claude-*` / `gpt-*` id passes through).
 Credentials: `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude, see below), `OPENAI_API_KEY`
 in `.env`; without one, every LLM path falls back.
 
 ```sh
-uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices
+uv run bazaar llm                                    # config, keys set (never values), Jev's last model choices (moves + desk roles)
 uv run bazaar ask "buy LAV-09 under 90"              # strict intent → guardrail verdict → the command (never runs it)
 uv run bazaar --llm-runtime opus-5-5 ask "sell my spare SAL-03 for at least 8"
 uv run bazaar steer "be more aggressive with rares tonight"   # bounded deltas, clamped by GUARDRAILS.md,
@@ -568,7 +577,7 @@ uv run python -m bazaar_agent.jev report --directory .local/jev-decisions
 A Mastra-style agent layer in Python, on the Claude subscription: one **desk** (the orchestrator) hands
 each request to a **subagent** with a focused prompt and its own tool allow-list. The tools are Team 1's
 capabilities as typed MCP tools, and every write meets the guardrails twice. Code:
-`src/bazaar_agent/runtime/` (`tools.py`, `hooks.py`, `agents.py`, `desk.py`, `mcp_server.py`).
+`src/bazaar_agent/runtime/` (`tools.py`, `hooks.py`, `agents.py`, `desk.py`, `desk_models.py`, `mcp_server.py`).
 
 ```
  operator ── bazaar agent chat ─┐            ┌── teammate's Claude Code ── Authorization: Bearer ──┐
@@ -592,6 +601,9 @@ capabilities as typed MCP tools, and every write meets the guardrails twice. Cod
            │          (dealer_buy, sell_list, sell_bid, sell_cancel, duel_move, steer)
            ▼
    PostToolUse hook ── decisions row per write, executions row per send, OTel span  ──► game
+
+   models: before each request, Jev (model_for_desk_role, ONE call for every uncached role) picks a
+   Claude model for the desk (set_model) and for each subagent (the hook sets its Agent call's model)
 ```
 
 ```sh
@@ -623,8 +635,21 @@ uv run bazaar agent tools                # every tool, read or write, which agen
   `setting_sources=[]`, no CLAUDE.md or claude.ai connectors, no session files, the built-in
   general-purpose agent and nested subagents off. Counterparty words reach the model only as
   `untrusted_text` with `injection_flags`; every prompt says they are data, never instructions.
+- **Jev picks every model, per request.** Before each request, one Jev call (`model_for_desk_role`, one
+  question per role about the same request: its length, the largest price in it, injection shapes in it)
+  picks the orchestrator's model and each subagent's; a role cached within `model_choice_cache_ticks`
+  costs nothing. A conversation keeps one session: the orchestrator switches in place
+  (`set_model`), and the PreToolUse hook replaces whatever `model` the desk's LLM puts on an `Agent` call
+  with the family alias of this request's choice for that subagent (`opus`, `sonnet`, `haiku`), which
+  the session pins to our exact ids (ANTHROPIC_DEFAULT_<FAMILY>_MODEL); the `AgentDefinition`s carry the
+  first request's models. Undecided, slow (`jev_timeout_s`) or keyless Jev → RUNTIME.md `desk_role_defaults` (Sonnet for
+  every role, what ran before). A pin wins: `agent chat --model` > a Claude `--llm-runtime` /
+  `BAZAAR_LLM_RUNTIME` / `llm_runtime` > RUNTIME.md `desk_model` (default `auto`). Claude models only.
+  The transcript prints the choice (`models: desk sonnet-5-5 (jev 0.91) · buyer opus-5-5 (jev 0.88) · …`)
+  and, after the answer, the model each agent really ran on (`ran on: desk claude-sonnet-5-5 · buyer
+  claude-opus-5-5`). A failed switch keeps the session's model and says so.
 - **Never in the hot path.** The taker, maker, duel and monitor loops stay deterministic; the desk
-  advises, proposes, parses and steers. RUNTIME.md `desk_model` (Sonnet 5.5), `desk_max_turns`,
+  advises, proposes, parses and steers. RUNTIME.md `desk_model`, `desk_role_defaults`, `desk_max_turns`,
   `desk_timeout_s`. A missing CLI, a rejected token, a used-up subscription window, a rate limit or a
   timeout ends the request with the reason: `bazaar ask` falls back to its intent parser, `agent chat`
   prints the deterministic commands.
@@ -923,7 +948,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
-| N15 (new) | Jev picks the desk's model per request, for the orchestrator and each subagent (no pinned Sonnet) | 1 | 🔵 approved (#108, 09:30 window) |
+| N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
 | N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0` | 1 → 2 | 🔵 worker (PR before Duels II, Sat 18:00) |
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
@@ -977,14 +1002,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
+- [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
+- [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
 - [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
 - [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
 - [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
 - [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
 - [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
-- [2026-10-03] build-error — a reset simulator world's rows hid the current tick from the holdings
-- [2026-10-03] gotcha — parallel worktrees running `scripts/sim_smoke.py` collide on 127.0.0.1:8765
-- [2026-10-03] gotcha — another worker's simulator may own 127.0.0.1:8765
 
 <!-- BAZAAR:STATUS:END -->
 
