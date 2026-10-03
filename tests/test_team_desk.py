@@ -69,6 +69,7 @@ def view(threads=(), tick=TICK, in_use=None, paused=False, window=True) -> DeskV
     held = {"LAV-01": 1, "LAV-06": 1, "LAT-03": 2, "LAT-09": 1}
     return DeskView(
         tick=tick,
+        t_hours=1.5,
         us=US,
         me=ME,
         catalog=CATALOG,
@@ -318,6 +319,7 @@ def test_bazaar_swaps_prints_the_ladder_as_json_from_files(tmp_path, monkeypatch
     out = CliRunner().invoke(cli.app, args)
     assert out.exit_code == 0, out.output
     rows = json.loads(out.stdout)  # stdout is pure JSON (notes go to stderr)
+    assert {r["team"] for r in rows} == {"t05"}  # t09's swap would give our only LAT-09: the desk never would
     t05 = next(r for r in rows if r["team"] == "t05")
     assert (t05["give"], t05["want"], len(t05["cash_steps"])) == ("LAT-03", "LAV-02", 3)
     assert t05["cash_steps"][-1] == -8 and all(t05["fair"])  # the plan's even split is the last step
@@ -471,3 +473,152 @@ def test_after_a_walk_the_team_rests_and_a_stuck_accepted_deal_frees_its_slot(tm
         d2.proposals(view([open_], tick=tick))
         d2.converse(view([open_], tick=tick), set())
     assert ("close_thread", 42) in stuck.sent
+
+
+# ---------------------------------------------------------------- review round 1 (#123)
+
+
+def ledger_desk(tmp_path, team, **rules):
+    from bazaar_agent.guardrails import Ledger
+
+    d, lines = desk(tmp_path, team, **rules)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.plan_ttl = 10**6
+    return d, lines
+
+
+def test_the_cash_we_add_is_booked_as_spend_when_they_take_our_offer(tmp_path):
+    # pr-reviewer + security-auditor #123 P1: the cash leg of OUR offer escaped max_spend_per_game_hour.
+    team = Team()
+    d, _ = ledger_desk(tmp_path, team)
+    d.converse(view(), set())  # anchor: our LAT-03 + 1 P for their LAV-02 (offer 702)
+    assert d.ledger.spent_since(0) == 0 and d.ledger.count_in_tick("listing", TICK) == 1  # a listing, no spend yet
+    taken = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "Deal."}])
+    taken["standing_offers"] = [{**their_offer(oid=702), "maker": US, "to": THEM, "status": "accepted"}]
+    d.proposals(view([taken], tick=TICK + 1))
+    assert d.ledger.spent_since(0) == 1 and d.talks[42].accepted
+    d.converse(view([], tick=TICK + 2), set())  # it settled: the thread is gone, nothing booked twice
+    assert d.ledger.spent_since(0) == 1 and d.deals[THEM] == 1
+
+
+def test_a_deal_we_never_saw_accepted_is_booked_when_the_thread_ends(tmp_path):
+    team = Team(thread_payloads={42: {"id": 42, "status": "deal", "messages": [], "standing_offers": []}})
+    d, _ = ledger_desk(tmp_path, team)
+    d.converse(view(), set())
+    d.proposals(view([], tick=TICK + 1))
+    d.converse(view([], tick=TICK + 1), set())  # the thread left the open list: it ended in a deal
+    assert d.ledger.spent_since(0) == 1 and d.deals[THEM] == 1
+
+
+def test_a_refused_cancel_never_leaves_two_standing_offers(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class NoCancel(Team):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            raise BazaarError("rate_limited", "slow down", 429)
+
+    team = NoCancel()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    reply["standing_offers"] = [{**their_offer(oid=702), "maker": US, "to": THEM}]
+    team.sent.clear()
+    d.proposals(view([reply], tick=TICK + 1))
+    d.converse(view([reply], tick=TICK + 1), set())
+    assert team.sent == [("cancel", 702)]  # no new offer while the old one may still stand
+
+
+def test_after_a_restart_our_own_thread_is_picked_up_where_it_was(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)  # a fresh desk: no talks in memory
+    ours = {**their_offer(oid=702), "maker": US, "to": THEM}
+    mid = thread(
+        messages=[{"sender": US, "tick": TICK - 2, "offer": ours}, {"sender": THEM, "tick": TICK - 1, "text": "?"}]
+    )
+    mid["standing_offers"] = [ours]
+    d.proposals(view([mid]))
+    d.converse(view([mid], in_use=6), set())
+    step1 = offer_terms(trade(), cash_at(trade(), 1, Ladder()))
+    assert team.sent == [("cancel", 702), ("say", 42, step1)]  # the old offer first, then the next step
+
+
+def test_a_rival_that_keeps_writing_is_walked_at_our_last_price(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.plan_ttl = 10**6
+    d.converse(view(), set())
+    for tick in range(TICK + 1, TICK + 12):
+        chatty = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": tick, "text": "hmm"}])
+        d.proposals(view([chatty], tick=tick))
+        d.converse(view([chatty], tick=tick), set())
+        if ("close_thread", 42) in team.sent:
+            break
+    assert ("close_thread", 42) in team.sent and len(says(team)) == Ladder().steps  # 3 proposals, then a walk
+
+
+def test_only_threads_on_the_house_venue_are_answered(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    elsewhere = {**thread(tid=60, opened_by=THEM, offers=[their_offer(cash_out=1)]), "venue": "v02"}
+    assert d.proposals(view([elsewhere])) == []  # a rival's venue earns its owner market-making points
+    for tick in (TICK, TICK + 1, TICK + 2, TICK + 3):
+        d.proposals(view([elsewhere], tick=tick))
+        d.converse(view([elsewhere], tick=tick, in_use=6), set())
+    assert ("close_thread", 60) in team.sent and not says(team)
+
+
+def test_our_own_offer_in_the_thread_does_not_hide_the_duplicate_but_an_ask_elsewhere_does(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    in_thread = {"id": 702, "maker": US, "to": THEM, "thread": 42, "status": "open", "give": {"assets": [{"id": 3}]}}
+    counter = thread(offers=[their_offer(cash_out=1)])
+    v = DeskView(**{**view([counter], tick=TICK + 1).__dict__, "offers": [in_thread]})
+    assert len(d.proposals(v)) == 1  # #3 is offered in this very thread: still a free duplicate for this swap
+    ask4 = {"id": 9, "maker": US, "to": None, "status": "open", "give": {"assets": [{"id": 4}]}, "want": {"cash": 5}}
+    names4 = thread(offers=[{**their_offer(cash_out=1), "want": {"assets": [4], "cash": 1}}])
+    v2 = DeskView(**{**view([names4], tick=TICK + 1).__dict__, "offers": [ask4]})
+    assert d.proposals(v2) == []  # #4 is in our ask on the board: never handed over in a swap
+
+
+def test_turning_the_desk_off_withdraws_our_threads(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    d.env = {"BAZAAR_TEAM_THREADS": "0"}
+    d.converse(view([thread()], tick=TICK + 1), set())
+    assert team.sent[-1] == ("close_thread", 42) and d.talks == {}  # closing cancels our offer there
+
+
+def test_a_malformed_side_is_unreadable_never_a_crash():
+    from bazaar_agent.swaps import read_offer
+
+    for bad in ({"cards": "LAV-02"}, {"assets": 3}, {"types": {"card": "LAV-02"}}):
+        assert read_offer({**their_offer(), "want": bad}, US) is None
+
+
+def test_a_team_desk_error_never_costs_the_taker_its_tick(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, ask, clock, parts
+
+    team = Team()
+    lines: list[str] = []
+    t = Taker(
+        team,
+        FakePublic(boards={"rastro": [ask(77, "LAV-02", 5)]}),
+        live=True,
+        log=lines.append,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=0),
+        **parts(tmp_path, team_threads_enabled=True),
+    )
+
+    def boom(view):
+        raise RuntimeError("bad payload")
+
+    t.team_desk.proposals = boom  # type: ignore[method-assign]
+    t.on_tick(clock())
+    assert ("accept", 77, None) in team.sent  # the board buy still happened
+    assert any("team desk: proposals failed (RuntimeError: bad payload)" in line for line in lines)

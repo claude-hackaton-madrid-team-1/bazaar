@@ -389,7 +389,8 @@ class Taker:
         self.cooling: dict[tuple[str, str], float] = {}
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._dry_accepts: dict[int, int] = {}
-        self.team_desk = TeamDesk(team, rules, self.rec, log, live)  # swap threads with teams (N17), off by default
+        # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
+        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -448,11 +449,17 @@ class Taker:
         proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
-        run.team_view = self._team_view(run, threads)
-        proposals += [swap_proposal(a) for a in self.team_desk.proposals(run.team_view)]
+        view = run.team_view = self._team_view(run, threads)
+        proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
         self._accept(run, proposals)
         self._converse(run, desk)
-        self.team_desk.converse(run.team_view, {p.swap.thread_id for p in run.accepted if p.swap is not None})
+        taken = {p.swap.thread_id for p in run.accepted if p.swap is not None}
+
+        def converse() -> list[SwapAccept]:
+            self.team_desk.converse(view, taken)
+            return []
+
+        self._team_desk("converse", converse)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         self.log(
@@ -504,11 +511,22 @@ class Taker:
             }
         )
 
+    def _team_desk(self, what: str, call: Callable[[], list[SwapAccept] | None]) -> list[SwapAccept]:
+        """The team desk never costs the taker its tick: an error there is reported and the desk skips."""
+        try:
+            return call() or []
+        except BazaarError:
+            raise  # a refused read is the taker's (on_tick reports it)
+        except Exception as e:  # noqa: BLE001 — fail closed for the desk, never for the board or the dealers
+            self.log(f"team desk: {what} failed ({type(e).__name__}: {e}); no team-thread move this tick")
+            return []
+
     def _team_view(self, run: _TickRun, threads: list[dict[str, Any]]) -> DeskView:
         snap, listed = run.snap, {t.get("id") for t in threads}
         opened_now = sum(1 for c in self.convs.values() if c.thread_id not in listed)  # this tick's dealer opens
         return DeskView(
             tick=snap.clock.tick,
+            t_hours=snap.clock.t_hours,
             us=snap.us,
             me=snap.me,
             catalog=snap.catalog,

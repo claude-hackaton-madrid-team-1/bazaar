@@ -358,15 +358,19 @@ def swaps(
     from bazaar_agent import affinity as af
     from bazaar_agent import swaps as sw
     from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.team_desk import spare_copy
 
     me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
     events, us, rules = _history(events_file, live), str(me.get("id") or ""), _rules().rules
     amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
     rastro = next((v for v in venues if v.id == "rastro"), None)
     pp = td.PlanParams(listings=0, threads=threads, max_share=1.0)  # as the desk plans (team_desk._trades)
-    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, rastro)
+    offers = _my_offers(_team_client()) if not me_file else []  # what our open offers already promise
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, rastro, offers)
     ladder, rows = sw.Ladder(), []
     for t in plan.threads:
+        if spare_copy(me, offers, us, t.refs[0]) is None:
+            continue  # the desk gives only a free duplicate (team_desk.spare_copy)
         steps = [sw.cash_at(t, k, ladder) for k in range(ladder.steps)]
         verdicts = [sw.judge(t, c, 0, rules) for c in steps]
         rows.append(

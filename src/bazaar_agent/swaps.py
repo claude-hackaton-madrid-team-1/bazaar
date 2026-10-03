@@ -103,6 +103,9 @@ def read_offer(o: Any, us: str) -> TheirOffer | None:
     give, want = o.get("give"), o.get("want")
     if not (isinstance(give, dict) and isinstance(want, dict) and _plain_side(give) and _plain_side(want)):
         return None
+    lists = [give.get(k) for k in ("assets", "types", "cards")] + [want.get(k) for k in ("assets", "types", "cards")]
+    if not all(x is None or isinstance(x, list) for x in lists):  # a side's shape we cannot read: not ours to take
+        return None
     if give.get("cards") or give.get("types"):  # a giver names its own copies
         return None
     got = give.get("assets") or []

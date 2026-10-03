@@ -76,6 +76,7 @@ def _run_desk(tmp_path, enabled: bool, ticks: int = 40):
         offers = [o for rows in market.my_offers(w, US).values() if isinstance(rows, list) for o in rows]
         view = DeskView(
             tick=w.tick,
+            t_hours=1.0,
             us=US,
             me=me,
             catalog=views.catalog_view(w),
