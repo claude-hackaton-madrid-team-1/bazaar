@@ -10,6 +10,7 @@ asks AS (
     AND jsonb_array_length(f.payload->'offer'->'give'->'assets')=1
     AND coalesce((f.payload->'offer'->'give'->>'cash')::int,0)=0
     AND jsonb_array_length(f.payload->'offer'->'want'->'assets')=0
+    AND jsonb_array_length(coalesce(f.payload->'offer'->'want'->'types','[]'::jsonb))=0  -- swaps (want a card type) are not cash asks
     AND (f.payload->'offer'->>'to' IS NULL OR f.payload->'offer'->>'to'='t01'))
 SELECT CASE WHEN a.tick<262 THEN 'a 159-261' WHEN a.tick<441 THEN 'b 262-440' WHEN a.tick<631 THEN 'c 441-630'
             WHEN a.tick<898 THEN 'd 631-897' WHEN a.tick<1202 THEN 'e 898-1201' ELSE 'f 1202-1445' END w,
