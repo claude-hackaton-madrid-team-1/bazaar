@@ -54,6 +54,7 @@ markers = [
     "integration: needs the local Postgres (uv run bazaar db up)",
     "official_values: runs the official value cap (GET /api/me/value); off in every other test (tests/conftest.py)",
     "human_approval: runs the human approval rule (human_approvals); off in every other test (tests/conftest.py)",
+    "score_impact: runs the score impact rule (max_score_loss_per_move); off in every other test (tests/conftest.py)",
 ]
 
 [tool.coverage.run]

@@ -47,7 +47,13 @@ class Listing:
 
     def action(self) -> Action:
         return Action(
-            self.kind, self.ref, self.rarity, self.price, your_value=self.your_value, counterparty=self.to or ANY_TEAM
+            self.kind,
+            self.ref,
+            self.rarity,
+            self.price,
+            your_value=self.your_value,
+            counterparty=self.to or ANY_TEAM,
+            asset=self.asset_id if self.kind == "sell" else None,
         )
 
     def describe(self) -> str:
@@ -149,6 +155,7 @@ class Swap:
                 counterparty=self.to,
                 volume=self.notional,
                 scope="team_swap",
+                asset=self.asset_id,
             ),
         ]
         gives = self.your_value - self.want_cash  # the official value cap: the copy we give, net of their cash

@@ -1996,6 +1996,7 @@ class Taker:
             your_value=your_value,
             counterparty=op.maker,
             volume=op.price,
+            asset=p.asset_id,
         )
         verdict = check(action, self._ctx(run), self.rules)
         if not verdict.allowed:

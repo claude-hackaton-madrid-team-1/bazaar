@@ -23,6 +23,7 @@ from bazaar_agent import (
     breaker_cli,
     deploy_guard,
     flags_cli,
+    impact_cli,
     intel,
     persona_cli,
     render,
@@ -991,6 +992,7 @@ def dealer_sell(
     from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.official_values import unread_only
 
     rules = _rules().rules
     settings = load_settings()
@@ -1025,7 +1027,8 @@ def dealer_sell(
         return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
 
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
-        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell")  # a dealer sell thread
+        # a dealer sell thread; `asset`: the score impact rule prices this copy
+        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell", asset=asset_id)
 
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
@@ -1050,6 +1053,8 @@ def dealer_sell(
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
         verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
+            raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     decisions = DecisionLog(
@@ -2348,6 +2353,7 @@ app.add_typer(flags_cli.flags_app, name="flags")
 app.add_typer(breaker_cli.breaker_app, name="breaker")
 app.command("approve")(approval_cli.approve)
 app.command("approvals")(approval_cli.approvals_list)
+app.command("impact")(impact_cli.impact)
 app.command("deploy-guard", help="Is it safe to merge to main (which redeploys the duels)? Exit 1 = no.")(
     deploy_guard.deploy_guard_cmd
 )
