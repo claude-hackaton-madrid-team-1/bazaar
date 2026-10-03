@@ -22,10 +22,11 @@ Full tables come from `uv run python scripts/duel_tournament.py` (our arena + re
 |---|---|---|---|
 | W2a's gate (PR #80, one duel at a time): v2/v1 mean | 1.42 (seeds 1.420–1.432) | **1.55** (1.550–1.575) | ≥ 1.40 |
 | … if we move before the rival within a tick | 1.34 | 1.44 | |
+| W2a's batch runner (6 duels per deadline, 1 accept/tick, `plan_moves`) | 1.33 | **1.45** | |
 | Our arena (6 duels per deadline, 1 accept/tick) | 1.26–1.37 by decay | **1.42** (seeds 1.418–1.424); we-move-first 1.47 | |
 | Deal rate vs conceders / vs one-shot (W2a) | 0.999 vs 0.992 / 0.895 vs bar 0.789 | 0.999 vs 0.993 / 0.877 vs bar 0.777 | ≥ v1 / ≥ 0.9 × v1 |
 | Closes outside our limit | 0 of 14,400 (W2a) + 0 of 10,000 (arena) | same | 0 |
-| Replay, 12 unanswered duels (ideal 195 P) | v2 178.4 P vs v1 121.7 P | same | > v1 |
+| Replay, 12 unanswered duels, one clock (ideal 195 P) | v2 178.4 P vs v1 121.7 P (W2a's replay: identical) | same | > v1 |
 
 - Replay: v2 misses 16.6 P of the ideal.
   - 8.7 P on duel 201 (an anchor round, and an accept one tick early).
