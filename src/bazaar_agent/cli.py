@@ -367,6 +367,82 @@ def dealer_buy(
     )
 
 
+@dealer_app.command("sell")
+def dealer_sell(
+    target: str = typer.Argument(help="Asset id (15) or card ref (LAT-03: the copy we lose least by selling)"),
+    min_price: int = typer.Option(..., "--min", help="Hard floor: never sell below this"),
+    start: int = typer.Option(..., help="Opening ask"),
+    step: int = typer.Option(1, help="Come down this much per tick (small steps earn small steps)"),
+    dealer: str = typer.Option("abuela", help="Dealer id (one that buys this rarity)"),
+    live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
+) -> None:
+    """Sell one card to a dealer: falling distinct asks, take its bid when it meets our next ask, hard min."""
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.dealer import Move
+    from bazaar_agent.agents.dealer_sell import AskPlan, Sale, decide_sell, negotiate_sell, sell_floor
+    from bazaar_agent.agents.seller import OfferError, find_copy
+
+    rules = _rules().rules
+    try:
+        plan = AskPlan(start, step, min_price)
+    except ValueError as e:
+        _fail(str(e))
+    if not live:
+        sale, asks = Sale(plan), []
+        while (move := decide_sell(sale, None, None, False)).kind == "bid" and move.price is not None:
+            sale.record(move.price)
+            asks.append(move.price)
+        console.print(
+            f"[yellow]dry run[/yellow] {dealer} sell {target}: asks {asks}, take any bid ≥ our next ask, "
+            f"walk below {min_price}. Add --live to trade."
+        )
+        return
+    settings = load_settings()
+    client = team_client(settings)
+    try:
+        asset = find_copy(client.me(), target)
+    except OfferError as e:
+        _fail(str(e))
+    ref, rarity, value = str(asset.get("ref")), asset.get("rarity"), asset.get("your_value")
+    if not isinstance(value, int | float):
+        _fail(f"asset {asset['id']} ({ref}) has no your_value in /api/me: not pricing it blind")
+        return
+    worth = float(value)
+    floor = sell_floor(worth, rules.sell_min_value_ratio)
+    if min_price < floor:
+        _fail(f"--min {min_price} is below sell_min_value_ratio {rules.sell_min_value_ratio} × your_value = {floor}")
+    ledger = _ledger("dealer-sell")
+
+    def guard(move: Move) -> str | None:
+        c = Clock.model_validate(client.clock())
+        ctx = replace(gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules), accepts_this_tick=0)
+        kind: gr.ActionKind = "accept_sell" if move.kind == "accept" else "sell"
+        verdict = gr.check(gr.Action(kind, ref, rarity, move.price, worth, dealer=dealer), ctx, rules)
+        return None if verdict.allowed else "; ".join(verdict.violations)
+
+    def reserve(move: Move, c: Clock) -> bool:
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        return bool(ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), ref, limit))
+
+    topic = {"sell": {"assets": [int(asset["id"])]}}
+    out = negotiate_sell(
+        client,
+        dealer,
+        int(asset["id"]),
+        plan,
+        log=console.print,
+        guard=guard,
+        max_ticks=rules.dealer_max_ticks_per_thread,
+        reserve=reserve,
+        on_thread=_flag_policy(client, dealer, topic, rules, ledger),
+    )
+    colour = "green" if out.status == "deal" else "red"
+    console.print(
+        f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} asks {list(out.bids)} "
+        f"in {out.ticks} ticks"
+    )
+
+
 def _flag_policy(client: Any, dealer: str, topic: dict[str, Any], rules: Any, ledger: Any) -> Any:
     """The offer inspector on every thread read; a certain trickster is flagged only when GUARDRAILS.md
     allows flags (`allow_flags`, default false: logged as `would flag`)."""

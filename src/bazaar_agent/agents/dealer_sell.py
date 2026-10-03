@@ -16,9 +16,11 @@ the copy's `your_value`, rounded up, is the least it may be). Pure functions, no
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from typing import Any
 
-from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation, decide
+from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation, Outcome, decide
 from bazaar_agent.ladder import Conversation, FloorRow, PlanChoice, Turn
 
 MIRROR = 10_000  # above any dealer price (RULES.md caps prices at 10,000,000; dealer bids are tens)
@@ -106,3 +108,135 @@ def mirrored_conversation(c: Conversation) -> Conversation:
     out.fill_tick = c.fill_tick
     out.turns = [Turn(t.tick, t.dealer, mirror(t.price), t.final) for t in c.turns]
     return out
+
+
+SELL_WORDS = (
+    "¡Buenas, {n}! Le traigo un cromo muy bonito. ¿Le parece bien {p} primas?",
+    "Gracias por atenderme, {n}. ¿Podríamos dejarlo en {p}?",
+    "Es usted muy amable. Bajo a {p}, ¿trato hecho?",
+    "Está en perfecto estado, {n}. {p} primas y es suyo.",
+    "Mi abuela lo guardaba con cariño. ¿{p} le parece justo?",
+    "Por usted, {p}. ¿Cerramos?",
+)
+
+
+def sell_words(step: int, price: int, dealer: str = "") -> str:
+    """Kind, varied words for an ask. The structured price is what binds; the text never changes it."""
+    from bazaar_agent.agents.dealer import DEALER_NAMES
+
+    return SELL_WORDS[step % len(SELL_WORDS)].format(p=price, n=DEALER_NAMES.get(dealer, "amigo"))
+
+
+def sell_terms_problem(offer: Mapping[str, Any], asset_id: int) -> str | None:
+    """Why accepting this dealer offer would not be the sale we asked for (None = it is): it must want
+    exactly our asset and give only cash. Words persuade, structure binds."""
+    give, want = offer.get("give") or {}, offer.get("want") or {}
+    wanted = [a.get("id") if isinstance(a, dict) else a for a in want.get("assets") or []]
+    if wanted != [asset_id] or want.get("types") or want.get("cards") or want.get("cash"):
+        return f"the offer wants {wanted or 'nothing'} instead of exactly our asset {asset_id}"
+    if give.get("assets") or give.get("types") or give.get("cards"):
+        return "the offer gives items on a sale"
+    if not give.get("cash"):
+        return "the offer pays no cash"
+    return None
+
+
+SellGuard = Callable[[Move], str | None]  # a deny reason for an ask or an accept, or None when allowed
+
+
+def negotiate_sell(
+    client: Any,
+    dealer: str,
+    asset_id: int,
+    plan: AskPlan,
+    *,
+    log: Callable[[str], None],
+    guard: SellGuard | None = None,
+    max_ticks: int = 14,
+    sleep: Callable[[float], None] | None = None,
+    reserve: Callable[[Move, Any], bool] | None = None,
+    on_thread: Callable[[dict[str, Any]], None] | None = None,
+    on_deal: Callable[[int, int, float], None] | None = None,
+) -> Outcome:
+    """Open one sale thread and play it out, one move per tick (the mirror of `dealer.negotiate`).
+    `guard` sees every ask and accept first (GUARDRAILS.md: sell_min_value_ratio, kill switch); a denied
+    move walks. `reserve` claims the team's accept slot on the tick the accept is sent."""
+    import time
+
+    from bazaar_agent.agents.dealer import latest_dealer_offer, newest_dealer_offer
+    from bazaar_agent.sdk import BazaarError
+    from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
+
+    sleep = sleep or time.sleep
+    sale = Sale(plan)
+    topic = {"sell": {"assets": [asset_id]}}
+    tid = int(client.open_thread(dealer, topic=topic)["id"])
+    log(f"thread {tid} opened with {dealer}: sell asset {asset_id} · asks {plan.start}→{plan.min_price}")
+    state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
+
+    def on_tick(clock: Clock) -> None:
+        if state["status"] != "open":
+            return
+        state["ticks"] += 1
+        thread = client.thread(tid)
+        if on_thread is not None:
+            try:
+                on_thread(thread)
+            except Exception as e:  # inspection never changes or breaks the sale
+                log(f"tick {clock.tick}: offer inspection failed ({type(e).__name__}); sale continues")
+        state["status"] = thread.get("status", "open")
+        if state["status"] != "open":
+            log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
+            if state["status"] == "deal" and state["price"] is None and sale.asks:
+                state["price"] = sale.asks[-1]  # it took our last ask
+            if state["status"] == "deal" and on_deal is not None and state["price"] is not None:
+                on_deal(int(state["price"]), clock.tick, clock.t_hours)
+            return
+        if state["accepted"]:
+            log(f"tick {clock.tick}: accepted, waiting for settlement")
+            return
+        bid, offer_id, final = latest_dealer_offer(thread, dealer)
+        newest = newest_dealer_offer(thread, dealer)
+        problem = sell_terms_problem(newest, asset_id) if newest is not None else None
+        if problem:
+            log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
+            bid, offer_id, final = None, None, False
+        move = decide_sell(sale, bid, offer_id, final)
+        log(
+            f"tick {clock.tick}: its bid {bid}{' FINAL' if final else ''} → "
+            f"{move.kind} {move.price or ''} ({move.reason})"
+        )
+        if guard is not None and move.kind in ("accept", "bid") and (denied := guard(move)):
+            log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
+            move = Move("walk", reason=f"guardrail: {denied}")
+        if move.kind in ("accept", "bid"):
+            fresh = Clock.model_validate(client.clock())
+            if fresh.tick != clock.tick or action_budget_s(fresh) <= 0:
+                log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
+                return
+            if move.kind == "accept" and reserve is not None and not reserve(move, fresh):
+                log(f"tick {fresh.tick}: the team's accept slot is taken this tick, trying again next tick")
+                return
+        try:
+            if move.kind == "accept" and move.offer_id is not None:
+                client.accept(move.offer_id)
+                state["accepted"], state["price"] = True, move.price
+            elif move.kind == "bid" and move.price is not None:
+                client.say(tid, sell_words(len(sale.asks), move.price, dealer), price=move.price)
+                sale.record(move.price)
+            elif move.kind == "walk":
+                client.close_thread(tid)
+                state["status"] = "walked"
+        except BazaarError as e:
+            log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
+
+    stop = lambda: state["status"] != "open"  # noqa: E731
+    run_per_tick(client.clock, on_tick, max_ticks=max_ticks, stop=stop, sleep=sleep)
+    if state["status"] == "open" and state["accepted"]:
+        run_per_tick(client.clock, on_tick, max_ticks=2, stop=stop, sleep=sleep)
+        if state["status"] == "open":
+            state["status"] = "accepted_pending"
+    if state["status"] == "open":
+        client.close_thread(tid)
+        state["status"] = "timeout"
+    return Outcome(tid, str(state["status"]), state["price"], tuple(sale.asks), int(state["ticks"]))

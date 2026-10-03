@@ -87,3 +87,78 @@ def test_sales_replay_through_the_buy_machinery_without_repeats(real):
     for _ in range(200):
         r = play(plan, draw(model, rng))
         assert r.price is None or MIRROR - r.price >= 12  # never sold below the floor
+
+
+class FakeBuyingDealer:
+    """A dealer that buys asset 437: opens at `opening`, raises 1 per ask we send, takes an ask <= limit."""
+
+    def __init__(self, opening=12, limit=14, want=437, final_at=None):
+        self.opening, self.limit, self.want, self.final_at = opening, limit, want, final_at
+        self.asks, self.accepted, self.closed, self.status = [], [], False, "open"
+        self.reads = 0
+
+    def clock(self):
+        self.reads += 1
+        return {"tick": 100 + self.reads // 3, "next_tick_in": 30, "tick_seconds": 60}
+
+    def open_thread(self, dealer, topic):
+        assert topic == {"sell": {"assets": [437]}}
+        return {"id": 91}
+
+    def thread(self, tid):
+        if self.accepted:
+            self.status = "deal"
+        bid = min(self.limit, self.opening + len(self.asks))
+        final = self.final_at is not None and len(self.asks) >= self.final_at
+        offer = {
+            "id": 700 + len(self.asks),
+            "maker": "chato",
+            "status": "open",
+            "final": final,
+            "give": {"cash": bid},
+            "want": {"assets": [{"id": self.want}]},
+        }
+        return {"status": self.status, "standing_offers": [] if self.status != "open" else [offer]}
+
+    def say(self, tid, text, price):
+        self.asks.append(price)
+        if price <= self.limit:
+            self.status = "deal"
+
+    def accept(self, offer_id):
+        self.accepted.append(offer_id)
+
+    def close_thread(self, tid):
+        self.closed = True
+
+
+def sell(client, plan=None, **kw):
+    from bazaar_agent.agents.dealer_sell import negotiate_sell
+
+    plan = plan or AskPlan(16, 1, 12)
+    return negotiate_sell(client, "chato", 437, plan, log=lambda _: None, sleep=lambda _: None, **kw)
+
+
+def test_a_sale_closes_at_the_dealers_limit():
+    client = FakeBuyingDealer(opening=12, limit=14)
+    out = sell(client)
+    # after our 15 its bid rose to 14, which meets our next ask: we take its 14, its limit, a round sooner
+    assert (out.status, out.price, client.asks, len(client.accepted)) == ("deal", 14, [16, 15], 1)
+
+
+def test_a_guardrail_denial_walks():
+    client = FakeBuyingDealer()
+    out = sell(client, guard=lambda move: "sell price below your_value")
+    assert (out.status, client.asks, client.closed) == ("walked", [], True)
+
+
+def test_an_offer_for_another_asset_is_never_accepted():
+    client = FakeBuyingDealer(opening=15, limit=12, want=999)  # a bid of 15 that wants a different card
+    out = sell(client, plan=AskPlan(16, 1, 14))
+    assert client.accepted == [] and out.status in ("walked", "timeout")
+
+
+def test_a_final_bid_below_our_floor_walks():
+    client = FakeBuyingDealer(opening=10, limit=11, final_at=2)
+    out = sell(client)
+    assert out.status == "walked" and client.accepted == [] and min(client.asks) >= 12
