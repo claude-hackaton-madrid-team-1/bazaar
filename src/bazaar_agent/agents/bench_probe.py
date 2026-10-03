@@ -10,13 +10,15 @@ ever proposed crossed by quote, so nobody knows whether `POST /api/broker/matche
     against the next, ..., while the gap `ask + fee(ask) − bid` is at most `max_gap`, at most `per_tick` pairs, at
     the price that centres `[price, price + fee]` between the two quotes (both limits sit beyond their quotes, so
     the middle has the best chance of sitting inside both);
-  - a pair is never proposed twice at one price, and at most `tries_per_pair` times; a session (bench run) stops
-    probing after `give_up_after` refusals with nothing accepted: then the server checks quotes, and the broker
-    is the exact broker again for the rest of that run and, while the process lives, for every later run;
-  - the server answers a match `queued` and settles it next tick (h11: `settles_at_tick` = tick + 1), so a queued
-    probe is only a probe sent: it counts as accepted when the next tick's book has neither trader, and as
-    refused ("dropped") when either is back. Its offers are never marked done, so a dropped pair's traders stay
-    open to the exact plan.
+  - a pair is never proposed twice at one price, and at most `tries_per_pair` times; a session (bench run) sends
+    at most `max_per_run` probes, whatever the server answers, and stops after `give_up_after` refusals with no
+    probe gone from the book: then the server checks quotes, and the broker is the exact broker again for the rest
+    of that run and, while the process lives, for every later run;
+  - the server answers a match `queued` and settles it next tick (h11: `settles_at_tick` = tick + 1), and queued
+    offers leave the book before settlement, so the book cannot tell a settled probe from one dropped at
+    settlement: a probe whose traders are both gone next tick is only "gone", never proof that the server checks
+    limits (the score says that), hence the hard cap per run. A probe with a trader back in the book was dropped;
+    its offers are never marked done, so a dropped pair's traders stay open to the exact plan.
 
 If the server checks quotes, every probe is refused and the matches are exactly the exact plan's: the same score.
 If it checks limits, a probe that lands pairs two traders whose limits cross and who would otherwise have left
@@ -34,7 +36,8 @@ from bazaar_agent.agents.matcher import Fee, Match, Quote
 DEFAULT_MAX_GAP = 20  # P between a leftover ask (+ fee) and a leftover bid
 DEFAULT_PER_TICK = 4  # probes per tick, sent after every exact match
 DEFAULT_TRIES_PER_PAIR = 3
-DEFAULT_GIVE_UP_AFTER = 8  # refusals in one run with nothing accepted
+DEFAULT_GIVE_UP_AFTER = 8  # refusals in one run with no probe gone from the book
+DEFAULT_MAX_PER_RUN = 6  # probes sent in one run, whatever the server answers (S4: 1-4 a session when limits rule)
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class ProbeConfig:
     per_tick: int = DEFAULT_PER_TICK
     tries_per_pair: int = DEFAULT_TRIES_PER_PAIR
     give_up_after: int = DEFAULT_GIVE_UP_AFTER
+    max_per_run: int = DEFAULT_MAX_PER_RUN
 
 
 def probe_price(ask: int, bid: int, fee: Fee) -> int:
@@ -56,13 +60,14 @@ def probe_price(ask: int, bid: int, fee: Fee) -> int:
 
 @dataclass
 class _Run:
-    accepted: int = 0
+    sent: int = 0  # probes the server saw (queued or refused)
+    accepted: int = 0  # queued probes whose traders were both gone from the next book: settled, or removed
     refused: int = 0
     tries: Counter[tuple[str, str]] = field(default_factory=Counter)
     prices: dict[tuple[str, str], set[int]] = field(default_factory=lambda: defaultdict(set))
 
     def given_up(self, config: ProbeConfig) -> bool:
-        return not self.accepted and self.refused >= config.give_up_after
+        return self.sent >= config.max_per_run or (not self.accepted and self.refused >= config.give_up_after)
 
 
 DROPPED = "dropped"  # a queued probe whose traders are back in the next tick's book
@@ -77,16 +82,16 @@ class BenchProbe:
         self.codes: Counter[str] = Counter()  # refusal codes over every run: the server's answer to the question
         self.pending: list[Match] = []  # probes the server queued, settled (or dropped) by the next read
         self.quote_rule = False  # a whole run refused every probe: no more probes while this process lives
-        self.limit_rule = False  # a probe settled: the server checks limits, and no run gives up any more
 
     def _run(self, item: str) -> _Run:
         return self.runs.setdefault(item.removeprefix("bench:"), _Run())
 
     def active(self, item: str) -> bool:
-        return self.limit_rule or (not self.quote_rule and not self._run(item).given_up(self.config))
+        return not self.quote_rule and not self._run(item).given_up(self.config)
 
     def resolve(self, bench: Iterable[Quote]) -> list[tuple[Match, bool]]:
-        """Settle last tick's queued probes against this tick's book: accepted when both traders are gone."""
+        """Last tick's queued probes against this tick's book: gone when both traders are gone (settled, or removed
+        while queued: the book cannot tell), dropped when either is back."""
         present = {str(q.id) for q in bench}
         settled = [(m, str(m.sell.id) not in present and str(m.buy.id) not in present) for m in self.pending]
         self.pending = []
@@ -109,6 +114,7 @@ class BenchProbe:
             if not self.active(item):
                 continue
             run = self._run(item)
+            budget = self.config.max_per_run - run.sent
             asks = sorted(sells, key=lambda q: q.price)  # stable: the book's order among equal quotes
             bids = sorted(buys, key=lambda q: -q.price)
             for rank, (s, b) in enumerate(zip(asks, bids, strict=False)):
@@ -121,12 +127,16 @@ class BenchProbe:
                 price = probe_price(s.price, b.price, fee)
                 if run.tries[key] >= self.config.tries_per_pair or price in run.prices[key]:
                     continue
+                if budget <= 0:
+                    break
+                budget -= 1
                 candidates.append((gap, rank, Match(s, b, price, fee.of(price))))
         candidates.sort(key=lambda c: (c[0], c[1], str(c[2].sell.id)))
         return [m for _, _, m in candidates[: max(0, min(room, self.config.per_tick))]]
 
     def sent(self, m: Match) -> None:
         """The server queued this probe: whether it settles shows in the next tick's book (`resolve`)."""
+        self._run(m.sell.item).sent += 1
         self.pending.append(m)
 
     def record(self, m: Match, accepted: bool, code: str | None = None) -> None:
@@ -137,20 +147,18 @@ class BenchProbe:
         run.prices[key].add(m.price)
         if accepted:
             run.accepted += 1
-            self.limit_rule, self.quote_rule = True, False
-        else:
-            run.refused += 1
-            self.codes[code or "unknown"] += 1
-            self.quote_rule = not self.limit_rule and (self.quote_rule or run.given_up(self.config))
+            return
+        if code != DROPPED:  # refused at the POST: never queued, so `sent` has not counted it
+            run.sent += 1
+        run.refused += 1
+        self.codes[code or "unknown"] += 1
+        if not run.accepted and run.refused >= self.config.give_up_after:
+            self.quote_rule = True
 
     def summary(self, item: str) -> str:
         run = self._run(item)
-        state = (
-            "probing"
-            if self.limit_rule
-            else "given up" if run.given_up(self.config) else "stopped" if self.quote_rule else "probing"
-        )
-        return f"probes {run.accepted} accepted, {run.refused} refused ({state})"
+        state = "given up" if run.given_up(self.config) else "stopped" if self.quote_rule else "probing"
+        return f"probes {run.sent} sent: {run.accepted} gone, {run.refused} refused or dropped ({state})"
 
     def forget(self, run: str) -> None:
         self.runs.pop(run, None)

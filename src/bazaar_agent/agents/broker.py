@@ -374,9 +374,9 @@ class BrokerAgent:
                 self.log(
                     f"tick {tick} broker: bench probe {m.sell.id}×{m.buy.id} at {m.price} "
                     + (
-                        "SETTLED (both traders gone)"
+                        "GONE from the book (settled, or removed while queued)"
                         if accepted
-                        else "DROPPED at settlement (traders back in the book)"
+                        else "DROPPED (traders back in the book)"
                     )
                     + f" · {self.probe.summary(m.sell.item)}"
                 )
@@ -520,8 +520,8 @@ class BrokerAgent:
     def _session_closed(self, s: Session) -> None:
         self.edge.forget(s.run)
         if self.config.bench_policy == "probe":
+            # the run's probe memory stays: its cap must hold even if its offers show again after this close
             self.log(f"broker: Market Test {s.run} {self.probe.summary(s.run)}; refusal codes {dict(self.probe.codes)}")
-            self.probe.forget(s.run)
         row = {"run": s.run, "first_tick": s.first_tick, "last_tick": s.last_tick, "pairs": s.pairs}
         row |= {"surplus": s.surplus, "refused": s.refused, "live": self.live}
         tm.event("broker.bench_session", row)

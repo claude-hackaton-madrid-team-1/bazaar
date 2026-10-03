@@ -92,7 +92,7 @@ def test_a_refused_pair_is_not_proposed_again_at_the_same_price_and_runs_give_up
     assert not probe.active("bench:b7") and plan(other + bench, probe)[1] == []  # 3 refusals, none accepted
     assert probe.codes == {"invalid": 3}
     assert probe.quote_rule and not probe.active("bench:b8")  # the server checks quotes: no later run probes
-    assert probe.summary("bench:b8") == "probes 0 accepted, 0 refused (stopped)"
+    assert probe.summary("bench:b8") == "probes 0 sent: 0 gone, 0 refused or dropped (stopped)"
 
 
 def test_queued_probes_settle_by_the_next_book():
@@ -112,11 +112,8 @@ def test_one_accepted_probe_keeps_the_run_probing():
     probe.record(m, accepted=True)
     _, [m2] = plan([bench_sell("b7-2", 80), bench_buy("b7-3", 75)], probe)
     probe.record(m2, accepted=False)
-    assert probe.active("bench:b7") and probe.summary("bench:b7") == "probes 1 accepted, 1 refused (probing)"
-    for k in range(5):  # one settled probe settles the rule: a later run never gives up
-        _, [m3] = plan([bench_sell(f"b8-{2 * k}", 80), bench_buy(f"b8-{2 * k + 1}", 75)], probe)
-        probe.record(m3, accepted=False)
-    assert probe.limit_rule and probe.active("bench:b8") and not probe.quote_rule
+    assert probe.active("bench:b7")
+    assert probe.summary("bench:b7") == "probes 1 sent: 1 gone, 1 refused or dropped (probing)"
 
 
 # ---------------------------------------------------------------- the broker
@@ -163,7 +160,10 @@ def test_an_accepted_probe_takes_both_traders(tmp_path):
     assert any("bench probe b7-2×b7-3 at 68 QUEUED" in line for line in lines)
     assert a.history[-1].surplus_bench == 60  # the probe's negative quoted surplus is not counted
     a.on_tick(clock(tick=6))
-    assert any("SETTLED (both traders gone) · probes 1 accepted, 0 refused (probing)" in line for line in lines)
+    assert any(
+        "GONE from the book (settled, or removed while queued) · probes 1 sent: 1 gone, 0 refused or dropped" in line
+        for line in lines
+    )
 
 
 class SettlementDropBroker(FakeBroker):
@@ -185,7 +185,7 @@ def test_a_probe_dropped_at_settlement_counts_as_refused_and_its_traders_stay_op
     a.on_tick(clock(tick=5))
     broker.bench = [bench_sell("b7-2", 64), bench_buy("b7-3", 66)]  # back, and now they cross by quote
     a.on_tick(clock(tick=6))
-    assert any("DROPPED at settlement (traders back in the book)" in line for line in lines)
+    assert any("DROPPED (traders back in the book)" in line for line in lines)
     assert broker.sent[-1] == ("b7-2", "b7-3", 65)  # the exact plan takes them
     assert a.probe.codes == {"dropped": 1} and a.probe.quote_rule
     broker.bench = [bench_sell("b8-0", 71), bench_buy("b8-1", 66)]
@@ -271,3 +271,23 @@ def test_bench_settlements_in_the_book_are_logged_under_probe(tmp_path):
 
     probe_broker(tmp_path, WithSettlements(bench=two_books()), lines).on_tick(clock(tick=5))
     assert any('bench settlements 1: {"buy": "b7-1", "price": 60, "sell": "b7-0"}' in line for line in lines)
+
+
+class QueueAndVanishBroker(FakeBroker):
+    """Queues every match and takes both offers out of the book, settled or not (S2: queued offers leave the book
+    before settlement): the book can never tell a settled probe from a dropped one."""
+
+    def match(self, sell: Any, buy: Any, price: int) -> dict[str, Any]:
+        super().match(sell, buy, price)
+        return {"queued": True, "settles_at_tick": 0}
+
+
+def test_probes_stop_at_the_cap_per_run_even_when_every_probe_looks_settled(tmp_path):
+    broker = QueueAndVanishBroker()
+    a = probe_broker(tmp_path, broker)
+    for tick in range(5, 15):  # a fresh near-miss pair every tick
+        broker.bench = [bench_sell(f"b7-{2 * tick}", 71), bench_buy(f"b7-{2 * tick + 1}", 66)]
+        a.on_tick(clock(tick=tick))
+    probes = [s for s in broker.sent if s[2] == 68]
+    assert len(probes) == ProbeConfig().max_per_run == 6
+    assert not a.probe.active("bench:b7") and a.probe.active("bench:b8")  # the cap is per run
