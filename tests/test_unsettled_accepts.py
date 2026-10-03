@@ -150,3 +150,32 @@ def test_accept_rows_read_postgres(database_url, schema):  # noqa: F811
     c = unsettled_accepts({"cash": 400, "assets": []}, ledger, 100)
     assert (c.cash, c.wanted) == (0, ())
     conn.close()
+
+
+def test_a_bid_denied_only_by_a_settled_pack_waits_instead_of_walking(tmp_path):
+    """Review round 2 of #143: a pack accept counts for its whole window even once /api/me shows it, so near the
+    cash floor a dealer-thread bid a settled view allows was denied and the thread walked. It waits instead."""
+    from tests.bites.kit import make_taker
+
+    team = FakeTeam()
+    t, lines, ledger = make_taker(tmp_path, team, FakePublic(), cash_floor=270)
+    t.on_tick(at(team, TICK))  # opens 5000 with abuela for LAV-08 and bids 18 (ladder 18 -> 22)
+    assert ("say", 5000, 18) in team.sent
+    her_ask = {"id": 9, "maker": "abuela", "status": "open", "want": {"cash": 25}, "give": {"types": ["card:LAV-08"]}}
+    team.threads = [{"id": 5000, "with": "abuela", "team": "t01", "status": "open"}]
+    team.thread_payloads[5000] = {
+        "id": 5000,
+        "status": "open",
+        "with": "abuela",
+        "messages": [
+            {"id": 1, "sender": "t01", "offer": None},
+            {"id": 2, "sender": "abuela", "text": "25, cariño", "offer": her_ask},
+        ],
+        "standing_offers": [her_ask],
+    }
+    ledger.reserve_accept(TICK, 1.67, 17, "sobre_barrio", 1)  # another process bought a pack; it has settled
+    team._me["cash"] = 290  # 290 - 19 = 271 >= 270, but 290 - 17 - 19 < 270
+    team._me["assets"].append({"id": 7777, "kind": "pack", "ref": "sobre_barrio"})
+    t.on_tick(at(team, TICK + 1))
+    assert ("close_thread", 5000) not in team.sent
+    assert any("wait (guardrail with unsettled accepts" in line for line in lines)

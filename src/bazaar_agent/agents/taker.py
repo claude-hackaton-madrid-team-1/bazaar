@@ -386,9 +386,17 @@ class Taker:
             + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")  # what the tick decided from
         )
 
-    def _ctx(self, run: _TickRun, *, skip_thread: int | None = None, skip_offer: int | None = None) -> Context:
+    def _ctx(
+        self,
+        run: _TickRun,
+        *,
+        skip_thread: int | None = None,
+        skip_offer: int | None = None,
+        unsettled: bool = True,
+    ) -> Context:
         """Live guardrail context; our open offers count (this tick's accepts and bids too, `_commit`),
-        except the thread or bid this move replaces."""
+        except the thread or bid this move replaces; and, unless `unsettled` is False, recent accepts
+        `/api/me` does not show yet."""
         kept = [
             o
             for o in run.offers
@@ -396,7 +404,8 @@ class Taker:
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
-        ctx = committed_context(ctx, self._unsettled)  # an accept of the last ticks /api/me does not show yet
+        if unsettled:  # an accept of the last ticks /api/me does not show yet
+            ctx = committed_context(ctx, self._unsettled)
         return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent)
 
     def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None) -> None:
@@ -586,6 +595,13 @@ class Taker:
         if verdict.halted:  # the kill switch went on this tick: hold, the thread stays open
             self.log(f"tick {tick} taker: kill switch on: holding {move.kind} on thread {conv.thread_id} ({verdict})")
             return
+        if not verdict.allowed and move.kind == "bid" and self._unsettled != Commitments():
+            # Denied only because of accepts `/api/me` may already show (a pack's cash counts for 2 ticks):
+            # wait a tick instead of walking a thread a settled view would let us bid in.
+            ctx = self._ctx(run, skip_thread=conv.thread_id, unsettled=False)
+            if check(action, ctx, self.rules).allowed:
+                self.log(f"tick {tick} taker: {conv.dealer} wait (guardrail with unsettled accepts: {verdict})")
+                return
         if not verdict.allowed:
             move = Move("walk", reason=f"guardrail: {verdict}")
         inputs = {
