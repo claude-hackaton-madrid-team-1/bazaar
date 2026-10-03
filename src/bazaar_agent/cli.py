@@ -414,7 +414,8 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duel_jev import DuelPick
+    from bazaar_agent.agents.duel_days import effective_rules, latch, real_game
+    from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
@@ -442,6 +443,9 @@ def duel_run(
     )
     rec = Recorder("duels", decisions, play, lambda line: None)  # the duel loop prints its own lines
     log_path = settings.data_dir / "duels" / "duels.jsonl"
+    days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
+    done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
+    real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     handled: list[int] = []  # the last tick this loop handled (v2 widens its accept margin after a gap)
@@ -516,6 +520,19 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        verdict_before = days_switch.verdict
+        finished: list[dict[str, Any]] = []
+        if real and days_switch.verdict == "unknown" and c.tick % done_every_ticks == 0:  # a scored deal is proof
+            try:
+                finished = [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)]
+            except BazaarError as e:
+                console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+        days_switch.observe([*duels, *finished], real)
+        if days_switch.verdict != verdict_before:
+            console.print(
+                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
+            )
+        rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
@@ -527,7 +544,7 @@ def duel_run(
         except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, v2 holds every duel
             console.print(f"  ledger unreadable ({type(e).__name__}): v2 holds every duel this tick")
             slots = None
-        params = V2Params.from_rules(rules, anchor, floor) if v2 else None
+        params = V2Params.from_rules(rules_t, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
         if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
@@ -548,7 +565,10 @@ def duel_run(
             if did is None:
                 return
             pick = picks.get(did)
-            if pick is not None:
+            if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
+                pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
+                move = forced[did].move
+            elif pick is not None:
                 move = pick.move
             elif did in planned:
                 move = planned[did]
@@ -571,7 +591,7 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
-                verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
+                verdict = gr.check(duel_action(d, move), ctx, rules_t)  # the price and days we would agree to
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
@@ -597,11 +617,30 @@ def duel_run(
             except Exception as e:  # one malformed row must not cost the other duels their move (r2 bite B2b)
                 console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
 
+        # v1 (r2 X17): in the endgame an inside-limit offer is the only legal move and Jev is never asked about
+        # it, so it is booked AND sent now, nearest deadline first, before Jev answers about the other duels and
+        # before the taker's duel grace (2 s) ends. v2 sends its planner's accepts in the same early pass.
+        forced: dict[int, DuelPick] = {}
+        for d in duels if play and params is None else ():
+            if (fid := duel_id(d)) is None:
+                continue
+            try:
+                endgame = rules.duel_endgame_ticks
+                if (fp := forced_pick(d, c.tick, first_seen[fid], anchor, floor, endgame)) is not None:
+                    forced[fid] = fp
+            except Exception as e:  # a malformed row goes the usual way below
+                console.print(f"  duel {fid}: forced-accept check failed ({type(e).__name__}): today's path")
+
         # v2: the planner's accepts are booked AND sent now, before Jev is asked about the other duels (r2 X17, as
         # B15 does for v1's forced accepts): the taker claims the team's accept 2 s into the tick, and a slow Jev
         # can no longer strand a booked slot. Jev's only legal move for such a duel is that accept anyway.
+        # One early pass (B7 + B15): v2's planned accepts, or v1's forced endgame accepts, nearest deadline first.
         early = sorted(
-            (d for d in duels if planned.get(duel_id(d) or -1, DuelMove("hold")).kind == "accept"),
+            (
+                d
+                for d in duels
+                if duel_id(d) in forced or planned.get(duel_id(d) or -1, DuelMove("hold")).kind == "accept"
+            ),
             key=lambda d: duel_deadline(d) or 0,
         )
         for d in early:
