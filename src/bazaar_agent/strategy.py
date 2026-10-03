@@ -56,6 +56,7 @@ class StrategyParams(BaseModel):
     rare_fallback_price: int = Field(ge=1)
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
+    dealer_mints_unminted: bool = False  # optional line: a dealer sells (mints) a card nobody holds yet
 
 
 @dataclass(frozen=True)
@@ -248,9 +249,10 @@ def supply_of(m: Market, card: Card, params: StrategyParams) -> Supply:
     ours = m.held.get(card.ref, 0)
     mintable = card.minted < card.print_run
     where: Availability
-    if card.minted == 0:
+    dealer_sells = card.set_code in m.released and quote_for(m, card) is not None and mintable
+    if card.minted == 0 and not (params.dealer_mints_unminted and dealer_sells):
         where = "packs" if mintable and card.rarity in pack_rarities(m) else "none"
-    elif card.set_code in m.released and quote_for(m, card) is not None and mintable:
+    elif dealer_sells:
         where = "dealer"
     elif card.minted > ours:
         where = "teams"
