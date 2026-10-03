@@ -848,6 +848,19 @@ flatten` / the desk, which already booked its refund. The live feed emits `offer
 a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
 emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
 
+### [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
+`uv run bazaar supply` (N14b) at Friday's close, before any card scan: 287 assets placed from settlements and
+listings, 42 packs opened. Complete pages that can exist now (fewest copies of a page card): LAT 2 (LAT-10),
+MAL 3 (MAL-09/MAL-10), LAV 4 (LAV-09), SAL 4 (SAL-09/SAL-10). A starting asset never traded keeps the block
+of its id: team k was dealt ids 15k−14…15k, so a scan names who holds an unmoved rare even though
+`/api/cards/{id}` says only "a team".
+
+### [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
+`uv run bazaar supply scan --rate 2` read ids 1–538 (doors closed, tick 159), then 5 unknown ids. With the
+scan, the holders of every rare with at most 5 copies are placed (unplaced 0–1): LAT-10 t03, t15 · MAL-09
+t11, t12 · MAL-10 t08, t09, t12 · LAV-09 t05, t07, t10, t14 · SAL-09 t13, t16, t17, t18 · SAL-10 t02, t13,
+t17, t18 · LAV-10 t04, t05, t07, t10, t14. Rescan with `--from-id 539` for new pulls (incremental).
+
 ### [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
 `uv run bazaar flags precision --feed-dir <capture>`: 1,027 dealer offers (Abuela 805, Chato 217 with a known topic),
 0 would-flag, 5 with an empty topic `{}` (thread 44). Jev `enable_bad_faith_flags` (questions/flags.json) on that

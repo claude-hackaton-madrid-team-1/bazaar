@@ -316,3 +316,15 @@ create table if not exists me_snapshots (
 create table if not exists holdings_state (
   scope text primary key, epoch bigint not null default 0, written_at timestamptz,
   thread_message_at timestamptz, last_write text, last_writer text);
+
+-- Supply map (N14b, `bazaar supply`): the card scan (`GET /api/cards/{id}`: ids 1-270 are the starting
+-- hands, block k = team k; newer ids are pack pulls and dealer mints), and per card and per set who holds
+-- what and how many complete pages can exist. The agents read `supply_assets` back for valuation.
+create table if not exists supply_assets (
+  id int primary key, ref text, kind text, scanned jsonb, scanned_tick int);
+create table if not exists supply_cards (
+  ref text primary key, set_code text, rarity text, page bool, minted int, print_run int, ours int,
+  holders jsonb, others int, unplaced int, updated_tick int);
+create table if not exists supply_sets (
+  set_code text primary key, released bool, pages_possible int, bottleneck jsonb, our_have int,
+  page_cards int, packs_opened int, updated_tick int);
