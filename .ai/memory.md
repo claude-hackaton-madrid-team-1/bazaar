@@ -1113,3 +1113,27 @@ harsh reading (rivals +0.10, 0 points at −0.05) with wrong priors makes exact 
 unguarded 0.072, margin 10 0.110, exact 0.252. Per book, any deviation from the stall can lose: a guard that deviates
 only when the edge wins at the worst corner of every limit band still loses 0.4-8.7 % of books, because the trader the
 edge pairs now is the one the stall would have matched to a better late arrival (path effect, not estimate error).
+
+### [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
+symptom: LAV-10 bought from `picaros` at 63, its rare list price, after bids 54→55→56 (~0 on the ladder) → root cause:
+`dealer.decide` takes any FINAL inside our max as the dealer's limit, and Los Pícaros (`/api/dealers`: kind `trickster`,
+strictness 0.1) keep talking after theirs → fix: `agents/trickster.py` marks the plan `forgiving` (published kind
+`trickster`): its FINAL is a plain ask, no ask at or above its list price is taken, only one
+≤ lowest fill + `trickster_accept_fill_share` × fill range (none seen: we only bid), and our bids stay below its list
+price and below any ask we may not take. Same plan in the taker (opens, restart adoption, Jev) and `dealer buy`.
+The range is read from OTHER teams' fills of that rarity in that set only, and needs 3 of them (#228 security P2: one
+fill of ours at 63 made 63 acceptable; pooled sets made every LAV ask below list acceptable): fewer, and we only bid.
+Abuela publishes strictness 0.1 too (and chattiness 0.75), so a strictness bar would make her real final a fake one:
+`trickster_max_strictness` ships at 0 and the published kind alone decides.
+
+### [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
+The main checkout sat at 1e57564f while main already had #223 (every set protected): `bazaar sell list` from that
+laptop read `protect_page_sets = RET,CHA`, so a hand sell of a LAT/LAV/SAL/MAL last copy passed the guard (the
+seller's own free-copy check caught it, tick 1028). After every merge, `git pull --ff-only` the checkout that runs
+live hand commands, then `uv run bazaar rules`; Railway services redeploy by themselves, laptops do not.
+
+### [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
+Tick 1028: the desk put MAL-06 #468 into a swap counter to t05 seconds before a hand `sell list` posted MAL-06 #1020 →
+t02 (cancelled next tick, no fill). `committed_context` subtracts the copies in our open offers as read by THAT
+command, so two writers posting in the same instant can still race; re-read `/api/me/offers` right before a hand post
+and keep one copy free per card. A shell check piped through `grep` returns grep's exit code, not the check's.

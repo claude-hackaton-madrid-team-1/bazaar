@@ -3,8 +3,9 @@
 `negotiate()` plays ONE thread to the end inside its own tick loop. The taker cannot wait on one
 dealer, so the desk keeps each conversation's state between ticks and asks `dealer.decide()` for that
 tick's move only. Same rules: one thread per dealer, the hard max never moves, a final offer is
-take-it-or-walk, an offer whose structure is not the plain buy we asked for is ignored, and a thread
-that runs `dealer_max_ticks_per_thread` ticks without a deal is closed.
+take-it-or-walk (a forgiving dealer's is a plain ask: agents/trickster.py), an offer whose structure is not
+the plain buy we asked for is ignored, and a thread that runs `dealer_max_ticks_per_thread` ticks without a
+deal is closed.
 """
 
 from __future__ import annotations
@@ -97,10 +98,13 @@ def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: 
     if problem:
         ask, offer_id, final = None, None, False
     see_history(conv.neg, thread, conv.dealer, conv.item)  # her opening ask, even if it lapsed while we held
+    # A forgiving dealer's FINAL is a plain ask (agents/trickster.py): never ranked first, met as a final or checked
+    # against the lifted cap downstream. `decide` still sees the flag, and its reason says so.
+    binds = final and not conv.neg.plan.forgiving
     if conv.ticks >= max_ticks:
         walk = Move("walk", reason=f"{max_ticks} ticks without a deal")
-        return DeskMove(conv, walk, ask, final, ignored=problem, offer_id=offer_id)
-    return DeskMove(conv, decide(conv.neg, ask, offer_id, final), ask, final, ignored=problem, offer_id=offer_id)
+        return DeskMove(conv, walk, ask, binds, ignored=problem, offer_id=offer_id)
+    return DeskMove(conv, decide(conv.neg, ask, offer_id, final), ask, binds, ignored=problem, offer_id=offer_id)
 
 
 def meet_the_ask(dm: DeskMove) -> DeskMove:

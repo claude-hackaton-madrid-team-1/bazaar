@@ -171,7 +171,7 @@ def test_a_guarded_team_gets_a_move_only_when_our_gain_is_twice_theirs(conn):
     t02 = rows["t02"]  # top 5: buying their MAL-09 at 60 (+5 for us, +60 for them) is refused; this swap is not
     assert (t02["guarded"], t02["guard_reason"], t02["move_kind"]) == (True, "top5", "swap")
     assert t02["suggested_move"] == "offer our spare LAT-02 for their MAL-09 (+69.0 for us, +16.0 for them)"
-    t07 = rows["t07"]  # 2 ranks below us: buying their MAL-09 at 50 (+15 after the fee, +50 for them) is refused
+    t07 = rows["t07"]  # 2 ranks below us: buying their MAL-09 at 50 (+16 after the fee, +50 for them) is refused
     assert (t07["guarded"], t07["guard_reason"], t07["move_kind"], t07["move_give"], t07["move_get"]) == (
         True, "near", "hold", None, None)  # fmt: skip
     assert t07["suggested_move"] == "don't trade: within 3 ranks of us (rank 11, ours 9)"
@@ -201,7 +201,7 @@ def test_an_unknown_rank_of_ours_guards_every_team(conn):
         cur.execute("delete from leaderboard_snapshots where team = 't01'")
     conn.commit()
     rows = board(conn)
-    # the swap (+31.5 vs 2 × 16) is refused now; the sale into their bid (+10.3 vs +4.0) is not
+    # the swap (+31.5 vs 2 × 16) is refused now; the sale into their bid (+9.5 after the fee vs +4.0) is not
     assert (rows["t09"]["guarded"], rows["t09"]["guard_reason"], rows["t09"]["move_kind"]) == (True, "near", "sell")
     assert rows["t07"]["suggested_move"] == "don't trade: our rank is unknown (theirs 11)"
 
@@ -220,8 +220,8 @@ def test_a_bid_alone_is_a_sale_into_it_and_a_swap_beats_it(conn):
     listing(conn, 20, offer("t11", give_cash=8, want_types=["card:SAL-01"]))
     t11 = board(conn)["t11"]
     assert (t11["move_kind"], t11["move_give"], t11["move_price"]) == ("sell", "SAL-01", 8)
-    assert t11["suggested_move"] == "sell our spare SAL-01 into their bid of 8 (+6.7 for us after the fee)"
-    listing(conn, 21, offer("t11", give_assets=["LAT-04"], want_cash=10))  # a buy would make +21; the swap +31.5
+    assert t11["suggested_move"] == "sell our spare SAL-01 into their bid of 8 (+5.5 for us after the fee)"
+    listing(conn, 21, offer("t11", give_assets=["LAT-04"], want_cash=10))  # a buy would make +20; the swap +31.5
     t11 = board(conn)["t11"]
     assert (t11["move_kind"], t11["move_give"], t11["move_get"], float(t11["our_gain"])) == (
         "swap",
@@ -241,7 +241,7 @@ def test_a_copy_we_miss_at_a_low_ask_is_a_buy(conn):
         10,
         10.0,
     )
-    assert t11["suggested_move"] == "buy their LAT-04 at their ask of 10 (+21.0 for us after the fee)"
+    assert t11["suggested_move"] == "buy their LAT-04 at their ask of 10 (+20.0 for us after the fee)"
 
 
 def test_a_lapsed_cancelled_or_addressed_listing_signals_but_never_prices_a_move(conn):
@@ -279,7 +279,7 @@ def test_the_view_is_replaced_only_by_a_newer_version_and_never_fails_the_schema
     def comment():
         return conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
 
-    assert comment() == "rival_board v1"
+    assert comment() == "rival_board v2"
     # a newer checkout appended a column: this older file cannot drop it, so it warns and init_schema goes on
     body = conn.execute("select pg_get_viewdef(to_regclass('rival_board'))").fetchone()[0].rstrip().rstrip(";")
     conn.execute(f"create or replace view rival_board as select v.*, 1 as newer_column from ({body}) v")
@@ -290,11 +290,11 @@ def test_the_view_is_replaced_only_by_a_newer_version_and_never_fails_the_schema
     assert "newer_column" in [d.name for d in conn.execute("select * from rival_board limit 0").description]
     conn.execute("comment on view rival_board is 'rival_board v9'")
     conn.commit()
-    db.init_schema(conn)  # stored v9 >= v1: nothing to replace, no lock taken
+    db.init_schema(conn)  # stored v9 >= v2: nothing to replace, no lock taken
     assert comment() == "rival_board v9"
 
 
-def test_a_reader_holding_the_view_delays_the_replacement_2_s_at_most(conn, database_url, schema):
+def test_a_reader_holding_the_view_delays_the_replacement_2_s_at_most(conn, database_url, schema, caplog):
     import time
 
     from bazaar_agent import db
@@ -309,9 +309,30 @@ def test_a_reader_holding_the_view_delays_the_replacement_2_s_at_most(conn, data
         assert time.monotonic() - started < 10
         stored = conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
         assert stored == "rival_board v0"  # not replaced this time; the next start tries again
+        assert "rival_board v2 not applied (canceling statement due to lock timeout)" in caplog.text  # logged, not lost
     finally:
         reader.close()
     db.init_schema(conn)
     assert (
-        conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0] == "rival_board v1"
+        conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0] == "rival_board v2"
     )
+
+
+def test_a_bid_on_another_venue_pays_the_fee_caps(conn):
+    seed(conn)
+    bid = offer("t11", give_cash=8, want_types=["card:SAL-01"])
+    bid["offer"]["venue"] = "v05"  # unknown fee: 10 % + 5 P, the caps (El Rastro: 5 % + 1 P)
+    listing(conn, 20, bid)
+    assert (
+        board(conn)["t11"]["suggested_move"] == "sell our spare SAL-01 into their bid of 8 (+1.5 for us after the fee)"
+    )
+
+
+def test_a_copy_in_an_open_offer_of_ours_is_not_spare(conn):
+    seed(conn)
+    listing(conn, 20, offer("t01", give_assets=["SAL-01"], want_cash=20))  # 3 copies: one kept, one listed, one spare
+    t09 = board(conn)["t09"]
+    assert t09["we_have_for_them"] == [{"ref": "SAL-01", "spare": 1, "their_price": 12, "our_value": 0.5}]
+    listing(conn, 21, offer("t01", give_assets=["SAL-01"], want_cash=25))  # the last spare listed too
+    t09 = board(conn)["t09"]
+    assert (t09["we_have_for_them"], t09["move_kind"], t09["move_get"]) == ([], "buy", "LAT-04")  # no swap left

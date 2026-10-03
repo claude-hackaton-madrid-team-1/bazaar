@@ -218,6 +218,27 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
 
 ---
 
+## Saturday 3 October, afternoon: rules audit
+
+- **17:55 · Rules audit: what the rules really score, and what our code and docs get wrong** · `proposed` · Jev + a Claude session for Marius
+  Why: a check that our understanding of the rules (code, GUARDRAILS.md, STRATEGY.md, briefing, explainer site) matches RULES.md, the live API and the scores we observe. Eight areas were audited in parallel.
+  Evidence: the full report is in `_night/RULES_AUDIT.md`, outside git because it holds private values. Score formulas are fitted on `me_snapshots`.
+  Outcome:
+  - Market-making ≈ 22.5 Market Test + 7.5 organic. Our venue scores exactly the stall's 0.5 and has had 0 organic trades.
+  - Round 3 starts at about Sun 11:34; the ladder restarts each round.
+  - Two code bugs are verified, both small. Fix branches are local, not pushed: `fix/audit-page-bonus-double-count`, `fix/audit-score-sim-market-split`, `fix/audit-duel-days-top-level`, `fix/audit-duel-refusal-code`, `fix/audit-sell-final-min-zero`.
+  - The docs are corrected in docs/briefing.md and STRATEGY.md.
+
+- **17:55 · Jev rules-audit review (`questions/rules_audit.json`, `questions/rules_audit.state.json`)** · `decided` (2) / kept (5) · Jev
+  - `flag_dealers_choice`: picaros 0.84 (decided). Set in GUARDRAILS.md; it is inert while `allow_flags` is false.
+  - `workshop_build_noul`: no, yes-probability 0.2 (decided). The Workshop (`taller`) is not built.
+  - Undecided, today's values kept:
+    - `allow_flags_noul`: yes 0.56.
+    - `dealer_sell_final_min_first_ask_share_choice`: keep_0_5 0.67, so `fix/audit-sell-final-min-zero` stays unmerged.
+    - `dealer_final_lift_choice`: lift_0_15 0.54.
+    - `duel_accept_margin_ticks_choice`: lower_0 0.80, confidence 0.59.
+    - `overnight_first_build_choice`: bench_edge 0.58, ladder_round_tracker 0.36.
+
 ## Sources
 Merged and open PRs #6–#130 and issues #2–#24 with their comments (`gh`); RULES.md (`vendor/bazaar-kit/RULES.md`);
 `docs/transcripts/2026-10-02-hackathon-kickoff.md`; `.ai/memory.md` and `docs/architecture.status.json` on main;
