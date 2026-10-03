@@ -35,7 +35,7 @@ from bazaar_agent.breakers import CONNECT_TIMEOUT_S, TickBoard
 from bazaar_agent.guardrails import OFF_PAGE_RARITIES, Guardrails
 from bazaar_agent.intel import card_rarities
 
-GRANT_LOOKBACK_TICKS = 2000  # a grant older than this is not looked up: the ladder starts when the agent first saw it
+GRANT_LOOKBACK_TICKS = 480  # the MCP's longest ttl: an older grant (a long CLI ttl) starts when the agent first saw it
 # The grant's tick: its `approval_granted` row, found through the (status, tick) index (`decisions_queue`) inside a
 # bounded tick range, and tied to this approval by its `until_tick` (a re-approve writes a new one).
 READ = (

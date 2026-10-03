@@ -2096,14 +2096,13 @@ class Taker:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
-        if target_bid is not None and not self._withdraw(run, target_bid, "taking an ask for it within its ceiling"):
+        if target_bid is not None and (why := self._withdrawn_first(run, target_bid)) is not None:
+            self.rec.decisions.settle(did, "failed" if "withdrawn" in why else "expired")  # never reads as sent
             try:
                 self.ledger.release_accept(clock.tick, p.ref)
             except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on
-                self._accepts_stop = (
-                    f"our bid for {p.ref} could not be withdrawn; its slot could not be given back ({e})"
-                )
-            self.log(f"tick {clock.tick} taker: not accepting {p.ref}: our bid {target_bid.id} could not be withdrawn")
+                self._accepts_stop = f"{why}; the accept slot could not be given back ({e})"
+            self.log(f"tick {clock.tick} taker: not accepting {p.ref}: {why}")
             return False
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
         if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
@@ -2334,6 +2333,17 @@ class Taker:
             self.log(f"tick {clock.tick} taker: clock read refused {e.code} before an accept: none sent this tick")
             return False
         return fresh.tick == clock.tick and action_budget_s(fresh) > 0
+
+    def _withdrawn_first(self, run: _TickRun, bid: OpenOffer) -> str | None:
+        """Withdraw a buy target's bid before taking an ask for the card (a holder could take the bid in the same
+        tick: a second copy). Why the accept must not go out, or None: the bid is gone and the tick still open."""
+        if not self._withdraw(run, bid, "taking an ask for it within its ceiling"):
+            return f"our bid {bid.id} could not be withdrawn"
+        if not run.window.open() or not self._fresh_tick(run.snap.clock):  # the cancel took time: never send late
+            run.window = TickWindow(run.snap.clock.tick, 0.0, self.now)
+            self._accepts_stop = "the tick ended before the send"
+            return "the tick ended after our bid was withdrawn (the maker bids again next tick)"
+        return None
 
     def _withdraw(self, run: _TickRun, bid: OpenOffer, why: str = "bought it cheaper") -> bool:
         """A cheaper ask filled the card our bid was waiting for: withdraw the bid, refund its spend. True when

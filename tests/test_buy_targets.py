@@ -343,10 +343,14 @@ def test_our_bid_is_withdrawn_before_the_accept_and_no_withdrawal_means_no_accep
             self.sent.append(("cancel", offer_id))
             raise BazaarError("offer_not_open", "already accepted", 409)
 
-    t2 = Taken(values={EPIC: VALUE}, offers=[bid(4300, EPIC, 161, created=TICK - 2)])
-    tk, lines = taker(tmp_path / "taken", t2, board(ask(1, EPIC, 180, maker="t07")), live=True, **ON)
+    t2 = Taken(values={EPIC: VALUE, "LAV-02": 30.0}, offers=[bid(4300, EPIC, 161, created=TICK - 2)])
+    offers = board(ask(1, EPIC, 180, maker="t07"), ask(2, "LAV-02", 10))
+    tk, lines = taker(tmp_path / "taken", t2, offers, live=True, **ON)
     tk.on_tick(at(t2, TICK))  # a holder took our bid: one copy is coming, never a second
     assert ("accept", 1) not in t2.sent and any("could not be withdrawn" in line for line in lines)
+    assert ("accept", 2) in t2.sent  # the slot was given back: the next candidate took it
+    accept = next(r for r in rows(tmp_path / "taken") if r.get("kind") == "accept_ask" and r["inputs"]["ref"] == EPIC)
+    assert {"id": accept["id"], "status": "failed", "update": True} in rows(tmp_path / "taken")  # never reads as sent
 
 
 def test_without_a_target_the_taker_ignores_an_epic_ask_and_page_cards_are_unchanged(tmp_path, targets):
@@ -436,3 +440,19 @@ def test_the_maker_bid_structure_buys_an_epic_from_a_team_below_our_value_in_the
     m.step()
     assert w.held_counts(us)["LAT-11"] == 1 and w.held_counts(them)["LAT-11"] == 0
     assert w.team(us).cash == cash - price and price < official
+
+
+def test_no_accept_goes_out_late_after_our_bid_was_withdrawn(tmp_path, targets):
+    targets.found = (order(),)
+
+    class Slow(ValuedTeam):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            self.now = clock(tick=TICK + 1)  # the tick rolled over while we withdrew the bid
+            return {"id": offer_id, "status": "cancelled"}
+
+    t = Slow(values={EPIC: VALUE}, offers=[bid(4300, EPIC, 161, created=TICK - 2)])
+    tk, lines = taker(tmp_path, t, board(ask(1, EPIC, 180, maker="t07")), live=True, **ON)
+    tk.on_tick(at(t, TICK))
+    assert ("cancel", 4300) in t.sent and ("accept", 1) not in t.sent
+    assert any("the tick ended after our bid was withdrawn" in line for line in lines)
