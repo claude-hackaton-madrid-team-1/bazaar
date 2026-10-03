@@ -173,8 +173,8 @@ def live_show() -> object:
     plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
     The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
 
-    The voice keys and the show's read-only database URL are set once by hand with `railway variable set ... --stdin` and declared preserve()
-    so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
+    The voice keys and the show's read-only database URL are set once by hand with
+    `railway variable set ... --stdin` and declared preserve() so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
     the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
     the bazaar-live README) must be declared here before it is set. Its public domain is generated once
     with `railway domain --service bazaar-live --port 8080`: Railway IaC does not declare generated domains."""
