@@ -1515,6 +1515,10 @@ def _run_agent(
         store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
         extra["learner"] = LiveLearner(store, log, _feed_interpreter(settings, rules, log) if llm_read else None)
+        from bazaar_agent.learn.threads import ThreadStore
+
+        extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
+        extra["thread_store"].open()  # connect now, never inside a tick
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
