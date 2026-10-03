@@ -6,7 +6,7 @@ Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stac
 
 | Piece | What it does |
 |---|---|
-| `agents/bench_model.py` `TraderModel` | One model per bench trader id. The limit band comes from its quotes: cost ∈ [ask₀/1.30, ask₀/1.05] and never above an ask it has shown; value likewise from the bid. The leave hazard comes from #12's patience prior (normal: 0.125, 0.143, 0.25, 0.33, 0.5, 1 at ages 1–6). If the offer carries an explicit expiry, that tick is used instead. |
+| `agents/bench_model.py` `TraderModel` | One model per bench trader id. The limit band comes from its quotes: cost ∈ [ask₀/1.30, ask₀/1.05] and never above an ask it has shown; value likewise from the bid. The leave hazard comes from #12's patience prior (normal: 0.125, 0.143, 0.25, 0.33, 0.5, 1 at ages 1–6). If the offer carries an explicit expiry, that tick minus one is used instead (the field's meaning is a guess). |
 | `agents/bench_edge.py` `BenchEdge` | Takes the exact max-weight matching (#71's Hungarian) of the crossing pairs, weighted by **estimated true surplus**, and sends it at once (holding does not pay; see below). Optional `cross="limit"` probe: after the crossing pairs, it proposes non-crossing pairs at the price most likely to sit inside both limits. A refusal narrows the bands, by exact inclusion–exclusion. The probe gives up on evidence: no acceptance, at least 8 refusals, and P(all refused \| limits honoured) < 1 %. |
 | `agents/broker.py`, `bazaar broker run` | New options: `--bench-policy exact\|edge` (default exact), `--bench-preset`, `--bench-cross quote\|limit` (default quote), `--bench-reads 1–3` (default 1). Extra reads are spaced over the tick window and never re-propose an offer already proposed that tick. The first read of each run logs the bench offer's keys to `broker_bench_shapes.jsonl`, so the first real Market Test shows its shape. |
 | `evals/bench.py` | In-process tournament: stall, greedy (= `starter_broker.bench_plan`, checked against the kit), exact (#71), edge and edge_limit, plus three bounds: prescient (knows present limits and departures), oracle_quote and oracle_limit. Run with `uv run python -m bazaar_agent.evals.bench`. |
@@ -40,7 +40,7 @@ In every cell the edge's mean efficiency is ≥ the stall's, and its points are 
 | preset | world | stall | edge | edge_limit | prescient | oracle_quote | oracle_limit |
 |---|---|---|---|---|---|---|---|
 | normal / hard | base (spread arrivals, quote) | 0.802 / 0.803 | 0.801 / 0.803 | same | 0.819 / 0.832 | 0.890 / 0.889 | 0.902 |
-| normal / hard | offers carry `expires_tick` | 0.802 / 0.803 | **0.816 / 0.825** | same | 0.819 / 0.832 | | |
+| normal / hard | offers carry `expires_tick` | 0.802 / 0.803 | **0.812 / 0.823** | same | 0.819 / 0.832 | | |
 | normal / hard | stall crosses 1 pair/tick, tick 0 | 0.875 / 0.785 | **1.000 / 1.000** | same | | | |
 | normal / hard | wide shade, limit rule | 0.732 / 0.716 | 0.733 / 0.718 | **0.804 / 0.803** | 0.827 / 0.840 | 0.814 / 0.803 | 0.902 |
 
@@ -49,7 +49,7 @@ Greedy (the starter broker) and exact (#71) equal the stall in every cell of bot
 ## What it means
 
 1. **With the quote rule and staggered arrivals (the default, our best guess), no broker beats the stall by much.** The clairvoyant oracle gets +0.04–0.09. A broker that knew every present limit and departure gets +0.02–0.03. Ours gets +0.00. Under the quote rule, all a broker can choose is *which* crossing pairs to cross, and in thin books there is rarely a choice. Holding pairs for better crosses loses (hold threshold 0.13–0.34: −0.04 to −0.45). So does saving flexible traders (−0.02 to −0.04).
-2. **The edge pays when the book is thick or the quotes are far from the limits.** With the whole book at tick 0 it wins 38–68 % of sessions and loses ≤ 10 %; with 2× shade and firm traders it is +0.13 p50 and wins 56–68 %. If the offers say when they leave, it is +0.014–0.022, close to the prescient bound.
+2. **The edge pays when the book is thick or the quotes are far from the limits.** With the whole book at tick 0 it wins 38–68 % of sessions and loses ≤ 10 %; with 2× shade and firm traders it is +0.13 p50 and wins 56–68 %. If the offers say when they leave, it is +0.010–0.020 (mean +0.012). It crosses one tick before the stated expiry on purpose: +0.014–0.022 if the field's meaning is confirmed and `expiry_margin` is set to 0.
 3. **Under the limit rule, the probe is the big lever:** +0.08–0.25 p50 when the shades are wide, and points 0.61–0.97. If the server checks quotes, the probe costs 8–82 refused requests over 1,000 sessions, then switches itself off.
 4. **The stall's own rule matters as much as ours.** If the free stall crosses one pair per tick (RULES.md: "crosses its best bid and ask every tick"), then any broker, even greedy, is +0.12–0.19.
 
@@ -73,4 +73,4 @@ Greedy (the starter broker) and exact (#71) equal the stall in every cell of bot
 
 1. **The bar:** keep "stall + 0.15" (no-go) or adopt W1a's points bar.
 2. **The morning probe:** one manual non-crossing match, or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue, which means `allow_venue_open` and 540 P with today's `cash_floor`. Neither changes tonight.
-3. **Default after the first real Market Test:** read `broker_bench_shapes.jsonl` (an expiry field would turn on the hold, +0.02). Compare our `/me` `bench_efficiency` with W1a's calibration table, then choose `bench_policy`.
+3. **Default after the first real Market Test:** read `broker_bench_shapes.jsonl` (an expiry field would turn on the hold, +0.01–0.02; check what the field means before setting `expiry_margin` to 0). Compare our `/me` `bench_efficiency` with W1a's calibration table, then choose `bench_policy`.
