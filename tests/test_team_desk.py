@@ -305,3 +305,60 @@ def test_the_cli_needs_a_plan_and_takes_its_swaps(tmp_path, monkeypatch):
     )
     out = CliRunner().invoke(cli.app, ["agent", "team", "--plan", str(tmp_path / "plan.json")])
     assert out.exit_code == 0 and seen == {"name": "team", "live": False}
+
+
+# ---------------------------------------------------------------- whole negotiations against scripted teams
+
+
+class Counterparty(Team):
+    """A scripted other team: each tick it reads our newest offer and answers with a standing offer."""
+
+    def __init__(self, style, **kw):
+        super().__init__(**kw)
+        self.style, self.next_id, self.accepted = style, 500, None
+
+    def say(self, tid, text="", price=None, offer=None, topic=None):
+        super().say(tid, text, price, offer, topic)
+        ours = td.their_terms({"give": offer["want"], "want": offer["give"]})  # our offer, seen from their side
+        cash = (offer.get("give") or {}).get("cash", 0)
+        if self.style == "haggler" and cash >= 4:  # takes our offer once we add 4 P
+            self.accepted = "ours"
+        self.next_id += 1
+        give = {"assets": [{"id": 801, "ref": "LAV-08"}]}
+        want: dict = {"assets": list(ours.get_assets) or [3]}
+        text_out = "deal?"
+        if self.style == "haggler":
+            want["cash"] = max(0, 10 - 2 * (self.next_id - 501))  # asks for cash, conceding 2 P a round
+        elif self.style == "bait":
+            text_out = "LAV-08 and LAV-09 together, plus 30 P!"  # the structure gives only LAV-08
+            want["cash"] = 1
+        elif self.style == "stonewall":
+            want["cash"] = 60  # never moves
+        offer_out = {"id": self.next_id, "maker": "t05", "status": "open", "give": give, "want": want}
+        status = "deal" if self.accepted else "open"
+        self.thread_payloads[tid] = thread(offer_out, text_out, status)
+        return {"id": 900}
+
+    def accept(self, offer_id, assets=None):
+        super().accept(offer_id, assets)
+        self.accepted = "theirs"
+        payload = self.thread_payloads[11]
+        self.thread_payloads[11] = {**payload, "status": "deal"}
+        return {"ok": True}
+
+
+@pytest.mark.parametrize(
+    ("style", "outcome", "accepts"),
+    [("haggler", "deal", 0), ("bait", "walked", 0), ("stonewall", "walked", 0)],
+)
+def test_whole_negotiations_end_inside_our_limits(tmp_path, style, outcome, accepts):
+    team = Counterparty(style)
+    d, lines = desk(tmp_path, team)
+    for tick in range(100, 115):
+        d.on_tick(clock(tick=tick))
+    assert d.done and d.done[0][1] == outcome
+    sent_offers = [s[2] for s in team.sent if s[0] == "say"]
+    assert all(o["give"].get("cash", 0) <= 10 for o in sent_offers)  # never past our limit
+    assert len([s for s in team.sent if s[0] == "accept"]) == accepts
+    if style == "bait":
+        assert any("bait" in x for x in lines)

@@ -259,6 +259,9 @@ def decide(
     plan = neg.plan
     if neg.thread_id is None:
         return TeamMove("open", plan.opening, reason="open the thread with our proposal")
+    nxt = concede(neg.current, plan.step) if neg.ours else neg.current
+    nxt_ok = surplus_if_offered(nxt).surplus >= plan.floor and guard(nxt, None) is None
+    last_round = len(neg.ours) >= plan.max_rounds or not nxt_ok
     if their is not None and isinstance(their.get("id"), int) and inspection is not None:
         terms = their_terms(their)
         value = surplus_if_accepted(terms)
@@ -270,17 +273,20 @@ def decide(
             why = f"their offer {their['id']} gives us {value.surplus:+.1f} (< floor {plan.floor:g})"
         elif (refused := guard(terms, their)) is not None:
             why = f"their offer {their['id']}: guardrails refuse ({refused})"
+        elif not last_round and value.surplus < surplus_if_offered(nxt).surplus:
+            # Our next counter is better for us than their offer: keep negotiating (it still clears the
+            # floor); we take theirs once it is at least as good, or when we have no move left.
+            why = f"their offer {their['id']} gives us {value.surplus:+.1f}, our next counter more"
         else:
             return TeamMove("accept", terms, int(their["id"]), f"their offer gives us {value.surplus:+.1f}")
     else:
         why = "no standing offer from them"
     if len(neg.ours) >= plan.max_rounds:
         return TeamMove("walk", reason=f"{plan.max_rounds} offers without a deal; {why}")
-    nxt = concede(neg.current, plan.step) if neg.ours else neg.current
-    if nxt == neg.current and neg.ours:
-        return TeamMove("wait", reason=f"our offer stands; {why}")
-    if surplus_if_offered(nxt).surplus < plan.floor or guard(nxt, None) is not None:
+    if not nxt_ok:
         return TeamMove("wait", reason=f"at our limit, our last offer stands; {why}")
+    if neg.ours and nxt == neg.current:
+        return TeamMove("wait", reason=f"our offer stands; {why}")
     return TeamMove("counter", nxt, reason=why)
 
 
