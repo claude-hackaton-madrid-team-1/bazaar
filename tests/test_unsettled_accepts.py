@@ -5,11 +5,12 @@ An accept settles on the next tick; a read can land before that. The shared ledg
 in `tests/bites/test_taker_unsettled_duplicate.py`.
 """
 
+import psycopg
 import pytest
 
 from bazaar_agent.agents.seller import unsettled_accepts
 from bazaar_agent.guardrails import Ledger
-from bazaar_agent.ledger_pg import PgLedger
+from bazaar_agent.ledger_pg import FallbackLedger, LedgerUnavailable, PgLedger
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, clock
 from tests.test_db import database_url, open_in, schema  # noqa: F401  (pytest fixtures)
 from tests.test_maker import maker
@@ -135,13 +136,52 @@ def test_the_maker_does_not_bid_for_a_card_the_taker_accepted_last_tick(tmp_path
     assert any("we already hold LAV-09" in line for line in lines)
 
 
+class Rows:
+    """A psycopg connection stand-in: `rows` answer every select; `fail` makes the next select raise."""
+
+    def __init__(self, rows, fail=None):
+        self.autocommit, self.closed, self.broken, self.rows, self.fail = False, False, False, rows, fail
+
+    def execute(self, sql, args=()):
+        if sql.startswith("select item") and self.fail is not None:
+            error, self.fail = self.fail, None
+            raise error
+        return self
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        self.closed = True
+
+
+def refused():
+    raise psycopg.OperationalError("connection refused")
+
+
+def test_accept_rows_run_on_the_reconnecting_postgres_connection():
+    opened = [Rows([], psycopg.OperationalError("server closed the connection")), Rows([("LAV-08", 22)])]
+    ledger = PgLedger(lambda: opened.pop(0), "taker")
+    with pytest.raises(LedgerUnavailable):  # the drop fails closed: the taker sends nothing this tick
+        unsettled_accepts({"cash": 400, "assets": []}, ledger, 100)
+    assert ledger.accept_rows(99) == [("LAV-08", 22)]  # the next call reconnects
+
+
+def test_accept_rows_while_postgres_is_down_fail_closed_live_and_read_the_file_in_a_dry_run(tmp_path):
+    with pytest.raises(LedgerUnavailable):
+        PgLedger(refused, "taker").accept_rows(99)
+    ledger = FallbackLedger(PgLedger(refused, "taker"), Ledger(tmp_path / "ledger.jsonl"))
+    ledger.reserve_accept(99, 1.45, 22, "LAV-08", 1)
+    assert ledger.accept_rows(99) == [("LAV-08", 22)]
+
+
 @pytest.mark.integration
 def test_accept_rows_read_postgres(database_url, schema):  # noqa: F811
     from bazaar_agent import db
 
     conn = open_in(database_url, schema)
     db.init_schema(conn)
-    ledger = PgLedger(conn, "taker")
+    ledger = PgLedger(lambda: conn, "taker")
     ledger.reserve_accept(99, 1.45, 22, "LAV-08", 1)
     ledger.reserve_accept(98, 1.4, 0, "duel:3", 1)
     assert ledger.accept_rows(99) == [("LAV-08", 22)]

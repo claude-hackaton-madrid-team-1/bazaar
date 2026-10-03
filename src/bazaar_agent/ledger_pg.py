@@ -149,12 +149,12 @@ class PgLedger:
         return [str(item or "") for (item,) in rows]
 
     def accept_rows(self, tick: int) -> list[tuple[str, int]]:
-        try:
-            rows = self._conn.execute(
+        rows = self._run(
+            "read",
+            lambda conn: conn.execute(
                 "select item, price from ledger where kind = 'accept' and tick = %s order by id", (tick,)
-            ).fetchall()
-        except psycopg.Error as e:
-            raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
+            ).fetchall(),
+        )
         return [(str(item or ""), int(price or 0)) for item, price in rows]
 
     def count_in_tick(self, kind: str, tick: int) -> int:
@@ -244,6 +244,9 @@ class FallbackLedger:
 
     def accept_items(self, tick: int) -> list[str]:
         return self._use(lambda ledger: ledger.accept_items(tick))
+
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        return self._use(lambda ledger: ledger.accept_rows(tick))
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
