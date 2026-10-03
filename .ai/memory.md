@@ -353,3 +353,8 @@ transaction start: freshness uses `clock_timestamp()`, or a reader that waited o
 `BAZAAR_SIM=local` hardcodes 8765, and a teammate's `bazaar-sim serve` may hold it. Never kill it: for a
 private run, patch `bazaar_agent.config.LOCAL_SIM_URL` in a wrapper (`config.LOCAL_SIM_URL = ...` before
 importing `bazaar_agent.cli`) and serve the sim elsewhere. `scripts/sim_smoke.py` refuses a busy 8765.
+
+### [2026-10-03] gotcha — parallel worktrees running `scripts/sim_smoke.py` collide on 127.0.0.1:8765
+Two smokes started together both see 8765 free; one sim fails to bind and that smoke's CLI steps talk to the
+OTHER worktree's simulator with the same `sim-team1` key (seen: `thread_exists: one open conversation per
+dealer` in the dealer-buy step). Not a code failure: rerun when `lsof -iTCP:8765 -sTCP:LISTEN` is empty.
