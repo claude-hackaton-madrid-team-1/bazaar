@@ -1321,6 +1321,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#172](../../pull/172) | docs: the game screens live in bazaar-live now | `docs/web-view-in-bazaar-live` |
 | [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
 | [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
@@ -1340,6 +1341,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
 | [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
-| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
