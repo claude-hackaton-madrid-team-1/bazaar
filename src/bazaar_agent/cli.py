@@ -2620,7 +2620,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
     """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
     from bazaar_agent import db
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.venue_keeper import VenueKeeper
+    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_GAME_HOURS, VenueKeeper
 
     return VenueKeeper(
         team,
@@ -2633,6 +2633,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
+        announce_every_game_hours=ANNOUNCE_EVERY_GAME_HOURS,
     )
 
 
