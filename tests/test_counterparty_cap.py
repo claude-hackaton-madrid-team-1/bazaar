@@ -425,7 +425,7 @@ def test_a_dealer_accept_holds_the_tick_when_the_shared_ledger_cannot_answer():
             return False
 
     move = SimpleNamespace(price=20)
-    assert cli._reserve_accept(Down(), Guardrails(), "LAV-08", move, clock()) is False  # hold, never a traceback
+    assert cli._reserve_accept(Down(), Guardrails(), "LAV-08", move, clock()) is None  # hold, never a traceback
     assert cli._reserve_accept(Full(), Guardrails(), "LAV-08", move, clock()) is False
     from bazaar_agent.guardrails import Ledger
 

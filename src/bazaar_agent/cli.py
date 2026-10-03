@@ -523,7 +523,7 @@ def dealer_buy(
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
-    def reserve(move: Any, c: Clock) -> bool:
+    def reserve(move: Any, c: Clock) -> bool | None:
         return _reserve_accept(ledger, rules, item, move, c)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
@@ -1391,9 +1391,10 @@ def _team_to(to: str | None) -> str | None:
     return to
 
 
-def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> bool:
-    """Claim the team's accept slot for a dealer accept. False holds this tick (the dealer thread stays open
-    and tries again): the slot is taken, or the shared ledger cannot answer (fail closed, never a walk)."""
+def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> bool | None:
+    """Claim the team's accept slot for a dealer accept. False: the slot is taken this tick (the dealer bids
+    her ask instead). None: the shared ledger cannot answer, so the dealer holds the tick and sends nothing
+    (fail closed: never a bid whose spend the ledger could not book, never a walk)."""
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
@@ -1402,7 +1403,7 @@ def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> 
             return False
     except LedgerUnavailable as e:
         console.print(f"[yellow]tick {c.tick}: no accept this tick (fail closed): {e}[/yellow]")
-        return False
+        return None
     tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
     return True
 
