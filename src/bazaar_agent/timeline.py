@@ -62,7 +62,7 @@ class Event:
 
     @property
     def name(self) -> str:
-        return str(self.params.get("name") or self.note.split(":")[0] or self.action)
+        return str(self.params.get("name") or self.note.split(": ")[0] or self.action)
 
 
 @dataclass(frozen=True)
@@ -283,3 +283,19 @@ def render(rows: Sequence[Row], found: Sequence[Anchor]) -> list[str]:
                 cols += f"{_hhmm(s.start):<22}"
         lines.append(f"{r.event.at_hours:6.2f}  {r.event.action:<13} {cols}{r.event.note}")
     return lines
+
+
+def with_plays(doc: Mapping[str, Any], plays: Mapping[str, Any]) -> dict[str, Any]:
+    """Attach the playbook's steps: each event gets the first play whose `match` keys all equal its own.
+
+    `plays` = {"events": [{"match": {"action": "bench", "at_hours": 16.0}, ...}], ...}; every other
+    top-level key (standing plays, gates) is copied as is.
+    """
+    out = {**doc, **{k: v for k, v in plays.items() if k != "events"}}
+    rules = list(plays.get("events") or [])
+    events = []
+    for e in doc.get("events") or []:
+        hit = next((p for p in rules if all(e.get(k) == v for k, v in (p.get("match") or {}).items())), None)
+        events.append({**e, "play": {k: v for k, v in hit.items() if k != "match"}} if hit else dict(e))
+    out["events"] = events
+    return out

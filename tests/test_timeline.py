@@ -142,3 +142,38 @@ def test_cli_prints_both_columns_and_json():
     assert [a["name"] for a in data["anchors"]] == ["resume", "jump"]
     duels_2 = next(e for e in data["events"] if e["name"] == "Duels II")
     assert duels_2["slots"]["resume"]["start"] == "2026-10-03T19:21:00+02:00"
+
+
+def test_plays_attach_by_match_and_keep_the_rest():
+    doc = {
+        "anchors": [],
+        "events": [
+            {"action": "bench", "at_hours": 16.0, "name": "The hard Market Test"},
+            {"action": "bench", "at_hours": 5.0, "name": "The Market Test"},
+            {"action": "grant_all", "at_hours": 4.05, "name": "El Retiro has arrived"},
+        ],
+    }
+    plays = {
+        "gates": [{"id": "G1"}],
+        "events": [
+            {"match": {"action": "bench", "at_hours": 16.0}, "do": "hard preset"},
+            {"match": {"action": "bench"}, "do": "normal preset"},
+        ],
+    }
+    out = tl.with_plays(doc, plays)
+    assert out["gates"] == [{"id": "G1"}]
+    assert [e.get("play") for e in out["events"]] == [{"do": "hard preset"}, {"do": "normal preset"}, None]
+
+
+def test_the_committed_schedule_is_the_generated_one():
+    """docs/night/saturday-schedule.json = the CLI on the fixtures + the plays file (regenerate on change)."""
+    args = ["timeline", "--frozen-at", "2.65", "--at", "2026-10-03T08:55:00+02:00"]
+    args += ["--plays", "docs/night/saturday-plays.json", "--json"]
+    out = CliRunner().invoke(app, args)
+    assert out.exit_code == 0, out.output
+    committed = json.loads(open("docs/night/saturday-schedule.json", encoding="utf-8").read())
+    assert json.loads(out.stdout) == committed
+    saturday = [
+        e for e in committed["events"] if e["action"] in ("bench", "duels", "grant_all", "round") and e["at_hours"] < 18
+    ]
+    assert all("play" in e for e in saturday)

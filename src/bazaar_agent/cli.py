@@ -128,6 +128,7 @@ def timeline_cmd(
     frozen_at: float | None = typer.Option(None, "--frozen-at", help="Treat the clock as closed at this game hour"),
     at: str | None = typer.Option(None, "--at", help="The wall time to plan from (ISO 8601; default: now)"),
     teams: int = typer.Option(18, "--teams", help="Teams in the duel round-robin"),
+    plays: str | None = typer.Option(None, "--plays", help="A plays JSON to attach (docs/night/saturday-plays.json)"),
     as_json: bool = typer.Option(False, "--json", help="Print the timeline as JSON"),
 ) -> None:
     """Every scheduled event in game hours and Madrid time: `resume` and `jump` columns while closed, `live` open.
@@ -154,7 +155,10 @@ def timeline_cmd(
     found = tl.anchors(clock_doc, events, now)
     rows = tl.timeline(events, days, found, teams)
     if as_json:
-        typer.echo(json.dumps(tl.as_dict(rows, found, source), indent=2, ensure_ascii=False))
+        doc = tl.as_dict(rows, found, source)
+        if plays:
+            doc = tl.with_plays(doc, json.loads(Path(plays).read_text(encoding="utf-8")))
+        typer.echo(json.dumps(doc, indent=2, ensure_ascii=False))
         return
     anchored = ", ".join(f"{a.name}: h{a.t_hours:g} = {a.wall:%a %H:%M}" for a in found)
     typer.echo(f"{source} · {anchored}")
