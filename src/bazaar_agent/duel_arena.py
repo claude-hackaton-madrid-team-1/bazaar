@@ -32,6 +32,9 @@ from bazaar_agent.agents.duelist import DuelMove, duel_action, duel_id, duel_mov
 
 STYLES = ("linear", "convex", "oneshot", "titfortat", "noshow", "simbot")
 ROBUSTNESS = ("late", "stubborn")  # reported apart, outside the go/no-go: v2's worst cases
+EXPLOITERS = ("oracle_squeezer", "curve_inferrer")  # B11 (names as W2a's PR #97 where they match)
+SQUEEZE = {3: 0.0, 2: 0.05, 1: 0.15}  # ticks left -> the exploiter's margin for us, as a share of its pie estimate
+OUR_FORMULA = (0.6, 0.05)  # the anchor and floor an inferrer assumes we use (today's GUARDRAILS.md defaults)
 ALIASES = ("Rival Azul", "Rival Verde", "Rival Oro", "Rival Rojo", "Rival Noche", "Rival Plata")
 RIVAL_ENDGAME = 2  # the simulator's bot takes any deal inside its limit in the last 2 ticks
 
@@ -56,6 +59,7 @@ class Scenario:
     rival_floor: float = 0.1  # how close to its limit it goes (fraction of its limit)
     rival_step: float = 0.35  # oneshot: share of its remaining gap it gives per answer; titfortat: mirror ratio
     rival_every: int = 1  # time-based rivals reprice every N ticks
+    greedy: bool = False  # exploiters: never take our offer at their last move (else they take any deal inside)
 
     @property
     def pie(self) -> int:
@@ -82,6 +86,7 @@ def draw(rng: random.Random, style: str, role: str, decay: float, ticks: int, tw
         rival_floor=rng.uniform(0.03, 0.25),
         rival_step=rng.uniform(0.2, 0.6) if style == "oneshot" else rng.uniform(0.6, 1.2),
         rival_every=rng.choice((1, 1, 2)),
+        greedy=style in EXPLOITERS and rng.random() < 0.5,
     )
 
 
@@ -96,6 +101,7 @@ class Rival:
         self.floor = round(rl * (1 - s.rival_floor)) if self.buyer else round(rl * (1 + s.rival_floor))
         self.days = 0 if not s.two_issue else (10 if (s.rival_weight or 0) > 0 else 0)
         self.price: int | None = None  # its standing offer
+        self.messages: list[dict[str, Any]] = []  # the duel's messages (exploiters read our offers)
         self.answered_ours = 0  # how many of our offers it has answered
 
     def utility(self, price: int, days: int) -> float:
@@ -133,6 +139,8 @@ class Rival:
         """('accept', None) | ('offer', price) | ('none', None). `ours` = our standing (price, days)."""
         s = self.s
         left = self.start + s.ticks - tick
+        if s.style in EXPLOITERS:
+            return self._squeeze(tick, left, ours, ours_new)
         target = self.target(tick)
         if ours is not None and ours_new:
             mine = self.utility(*ours)
@@ -159,6 +167,56 @@ class Rival:
             return "none", None
         if target is not None and (target != self.price or s.style == "stubborn"):
             return "offer", target
+        return "none", None
+
+    # ---------------------------------------------------------------- exploiters (B11)
+
+    def estimate(self, tick: int) -> int | None:
+        """Our limit as the exploiter sees it. `oracle_squeezer`: exactly (a mirror-duel learner: our limit here was
+        its own in the role-swapped duel). `curve_inferrer`: our latest priced offer, inverted through today's
+        concession curve."""
+        if self.s.style == "oracle_squeezer":
+            return self.s.limit
+        ours = [m for m in self.messages if m.get("from") == "you" and m.get("price") is not None]
+        if not ours:
+            return None
+        anchor, floor = OUR_FORMULA
+        progress = min(1.0, max(0.0, (ours[-1]["tick"] - self.start) / max(1, self.s.ticks)))
+        reach = anchor - (anchor - floor) * progress
+        price = float(ours[-1]["price"])
+        return round(price / (1 + reach) if self.s.role == "seller" else price / (1 - reach))
+
+    def _squeeze(self, tick: int, left: int, ours: tuple[int, int] | None, ours_new: bool) -> tuple[str, Any]:
+        """Hold its opening price; from 3 ticks before the deadline offer our estimated limit plus a sliver (1 P, then
+        5 %, then 15 % of its pie estimate) and take our offer only when it is at least as good for it. At its last
+        move a rational exploiter takes any offer of ours inside its limit; a greedy one keeps squeezing."""
+        est = self.estimate(tick)
+        if self.price is None:  # it opens just outside our zone when it knows where that is, and holds there
+            if est is None:
+                return "offer", self.open
+            gap = max(1, round(0.25 * abs(self.s.rival_limit - est)))
+            return "offer", est - gap if self.buyer else est + gap
+        planned = None
+        if est is not None and left in SQUEEZE:
+            pie = abs(self.s.rival_limit - est)
+            margin = max(1, round(SQUEEZE[left] * pie))
+            price = est + margin if self.buyer else est - margin
+            inside_its = price < self.s.rival_limit if self.buyer else price > self.s.rival_limit
+            planned = price if inside_its else None
+        if ours is not None and ours_new and self.utility(*ours) > 0:
+            if planned is not None and self.utility(*ours) >= self.utility(planned, self.days):
+                return "accept", None
+            if left <= 1 and not self.s.greedy:
+                return "accept", None
+            if est is None and left <= RIVAL_ENDGAME and self.utility(*ours) >= self.utility(self.floor, self.days):
+                return "accept", None  # it learned nothing: it behaves like an honest rival at the end
+        if planned is not None:
+            return "offer", planned
+        if est is not None and (self.price > est if self.buyer else self.price < est):  # learned it: back outside
+            gap = max(1, round(0.25 * abs(self.s.rival_limit - est)))
+            return "offer", est - gap if self.buyer else est + gap
+        if est is None and left <= 3 and self.price != self.floor:
+            return "offer", self.floor
         return "none", None
 
 
@@ -239,6 +297,8 @@ class Outcome:
     gain_worst: float  # days at |weight| against us
     pie: int
     denied: int  # moves the guardrail refused (should be 0: the policy stays inside the limit)
+    limit: int = 0
+    ours: tuple[tuple[int, int], ...] = ()  # our priced messages: (ticks since the start, price)
 
     @property
     def kept(self) -> float:
@@ -279,6 +339,8 @@ def run_session(
         Live(first_id + i, s, Rival(s, start), ALIASES[i % len(ALIASES)], start, start + s.ticks)
         for i, s in enumerate(scenarios)
     ]
+    for d in duels:
+        d.rival.messages = d.messages  # exploiters read our offers
     denied = {d.did: 0 for d in duels}
     first_seen = {d.did: start for d in duels}
     end = max(d.deadline for d in duels)
@@ -348,7 +410,20 @@ def run_session(
         s = d.s
         out.append(
             Outcome(
-                d.did, s.style, s.role, s.decay, s.ticks, s.two_issue, d.status, d.rounds, gs, gw, s.pie, denied[d.did]
+                d.did,
+                s.style,
+                s.role,
+                s.decay,
+                s.ticks,
+                s.two_issue,
+                d.status,
+                d.rounds,
+                gs,
+                gw,
+                s.pie,
+                denied[d.did],
+                s.limit,
+                tuple((m["tick"] - d.start, m["price"]) for m in d.messages if m["from"] == OUR_SENDER and m["price"]),
             )
         )
     return out
@@ -451,6 +526,28 @@ def summarize(outcomes: list[Outcome], worst: bool = False) -> Summary:
         sum(o.outside for o in outcomes),
         sum(o.denied for o in outcomes),
     )
+
+
+def leakage(outcomes: list[Outcome]) -> dict[str, float]:
+    """What our offers tell a rival about our limit (B11), over the duels where we priced at all:
+    `inverted` = our latest offer through today's curve (an inferrer that knows our code family), `floor` = our
+    latest offer read as limit ± 5 % (one that only watches where we stop). Mean |error| as a share of our limit,
+    and the share of duels it gets within 2 %."""
+    priced = [o for o in outcomes if o.ours and o.limit]
+    out: dict[str, float] = {"duels": len(outcomes), "priced": len(priced) / (len(outcomes) or 1)}
+    if not priced:
+        return out
+    anchor, floor = OUR_FORMULA
+    for name in ("inverted", "floor"):
+        errors = []
+        for o in priced:
+            t, price = o.ours[-1]
+            reach = anchor - (anchor - floor) * min(1.0, t / max(1, o.ticks)) if name == "inverted" else floor
+            est = price / (1 + reach) if o.role == "seller" else price / (1 - reach)
+            errors.append(abs(est - o.limit) / o.limit)
+        out[f"{name}_error"] = sum(errors) / len(errors)
+        out[f"{name}_within_2pct"] = sum(e <= 0.02 for e in errors) / len(errors)
+    return out
 
 
 # ---------------------------------------------------------------- replay on the real practice payloads
@@ -584,3 +681,40 @@ class _ReplayDuel:
 def load_practice(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     return [d for d in data.get("duels", data) if isinstance(d, dict)]
+
+
+# ---------------------------------------------------------------- B11 presets, one duel at a time (W2a's harness)
+
+
+def single(params: V2Params) -> Callable[[dict[str, Any], int, int], DuelMove]:
+    """v2 with `params` for ONE duel, with `duelist.duel_move`'s signature (a one-duel harness such as W2a's zoo)."""
+
+    def move(duel: dict[str, Any], tick: int, started_tick: int) -> DuelMove:
+        did = duel_id(duel)
+        if did is None:
+            return DuelMove("hold", reason="duel without an id")
+        return plan_moves([duel], tick, {did: started_tick}, params)[did]
+
+    return move
+
+
+B11_PRESETS = {
+    "today": V2Params(),
+    "eg1": V2Params(endgame_ticks=1),
+    "eg1_share02": V2Params(endgame_ticks=1, min_share=0.2),
+    "eg1_share03": V2Params(endgame_ticks=1, min_share=0.3),
+    "eg1_share05": V2Params(endgame_ticks=1, min_share=0.5),
+    "jitter025": V2Params(jitter=0.25, jitter_seed=17),
+    "eg1_share03_jitter025": V2Params(endgame_ticks=1, min_share=0.3, jitter=0.25, jitter_seed=17),
+    "eg1_share05_jitter025": V2Params(endgame_ticks=1, min_share=0.5, jitter=0.25, jitter_seed=17),
+    "eg0_share03_jitter025": V2Params(endgame_ticks=0, min_share=0.3, jitter=0.25, jitter_seed=17),
+}
+b11_today = single(B11_PRESETS["today"])
+b11_eg1 = single(B11_PRESETS["eg1"])
+b11_eg1_share02 = single(B11_PRESETS["eg1_share02"])
+b11_eg1_share03 = single(B11_PRESETS["eg1_share03"])
+b11_eg1_share05 = single(B11_PRESETS["eg1_share05"])
+b11_jitter025 = single(B11_PRESETS["jitter025"])
+b11_eg1_share03_jitter025 = single(B11_PRESETS["eg1_share03_jitter025"])
+b11_eg1_share05_jitter025 = single(B11_PRESETS["eg1_share05_jitter025"])
+b11_eg0_share03_jitter025 = single(B11_PRESETS["eg0_share03_jitter025"])
