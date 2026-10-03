@@ -1121,5 +1121,7 @@ strictness 0.1) keep talking after theirs → fix: `agents/trickster.py` marks t
 `trickster`): its FINAL is a plain ask, no ask at or above its list price is taken, only one
 ≤ lowest fill + `trickster_accept_fill_share` × fill range (none seen: we only bid), and our bids stay below its list
 price and below any ask we may not take. Same plan in the taker (opens, restart adoption, Jev) and `dealer buy`.
+The range is read from OTHER teams' fills of that rarity in that set only, and needs 3 of them (#228 security P2: one
+fill of ours at 63 made 63 acceptable; pooled sets made every LAV ask below list acceptable): fewer, and we only bid.
 Abuela publishes strictness 0.1 too (and chattiness 0.75), so a strictness bar would make her real final a fake one:
 `trickster_max_strictness` ships at 0 and the published kind alone decides.

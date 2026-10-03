@@ -49,8 +49,8 @@ def fill(eid: int, ref: str, price: int, buyer: str = "t01", dealer: str = "pica
 
 
 # Our two real Pícaros rare deals before tick 863 (coordinator log): LAV-09 at 58 (tick 775), MAL-10 at 59 (tick 790).
-REAL = [fill(1, "LAV-09", 58), fill(2, "MAL-10", 59)]
-WIDE = [fill(1, "LAV-09", 52, "t07"), fill(2, "MAL-10", 57, "t03"), fill(3, "SAL-09", 62, "t12")]  # low third ≤ 55
+REAL = [fill(1, "LAV-09", 58, "t07"), fill(2, "LAV-10", 59, "t03"), fill(3, "LAV-09", 59, "t12")]  # cap 58
+WIDE = [fill(1, "LAV-09", 52, "t07"), fill(2, "LAV-10", 57, "t03"), fill(3, "LAV-09", 62, "t12")]  # low third ≤ 55
 
 
 def persona(**over: Any) -> Persona:
@@ -134,7 +134,8 @@ def test_an_ask_in_the_low_third_of_its_fills_is_taken_final_or_not():
 
 
 def test_fills_at_or_above_its_list_price_never_make_its_list_price_acceptable():
-    plan = plan_for([fill(1, "LAV-09", 63, "t07"), fill(2, "MAL-10", 66, "t03")])  # teams paid its list, and more
+    paid = [fill(1, "LAV-09", 63, "t07"), fill(2, "LAV-10", 66, "t03"), fill(3, "LAV-09", 64, "t12")]
+    plan = plan_for(paid)  # teams paid its list, and more
     assert (plan.accept_max, plan.list_price) == (64, 63)
     assert decide(facing(plan, bids=(60, 61, 62)), 63, 9, False).kind == "walk"  # 63 ≤ 64, but it is its list price
     assert not plan.accepts(63) and not plan.accepts(64) and not plan.takes_final(63, 9)
@@ -157,10 +158,12 @@ def test_only_its_own_sales_in_the_same_price_class_are_fills():
         fill(2, "MAL-09", 50, dealer="chato"),  # another dealer
         settle(3, 3, "t07", "picaros", "SAL-09", 30, tick=703, kind="card", persona="picaros"),  # it bought
         fill(4, "SAL-10", 60, buyer="pilar"),  # not a team's price
-        fill(5, "LAT-10", 61),
+        fill(5, "LAV-09", 61),
+        fill(6, "LAT-10", 40),  # a rare of another set: another range
     ]
     assert class_fills(intel.tape(events), "picaros", "LAV-10") == [61]
-    assert accept_cap([], 1 / 3) is None and accept_cap([58, 59], 1 / 3) == 58 and accept_cap([52, 61], 1 / 3) == 55
+    assert accept_cap([], 1 / 3) is None and accept_cap([58, 59], 1 / 3) is None  # fewer than 3 fills: only bid
+    assert accept_cap([58, 59, 59], 1 / 3) == 58 and accept_cap([52, 61, 61], 1 / 3) == 55
 
 
 # ---------------------------------------------------------------- who forgives
@@ -453,3 +456,25 @@ def test_our_own_buys_and_a_single_fill_never_set_what_we_accept():
 def test_a_walk_from_a_trickster_rests_the_item():
     sent, last = bids_against(facing(plan_for(REAL)), 63, final=True)
     assert last.kind == "walk" and last.rest and not last.reopen
+
+
+def test_abuela_and_chato_keep_their_binding_finals_with_the_shipped_rules():
+    """Only the published kind `trickster` makes a FINAL a plain ask: Abuela publishes strictness 0.1 and walks after
+    her final, so her final (and Chato's) above our next bid is still taken inside our limit, as before."""
+    fixture = Path(__file__).parent / "fixtures" / "api" / "get_api_dealers.anon.json"
+    abuela = parse_personas(json.loads(fixture.read_text(encoding="utf-8"))["body"]["personas"])["abuela"]
+    # Chato as /api/dealers published him on Sat 3 Oct (~18:10): kind dealer, strictness 0.85
+    chato = persona(id="chato", name="El Chato", kind="dealer", level=2, traits={"strictness": 0.85, "memory": 0.9})
+    shipped = load_guardrails().rules
+    for p in (abuela, chato):
+        assert not is_forgiving(p, shipped)
+        plan = BidPlan(54, 1, 67)
+        assert forgiving_plan(plan, p, "LAV-10", "rare", intel.tape(REAL), shipped) == plan  # unchanged
+        n = facing(plan, bids=(54, 55, 56))  # our next bid 57; their FINAL 63 sits above it, inside our 67
+        assert decide(n, 63, 9, True) == Move("accept", 63, 9, "final within limit")
+
+
+def test_a_rare_of_another_set_never_widens_the_range():
+    pooled = [fill(1, "LAV-09", 55, "t07"), fill(2, "RET-09", 135, "t03"), fill(3, "RET-10", 130, "t12")]
+    assert class_fills(intel.tape(pooled), "picaros", "LAV-10") == [55]
+    assert plan_for(pooled).accept_max is None  # one LAV fill: we only bid

@@ -7,7 +7,7 @@ from bazaar_agent.agents.team_desk import _Plan
 from bazaar_agent.guardrails import Guardrails, load_guardrails, team_ids
 from tests.test_team_desk import TICK, Team, desk, their_offer, thread, trade, view
 
-RIVALS = "t05,t10,t12,t13,t14,t17,t18"
+RIVALS = "t03,t05,t06,t10,t12,t13,t14,t17,t18"
 
 
 def test_the_shipped_guardrails_block_the_podium_and_our_neighbours():

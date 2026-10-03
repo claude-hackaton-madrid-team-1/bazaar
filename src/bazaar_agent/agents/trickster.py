@@ -53,19 +53,26 @@ def list_price_for(persona: Persona, item: str, rarity: str | None = None) -> in
     return min(prices) if prices else None
 
 
-MIN_FILLS = 2  # one fill says nothing about its range (one at its list made the cap its list): we only bid
+MIN_FILLS = 3  # fewer fills say little about its range (one at its list made the cap its list): we only bid
 
 
 def class_fills(prints: Iterable[intel.Print], dealer: str, item: str, us: str | None = None) -> list[int]:
-    """What OTHER teams paid this dealer for one item of `item`'s price class (`strategy.dealer_fills`, by class):
-    our own buys are left out, so a deal we regret (LAV-10 at its list price) never widens the range we accept."""
-    cls = price_class(item)
+    """What OTHER teams paid this dealer for one item of `item`'s price class in `item`'s set (`strategy.dealer_fills`,
+    by class): another set's fills are another range (LAV rares at 55 and RET rares at 135 pooled made every LAV ask
+    below its list acceptable), and our own buys are left out, so a deal we regret (LAV-10 at its list price) never
+    widens the range we accept. A pack has no set: its own fills only."""
+    cls, set_code = price_class(item), intel.set_of(item)
     if cls is None:
         return []
     sold = (
         p
         for p in prints
-        if p.persona == dealer and p.seller == dealer and is_team(p.buyer) and p.items == 1 and p.buyer != us
+        if p.persona == dealer
+        and p.seller == dealer
+        and is_team(p.buyer)
+        and p.items == 1
+        and p.buyer != us
+        and intel.set_of(p.ref) == set_code
     )
     return [p.price for p in sold if p.price > 0 and price_class(p.ref) == cls]
 
