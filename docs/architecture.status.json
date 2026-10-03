@@ -254,8 +254,12 @@
           "mark": "✓"
         },
         {
-          "text": "LLM pass: PR 2 (#111)",
-          "note": true
+          "text": "LLM pass (background, never blocks)",
+          "mark": "✓"
+        },
+        {
+          "text": "maker reads fee notices",
+          "mark": "✓"
         },
         {
           "text": "learner N3 approved (#96), 09:30 window",

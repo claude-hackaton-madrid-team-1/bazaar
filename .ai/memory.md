@@ -361,3 +361,10 @@ never in a tick loop.
 ### [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 `insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
 window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
+
+### [2026-10-03] finding — the LLM feed reader on real captured text: 24 texts → 15 learnings, subjects need a guard
+`uv run bazaar learnings --llm 24` (subscription, Jev picked opus-5-5; an earlier run got haiku-4-5 as the
+default on an undecided verdict): "Chato holds firm on price (13) and dislikes haggling", "Abuela responds well
+to politeness", "Abuela offers 5 P for El Organillero". The model wrote subjects as `dealer:chato` (copying
+the `from` field), which our validation first dropped: the prefix is now accepted only when it matches our own
+record of that id. LLM learnings stay `source: llm`, confidence ≤ 0.7, bound to nobody, and never block.

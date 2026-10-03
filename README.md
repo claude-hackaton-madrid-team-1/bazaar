@@ -513,11 +513,25 @@ already reads the shared `feed_events` table plus the public 500-event window ev
 that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
 keeps growing while the laptop sleeps, with no new service and no extra game call.
 
+**The LLM pass (free text only).** Dealer words, organiser notices, venue notices, a dealer's update note and
+a level's teaser go, as quoted data in one JSON array, to the model Jev picks for `read_feed` through the
+runtime LLM (the Claude subscription when `CLAUDE_CODE_OAUTH_TOKEN` is set), on a background thread inside
+the taker, one bounded call at a time (8 texts, 1,500 tokens, 25 s), never in a tick. Our code keeps only a
+learning whose event is one we sent, whose subject is a dealer or venue we know (or `organiser`), with a
+plausible expiry, confidence capped at 0.7, `source: llm`, bound to nobody: **an LLM reading never blocks a
+dealer**. `--no-llm-read` (or `BAZAAR_LLM_READ=0`) turns it off.
+
+**The maker reads fee notices.** A venue owner may announce a fee from a later tick ("v04 will charge 0% from
+T161"). The maker (`--learn`, default on, `BAZAAR_LEARN=0` turns it off) scores each venue at the worse of its
+fee now and a fee announced to take effect within a listing's life (40 ticks), and leaves out a venue that is
+closing, from the events it already reads: no database and no extra call.
+
 ```sh
 uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
 uv run bazaar learnings --all --subject v04 --json
 uv run bazaar learnings --kind cooloff --kind quota --tick 180
 uv run bazaar learnings --save             # also upsert them into the shared learnings table
+uv run bazaar learnings --llm 24           # also read the newest 24 free texts with the runtime LLM
 ```
 
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
@@ -961,6 +975,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the LLM feed reader on real captured text: 24 texts → 15 learnings, subjects need a guard
 - [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 - [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
 - [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
