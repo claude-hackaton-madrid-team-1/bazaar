@@ -38,7 +38,7 @@ The official `vendor/bazaar-kit/RULES.md` wins on any clash.
 - Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team
   trade (price minus our `your_value`, into `neg_points`) or a dealer deal (ladder share of that dealer's own range,
   buying or selling; the opening price scores 0, the dealer's final the whole range; best 3 deals per level).
-- A round starts on the organisers' `round` action in `/api/schedule`, not when the doors open and not each day, and
+- A round starts on the organisers' `round` action in `/api/schedule`, not when the doors open and not each day *[audit; RULES.md says each day is a round and wins on a clash]*, and
   the ladder restarts every round. Read the schedule; never assume the hours.
 - `your_value` is the collection value lost by removing that copy. On a complete page our only copy of a page card
   already carries the whole page bonus; a duplicate never does.
