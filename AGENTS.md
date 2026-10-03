@@ -135,6 +135,11 @@ every deal. Never decide on a stale view of what we hold.
 **Live services:** Taker https://bazaar-taker-production.up.railway.app (wss …/events) · Maker
 https://bazaar-maker-production.up.railway.app (wss …/events) · Phoenix
 https://phoenix-production-6aa3.up.railway.app — contracts in `docs/services.md`.
+**PR review gate (Greptile is disabled):** before asking for a merge, every PR gets `/pr-review <n>`:
+the `pr-reviewer` sub-agent (`.ai/agents/pr-reviewer.md`) reviews it in a fresh context against current
+`origin/main`, runs the gate on main+PR and posts a P0-P3 verdict on the PR (plus `security-auditor` in
+parallel when the diff touches money, keys or public surfaces). Fix every P0 and P1 and re-run until it
+says APPROVE; the merge request lists each P0/P1 with its fixing commit. Authors resolve their own conflicts.
 **Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
 `guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
 to validate. `touch .local/PAUSE` stops every write at once.
