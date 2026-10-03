@@ -1145,3 +1145,11 @@ for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at ti
 it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
 (ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
 (MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+`strategy.guarded` checked every dealer buy at `mv.limit` (the ladder's top): MAL-09 (top 67) read "cash 58 - 67 <
+cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 was affordable; `_all_denied` then said
+"none affordable". A ladder is now ranked at its first rung (caps still at its top); each rung is checked when sent,
+and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
+1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
+a walk at the official-value top now rests on the card for an hour (`official_values.over_value_only`).

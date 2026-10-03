@@ -208,6 +208,7 @@ class Guardrails(BaseModel):
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
     watchdog_refusal_storm: int = Field(default=50, ge=1)
+    activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -358,6 +359,7 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
+    "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
 }
 
 
