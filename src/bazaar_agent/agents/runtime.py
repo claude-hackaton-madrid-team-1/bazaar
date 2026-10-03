@@ -165,12 +165,14 @@ class MarketFeed:
             with self._conn.transaction():
                 self._conn.execute(f"set local statement_timeout = {ARCHIVE_TIMEOUT_MS}")
                 with self._conn.cursor() as cur:
-                    insert_events(cur, fresh)
+                    stored = insert_events(cur, fresh)["feed_events"]
         except Exception as e:
             if not self._archive_failed:
                 self._log(f"feed: archiving the window failed ({type(e).__name__}); trading goes on")
             self._archive_failed = True
             return
+        if stored < len(fresh):  # an event Postgres would refuse (malformed, out of range): skipped, not the batch
+            self._log(f"feed: archived {stored} of {len(fresh)} new events; {len(fresh) - stored} unstorable skipped")
         if self._archive_failed:
             self._log("feed: archiving the window again")
         self._archive_failed = False
