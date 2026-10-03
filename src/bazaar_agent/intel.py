@@ -109,8 +109,9 @@ def tape(events: Iterable[Event]) -> list[Print]:
 
 
 def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | None = None) -> dict[str, int]:
-    """Primas we settled with each other team: the cash of every team-to-team settlement we are a party to (a
-    swap without cash counts the book value of the cards that moved). Dealers are not counterparties."""
+    """Primas we settled with each other team: the notional of every team-to-team settlement we are a party
+    to, the larger of its cash and the book of the cards that moved (a swap has no cash). Dealers are not
+    counterparties."""
     out: Counter[str] = Counter()
     for e in events:
         p = e.get("payload") or {}
@@ -120,8 +121,8 @@ def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | No
         if len(others) != 1:
             continue
         items = p.get("items") or []
-        cash = int(p.get("price") or 0) or round(sum((book or {}).get(str(i.get("ref")), 0.0) for i in items))
-        out[others.pop()] += cash
+        books = round(sum((book or {}).get(str(i.get("ref")), 0.0) for i in items))
+        out[others.pop()] += max(int(p.get("price") or 0), books)
     return dict(out)
 
 

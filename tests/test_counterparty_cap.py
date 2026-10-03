@@ -16,6 +16,7 @@ from bazaar_agent.agents.seller import bid_listing, trade_book
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.guardrails import ANY_TEAM, Action, Context, Guardrails, TradeBook, check, counterparty_refusal
 from tests.agent_fakes import FakePublic, FakeTeam, ask, bid, clock, parts, rows
+from tests.test_runtime_tools import cli_env  # noqa: F401 (the CLI on fakes)
 from tests.test_strategy import EVENTS
 
 CAP = Guardrails(max_counterparty_share=0.25, counterparty_cap_base=200)
@@ -193,17 +194,66 @@ def test_taker_refuses_a_board_ask_from_a_maker_at_its_cap(tmp_path):
     assert any("counterparty t14: 45 + 12 > max_counterparty_share 0.25" in line for line in lines)
 
 
-def test_taker_accepts_from_a_maker_with_room_and_counts_it(tmp_path):
+def test_taker_accepts_from_a_maker_with_room_and_refuses_an_unknown_one(tmp_path):
     events = EVENTS + [settled(1, "t14", "t01", "SAL-01", 45), listed(2, "t15")]
     public = FakePublic(
         boards={"rastro": [ask(2, "LAV-02", 10, maker="mAAA"), ask(3, "LAV-08", 20, asset=901, maker="mBBB")]},
         events=events,
     )
     team = FakeTeam()
-    t, _ = taker(tmp_path, team, public, events, max_counterparty_share=0.25)
+    t, lines = taker(tmp_path, team, public, events, max_counterparty_share=0.25)
     t.on_tick(clock())
-    # LAV-08 (best score) has an unknown maker: it is capped under its pseudonym, alone, so it passes too;
-    # one accept per tick: the best one goes.
-    assert team.sent == [("accept", 3)]
+    # LAV-08 (the better score) comes from a pseudonym the feed never named: its share is unknown, refused;
+    # LAV-02's maker is t15 (from `offer.listed`), with room: accepted
+    assert team.sent == [("accept", 2)]
+    assert any("counterparty 'mBBB' is not a known team" in line for line in lines)
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r.get("chosen")]
-    assert row["inputs"]["maker"] == "mBBB"
+    assert row["inputs"]["maker"] == "t15"
+
+
+def test_an_unknown_counterparty_fails_closed_only_when_the_cap_is_on():
+    ctx = Context(cash=1000, held={}, tick=1, t_hours=0.1, trades=TradeBook())
+    assert "not a known team" in str(check(sell(10, "m3950d43b"), ctx, CAP))
+    assert check(sell(10, "m3950d43b"), ctx, Guardrails()).allowed
+
+
+def test_a_live_post_sends_its_to():
+    from bazaar_agent.agents.seller import post
+
+    class Client:
+        sent: list = []
+
+        def list_offer(self, give, want, venue=None, to=None, expires_in_ticks=40):
+            self.sent.append(to)
+            return {"id": 1}
+
+    client = Client()
+    ctx = Context(cash=1000, held={}, tick=1, t_hours=0.1, trades=TradeBook())
+    assert post(client, bid_listing("LAV-09", "rare", 50, to="t05"), ctx, CAP, live=True).sent  # 50 = 0.25 × 200
+    assert post(client, bid_listing("LAV-10", "rare", 30), ctx, Guardrails(), live=True).sent
+    assert client.sent == ["t05", None]
+
+
+@pytest.mark.usefixtures("cli_env")
+def test_the_cli_sell_commands_take_to_and_read_our_volume_when_the_cap_is_on(monkeypatch):
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+
+    monkeypatch.setattr(cli, "_rules", lambda: SimpleNamespace(rules=CAP))
+    out = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--to", "t09"])
+    assert out.exit_code == 0, out.output
+    assert "dry run: would sell asset 4 (LAT-03) for 5 P on rastro to t09" in out.output.replace("\n", " ")
+    out = CliRunner().invoke(cli.app, ["sell", "bid", "LAV-09", "--price", "60", "--to", "m3950"])
+    assert out.exit_code == 1 and "--to takes a team id" in out.output
+
+
+def test_the_runtime_reads_our_volume_only_when_the_cap_is_on(tmp_path):
+    from bazaar_agent.runtime import actions
+    from tests.runtime_fakes import backend
+
+    assert actions._base(backend(tmp_path), clock()).ctx.trades is None
+    on = actions._base(backend(tmp_path / "on", rules=CAP), clock())
+    assert on.ctx.trades == TradeBook({}, {}, 0)

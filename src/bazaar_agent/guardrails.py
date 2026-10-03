@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol, cast, get_args
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from bazaar_agent.config import REPO_ROOT
+from bazaar_agent.intel import TEAM_ID
 
 GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
@@ -352,12 +353,15 @@ class TradeBook:
 def counterparty_refusal(trades: TradeBook | None, team: str, price: int, rules: Guardrails) -> str | None:
     """Why a trade of `price` with `team` would break `max_counterparty_share`; None when it passes or the
     cap is off (1.0). The cap is `share × max(our settled volume + price, counterparty_cap_base)`: the base
-    lets the first trades through. Fails closed when our volume was not read."""
+    lets the first trades through. Fails closed when our volume was not read, or when the counterparty is
+    not a team id (a board pseudonym the feed did not resolve: its volume with us is unknown)."""
     share = rules.max_counterparty_share
     if share >= 1:
         return None
     if trades is None:
         return "max_counterparty_share is on but our team-to-team volume was not read"
+    if team != ANY_TEAM and not TEAM_ID.match(team):
+        return f"counterparty {team!r} is not a known team: its share of our volume is unknown"
     cap = share * max(trades.total + price, rules.counterparty_cap_base)
     exposure = trades.exposure(team)
     if exposure + price <= cap:

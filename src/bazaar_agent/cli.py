@@ -1245,6 +1245,13 @@ sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a
 app.add_typer(sell_app, name="sell")
 EXPIRES_HELP = "Ticks the offer stays open"
 POST_HELP = "Actually post. Without it: dry run, nothing is sent"
+TO_HELP = "Address the offer to one team (t05): only it may accept. Default: anyone on the venue"
+
+
+def _team_to(to: str | None) -> str | None:
+    if to is not None and not intel.TEAM_ID.match(to):
+        _fail(f"--to takes a team id like t05, not {to!r}")
+    return to
 
 
 def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
@@ -1256,6 +1263,12 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
     commitments = _open_commitments(client, me)
+    if rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        from bazaar_agent.agents.seller import offers_in, trade_book
+
+        us = str(me.get("id") or "")
+        settled = intel.settled_volume(_events(live=True), us)
+        ctx = replace(ctx, trades=trade_book(offers_in(client.my_offers()), us, settled))
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1275,6 +1288,7 @@ def sell_list(
     price: int = typer.Option(..., min=1, help="Cash we want for it"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md)."""
@@ -1282,7 +1296,7 @@ def sell_list(
 
     client, me = _team_me()
     try:
-        listing = sell_listing(me, target, price, venue)
+        listing = sell_listing(me, target, price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return
@@ -1295,6 +1309,7 @@ def sell_bid(
     price: int = typer.Option(..., min=1, help="Cash we offer"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold."""
@@ -1302,7 +1317,7 @@ def sell_bid(
 
     client, me = _team_me()
     try:
-        listing = bid_listing(ref, _rarity_of(ref), price, venue)
+        listing = bid_listing(ref, _rarity_of(ref), price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return

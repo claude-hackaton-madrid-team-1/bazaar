@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,9 +31,11 @@ from bazaar_agent.agents.seller import (
     committed_context,
     post,
     sell_listing,
+    trade_book,
 )
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import Action, Context, Verdict, check, context_from
+from bazaar_agent.intel import settled_volume
 from bazaar_agent.llm.steering import SteerDelta
 from bazaar_agent.runtime.backend import Backend
 from bazaar_agent.ticks import Clock, action_budget_s
@@ -134,6 +136,9 @@ class Base:
 def _base(b: Backend, clock: Clock) -> Base:
     me, offers = b.team.me(), b.my_offers()
     ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
+    if b.rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        us = str(me.get("id") or "")
+        ctx = replace(ctx, trades=trade_book(offers, us, settled_volume(b.events(), us)))
     return Base(me, offers, ctx, b.commitments(me, offers))
 
 
