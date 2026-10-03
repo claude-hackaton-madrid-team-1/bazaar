@@ -427,6 +427,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
@@ -460,6 +461,9 @@ def duel_run(
         _db_connect("bazaar-duels") if ledger.where.startswith("postgres") else None,
         lambda m: console.print(f"[dim]{escape(m)}[/dim]"),
     )
+    days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
+    done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
+    real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     handled: list[int] = []  # the last tick this loop handled (v2 widens its accept margin after a gap)
@@ -521,6 +525,24 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
+    def observe_days(rows: list[dict[str, Any]]) -> None:
+        before = days_switch.verdict
+        days_switch.observe(rows, real)
+        if days_switch.verdict != before:
+            console.print(
+                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
+            )
+
+    def read_done_days(tick: int) -> None:
+        """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
+        while the verdict is unknown or signed (r1: a text latch keeps its cross-check against the score)."""
+        if tick % done_every_ticks or not reads_done(rules, days_switch, real):
+            return
+        try:
+            observe_days([d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
+        except BazaarError as e:
+            console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+
     def save_finished(tick: int) -> None:
         """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
         try:
@@ -530,6 +552,7 @@ def duel_run(
             return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
+        observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -544,6 +567,8 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = duel_list(data)
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        observe_days(duels)
+        rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
@@ -555,7 +580,7 @@ def duel_run(
         except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, v2 holds every duel
             console.print(f"  ledger unreadable ({type(e).__name__}): v2 holds every duel this tick")
             slots = None
-        params = V2Params.from_rules(rules, anchor, floor) if v2 else None
+        params = V2Params.from_rules(rules_t, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
         if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
@@ -587,7 +612,7 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
-                if not gr.check(duel_action(d, m), ctx, rules).allowed:
+                if not gr.check(duel_action(d, m), ctx, rules_t).allowed:
                     continue
                 if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
                     booked.add(planned_id)
@@ -642,7 +667,7 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick) - (did in booked),  # not our own booking
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
-                verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
+                verdict = gr.check(duel_action(d, move), ctx, rules_t)  # the price and days we would agree to
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
@@ -669,6 +694,7 @@ def duel_run(
             except Exception as e:
                 console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
         duel_traces.end_tick(duel_id(d) for d in duels)
+        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):
