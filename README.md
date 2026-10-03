@@ -163,7 +163,7 @@ uv run bazaar status                      # our cash, level, score, cards (needs
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
 uv run bazaar agent taker                 # autonomous buyer, every tick: DRY RUN (logs WOULD-moves) until --live
-uv run bazaar agent maker                 # market maker + our venue (opened at game hour 6.5, brokered): DRY RUN until --live
+uv run bazaar agent maker                 # market maker (+ our venue when allow_venue_open is on; OFF now): DRY RUN until --live
 uv run bazaar venue status                # our venue, the switch, what our broker would match now
 uv run bazaar venue open --fee-bps 0      # open our board venue by hand (250 P bond + 20 P): DRY RUN until --live
 uv run bazaar broker run                  # our venue's broker alone, every tick: exact max-surplus matches, DRY RUN
@@ -1013,7 +1013,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
-| [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved: the maker opens our 0 bps board venue at game hour 6.5 (~11:30, Jev open_noon) and brokers it; 370 P reserve until then; merges before 06:00 after #72 |
+| [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |

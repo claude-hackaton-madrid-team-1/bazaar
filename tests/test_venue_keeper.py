@@ -476,8 +476,11 @@ def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(t
     assert committed.allow_venue_open is False
 
     class OpeningTeam(FakeTeam):
-        def open_venue(self, *a, **kw):
-            raise AssertionError("POST /api/venues sent while allow_venue_open = false")
+        opened: list[tuple] = []
+
+        def open_venue(self, *a, **kw):  # recorded, never raised: the keeper swallows any exception
+            self.opened.append(a)
+            return {"venue": "v09", "broker_key": KEY}
 
     team, store = OpeningTeam(), {}
     keeper_ = vk.VenueKeeper(
@@ -498,4 +501,4 @@ def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(t
             window(),
         )
         m.on_tick(c)
-    assert store == {} and keeper_.opened is None
+    assert team.opened == [] and store == {} and keeper_.opened is None
