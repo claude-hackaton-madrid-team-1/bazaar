@@ -7,6 +7,7 @@ structure binds: the listing IS the structured offer (`give` / `want`) a counter
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
@@ -153,6 +154,29 @@ def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         elif tid not in best or rank(o) > rank(best[tid]):
             best[tid] = o
     return out + list(best.values())
+
+
+UNSETTLED_TICKS = 2  # an accept settles on the next tick; one still missing from /api/me after two never landed
+
+
+def unsettled_accepts(me: dict[str, Any], ledger: LedgerStore, tick: int) -> Commitments:
+    """The team's accepts of the last UNSETTLED_TICKS ticks (any process, from the shared ledger) that `/api/me`
+    does not show yet: an accept settles on the next tick, and a read can land before that (bite X18). Counted
+    like an open offer (`committed_context`): the card as held, its cash as gone. A copy `/api/me` shows is
+    settled (it already holds the card and paid the cash); a duel's accept moves no card."""
+    have = Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") in ("card", "pack"))
+    cash, wanted = 0, []
+    for t in range(tick - UNSETTLED_TICKS, tick):
+        for item, price in ledger.accept_rows(t):
+            if not item or ":" in item:
+                continue
+            if have[item] > 0:
+                have[item] -= 1
+                continue
+            cash += price
+            if not is_pack(item):
+                wanted.append(item)
+    return Commitments(cash, tuple(wanted))
 
 
 def committed_context(ctx: Context, commitments: Commitments) -> Context:

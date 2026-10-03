@@ -225,6 +225,7 @@ class LedgerStore(Protocol):
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
     def accept_items(self, tick: int) -> list[str]: ...
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
     def release_accept(self, tick: int, item: str) -> None: ...
 
@@ -271,16 +272,22 @@ class Ledger:
 
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
-        items: list[str] = []
+        return [item for item, _ in self.accept_rows(tick)]
+
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        """(item, price) of this tick's accepts, released ones left out."""
+        rows: list[tuple[str, int]] = []
         for e in self.entries():
             item = str(e.get("item") or "")
             if e.get("tick") != tick:
                 continue
             if e.get("kind") == "accept":
-                items.append(item)
-            elif e.get("kind") == RELEASE and item in items:
-                items.remove(item)
-        return items
+                rows.append((item, int(e.get("price") or 0)))
+            elif e.get("kind") == RELEASE:
+                gone = next((n for n, (it, _) in enumerate(rows) if it == item), None)
+                if gone is not None:
+                    del rows[gone]
+        return rows
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         """Count and record an accept under one file lock: two processes cannot both take the last slot."""

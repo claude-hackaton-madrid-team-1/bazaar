@@ -75,6 +75,15 @@ class PgLedger:
             raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
         return [str(item or "") for (item,) in rows]
 
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        try:
+            rows = self._conn.execute(
+                "select item, price from ledger where kind = 'accept' and tick = %s order by id", (tick,)
+            ).fetchall()
+        except psycopg.Error as e:
+            raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
+        return [(str(item or ""), int(price or 0)) for item, price in rows]
+
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._one("select count(*) from ledger where kind = %s and tick = %s", (kind, tick))
 

@@ -68,7 +68,7 @@ from bazaar_agent.agents.runtime import (
     read_snapshot,
     window_for,
 )
-from bazaar_agent.agents.seller import offers_in, open_commitments
+from bazaar_agent.agents.seller import Commitments, committed_context, offers_in, open_commitments, unsettled_accepts
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
@@ -333,6 +333,7 @@ class Taker:
         self._restart_ticks = 0  # ticks the restart wrap-up ran (bounded by `restart_lookback_ticks`)
         self._accepts_stop: str | None = None  # why no more accepts are tried this tick (rate limit, lost race)
         self._accepts_refused = 0  # refused accepts this tick (each one cost a clock read and a POST)
+        self._unsettled = Commitments()  # this tick: recent accepts /api/me does not show yet (bite X18)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -356,6 +357,7 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         stops = kill_switch(self.rules)
@@ -394,6 +396,7 @@ class Taker:
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        ctx = committed_context(ctx, self._unsettled)  # an accept of the last ticks /api/me does not show yet
         return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent)
 
     def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None) -> None:
