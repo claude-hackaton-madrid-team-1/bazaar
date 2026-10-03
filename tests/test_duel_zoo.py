@@ -512,3 +512,19 @@ def test_a_broken_rival_is_logged_once_with_its_traceback(monkeypatch, caplog):
         m.step(4)
     records = [r for r in caplog.records if "convex" in r.getMessage()]
     assert len(records) == 1 and records[0].exc_info is not None
+
+
+@pytest.mark.parametrize("bad", [None, 101.5, True, 0, 10_000_001, "110"])
+def test_a_rival_move_with_a_bad_price_or_days_is_a_hold(monkeypatch, bad):
+    # #178 security P3: the guard covered only the rival call; a returned offer with a fractional or missing price
+    # raised later in the tick and skipped the rest of it (duels, bench, venue, scoring).
+    monkeypatch.setattr(duels, "_warned", set())
+    monkeypatch.setenv(duels.STYLES_ENV, "linear")
+    monkeypatch.setitem(duels.LIVE_RIVALS, "linear", lambda view: zoo.Act("offer", bad))
+    m = manual_world(duel_first_tick=1, duel_ticks=6)
+    m.step(3)
+    mine = [d for d in m.world.state.duels.values() if d.team == "t01"]
+    assert mine and all(d.rival_offer is None for d in mine)
+    monkeypatch.setitem(duels.LIVE_RIVALS, "linear", lambda view: zoo.Act("offer", 120, days=11))
+    m.step()
+    assert all(d.rival_offer is None for d in mine)  # days outside 0-10 hold too

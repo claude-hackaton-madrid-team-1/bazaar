@@ -313,7 +313,7 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
         other_limit=duel.your_limit,
     )
     try:
-        act = LIVE_RIVALS[style](view)
+        act = _checked(LIVE_RIVALS[style](view))
     except Exception as e:  # noqa: BLE001 - a broken rival holds: the shared clock never stops (#151 review)
         _warn_once(f"duel rival style {style!r} raised {type(e).__name__}: it holds instead", exc_info=True)
         return
@@ -326,6 +326,24 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
         lines = OPENERS if duel.rival_offer is None else COUNTERS
         duel.rival_offer = DuelOffer(id=w.next_id("duel_offer"), price=act.price, days=days, tick=w.tick)
         _rival_says(w, duel, rng.choice(lines).format(p=act.price), act.price, days)
+
+
+def _checked(act: duel_zoo.Act) -> duel_zoo.Act:
+    """A rival's move as the game would take it: an offer needs a whole price in the game's range and days 0-10 (or
+    none); anything else raises here, inside the guard, so it is a hold (#178 security P3)."""
+    if act.kind not in ("accept", "offer", "hold"):
+        raise ValueError(f"move {act.kind!r}")
+    if act.kind == "offer":
+        price, days = act.price, act.days
+        if (
+            not isinstance(price, int)
+            or isinstance(price, bool)
+            or not duel_zoo.MIN_PRICE <= price <= duel_zoo.MAX_PRICE
+        ):
+            raise ValueError(f"offer price {price!r}")
+        if days is not None and (not isinstance(days, int) or isinstance(days, bool) or not 0 <= days <= 10):
+            raise ValueError(f"offer days {days!r}")
+    return act
 
 
 def _rival_days(duel: Duel) -> int:
