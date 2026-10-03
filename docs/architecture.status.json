@@ -190,7 +190,7 @@
           "note": true
         },
         {
-          "text": "venue + broker: blocked",
+          "text": "venue + broker: #71 approved, merges before 06:00",
           "note": true
         }
       ],
@@ -215,7 +215,7 @@
       "status": "wip",
       "lines": [
         {
-          "text": "holdings snapshot N13 in progress",
+          "text": "holdings N13 approved (#105), 09:30 window",
           "note": true
         }
       ],
@@ -242,7 +242,7 @@
       "status": "wip",
       "lines": [
         {
-          "text": "learner N3 in progress (P0)",
+          "text": "learner N3 approved (#96), 09:30 window",
           "note": true
         }
       ],
@@ -307,59 +307,59 @@
   "being_built": [
     {
       "status": "wip",
-      "label": "worker",
-      "title": "Simulator as the merge gate",
-      "body": "bazaar-sim is live (#55): BAZAAR_SIM=1 targets it with a sim- key. Now: a CI smoke job that runs the agents against a local sim on every PR."
+      "label": "before 06:00",
+      "title": "Live fixes, leak fix, our venue",
+      "body": "Merge order: #72 (Marius live fixes, review round 3), the /state leak follow-up #121, then #71 rebased on #72 (its 370 P reserve must hold from the 09:00 tick). Each needs pr-reviewer APPROVE + CI + sim smoke."
+    },
+    {
+      "status": "wip",
+      "label": "09:30 window",
+      "title": "Approved and queued",
+      "body": "After the first live ticks are verified: #89 feed reader, #96 learner (hybrid RAG), #91 evals in the agents, #105 holdings in the DB, #108 Jev picks the desk model. All approved."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Evals inside the agents",
-      "body": "No separate service: taker, maker and duels score their own settled decisions. BAZAAR_LIVE kept by the IaC (#73)."
+      "title": "Learner auto-evolve + feed reader v2",
+      "body": "#112 (learned dealer curves inside GUARDRAILS, lessons into Jev) and #111 (LLM over the feed's free text) are in review."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Market Test: open our venue at ~11:30",
-      "body": "Jev: `open_noon` (0.82). #71's broker runs inside the maker on Railway and opens a board venue after game hour 6.5, before the 12:00 session; the cash floor keeps the 270 P bond until then, 100 after."
+      "title": "Bluffing + negotiation psychology (N16)",
+      "body": "Omar: the agents may lie to win. Words only (structure binds), learned per counterparty (Jev 0.90): a cooloff or a bad-faith flag turns a tactic off; Abuela gets kindness. Voss/Cialdini tactics from a vetted MIT skill."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Marius's live PRs taken over",
-      "body": "Jev: fix then merge #72, #62, #61; #60 through the gate; #68 closes into #72; #43 closed. Merged one by one after /pr-review."
+      "title": "Team-to-team negotiation (N17)",
+      "body": "Review Marius's #79/#98/#101 first, then swap threads with other teams priced by their need, inside the guardrails."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Learner / auto-evolve (P0)",
-      "body": "Outcomes become lessons; hybrid RAG (BM25 + pgvector + a local reranker) feeds Jev and the words; per-dealer concession parameters evolve inside the guardrails. Postgres only (Jev: no graph DB)."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
-      "title": "Our cards in the DB, real time",
-      "body": "Per-tick `/api/me` snapshot and the card catalog in Postgres; agents and bazaar-mcp read the latest holdings, refreshed after every deal."
-    },
-    {
-      "status": "todo",
-      "label": "next",
-      "title": "RAG-driven strategies (N14)",
-      "body": "Every mechanic (hard dealers, packs, supply, custom markets, duels, new pages) reads the learner's lessons and writes its outcome back: the auto-evolve loop applied to the whole game."
+      "title": "Bazaar Live v2 + real transcripts",
+      "body": "Fantasy-RPG art (original), ES/EN selector, native voices, real dealer and closed-duel conversations from Postgres through a read-only role. Zero paid TTS calls."
     }
   ],
   "not_started": [
     {
-      "status": "part",
-      "label": "gap",
-      "title": "Prompt-injection cap",
-      "body": "The original rule caps counterparty text per decision (200k)."
+      "status": "todo",
+      "label": "next",
+      "title": "RAG-driven strategies (N14)",
+      "body": "Hard dealers, packs, supply, custom markets, duels, new pages read the learner's lessons; Ackerman price schedule proposed there."
     },
     {
       "status": "todo",
-      "label": "later",
-      "title": "First eval target",
-      "body": "Nice to have: Jev leaned toward duels (0.64 / 0.72, under its 0.75 bar); revisit with Saturday's outcomes."
+      "label": "Sunday P0",
+      "title": "Presentation + decision log (P1)",
+      "body": "40% of judging. Material accumulating: Jev decision logs, evals, pitch notes."
+    },
+    {
+      "status": "part",
+      "label": "gap",
+      "title": "Prompt-injection hardening (S1)",
+      "body": "Counterparty text is capped and escaped; bait inspector and auto-flagging still open (Marius #93 off by default)."
     }
   ],
   "links": [
@@ -418,14 +418,25 @@
     ],
     "markers": [
       {
+        "at": "2026-10-03T06:00",
+        "kind": "deadline",
+        "label": "Sat 06:00 live fixes in",
+        "side": "left"
+      },
+      {
+        "at": "2026-10-03T09:00",
+        "kind": "deadline",
+        "label": "Sat 09:00 market opens"
+      },
+      {
         "at": "2026-10-04T06:00",
         "kind": "freeze",
-        "label": "Build freeze 06:00"
+        "label": "Sun 06:00 build freeze"
       },
       {
         "at": "2026-10-04T14:00",
         "kind": "deadline",
-        "label": "Deadline 14:00"
+        "label": "Sun 14:00 final"
       }
     ],
     "events": [
@@ -553,33 +564,47 @@
           {
             "title": "Sim smoke = merge gate (#75)",
             "start": "2026-10-03T02:00",
-            "end": "2026-10-03T05:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
+            "end": "2026-10-03T03:55",
+            "status": "done",
+            "priority": "P0"
           },
           {
             "title": "IaC: BAZAAR_LIVE kept, no off services (#73)",
             "start": "2026-10-03T01:50",
-            "end": "2026-10-03T05:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
+            "end": "2026-10-03T04:10",
+            "status": "done",
+            "priority": "P1"
           },
           {
-            "title": "Shared kill switch in Postgres",
-            "start": "2026-10-03T09:00",
+            "title": "Instant pause on Railway (SSH PAUSE) ✓; shared DB switch later",
+            "start": "2026-10-03T04:15",
             "end": "2026-10-03T13:00",
-            "status": "todo",
+            "status": "partial",
             "priority": "P1",
-            "owner": "worker"
+            "owner": "coordinator"
           },
           {
-            "title": "Our cards in the DB, real time (N13)",
+            "title": "Our cards in the DB, real time (N13 #105 approved)",
             "start": "2026-10-03T03:45",
-            "end": "2026-10-03T08:30",
+            "end": "2026-10-03T10:00",
             "status": "wip",
             "priority": "P0",
+            "owner": "worker"
+          },
+          {
+            "title": "Infra clean: bazaar-monitor deleted, IaC 0 drift",
+            "start": "2026-10-03T04:20",
+            "end": "2026-10-03T04:30",
+            "status": "done",
+            "priority": "P2",
+            "owner": "coordinator"
+          },
+          {
+            "title": "Jev picks the desk model per role (N15 #108 approved)",
+            "start": "2026-10-03T03:55",
+            "end": "2026-10-03T10:00",
+            "status": "wip",
+            "priority": "P1",
             "owner": "worker"
           }
         ]
@@ -588,9 +613,9 @@
         "name": "Trading (live)",
         "bars": [
           {
-            "title": "Live fixes #60 #61 #62 #72",
+            "title": "Live fixes #72 (+#61 #68), #62, #60: before 06:00",
             "start": "2026-10-02T23:10",
-            "end": "2026-10-03T08:30",
+            "end": "2026-10-03T06:00",
             "status": "wip",
             "priority": "P0",
             "owner": "worker (takeover)"
@@ -604,7 +629,7 @@
             "owner": "agents"
           },
           {
-            "title": "Dealer ladder: walk, not the opening ask (#8 #9)",
+            "title": "Dealer ladder: walk, not the opening ask (N14)",
             "start": "2026-10-03T09:00",
             "end": "2026-10-03T13:00",
             "status": "todo",
@@ -612,7 +637,7 @@
             "owner": "Marius"
           },
           {
-            "title": "Duels II/III policy + days (#5 #7)",
+            "title": "Duels II/III policy + days (D1)",
             "start": "2026-10-03T12:00",
             "end": "2026-10-03T17:30",
             "status": "todo",
@@ -624,6 +649,22 @@
             "end": "2026-10-04T04:00",
             "status": "todo",
             "priority": "P2"
+          },
+          {
+            "title": "Bluffing + negotiation psychology in words (N16)",
+            "start": "2026-10-03T04:20",
+            "end": "2026-10-03T17:30",
+            "status": "wip",
+            "priority": "P1",
+            "owner": "worker"
+          },
+          {
+            "title": "Team-to-team swap threads (N17; triage #79 #98 #101)",
+            "start": "2026-10-03T04:30",
+            "end": "2026-10-03T17:30",
+            "status": "wip",
+            "priority": "P1",
+            "owner": "worker"
           }
         ]
       },
@@ -631,15 +672,15 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Own venue + broker in the maker (#71, Jev: open at ~11:30)",
+            "title": "Own venue + broker (#71 approved; merges before 06:00, Jev 0.99)",
             "start": "2026-10-03T03:20",
-            "end": "2026-10-03T11:30",
+            "end": "2026-10-03T06:00",
             "status": "wip",
             "priority": "P1",
             "owner": "worker"
           },
           {
-            "title": "Organic market making (#13)",
+            "title": "Organic market making (M1)",
             "start": "2026-10-03T13:00",
             "end": "2026-10-03T20:00",
             "status": "todo",
@@ -659,49 +700,49 @@
         "name": "Intelligence",
         "bars": [
           {
-            "title": "AI feed reader → RAG v1 (N12)",
+            "title": "Feed reader v1 (N12 #89 approved, 09:30 window)",
             "start": "2026-10-03T02:10",
-            "end": "2026-10-03T11:00",
+            "end": "2026-10-03T10:00",
             "status": "wip",
             "priority": "P1",
             "owner": "worker"
           },
           {
-            "title": "Feed reader v2: LLM over free text",
-            "start": "2026-10-03T11:00",
-            "end": "2026-10-03T17:00",
-            "status": "todo",
+            "title": "Feed reader v2: LLM over free text (#111 in review)",
+            "start": "2026-10-03T03:30",
+            "end": "2026-10-03T13:00",
+            "status": "wip",
             "priority": "P1",
             "owner": "worker"
           },
           {
-            "title": "Evals inside the agents",
-            "start": "2026-10-03T06:00",
-            "end": "2026-10-03T14:00",
+            "title": "Evals inside the agents (#91 approved, 09:30 window)",
+            "start": "2026-10-03T02:30",
+            "end": "2026-10-03T10:00",
             "status": "wip",
             "priority": "P2",
             "owner": "worker"
           },
           {
-            "title": "Trade scanner + scarcity (#14 #22)",
+            "title": "Trade scanner + scarcity (T1, N14)",
             "start": "2026-10-03T14:00",
             "end": "2026-10-03T22:00",
             "status": "todo",
             "priority": "P2"
           },
           {
-            "title": "Learner v1: lessons + hybrid RAG (N3)",
+            "title": "Learner v1: lessons + hybrid RAG (N3 #96 approved)",
             "start": "2026-10-03T03:40",
-            "end": "2026-10-03T12:00",
+            "end": "2026-10-03T10:00",
             "status": "wip",
             "priority": "P0",
             "owner": "worker"
           },
           {
-            "title": "Auto-evolve: learned dealer curves (N3)",
-            "start": "2026-10-03T12:00",
+            "title": "Auto-evolve: learned dealer curves (N3 #112 in review)",
+            "start": "2026-10-03T04:00",
             "end": "2026-10-03T20:00",
-            "status": "todo",
+            "status": "wip",
             "priority": "P0",
             "owner": "worker"
           }
@@ -766,15 +807,15 @@
         "name": "Safety",
         "bars": [
           {
-            "title": "Public /state allow-list (#69) + follow-up",
+            "title": "Public /state leak follow-up (#121, before 06:00, Jev 0.99)",
             "start": "2026-10-02T23:45",
-            "end": "2026-10-03T08:30",
-            "status": "partial",
+            "end": "2026-10-03T06:00",
+            "status": "wip",
             "priority": "P0",
-            "owner": "Marius"
+            "owner": "worker"
           },
           {
-            "title": "Counterparty text hardening (#24 #10)",
+            "title": "Counterparty text hardening (S1)",
             "start": "2026-10-03T10:00",
             "end": "2026-10-03T16:00",
             "status": "todo",
@@ -787,7 +828,7 @@
         "name": "Show & pitch",
         "bars": [
           {
-            "title": "Bazaar Live show (bazaar-live #1, #85)",
+            "title": "Bazaar Live v1 deployed (bazaar-live #1 #2)",
             "start": "2026-10-03T01:55",
             "end": "2026-10-03T04:00",
             "status": "done",
@@ -795,7 +836,7 @@
             "owner": "worker"
           },
           {
-            "title": "Score tracker (#15 #17)",
+            "title": "Score tracker (K1)",
             "start": "2026-10-03T14:00",
             "end": "2026-10-03T20:00",
             "status": "todo",
@@ -810,12 +851,28 @@
             "owner": "Marius"
           },
           {
-            "title": "Presentation + decision log (#16)",
+            "title": "Presentation + decision log (P1)",
             "start": "2026-10-03T22:00",
             "end": "2026-10-04T13:30",
             "status": "todo",
             "priority": "P0",
             "owner": "Omar + team"
+          },
+          {
+            "title": "Bazaar Live v2: fantasy-RPG art, ES/EN voices (P2)",
+            "start": "2026-10-03T04:10",
+            "end": "2026-10-04T06:00",
+            "status": "wip",
+            "priority": "P2",
+            "owner": "worker"
+          },
+          {
+            "title": "Bazaar Live: real dealer + duel transcripts (Postgres read-only)",
+            "start": "2026-10-03T04:15",
+            "end": "2026-10-03T11:30",
+            "status": "wip",
+            "priority": "P2",
+            "owner": "worker"
           }
         ]
       }

@@ -259,3 +259,27 @@ def test_timeline_rejects_offsets_bad_stamps_bad_bands_and_bad_ticks() -> None:
 def test_timeline_is_optional() -> None:
     without = {k: v for k, v in DATA.items() if k != "timeline"}
     assert "No timeline yet" in ap.render_page(without, PLAN, TEMPLATE)
+
+
+def test_a_marker_can_put_its_label_on_the_left_and_rejects_other_sides() -> None:
+    lane = {
+        "name": "L",
+        "bars": [
+            {"title": "t", "start": "2026-10-03T01:00", "end": "2026-10-03T02:00", "status": "todo", "priority": "P1"}
+        ],
+    }
+    tl = {
+        "start": "2026-10-03T00:00",
+        "end": "2026-10-03T12:00",
+        "markers": [
+            {"at": "2026-10-03T06:00", "kind": "deadline", "label": "A", "side": "left"},
+            {"at": "2026-10-03T09:00", "kind": "deadline", "label": "B"},
+        ],
+        "lanes": [lane],
+    }
+    page = ap.render_timeline(tl)
+    assert re.search(r'class="tl-marker deadline end" style="left:50(\.0+)?%"', page)
+    assert re.search(r'class="tl-marker deadline" style="left:75(\.0+)?%"', page)
+    tl["markers"][1]["side"] = "up"
+    with pytest.raises(SystemExit):
+        ap.render_timeline(tl)
