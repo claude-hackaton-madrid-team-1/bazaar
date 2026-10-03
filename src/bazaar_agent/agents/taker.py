@@ -58,7 +58,7 @@ from bazaar_agent.agents.runtime import (
     read_snapshot,
     window_for,
 )
-from bazaar_agent.agents.seller import offers_in, open_commitments
+from bazaar_agent.agents.seller import Commitments, committed_context, offers_in, open_commitments, unsettled_accepts
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import THREAD_CLOSED, Decision, DecisionLog, Status, ThreadTrail
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
@@ -317,6 +317,7 @@ class Taker:
         self._refused: Counter[int] = Counter()  # watched thread -> refused reads
         self._quiet: dict[int, int] = {}  # watched open thread with no fresh bid of ours -> first tick seen so
         self._accepts_stop: str | None = None  # why no more accepts are tried this tick (rate limit, lost race)
+        self._unsettled = Commitments()  # this tick: recent accepts /api/me does not show yet (bite X18)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -339,6 +340,7 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
         self._watch_threads(run, threads)
         stops = kill_switch(self.rules)
         if stops:
@@ -375,6 +377,7 @@ class Taker:
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        ctx = committed_context(ctx, self._unsettled)  # an accept of the last ticks /api/me does not show yet
         return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent)
 
     def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None) -> None:
