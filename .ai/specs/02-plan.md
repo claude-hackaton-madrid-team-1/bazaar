@@ -427,8 +427,9 @@ Files: `scripts/tick_profile.py`, `src/bazaar_agent/agents/{jev_cache,runtime,ta
   · **Acceptance:** identical writes with the rule off and on; reads in flight together (barrier test).
 - Step 5 — Re-measure the scratch merge with the fixes; request budget across the three agents under 5 req/s.
   · **Acceptance:** before/after table in the PR body.
-- Step 6 — Rebase onto #105's `/me` snapshot (holdings read first in the keyed lane), #91, #108 and #72's kill switch;
-  re-run the gate. · **Acceptance:** gate green on the rebased branch (done Sat 06:20).
+- Step 6 — Rebase onto main as the Sunday PRs land (#105 /me snapshot first in the keyed lane, #91, #108, #72 kill
+  switch, #145, #89, #148, #96 lessons behind the cache, #112, #150, #162 ledger, #111); re-run the gate.
+  · **Acceptance:** gate green on the rebased branch (done Sat 07:10).
 
 ---
 
