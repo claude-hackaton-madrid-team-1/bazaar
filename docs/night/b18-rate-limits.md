@@ -50,6 +50,10 @@ Stacked on B17 (#114), which is stacked on #72. B18 alone: `git diff origin/nigh
 
 ## Risks and what Marius must decide
 
+- **Seen tonight:** under local port exhaustion (`Errno 49`, other sessions running simulators) the sim CLI test
+  `test_a_full_scripted_session_against_the_simulator` failed about 1 run in 5 with this client, while #72 passed 5 of 5
+  under the same load: a dropped read at ticks of 15 s or faster is no longer retried. That is the price of the
+  4 s / no-retry choice; Marius decides (r1 proposed keeping 15 s behind a setting).
 - Fewer retries means more errors reach the loops. Each loop already treats a refused read as "nothing sent this
   tick" and decides again on the next tick (the taker logs `read refused ... nothing sent`). A transient blip on a
   15 s tick costs that tick's moves instead of 46 s of stall.
