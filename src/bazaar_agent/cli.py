@@ -182,6 +182,54 @@ def teams(
     console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
 
 
+def _json_file(path: str) -> Any:
+    """A captured payload: a bare body, a fixture (`{"body": ...}`) or a feed event (`{"payload": ...}`)."""
+    from pathlib import Path
+
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("body"), dict):
+        return data["body"]
+    if isinstance(data, dict) and isinstance(data.get("payload"), dict) and "type" in data:
+        return data["payload"]
+    return data
+
+
+def _events_file(path: str) -> list[Event]:
+    """Feed events from a JSONL file (one event per line, e.g. a `feed_events` export)."""
+    from pathlib import Path
+
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+@app.command()
+def affinity(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file (the multiset); else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    beta: float = typer.Option(0.5, help="Weight of one unit of (damped) interest per sd of the multiplier"),
+    as_json: bool = typer.Option(False, "--json", help="Print the map as JSON"),
+) -> None:
+    """Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    events = _events_file(events_file) if events_file else _events(live)
+    us = str(me.get("id") or "") or None
+    amap = af.affinity_map(
+        events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, af.ModelParams(beta=beta), [us or ""]
+    )
+    if as_json:
+        typer.echo(json.dumps({t: asdict(a) for t, a in amap.teams.items()}, indent=2, default=str))
+        return
+    console.print(render.affinity_table(amap))
+    for s in af.catalog_sets(catalog):
+        console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
+
+
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
