@@ -1071,3 +1071,14 @@ refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused 
 Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
 service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
 429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.
+
+### [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
+`db.init_schema` in that schema fails (`column "set_code" does not exist`): the fixture's `cards (id, name)` is
+not schema.sql's. Drop it before applying the schema there (AF1's read-only test does).
+
+### [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
+symptom: every Postgres test on the laptop (all worktrees) hung in `init_schema`, then failed with lock timeouts →
+root cause: a pytest killed mid-test left a backend `idle in transaction` after schema.sql (docker's port proxy keeps
+the dead client's TCP connection open), holding the schema's advisory xact lock → fix: find it (`select pid, state,
+client_port from pg_stat_activity where application_name = 'bazaar-pytest'`), check no live process owns its client
+port (`lsof -nP -iTCP:<port>`), then `select pg_terminate_backend(<pid>)` on the LOCAL docker DB only.

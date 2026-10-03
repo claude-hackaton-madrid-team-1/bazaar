@@ -139,6 +139,7 @@ from bazaar_agent.strategy import (
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
+from bazaar_agent.team_affinity import AffinityBook
 from bazaar_agent.ticks import Clock, action_budget_s
 from bazaar_agent.watchdog import Watchdog
 
@@ -489,6 +490,7 @@ class Taker:
         cards: CardsHeartbeat | None = None,
         news: NewsSentinel | None = None,
         personas: PersonaBook | None = None,
+        affinity: AffinityBook | None = None,
         strategy_gate: StrategyGate | None = None,
         strategy_jev: AskFn | None = None,
     ) -> None:
@@ -550,7 +552,8 @@ class Taker:
         self._unsettled = Commitments()  # this tick: recent accepts /api/me does not show yet (bite X18)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
-        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
+        # AF1: the desk asks teams their multipliers and stores what they say (and what we infer) off the tick.
+        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger, affinity=affinity)
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
@@ -779,6 +782,7 @@ class Taker:
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),
             scan=snap.scan,
+            round=snap.clock.round,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:

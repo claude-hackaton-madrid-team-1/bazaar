@@ -564,6 +564,13 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   **Acceptance:** verdict parity and failure tests.
 - Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
   **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
+### AF1 — Ask other teams their multipliers (said vs inferred)
+Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_desk.py`, `agents/taker.py`, `cli.py`,
+`render.py`, `sql/schema.sql`, `tests/test_team_affinity.py`, `tests/test_readonly_user.py`.
+- Step 1 — parser + rows + table/view. · **Acceptance:** parser cases, upsert never backwards, board view (tests).
+- Step 2 — the desk asks once per team per day in its first message, parses replies, writes inferred every 10 ticks
+  off the tick. · **Acceptance:** desk tests (offer unchanged, once per day, told teams not asked).
+- Step 3 — `bazaar affinity --teams` read-only. · **Acceptance:** CLI tests; read-only role test.
 
 ## Parallel-work notes
 

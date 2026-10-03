@@ -97,3 +97,7 @@ dealers ignore our first bids.
   same flag. Claim the flag in the shared Postgres ledger before the POST, as accepts do.
 - Look-alike letters still untagged (nit): U+01C0, U+A7AE, U+0196, Runic, Old Italic. Tags change nothing we send.
 
+- **AF1: a stated multiplier as a valuation hint** (P2): feed `team_affinity` 'said' rows (confidence ≥ 0.5, agreeing
+  with the inferred top set) into the team desk's estimate of the counterparty's private value, capped and never
+  above our own estimate. Left out of AF1: words are untrusted and the swap ladder already prices on the map.
+- **AF1: persist "asked today" across restarts** (P3): a restart may ask a team a second time the same day.
