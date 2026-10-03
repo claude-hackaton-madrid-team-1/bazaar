@@ -149,6 +149,17 @@ def test_postgres_spend_packs_listings_and_refunds(pg_ledgers):
 
 
 @pg
+def test_postgres_tagged_spend_rows(pg_ledgers):
+    taker, duels = pg_ledgers
+    taker.record("spend", 10, 1.0, 12, "arb:LAV-01:1")
+    duels.record("spend", 11, 1.2, 15, "dup:LAV-09")
+    taker.record("spend", 12, 1.3, 9, "LAV-03")
+    assert duels.spend_rows("arb:", 0.5) == [("arb:LAV-01:1", 12, 10)]
+    assert taker.spend_rows("dup:", 1.1) == [("dup:LAV-09", 15, 11)] and not taker.spend_rows("dup:", 1.2)
+    assert taker.spent_since(0.5) == 36 and not taker.packs_since(0.5)
+
+
+@pg
 def test_a_broken_connection_fails_closed(pg_ledgers):
     taker, _ = pg_ledgers
     taker._conn.close()

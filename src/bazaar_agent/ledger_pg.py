@@ -75,6 +75,17 @@ class PgLedger:
             raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
         return [str(item or "") for (item,) in rows]
 
+    def spend_rows(self, prefix: str, t_hours: float) -> list[tuple[str, int, int]]:
+        try:
+            rows = self._conn.execute(
+                "select item, price, tick from ledger where kind = 'spend' and t_hours > %s "
+                "and starts_with(item, %s) order by id",
+                (t_hours, prefix),
+            ).fetchall()
+        except psycopg.Error as e:
+            raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
+        return [(str(item), int(price or 0), int(tick or 0)) for item, price, tick in rows]
+
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._one("select count(*) from ledger where kind = %s and tick = %s", (kind, tick))
 

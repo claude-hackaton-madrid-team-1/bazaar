@@ -16,6 +16,7 @@ import fcntl
 import json
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
@@ -60,6 +61,12 @@ class Guardrails(BaseModel):
     allow_flags: bool = False
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
+    arb_enabled: bool = False
+    arb_min_net_spread: int = Field(default=3, ge=1)
+    arb_max_inventory_p: int = Field(default=60, ge=0)
+    dup_buy_enabled: bool = False
+    dup_min_surplus: float = Field(default=3.0, ge=0)
+    dup_max_spend_per_hour: int = Field(default=40, ge=0)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -95,6 +102,12 @@ ENFORCED_BY: dict[str, str] = {
     "allow_flags": "guardrails.check",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
+    "arb_enabled": "guardrails.check (Action.held_buy = arb) + agents.taker arbitrage legs",
+    "arb_min_net_spread": "guardrails.check (Action.exit_net, re-read before the accept)",
+    "arb_max_inventory_p": "guardrails.check (Context.arb_inventory from the ledger's arb: spend rows)",
+    "dup_buy_enabled": "guardrails.check (Action.held_buy = dup) + agents.taker duplicate asks",
+    "dup_min_surplus": "guardrails.check (Action.next_copy_value − all-in price)",
+    "dup_max_spend_per_hour": "guardrails.check (Context.dup_spent_last_hour from the ledger's dup: spend rows)",
 }
 
 
@@ -223,6 +236,7 @@ class LedgerStore(Protocol):
     def count_in_tick(self, kind: str, tick: int) -> int: ...
     def accept_items(self, tick: int) -> list[str]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
+    def spend_rows(self, prefix: str, t_hours: float) -> list[tuple[str, int, int]]: ...
 
 
 class Ledger:
@@ -258,6 +272,15 @@ class Ledger:
 
     def accepts_in_tick(self, tick: int) -> int:
         return self.count_in_tick("accept", tick)
+
+    def spend_rows(self, prefix: str, t_hours: float) -> list[tuple[str, int, int]]:
+        """(item, price, tick) of the spend rows after `t_hours` whose item starts with `prefix` (a tag such
+        as `arb:` or `dup:`), oldest first."""
+        return [
+            (str(e.get("item")), int(e.get("price", 0)), int(e.get("tick", 0)))
+            for e in self.entries()
+            if e.get("kind") == "spend" and e["t_hours"] > t_hours and str(e.get("item") or "").startswith(prefix)
+        ]
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
@@ -317,6 +340,12 @@ class Action:
     # (a dealer), and `max_counterparty_share` does not apply.
     counterparty: str | None = None
     volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
+    # A buy that claims an exception to `block_buying_held_cards`: "arb" (resold at once to a standing bid,
+    # `exit_net` = the spread after every fee of both legs) or "dup" (kept: `next_copy_value` = our value of
+    # one more copy, `/api/me/value`). The claim's own rules apply even to a card we do not hold.
+    held_buy: Literal["arb", "dup"] | None = None
+    exit_net: int | None = None
+    next_copy_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -389,6 +418,8 @@ class Context:
     stops: tuple[str, ...] | None = None
     # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
     trades: TradeBook | None = None
+    arb_inventory: int = 0  # primas in arbitrage buys whose extra copy we still hold (`arb_inventory`)
+    dup_spent_last_hour: int = 0  # primas of duplicate buys this game hour (`dup:` spend rows)
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -406,7 +437,70 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         paused=(REPO_ROOT / rules.pause_file).exists(),
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
         stops=kill_switch(rules),
+        # Read only when the switch is on: with both off, a tick costs the ledger nothing more than before.
+        arb_inventory=arb_inventory(ledger.spend_rows(ARB_TAG, -1.0), held) if rules.arb_enabled else 0,
+        dup_spent_last_hour=(
+            sum(price for _, price, _ in ledger.spend_rows(DUP_TAG, t_hours - 1.0)) if rules.dup_buy_enabled else 0
+        ),
     )
+
+
+# ---------------------------------------------------------------- held-card exceptions (arbitrage, duplicates)
+
+ARB_TAG, DUP_TAG = "arb:", "dup:"
+
+
+def arb_item(ref: str, held_before: int) -> str:
+    """The spend row's item for an arbitrage buy: `arb:LAV-03:1` = bought while we held 1 copy."""
+    return f"{ARB_TAG}{ref}:{held_before}"
+
+
+def dup_item(ref: str) -> str:
+    return f"{DUP_TAG}{ref}"
+
+
+def arb_inventory(rows: Iterable[tuple[str, int, int]], held: dict[str, int]) -> int:
+    """Primas still tied up in arbitrage: every `arb:REF:n` buy while we hold more than n copies of REF.
+    Its exit (or any later sale of the copy) closes it; a copy we keep because the exit vanished stays
+    counted, so `arb_max_inventory_p` bounds what is stuck too. A malformed row counts (fail closed)."""
+    total = 0
+    for item, price, _ in rows:
+        ref, _, before = item.removeprefix(ARB_TAG).rpartition(":")
+        if not before.isdigit() or held.get(ref, 0) > int(before):
+            total += max(0, price)
+    return total
+
+
+def held_buy_refusals(action: Action, ctx: Context, rules: Guardrails, held: bool) -> list[str]:
+    """Why a buy may not go ahead under `block_buying_held_cards` and its two guarded exceptions."""
+    price = action.price or 0
+    if action.held_buy == "arb":
+        if not rules.arb_enabled:
+            return [f"arbitrage buy of {action.item}: arb_enabled = false"]
+        out = []
+        if action.kind != "accept_buy":
+            out.append("an arbitrage buy is an accept of a standing ask, never a posted bid")
+        if action.exit_net is None or action.exit_net < rules.arb_min_net_spread:
+            out.append(f"exit net {action.exit_net} < arb_min_net_spread {rules.arb_min_net_spread}")
+        if ctx.arb_inventory + price > rules.arb_max_inventory_p:
+            out.append(f"arb inventory {ctx.arb_inventory} + {price} > arb_max_inventory_p {rules.arb_max_inventory_p}")
+        return out
+    if action.held_buy == "dup":
+        if not rules.dup_buy_enabled:
+            return [f"duplicate buy of {action.item}: dup_buy_enabled = false"]
+        out = []
+        value = action.next_copy_value
+        if value is None or value - price < rules.dup_min_surplus:
+            out.append(f"one more {action.item} is worth {value} − {price} < dup_min_surplus {rules.dup_min_surplus:g}")
+        if ctx.dup_spent_last_hour + price > rules.dup_max_spend_per_hour:
+            out.append(
+                f"duplicate spend {ctx.dup_spent_last_hour} + {price} > dup_max_spend_per_hour "
+                f"{rules.dup_max_spend_per_hour}"
+            )
+        return out
+    if held and rules.block_buying_held_cards:
+        return [f"we already hold {action.item} (block_buying_held_cards)"]
+    return []
 
 
 def action_kind(kind: str) -> ActionKind:
@@ -439,8 +533,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             f"{ctx.packs_last_hour} pack(s) bought this game hour (max_packs_per_game_hour "
             f"{rules.max_packs_per_game_hour})"
         )
-    if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0:
-        v.append(f"we already hold {action.item} (block_buying_held_cards)")
+    if buying:
+        v += held_buy_refusals(action, ctx, rules, ctx.held.get(action.item, 0) > 0)
     if action.kind in ("sell", "accept_sell") and action.price is not None and action.your_value is not None:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
