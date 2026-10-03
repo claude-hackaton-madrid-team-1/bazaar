@@ -125,6 +125,7 @@ class DealerThread:
     fill_price: int | None = None
     fill_tick: int | None = None
     ours: bool = False  # our own thread (see `dealer_threads(..., ours=)`)
+    sequence: list[tuple[str, int]] = field(default_factory=list)  # ("team"|"dealer", price) in feed order
 
     @property
     def opening_ask(self) -> int | None:
@@ -190,10 +191,12 @@ def dealer_threads(events: Iterable[Event], ours: str | None = None) -> list[Dea
             t.last_tick = int(e.get("tick", t.last_tick))
             if p.get("sender") == t.dealer:
                 t.dealer_prices.append(price)
+                t.sequence.append(("dealer", price))
                 if offer.get("final"):
                     t.final_price = price
             else:
                 t.team_prices.append(price)
+                t.sequence.append(("team", price))
         elif kind == "settlement":
             for pr in tape([e]):
                 settlements.append((pr, (e.get("payload") or {}).get("items") or []))

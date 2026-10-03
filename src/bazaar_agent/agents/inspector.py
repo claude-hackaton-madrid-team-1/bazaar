@@ -140,7 +140,8 @@ SENTENCE_END = re.compile(r"[.!?\n]")
 # every shape, and a wrong flag costs points while a missed one only loses a bonus (S1 #152 review r3).
 MESSAGE_DENIAL = re.compile(
     SENTENCE_NEGATION.pattern
-    + r"|\b(?:nobody|no one|nadie|wish|ojal[aá]|sold|gone|went|lost|terminad[oa]s?|termin[oó]|acabad[oa]s?"
+    + r"|\b(?:nobody|no one|nadie|wish|ojal[aá]|sold|gone|went|lost|taken|took|llev[oó]|llevad[oa]s?|terminad[oa]s?"
+    r"|termin[oó]|acabad[oa]s?"
     r"|acab[oó]|agotad[oa]s?|agot[oó]|vend[ií]|vendid[oa]s?|perd[ií]|sorry|lo siento|unfortunately"
     r"|lamentablemente|out of stock|in place of|instead|en vez|en lugar|replacement|substitut\w*|sustitu\w*)\b"
 )

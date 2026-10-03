@@ -240,6 +240,95 @@ def test_a_guardrail_denial_turns_the_move_into_a_walk_and_deals_are_reported():
     assert deals == [9]
 
 
+class LiveDealerClient(FakeDealerClient):
+    def me(self):
+        return {"cash": 400, "assets": []}
+
+    def my_offers(self):
+        return {"offers": []}
+
+
+@pytest.fixture
+def live_dealer_buy(monkeypatch, tmp_path):
+    from bazaar_agent import cli
+    from bazaar_agent.config import Settings
+
+    client = LiveDealerClient(asks=[12, 10, 9])
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    monkeypatch.setattr(cli, "_rarity_of", lambda item: "common")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    return cli, client
+
+
+def dealer_buy(cli, ledger, monkeypatch):
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
+    args = ["dealer", "buy", "LAV-03", "--max", "10", "--start", "6", "--live"]
+    result = CliRunner().invoke(cli.app, args)
+    return result, " ".join(result.output.split())
+
+
+def test_live_dealer_buy_with_the_ledger_down_exits_cleanly_before_opening(live_dealer_buy, monkeypatch):
+    import psycopg
+
+    from bazaar_agent.ledger_pg import PgLedger
+
+    cli, client = live_dealer_buy
+
+    def refused():
+        raise psycopg.OperationalError("down")
+
+    result, output = dealer_buy(cli, PgLedger(refused, "dealer-buy"), monkeypatch)
+    assert result.exit_code == 1 and not isinstance(result.exception, psycopg.Error | RuntimeError)
+    assert "refusing to trade: ledger read failed" in output and "(fail closed)" in output
+    assert client.sent == [] and client.reads == 1  # read the clock, never opened a thread
+
+
+def test_a_ledger_failure_inside_the_guard_holds_instead_of_accepting_or_walking(
+    live_dealer_buy, monkeypatch, tmp_path
+):
+    from bazaar_agent.guardrails import Ledger
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    class ReserveFails(Ledger):
+        def reserve_accept(self, *args, **kw):
+            raise LedgerUnavailable("accept reservation failed (OperationalError)")
+
+    cli, client = live_dealer_buy
+    result, output = dealer_buy(cli, ReserveFails(tmp_path / "ledger.jsonl"), monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert client.sent == [6, 7, 8] and client.accepted == []  # her 9 was not taken without a slot
+    assert "HOLD accept 9: accept reservation failed (OperationalError); no write without the shared ledger" in output
+    assert "walk" not in output and "timeout" in output  # held every tick; only the 14-tick timeout closed it
+
+
+def test_a_held_move_sends_nothing_keeps_the_thread_and_is_decided_again_next_tick():
+    from bazaar_agent.agents.dealer import Hold, negotiate
+
+    blinks = {"accept": 1, "bid": 1}  # the ledger blinks once for the first bid and once for the accept
+
+    def guard(move, thread_id):
+        if blinks[move.kind]:
+            blinks[move.kind] -= 1
+            raise Hold("ledger read failed (Postgres unreachable)")
+        return None
+
+    client, lines = FakeDealerClient(asks=[12, 10, 9]), []
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        guard=guard,
+    )
+    assert (client.sent, client.accepted, out.status) == ([6, 7, 8], [503], "deal")  # same bids, one tick later
+    assert not client.closed and sum("HOLD" in line for line in lines) == 2
+
+
 def test_offer_terms_must_be_exactly_the_requested_item_for_cash_only():
     from bazaar_agent.agents.dealer import offer_terms_problem, requested_item
 

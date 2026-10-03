@@ -430,6 +430,7 @@ def test_honest_words_with_the_denial_in_another_sentence_never_flag(text):
         "La Tabacalera is all gone. 12 P for this.",
         "La Tabacalera se agotó. Toma este, 12.",
         "In place of La Tabacalera, this one for 12.",
+        "La Tabacalera has been taken by another team. 12 P for this.",
         "Here is a common for you instead of La Tabacalera: 12 P.",
         "Te doy una común, 12 P. La Tabacalera vuela.",
     ],
