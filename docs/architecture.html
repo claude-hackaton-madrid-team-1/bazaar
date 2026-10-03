@@ -160,20 +160,23 @@ footer { color: var(--muted); font-size: 13px }
       <rect x="74" y="770" width="320" height="140" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="94" y="812" class="t">Pg vectors ✓</text>
       <text x="94" y="848" class="s">pgvector 0.8.6, PG 18.6</text>
-      <text x="94" y="878" class="n">no embeddings written yet</text>
+      <text x="94" y="876" class="s">learnings embedded (bge-small, 384-d) ✓</text>
+      <text x="94" y="904" class="s">HNSW cosine for the hybrid recall ✓</text>
       <rect x="430" y="770" width="390" height="120" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="450" y="812" class="t">DB · cards ✓</text>
       <text x="450" y="848" class="n">holdings N13 approved (#105), 09:30 window</text>
-      <rect x="430" y="910" width="390" height="140" rx="10" fill="var(--todo)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="450" y="952" class="t">DB · traders_behaviors ○</text>
-      <text x="450" y="988" class="n">empty; dealer_curves, traders and</text>
-      <text x="450" y="1014" class="n">competitor_profiles are filled ✓</text>
+      <rect x="430" y="910" width="390" height="140" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="450" y="952" class="t">DB · traders_behaviors ◐</text>
+      <text x="450" y="988" class="s">every dealer move: open/concede/hold/final/deal ✓</text>
+      <text x="450" y="1018" class="n">written by the outcome learner (N3)</text>
       <rect x="430" y="1070" width="390" height="120" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
       <text x="450" y="1112" class="t">DB · learnings ◐</text>
       <text x="450" y="1148" class="s">feed reader: blockers, fees, notices ✓</text>
       <text x="450" y="1176" class="s">taker skips blocked dealers ✓</text>
       <text x="450" y="1206" class="n">LLM pass: PR 2 (#111)</text>
-      <text x="450" y="1232" class="n">learner N3 approved (#96), 09:30 window</text>
+      <text x="450" y="1234" class="s">lessons from every outcome (N3) ✓</text>
+      <text x="450" y="1262" class="s">hybrid recall: BM25+vector+RRF+rerank ✓</text>
+      <text x="450" y="1290" class="s">auto-evolved ladders + skip (N3) ✓</text>
       <rect x="74" y="930" width="320" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="94" y="972" class="t">Also stored ✓</text>
       <text x="94" y="1008" class="s">feed · tape · dealer_curves</text>
@@ -256,7 +259,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><span class="mono">[D1](D1-spec.md) · was #4</span><b>Duel logger (practice h2)</b><p>🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in <code>tests/fixtures/duels/</code>, live deadline proof</p></div>
       <div class="item"><span class="mono">N1 (new)</span><b>Memory schema + repository + Railway-ready DB</b><p>✅ (#29, #32, #33)</p></div>
       <div class="item"><span class="mono">N2 (new)</span><b>Intel: order book, tape, competitor profiles</b><p>✅ (#29, #32)</p></div>
-      <div class="item"><span class="mono">N3 (new)</span><b>**P0 (Omar) · Learner / auto-evolve**: outcomes → lessons in <code>learnings</code>/<code>traders_behaviors</code>; hybrid RAG (BM25 + pgvector + local cross-encoder reranker, Postgres only — Jev: no graph DB); per-dealer concession parameters learned within GUARDRAILS; lessons into Jev and the LLM words</b><p>🔵 v1 approved (#96, hybrid recall; merges in the 09:30 window); auto-evolve #112 in review</p></div>
+      <div class="item"><span class="mono">N3 (new)</span><b>**P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder <code>recall()</code>, learned ladder parameters inside GUARDRAILS</b><p>🔵 PR A #96 (stacked on #89): lessons + <code>trader_behaviors</code> + embeddings + hybrid <code>recall()</code> in the taker · PR B (stacked on #96): auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (<code>offer_is_worth_accepting</code>, <code>duel_move</code>, <code>list_price_choice</code>) + words, <code>Query.where</code> + <code>record_lesson</code> for N14, MCP <code>learnings</code>, <code>bazaar learnings --policy</code></p></div>
       <div class="item"><span class="mono">N5 · was #1</span><b>Decision model: decider + Jev packs + policy</b><p>🔵 autonomous taker + maker (<code>bazaar agent</code>), every move in <code>decisions</code>; LIVE on Railway since Sat 01:45 Madrid (<code>BAZAAR_LIVE=1</code> by hand)</p></div>
       <div class="item"><span class="mono">[S1](S1-spec.md) · was #10, #24</span><b>Executor firewall, offer inspector, flags</b><p>🔵 guardrails + offer-term check (#30, #31); <code>untrusted_text</code> (#59); public <code>/state</code> leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60)</p></div>
       <div class="item"><span class="mono">N4 (new)</span><b><code>service.py</code> + CLI + bazaar skill + commands</b><p>🔵 CLI + skill done; <code>service.py</code> seam ⬜</p></div>
@@ -266,7 +269,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><span class="mono">N8 (new)</span><b>Runtime LLM: Jev-chosen model, <code>--llm-runtime</code>, ask, words, steer</b><p>🔵 worker</p></div>
       <div class="item"><span class="mono">N9 (new)</span><b>Guardrails rule book (GUARDRAILS.md)</b><p>✅ (#30)</p></div>
       <div class="item"><span class="mono">N11 (new)</span><b>Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, <code>questions/evals.json</code>)</b><p>🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs</p></div>
-      <div class="item"><span class="mono">N12 (new)</span><b>**P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (<code>learnings</code>, <code>traders_behaviors</code>, embeddings) for the live taker and maker</b><p>🔵 PR 1: deterministic reader (<code>bazaar_agent.learn</code>), <code>learnings</code> columns + <code>recall()</code>, the taker skips dealers under a blocker, the taker archives the feed window, <code>bazaar learnings</code>; PR 2 ⬜: LLM pass over free text, embeddings, <code>trader_behaviors</code>, Jev/words context, maker fee notices, MCP tool</p></div>
+      <div class="item"><span class="mono">N12 (new)</span><b>**P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (<code>learnings</code>, <code>traders_behaviors</code>, embeddings) for the live taker and maker</b><p>🔵 PR 1: deterministic reader (<code>bazaar_agent.learn</code>), <code>learnings</code> columns + <code>recall()</code>, the taker skips dealers under a blocker, the taker archives the feed window, <code>bazaar learnings</code>; PR 2 ⬜: LLM pass over free text, embeddings, <code>trader_behaviors</code>, Jev/words context, maker fee notices, MCP tool; PR 3 🔵: our dealer threads + <code>closed_reason</code> into <code>threads</code>/<code>messages</code> from the answers the taker already reads (0 extra requests)</p></div>
       <div class="item"><span class="mono">N13 (new)</span><b>**P0 · Real-time holdings + card catalog in Postgres**: per-tick <code>/api/me</code> snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB</b><p>🔵 approved (#105, 09:30 window)</p></div>
       <div class="item"><span class="mono">N14 (new)</span><b>**P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back</b><p>⬜ after N3 v1 (Sat 12:00)</p></div>
       <div class="item"><span class="mono">N15 (new)</span><b>**Jev picks the desk's model per request**: orchestrator + each subagent (<code>desk_model</code> = auto, one batched <code>model_for_desk_role</code> Jev call, cache, per-role defaults, pin wins); spec [<code>N15-spec.md</code>](./N15-spec.md)</b><p>🔵 approved (#108, 09:30 window)</p></div>
