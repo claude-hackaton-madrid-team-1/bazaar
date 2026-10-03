@@ -63,6 +63,8 @@ def test_the_taker_starts_a_pass_after_its_tick(tmp_path):
     calls: list[tuple[int, str]] = []
 
     class Spy:
+        policies: dict = {}
+
         def maybe_run(self, tick, us):
             calls.append((tick, us))
             return True

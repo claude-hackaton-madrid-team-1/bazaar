@@ -47,10 +47,12 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
+from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
+from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -286,6 +288,7 @@ class Taker:
         sleep: Callable[[float], None] = time.sleep,
         learner: LiveLearner | None = None,
         outcome_learner: OutcomeLearner | None = None,
+        lessons: Lessons | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -294,6 +297,7 @@ class Taker:
         self.sleep = sleep
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
         self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
+        self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -402,6 +406,7 @@ class Taker:
         moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
+        moves = self._evolved(run, moves, busy)
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
 
@@ -429,6 +434,39 @@ class Taker:
                 f"skip {dealer} for {mv.ref}: {stop.text}",
                 inputs={"blocked_dealer": dealer, "wanted": mv.ref, "until_tick": stop.until_tick, "why": stop.text},
                 reason=stop.text,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return kept
+
+    def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """The learned ladder per (dealer, price class) replaces the strategy's (never above its top), and a
+        class priced above what we may pay is skipped with a `dealer_skip` row (N3). No policy: unchanged."""
+        policies = self.outcome_learner.policies if self.outcome_learner is not None else {}
+        if not policies:
+            return moves
+        kept: list[StrategyMove] = []
+        skipped: dict[str, tuple[StrategyMove, str]] = {}
+        for mv in moves:
+            cls = price_class(mv.ref)
+            policy = policies.get((mv.source, cls)) if mv.ladder is not None and cls is not None else None
+            if policy is None or mv.ladder is None:
+                kept.append(mv)
+                continue
+            plan, why = policy.plan(mv.ladder)
+            if plan is None:
+                if mv.source not in busy:
+                    skipped.setdefault(mv.source, (mv, why))
+                continue
+            kept.append(replace(mv, ladder=plan, limit=plan[1], reason=f"{mv.reason}; {why}"))
+        for dealer, (mv, why) in skipped.items():
+            self.rec.decide(
+                run.snap.clock.tick,
+                "dealer_skip",
+                f"skip {dealer} for {mv.ref}: {why}",
+                inputs={"dealer": dealer, "item": mv.ref, "score": mv.score, "learned": why},
+                reason=why,
                 guardrail="-",
                 chosen=False,
                 status="rejected",
@@ -580,7 +618,7 @@ class Taker:
         price = int(move.price or 0)
         text = bid_words(
             self.words_fn,
-            WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item),
+            WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item, lessons=self._lessons_for(run, conv)),
             thread,
             run.snap.clock,
             run.window.deadline,
@@ -600,6 +638,14 @@ class Taker:
             is not None
         ):
             conv.neg.bids.append(price)
+
+    def _lessons_for(self, run: _TickRun, conv: Conversation) -> tuple[str, ...]:
+        """The top lessons about this dealer and item for the words (cached for a few ticks; none when short)."""
+        if self.lessons is None or run.window.left() < self.config.jev_min_budget_s:
+            return ()
+        situation = f"bid to {conv.dealer} for {conv.item} ({conv.rarity})"
+        found = self.lessons(situation, subjects=(conv.dealer,), tick=run.snap.clock.tick)
+        return tuple(str(x["quoted_lesson"]) for x in found)
 
     # ------------------------------------------------------------ accepts (shared quota)
 

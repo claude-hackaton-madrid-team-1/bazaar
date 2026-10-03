@@ -123,6 +123,7 @@ def dealer_lesson(o: Outcome, stats: CurveStats | None, us: str) -> Learning | N
     )
     detail: dict[str, Any] = {
         "outcome": o.subject,
+        "mechanic": "dealer",
         "target": "dealer",
         "item": item,
         "price_class": cls,
@@ -189,6 +190,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     text = f"Duel {d.get('duel')} as {role} (limit {limit:g}) vs {who}: {result}. {_duel_advice(d, o.score)}"
     detail = {
         "outcome": o.subject,
+        "mechanic": "duel",
         "target": "duel",
         "item": d.get("item"),
         "role": role,
@@ -237,6 +239,7 @@ def trade_lesson(o: Outcome, us: str) -> Learning | None:
     text = f"Trade {o.subject}: we {verb} {ref} at {price} with {who or 'a team'}: {result}. {advice}"
     detail = {
         "outcome": o.subject,
+        "mechanic": "trade",
         "target": "trade",
         "item": ref,
         "side": side,
@@ -275,6 +278,7 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
         source="outcome",
         detail=clean(
             {
+                "mechanic": "dealer",
                 "pattern": "concession",
                 "price_class": stats.price_class,
                 "threads": stats.threads,
@@ -290,6 +294,44 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
                 "evidence_threads": list(stats.thread_ids[-20:]),
             }
         ),
+    )
+
+
+# ---------------------------------------------------------------- any strategy's own outcome (N14 writes back)
+
+MECHANICS = ("dealer", "duel", "trade", "pack", "market", "venue", "page", "grant")
+
+
+def record_lesson(
+    *,
+    mechanic: str,
+    subject_kind: str,
+    subject: str,
+    outcome: str,
+    tick: int,
+    team: str,
+    text: str,
+    features: Mapping[str, Any] | None = None,
+    confidence: float = 0.6,
+) -> Learning:
+    """A lesson any strategy writes back after its own outcome (then `store.record([...])`).
+
+    `outcome` is its identity ("pack:42", "venue:v04:fee"): the same outcome twice is one row. `features` are
+    the situation's numbers (item, price_class, price, ...), searchable and filterable with `Query.where`.
+    The text must be ours, built from structure: never a counterparty's words."""
+    if mechanic not in MECHANICS:
+        raise ValueError(f"unknown mechanic {mechanic!r} (one of {', '.join(MECHANICS)})")
+    detail = {k: v for k, v in (features or {}).items() if isinstance(v, str | int | float | bool)}
+    return Learning(
+        subject_kind=subject_kind,  # type: ignore[arg-type]  # validated by the model
+        subject=subject,
+        kind="lesson",
+        tick=max(0, tick),
+        team=team,
+        confidence=confidence,
+        text=_cap(text),
+        source="outcome",
+        detail={**detail, "mechanic": mechanic, "outcome": outcome},
     )
 
 
