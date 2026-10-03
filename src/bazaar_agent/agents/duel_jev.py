@@ -213,6 +213,24 @@ def choose(
     return pick, f"jev {advice.verdict} ({advice.value:.2f})"
 
 
+def forced_pick(
+    duel: Mapping[str, Any], tick: int, start: int, anchor: float, floor: float, endgame_ticks: int
+) -> DuelPick | None:
+    """The pick `DuelJev.pick` makes for a duel whose only legal move is today's accept (an inside-limit
+    offer in the endgame), else None. Jev is never asked about such a duel, so the duel player may book and
+    send its accept before Jev answers about the others (r2 bite X17: the taker claims the accept 2 s in)."""
+    default = duel_move(dict(duel), tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
+    if default.kind != "accept":
+        return None
+    counter = duel_move({**duel, "rival_offer": None}, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
+    legal = legal_moves(duel, tick, default, counter, endgame_ticks)
+    if set(legal) != {"accept"}:
+        return None
+    return DuelPick(
+        default, default, tuple(legal), "jev not asked", state=duel_state(duel, tick, legal, default, counter)
+    )
+
+
 def with_rival_days(move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | None) -> tuple[DuelMove, str]:
     """On a yes to `rival_cares_about_days`, give the rival its own days, if our price still holds after them."""
     if days is None or days.verdict != "yes" or move.kind != "offer" or move.price is None:

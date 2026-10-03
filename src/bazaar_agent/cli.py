@@ -415,7 +415,7 @@ def duel_run(
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
-    from bazaar_agent.agents.duel_jev import DuelPick
+    from bazaar_agent.agents.duel_jev import DuelPick, forced_pick, ticks_left
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
@@ -592,30 +592,16 @@ def duel_run(
             except Exception as e:  # a ledger outage mid-booking: fail closed for this duel (#62)
                 console.print(f"  duel {planned_id}: ledger unreadable ({type(e).__name__}): hold")
                 planned[planned_id] = DuelMove("hold", reason="ledger unreadable: no accept this tick")
-        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
-            endgame = rules.duel_endgame_ticks
-            left = lambda: send_by - time.monotonic()  # noqa: E731
-            try:
-                picks = duel_jev.pick(
-                    duels,
-                    c.tick,
-                    first_seen,
-                    anchor=anchor,
-                    floor=floor,
-                    endgame_ticks=endgame,
-                    left=left,
-                    v2=params,
-                    slots=slots,
-                )
-            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
-                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
 
         def play_one(d: dict[str, Any]) -> None:
             did = duel_id(d)
             if did is None:
                 return
             pick = picks.get(did)
-            if pick is not None:
+            if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
+                pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
+                move = forced[did].move
+            elif pick is not None:
                 move = pick.move
             elif did in planned:
                 move = planned[did]
@@ -659,7 +645,45 @@ def duel_run(
             status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
             record(d, move, pick, c.tick, status)
 
+        # v1 (r2 X17): in the endgame an inside-limit offer is the only legal move and Jev is never asked about
+        # it, so it is booked AND sent now, nearest deadline first, before Jev answers about the other duels and
+        # before the taker's duel grace (2 s) ends. v2 books its planner's accepts above.
+        forced: dict[int, DuelPick] = {}
+        for d in duels if play and params is None else ():
+            if (fid := duel_id(d)) is None:
+                continue
+            try:
+                endgame = rules.duel_endgame_ticks
+                if (fp := forced_pick(d, c.tick, first_seen[fid], anchor, floor, endgame)) is not None:
+                    forced[fid] = fp
+            except Exception as e:  # a malformed row goes the usual way below
+                console.print(f"  duel {fid}: forced-accept check failed ({type(e).__name__}): today's path")
+        for d in sorted((d for d in duels if duel_id(d) in forced), key=lambda d: ticks_left(d, c.tick) or 0):
+            try:
+                play_one(d)
+            except Exception as e:
+                console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
+        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
+            endgame = rules.duel_endgame_ticks
+            left = lambda: send_by - time.monotonic()  # noqa: E731
+            try:
+                picks = duel_jev.pick(
+                    duels,
+                    c.tick,
+                    first_seen,
+                    anchor=anchor,
+                    floor=floor,
+                    endgame_ticks=endgame,
+                    left=left,
+                    v2=params,
+                    slots=slots,
+                )
+            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
+                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
+
         for d in duels:  # one malformed row must not cost the other duels their move (r2 bite B2b)
+            if duel_id(d) in forced:
+                continue
             try:
                 play_one(d)
             except Exception as e:
