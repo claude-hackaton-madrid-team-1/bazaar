@@ -199,6 +199,8 @@ def test_server_fields_out_of_range_skip_only_their_event(database_url, schema):
         {"id": 4, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "price": 2**40}},
         {"id": 5, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "venue": "v\x0004"}},
         {"id": 6, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "price": 9}},
+        {"id": 7, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "venue": {"x": 1}}},
+        {"id": 8, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "venue": "v\ud800"}},
     ]
     with open_in(database_url, schema) as conn, conn.cursor() as cur:
         counts = db.insert_events(cur, events)

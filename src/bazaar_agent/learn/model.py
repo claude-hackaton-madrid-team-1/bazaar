@@ -34,9 +34,8 @@ TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
 IDENTITY_FIELDS = frozenset({"item", "rarity", "code", "aggregate", "venue", "effective_tick"})
-ORIGIN_THAT_BLOCKS = re.compile(
-    r"(feed|refusal|thread:\d+)"
-)  # matched with fullmatch  # where a rules blocker may come from
+# Where a rules blocker may come from (matched with `fullmatch`).
+ORIGIN_THAT_BLOCKS = re.compile(r"(feed|refusal|thread:\d+)")
 
 
 class Learning(BaseModel):
