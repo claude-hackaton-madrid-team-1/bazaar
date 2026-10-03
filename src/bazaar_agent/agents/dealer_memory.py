@@ -5,11 +5,13 @@ words it said to us, and how to address it.
   reader or our own outcomes (an LLM reading of feed text is left out: it may quote another team's words).
   Read from the store's memory by default (no I/O inside the tick); the live learner pulls the stored ones in
   after the sends. Any error is an empty memory, never a raise.
-- Texts: its last `MAX_TEXTS` messages TO US in the feed window, untrusted: one line, `TEXT_MAX` characters,
-  and a text with an injection shape is withheld (only its tags are kept).
-- Address (`address_for`): an etiquette learning ("address chato as Don Chato"), then the dealer's published
-  name (`/api/dealers`), then `DEALER_NAMES`; never a word the dealer forbade, never "amigo" (Doña Pilar,
-  Sat 3 Oct). Everything here is quoted data for Jev and the words; it never sets a price.
+- Texts: its last `MAX_TEXTS` messages TO US in a dealer thread of the feed window, untrusted: one line,
+  `TEXT_MAX` characters, and a text with an injection shape is withheld (only its tags are kept). They reach
+  only our words, as quoted data; Jev sees their counts and tags, never their text (`jev_facts`).
+- Address (`address_for`): an etiquette learning ("address chato as Don Chato"), then for the three dealers
+  #211 named the short form in `DEALER_NAMES` ("Chato", not the published "El Chato"), for any other dealer its
+  published name (`/api/dealers`); never a word the dealer forbade (at most `NEVER_ADDRESS_MAX` of them), never
+  "amigo" or "amiga" (Doña Pilar, Sat 3 Oct). Everything here is quoted data; it never sets a price.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from bazaar_agent.llm.chooser import injection_flags
 MAX_LEARNINGS = 5
 MAX_TEXTS = 3
 TEXT_MAX = 200
+NEVER_ADDRESS_MAX = 8  # forbidden addresses kept for the words and the prompt; NEVER_ADDRESS always among them
 KINDS = frozenset({"behaviour", "lesson"})
 SOURCES = frozenset({"rules", "outcome"})
 RECALL_POOL = 50  # learnings read before the source filter keeps the newest MAX_LEARNINGS
@@ -55,14 +58,14 @@ class DealerMemory:
     status: str = "ok"  # ok | error:<Type>
 
     def never_address(self) -> tuple[str, ...]:
-        """Every address the dealer forbade (its learnings and its recent words), plus "amigo"; folded."""
-        out = list(NEVER_ADDRESS)
+        """The addresses the dealer forbade, folded: "amigo" and "amiga" always, then its newest words to us, then
+        its newest learnings, at most `NEVER_ADDRESS_MAX` in all (a steered flood cannot fill the prompt)."""
+        out = [*NEVER_ADDRESS, *(x for t in reversed(self.texts) for x in t.forbids)]
         for lr in self.learnings:
             parsed = parse_etiquette(lr.text)
             if parsed is not None and parsed[0] == "never" and parsed[1] == self.dealer:
                 out.append(fold(parsed[2]))
-        out += [x for t in self.texts for x in t.forbids]
-        return tuple(dict.fromkeys(out))
+        return tuple(dict.fromkeys(out))[:NEVER_ADDRESS_MAX]
 
     def preferred(self) -> list[str]:
         """The addresses its etiquette learnings ask for, newest first."""
@@ -78,6 +81,24 @@ class DealerMemory:
             ],
             "their_recent_texts": [{"tick": t.tick, "text": t.text, "flags": list(t.flags)} for t in self.texts],
             "never_address": list(self.never_address()),
+            "status": self.status,
+        }
+
+    def jev_facts(self) -> dict[str, Any]:
+        """For a Jev state: structure only (#212 security r2). Our learnings from rules or outcomes, and how many
+        texts it sent us, how many were withheld and their injection tags; never the words themselves."""
+        return {
+            "dealer": self.dealer,
+            "learnings": [
+                {"kind": lr.kind, "tick": lr.tick, "source": lr.source, "text": lr.text}
+                for lr in self.learnings
+                if lr.source in SOURCES
+            ],
+            "their_recent_texts": {
+                "count": len(self.texts),
+                "withheld": sum(1 for t in self.texts if t.flags),
+                "flags": sorted({f for t in self.texts for f in t.flags}),
+            },
             "status": self.status,
         }
 
@@ -117,6 +138,8 @@ def _texts(events: Iterable[Mapping[str, Any]] | None, dealer: str, us: str | No
         p = e.get("payload")
         if e.get("type") != "thread.message" or not isinstance(p, Mapping) or not isinstance(e.get("id"), int):
             continue
+        if p.get("kind", "persona") != "persona":  # a team thread is never the dealer speaking (#212 security r2)
+            continue
         if p.get("sender") == dealer and p.get("team") == us and isinstance(p.get("text"), str) and p["text"].strip():
             mine.append(e)
     mine.sort(key=lambda e: int(e["id"]))
@@ -143,12 +166,15 @@ def _published_name(persona: Any, dealer: str) -> str:
 
 
 def address_for(dealer_id: str, memory: DealerMemory | None, personas: Mapping[str, Any] | None) -> str:
-    """How we address the dealer: an etiquette learning, its published name, then DEALER_NAMES; "" when none
-    is safe (the templates then leave the address out). Never a forbidden word, never "amigo"."""
+    """How we address the dealer: an etiquette learning first; then `DEALER_NAMES` for the three dealers #211
+    named (its short forms outrank the published "El Chato" and "Abuela Carmen"), or the published name for any
+    other dealer; "" when none is safe (the words then leave the address out). Never a forbidden word, never
+    "amigo"."""
     memory = memory or DealerMemory(dealer_id)
     never = memory.never_address()
-    published = _published_name((personas or {}).get(dealer_id), dealer_id)
-    for raw in [*memory.preferred(), published, DEALER_NAMES.get(dealer_id, "")]:
+    known = DEALER_NAMES.get(dealer_id)
+    fallback = known if known is not None else _published_name((personas or {}).get(dealer_id), dealer_id)
+    for raw in [*memory.preferred(), fallback]:
         candidate = plain_address(raw or "")
         if candidate is not None and not uses_forbidden(candidate, never):
             return candidate

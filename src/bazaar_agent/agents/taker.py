@@ -1323,7 +1323,7 @@ class Taker:
                 reopened=reopened,
                 notes=tuple(notes),
                 recalled=tuple(recalled),
-                memory=memory.facts(),
+                memory=memory.jev_facts(),  # structure only: the dealer's words never reach Jev (#212 r2)
                 address=address,
                 never_address=memory.never_address(),
                 memory_lines=memory.lines(),

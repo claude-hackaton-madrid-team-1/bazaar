@@ -27,6 +27,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from bazaar_agent.agents.words import leave_out_address
+
 Side = Literal["buy", "sell"]
 CounterpartyKind = Literal["dealer", "rival", "team"]
 Family = Literal["kindness", "psychology", "bluff"]
@@ -353,24 +355,26 @@ def render(
     avoid: Iterable[int] = frozenset(),
     step: int = 0,
     their: int | None = None,
+    name: str | None = None,
 ) -> str | None:
     """The tactic's text for a message whose structured price is `price`. None when it does not fit: unknown id,
     wrong side, not on this counterparty's list, an accusation audit after the first message, no counterparty
     price to quote, no plausible invented number. `avoid`: our private numbers (limit, max price, value), which an
-    invented number must never equal. `their`: the counterparty's own structured price, never parsed from text."""
+    invented number must never equal. `their`: the counterparty's own structured price, never parsed from text.
+    `name`: how we address a dealer (`dealer_memory.address_for`), over `NAMES`; "" leaves the address out."""
     tactic = BY_ID.get(tactic_id)
     if tactic is None or side not in tactic.sides or price < 1 or not allowed(tactic, kind, counterparty):
         return None
     if (tactic.first_only and step != 0) or (tactic.quotes_their and not _their_fits(side, price, their)):
         return None
     lang = language_of(language)
+    if kind != "dealer":
+        name = NEUTRAL_NAME[lang]
+    elif name is None:
+        name = NAMES.get(counterparty.strip().lower(), counterparty.strip().title() or NEUTRAL_NAME[lang])
     fields = {
         "p": str(price),
-        "n": (
-            NAMES.get(counterparty.strip().lower(), counterparty.strip().title() or NEUTRAL_NAME[lang])
-            if kind == "dealer"
-            else NEUTRAL_NAME[lang]
-        ),
+        "n": name,
         "place": PLACE["dealer" if kind == "dealer" else "other"][lang],
         "elsewhere": _elsewhere(kind, counterparty, lang),
         "their": str(their) if tactic.quotes_their else "",
@@ -381,7 +385,8 @@ def render(
         if alt is None:
             return None
         fields["alt"] = str(alt)
-    return tactic.lines[side][lang].format(**fields)
+    text = tactic.lines[side][lang].format(**fields)
+    return text if name else leave_out_address(text)
 
 
 def numbers_in(text: str) -> set[int]:

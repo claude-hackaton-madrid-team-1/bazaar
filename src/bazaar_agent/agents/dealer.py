@@ -14,7 +14,6 @@ Words persuade, structure binds: we read only the structured offers, never the d
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -23,8 +22,9 @@ from typing import Any, Literal
 
 from bazaar_agent.agents.bluff import Counterparty, TacticBook, message_id
 from bazaar_agent.agents.tactics import private_numbers
-from bazaar_agent.agents.words import WordsFn, WordsRequest
+from bazaar_agent.agents.words import WordsFn, WordsRequest, leave_out_address
 from bazaar_agent.jev.decider import needed_budget_s
+from bazaar_agent.learn.etiquette import NEVER_ADDRESS, uses_forbidden
 
 MoveKind = Literal["accept", "bid", "walk", "wait"]
 
@@ -243,10 +243,7 @@ def with_name(template: str, price: int, name: str) -> str:
     """A word template with the dealer's name; with no known name the address is left out, never "amigo"
     (Doña Pilar answered "no me llame amigo" three times on Sat 3 Oct, threads 880-914)."""
     text = template.format(p=price, n=name)
-    if not name:
-        text = re.sub(r",\s*([!?.,])", r"\1", text)
-        text = re.sub(r"\s{2,}", " ", text).strip()
-    return text
+    return text if name else leave_out_address(text)
 
 
 def words(step: int, price: int, dealer: str = "", tone: str = "", name: str | None = None) -> str:
@@ -259,12 +256,15 @@ def words(step: int, price: int, dealer: str = "", tone: str = "", name: str | N
 
 def template_words(request: WordsRequest) -> str:
     """The default `WordsFn`: our Spanish templates in the dealer's tone, addressed to it, with the structured
-    price."""
-    return words(request.step, request.price, request.counterparty, request.tone, request.address or None)
+    price. The request's address as given: None names the dealer from `DEALER_NAMES`, "" leaves it out."""
+    return words(request.step, request.price, request.counterparty, request.tone, request.address)
 
 
 def bid_words(words_fn: WordsFn, base: WordsRequest, thread: dict[str, Any], clock: Any, send_by: float) -> str:
-    """The text for one bid: the counterparty's latest words and the time left until `send_by` added."""
+    """The text for one bid: the counterparty's latest words and the time left until `send_by` added.
+
+    The one check where a dealer's words are sent (templates, tactics and LLM words alike, #212 review r2): words
+    that use an address the dealer forbade, or "amigo", become the template words with no address at all."""
     request = replace(
         base,
         their_text=their_latest_text(thread, base.counterparty),
@@ -272,7 +272,10 @@ def bid_words(words_fn: WordsFn, base: WordsRequest, thread: dict[str, Any], clo
         tick=clock.tick,
         tick_seconds=clock.tick_seconds,
     )
-    return words_fn(request)
+    text = words_fn(request)
+    if uses_forbidden(text, (*NEVER_ADDRESS, *request.never_address)):
+        return words(request.step, request.price, request.counterparty, request.tone, name="")
+    return text
 
 
 def their_latest_text(thread: dict[str, Any], sender: str) -> str | None:

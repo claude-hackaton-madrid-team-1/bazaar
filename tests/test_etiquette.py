@@ -83,3 +83,132 @@ def test_the_feed_reader_stores_the_etiquette_once() -> None:
     out = reader.read([_message(10, "pilar", PILAR_THIRD), _message(11, "pilar", PILAR_NAME)])
     etiquette = [lr for lr in out if lr.text.startswith("never address")]
     assert [lr.text for lr in etiquette] == ["never address pilar as amigo"]
+
+
+# ---------------------------------------------------------------- #212 review r2: the flood and the misreads
+
+
+def test_a_text_with_more_than_two_forbids_teaches_nothing() -> None:
+    """An honest dealer asks once; a text steered into a list of forbids (security r2 #2: 60 from one message)."""
+    two = "No me llames 'jefe'. Y no me llames 'colega'."
+    assert forbidden_addresses(two) == ["jefe", "colega"]
+    flood = " ".join(f"No me llames '{word}'." for word in ("aaa", "aab", "aac", "aad", "aae"))
+    assert forbidden_addresses(flood) == []
+    assert etiquette_learnings(_message(10, "pilar", flood)) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No me llames 'le'",
+        "No me llames 'a'",
+        "No me llames 'que'",
+        "Don't call me 'the'",
+        "No me llames 'de la'",  # every word a function word
+        "No me llames nunca",
+    ],
+)
+def test_short_and_function_words_are_never_an_address(text: str) -> None:
+    assert forbidden_addresses(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Me llamo «Doña Pilar», encantada.",  # her own name
+        "Todo el barrio me llama 'Doña Pilar'.",  # what people call her
+        "Si no me llamas 'Doña Pilar', no hay trato.",  # what she demands: the opposite of a forbid
+        "Todo el barrio me llama 'Doña Pilar'. Otra vez le pregunto: ¿qué busca?",  # a complaint in the next sentence
+    ],
+)
+def test_a_dealer_stating_or_demanding_its_name_forbids_nothing(text: str) -> None:
+    assert forbidden_addresses(text) == []
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Es la tercera vez que me llama 'amigo'.", ["amigo"]),
+        ("Me llamas «abuelita» otra vez", ["abuelita"]),
+        ("Ya le dije que me llama 'jefa' y no me gusta.", ["jefa"]),
+        ("Le he pedido mil veces que deje de... me llama 'reina' cada día.", ["reina"]),
+        ("No me llames nunca 'amigo'.", ["amigo"]),
+    ],
+)
+def test_me_llama_counts_only_next_to_a_complaint(text: str, expected: list[str]) -> None:
+    assert forbidden_addresses(text) == expected
+
+
+def test_a_short_name_forbidden_never_blocks_the_titled_address_that_contains_it() -> None:
+    from bazaar_agent.agents.dealer_memory import DealerMemory, DealerText, address_for
+    from bazaar_agent.learn.etiquette import NEVER_ADDRESS, uses_forbidden
+
+    text = "No me llame Pilar a secas: soy Doña Pilar."
+    assert forbidden_addresses(text) == ["pilar"]
+    assert not uses_forbidden("Gracias por su paciencia, Doña Pilar.", ("pilar",))
+    assert uses_forbidden("Gracias por su paciencia, Pilar.", ("pilar",))
+    assert uses_forbidden("Gracias, Doña Pilar.", ("dona pilar",))
+    memory = DealerMemory("pilar", texts=(DealerText(1, 1, text, forbids=("pilar",)),))
+    assert address_for("pilar", memory, {}) == "Doña Pilar"
+    # a title never excuses "amigo" or "amiga" (#211): only a learned name inside a titled address is fine
+    assert uses_forbidden("Gracias, señor amigo.", NEVER_ADDRESS)
+    assert uses_forbidden("Venga, Doña Amiga, cerramos.", NEVER_ADDRESS)
+
+
+def test_the_feed_reader_learns_nothing_from_a_dealer_saying_its_own_name() -> None:
+    reader = FeedReader("t01")
+    texts = ["Me llamo «Doña Pilar», encantada.", "Si no me llamas 'Doña Pilar', no hay trato.", PILAR_THIRD]
+    out = reader.read([_message(20 + i, "pilar", text, team="t05") for i, text in enumerate(texts)])
+    assert [lr.text for lr in out if lr.text.startswith("never address")] == ["never address pilar as amigo"]
+
+
+# ---------------------------------------------------------------- a flood never evicts a blocker in force
+
+
+def _cooloff_event(eid: int, tick: int, until: int) -> dict:
+    payload = {"persona": "chato", "team": "t01", "until_tick": until}
+    return {"id": eid, "tick": tick, "type": "persona.cooloff", "payload": payload}
+
+
+def test_a_flood_of_newer_learnings_never_evicts_a_cooloff_still_in_force() -> None:
+    """Security r2 #2: newer rows trimmed a live cooloff out of memory (MEMORY_MAX newest by tick), so we opened
+    a thread the server refuses. A blocker in force stays; an expired one is trimmed like any old row."""
+    from types import SimpleNamespace
+
+    from bazaar_agent.learn.live import LiveLearner
+    from bazaar_agent.learn.model import Learning
+    from bazaar_agent.learn.store import MEMORY_MAX, LearningStore
+
+    def at(tick: int) -> SimpleNamespace:
+        return SimpleNamespace(tick=tick, t_hours=tick / 60, tick_seconds=60.0)
+
+    learner = LiveLearner(LearningStore(None))
+    assert learner.blocks([_cooloff_event(1, 100, 400)], "t01", at(100)).stops("chato") is not None
+    old = Learning(
+        subject_kind="dealer",
+        subject="abuela",
+        kind="quota",
+        tick=10,
+        until_tick=20,
+        team="t01",
+        confidence=1.0,
+        text="abuela persona quota with us until T20",
+        detail={"code": "persona_quota", "origin": "feed"},
+    )
+    learner.store.remember([old])
+    flood = [
+        Learning(
+            subject_kind="dealer",
+            subject="chato",
+            kind="behaviour",
+            tick=101 + i // 100,
+            confidence=0.9,
+            text=f"never address chato as w{i}",
+            detail={"pattern": f"never_address:w{i}"},
+        )
+        for i in range(MEMORY_MAX)
+    ]
+    learner.store.remember(flood)
+    assert len(learner.store.memory) <= MEMORY_MAX
+    assert old.key() not in learner.store.memory  # expired at T20: trimmed as before
+    assert learner.blocks([], "t01", at(150)).stops("chato") is not None  # the cooloff still blocks

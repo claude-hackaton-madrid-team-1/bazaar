@@ -2,9 +2,17 @@
 
 Doña Pilar told us three times on Sat 3 Oct (threads 880-914): "es la tercera vez que me llama 'amigo'",
 "Soy Doña Pilar, no 'amigo'… le he pedido que no me llame amigo". A fixed phrase is structure enough to read
-deterministically (`source: rules`): "no me llame(s) X", "me llama(s) 'X'" (quoted only: "me llama la atención"
-is no name), "don't / do not call me X". The text is untrusted: one injection shape and nothing is learned;
-an address is at most a few letters-only words; the lesson only ever FORBIDS a word in our own messages.
+deterministically (`source: rules`): "no me llame(s) X" and "don't / do not call me X" forbid X; "me llama(s)
+'X'" (quoted) forbids X only next to a complaint ("es la tercera vez que me llama 'amigo'"), because alone it is
+her own name ("todo el barrio me llama 'Doña Pilar'"), and after "no" it is the name she wants. "Me llamo X" is
+her name, never a forbid.
+
+The text is untrusted, and any team can steer what a dealer says in its own thread (#212 security r2): one
+injection shape and nothing is learned; an address is at most a few letters-only words with at least
+`MIN_LETTERS` letters, never only function words ("le", "que", "the"); a text that forbids more than
+`MAX_FORBIDS` addresses teaches nothing (an honest dealer asks once). The lesson only ever FORBIDS a word in our
+own messages, and a forbidden short name never blocks the titled address that holds it ("pilar" forbidden, "Doña
+Pilar" is still fine).
 """
 
 from __future__ import annotations
@@ -21,22 +29,51 @@ from bazaar_agent.llm.chooser import injection_flags
 
 QUOTES = "'\"‘’“”«»"
 _QUOTED = rf"[{QUOTES}]([^{QUOTES}]{{1,40}})[{QUOTES}]"
-_WORD = r"([^\W\d_]{2,24})"
+_WORD = r"([^\W\d_]{3,24})"
+_NEVER = r"(?:(?:nunca|jamas|mas|ever) )?"  # "no me llames nunca 'amigo'", "don't ever call me pal"
 # Folded text (lowercase, no accents, curly apostrophes made straight) → the forbidden address.
-_SHAPES = (
-    re.compile(rf"\bno me llames? (?:{_QUOTED}|{_WORD})"),
-    re.compile(rf"\bme llam(?:as?|o) {_QUOTED}"),
-    re.compile(rf"\b(?:don't|do not|dont) call me (?:{_QUOTED}|{_WORD})"),
+_FORBIDS = (
+    re.compile(rf"\bno me llames? {_NEVER}(?:{_QUOTED}|{_WORD})"),
+    re.compile(rf"\b(?:don't|do not|dont) {_NEVER}call me (?:{_QUOTED}|{_WORD})"),
 )
-# Words after "no me llame" that are not an address ("no me llame así", "no me llame de tú").
-STOP_WORDS = frozenset(
-    {"asi", "eso", "esto", "nada", "mas", "de", "por", "con", "tu", "usted", "that", "this", "so", "again", "more"}
+# "me llama(s) 'X'": a forbid only with a complaint next to it, and never after "no" ("si no me llamas 'X'").
+_CALLED = re.compile(rf"(?<!\bno )\bme llamas? {_QUOTED}")
+_COMPLAINT = re.compile(r"\b(?:otra vez|vez que|dej[ae]s? de|(?:le|te) he pedido|ya (?:le|te) (?:dije|he dicho))\b")
+COMPLAINT_WINDOW = 40  # characters before "me llama" or after the quoted word, inside one sentence
+_SENTENCE_END = re.compile(r"(?<!\.)\.(?!\.)|[!?;]")  # an ellipsis ("…", "...") is a pause, not an end
+MAX_FORBIDS = 2  # forbids read from one text; a text with more teaches nothing
+MIN_LETTERS = 3
+# Words that are never an address on their own: "no me llames así", "no me llame de tú", "don't call me that".
+FUNCTION_WORDS = frozenset(
+    {
+        # Spanish
+        *("a", "al", "ante", "con", "contra", "de", "del", "desde", "en", "entre", "hacia", "hasta", "para"),
+        *("por", "segun", "sin", "sobre", "tras", "el", "la", "lo", "los", "las", "le", "les", "un", "una"),
+        *("uno", "unos", "unas", "que", "y", "e", "o", "u", "ni", "pero", "sino", "mas", "menos", "muy", "tan"),
+        *("ya", "si", "no", "se", "me", "te", "nos", "os", "mi", "mis", "tu", "tus", "su", "sus", "yo", "usted"),
+        *("ustedes", "vos", "ella", "ellas", "ellos", "este", "esta", "esto", "estos", "estas", "ese", "esa"),
+        *("eso", "esos", "esas", "aquel", "aquella", "aquello", "asi", "nada", "algo", "todo", "nunca", "jamas"),
+        *("siempre", "otra", "otro", "vez", "como", "cuando", "donde", "quien", "cual", "porque", "pues", "aqui"),
+        *("ahi", "alli", "bien", "mal", "hoy", "eh", "oye", "favor"),
+        # English
+        *("an", "the", "and", "or", "but", "nor", "of", "to", "in", "on", "at", "by", "for", "with", "from"),
+        *("into", "about", "as", "that", "this", "these", "those", "it", "its", "my", "mine", "you", "your"),
+        *("him", "his", "her", "hers", "them", "their", "us", "our", "we", "they", "he", "she", "i", "so"),
+        *("again", "more", "ever", "never", "not", "yes", "like", "is", "are", "was", "be", "am", "do", "does"),
+        *("did", "what", "which", "who", "how", "why", "when", "where", "anything", "something", "nothing"),
+        *("please", "just", "now", "then", "here", "there", "too", "very", "names", "name"),
+    }
 )
+# Titles that make a name part of a longer address: "pilar" forbidden never rejects "Doña Pilar" (folded).
+HONORIFICS = frozenset({"don", "dona", "senor", "senora", "senorita", "sr", "sra", "srta", "mr", "mrs", "ms", "miss"})
 ADDRESS = re.compile(r"[^\W\d_]+(?:[ .'\-][^\W\d_]+){0,3}\.?")
 ADDRESS_MAX = 40
+_LETTERS = re.compile(r"[^\W\d_]+")
+_TITLE_BEFORE = re.compile(r"(\w+)\.?\s+$")
+TITLE_LOOKBACK = 16  # characters read before a match for its title ("senorita " is the longest)
 _LESSON = re.compile(r"^\s*(never\s+)?address\s+([A-Za-z0-9_.:\-]{1,64})\s+as\s+(.+?)\s*$", re.IGNORECASE)
 _SUBJECT = re.compile(SUBJECT_PATTERN)
-NEVER_ADDRESS = ("amigo",)  # no dealer is ever called this (#211: Doña Pilar, three times)
+NEVER_ADDRESS = ("amigo", "amiga")  # no dealer is ever called this (#211: Doña Pilar, three times)
 CONFIDENCE = 0.9  # a fixed phrase from the dealer itself; the words around it are still free text
 
 
@@ -54,24 +91,60 @@ def plain_address(raw: str) -> str | None:
     return text
 
 
+def _forbid(raw: str) -> str | None:
+    """The address a forbid names, or None: at least `MIN_LETTERS` letters, and not only function words."""
+    found = plain_address(raw)
+    if found is None:
+        return None
+    words = _LETTERS.findall(found)
+    if sum(len(w) for w in words) < MIN_LETTERS or all(w in FUNCTION_WORDS for w in words):
+        return None
+    return found
+
+
+def _complained(folded: str, match: re.Match[str]) -> bool:
+    """A complaint within `COMPLAINT_WINDOW` characters of the match, before its sentence ends either side."""
+    before = _SENTENCE_END.split(folded[max(0, match.start() - COMPLAINT_WINDOW) : match.start()])[-1]
+    after = _SENTENCE_END.split(folded[match.end() : match.end() + COMPLAINT_WINDOW])[0]
+    return bool(_COMPLAINT.search(before) or _COMPLAINT.search(after))
+
+
 def forbidden_addresses(text: str | None) -> list[str]:
-    """The addresses a dealer's text forbids (folded), in order, once each; [] for ordinary words."""
+    """The addresses a dealer's text forbids (folded), in text order, once each; [] for ordinary words, and []
+    for a text that forbids more than `MAX_FORBIDS`."""
     if not text or not isinstance(text, str):
         return []
-    folded, out = fold(text), []
-    for shape in _SHAPES:
-        for match in shape.finditer(folded):
-            word = next((g for g in match.groups() if g), "")
-            found = plain_address(word)
-            if found is not None and found not in STOP_WORDS and found not in out:
-                out.append(found)
-    return out
+    folded = fold(text)
+    found = [m for shape in _FORBIDS for m in shape.finditer(folded)]
+    found += [m for m in _CALLED.finditer(folded) if _complained(folded, m)]
+    out: list[str] = []
+    for match in sorted(found, key=lambda m: m.start()):
+        address = _forbid(next((g for g in match.groups() if g), ""))
+        if address is not None and address not in out:
+            out.append(address)
+    return out if len(out) <= MAX_FORBIDS else []
+
+
+def _titled(folded: str, start: int) -> bool:
+    """The word right before `start` is a title ("dona pilar"): the name there is part of a longer address."""
+    previous = _TITLE_BEFORE.search(folded[max(0, start - TITLE_LOOKBACK) : start])
+    return previous is not None and previous.group(1) in HONORIFICS
 
 
 def uses_forbidden(text: str, never: Iterable[str]) -> bool:
-    """`text` uses one of the `never` addresses as a whole word (case and accents ignored)."""
+    """`text` uses one of the `never` addresses as a whole address: whole words, case and accents ignored, and
+    not as the name inside a titled address ("pilar" forbidden never rejects "Doña Pilar"; "dona pilar" does).
+    A title never excuses `NEVER_ADDRESS`: "señor amigo" is still "amigo"."""
     folded = fold(text)
-    return any(re.search(rf"(?<!\w){re.escape(fold(x))}(?!\w)", folded) for x in never if x and x.strip())
+    for raw in never:
+        target = fold(raw) if isinstance(raw, str) else ""
+        if not target:
+            continue
+        strict = target in NEVER_ADDRESS or target.split()[0] in HONORIFICS
+        for match in re.finditer(rf"(?<!\w){re.escape(target)}(?!\w)", folded):
+            if strict or not _titled(folded, match.start()):
+                return True
+    return False
 
 
 def etiquette_from_text(dealer_id: str, text: str | None) -> list[str]:
@@ -89,7 +162,8 @@ def parse_etiquette(text: str) -> tuple[str, str, str] | None:
 
 def etiquette_learnings(e: dict[str, Any]) -> list[Learning]:
     """One `behaviour` learning per address a dealer forbids in a `thread.message` it sent (about the dealer,
-    so it binds everyone). A team's text, or a text with an injection shape, teaches nothing."""
+    so it binds everyone), at most `MAX_FORBIDS`. A team's text, or a text with an injection shape, teaches
+    nothing."""
     p = e.get("payload")
     if e.get("type") != "thread.message" or not isinstance(p, dict) or p.get("kind") != "persona":
         return []

@@ -1071,3 +1071,9 @@ Three live `judge()` calls on the laptop's subscription token (duels.json 2 ques
 7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
 and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
 third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
+### [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
+Each `TacticBook` in `duel run` draws `secrets.randbits(64)` as its tie-break seed, and 25 of 400 seeds give that test's
+rival the `plain` arm, whose duel words carry no number, so `price in numbers_in(text)` fails (seeds 14 and 23 fail on
+an untouched export of HEAD as well; the 400 picks hash the same with and without the #212 r2 fixes). Rerun it, or pin
+`BAZAAR_BLUFF_SEED` in that test.
