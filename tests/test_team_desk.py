@@ -420,3 +420,24 @@ def test_the_public_record_of_a_team_send_names_no_team_and_no_terms(tmp_path):
     for row in sent:
         flat = repr(public_execution({**row, "method": row["sdk_method"]}))
         assert "t05" not in flat and "LAV-02" not in flat and "cash" not in flat
+
+
+def test_a_dry_run_and_a_spent_tick_send_nothing(tmp_path):
+    dry = Team()
+    d, lines = desk(tmp_path / "dry", dry, live=False)
+    d.converse(view(), set())
+    assert dry.sent == [] and any("open a swap thread with t05" in line for line in lines)  # logged, not sent
+    late = Team()
+    d2, _ = desk(tmp_path / "late", late)
+    d2.converse(view(window=False), set())
+    assert late.sent == []  # past the tick's send window: dropped, never sent late
+
+
+def test_trading_disabled_in_guardrails_holds_the_desk(tmp_path, monkeypatch):
+    from bazaar_agent import guardrails as gr
+
+    monkeypatch.setattr(gr, "_file_stop", lambda path: "trading_enabled = false")
+    team = Team()
+    d, _ = desk(tmp_path, team, trading_enabled=False)
+    d.converse(view(), set())
+    assert team.sent == []
