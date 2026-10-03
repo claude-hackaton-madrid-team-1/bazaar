@@ -171,7 +171,7 @@ def write_words(request: WordsRequest, runtime: LLMRuntime) -> WordsResult:
         picked = runtime.pick(situation, request.tick, budget_s=request.budget_s - words_s - WORDS_MARGIN_S)
         prompt = words_prompt(request, config.words_max_chars)
         raw = picked.provider.complete(
-            TextRequest(picked.ref.model_id, WORDS_SYSTEM, prompt, WORDS_MAX_TOKENS, words_s)
+            TextRequest(picked.ref.model_id, WORDS_SYSTEM, prompt, WORDS_MAX_TOKENS, words_s, purpose="words")
         )
     except (LLMError, UnknownModelError) as e:
         return WordsResult(None, getattr(e, "reason", "unknown_model"))
