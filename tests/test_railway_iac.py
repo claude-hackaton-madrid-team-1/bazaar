@@ -13,8 +13,8 @@ deploy commands, nested resources, a context-only branch) is checked as Railway 
    its config (bazaar-monitor, 2026-10-02 23:14 UTC).
 4. Exactly the services and volumes we run are declared (an allowlist: add a new one here on
    purpose). The monitor runs in the CLI and the evals inside the agents, so neither is declared.
-5. The show (bazaar-live) holds no team key and no database: only its runtime settings and the two
-   optional voice keys, both preserve().
+5. The show (bazaar-live) holds no team key: only its runtime settings, the two optional voice keys and
+   the read-only show database URL (role bazaar_live_reader, two views) plus its SHOW_DUELS flag, all preserve().
 """
 
 from __future__ import annotations
@@ -39,6 +39,11 @@ LIVE_SHOW_VARIABLES = {
     "PORT": {"type": "literal", "value": "8080"},
     "ELEVENLABS_API_KEY": {"type": "preserve"},
     "GEMINI_API_KEY": {"type": "preserve"},
+    "SHOW_DATABASE_URL": {"type": "preserve"},
+    "SHOW_DUELS": {"type": "preserve"},
+    "TRANSCRIPT_SPEAK_QUOTES": {"type": "preserve"},
+    "TRANSCRIPT_STREAMS_PER_ADDRESS": {"type": "preserve"},
+    "TTS_DAILY_CHARS": {"type": "preserve"},
 }
 VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})

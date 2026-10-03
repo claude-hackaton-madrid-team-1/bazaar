@@ -214,7 +214,10 @@ def _overlays(axis: _Axis, tl: dict[str, Any], labels: bool) -> str:
             raise SystemExit(f"architecture.status.json: unknown marker kind {m['kind']!r}")
         text = f"<span>{html.escape(m['label'])}</span>" if labels else ""
         x = axis.pct(m["at"])
-        flip = " end" if x > 85 else ""  # near the right edge the label goes on the left of the line
+        if m.get("side", "right") not in ("left", "right"):
+            raise SystemExit(f"architecture.status.json: marker side must be left or right, got {m['side']!r}")
+        # Near the right edge, or when asked (a close neighbour on the right), the label goes on the left.
+        flip = " end" if x > 85 or m.get("side") == "left" else ""
         out.append(f'<div class="tl-marker {m["kind"]}{flip}" style="left:{x}%">{text}</div>')
     out.append('<div class="tl-now" hidden></div>')
     return "".join(out)
