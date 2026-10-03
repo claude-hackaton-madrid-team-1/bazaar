@@ -44,9 +44,11 @@ from bazaar_agent.agents.market import OpenOffer, Side, best_venue, our_open_off
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
+    new_page_line,
     read_snapshot,
     window_for,
 )
@@ -208,6 +210,7 @@ class Maker:
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
@@ -225,6 +228,8 @@ class Maker:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
         mine, total = our_open_offers(snap.offers, snap.us)
         stops = kill_switch(self.rules)
         if stops:
@@ -439,9 +444,10 @@ class Maker:
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
         if t.side == "bid":
             run.spent += t.price
-        run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "give": listing.give, "want": listing.want}
-        )
+        give = listing.give  # our open offers this tick; an ask names its card (protect_page_sets counts it)
+        if listing.asset_id is not None:
+            give = {**give, "assets": [{"id": listing.asset_id, "ref": listing.ref}]}
+        run.offers.append({"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want})
         run.open_total += 1
         run.listings_left -= 1
         run.posted.append(t.ref)

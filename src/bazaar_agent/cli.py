@@ -24,6 +24,7 @@ from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.evals.model import EVERY_TICKS
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
+from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
@@ -1498,9 +1499,11 @@ def _run_agent(
     port: int | None = None,
     host: str | None = None,
     evals_every: int | None = None,
+    learn: bool = False,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
-    read-only status server, the loop."""
+    read-only status server, the loop. `learn`: this agent owns the live-feed reader (N12): it archives
+    the feed window into `feed_events` and gets a `learner` (blockers recalled before dealer threads)."""
     from rich.markup import escape
 
     from bazaar_agent import db
@@ -1531,7 +1534,18 @@ def _run_agent(
     except LedgerNotShared as e:
         _fail(f"{name}: refusing to trade: {e}")
     decisions = DecisionLog(settings.data_dir, connect, log)
-    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, archive=learn)
+    extra: dict[str, Any] = {}
+    if learn:
+        from bazaar_agent.learn.live import LiveLearner
+        from bazaar_agent.learn.store import LearningStore
+
+        def connect_learnings() -> Any:  # a short timeout: a reconnect after the sends must not eat the next tick
+            return db.connect(app=f"bazaar-{name}", connect_timeout_s=3)
+
+        store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
+        log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
+        extra["learner"] = LiveLearner(store, log)
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
@@ -1560,6 +1574,7 @@ def _run_agent(
             team=resolve_team_id(settings.team_id, settings.data_dir, None),
             on_team=partial(remember_team_id, settings.data_dir),
         ),
+        **extra,
     )
     every = evals_default(evals_every, is_live)
     evals = _tick_evals(name, every, log)
@@ -1585,6 +1600,12 @@ def agent_taker(
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
+    learn: bool = typer.Option(
+        True,
+        envvar="BAZAAR_LEARN",
+        help="Read the live feed into learnings, skip dealers under a learned blocker, archive the feed window "
+        "(BAZAAR_LEARN=0 turns it off on a service)",
+    ),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
@@ -1603,7 +1624,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host, evals_every)
+    _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn)
 
 
 @agent_app.command("maker")
@@ -1629,6 +1650,7 @@ def agent_maker(
 
 llm_cli.register(app)
 evals_cli.register(app)
+learn_cli.register(app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.

@@ -54,6 +54,13 @@ The taker returns its active dealer threads, `{dealer, thread, item, ticks, open
 the maker returns our open board offers, `{id, side, ref, price, venue, expires_tick, created_tick}`, and
 `posted_this_tick` (card refs).
 
+Since N12 the taker may log a `dealer_skip` decision (it skipped a dealer under a learned blocker:
+cooloff, hourly quota, sold out, locked). Like every row that was not sent, `/state` shows only its tick,
+kind, status and card: never the dealer or the blocker. The taker also writes two private Postgres
+tables: `learnings` (what the live-feed reader learned) and `feed_events` (the public feed window it
+reads every tick, so the archive keeps growing while the laptop monitor sleeps). `bazaar learnings`
+reads them.
+
 ## Public by design: what these routes never show
 
 There is no token (a browser page reads `/events` directly, so a token would ship in its JS), so the data
