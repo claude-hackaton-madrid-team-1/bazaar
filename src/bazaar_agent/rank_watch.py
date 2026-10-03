@@ -25,7 +25,7 @@ LIST_CAP = 5  # items named per list in the text
 DETAIL_CAP = 20  # items kept per list in `detail`
 LATEST_MAX = 3  # rival moves kept for Jev's state
 FIELD_MAX = 24
-SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
+SAFE_ID = re.compile(r"[A-Za-z0-9_.:\-]{1,64}")  # always `fullmatch`: `$` would let a trailing newline in
 COMPONENTS = ("negotiating", "market")
 
 
@@ -57,7 +57,7 @@ def _int(value: Any) -> int | None:
 
 
 def _id(value: Any) -> str | None:
-    return value if isinstance(value, str) and SAFE_ID.match(value) else None
+    return value if isinstance(value, str) and SAFE_ID.fullmatch(value) else None
 
 
 def board_tick(board: Mapping[str, Any]) -> int | None:

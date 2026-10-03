@@ -10,17 +10,16 @@ deploy. Pure reading: the payloads come from the news sentinel's own keyless rea
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.rank_watch import SAFE_ID
 
 ALERT_TICKS = (20, 10, 3)  # a lead time crossing one of these is logged and stored again
 CONFIDENCE = 1.0  # the organisers' schedule happens
 FIELD_MAX = 200
-SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 # What each action asks of us, in a few words (quoted in the learning; never an instruction to a model).
 ADVICE = {
     "bench": "keep the maker and our venue's broker up, no deploy",
@@ -77,7 +76,7 @@ def events_from_levels(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
         if (
             not isinstance(lv, dict)
             or not isinstance(lv.get("id"), str)
-            or not SAFE_ID.match(lv["id"])
+            or not SAFE_ID.fullmatch(lv["id"])
             or lv.get("open_to_all") is True
         ):
             continue
