@@ -78,7 +78,7 @@ def test_jevs_offer_state_carries_the_latest_rival_moves(tmp_path):
     t.news.ranks.observe(_board(400, order), [], 400)
     t.news.ranks.observe(_board(410, ["t14", *order[:4], "t01"], {"t14": 11.9}), [], 410)
     assert t._rival_moves() == [t.news.ranks.latest[0].text] and "t14 +4 ranks" in t._rival_moves()[0]
-    assert offer_state.__defaults__ == ((),)  # optional: callers without it are unchanged
+    assert offer_state.__defaults__ == ((), None)  # optional: callers without them are unchanged
 
 
 def _board(tick, order, market=None):

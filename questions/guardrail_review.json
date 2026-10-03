@@ -1,5 +1,5 @@
 {
-  "about": "Guardrail review (SG1, Sat 3 Oct afternoon): one question per GUARDRAILS.md rule that may block points today, asked with the live state in questions/guardrail_review.state.json. Only a decided verdict changes a rule (cited in its GUARDRAILS.md line); undecided keeps today's value. Reproduce: set -a; . ./.env; set +a; uv run python -m bazaar_agent.jev judge --state questions/guardrail_review.state.json --questions questions/guardrail_review.json --log",
+  "about": "Guardrail review (SG1, Sat 3 Oct afternoon; re-run at 16:30 with Omar's aggressive risk posture): one question per GUARDRAILS.md rule that may block points today, asked with the live state in questions/guardrail_review.state.json. Only a decided verdict changes a rule (cited in its GUARDRAILS.md line); undecided keeps today's value. Reproduce: set -a; . ./.env; set +a; uv run python -m bazaar_agent.jev judge --state questions/guardrail_review.state.json --questions questions/guardrail_review.json --log",
   "questions": {
     "cash_floor_choice": {
       "type": "choice",
@@ -87,6 +87,43 @@
       "criteria": {
         "keep_0": "The finals we see are within today's caps, or the official value binds first.",
         "lift_0_15": "Finals just above our caps are lost while they are worth more than the price to us."
+      }
+    },
+    "duplicates_reserve_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, how should the maker treat duplicates the team desk reserves for swaps: list_duplicates, reserve_for_open_swaps or keep_reserve?",
+        "note": "Since #188 the maker never lists a card we hold exactly twice, nor the desk's copy of one we hold three or more times, so the team desk keeps a copy to swap. `state.duplicates_market` shows what that reserve did. list_duplicates: the maker lists them again (the desk swaps only while two free copies remain). reserve_for_open_swaps: the maker skips only cards in a team thread where we have a swap proposal open. keep_reserve: as today."
+      },
+      "criteria": {
+        "list_duplicates": "The reserve blocks sales while swaps do not happen; listed duplicates can turn into cash and trade value.",
+        "reserve_for_open_swaps": "Swaps happen sometimes; reserve only what a live swap needs and list the rest.",
+        "keep_reserve": "Swaps are about to work, and listing would give away the copies they need."
+      }
+    },
+    "close_v19_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, should we close our venue v19 to recover its 250 P bond (close_v19), or keep it open for the remaining Market Test benches (keep_v19)?",
+        "note": "The Market Test counts the best venue we have OPEN during each session (none open counts 0), and the round averages its sessions; our bench efficiency is 0.93 on v19. The bond comes back only after a cooldown. RULES.md says every team WITHOUT a venue gets a free starter stall from +3 h; whether one is handed out again after closing is unverified. `state.venue` has the facts."
+      },
+      "criteria": {
+        "close_v19": "The bond's 250 P buys more points (dealer ladder, missing cards) than v19 keeps on the bench and venue terms, even after the cooldown.",
+        "keep_v19": "v19's bench points (and the risk of having no venue during a session) outweigh what the bond would buy."
+      }
+    },
+    "podium_venue_rule_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which rule should the maker and taker follow for trading on a venue owned by a top-5 (podium) team: avoid_unless_2x or no_rule?",
+        "note": "The market score's venue term counts value created between other teams on a venue for its OWNER, so our trades on t10's v07 (rank 4) raise a podium rival's score. avoid_unless_2x: post or accept on a top-5 team's venue only when our gain there is at least 2x the gain on rastro or our v19 for the same card; no_rule: pick the venue on price alone, as today."
+      },
+      "criteria": {
+        "avoid_unless_2x": "Feeding a podium rival's market score costs us more rank than the small price edge earns.",
+        "no_rule": "The trades are too few or too small to move a rival's score; price alone is better."
       }
     }
   }

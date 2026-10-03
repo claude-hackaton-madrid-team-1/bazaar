@@ -325,11 +325,18 @@ def affinity(
     catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
     beta: float = typer.Option(0.5, help="Weight of one unit of (damped) interest per sd of the multiplier"),
     as_json: bool = typer.Option(False, "--json", help="Print the map as JSON"),
+    teams: bool = typer.Option(
+        False, "--teams", help="Read-only: the stored team_affinity rows (said in a thread vs inferred)"
+    ),
 ) -> None:
     """Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone."""
     from dataclasses import asdict
 
     from bazaar_agent import affinity as af
+
+    if teams:
+        _team_affinity(as_json)
+        return
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
     catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
@@ -344,6 +351,26 @@ def affinity(
     console.print(render.affinity_table(amap))
     for s in af.catalog_sets(catalog):
         console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
+
+
+def _team_affinity(as_json: bool) -> None:
+    """`bazaar affinity --teams`: the `team_affinity` table as stored (a select, nothing written)."""
+    from bazaar_agent import db
+    from bazaar_agent import team_affinity as ta
+
+    try:
+        with db.connect(app="bazaar-affinity", connect_timeout_s=5) as conn:
+            conn.read_only = True
+            rows = ta.read(conn)
+    except Exception as e:  # noqa: BLE001 — a read-only report: say why and stop
+        err_console.print(f"team_affinity unreadable: {db.redact(str(e))}")
+        raise typer.Exit(1) from None
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2, default=str))
+        return
+    console.print(render.team_affinity_table(rows))
+    if not rows:
+        console.print("no rows yet: the taker's team desk writes them (inferred every 10 ticks, said on a reply)")
 
 
 @app.command("trade-plan")
@@ -2866,8 +2893,34 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
     return NewsSentinel(
-        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+        reader,
+        store.record,
+        kw["log"],
+        settings.data_dir / "agents",
+        history=_rank_history(kw, settings),
+        matrix_store=_matrix_store(kw, settings),
     )
+
+
+def _matrix_store(kw: dict[str, Any], settings: Any) -> Any:
+    """The team matrix's tables in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.team_matrix_store import TeamMatrixStore
+
+    return TeamMatrixStore(lambda: db.connect(app="bazaar-team-matrix", connect_timeout_s=3), kw["log"],
+                           scope_of(settings).world)  # fmt: skip
+
+
+def _latest_matrix(kw: dict[str, Any], settings: Any) -> Any:
+    """The maker reads the matrix the taker stores, at most every 10 ticks after its sends."""
+    from bazaar_agent.team_matrix_store import LatestMatrix
+
+    store = _matrix_store(kw, settings)
+    return LatestMatrix(store) if store is not None else None
 
 
 def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
@@ -2894,6 +2947,24 @@ def _persona_book(kw: dict[str, Any], shared: bool) -> Any:
             db.upsert_traders(conn, snaps, tick)
 
     return PersonaBook(write if shared else None, kw["log"])
+
+
+def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
+    """Other teams' multipliers (AF1), said in a team thread or inferred from the feed, stored in the shared
+    Postgres `team_affinity` table off the tick. Without the shared database: nothing stored, nothing asked."""
+    from bazaar_agent import db
+    from bazaar_agent import team_affinity as ta
+
+    def write(rows: list[Any]) -> int:
+        with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
+            return ta.save(conn, rows)
+
+    def told() -> set[str]:
+        with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
+            conn.read_only = True
+            return ta.said_teams(conn)
+
+    return ta.AffinityBook(write, kw["log"], told) if shared else None
 
 
 @agent_app.command("taker")
@@ -2946,6 +3017,7 @@ def agent_taker(
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             personas=_persona_book(kw, shared),
+            affinity=_affinity_book(kw, shared),
             **kw,
         )
 
@@ -2990,6 +3062,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
+            latest_matrix=_latest_matrix(kw, settings),
             **kw,
         )
 

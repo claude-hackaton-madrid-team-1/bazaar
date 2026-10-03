@@ -53,19 +53,27 @@ def list_price_for(persona: Persona, item: str, rarity: str | None = None) -> in
     return min(prices) if prices else None
 
 
-def class_fills(prints: Iterable[intel.Print], dealer: str, item: str) -> list[int]:
-    """What teams paid this dealer for one item of `item`'s price class (`strategy.dealer_fills`, by class)."""
+MIN_FILLS = 2  # one fill says nothing about its range (one at its list made the cap its list): we only bid
+
+
+def class_fills(prints: Iterable[intel.Print], dealer: str, item: str, us: str | None = None) -> list[int]:
+    """What OTHER teams paid this dealer for one item of `item`'s price class (`strategy.dealer_fills`, by class):
+    our own buys are left out, so a deal we regret (LAV-10 at its list price) never widens the range we accept."""
     cls = price_class(item)
     if cls is None:
         return []
-    sold = (p for p in prints if p.persona == dealer and p.seller == dealer and is_team(p.buyer) and p.items == 1)
+    sold = (
+        p
+        for p in prints
+        if p.persona == dealer and p.seller == dealer and is_team(p.buyer) and p.items == 1 and p.buyer != us
+    )
     return [p.price for p in sold if p.price > 0 and price_class(p.ref) == cls]
 
 
 def accept_cap(fills: Sequence[int], share: float) -> int | None:
-    """The most we take from a forgiving dealer: its lowest fill plus `share` of its fill range, in whole primas;
-    None when no fill is known (we only bid then)."""
-    if not fills:
+    """The most we take, or bid, with a forgiving dealer: its lowest fill plus `share` of its fill range, in whole
+    primas; None with fewer than `MIN_FILLS` fills (we only bid then, below its list price)."""
+    if len(fills) < MIN_FILLS:
         return None
     low, high = min(fills), max(fills)
     return math.floor(low + share * (high - low) + EPSILON)
@@ -78,12 +86,13 @@ def forgiving_plan(
     rarity: str | None,
     prints: Iterable[intel.Print],
     rules: Guardrails,
+    us: str | None = None,
 ) -> BidPlan:
     """The plan for this dealer and item. A forgiving dealer's: step 1 (a fake deadline is no reason to jump), no
     lifted final (N14a), its list price and the most we take from its fills. Any other dealer's: unchanged."""
     if persona is None or not is_forgiving(persona, rules):
         return plan
-    fills = class_fills(prints, persona.id, item)
+    fills = class_fills(prints, persona.id, item, us)
     return replace(
         plan,
         step=1,

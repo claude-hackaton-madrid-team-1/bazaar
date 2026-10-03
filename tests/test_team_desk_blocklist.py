@@ -66,3 +66,49 @@ def test_the_guards_refuse_a_blocked_team_even_if_it_reaches_them(tmp_path):
     object.__setattr__(accept, "trade", trade("t17"))
     refused = d.guard_accept(view(), accept)
     assert not refused.allowed and "team_desk_never_trade" in refused.violations[0]
+
+
+def test_an_inbound_thread_from_a_blocked_team_is_closed_at_once(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team, team_desk_never_trade=RIVALS)
+    inbound = thread(tid=51, team="t17", opened_by="t17")
+    d.proposals(view([inbound]))
+    d.converse(view([inbound]), set())
+    assert ("close_thread", 51) in [s[:2] for s in team.sent]
+    assert not [s for s in team.sent if s[0] in ("say", "open_thread", "accept")]
+
+
+def test_after_a_restart_our_offer_in_a_blocked_teams_thread_is_closed_on_the_first_tick(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team, team_desk_never_trade=RIVALS)  # a fresh desk: no talks remembered
+    ours = {**their_offer(oid=702), "maker": "t01", "to": "t17"}
+    standing = thread(tid=42, team="t17", offers=[ours])
+    d.proposals(view([standing]))
+    d.converse(view([standing]), set())
+    assert ("close_thread", 42) in [s[:2] for s in team.sent]
+
+
+def test_a_talk_with_a_team_added_to_the_list_gets_no_move_and_is_closed(tmp_path):
+    from bazaar_agent.agents.team_desk import Talk
+
+    team = Team()
+    d, _ = desk(tmp_path, team, team_desk_never_trade=RIVALS)
+    d.talks[42] = Talk(42, "t17", trade("t17"), TICK - 5)
+    running = thread(tid=42, team="t17")
+    d.proposals(view([running]))
+    d.converse(view([running]), set())
+    assert ("close_thread", 42) in [s[:2] for s in team.sent] and 42 not in d.talks
+    assert not [s for s in team.sent if s[0] == "say"]
+
+
+def test_two_blocked_threads_never_stop_an_opening_with_an_allowed_team(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team, team_desk_never_trade=RIVALS)
+    d._plan = _Plan(TICK, (trade("t02"),), {"LAV-02": 16.0})
+    parked = [thread(tid=51, team="t17", opened_by="t17"), thread(tid=52, team="t18", opened_by="t18")]
+    d.proposals(view(parked))
+    d.converse(view(parked), set())  # both closed this tick
+    after = view([])
+    d.proposals(after)
+    d.converse(after, set())
+    assert ("open_thread", "t02") in [s[:2] for s in team.sent]

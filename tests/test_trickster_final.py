@@ -309,7 +309,8 @@ def test_the_taker_never_takes_their_final_at_list_and_keeps_bidding(tmp_path):
     assert not [s for s in team.sent if s[0] == "accept"]
     assert [s[2] for s in team.sent if s[0] == "say"] == [56, 57, 58, 59]  # by 1, on through their FINAL 63
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
-    assert (row["inputs"]["forgiving"], row["inputs"]["list_price"], row["inputs"]["accept_max"]) == (True, 63, 59)
+    # The fills in this feed are our own buys (t01): they never set what we accept (#228 security P2), so none is known
+    assert (row["inputs"]["forgiving"], row["inputs"]["list_price"], row["inputs"]["accept_max"]) == (True, 63, None)
 
 
 def test_a_jev_yes_never_takes_their_ask_at_list_through_the_taker(tmp_path):
@@ -438,3 +439,17 @@ def test_dealer_buy_never_takes_their_final_at_list(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert client.accepted == [] and client.sent == [54, 55, 56, 57, 58, 59, 60, 61, 62]
     assert client.closed and "picaros forgives" in " ".join(result.output.split())
+
+
+def test_our_own_buys_and_a_single_fill_never_set_what_we_accept():
+    ours = [fill(1, "LAV-10", 63)]  # tick 864: our own buy at its list price
+    assert class_fills(intel.tape(ours), "picaros", "LAV-09", us="t01") == []
+    assert class_fills(intel.tape(ours), "picaros", "LAV-09") == [63]
+    assert accept_cap([63], 1 / 3) is None  # one fill: no range, we only bid
+    plan = forgiving_plan(BidPlan(54, 1, 67), persona(), "LAV-09", "rare", intel.tape(ours), RULES, "t01")
+    assert plan.accept_max is None and not plan.accepts(62)
+
+
+def test_a_walk_from_a_trickster_rests_the_item():
+    sent, last = bids_against(facing(plan_for(REAL)), 63, final=True)
+    assert last.kind == "walk" and last.rest and not last.reopen

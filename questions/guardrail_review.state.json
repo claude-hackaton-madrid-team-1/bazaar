@@ -1,19 +1,240 @@
 {
-  "as_of": {"day": "Saturday", "tick": 668, "tick_seconds": 30, "source": "uv run bazaar status / strategy --json (read-only), decisions table"},
-  "team": {"cash": 81, "level": 3, "rank": 8, "score": 25.22, "collection_value": 855.0},
-  "score_parts": {"negotiating": 17.7, "duel_points": 15, "ladder_points": 0.02, "market": 7.5, "bench_efficiency": 0.93},
-  "album": {
-    "SAL": {"affinity": 1.3, "page": "10/10"},
-    "LAV": {"affinity": 1.6, "page": "8/10", "missing": {"LAV-09": 112, "LAV-10": 112}, "completion_bonus_est": 106},
-    "MAL": {"affinity": 1.1, "page": "8/10", "missing": {"MAL-09": 77, "MAL-10": 77}, "completion_bonus_est": 73},
-    "RET": {"affinity": 0.7, "page": "1/10", "missing_commons_worth": 7, "missing_uncommons_worth": 18},
-    "LAT": {"affinity": 0.5, "page": "2/10", "missing_commons_worth": 5, "missing_uncommons_worth": 12}
+  "as_of": {
+    "day": "Saturday",
+    "tick": 668,
+    "tick_seconds": 30,
+    "source": "uv run bazaar status / strategy --json (read-only), decisions table",
+    "rerun": "Sat 3 Oct ~16:30, tick ~720, with Omar's risk posture"
   },
-  "duplicates": {"SAL-01": {"copies": 3, "your_value": 1.3}, "SAL-03": {"copies": 2, "your_value": 3.2}, "SAL-10": {"copies": 2}, "LAV-04": {"copies": 2, "your_value": 4.0}, "LAV-05": {"copies": 2, "your_value": 4.0}, "LAV-06": {"copies": 2, "your_value": 10.0}, "MAL-02": {"copies": 2, "your_value": 2.8}, "MAL-08": {"copies": 2, "your_value": 6.9}, "LAT-02": {"copies": 2, "your_value": 1.2}},
-  "rules_now": {"cash_floor": 50, "dealer_sell_enabled": false, "jev_accept_min_share": 0.5, "human_approval_above": 60, "max_price_common": 12, "max_price_uncommon": 26, "max_price_rare": 95, "official_value_margin": 0, "team_swap_max_cash_per_hour": 40, "dealer_final_lift": 0, "max_spend_per_game_hour": 150},
-  "taker_last_hour": {"dealer_threads_opened_since_tick_443": 0, "skip": "4 dealer buys ranked (LAV-09/10, MAL-09/10 at Chato ~81), none affordable: cash 81 - 81 < cash_floor 50", "cheap_cards_skipped": "every missing RET/LAT common and uncommon: 'surplus too small' (RET common worth 8.9 to our model, official 7, Abuela fills ~9.5; LAT common worth 6.4, fills ~9.5; uncommons worth 15.9-22.3, fills ~25)"},
-  "dealer_prices": {"abuela_common_buy_open": 12, "abuela_common_fills": "7-10", "abuela_pays_for_commons_final": "5-6", "chato_uncommon_final_LAV-06_sell": 14, "chato_uncommon_finals_buy_friday": "28-32", "chato_rare_fills": "81-93"},
-  "team_market": {"maker_board_asks": 110, "sold": 3, "pilar_bids_SAL-10": "61 -> 71 FINAL, walked twice", "team_swaps_settled_last_hour": 0, "team_desk": "61 team_open rows rejected since tick 600"},
-  "dealer_sell_fixes": {"retry_same_card_same_dealer_after_no_deal_game_hours": 1.0, "dealer_left_free_after_a_sell_thread_ticks": 6, "no_sell_thread_with_a_dealer_the_taker_wanted_last_ticks": 20, "final_taken_only_at_or_above": "max(our value + 2, 0.5 x our first ask)", "one_sell_thread_at_a_time": true, "each_new_thread_needs_jev_yes": true},
-  "hints": ["Abuela: a full page is worth much more than the loose cards. Swap your duplicates!", "Day-2: the official value is what trades score at; quality over volume; the same price twice is not a move"]
+  "team": {
+    "cash": 81,
+    "level": 3,
+    "rank": 8,
+    "score": 25.22,
+    "collection_value": 855.0
+  },
+  "score_parts": {
+    "negotiating": 17.7,
+    "duel_points": 15,
+    "ladder_points": 0.02,
+    "market": 7.5,
+    "bench_efficiency": 0.93
+  },
+  "album": {
+    "SAL": {
+      "affinity": 1.3,
+      "page": "10/10"
+    },
+    "LAV": {
+      "affinity": 1.6,
+      "page": "8/10",
+      "missing": {
+        "LAV-09": 112,
+        "LAV-10": 112
+      },
+      "completion_bonus_est": 106
+    },
+    "MAL": {
+      "affinity": 1.1,
+      "page": "8/10",
+      "missing": {
+        "MAL-09": 77,
+        "MAL-10": 77
+      },
+      "completion_bonus_est": 73
+    },
+    "RET": {
+      "affinity": 0.7,
+      "page": "1/10",
+      "missing_commons_worth": 7,
+      "missing_uncommons_worth": 18
+    },
+    "LAT": {
+      "affinity": 0.5,
+      "page": "2/10",
+      "missing_commons_worth": 5,
+      "missing_uncommons_worth": 12
+    }
+  },
+  "duplicates": {
+    "SAL-01": {
+      "copies": 3,
+      "your_value": 1.3
+    },
+    "SAL-03": {
+      "copies": 2,
+      "your_value": 3.2
+    },
+    "SAL-10": {
+      "copies": 2
+    },
+    "LAV-04": {
+      "copies": 2,
+      "your_value": 4.0
+    },
+    "LAV-05": {
+      "copies": 2,
+      "your_value": 4.0
+    },
+    "LAV-06": {
+      "copies": 2,
+      "your_value": 10.0
+    },
+    "MAL-02": {
+      "copies": 2,
+      "your_value": 2.8
+    },
+    "MAL-08": {
+      "copies": 2,
+      "your_value": 6.9
+    },
+    "LAT-02": {
+      "copies": 2,
+      "your_value": 1.2
+    }
+  },
+  "rules_now": {
+    "cash_floor": 50,
+    "dealer_sell_enabled": false,
+    "jev_accept_min_share": 0.5,
+    "human_approval_above": 60,
+    "max_price_common": 12,
+    "max_price_uncommon": 26,
+    "max_price_rare": 95,
+    "official_value_margin": 0,
+    "team_swap_max_cash_per_hour": 40,
+    "dealer_final_lift": 0,
+    "max_spend_per_game_hour": 150
+  },
+  "taker_last_hour": {
+    "dealer_threads_opened_since_tick_443": 0,
+    "skip": "4 dealer buys ranked (LAV-09/10, MAL-09/10 at Chato ~81), none affordable: cash 81 - 81 < cash_floor 50",
+    "cheap_cards_skipped": "every missing RET/LAT common and uncommon: 'surplus too small' (RET common worth 8.9 to our model, official 7, Abuela fills ~9.5; LAT common worth 6.4, fills ~9.5; uncommons worth 15.9-22.3, fills ~25)"
+  },
+  "dealer_prices": {
+    "abuela_common_buy_open": 12,
+    "abuela_common_fills": "7-10",
+    "abuela_pays_for_commons_final": "5-6",
+    "chato_uncommon_final_LAV-06_sell": 14,
+    "chato_uncommon_finals_buy_friday": "28-32",
+    "chato_rare_fills": "81-93"
+  },
+  "team_market": {
+    "maker_board_asks": 110,
+    "sold": 3,
+    "pilar_bids_SAL-10": "61 -> 71 FINAL, walked twice",
+    "team_swaps_settled_last_hour": 0,
+    "team_desk": "61 team_open rows rejected since tick 600"
+  },
+  "dealer_sell_fixes": {
+    "retry_same_card_same_dealer_after_no_deal_game_hours": 1.0,
+    "dealer_left_free_after_a_sell_thread_ticks": 6,
+    "no_sell_thread_with_a_dealer_the_taker_wanted_last_ticks": 20,
+    "final_taken_only_at_or_above": "max(our value + 2, 0.5 x our first ask)",
+    "one_sell_thread_at_a_time": true,
+    "each_new_thread_needs_jev_yes": true
+  },
+  "hints": [
+    "Abuela: a full page is worth much more than the loose cards. Swap your duplicates!",
+    "Day-2: the official value is what trades score at; quality over volume; the same price twice is not a move"
+  ],
+  "risk_posture": "aggressive (Omar, Sat 15:50): we are rank ~8 and must risk to reach the podium",
+  "score_decoder": {
+    "score": "negotiating + market",
+    "market": {
+      "bench": 22.5,
+      "venue_term": 7.5,
+      "venue_term_counts": "value created between OTHER teams on our venue; v19 has 0 such trades; one such trade is worth ~+1.3-2 board points"
+    },
+    "trade_term": "capped: neg_points 101 -> 134 added nothing",
+    "points_now_from": [
+      "dealer ladder (we are last, proxy 0.38; Pilar's level-3 slots are empty)",
+      "duels"
+    ]
+  },
+  "duplicates_market": {
+    "rule_since_188": "the maker never lists a card held exactly twice, nor the desk's copy",
+    "maker_listed_since_tick_640": 0,
+    "team_swap_attempts_jev_rejected": 28,
+    "team_swaps_settled": 0,
+    "earlier_verdict_without_risk_posture": "leaned list_duplicates 0.87"
+  },
+  "venue": {
+    "id": "v19",
+    "bond": 250,
+    "fee_paid": 20,
+    "fee_bps": 0,
+    "bench_efficiency": 0.93,
+    "trades_between_other_teams": 0,
+    "market_points": 7.5,
+    "teams_without_a_venue_market_points": "about the same 7.5",
+    "bond_returns": "after a cooldown",
+    "benches": "every two hours; doors close 23:00 Sat, Sunday 09:00-15:00",
+    "cash": 81
+  },
+  "podium": {
+    "top5_venue_owners": {
+      "t10": {
+        "rank": 4,
+        "venue": "v07"
+      }
+    },
+    "v07_book": "LAT-04 at 6 (our value 5), RET-01..05 bundle at 70 (value 35)"
+  },
+  "targeted_swap_pairs": [
+    {
+      "team": "t04",
+      "give": [
+        "LAV-04",
+        "LAV-06"
+      ],
+      "get": [
+        "RET-07",
+        "RET-01",
+        "RET-02",
+        "RET-03",
+        "RET-04",
+        "RET-05"
+      ],
+      "our_gain": 38.5,
+      "note": "completes t04's LAV page; t04 is rank 11"
+    },
+    {
+      "team": "t02",
+      "give": [
+        "SAL-01",
+        "LAT-02"
+      ],
+      "get": [
+        "LAT-07",
+        "LAT-04"
+      ],
+      "our_gain": 15
+    },
+    {
+      "team": "t09",
+      "give": [
+        "SAL-10",
+        "LAV-05"
+      ],
+      "get": [
+        "LAV-10"
+      ],
+      "our_gain": 85,
+      "confidence": "low"
+    },
+    {
+      "team": "t08",
+      "give": [
+        "SAL-03",
+        "MAL-08"
+      ],
+      "get": [
+        "MAL-10",
+        "RET-05"
+      ],
+      "our_gain": 74,
+      "confidence": "low"
+    }
+  ]
 }
