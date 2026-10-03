@@ -168,11 +168,26 @@ def own_offers(duel: Mapping[str, Any]) -> int:
     return 1 if sent == 0 and isinstance(duel.get("your_offer"), dict) else sent
 
 
-def payload_start(duel: Mapping[str, Any], tick: int) -> int:
+def first_offer_wait(params: V2Params) -> int:
+    """Ticks v2 waits, from the first sight of a duel the rival has not priced, before our first offer."""
+    return max(params.open_wait_ticks, params.stall_ticks)
+
+
+def payload_start(duel: Mapping[str, Any], tick: int, wait: int = 0) -> int:
     """A duel's start as the payload shows it: its earliest message, else now. After a restart (every merge to main
-    redeploys the duel loop) this keeps v2's clock instead of reopening the duel at the anchor."""
-    ticks = [m["tick"] for m in duel.get("messages") or [] if isinstance(m, dict) and isinstance(m.get("tick"), int)]
-    return min([tick, *ticks])
+    redeploys the duel loop) this keeps v2's clock instead of reopening the duel at the anchor.
+
+    When that earliest message is ours, the runner that sent it had seen the duel `wait` ticks before (v2 opens
+    only after max(`duel_open_wait_ticks`, `duel_stall_ticks`) when the rival has not priced): without them a
+    restarted runner starts the clock late and steps back on its own offers (a seller's ask up, a buyer's bid down)."""
+    msgs = [m for m in duel.get("messages") or [] if isinstance(m, dict) and isinstance(m.get("tick"), int)]
+    if not msgs:
+        return tick
+    first = min(msgs, key=lambda m: m["tick"])
+    ours_first = first.get("from") == "you" and not any(
+        m["tick"] == first["tick"] and m.get("from") != "you" for m in msgs
+    )
+    return min(tick, first["tick"] - (max(0, wait) if ours_first else 0))
 
 
 def rounds_spent(duel: Mapping[str, Any]) -> int:
@@ -371,7 +386,7 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
     wait = V2Plan(DuelMove("hold", reason="nothing inside our limit yet: wait"), None, 0.0, stalled, left)
     if theirs == 0:  # the rival never priced: our offers cost no round until it does
-        first = max(params.open_wait_ticks, params.stall_ticks)  # give it time to open first
+        first = first_offer_wait(params)  # give it time to open first
         if ours >= params.free_offers or (ours == 0 and elapsed < first):
             return wait
         return send(target, "the rival has not priced: our offers cost no round yet")

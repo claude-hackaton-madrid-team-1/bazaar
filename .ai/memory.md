@@ -1036,3 +1036,11 @@ never spoke). Team threads: none ever opened with us. It is the dealer threads (
   conversation slots for 40 ticks.
 Fix candidates: let Jev accept only what `decide` accepts (or a final) inside a thread; keep stepping until she stops
 moving; close a thread the moment its item is bought elsewhere.
+### [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
+Every merge to main restarts `duel run` (~30 redeploys on Saturday morning). Against a rival that has not priced,
+v2 waits `first_offer_wait` (max(`duel_open_wait_ticks`, `duel_stall_ticks`) = 3) ticks before its first offer, but
+`payload_start` restarted the clock at that first offer: 3 ticks of concession lost, so a seller's ask went up and
+a buyer's bid down (9 times in duel session 2, one per restart tick, from `duels.payload`). A restart inside a tick
+the old process had already offered in also sent a second message, refused `wait_for_tick` (8 in the Railway logs).
+Fix: `payload_start(..., wait)` backs our earliest message off by the wait, and `duel run` holds an offer when the
+duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not in `executions`: read `duels`.

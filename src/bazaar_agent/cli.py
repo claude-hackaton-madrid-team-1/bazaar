@@ -1161,7 +1161,7 @@ def duel_run(
     from bazaar_agent.agents.bluff import message_id
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
-    from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
+    from bazaar_agent.agents.duel_v2 import V2Params, first_offer_wait, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
@@ -1174,6 +1174,7 @@ def duel_run(
         our_duel_messages,
         rival_offer,
         rival_text,
+        spoke_this_tick,
         template_duel_words,
     )
     from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
@@ -1382,9 +1383,10 @@ def duel_run(
         observe_days(c.tick, duels)
         rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
+        wait = first_offer_wait(V2Params.from_rules(rules_t)) if v2 else 0
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
-                first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
+                first_seen.setdefault(live_id, payload_start(d, c.tick, wait) if v2 else c.tick)
         for d in duels:  # memory only: the rival's new offer scores our last tactic message
             if (seen_id := duel_id(d)) is not None:
                 observe_duel(book, d, seen_id, c.tick)
@@ -1433,6 +1435,8 @@ def duel_run(
             else:
                 endgame = rules.duel_endgame_ticks
                 move = duel_move(d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=endgame)
+            if move.kind == "offer" and spoke_this_tick(d, c.tick):  # a restart mid-tick: the game would refuse it
+                move = DuelMove("hold", reason="we already offered this tick: one message per side per tick")
             duel_traces.seen(d, c.tick, move)
             if pick is not None:
                 duel_traces.jev(did, pick)

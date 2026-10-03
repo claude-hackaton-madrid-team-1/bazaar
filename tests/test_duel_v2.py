@@ -303,6 +303,34 @@ def test_after_a_restart_v2_recovers_the_duels_start_from_its_messages():
 
     assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108) == 103  # not 108: the clock survives
     assert payload_start(duel(), 108) == 108
+    # the rival priced first: its message is the start, whatever we waited
+    assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108, wait=3) == 103
+
+
+def test_a_restart_against_a_silent_rival_never_steps_back_on_our_own_offers():
+    """Live, Sat 3 Oct: each redeploy made v2 restart the clock at our first offer, not at our first sight of the
+    duel (it waits `first_offer_wait` ticks before opening when the rival has not priced), so a seller's ask went
+    up and a buyer's bid down (9 times in duel session 2, one per restart). A restarted runner must play on."""
+    from bazaar_agent.agents.duel_v2 import first_offer_wait, payload_start
+
+    params = V2Params()
+    wait = first_offer_wait(params)
+    assert wait == 3  # GUARDRAILS.md today: max(duel_open_wait_ticks 0, duel_stall_ticks 3)
+    for role in ("seller", "buyer"):
+        seen, deadline, ours = 100, 116, []
+        for tick in range(seen, deadline - 2):  # a runner that never restarts: our offers, tick by tick
+            move = plan_moves([duel(7, role=role, limit=100, deadline=deadline, ours=ours)], tick, {7: seen}, params)[7]
+            if move.kind == "offer":
+                ours.append((tick, move.price))
+        assert ours[0][0] == seen + wait and len(ours) > 6
+        for cut in range(1, len(ours)):  # a restart after any of them: the next offer is the same
+            sent, (tick, expected) = ours[:cut], ours[cut]
+            d = duel(7, role=role, limit=100, deadline=deadline, ours=sent)
+            restarted = {7: payload_start(d, tick, wait)}
+            assert restarted == {7: seen}
+            assert plan_moves([d], tick, restarted, params)[7].price == expected
+        prices = [p for _, p in ours]
+        assert prices == sorted(prices, reverse=role == "seller")  # a seller only comes down, a buyer only up
 
 
 # ---------------------------------------------------------------- r2 bites B2a / B2c
