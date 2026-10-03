@@ -1,0 +1,1919 @@
+[
+ {
+  "id": "clock-pace-30s",
+  "assumption": "Saturday ticks every 30 s (Friday 60 s, Sunday 15 s).",
+  "sources": [
+   "RULES.md The clock",
+   "schedule day_opens tick_seconds 30",
+   "final_saturday-playbook.md title, §4 'Hourly limits in force all day'",
+   "BITES.md X10, X6, X15, X2",
+   "final_r1-reviewer.md #72 row (refunds dated at 60 s per tick)",
+   "PLAN.md W3 (8 deals/dealer/hour, 3 packs/hour), W5+W6 (30 s / 15 s budget)",
+   "final_b13-wake-opening.md:10-11 (0-10 Saturday ticks at 30 s, 0-20 Sunday ticks at 15 s)",
+   "final_b18-rate-limits.md:18, 36-37 (GET re-sent after a network error only while /api/clock says ticks slower than 15 s)",
+   "REVIEWS.md:30 (#81 low 4: --grant-tick 6 hard-codes 30 s ticks)",
+   "REVIEWS.md:243 (#72 refund_row window at 30 s vs 15 s)",
+   "final_b15-duels-first.md § Risks and limits (Residual race)",
+   "final_w5w6-score-redteam-morning.md § 3 (15 s ticks)",
+   "final_b21-levels.md § 1 (persona.open_to_all '1.0 h (60 ticks)')",
+   "final_w7-page-economics.md § Risks ('game hours are not wall hours (b6)')",
+   "final_w8-arbitrage.md § What shipped ('tight on 15 s ticks')",
+   "final_w3-ladder.md § The 09:00–10:30 plan (wall times)"
+  ],
+  "verify_how": "GET /api/clock: today == 'sat' and tick_seconds == 30.",
+  "endpoint": "GET /api/clock",
+  "when": "09:00",
+  "flips": "Every timed plan (W3 slots every 6 ticks = 3 min, W7 cash walk, B6 playbook): re-time if not 30 s.",
+  "also_flips": [
+   "X15 stopgap offer_ttl_ticks ≈ one game hour (40 ticks = 20 min at 30 s -> each bid counted 3x/h); #72's 60 s refund dating leaves ~100 P phantom spend for 21-31 min at 30 s; #78 request budget / stagger (BAZAAR_TICK_OFFSET_S) and X6 ceiling; at 5 s pace Jev is effectively off and 429s burn accepts (X20/B18); W3 ladder schedule within 8 deals/dealer/hour; duel/Market Test durations in ticks.",
+   "#81 --grant-tick 6; B18 (#115) TeamBazaar retry vs no-retry branch (4 s x 3 vs 4 s once); #78 rate budget per tick; #72 refund_row phantom-spend duration.",
+   "B15 (#72-based) residual race; need for a taker grace floor",
+   "#81 slot wall-times (8 slots 09:00–09:21); #87 rolling max_spend_per_game_hour and Market Test times; #101 arb rate budget; #119 head-start-in-wall-time."
+  ],
+  "if_unknown": "30 s",
+  "priority": "high"
+ },
+ {
+  "id": "clock-anchor",
+  "assumption": "At 09:00 the game clock jumps to h4.0 (rather than resuming at h2.65 where Friday froze).",
+  "sources": [
+   "W7 §Verdict cash",
+   "B6 saturday-schedule anchors",
+   "final_saturday-playbook.md §1 (resume/jump table, G0), §3b P1, §6 G0, §8 Clock",
+   "final_b6-saturday-playbook.md 'Finding: Saturday 09:00 is probably game hour 2.65'",
+   "BITES.md '09:00 read-only probes' row 1, X1",
+   "final_r2-bite-hunter.md Decisions 7",
+   "final_saturday-playbook.md §8 Clock, §4 'Hourly limits... turn at :21 under resume'",
+   "final_b6-saturday-playbook.md Risks 'Clock pace'",
+   "REVIEWS.md:302 (#102 'Resume vs jump ... when scheduled EVENTS fire is unestablished')",
+   "REVIEWS.md:307 (#102 low 5, Friday reproduction circular)",
+   "REVIEWS.md:313 (#102 cross-PR: #81 defaults t_start 4.0 / grant_tick 6 assume the jump)",
+   "REVIEWS.md:276 (#71 low 8 'h6.5 ~ 11:30 assumes 09:00 = h4; resume -> h6.5 ~ 12:51')",
+   "REVIEWS.md:488 (#92 NEW medium runbook assumes h4 = 09:00)",
+   "REVIEWS.md:302 (#102: 'add: bazaar clock round/round_name (if round 2 at 09:00 with t_hours 2.65, the \"ladder now for Friday credit\" play is void)')",
+   "final_b2-venue-runbook.md § What the venue is worth on Saturday",
+   "final_b20-venue-path.md § Saturday, wall clock"
+  ],
+  "verify_how": "GET /api/clock t_hours on Saturday's first tick: >= 3.95 means it jumped; ~2.65 means it resumed.",
+  "endpoint": "GET /api/clock",
+  "when": "09:00",
+  "flips": "W7 cash plan column (grant at 09:03 vs ~10:24), round 2 start (09:00 vs ~10:21), the h3 Market Test at ~09:21 only if it resumed, W3 schedule (`--t-start`).",
+  "also_flips": [
+   "Picks the playbook column for the whole day (G0). Under resume: #71's head opens the venue at h6.5 = 12:51, the same tick Duels I starts (vs ~11:30 under jump) and with its 370 P floor freezes all buys until the 10:24 grant; 09:00-10:21 still counts for Friday's round so the ladder best three go first (B6 order ladder -> G3 -> grant -> venue -> trades) vs W7's trades-first; W3/W4/W7/B2 plans that assume 503 P at 09:03 shift; merge windows (X16) and probe times P6/P7 move; Sunday would end at h22.65 without the h23 finale.",
+   "If FALSE both playbook columns are wrong (all wall times, Duels I/II windows, merge windows), max_spend_per_game_hour and dealer per-hour quotas reset twice as often, and X15's '40 ticks = 20 min -> 3x per hour' math changes; re-run `bazaar timeline --from-api`.",
+   "#81 ladder plan defaults (t_start 4.0, grant_tick 6) valid only under jump; #87 W7 cash plan (grant at 09:03 vs 10:24); #92 venue runbook (h6.5 = 11:30 vs 12:51, 8 vs 7 Market Test sessions, venue skips h3/h5 sessions); #71 venue_open_after_game_hours 6.5 wall time; #102 playbook column choice; with #71 merged under resume the 370 floor blocks every buy until the ~10:24 grant.",
+   "#102 playbook 'ladder at 09:00 for Friday credit'; #81 09:00 ladder slot timing; #87 best-three slot accounting for the round",
+   "Every wall-clock row of the B2/B20 runbooks and venue_open_after_game_hours 4.05 vs 6.5 (#71/#118)"
+  ],
+  "if_unknown": "plan both columns (W7)",
+  "priority": "high"
+ },
+ {
+  "id": "limits-unchanged",
+  "assumption": "1 accept per team per tick, 12 new listings per tick, 6 open conversations still hold.",
+  "sources": [
+   "RULES.md The clock",
+   "B18 rate limits",
+   "final_b18-rate-limits.md:57-58 ('The limit is 1 today; revisit if the organisers raise it')",
+   "REVIEWS.md:52 (#86 low 2: planner slots = min(max_accepts_per_tick, accepts_per_team_per_tick))",
+   "REVIEWS.md:60-62 (#80: W2b GO thin with 1 accept/tick; shared accept budget)",
+   "REVIEWS.md:222 (#98 low 8: sells and buys share the one accept slot)",
+   "final_w7-page-economics.md § 5 header ('within 1 accept per tick, 12 listings, 6 conversations, Abuela 8 deals an hour, 150 P an hour')",
+   "final_w3-ladder.md § The 09:00–10:30 plan ('One conversation per dealer at a time')",
+   "final_b9-packs-ev.md § Verdict 2 (the conversation slot)"
+  ],
+  "verify_how": "GET /api/clock limits{accepts_per_team_per_tick, offers_per_team_per_tick, max_open_threads_per_team}.",
+  "endpoint": "GET /api/clock",
+  "when": "09:00",
+  "flips": "Desk/maker/duel accept-slot sharing (GUARDRAILS max_accepts_per_tick), W4 listing plan.",
+  "also_flips": [
+   "B18 (#115) Postgres release_accept: with > 1 deleting slot 1 while slot 2 held makes the next reservation collide and be refused; #86/#103 duel planner slot count; #80 W2b gate (lift below 1.4 with 1 accept/tick at 0.06/0.08) and Duels II accept competition; #98 sell vs buy ranking.",
+   "#81 slot concurrency (Chato and Abuela in parallel, one thread per dealer); #87 step plan; #98 taker accept quota shared with ladder/duels; #109 conversation-slot argument; #101 exit accept timing."
+  ],
+  "if_unknown": "the RULES.md numbers",
+  "priority": "high"
+ },
+ {
+  "id": "grant-150-saturday",
+  "assumption": "Every team gets a 150 P grant (and a pack) at game hour 4.05.",
+  "sources": [
+   "/api/schedule grant_all h4.05",
+   "W7 §cash",
+   "final_saturday-playbook.md §4 row 4.05, §5, §1 'Confirm at 09:01-09:05'",
+   "final_b6-saturday-playbook.md event table",
+   "BITES.md X4, X21",
+   "PLAN.md W7 'any organiser grant (VERIFY ...)'",
+   "final_b2-venue-runbook.md § Cash under #71 (restated)",
+   "final_b2-venue-runbook.md § Guardrail proposals",
+   "final_b20-venue-path.md § GUARDRAILS.md diff (Cash)",
+   "final_b20-venue-path.md § The choice is firm for the day",
+   "final_w7-page-economics.md § Verdict 'Cash on Saturday' and § 3 'If the clock resumes'",
+   "final_b21-levels.md § 5 table header ('grant lands at 09:03 ... ~10:24')",
+   "final_w3-ladder.md § 'The 09:00–10:30 plan' (150 grant at 09:03)"
+  ],
+  "verify_how": "GET /api/schedule upcoming grant_all at_hours 4.05 params.cash 150; after it lands, /api/me cash +150.",
+  "endpoint": "GET /api/schedule; GET /api/me",
+  "when": "09:00 (schedule), 09:03 or ~10:24 (cash)",
+  "flips": "W7 cash plan (233 P spendable after it), W3 ladder schedule (Chato slots after the grant).",
+  "also_flips": [
+   "Cash plan ordering (ladder -> grant -> trades -> Chato under today's guardrails); W4's 82 P trades and Chato's ~87 P only fit after it; with #71 merged, 503-370 = 133 P spendable until the venue opens; Marius must open the sealed pack(s) by hand (X21, open_pack nowhere in code).",
+   "#71/#92/#118 guardrails: cash_floor 100 -> 50 (spendable 133 -> 183 P), venue_open_after_game_hours 4.05 (opening refused and retried 10 ticks later if read before the grant); W3+W4's ~136 P plan is 3 P short at floor 100",
+   "#87 cash plan: 83 P spendable before the grant vs 233 P after (floor 270); which column of `bazaar plan pages --now-hours` to use; W3 #81 ladder slots (two Abuela deals wait for the grant if resume); #119 Saturday plan puts the 3 Chato buys 'after the grant'; Market Test timing (h3 ≈ 09:21 vs h5 = 10:00); wall-time derivation depends on tick-length-and-game-hour."
+  ],
+  "if_unknown": "150 P, spend only the 83 P above the floor before it",
+  "priority": "high"
+ },
+ {
+  "id": "ladder-resets-per-round",
+  "assumption": "Saturday's round restarts each level's best three (Friday's dealer deals do not count for Saturday).",
+  "sources": [
+   "W5 §1 unverified",
+   "B21 §4",
+   "W7 §Risks",
+   "final_saturday-playbook.md §2 row 3, §4 row 4.0 (G2), §5 'The best three are a level', §6 G2, §8",
+   "final_b6-saturday-playbook.md Points per action",
+   "REVIEWS.md:72 (#87 M1: Friday deals closing Saturday's best-three slots)",
+   "REVIEWS.md:235 (#87 regression: current-round deals must count)",
+   "REVIEWS.md:261 (#87 residual: pre-open run without --now-hours treated as Friday)",
+   "final_w5w6-score-redteam-morning.md § Unverified (whether the ladder restarts each round)",
+   "final_w5w6-score-redteam-morning.md § Saturday morning check",
+   "final_b21-levels.md § 4 'Does Saturday reset the round's best three?'",
+   "final_b21-levels.md § Risks",
+   "final_w7-page-economics.md § Risks ('whether the ladder restarts each round (W5)')",
+   "final_b9-packs-ev.md § verdict table (4th Abuela deal scores 0)"
+  ],
+  "verify_how": "GET /api/me score.ladder_points on Saturday before our first Saturday dealer deal: ~0 means a reset; Friday's value (0.058) means no reset. Or `bazaar evals score-check --round-start <tick>` (W5).",
+  "endpoint": "GET /api/me",
+  "when": "09:00–09:05 (before the first Abuela deal settles)",
+  "flips": "Reset: 3 new deals per level today (W3/W7/B21 plans as written). No reset: Abuela's best three only need deals beating Friday's 0.73 mean; spend shifts to Chato/L3.",
+  "also_flips": [
+   "TRUE: redo Saturday's best three right after the grant (worth 10.7 round points, ~54 P). FALSE: Friday's deals stand; only the +2.44 upgrade is worth buying. Under resume also decides ladder-first (B6) vs trades-first (W7) for the 83 P.",
+   "#87 W7 page/dealer plan (which dealers' deals are 'scoring'; LAV-06 from Abuela vs teams); #81 ladder targets.",
+   "#78 `bazaar evals score-check --round-start <tick>`; W3 ladder plan (which deals are worth buying: all three per level from zero vs only improvements over 0.73)",
+   "#119 levels plan (3 new deals per level vs only higher-share replacements); #81 ladder plan (best-three commons first at 09:00–09:06); #87 W7 step 3 (three Abuela deals ~40 P, +2.4 round points) and B9 #109 round-point table (0.044 pts/P for the best three)."
+  ],
+  "if_unknown": "assume a reset",
+  "priority": "high"
+ },
+ {
+  "id": "chato-unlocked",
+  "assumption": "We stay at level 2 with El Chato unlocked on Saturday.",
+  "sources": [
+   "B21 §5",
+   "feed level.unlocked t01 tick 98"
+  ],
+  "verify_how": "GET /api/me unlocked contains 'chato' (level 2).",
+  "endpoint": "GET /api/me",
+  "when": "09:00",
+  "flips": "B21's L2 best three and the L3 early unlock path.",
+  "if_unknown": "unlocked",
+  "priority": "high"
+ },
+ {
+  "id": "abuela-menu",
+  "assumption": "Abuela still gives 8 deals/h, opens the pack at 30 and sells 3 packs/h.",
+  "sources": [
+   "W3 §plan",
+   "B9 §verdict",
+   "REVIEWS.md:28 (#81 M2: 'The 8 deals/dealer/hour limit is not in check() (server + offline schedule only)')",
+   "REVIEWS.md:27 (#81 M1 rolling-hour retry)"
+  ],
+  "verify_how": "GET /api/dealers abuela menu.deals_per_team_per_hour == 8, sells[sobre_barrio].opening_ask == 30, per_team_per_hour == 3.",
+  "endpoint": "GET /api/dealers",
+  "when": "09:00",
+  "flips": "W3 ladder schedule quotas (`bazaar ladder plan --dealers`), B9 pack verdict.",
+  "also_flips": [
+   "#81 ladder_plan schedule() slot count and rolling-hour retries; #109 pack vs card thread allocation."
+  ],
+  "if_unknown": "Friday's menu",
+  "priority": "medium"
+ },
+ {
+  "id": "chato-menu",
+  "assumption": "El Chato's menu (uncommons 30 list / 33 opening, rares 90/97, 6 deals/h) is what the night modelled.",
+  "sources": [
+   "W3 floor table",
+   "sim dealers.json"
+  ],
+  "verify_how": "GET /api/dealers chato menu: deals_per_team_per_hour and sells list prices; feed threads' opening asks 33/97.",
+  "endpoint": "GET /api/dealers",
+  "when": "09:00",
+  "flips": "W3 Chato caps proposal (chato:uncommon=31), B21 L2 best three, ladder_plan quotas.",
+  "if_unknown": "6 deals/h, openings 33/97",
+  "priority": "medium"
+ },
+ {
+  "id": "abuela-openings",
+  "assumption": "Abuela still opens uncommons at 29 and commons at 12 (the regime W3's floors were fitted on).",
+  "sources": [
+   "W3 §floors",
+   "final_w3-ladder.md § Floors table and § '09:00 runbook' step 2",
+   "final_b12-dealer-jitter.md § How it was measured (W3 plans)"
+  ],
+  "verify_how": "Feed: thread.message from abuela, first priced message per new thread today: 29 (uncommon), 12 (common), 30 (pack).",
+  "endpoint": "GET /api/feed",
+  "when": "~09:05, after 3 Abuela threads today",
+  "flips": "W3 plans (21→25, 8→11); re-run `bazaar ladder floors --since-tick <today>` if the openings moved.",
+  "also_flips": [
+   "#81 ladder plan (commons stop at 11 = one below the opening; uncommons 21→25; packs 20→24); #100 jitter plans built on W3's floors; #119 L1 best-three targets."
+  ],
+  "if_unknown": "Friday's regime",
+  "priority": "high"
+ },
+ {
+  "id": "abuela-floors",
+  "assumption": "Abuela's limits still sit where Friday put them (uncommon fills ~21–25, commons ~8–11).",
+  "sources": [
+   "W3 §floors",
+   "W3 backtest",
+   "PLAN.md W3",
+   "final_saturday-playbook.md §2 rows 3 and 5, §4 rows 2.65 and 9.0 (re-plan with ladder floors --since-tick), §6 G5",
+   "final_b6-saturday-playbook.md Points per action",
+   "final_w3-ladder.md § Floors table, § Risks ('Fitted on Friday ... re-run the floors on Saturday's feed')",
+   "final_b12-dealer-jitter.md § Risks",
+   "final_b9-packs-ev.md § Verdict 1 (pack median 22)"
+  ],
+  "verify_how": "Feed: today's Abuela settlements per class (opening 29 / 12): median fill within 21–25 / 8–11.",
+  "endpoint": "GET /api/feed",
+  "when": "~09:20, after 4 Abuela card fills today",
+  "flips": "W3 plan ranges and `ladder_floor_quantile` (#81); re-fit with `--since-tick`.",
+  "also_flips": [
+   "ladder_plan.json bids (start = floor-2, max = floor+2); G5 Chato caps (#81 dealer_price_caps chato:uncommon=31, ladder_level_deals=3); whether the ~54 P / ~87 P budgets hold; max_price_rare 80 vs Chato rare.",
+   "#81 decision 2 (ladder_floor_quantile = 0.5: open uncommons at 21 instead of 17); #81 decision 3 / #109 (max_price_pack 20 vs 22–24); #100 jitter band gap assumptions."
+  ],
+  "if_unknown": "Friday's floors",
+  "priority": "high"
+ },
+ {
+  "id": "l3-announced",
+  "assumption": "A third dealer (the Collector) is announced on Saturday.",
+  "sources": [
+   "B3 §known",
+   "B21 §3",
+   "final_saturday-playbook.md §7 Levels",
+   "PLAN.md W3 'early L3'",
+   "final_b21-levels.md § 1, § 3 'Published open-to-all times' and 'What an early unlock is worth', § Risks",
+   "final_b3-personas.md § How a level arrives"
+  ],
+  "verify_how": "GET /api/dealers lists a dealer other than abuela/chato, or a level.announced event in today's feed.",
+  "endpoint": "GET /api/dealers; GET /api/feed",
+  "when": "any time (watch level.announced)",
+  "flips": "B21 step 3 (read its unlock and menu), B3 persona plan, a dealer_price_caps proposal for its class.",
+  "also_flips": [
+   "Whether an early unlock (Chato deals, G5) is worth paying for before open_to_all; read B3's persona plan (#93) on announcement.",
+   "#119 value of the Chato cap for early L3 (worth more if L3 activates late in the day); #81 dealer_price_caps urgency; #93 L3 prep timing."
+  ],
+  "if_unknown": "no L3 yet",
+  "priority": "medium"
+ },
+ {
+  "id": "l3-unlock-rule",
+  "assumption": "L3's early unlock is 3 negotiated buys with El Chato (B21's analogy from L2).",
+  "sources": [
+   "B21 §2",
+   "final_saturday-playbook.md §6 G5, §2 row 3 ('with Chato and maybe level 3 all day'), §7 Levels",
+   "final_b6-saturday-playbook.md 'What Marius must decide' 4",
+   "PLAN.md W3 '(+3-5 pts, early L3)'",
+   "final_b21-levels.md § 2 'The trigger rules this implies' and § Risks",
+   "final_b3-personas.md § Early unlock evidence",
+   "final_w3-ladder.md § Decision 1 (ladder_level_deals = 3)",
+   "final_b21-levels.md § 2 last bullet ('L3 and up, by analogy (unverified)'), § Risks",
+   "final_b3-personas.md § Plan per persona (L3 Collector: three deals unlock L4)"
+  ],
+  "verify_how": "GET /api/dealers/<L3> unlock.early_deals_with == 'chato' and early_min_deals == 3.",
+  "endpoint": "GET /api/dealers",
+  "when": "at L3's level.announced",
+  "flips": "B21 Saturday step 2 (3 Chato buys) and the chato:uncommon=31 proposal's value.",
+  "also_flips": [
+   "G5 (#81 switches: dealer_price_caps chato:uncommon=31, ladder_level_deals=3) is worth more than +2.82 round points if it also buys early L3; changes how the post-grant cash (~87 P) is ranked against W4 trades.",
+   "#119 Saturday path (3 Chato uncommon buys for early L3); #81 `ladder_level_deals = 3` (raise to 4 if the count is shaky; 6 on Sunday because the desk counts over the whole feed); #93 L3/L4 persona plans.",
+   "#119 Saturday plan (Chato buys are only worth the cap change if they also open L3); #81 `dealer_price_caps` chato:uncommon=31 decision; #93 L4 unlock plan via Collector buys."
+  ],
+  "if_unknown": "3 Chato buys",
+  "priority": "high"
+ },
+ {
+  "id": "stall-scores",
+  "assumption": "Without our own venue, the free starter stall earns Market Test points for us.",
+  "sources": [
+   "W7 §4/§5",
+   "W5 §1",
+   "B2",
+   "final_saturday-playbook.md §2 row 2, §4 rows 3.0/5.0 (G3), §6 G3, §8",
+   "PLAN.md Fact 2 (0.5 = stall-level, each session counts our best open venue)",
+   "final_b6-saturday-playbook.md Points per action",
+   "final_r1-reviewer.md #105 row (starter_broker_key / starter stall seen as our venue)",
+   "REVIEWS.md:271 (#71 HIGH 3: 'realises 0 per Market Test session (worse than the stall)')",
+   "REVIEWS.md:126, 128 (#77: stall baseline 0.82-0.83, scoring step function vs stall)",
+   "REVIEWS.md:196-197 (#92: +0.19 points over the stall)",
+   "final_b20-venue-path.md § The premise needs one correction",
+   "final_b20-venue-path.md § Risks",
+   "final_b2-venue-runbook.md § What the venue is worth on Saturday (\"The free stall alone earns 0.5\")",
+   "final_w1a-bench-sim.md § What Marius must decide 3 (calibration via our free stall)",
+   "final_w7-page-economics.md § Step 5, § Decision C, § Risks"
+  ],
+  "verify_how": "GET /api/me score.bench_points / bench_efficiency after the first Market Test session: > 0 with no venue means the stall scores for us.",
+  "endpoint": "GET /api/me",
+  "when": "after the first Market Test (h3 ~09:21 if resumed, h5 = 10:00 if jumped)",
+  "flips": "Venue decision (W7 decision C, B2/B20 venue runbook, #71): if the stall scores, a venue is worth ~0.45/round, keep the 270 P; if not, ~7.5–8/round.",
+  "also_flips": [
+   "TRUE: venue optional (+0.19 final only), keep the 02:30 no-venue decision, do not merge #71 / #92 for this. FALSE: every session without a venue costs 0.94 round points -> open one (B2 runbook, #71 + cash_floor 270 -> 50/100).",
+   "#71 venue opening value (270 P bond vs stall baseline); #92/#84 runbook (+0.19 / +0.60 points over stall); #94 win-rate policy baseline.",
+   "B20 plan table: TRUE -> plans A/B/E are not zero-scoring, opening at 09:03 is only insurance (+~0.02 with edge), #71's 11:30 keeper is acceptable; FALSE -> plan A (allow_venue_open=false) scores 0.00, so approve #118/B20 venue_open_after_game_hours 6.5 -> 4.05 and venue_mechanism=auto unless edge is live (plan C 3.00)",
+   "#87 decision C (venue timing) and A (cash_floor 270 → small buffer); PR #71 venue bond reserve."
+  ],
+  "if_unknown": "decide the venue after the first Market Test",
+  "priority": "high"
+ },
+ {
+  "id": "days-meaning-sign",
+  "assumption": "In Duels II, days_meaning says the days weight is signed (primas gained + or lost − per day).",
+  "sources": [
+   "PLAN fact 3",
+   "B8 days",
+   "PLAN.md Fact 3",
+   "BITES.md probes row 7, X5-B2",
+   "final_saturday-playbook.md §3b P7, §6 G4, §4 row 13.0",
+   "final_r2-bite-hunter.md Decisions 7",
+   "REVIEWS.md:492 (#107: '#60 before Duels II only under the adverse-sign assumption (duelkit.py:55 uses abs(weight))')",
+   "REVIEWS.md:486 (#86 NEW low: server sending weight 0 on price-only; unobserved)",
+   "REVIEWS.md:436 (#60 low 2: missing your_days_weight blocks the duel)",
+   "final_b8-days.md § The question and Caveats",
+   "final_w2b-duel-v2.md § Risks (duel_days_signed)"
+  ],
+  "verify_how": "GET /api/duels: the first two-issue duel's days_meaning text; null or unsigned keeps the worst case.",
+  "endpoint": "GET /api/duels",
+  "when": "Duels II (h13)",
+  "flips": "duel_days_signed switch (#86 / B8): on only if the real payload confirms the sign.",
+  "also_flips": [
+   "G4: duel_days_signed (B8 signed days) vs #60's abs(weight) worst case; #60 must be live before Duels II regardless (main's v1 sends unvalued days = 5).",
+   "#60 merge urgency before Duels II; #86 v1 two-issue inference; worth() None hold.",
+   "#113 duel_days_auto = true / duel_days_signed (+3..10 % P per two-issue duel if right; 7-11 % outside-limit closes if wrong)"
+  ],
+  "if_unknown": "worst case (abs weight)",
+  "priority": "medium"
+ },
+ {
+  "id": "schedule-retimed",
+  "assumption": "The organisers may re-time the schedule (move at_hours) or anchor each day to the live hour it opened at, so events could fire at the jump wall times even if t_hours resumes at 2.65; the 23:00 day_closes is wall-anchored in both columns.",
+  "sources": [
+   "final_saturday-playbook.md §1 resume/jump 'Evidence' row (admin calendar doc), G0 step 2, §4 row 18.0",
+   "final_b6-saturday-playbook.md consistency-check paragraph",
+   "REVIEWS.md:301 (#102 verified vs get_api_schedule.anon.json)",
+   "REVIEWS.md:70 (#87: grant_all h4.05 INCLUDED)",
+   "REVIEWS.md:60-62 (#80: W2b GO thin at decays 0.06/0.08)",
+   "REVIEWS.md:303/320 (#102 M1: upcoming drops fired events; compare fixed)"
+  ],
+  "verify_how": "GET /api/schedule at 08:55 and 09:01: compare upcoming[].at_hours and upcoming[].wall for round 2 / grant / Duels I / Duels II / bench rows against docs/night/saturday-schedule.json (bazaar timeline --from-api --compare). TRUE (re-timed) if at_hours changed or wall for round 2 is ~09:00 while /api/clock t_hours ~2.65; FALSE if at_hours are unchanged (4.0, 4.05, 6.5, 13 ...) and wall follows t_hours. Check the day_closes row's wall = 23:00.",
+  "endpoint": "GET /api/schedule",
+  "field": "now_hours, upcoming[].at_hours, upcoming[].wall, upcoming[].action",
+  "when": "08:55, again 09:01; re-run on any clock.changed / announcement",
+  "flips": "If re-timed, the § 4 columns are stale and only `bazaar timeline --from-api` counts; all wall-time plans (grant, Duels I/II merge windows, #71's h6.5 open, Market Tests) follow the live schedule.",
+  "if_unknown": "Use the live `bazaar timeline --from-api` output over either hand column.",
+  "priority": "high"
+ },
+ {
+  "id": "cash-at-open",
+  "assumption": "Cash at the 09:00 opening is still Friday's 353 P (headroom 83 P above cash_floor 270) with nothing settling overnight and no grant before round 2.",
+  "sources": [
+   "final_saturday-playbook.md §5 Cash by hour, §4 row 2.65",
+   "final_b6-saturday-playbook.md 'Under resume ... cash at 09:00 is 353 P, not 503'",
+   "PLAN.md W7 (353 P at tick 159)",
+   "final_b21-levels.md § 5 'Status at Friday's close: level 2'",
+   "final_w7-page-economics.md § Data (cash 353) and § Verdict",
+   "final_w3-ladder.md § The 09:00–10:30 plan (cash 353)"
+  ],
+  "verify_how": "GET /api/me cash at the first open tick: 353 = TRUE; 503 = grant already landed (jump); other = overnight settlements of open offers (check /api/feed settlement events at the first tick).",
+  "endpoint": "GET /api/me",
+  "field": "cash",
+  "when": "09:00",
+  "flips": "Under resume only 83 P before the grant: ladder best three (~54 P) or a 09:00 venue (B2 floor 50), not both; with #71's head merged, 353 < 370 freezes every buy until the grant.",
+  "if_unknown": "Plan with 83 P of headroom until the grant event is seen.",
+  "priority": "high"
+ },
+ {
+  "id": "market-test-schedule",
+  "assumption": "Market Tests run every 2 game hours (Sat h3 if resume, h5, 7, 9, 11, 13, 15, 16 hard, 17; Sun h19, 21), each 16 ticks (8 min), scoring our best open venue at 0.5 for stall level and 1.0 for the top-3 mean; the hard test has 12 traders, firmer and more impatient.",
+  "sources": [
+   "PLAN.md Fact 2, W1a",
+   "final_saturday-playbook.md §4 rows 3.0-17.0",
+   "final_b6-saturday-playbook.md event table",
+   "final_b2-venue-runbook.md § What the venue is worth on Saturday",
+   "final_b20-venue-path.md § What each choice is worth (h5 lost)",
+   "final_w1a-bench-sim.md § parameter table (schedule fixture)",
+   "final_w7-page-economics.md § 3 'If the clock resumes' and § Step 5"
+  ],
+  "verify_how": "GET /api/schedule upcoming rows with the bench action: at_hours list and params (preset hard, trader count) match = TRUE. GET /api/feed schedule.fired for each bench; after one session, GET /api/me score.bench_efficiency vs bench_points ratio gives the scale.",
+  "endpoint": "GET /api/schedule",
+  "field": "upcoming[action=bench].at_hours, params",
+  "when": "08:55 (schedule), first Market Test for scoring",
+  "flips": "#118/B20 venue_open_after_game_hours 4.05 vs #71's 6.5 (value of the h5 session: 0.375 if the stall does not count); evals/saturday.py (#92) per-session numbers (0.375 per session = 15 x 0.40 / 8 x 0.5)",
+  "if_unknown": "Treat every published bench row as live and keep the broker up.",
+  "priority": "high"
+ },
+ {
+  "id": "thread-bids-in-me-offers",
+  "assumption": "Our standing dealer-thread bids appear in /api/me/offers on the real server (sim-verified; the recorded fixture is empty), which every cross-tick cash-floor guard for thread bids relies on.",
+  "sources": [
+   "BITES.md probes row 3, X7",
+   "final_saturday-playbook.md §3b P3"
+  ],
+  "verify_how": "With one dealer thread open, keyed read GET /api/me/offers (`bazaar sell offers`): our thread bid listed with its price = TRUE; absent = FALSE.",
+  "endpoint": "GET /api/me/offers (keyed read)",
+  "field": "offers[] (thread bid rows)",
+  "when": "first dealer thread (09:00 resume / 09:03 jump)",
+  "flips": "If FALSE, #72's committed-cash accounting for thread bids (thread_cash) misses them and X7 (three thread bids filling at one boundary, 240 P vs 150 cap; cash below 270) can recur: cap open dealer threads / pause the taker's ladder until fixed.",
+  "if_unknown": "Merge #72 before 09:00 and keep few concurrent dealer threads.",
+  "priority": "high"
+ },
+ {
+  "id": "thread-view-carries-settled-offer",
+  "assumption": "The real thread view carries the settled offer/price after a dealer deal (the sim's does), so a deal whose `say` reply was lost is booked at the right price.",
+  "sources": [
+   "BITES.md X7 ('real shape is unverified')"
+  ],
+  "verify_how": "After the first dealer deal, GET /api/me/threads: the thread shows status deal and the settled offer price = TRUE; no settled offer in the view = FALSE.",
+  "endpoint": "GET /api/me/threads",
+  "field": "threads[].status, settled offer / price",
+  "when": "first dealer deal",
+  "flips": "If FALSE, #72's lost-reply booking (fixed only in head e4efc82) undercounts spend; X3/B17 adoption of orphan threads after a redeploy also depends on it.",
+  "if_unknown": "Take #72's newest head; watch ledger vs real cash after deals.",
+  "priority": "medium"
+ },
+ {
+  "id": "accept-settles-next-tick",
+  "assumption": "An accept made in tick T is already settled in /api/me when read at T+1 (real settlement timing is unverified; Friday's capture has none in our window); if not, the taker can buy a duplicate (X18).",
+  "sources": [
+   "BITES.md probes row 4, X18",
+   "final_saturday-playbook.md §3b P4",
+   "final_r2-bite-hunter.md X18, Decisions 7",
+   "final_b19-pending-fee.md:58-60 ('The tick + 1 window assumes our accept lands in the tick we read')",
+   "REVIEWS.md:386 (#110 low 1: optional > tick+2)"
+  ],
+  "verify_how": "After our first accepts: compare the decision row's tick (snapshot tick) with the settlement tick of that offer in GET /api/feed (or GET /api/me/offers accepted/settled tick). settlement_tick == decision_tick + 1 for all -> TRUE; any == decision_tick + 2 -> FALSE (widen window to tick+2).",
+  "endpoint": "GET /api/me, GET /api/feed",
+  "field": "assets[], cash; feed settlement.tick",
+  "when": "first accept (09:00-09:05)",
+  "flips": "If FALSE, B16 (treat ledger accept_items of T-1/T-2 as held) becomes urgent; duplicates cost one 0.25x copy each.",
+  "if_unknown": "Accept the small duplicate risk; watch for duplicate buys.",
+  "priority": "medium"
+ },
+ {
+  "id": "fee-charged-at-settlement",
+  "assumption": "Which fee the real server charges when a venue fee change becomes effective at T+1 for an ask accepted at T (the sim charges the OLD fee because settle_due runs before venue_tick).",
+  "sources": [
+   "BITES.md probes row 5, X8",
+   "final_saturday-playbook.md §3b P5",
+   "final_r2-bite-hunter.md X8",
+   "final_b19-pending-fee.md:7-11 (bug: accept at T settles at T+1)",
+   "final_b19-pending-fee.md:14-17 ('which of the two the server charges at settlement is unverified')",
+   "final_b19-pending-fee.md:34-36 (0 settlements on team venues Friday: cannot be checked from data; sim charges OLD fee)",
+   "REVIEWS.md:385 (#110 review)"
+  ],
+  "verify_how": "Read-only, opportunistic: GET /api/venues for pending_fee {fee_bps, fee_per_card, effective_tick} (also confirms the field exists on /api/venues, so far seen only in feed venue.fee_announced); then GET /api/feed for any team's settlement on that venue at tick == effective_tick (accepted at effective_tick-1). Charged fee == new fee -> TRUE (settlement-time fee); == old fee -> FALSE (accept-time fee). No such settlement -> stays unknown.",
+  "endpoint": "GET /api/feed, GET /api/venues",
+  "field": "venue.fee_announced; settlement.fee; venues[].pending_fee",
+  "when": "first venue.fee_announced",
+  "flips": "#110 (B19) max(today, pending) pricing: if FALSE the max costs <= 1 P per skipped trade (could price today's fee only); if TRUE B19 is required to keep max_price_* caps honest (10 P common could settle at 16 vs cap 12). #111 maker 40-tick horizon.",
+  "if_unknown": "Use #110 (worst of current and pending).",
+  "priority": "medium"
+ },
+ {
+  "id": "closed-clock-payload",
+  "assumption": "A closed-door /api/clock carries next_opens (and/or next_tick_in) usable to wake the loops at 09:00 instead of a 300 s poll.",
+  "sources": [
+   "BITES.md probes row 2, X4",
+   "final_saturday-playbook.md §3b P2, §3 step 9",
+   "final_b13-wake-opening.md:60-62 ('Real closed-clock payload unverified offline'; docs/services.md:33 shape)",
+   "final_b13-wake-opening.md:63-64 (simulator never closes its doors)",
+   "REVIEWS.md:378 (#106: next_opens ISO with offset parsed; null/malformed -> 300 s)"
+  ],
+  "verify_how": "GET /api/clock now (doors closed): doors == 'closed' AND next_opens parses as ISO-8601 with an offset (e.g. ...T09:00:00+02:00) equal to tomorrow's 09:00 Madrid -> TRUE (B13 wakes ~09:00:00.3). next_opens missing/null/naive or doors field named differently -> FALSE (B13 keeps 300 s polls: restart services at ~09:00:05). Also note whether days[*].opens is present.",
+  "endpoint": "GET /api/clock",
+  "field": "doors, next_opens, next_tick_in",
+  "when": "08:55",
+  "flips": "#106 (B13) sleeps min(300, next_opens-now): if the field is present and #106 is merged, no restart needed; otherwise restart the three Railway services just after 09:00:00 or lose 0-10 ticks.",
+  "if_unknown": "Merge #106 before 09:00 or restart services after 09:00:00 and check the first tick line by 09:01.",
+  "priority": "high"
+ },
+ {
+  "id": "tick-numbering-continues",
+  "assumption": "Tick numbers continue across the night (no reset at day_opens), so the ledger's unique (tick, slot) accept index and hourly caps keep working.",
+  "sources": [
+   "BITES.md X1"
+  ],
+  "verify_how": "GET /api/clock at 09:00: tick >= 159 = TRUE; tick reset to ~0 = FALSE.",
+  "endpoint": "GET /api/clock",
+  "field": "tick",
+  "when": "09:00",
+  "flips": "If ticks reset, accepts on reused tick numbers would be refused once ledger rows exist for them (X1); the ledger table is empty today so impact starts only after reuse.",
+  "if_unknown": "Assume continuity (sim never resets).",
+  "priority": "low"
+ },
+ {
+  "id": "practice-duels-resume-and-take-accepts",
+  "assumption": "Under resume the frozen practice duels restart at 09:00 (6 of ours live, 8 not started, not scored) and claim the duel loop's accept slot until ~09:17.",
+  "sources": [
+   "final_saturday-playbook.md §4 row 2.65",
+   "final_b6-saturday-playbook.md Finding table (practice froze mid-session)"
+  ],
+  "verify_how": "GET /api/duels at 09:00: practice duels with status live/pending and deadlines in the next ~33 ticks = TRUE; none = FALSE. GET /api/feed duel.closed events in 09:00-09:20.",
+  "endpoint": "GET /api/duels",
+  "field": "duels[].status, deadline_tick, session",
+  "when": "09:00",
+  "flips": "Competes with the 09:00 ladder deals for the team's single accept per tick; ladder timing in the first 17 min.",
+  "if_unknown": "Expect duel accepts to win the slot in that window; let the ladder run around them.",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-accepts-share-team-slot",
+  "assumption": "Unverified whether the real server counts duel accepts against accepts_per_team_per_tick (the sim does not; our shared ledger guardrail does).",
+  "sources": [
+   "BITES.md Top decision 9, probes row 6, X5-B3",
+   "final_saturday-playbook.md §3b P6",
+   "final_r2-bite-hunter.md Decisions 7",
+   "final_w2a-duel-zoo.md § What the zoo says 6",
+   "final_w2b-duel-v2.md § Why v2",
+   "final_b15-duels-first.md § Goal"
+  ],
+  "verify_how": "Duels I first wave: from GET /api/feed duel.closed events (or GET /api/duels closed results), two of our duels closed by accept in the same tick (or our duel log showing a second accept refused with a limit error) -> two in one tick means they do NOT count (self-imposed limit); a refusal means they DO. Also read GET /api/clock limits for a separate duel key.",
+  "endpoint": "GET /api/feed, GET /api/duels",
+  "field": "duel.closed (tick, team); limits.accepts_per_team_per_tick",
+  "when": "Duels I first wave (11:30 jump / 12:51 resume)",
+  "flips": "If they don't count: v1 closes at most 2 of 3 shared-deadline duels (up to ~12 lost deals over Duels I) -> let duel accepts bypass the taker's slot (code + merge window) or run v2 (#86, 6/6). Also lowers X17 urgency.",
+  "if_unknown": "Keep the shared 1/tick slot; prefer v2 (#86) which books the slot before Jev.",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-accept-adds-round",
+  "assumption": "Unverified whether an accept itself adds a round to the duel decay (result = |price - limit| x (1-d)^rounds with rounds = min(our priced messages, rival priced messages)).",
+  "sources": [
+   "PLAN.md Fact 1 ('Unverified: whether an accept itself adds a round')",
+   "final_w2b-duel-v2.md § Why v2 ('An accept adds no round')",
+   "final_w2a-duel-zoo.md § Harness verdict"
+  ],
+  "verify_how": "After the first Duels I closures, GET /api/duels (closed payloads) or duel.closed in GET /api/feed: recompute |price - limit| x 0.94^rounds with rounds = min(our, rival priced messages); exact match = accept adds no round; match only with rounds+1 = accept adds a round.",
+  "endpoint": "GET /api/duels",
+  "field": "closed duels: result, price, limit, messages, decay",
+  "when": "after Duels I first wave (~16 ticks in)",
+  "flips": "#86 v2's acceptance rule (accept when surplus_now >= E[surplus_next] x (1-d)) and duel_max_own_offers: if an accept costs a round, accepting on the rival's move is relatively cheaper/hold-out less attractive.",
+  "if_unknown": "Use the verified formula without an extra round (v2 as built).",
+  "priority": "high"
+ },
+ {
+  "id": "duel-schedule-and-decay",
+  "assumption": "Duels I (h6.5) are price-only with decay 0.06, 34 duels, 3 concurrent, 16 ticks each (<= 96 min); Duels II (h13) are price + delivery day with decay 0.08, 68 duels, 6 concurrent; Sunday decay 0.10; windows are upper bounds.",
+  "sources": [
+   "PLAN.md Fact 1",
+   "final_saturday-playbook.md §4 rows 6.5 and 13.0, §8",
+   "BITES.md X16",
+   "final_b6-saturday-playbook.md Risks",
+   "final_w2b-duel-v2.md § Go/no-go (0.08/0.10 'what is left')",
+   "final_w2a-duel-zoo.md § Harness verdict / What Marius must decide 1",
+   "final_b8-days.md § The question (Duels II ~h13)"
+  ],
+  "verify_how": "GET /api/schedule upcoming duels rows: params (decay, count, concurrency, duel_ticks, issues). At session start GET /api/duels decay and issues per payload. TRUE if they match; the real end is the last duel.closed in GET /api/feed.",
+  "endpoint": "GET /api/schedule, GET /api/duels",
+  "field": "upcoming[action=duels].params; duels[].decay, issues",
+  "when": "08:55 (schedule); Duels I start for payloads",
+  "flips": "Merge-freeze windows (X16), request budget (6 duels = 9 calls/tick at Duels II + Market Test, stagger), v2 tuning (decays 0.06/0.08/0.10 in the W2a zoo).",
+  "if_unknown": "Freeze merges for the full 96 min upper bound of each session.",
+  "priority": "high"
+ },
+ {
+  "id": "rivals-concede-unilaterally",
+  "assumption": "Real rivals keep conceding into our zone when we stay silent (as in 12 unanswered practice duels: ~16.3 P/duel vs 12.6 when we countered), which v2's 'silence is free' policy relies on.",
+  "sources": [
+   "PLAN.md Fact 1, W2",
+   "final_w2b-duel-v2.md § What v2 does",
+   "final_b15-duels-first.md § Exposure on real data",
+   "final_w2a-duel-zoo.md § What the zoo says 2 (tit-for-tat deal rate 0.49 under silence)"
+  ],
+  "verify_how": "After Duels I: GET /api/duels?done=true messages: rival prices keep moving toward us across ticks where we sent nothing -> TRUE; rivals stop/withdraw when we are silent (tit-for-tat) -> FALSE.",
+  "endpoint": "GET /api/duels",
+  "field": "duels[].messages (rival price per tick), result",
+  "when": "after Duels I first wave",
+  "flips": "G6 duel_policy v2 (#86) vs v1 for the rest of Duels I and Duels II.",
+  "if_unknown": "Decide G6 on the sim/zoo gate (v2 GO 5/5).",
+  "priority": "high"
+ },
+ {
+  "id": "score-weights",
+  "assumption": "W5's score model: duel/trade/bench/venue weights 12.5/5/15/15 are assumed (only the ladder weight is fitted); 1 Saturday round point = 0.40 final, Friday = 0.20; Duels I vs II split by session (0.18/0.09 per duel) or by count (0.12); Friday's top-3 means (ladder 1.11) will move.",
+  "sources": [
+   "final_saturday-playbook.md header, §2, §8 Weights",
+   "final_b6-saturday-playbook.md Points per action, Risks",
+   "PLAN.md W5+W6",
+   "final_w5w6-score-redteam-morning.md § Unverified (bench/venue split 15/15)",
+   "final_b1-organic-winrate.md § 1 (W5 assumes 15 + 15)",
+   "final_b2-venue-runbook.md § What the venue is worth (15 x 0.5 x 0.40 = 3.00) and Risks",
+   "final_b20-venue-path.md § What each choice is worth",
+   "final_w5w6-score-redteam-morning.md § 1 (Rounds row; 'Where Saturday's points are')",
+   "final_b2-venue-runbook.md § (x 0.40)",
+   "final_w7-page-economics.md § 4 'What each use of cash buys' and § Risks",
+   "final_b9-packs-ev.md § Risks (W5's assumed trade weight 5)"
+  ],
+  "verify_how": "After the first scored session: GET /api/me score.bench_points vs score.bench_efficiency (and score.mm_points): bench_points at stall level ~= 0.5 x 15 x session weight; GET /api/leaderboard max market components cap at 15 -> TRUE. `bazaar evals score-check` residual.",
+  "endpoint": "GET /api/me, GET /api/leaderboard",
+  "field": "score.*; leaderboard rows",
+  "when": "after the first scored Saturday events (ladder deal, Market Test), refine after Duels I",
+  "flips": "Ranking of attention (§2): duels uptime vs Market Test vs ladder vs W4 trades; whether a venue (+0.19 final) or Chato (+1.1 final) is worth its cash.",
+  "if_unknown": "Keep W5's ranking: duel uptime and bench first, ladder as cheapest points.",
+  "priority": "medium"
+ },
+ {
+  "id": "trade-scores-in-settlement-round",
+  "assumption": "A trade scores in the round in which it settles (so a trade settled before 10:21 under resume counts in Friday's half-weight round).",
+  "sources": [
+   "final_saturday-playbook.md §5 ('Trades are a flow (assumed ...)')"
+  ],
+  "verify_how": "After a trade settles, `bazaar evals score-check` on GET /api/me snapshots: the trade's gain shows in the current round's score (and GET /api/clock round) = TRUE.",
+  "endpoint": "GET /api/me, GET /api/clock",
+  "field": "score.* delta; round",
+  "when": "first settled team trade",
+  "flips": "Ordering of the pre-grant 83 P: B6's ladder-first vs W7's trades-first; W4's 7 trades timed after 10:21 under resume.",
+  "if_unknown": "Ladder first, trades after round 2 starts.",
+  "priority": "low"
+ },
+ {
+  "id": "page-bonus-in-your-value",
+  "assumption": "The server's your_value carries no page-bonus share on incomplete pages (book x affinity x copy marginal, 19/19 cards Friday) and no page is completable under today's caps, so page_bonus_weight 1.0 overvalues buys.",
+  "sources": [
+   "BITES.md X25",
+   "final_r2-bite-hunter.md X25",
+   "PLAN.md W7",
+   "final_w7-page-economics.md § Decision D",
+   "final_w4-trade-desk.md § end ('Not done: #14's /api/me/value validation, which needs live calls') and § 1 (six multipliers, shuffled)"
+  ],
+  "verify_how": "GET /api/me assets[].your_value for each held card vs book × our multiplier × copy marginal (catalog book from GET /api/catalog): all equal → TRUE; any card above → page share included → FALSE.",
+  "endpoint": "GET /api/me",
+  "field": "assets[].your_value",
+  "when": "09:00",
+  "flips": "page_bonus_weight 1.0 -> 0 (STRATEGY.md, needs a merge window) or valuing with /api/me/value before board accepts; W7 page plans.",
+  "if_unknown": "Accept a few P overpay in low-affinity sets until a merge window.",
+  "priority": "medium"
+ },
+ {
+  "id": "retiro-released",
+  "assumption": "El Retiro (RET) is released at round 2: RET cards appear in dealer menus, packs and boards, priced from live your_value.",
+  "sources": [
+   "final_saturday-playbook.md §4 row 4.0",
+   "final_w4-trade-desk.md § 1 table (RET, CHA priors) and § Risks",
+   "final_b9-packs-ev.md § Pack contents",
+   "final_w7-page-economics.md § Risks (RET enters Saturday)"
+  ],
+  "verify_how": "GET /api/catalog: RET set released / minted counts > 0 → TRUE; GET /api/feed RET cards in listings/settlements.",
+  "endpoint": "GET /api/catalog, GET /api/dealers",
+  "field": "catalog sets; dealers[].menu",
+  "when": "round 2 start",
+  "flips": "Ladder/trade targets after the grant; strategy must handle a new set (fuzz says it survives, X12).",
+  "if_unknown": "Price RET only from live your_value.",
+  "priority": "low"
+ },
+ {
+  "id": "rival-venues-starter-broker",
+  "assumption": "Rival venues (t06 50 bps, t12 0 bps, t13 100 bps, t02 auto 0 bps) likely run the kit's starter broker, which earns about half the bench points, and team venues see ~0 organic settlements (0 on Friday).",
+  "sources": [
+   "PLAN.md Fact 2, W8",
+   "final_saturday-playbook.md §2 row 7"
+  ],
+  "verify_how": "GET /api/venues (fees, mode, pending_fee) and GET /api/feed settlement events on team venues; after a Market Test, GET /api/leaderboard / venue.* events for rival bench results.",
+  "endpoint": "GET /api/venues, GET /api/feed",
+  "field": "venues[].fee, mode; feed settlement.venue, venue.*",
+  "when": "09:00 (venues); after the first Market Test",
+  "flips": "W1/#71 venue go/no-go margin (stall + 0.15 target); W8 arbitrage fee arithmetic (#101, arb_enabled default false).",
+  "if_unknown": "Assume organic venue value ~0; venue only for bench.",
+  "priority": "low"
+ },
+ {
+  "id": "trade-caps-clip-negatives",
+  "assumption": "Unknown whether the per-trade / per-counterparty trade-value caps also clip negative legs, which the arbitrage edge (buy leg usually negative) relies on being symmetric.",
+  "sources": [
+   "PLAN.md W8"
+  ],
+  "verify_how": "After our first buy and resale with the same counterparty settle, `bazaar evals score-check` on GET /api/me score deltas: negative leg reduced by the cap = symmetric (TRUE).",
+  "endpoint": "GET /api/me",
+  "field": "score.* deltas per trade",
+  "when": "first settled trade pair",
+  "flips": "W8 arbitrage / duplicate buys (#101): keep arb_enabled = false and dup_buy_enabled = false unless symmetric.",
+  "if_unknown": "Arbitrage and duplicate buys off (today's defaults).",
+  "priority": "low"
+ },
+ {
+  "id": "overnight-open-offers-fill-at-open",
+  "assumption": "Offers left open at doors close stand overnight and settle at the next day's first tick at the previous day's prices.",
+  "sources": [
+   "final_saturday-playbook.md §4 row 18.0",
+   "BITES.md X13"
+  ],
+  "verify_how": "GET /api/feed at 09:00: settlement events in the first tick on offers created before the close = TRUE.",
+  "endpoint": "GET /api/feed",
+  "field": "settlement events at the first tick",
+  "when": "09:00",
+  "flips": "Whether Marius must cancel open offers before 22:55 (`bazaar sell offers` / cancel).",
+  "if_unknown": "Review and cancel stale offers before 22:55.",
+  "priority": "low"
+ },
+ {
+  "id": "bench-match-rule",
+  "assumption": "Unknown whether the real POST /api/broker/matches honours bench traders' hidden limits (planned morning non-crossing probe).",
+  "sources": [
+   "PLAN.md W1 Go/no-go 'Morning plan'",
+   "REVIEWS.md:92 (#84 M1: whether the server honours hidden limits = the morning decision)",
+   "REVIEWS.md:131 (#77 low 5: sides alternate, unsourced)",
+   "REVIEWS.md:164 (#94 M1: evaluation in-sample by model; model wrong -> edge vanishes)",
+   "REVIEWS.md:167 (#94 low 4: real ids unverified, book fixture is 401)",
+   "REVIEWS.md:487 (#84 env POLICY/CROSS sends live probes)",
+   "final_w1a-bench-sim.md § parameter table (match rule: unknown)",
+   "final_w1a-bench-sim.md § What it means 4",
+   "final_w1b-broker-edge.md § What it means 3 and Risks",
+   "final_b2-venue-runbook.md § point 3",
+   "final_b20-venue-path.md § point 2"
+  ],
+  "verify_how": "NEEDS A LIVE ACTION; no read-only field settles it. Cheapest safe probe during a Market Test with our board venue open: `uv run bazaar broker probe --auto` then `--live` (one non-crossing match at the price most likely inside both limits). 400/refused on price -> quote rule (TRUE); accepted -> limits honoured (FALSE). 'offer gone/not open' refusals are no evidence. Alternative: BAZAAR_BENCH_CROSS=limit self-stops after >=8 refusals (<=~13 per restart).",
+  "endpoint": "GET /api/feed (proxy only)",
+  "field": "venue.* match events",
+  "when": "first Market Test with a venue",
+  "flips": "#84 bench policy (exact vs edge vs edge_limit; NO-GO on edge stands); #92 runbook gains (+0.19 / +0.60 / +1.51 depend on model); #94 win-rate policy (unwired, run-id parsing resets history if ids are plain numbers).",
+  "if_unknown": "Match only true crosses (exact matcher).",
+  "priority": "high"
+ },
+ {
+  "id": "railway-redeploy-no-overlap",
+  "assumption": "A Railway redeploy stops the old instance before the new one runs (no overlap), so a merge costs a gap of no moves rather than two instances on one ledger.",
+  "sources": [
+   "BITES.md probes row 8, X16",
+   "final_saturday-playbook.md §3b P8"
+  ],
+  "verify_how": "Not in the game API: Railway deploy log of the first redeploy (two tick lines from different instances for the same tick = overlap).",
+  "endpoint": "n/a (Railway deploy log)",
+  "field": "n/a",
+  "when": "first merge inside a window",
+  "flips": "Merge-window length; X11 split-ledger risk.",
+  "if_unknown": "Merge only before 09:00 or between duel sessions.",
+  "priority": "low"
+ },
+ {
+  "id": "orphan-threads-at-open",
+  "assumption": "Dealer threads our agents left open on Friday are still open (not idled out) when doors reopen and they block that dealer and a thread slot until our new process adopts/closes them or the dealer idles them out after 40 ticks.",
+  "sources": [
+   "final_b13-wake-opening.md:76-78 ('X3 (dealer threads left open on Friday are orphaned) ... B17 handles it')",
+   "final_b17-restart-orphans.md:12-15 (dealer idles a thread after 40 ticks, ~20 min at 30 s)",
+   "REVIEWS.md:305 (#102 M3 orphan threads, closed dealer thread = walk)",
+   "REVIEWS.md:320 (#102 M3 fixed: orphans closed one by one by Marius)"
+  ],
+  "verify_how": "GET /api/me/threads at 08:55 and again at 09:00:05: any thread with a dealer counterparty and status open/active -> TRUE (orphans exist, list dealer + thread id + last activity tick); none open -> FALSE (nothing to clean, restart timing irrelevant for X3). Cross-check GET /api/me/offers for standing bids of ours on those threads (created_tick, expires_tick).",
+  "endpoint": "GET /api/me/threads; GET /api/me/offers",
+  "field": "threads[].status, threads[].counterparty/persona, threads[].id; offers[].thread_id, created_tick, expires_tick",
+  "when": "now / 08:55 (before open), recheck 09:00:05",
+  "flips": "Whether B17 (#114, stacked on #72) must be deployed before 09:00 and whether Marius closes orphans by hand one by one (#102 M3); B13 (#106) restart-at-09:00:05 fallback cost; #81 ladder slots for the blocked dealer (Abuela's one open conversation).",
+  "if_unknown": "Assume orphans exist: deploy B17 before the taker goes live, otherwise Marius closes orphan threads one by one after PAUSE; never `bazaar flatten --threads` (closes healthy best-three threads).",
+  "priority": "high"
+ },
+ {
+  "id": "me-cash-subtracts-open-bids",
+  "assumption": "/api/me cash is the raw balance and does NOT already subtract our open (unfilled) bids, so plans that subtract open bids themselves do not double-count.",
+  "sources": [
+   "REVIEWS.md:87 (#87 cross-PR open: 'if #72/server already subtract open bids from me.cash, a 09:00 re-run after W4's bids would subtract 82 P twice')",
+   "REVIEWS.md:488 (#92 NEW low: venue opening condition is 'cash minus our open bids >= 370', venue_keeper.py:147-148)",
+   "REVIEWS.md:218 (#98 M4 W4 bids and snipes share the same 83 P headroom)"
+  ],
+  "verify_how": "Read-only once any bid of ours is open (e.g. W4's 09:00 bids or a dealer thread bid): GET /api/me cash and GET /api/me/offers. If me.cash == last known cash (353 + grants - settled spend from /api/feed settlements of ours) -> TRUE (raw balance). If me.cash == that minus sum(open bid prices in /api/me/offers) -> FALSE (server escrows; plans double-subtract). Before any bid is posted it cannot be distinguished.",
+  "endpoint": "GET /api/me; GET /api/me/offers; GET /api/feed",
+  "field": "me.cash; offers[] where side == bid and status open: price; feed settlements with our team",
+  "when": "first tick after our first open bid (W4 09:00 bids or the first dealer bid), ~09:01",
+  "flips": "#87 W7 cash plan re-run at 09:00 (82 P subtracted twice if FALSE); #71 venue_keeper opening condition (cash minus open bids >= 370 would double-count); #79 W4 / #98 B4 headroom (83 P above floor); effective cash_floor checks in guardrails.",
+  "if_unknown": "Plans subtract open bids themselves (conservative: under-spends rather than breaching cash_floor).",
+  "priority": "high"
+ },
+ {
+  "id": "refused-accept-does-not-consume-slot",
+  "assumption": "A refused accept (429 rate_limited, offer_closed, insufficient_cash, not_found, duel_closed ...) 'costs nothing and moves nothing' and does not use the team's accept of the tick; only wait_for_tick (and possibly-landed network / bad_response) mean the slot is gone.",
+  "sources": [
+   "final_b18-rate-limits.md:23-26 (KEEPS_THE_ACCEPT; 'costs nothing and moves nothing' (RULES.md))",
+   "final_b18-rate-limits.md:13-15 (next candidate accepted in the same tick after a refusal)",
+   "REVIEWS.md:498 (#107 low 6: X20 'high' rests on an untested duel-loop claim)"
+  ],
+  "verify_how": "Not verifiable read-only (needs a refused accept). Cheapest safe evidence: once live with B18, find in the decisions log a tick where an accept was refused (non-429 4xx) and the next candidate's accept in the SAME tick succeeded (no wait_for_tick), confirmed by a GET /api/feed settlement of ours at tick+1 -> TRUE. A same-tick second accept refused with wait_for_tick after a refused first accept -> FALSE (revert to keeping the reservation).",
+  "endpoint": "none read-only (decisions log + GET /api/feed settlement)",
+  "field": "decision rows refusal code; feed settlement tick/parties",
+  "when": "first refused accept after go-live (opportunistic)",
+  "flips": "B18 (#115) release-on-refusal design; worst case FALSE = a second accept in the tick is refused wait_for_tick (no money lost, one extra keyed call).",
+  "if_unknown": "B18 releases on all refusals except wait_for_tick/network/bad_response; after a 429 it stops trying accepts for the tick.",
+  "priority": "low"
+ },
+ {
+  "id": "rate-limits",
+  "assumption": "The venue broker key has its own 5 req/s bucket separate from the team key (the #78 Sunday verdict uses this lenient reading; the stricter reading where the broker shares the team bucket gives 5.80 req/s and 29 refused at the ceiling).",
+  "sources": [
+   "REVIEWS.md:20 (#78 low 9: 'stricter reading (broker shares team bucket) = 5.80 req/s, 29 refused')",
+   "REVIEWS.md:105 (#84 low 3: 19 req/tick on the broker key, ~17 in the opening burst, 'limit 20')",
+   "REVIEWS.md:273 (#71 M5: two brokers on one key 2 x 5/s vs 5/s per key)",
+   "final_b13-wake-opening.md:27-30 (5 s overdue poll chosen because 1 s polls = 6 req/s > 5 req/s)",
+   "final_b13-wake-opening.md:68-71 (doors closed in a day window: ~1.2 req/s of the team key's 5 req/s)",
+   "REVIEWS.md:10-12 (#78: 4.67 req/s, 64 calls / 12x 429; MCP/desk/operator unbudgeted -> Sunday 5.17-5.67 NO-GO)",
+   "final_w5w6-score-redteam-morning.md § 3 Per-tick request budget",
+   "final_w1b-broker-edge.md § Go / no-go (Rate budget)"
+  ],
+  "verify_how": "Cannot be settled from response bodies; first check whether GET /api/broker/book (broker key) and GET /api/me (team key) return rate-limit headers (X-RateLimit-Remaining / Retry-After) with distinct counters -> separate buckets TRUE; identical shared counter -> FALSE. If no headers: after the venue opens, compare the count of 429s on the team key in ticks with broker activity vs without (decision/status logs). Do NOT burst-probe.",
+  "endpoint": "GET /api/broker/book (broker key) vs GET /api/me (team key)",
+  "field": "HTTP response headers (rate-limit counters), 429 counts per key",
+  "when": "only after our venue opens and a broker key exists (h6.5: ~11:30 jump / ~12:51 resume)",
+  "flips": "#78 Sunday sustained GO (becomes NO-GO under shared bucket); #84/#92 broker match cap (15 matches + reads per tick); #71 keeper broker pace 5 matches/s inside the maker tick.",
+  "if_unknown": "Treat Sunday as conditional GO only if nobody uses MCP/desk during 15 s ticks; cap broker matches at 20 - reads - 1 per tick; one broker host (the keeper).",
+  "priority": "medium"
+ },
+ {
+  "id": "keyed-reads-under-4s",
+  "assumption": "Healthy keyed game API calls complete well under 4 s, so B18's 4 s per-attempt timeout only cuts hung calls (a slow-but-successful accept is reported as network and booked as maybe-landed).",
+  "sources": [
+   "final_b18-rate-limits.md:18-19 (4 s per attempt)",
+   "final_b18-rate-limits.md:55-56 (slow but successful accept reported as network)"
+  ],
+  "verify_how": "Time a handful of read-only keyed GETs (/api/clock, /api/me) at 09:00:00-09:01 (the heaviest burst, all loops wake together): p99 < ~1 s -> TRUE; any > 3 s -> FALSE (writes would be reported as network often: raise the write timeout).",
+  "endpoint": "GET /api/clock; GET /api/me",
+  "field": "request latency (client-side)",
+  "when": "09:00-09:02 opening burst",
+  "flips": "B18 (#115) 4 s timeout; #71 venue open POST timeout (HIGH 3: a timed-out-but-landed open loses the one-time broker key).",
+  "if_unknown": "4 s per attempt, never re-send writes; network refusals booked as maybe-landed (spend counted, slot kept).",
+  "priority": "low"
+ },
+ {
+  "id": "fee-rounding-ceil",
+  "assumption": "The real server rounds venue fees UP (ceil), as the tape suggests (El Rastro charged 5 on 65 P), not half-to-even like the sim nor down; #84's probe planner treats a pair as non-crossing when ask + ceil_fee(ask) > bid.",
+  "sources": [
+   "final_b19-pending-fee.md:49-55 (X8b: sim rounds half-to-even, tape rounds up)",
+   "REVIEWS.md:92 (#84 M1: server rounding fee down would accept non-crossing probes -> false 'limit honoured' evidence)",
+   "REVIEWS.md:149 (#84 fix: pairs crossing under floor rounding excluded from probing)",
+   "REVIEWS.md:129 (#77 low 3 fee gap)"
+  ],
+  "verify_how": "GET /api/feed settlements on fee-charging venues (El Rastro, v03): for each, compare fee to ceil(price*fee_bps/10000)+fee_per_card (TRUE if all match), round() (FALSE: half-even) or floor() (FALSE: down). Need venue fee params from GET /api/venues.",
+  "endpoint": "GET /api/feed; GET /api/venues",
+  "field": "feed settlement .price/.fee/.venue; venues[].fee_bps, fee_per_card",
+  "when": "now (Friday tape) and any time after open",
+  "flips": "#84 limit probe evidence validity (morning decision whether server honours hidden limits); sim/bench numbers (#77, #94, #92) off by <= 1 P per trade; X8b xfail.",
+  "if_unknown": "Guardrails price with ceil (conservative); probes skip pairs that cross under floor rounding.",
+  "priority": "low"
+ },
+ {
+  "id": "thread-bids-expire-2-ticks",
+  "assumption": "Real dealer-thread bids expire 2 ticks after they are made and every real offer carries created_tick, so after a restart an open thread with no bid fresher than 3 ticks is not being driven by a live `dealer buy` and can be adopted or closed.",
+  "sources": [
+   "final_b17-restart-orphans.md:22-24 (real thread bids expire 2 ticks after they are made; closed after 3 quiet ticks)",
+   "final_b17-restart-orphans.md:69-70 (created_tick present in every real offer in Friday's feed; missing -> treated as fresh)"
+  ],
+  "verify_how": "GET /api/me/offers (and /api/me/threads) while a dealer thread is open: every offer has created_tick and expires_tick - created_tick == 2 for thread bids -> TRUE; created_tick missing or lifetime != 2 -> FALSE (B17 never adopts those / wrong quiet-tick count).",
+  "endpoint": "GET /api/me/offers; GET /api/me/threads",
+  "field": "offers[].created_tick, offers[].expires_tick, offers[].thread_id",
+  "when": "first dealer thread after 09:00 (~09:00-09:05)",
+  "flips": "B17 (#114) orphan_after_ticks = 3 and adoption rule; a wrong lifetime could close a thread a laptop `dealer buy` is driving.",
+  "if_unknown": "Offer without created_tick treated as fresh (never adopted); orphan_after_ticks 3.",
+  "priority": "medium"
+ },
+ {
+  "id": "dealer-thread-idle-and-walk",
+  "assumption": "A dealer idles out an untouched thread after 40 ticks, and closing a dealer thread counts as a walk the dealer remembers (so closing orphans has a price cost later).",
+  "sources": [
+   "final_b17-restart-orphans.md:13-15 ('dealer stayed blocked until it idled the thread out (40 ticks)')",
+   "final_b17-restart-orphans.md:71-72 ('Closing a dealer thread is a walk the dealer remembers')",
+   "REVIEWS.md:305 (#102 M3: closed dealer thread = walk)"
+  ],
+  "verify_how": "Idle: GET /api/me/threads for a Friday orphan (if any at 09:00): it closes on its own ~40 ticks after its last activity -> TRUE. Walk memory cannot be read directly; cheapest evidence: after a close, the same dealer's next opening ask to us (GET /api/me/threads messages / feed thread.opened) vs its usual opening (GET /api/dealers menu) -> higher = remembered walk.",
+  "endpoint": "GET /api/me/threads; GET /api/dealers",
+  "field": "threads[].status, last activity tick; dealers menu opening prices",
+  "when": "09:00 + 40 ticks (~09:20 at 30 s) for idle; after the first close for walk",
+  "flips": "B17 (#114) close-vs-adopt choice; #102 orphan handling (close by hand one by one); #81 ladder shares at that dealer.",
+  "if_unknown": "Adopt when our bid still stands; close only after 3 quiet ticks; never flatten threads.",
+  "priority": "low"
+ },
+ {
+  "id": "unlock-excludes-opening-price-deals",
+  "assumption": "A dealer deal struck at the dealer's opening ask is 'not negotiated' (share 0) and does not count toward the level unlock / best-three, and the server counts deals at settlement (deals settling after the hour boundary count in the next hour).",
+  "sources": [
+   "REVIEWS.md:29 (#81 low 3: opening ask = share 0, not counted for unlock)",
+   "REVIEWS.md:30 (#81 low 4: server counts at settlement, ticks 115-119 settle next hour)",
+   "REVIEWS.md:229 (#81 F3 fixed: top = min(floor+width, opening-1))",
+   "REVIEWS.md:360 (#93: final bid = opening also taken, no unlock credit)",
+   "final_b21-levels.md § 2 'A deal at the dealer's opening price does not count (RULES.md)'",
+   "final_b3-personas.md § Early unlock evidence (t15)",
+   "final_w3-ladder.md § Backtest ('a bid there would close at her opening price, which captures nothing')"
+  ],
+  "verify_how": "GET /api/dealers unlock{...} (and GET /api/levels / GET /api/me unlocked + score.negotiating) before and after our first ladder deal. Progress increments for a deal below the opening ask -> expected; if a deal at the opening ask also increments -> FALSE (opening deals count). Compare the tick of the increment with the settlement tick in GET /api/feed for the counting-at-settlement part.",
+  "endpoint": "GET /api/dealers; GET /api/levels; GET /api/me",
+  "field": "dealers.unlock{...}; levels; me.unlocked, me.level, me.score.negotiating/neg_points",
+  "when": "after the first ladder deals (~09:00-09:15)",
+  "flips": "#81 ladder top bound (opening-1) and walk-instead-of-take behaviour; #93 dealer sell floor; fix fd37ff6 'no opening price is not negotiated'.",
+  "if_unknown": "Never take the opening ask (walk instead); count deals at settlement.",
+  "priority": "medium"
+ },
+ {
+  "id": "doors-closed-inside-day-window",
+  "assumption": "The server does not close the doors during a day window (only pauses with doors open); if it does, every loop polls every 5 s for the whole closure (~1.2 req/s of the team key).",
+  "sources": [
+   "final_b13-wake-opening.md:68-71 ('Doors closed during a day window: this is undocumented')",
+   "REVIEWS.md:380 (#106 low 2)"
+  ],
+  "verify_how": "During the day: any GET /api/clock with doors != 'open' while now is inside days[*] -> FALSE (closure happens; watch 429s). Never seen -> TRUE so far.",
+  "endpoint": "GET /api/clock",
+  "field": "doors, paused, days[*]",
+  "when": "continuous during the day (agents already read it)",
+  "flips": "#106 5 s overdue poll (back off after N polls if closures are long).",
+  "if_unknown": "5 s polls, accept ~1.2 req/s.",
+  "priority": "low"
+ },
+ {
+  "id": "starter-stall-me-shape",
+  "assumption": "After the free starter stall is granted (from h3), /api/me shows it in a way #71's runs_venue() recognises as NOT our venue (starter: true or starter_broker_key present); if /me shows it as {venue,name,status} or a bare id (or starter_broker_key is stripped by #105), effective cash_floor drops from 370 to 100 before our venue exists.",
+  "sources": [
+   "REVIEWS.md:270 (#71 HIGH 2: real shape never observed, /me venue null in all fixtures, starter fields unverified in openapi)",
+   "REVIEWS.md:417 (#71 delta: HIGH 2 PARTIAL)",
+   "REVIEWS.md:422 (#71 NEW 5: /me may keep starter_broker_key after our open -> floor 370 all day)",
+   "REVIEWS.md:470 (#105 HIGH 2: SECRET_FIELD strips starter_broker_key)",
+   "final_b20-venue-path.md § The premise needs one correction",
+   "final_b20-venue-path.md § Saturday, wall clock (no-venue fallback: broker watch)",
+   "final_b20-venue-path.md § What changed in this PR"
+  ],
+  "verify_how": "GET /api/me after the stall is granted: venue field shape and whether starter_broker_key / starter:true is present; GET /api/venues: our stall row has starter == true and owner == us. starter flag or starter_broker_key present -> TRUE (runs_venue false, floor 370 holds). venue as {venue,name,status} or bare id with no starter marker -> FALSE (#71 would drop the floor to 100).",
+  "endpoint": "GET /api/me; GET /api/venues",
+  "field": "me.venue (shape), me.starter_broker_key; venues[].starter, venues[].owner, venues[].status",
+  "when": "h3 (immediately under jump at 09:00; ~09:21 under resume)",
+  "flips": "#71 effective_cash_floor (370 vs 100) and the h6.5 opening (refused as 'second opening' if the 270 reserve gets spent); #105 holdings_from_db stripping. Only matters if #71 is merged.",
+  "if_unknown": "#71 stays unmerged (DO NOT MERGE AS IS); if merged, detect the stall from /api/venues starter: true and fail closed at 370.",
+  "priority": "high"
+ },
+ {
+  "id": "server-refuses-second-venue",
+  "assumption": "The real server refuses a second venue opening by the same team (venue_exists comes only from our sim), and an open POST that timed out may still have landed (venue exists, one-time broker key lost).",
+  "sources": [
+   "REVIEWS.md:273 (#71 M5: 'Whether the real server refuses a second venue is unverified')",
+   "REVIEWS.md:271 (#71 HIGH 3 timed-out-but-landed open)",
+   "REVIEWS.md:419 (#71 NEW 2 landed-but-timed-out open auto-reopened)"
+  ],
+  "verify_how": "Not verifiable read-only before an open. After any open attempt (especially a timeout): GET /api/venues and GET /api/me for a venue owned by us (owner == our team, starter false) -> it landed; never attempt a second open to test refusal.",
+  "endpoint": "GET /api/venues; GET /api/me",
+  "field": "venues[].owner, venues[].starter, venues[].status; me.venue",
+  "when": "right after the venue open attempt (h6.5: ~11:30 jump / ~12:51 resume)",
+  "flips": "#71 venue_keeper 'never twice' and claim logic (second 270 P opening risk); #71 venue-without-key alert -> human decision.",
+  "if_unknown": "Any venue_keys row / claim is final until a human clears it; one broker host; --venue off on laptops.",
+  "priority": "medium"
+ },
+ {
+  "id": "venue-keys-table-shape",
+  "assumption": "Railway Postgres has the new venue_keys table shape (not e82ba8d's 'venue text primary key' shape); otherwise every #71 vault query raises UndefinedColumn and, with the never-reconnect bug, the maker never opens the venue.",
+  "sources": [
+   "REVIEWS.md:420 (#71 NEW 3 with the read-only CHECK query)",
+   "REVIEWS.md:418 (#71 NEW 1 vault never reconnects)",
+   "REVIEWS.md:424 (confirm the venue_keys shape in Railway Postgres)"
+  ],
+  "verify_how": "Not a game API item. Read-only SQL on Railway DATABASE_URL: select column_name from information_schema.columns where table_name='venue_keys'. No rows (table absent) or the new columns -> TRUE; a single 'venue' text primary-key shape -> FALSE (migration needed before #71 runs).",
+  "endpoint": "none (read-only SQL on Railway Postgres)",
+  "field": "information_schema.columns for venue_keys",
+  "when": "now (before any #71 merge)",
+  "flips": "#71 merge readiness (no venue all day, 0 mm_points if FALSE).",
+  "if_unknown": "Do not merge #71 until checked.",
+  "priority": "medium"
+ },
+ {
+  "id": "organic-formula",
+  "assumption": "Venue organic / mm_points follow the formula inferred from RULES.md:119 (sqrt of volume plus a pair cap from #17), and the feed's maker field identifies the real team (intel.py says only actor carries the real team id).",
+  "sources": [
+   "REVIEWS.md:163 ('Organic formula honestly labelled unverified (RULES.md:119 only; sqrt + pair cap from #17)')",
+   "REVIEWS.md:168 (#94 low 5: value created never derived; f.makers vs actor)",
+   "final_b1-organic-winrate.md § 1 The formula (issue #17 front-end quote, unverified)",
+   "final_b1-organic-winrate.md § Risks"
+  ],
+  "verify_how": "Only after other teams trade on our venue: GET /api/feed trades on our venue (pairs, prices) vs GET /api/me score.mm_points change; sqrt/pair-cap shape fits -> TRUE. While no team posts on team venues, mm_points stays 0 and nothing can be learned.",
+  "endpoint": "GET /api/me; GET /api/feed",
+  "field": "me.score.mm_points; feed settlement volume/venue, maker, actor",
+  "when": "after our venue has organic volume (h6.5+)",
+  "flips": "#94 organic win-rate model (unwired); any future pair-attraction work (fair-play limits).",
+  "if_unknown": "Nothing wired to it; no organic-chasing behaviour.",
+  "priority": "low"
+ },
+ {
+  "id": "duel-deadline-tick-settlement",
+  "assumption": "An accept on a duel's deadline tick (D-0) may not settle (deadline-tick settlement unverified, hence duel_accept_margin_ticks); B11 with endgame_ticks=1 lands every squeeze close on D-1, assumed to settle with certainty.",
+  "sources": [
+   "REVIEWS.md:405 (#103 M2: 'GUARDRAILS duel_accept_margin_ticks: deadline-tick settlement unverified'; arena treats D-1 settlement as certain)",
+   "REVIEWS.md:465 (#103 M2 addressed / documented)"
+  ],
+  "verify_how": "GET /api/duels (closed duels, ours and public) and GET /api/feed duel settlement events: find duels accepted at D-1 and at D (deadline tick). Accepts at D-1 always settle -> D-1 TRUE; any D accept settled -> deadline tick works (margin could shrink); D accepts expiring unsettled -> margin needed.",
+  "endpoint": "GET /api/duels; GET /api/feed",
+  "field": "duels[].deadline_tick, closed/settled tick, result; feed duel.* events tick",
+  "when": "now for Friday practice duels; Duels I (~h6.5: ~11:30 jump / ~12:51 resume)",
+  "flips": "#103 endgame_ticks=1 / min_share 0.3 (B11 squeeze closes all on D-1); duel_accept_margin_ticks; B15 accept priority on D-1.",
+  "if_unknown": "Keep duel_accept_margin_ticks; endgame squeeze documented as D-1 risk.",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-prices-integer",
+  "assumption": "Duel prices (rival_offer.price) are always whole primas, so int() casts in duel_v2/duelist/guardrail recompute are exact.",
+  "sources": [
+   "REVIEWS.md:54 (#86 low 4: only if prices can be non-integer; RULES shows integers)",
+   "REVIEWS.md:435 (#60 low 1: RULES.md:144 whole primas; only on a rule-breaking payload)"
+  ],
+  "verify_how": "GET /api/duels: every rival_offer.price (and our offers) is an integer -> TRUE; any non-integer (e.g. 99.9) -> FALSE (guardrail values accepts below the real price).",
+  "endpoint": "GET /api/duels",
+  "field": "duels[].rival_offer.price",
+  "when": "now (Friday duels) and Duels I",
+  "flips": "#60/#86 int() casting fix priority.",
+  "if_unknown": "Integers per RULES.md.",
+  "priority": "low"
+ },
+ {
+  "id": "persona-quota-scope",
+  "assumption": "A dealer persona_quota refusal (e.g. vault: 1 legendary per team per hour) applies only to that card/rarity, not to the whole dealer including packs; #89's learner instead blocks the whole dealer for the hour.",
+  "sources": [
+   "REVIEWS.md:140 (#89 M2: 'Real server semantics unverified (vault 1 legendary/team/hour)')",
+   "REVIEWS.md:323 (#89 re-check: M2 NOT FIXED)"
+  ],
+  "verify_how": "GET /api/dealers: quota fields per persona/menu item (per rarity vs per dealer). Per-item/rarity quota -> TRUE (#89 over-blocks); a whole-dealer quota -> FALSE.",
+  "endpoint": "GET /api/dealers",
+  "field": "dealers[].menu[].quota / unlock{...} / per-persona limits",
+  "when": "now",
+  "flips": "#89 learn/reader.py blocking scope (only if #89 merges with BAZAAR_LEARN on).",
+  "if_unknown": "#89 not merged unless BAZAAR_LEARN=0 confirmed or default flipped.",
+  "priority": "low"
+ },
+ {
+  "id": "thread-message-id-key",
+  "assumption": "Thread messages from GET /api/threads/{id} carry their id under 'message' or 'id' (inspector uses m.get('message', m.get('id'))); no real fixture exists.",
+  "sources": [
+   "REVIEWS.md:178 (#93 low 4: message-id key unverified against a real GET /api/threads/{id})",
+   "REVIEWS.md:357 (#93 F4 NOT FIXED, acknowledged)",
+   "final_b3-personas.md § Wiring ('Unverified: a real thread message's id key')"
+  ],
+  "verify_how": "Inspect any thread.message event in GET /api/feed (or our own thread reads): payload has key `message` holding the id → TRUE; only `id` → fallback path used; neither → flags cannot address a message (FALSE).",
+  "endpoint": "GET /api/me/threads (or GET /api/threads/{id})",
+  "field": "threads[].messages[].id / .message",
+  "when": "now (any existing thread)",
+  "flips": "#93 flag_step() addressing of flags (`would flag message N`).",
+  "if_unknown": "allow_flags stays false.",
+  "priority": "medium"
+ },
+ {
+  "id": "team-fill-rates",
+  "assumption": "Saturday's fill rates for posted bids resemble Friday's (about 20 % public, 6 % addressed, the 6 % resting on 1 of 18 samples), giving W4's 09:00 trade plan +1.5 P expected at Friday rates.",
+  "sources": [
+   "REVIEWS.md:293 (#79: '6 % rate = 1 of 18 sample')",
+   "REVIEWS.md:370 (#79: plan's expected value at Friday fill rates is now +1.5 P — marginal)",
+   "REVIEWS.md:115 (#79 M3: addressed ~6 % vs public 20 %)",
+   "final_w4-trade-desk.md § Totals (+24.4 P model vs +1.5 P at Friday's fill rates), § Evidence, § Risks",
+   "final_b9-packs-ev.md § Friday's team tape and § Risks",
+   "final_b4-rival-scanner.md § Rival profiles and Decision 1"
+  ],
+  "verify_how": "From GET /api/feed: offer.listed vs settlements on Saturday, per public/addressed and per rarity (`rivals.listings` / `bazaar rivals`). Rates near Friday's → TRUE; much higher addressed fill → W4 model nearer +24.4 P.",
+  "endpoint": "GET /api/me/offers",
+  "field": "offers[].status (filled/expired), expires_tick",
+  "when": "09:00 + bid expiry (10 ticks ~09:05; 40 ticks ~09:20)",
+  "flips": "#79 live 09:00 posting (conditional GO; locks 82 of 83 P above floor for 40 ticks); #98 snipes competing for the same headroom.",
+  "if_unknown": "Treat the W4 plan as marginal; Marius decides whether to post.",
+  "priority": "medium"
+ },
+ {
+  "id": "railway-flags-unset",
+  "assumption": "Railway start commands/variables do not set BAZAAR_LEARN=0 nor pass --evals-every, so merging #89/#91 turns learning/skipping and inline evals ON in the live taker/maker/duels by default.",
+  "sources": [
+   "REVIEWS.md:139 (#89 H1)",
+   "REVIEWS.md:323 (#89 re-check: not safe unless BAZAAR_LEARN=0 confirmed on Railway)",
+   "REVIEWS.md:153, 326 (#91 M1 EVERY_TICKS = 6 default)"
+  ],
+  "verify_how": "Not a game API item. Read-only: `railway variables` per service (BAZAAR_LEARN value) and the start commands in .railway/railway.py. BAZAAR_LEARN=0 set -> #89 safe to merge; unset -> merging turns learning on.",
+  "endpoint": "none (Railway variables, read-only)",
+  "field": "BAZAAR_LEARN; start command --evals-every",
+  "when": "now (before any merge)",
+  "flips": "#89/#96 and #91 merge safety (live taker skipping dealer moves; Phoenix calls from live services).",
+  "if_unknown": "Do not merge #89/#91 before 09:00.",
+  "priority": "medium"
+ },
+ {
+  "id": "our-venue-replaces-stall-in-bench",
+  "assumption": "Once our venue is open, Market Test sessions are scored on our venue (not the free stall), and /me score.bench_venue names it.",
+  "sources": [
+   "final_b20-venue-path.md § Saturday, wall clock (~10:10 row: 'our venue named = sessions count our venue')",
+   "final_b2-venue-runbook.md § Runbook (after each session)"
+  ],
+  "verify_how": "After the first session following our opening, GET /api/me: score.bench_venue == our venue id/name (from GET /api/venues owner = us) -> TRUE; still the stall or null -> FALSE.",
+  "endpoint": "GET /api/me, GET /api/venues",
+  "field": "score.bench_venue; venues[].id/owner",
+  "when": "~10:10 if opened 09:03; ~12:10 if opened 11:30",
+  "flips": "If FALSE, the edge policy (#84, BAZAAR_BENCH_POLICY=edge) cannot earn anything and board-venue downtime risk is moot; B20 'board below the stall twice -> auto next day' rule depends on it",
+  "if_unknown": "Assume our venue is what is scored (risk-side reading: broker downtime costs points)",
+  "priority": "high"
+ },
+ {
+  "id": "bench-trader-counts-ticks",
+  "assumption": "A normal Market Test has 10 traders over 16 ticks and the hard one (h16) has 12 traders over 16 ticks.",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (traders, ticks: schedule fixture)"
+  ],
+  "verify_how": "GET /api/schedule upcoming[] Market Test entries: params.traders == 10 / 12 (hard) and params.ticks == 16 -> TRUE. Later: count distinct trader ids in GET /api/broker/book bench_offers over a session.",
+  "endpoint": "GET /api/schedule (then GET /api/broker/book)",
+  "field": "upcoming[].params (traders, ticks, preset/hard)",
+  "when": "09:00 (schedule); confirmed after the h5 session if the book is watched",
+  "flips": "#77 NORMAL/HARD presets and every bench edge number in #84/#92/#94",
+  "if_unknown": "Keep #77's presets",
+  "priority": "low"
+ },
+ {
+  "id": "venue-mechanism-fixed-at-opening",
+  "assumption": "A venue's mechanism (board vs auto) is set only at opening; afterwards only the fee can be changed (set_fee), so undoing auto/board needs close + cooldown + new fee + new bond.",
+  "sources": [
+   "final_b2-venue-runbook.md § Caveat on the fallback",
+   "final_b20-venue-path.md § The choice is firm for the day"
+  ],
+  "verify_how": "Read-only: GET /api/venues row for our venue exposes mechanism but no mutable mechanism; API docs/openapi list only a fee update -> TRUE. Any documented mechanism change endpoint -> FALSE.",
+  "endpoint": "GET /api/venues",
+  "field": "venues[].mechanism, venues[].fee_bps",
+  "when": "09:00",
+  "flips": "B20 rule 'decided before 09:00, kept all day' (venue_mechanism guardrail, #118); if changeable, open auto at 09:03 and switch to board when edge is live",
+  "if_unknown": "Treat the mechanism choice as final for Saturday",
+  "priority": "medium"
+ },
+ {
+  "id": "free-stall-returns-after-close",
+  "assumption": "Unknown whether the free starter stall comes back if we close our venue during the day.",
+  "sources": [
+   "final_b2-venue-runbook.md § Runbook (Stop the venue: 'Whether the free stall then comes back is not stated')"
+  ],
+  "verify_how": "Only testable by closing our venue (not a safe probe). Read-only proxy: after any close, GET /api/me starter_broker_key reappears -> TRUE.",
+  "endpoint": "GET /api/me",
+  "field": "starter_broker_key, score.bench_venue",
+  "when": "only after a venue close",
+  "flips": "Whether closing the venue is a safe fallback for a failing board broker (B2/B20 stop procedure)",
+  "if_unknown": "Assume closing leaves us with no bench presence; do not close mid-day",
+  "priority": "low"
+ },
+ {
+  "id": "auto-venue-scores-stall-level",
+  "assumption": "An auto venue crosses its own best bid and ask every tick (RULES.md) and scores the stall's level on the bench with no broker running, and settles rival pairs posted on it.",
+  "sources": [
+   "final_b20-venue-path.md § What each choice is worth (plan C 3.00; points 2 and 3)"
+  ],
+  "verify_how": "If venue_mechanism=auto: after the first session GET /api/me score.bench_efficiency ~= the stall's (W1a table, ~0.79-0.83) and score.bench_points ~= half the bench share -> TRUE; much lower -> FALSE.",
+  "endpoint": "GET /api/me",
+  "field": "score.bench_efficiency, score.bench_points",
+  "when": "after the first Market Test with an auto venue (~10:10)",
+  "flips": "B20 plan C as the safe default; venue_mechanism=auto fallback (#118)",
+  "if_unknown": "B20 still prefers auto when the edge is not live",
+  "priority": "medium"
+ },
+ {
+  "id": "board-venue-broker-down-scores-zero",
+  "assumption": "A board venue whose broker is not matching in a session realises nothing and scores 0 for that session (instead of the stall's 0.5), a loss of 0.375 final points per lost session.",
+  "sources": [
+   "final_b2-venue-runbook.md § With the broker down in 5 % of sessions",
+   "final_b2-venue-runbook.md § Risks (maker downtime)",
+   "final_b20-venue-path.md § point 2 (board with exact is dominated by auto)"
+  ],
+  "verify_how": "Only observable if a session passes with no matches from our broker: GET /api/me score.bench_efficiency == 0 / bench_points unchanged after that session -> TRUE. Read-only partial check: the feed's bench.finished for a venue with 0 pairs.",
+  "endpoint": "GET /api/me, GET /api/feed",
+  "field": "score.bench_efficiency, score.bench_points; bench.finished payload",
+  "when": "after any session with maker downtime",
+  "flips": "B20: board+exact is dominated by auto (pick venue_mechanism=auto unless BAZAAR_BENCH_POLICY=edge is live); B2's break-even downtime ~6 %",
+  "if_unknown": "Assume 0: do not open board without the edge broker confirmed live",
+  "priority": "high"
+ },
+ {
+  "id": "cash-floor-is-budget-not-safety",
+  "assumption": "Once the venue bond is locked the cash floor is only a budget: the bond comes back on close, the server refuses an unaffordable accept at no cost, and duels need no cash.",
+  "sources": [
+   "final_b20-venue-path.md § GUARDRAILS.md diff (Cash: 'The minimum safe cash_floor once the bond is locked is functionally 0')",
+   "final_b2-venue-runbook.md § Guardrail proposals (cash_floor 100 -> 50)"
+  ],
+  "verify_how": "Read-only: GET /api/duels payload shows no cash/settlement requirement for our role; after the first Duels I deal where we were the buyer, GET /api/me cash unchanged -> duels need no cash (TRUE), dropped by the price -> FALSE. 'Unaffordable accept refused at no cost' needs a live action with no safe probe; read-only proxy: a refusal/penalty event in GET /api/feed if it ever happens. Bond return: GET /api/venues/me only after a close.",
+  "endpoint": "GET /api/duels, GET /api/me, GET /api/feed",
+  "field": "duels[] role/settlement fields; cash; feed penalty/refusal events",
+  "when": "09:00 (duel payload shape) / after the first Duels I deal (h6.5)",
+  "flips": "#92/#118/B20 cash_floor 100 -> 50 (spendable 133 -> 183 P); if duels consume cash, spending to the floor can strand a deadline accept",
+  "if_unknown": "Keep cash_floor 100 (or keep a buy-side reserve for duels)",
+  "priority": "high"
+ },
+ {
+  "id": "refused-probes-not-penalised",
+  "assumption": "Refused match requests (limit probes) do not count against our venue or lead to suspension.",
+  "sources": [
+   "final_w1b-broker-edge.md § Risks (Refused probes might count against a venue)",
+   "final_w1b-broker-edge.md § What Marius must decide 2"
+  ],
+  "verify_how": "After the first refused probe: GET /api/venues our venue status unchanged/active and GET /api/feed has no venue.* suspension/warning event for us -> TRUE; any such event -> FALSE, stop probing.",
+  "endpoint": "GET /api/venues, GET /api/feed",
+  "field": "venues[].status; feed venue.* events",
+  "when": "right after the first live probe",
+  "flips": "BAZAAR_BENCH_CROSS=limit (#84/#92) and manual `bazaar broker probe --live`",
+  "if_unknown": "One manual probe at most; do not leave CROSS=limit auto-probing on restarts",
+  "priority": "medium"
+ },
+ {
+  "id": "bench-arrivals-spread",
+  "assumption": "Bench traders arrive spread over ticks 0-10 of the 16-tick session (not all at tick 0); about 38 % of sessions have nobody at tick 0.",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (arrivals: assumption)",
+   "final_w1a-bench-sim.md § Sensitivity",
+   "final_w1b-broker-edge.md § What it means 2",
+   "final_b1-organic-winrate.md § Risks (policy.begin)",
+   "final_b2-venue-runbook.md § table rows 'whole book at tick 0'"
+  ],
+  "verify_how": "During a session, log GET /api/broker/book bench_offers each tick (`bazaar broker watch` via starter_broker_key, or `--ours`; `bazaar broker calibrate`): first-seen tick per trader id spread over 0-10 -> TRUE; all ids present at the first tick -> FALSE (tick-0 world, edge worth +1.0..+1.7 final points).",
+  "endpoint": "GET /api/broker/book",
+  "field": "bench_offers[].id + first tick seen",
+  "when": "h5 Market Test (10:00-10:08) if watched",
+  "flips": "Value of BAZAAR_BENCH_POLICY=edge (#84/#92: +0.17 default vs +1.03..1.47 tick-0) and B1's cautious policy (#94); #77 sim preset",
+  "if_unknown": "Default spread world: edge is small but >= stall, still worth enabling",
+  "priority": "medium"
+ },
+ {
+  "id": "bench-relax-and-patience",
+  "assumption": "Bench traders relax their quotes linearly with age, giving up 50-100 % of their shade by their last tick; firm (never moving) share is 0.20 normal / 0.35 hard and impatient (1-2 ticks) share 0.25 / 0.35, the rest staying 3-6 ticks (#12's patience prior).",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (relaxing: assumption; firm/impatient: issue #12)",
+   "final_w1b-broker-edge.md § What was built (TraderModel leave hazard)",
+   "final_w1b-broker-edge.md § Risks (The bench model)"
+  ],
+  "verify_how": "From per-tick GET /api/broker/book bench_offers: quote changes per trader over its life (relax step), share of traders whose quote never moves (firm), lifetime distribution (ticks present). Matches the priors -> TRUE.",
+  "endpoint": "GET /api/broker/book",
+  "field": "bench_offers[].price per id per tick; presence ticks",
+  "when": "after the first watched Market Test",
+  "flips": "#84 TraderModel priors and #94 WinRatePolicy prior; if far off, edge degrades to stall level",
+  "if_unknown": "Keep #12's priors",
+  "priority": "low"
+ },
+ {
+  "id": "bench-shades",
+  "assumption": "Bench quotes are shaded from hidden limits by ask +5-30 % over cost (20-60) and bid -5-25 % under value (40-95) (shade multiplier 1.0).",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (limits, shades: #55)",
+   "final_w1a-bench-sim.md § What Marius must decide 3 (calibration table)",
+   "final_w1b-broker-edge.md § Risks",
+   "final_b1-organic-winrate.md § Results (shades 1.5x/2x rows)"
+  ],
+  "verify_how": "Indirect, over several sessions: GET /api/me score.bench_efficiency of the stall/auto/exact venue vs W1a's calibration (shade 1.0 ~0.79, 1.5 ~0.77/0.70, 2.0 ~0.73/0.59). Mean ~0.79-0.83 -> TRUE; ~0.6-0.7 -> wider shades (FALSE; limit probe worth much more). One session's SD is 0.17-0.24: needs 4-8 sessions.",
+  "endpoint": "GET /api/me",
+  "field": "score.bench_efficiency",
+  "when": "after 4-8 Market Tests (afternoon)",
+  "flips": "Value of BAZAAR_BENCH_CROSS=limit (+1.34 at 2x shade) and choice of bench_policy (#84/#92/#94)",
+  "if_unknown": "Shade 1.0 default",
+  "priority": "low"
+ },
+ {
+  "id": "bench-sides-even-split",
+  "assumption": "Bench books split evenly: 5 sellers + 5 buyers (normal), 6 + 6 (hard).",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (sides: assumption)"
+  ],
+  "verify_how": "Count side per trader id in GET /api/broker/book bench_offers over a session: equal counts -> TRUE.",
+  "endpoint": "GET /api/broker/book",
+  "field": "bench_offers[].side (or want/give)",
+  "when": "after the first watched Market Test",
+  "flips": "#77 bench generator only",
+  "if_unknown": "Keep even split",
+  "priority": "low"
+ },
+ {
+  "id": "bench-offer-expiry-field",
+  "assumption": "Bench offers may carry an explicit expiry field (e.g. expires_tick) meaning the trader leaves after that tick; the edge crosses one tick before it.",
+  "sources": [
+   "final_w1b-broker-edge.md § What was built (TraderModel: 'the field's meaning is a guess')",
+   "final_w1b-broker-edge.md § What it means 2",
+   "final_b2-venue-runbook.md § Runbook (after 12:00 row)"
+  ],
+  "verify_how": "GET /api/broker/book during a session: bench_offers[] keys include an expiry-like field (logged to broker_bench_shapes.jsonl) -> field exists; compare its value with the tick the offer actually disappears to read its meaning.",
+  "endpoint": "GET /api/broker/book",
+  "field": "bench_offers[].* (expires_tick or similar)",
+  "when": "first Market Test our broker or broker watch reads",
+  "flips": "#84 expiry_margin = 0 (+0.014..0.022) and the hold logic (+0.01..0.02)",
+  "if_unknown": "Keep expiry_margin at default (cross one tick early)",
+  "priority": "low"
+ },
+ {
+  "id": "stall-crosses-all-pairs-fee-0",
+  "assumption": "The free stall crosses every crossing pair by quote every tick with the kit's tie-break and pays no fee (rather than only its single best bid and ask per tick as RULES.md words it).",
+  "sources": [
+   "final_w1a-bench-sim.md § parameter table (stall replica; fee is an assumption)",
+   "final_w1b-broker-edge.md § What it means 4",
+   "final_b20-venue-path.md § What changed (on the stall a crossed pair vanishes one relax step apart)"
+  ],
+  "verify_how": "Watch the stall's book via starter_broker_key (`bazaar broker watch`, `bazaar broker calibrate`): count pairs that vanish per tick. Several per tick -> all pairs (TRUE); at most one per tick -> one-pair stall (FALSE: any broker, even greedy, is +0.12..0.19).",
+  "endpoint": "GET /api/broker/book (starter_broker_key)",
+  "field": "bench_offers[] disappearing per tick",
+  "when": "h5 Market Test if watched",
+  "flips": "If one pair/tick: board venue even with exact broker beats the stall, strengthening B20 plan D/E over auto; #77 stall replica",
+  "if_unknown": "All-pairs stall (pessimistic for our edge)",
+  "priority": "medium"
+ },
+ {
+  "id": "bench-book-static-within-tick",
+  "assumption": "Under the quote rule the bench book changes within a tick only through our own matches, so extra reads per tick buy nothing.",
+  "sources": [
+   "final_w1b-broker-edge.md § Recommendation",
+   "final_w1b-broker-edge.md § Risks (Extra reads have not been tested against a real server)"
+  ],
+  "verify_how": "Two GET /api/broker/book reads in one tick (watch tool) with no matches in between: identical bench_offers -> TRUE.",
+  "endpoint": "GET /api/broker/book",
+  "field": "bench_offers",
+  "when": "first watched Market Test",
+  "flips": "#84 --bench-reads 1 vs 3",
+  "if_unknown": "--bench-reads 1",
+  "priority": "low"
+ },
+ {
+  "id": "bench-feed-events",
+  "assumption": "The real public feed emits bench.started (giving the run's first tick) and bench.finished events for each Market Test.",
+  "sources": [
+   "final_b1-organic-winrate.md § Results ('as bench.started gives it') and Risks (policy.begin)",
+   "final_w1a-bench-sim.md § Risks (bench.finished extra fields are simulator-only)",
+   "final_w1a-bench-sim.md § What Marius must decide 3"
+  ],
+  "verify_how": "GET /api/feed around h3 (Friday) or h5: events of type bench.started / bench.finished present with a tick/run id -> TRUE; absent -> FALSE (B1 policy guesses the start, late ~38 % of sessions).",
+  "endpoint": "GET /api/feed",
+  "field": "events[].type == bench.started / bench.finished; payload.tick, payload.run",
+  "when": "09:00 (Friday h3 events) else after h5",
+  "flips": "#94 WinRatePolicy begin() wiring; calibration logging",
+  "if_unknown": "Infer start from first offers",
+  "priority": "low"
+ },
+ {
+  "id": "bench-points-curve-above-stall",
+  "assumption": "Bench session points are 0.5 at the stall's efficiency and 1.0 at the top-three mean, linear in between (so beating a stall-level field by any margin earns the full point).",
+  "sources": [
+   "final_w1a-bench-sim.md § Evidence footnote and Risks ('our reading of one sentence in RULES.md')",
+   "final_w1b-broker-edge.md § Evidence: W1a's bench",
+   "final_w5w6-score-redteam-morning.md § Unverified (bench curve between the two anchors)"
+  ],
+  "verify_how": "After each session: GET /api/me score.bench_points vs score.bench_efficiency, with the stall's and top-3 efficiencies from GET /api/feed bench.finished (or leaderboard). points/session == 0.5 + 0.5 x (eff - stall)/(top3 - stall) -> TRUE.",
+  "endpoint": "GET /api/me, GET /api/feed",
+  "field": "score.bench_points, score.bench_efficiency; bench.finished payload",
+  "when": "after the h5 Market Test (or Friday h3 at 09:00)",
+  "flips": "W1a/W1b go/no-go bar (#77/#84): points bar vs 'stall + 0.15'; all of B2's final-point deltas (#92)",
+  "if_unknown": "W1a's reading",
+  "priority": "medium"
+ },
+ {
+  "id": "bench-points-curve-below-stall",
+  "assumption": "The scoring of a session below the stall is unknown: either 0 or linear (0.5 x eff/stall).",
+  "sources": [
+   "final_b1-organic-winrate.md § Results ('Cautious' vs 'Aggressive')",
+   "final_w1b-broker-edge.md § Risks (Losing sessions)",
+   "final_w1a-bench-sim.md § Go / no-go (B1 settles the risk question)"
+  ],
+  "verify_how": "Only observable from a session where our (or a published rival's) efficiency is below the stall: GET /api/me score.bench_points for that session ~0 -> 'zero' reading; ~0.5 x eff/stall -> linear. Feed bench.finished per-venue points if published.",
+  "endpoint": "GET /api/me, GET /api/feed",
+  "field": "score.bench_points, score.bench_efficiency; bench.finished per-venue results",
+  "when": "first session below the stall (any team) is observed",
+  "flips": "#94 loss_curve: aggressive only if linear; W1a's 'never below the stall' gate",
+  "if_unknown": "Assume 0 below the stall: cautious mode only, never aggressive",
+  "priority": "medium"
+ },
+ {
+  "id": "bench-rival-field-stall-level",
+  "assumption": "The rival venues in a Market Test are few and roughly at stall level (two stall-level rivals), so the top-three mean sits near the stall.",
+  "sources": [
+   "final_w1a-bench-sim.md § Evidence footnote",
+   "final_b2-venue-runbook.md § point 5 (the rival field)",
+   "final_b1-organic-winrate.md § Results"
+  ],
+  "verify_how": "GET /api/venues: count of board venues with brokers; GET /api/feed bench.finished efficiencies per venue: top-3 mean ~= stall -> TRUE; top-3 near oracle (0.86-0.88) -> use B2's top3 column.",
+  "endpoint": "GET /api/venues, GET /api/feed",
+  "field": "venues[].mechanism/owner; bench.finished payload (top3_efficiency if present)",
+  "when": "09:00 (venues), after h5 (efficiencies)",
+  "flips": "Magnitude only (B2 top3 column takes 0.05-0.5 off, no sign change)",
+  "if_unknown": "Two stall-level rivals",
+  "priority": "low"
+ },
+ {
+  "id": "negotiating-split-12-5-and-5",
+  "assumption": "The 17.5 negotiating points left after the ladder's 12.5 split as duels 12.5 / trades 5.",
+  "sources": [
+   "final_w5w6-score-redteam-morning.md § Unverified (duel/trade split 12.5/5 assumed)",
+   "final_w5w6-score-redteam-morning.md § Where Saturday's points are"
+  ],
+  "verify_how": "After Duels I: GET /api/me score.duel_points and score.neg_points vs score.negotiating; `bazaar evals score-check`: rest = negotiating - model ladder, rest / our duel ratio gives the duel weight. ~12.5 -> TRUE. GET /api/leaderboard top duel component cap.",
+  "endpoint": "GET /api/me, GET /api/leaderboard",
+  "field": "score.negotiating, score.duel_points, score.neg_points, score.ladder_points",
+  "when": "after Duels I (h6.5)",
+  "flips": "#78 score-sim weights; effort split between duels (#86/#103) and trades",
+  "if_unknown": "12.5 / 5",
+  "priority": "medium"
+ },
+ {
+  "id": "ladder-model-fitted",
+  "assumption": "The ladder component is W x min(1, raw / top-3 mean raw) with W = 12.5, raw = sum of level weight x best-three deal shares / 3 with level-2 (Chato) weight 0.5 (fitted, not from the rules).",
+  "sources": [
+   "final_w5w6-score-redteam-morning.md § 1 Score simulator (table; 'The formula is fitted to the data')"
+  ],
+  "verify_how": "`bazaar evals score-check` (read-only) after each new dealer deal: GET /api/me score.ladder_points vs model; GET /api/leaderboard ladder components capped at 12.5. Within ~0.5 -> TRUE.",
+  "endpoint": "GET /api/me, GET /api/leaderboard",
+  "field": "score.ladder_points; leaderboard rows' ladder component",
+  "when": "after our first Saturday dealer deal",
+  "flips": "#78 score-sim; W3 targets (a level-1 share point worth twice a Chato one)",
+  "if_unknown": "Use fitted weights",
+  "priority": "low"
+ },
+ {
+  "id": "duel-decay-per-exchange-min-rounds",
+  "assumption": "In scored duels the result is surplus x (1 - decay)^rounds with rounds = min(our priced messages, the rival's) (decay charged per priced exchange), as fitted on 26/26 unscored practice payloads.",
+  "sources": [
+   "final_w2a-duel-zoo.md § Harness verdict (Real scoring rule)",
+   "final_w2b-duel-v2.md § Why v2",
+   "final_w2a-duel-zoo.md § What Marius must decide 2 (live-sim rounds fix)"
+  ],
+  "verify_how": "GET /api/duels?done=true after Duels I: for each deal, rounds == min(count of our priced messages, rival's) and result ~= surplus x (1-decay)^rounds (±0.05) -> TRUE. Mismatch -> v2's 'silence is free' premise fails.",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "rounds, decay, messages[], result/points",
+  "when": "after Duels I (h6.5)",
+  "flips": "#86 duel_policy = v2 default and duel_max_own_offers = 3; #80 sim rounds/decay fix",
+  "if_unknown": "v2 still >= v1 on deals; keep v2 if gate holds",
+  "priority": "high"
+ },
+ {
+  "id": "duel-free-offers-cost-no-round",
+  "assumption": "Offers sent to a rival that never priced or went quiet cost no round unless the rival answers with a priced message.",
+  "sources": [
+   "final_w2b-duel-v2.md § What v2 does (Free offers)",
+   "final_w2b-duel-v2.md § Go/no-go (1.4 P on 148)"
+  ],
+  "verify_how": "GET /api/duels?done=true: duels where we sent offers to a silent rival show rounds == rival's priced count (0) -> TRUE.",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "rounds, messages[] (author, price)",
+  "when": "after Duels I (h6.5)",
+  "flips": "#86 v2 free descending offers",
+  "if_unknown": "Keep v2 as built",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-within-tick-order",
+  "assumption": "Within a tick rivals move before us (the sim's order); if we move first v2's lift drops (1.34 at 0.06/0.08).",
+  "sources": [
+   "final_w2a-duel-zoo.md § What the zoo says 5",
+   "final_w2b-duel-v2.md § Risks (Within-tick order)"
+  ],
+  "verify_how": "In the first Duels ticks compare each rival message's tick in GET /api/duels messages[].tick with the tick `duel run` first logged it (.local/duels/duels.jsonl). Same tick as our move and seen before it -> rival-first (TRUE).",
+  "endpoint": "GET /api/duels",
+  "field": "messages[].tick",
+  "when": "first Duels I ticks (h6.5)",
+  "flips": "#86 v2 lift estimate only (v2 passes at 0.08/0.10 in either order)",
+  "if_unknown": "Per-rival mix; v2 stays",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-standing-offer-stays-acceptable",
+  "assumption": "A silent rival's standing offer stays acceptable after the rival stops messaging (the replay's 185 P relies on it for duels 131/132/147/148).",
+  "sources": [
+   "final_w2a-duel-zoo.md § Caveats (Unverified on the real API)",
+   "final_w2a-duel-zoo.md § What Marius must decide 3"
+  ],
+  "verify_how": "Read-only partial: GET /api/duels payload shows the rival's last offer still flagged open/current after several silent ticks. Full check NEEDS A LIVE ACTION: accept one low-value silent rival's standing offer; deal recorded in ?done=true -> TRUE.",
+  "endpoint": "GET /api/duels, GET /api/duels?done=true",
+  "field": "messages[] (last rival offer, status), result",
+  "when": "Duels I (h6.5)",
+  "flips": "#86 v2 hold-while-rival-concedes and late accepts",
+  "if_unknown": "Accept a good standing offer early rather than wait",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-d-minus-1-accept-settles",
+  "assumption": "An accept sent on D-1 (and on the deadline tick) settles before the deadline.",
+  "sources": [
+   "final_w2b-duel-v2.md § Risks (D - 1 accepts)",
+   "final_b11-endgame.md § Risks (Squeezes close on D - 1)",
+   "final_b15-duels-first.md § Exposure"
+  ],
+  "verify_how": "NEEDS A LIVE ACTION: spend one low-value duel accepting on D-1 on purpose; GET /api/duels?done=true shows a deal with that price -> TRUE. Read-only: any of our v1 accepts that landed at D-1 in done duels.",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "result, closed tick, messages[]",
+  "when": "after Duels I (h6.5)",
+  "flips": "#86 duel_accept_margin_ticks = 0 (+0.05..0.13 lift); #103 duel_endgame_ticks = 1 safety",
+  "if_unknown": "Keep the planner's D-2 aim",
+  "priority": "medium"
+ },
+ {
+  "id": "duel-deadline-clustering",
+  "assumption": "Several duels share one deadline (6 at Duels II, as in practice deadline 132), with 3 live duels in Duels I.",
+  "sources": [
+   "final_w2a-duel-zoo.md § What the zoo says 6",
+   "final_w5w6-score-redteam-morning.md § 3 (duels 3 live / 6 live)"
+  ],
+  "verify_how": "GET /api/duels at session start: count of live duels and their deadline ticks.",
+  "endpoint": "GET /api/duels",
+  "field": "duels[].deadline (or ends_tick), count",
+  "when": "first Duels I payload",
+  "flips": "v2 lift in batches (1.33 vs 1.45); request budget at Duels II",
+  "if_unknown": "Assume clustered",
+  "priority": "low"
+ },
+ {
+  "id": "rivals-handle-days-by-end",
+  "assumption": "Real rivals pick their preferred end of 0-10 days (as the zoo's sign-valuing rivals do), so rival_days can read their preference.",
+  "sources": [
+   "final_b8-days.md § Findings 3 and Caveats"
+  ],
+  "verify_how": "After Duels II: GET /api/duels?done=true messages[].days distribution per rival: offers at 0 or 10 consistently -> TRUE; constant 0/5 -> days-blind.",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "messages[].days",
+  "when": "after Duels II (~h13)",
+  "flips": "#113 rival_days use; days_aware stays unwired either way",
+  "if_unknown": "Ignore rival_days",
+  "priority": "low"
+ },
+ {
+  "id": "duel-deal-rate-realism",
+  "assumption": "The zoo's deal rates (0.72-0.83 for v1) and rival style mix approximate scored duels, although practice shows only 46 % deals.",
+  "sources": [
+   "final_w2a-duel-zoo.md § Caveats (deal rates higher than the practice's)"
+  ],
+  "verify_how": "GET /api/feed duel.closed events after Duels I: share with a deal. Near 0.7-0.8 -> TRUE; ~0.46 -> absolute P/duel optimistic.",
+  "endpoint": "GET /api/feed",
+  "field": "duel.closed payloads (deal / no-deal)",
+  "when": "after Duels I (h6.5)",
+  "flips": "Absolute duel P estimates in #78/#80 (lifts unaffected)",
+  "if_unknown": "Use lifts, not absolute P",
+  "priority": "low"
+ },
+ {
+  "id": "duel-outside-limit-penalty",
+  "assumption": "A duel closed outside our limit scores a negative result (the zoo keeps it negative and flags it); the real penalty is unverified.",
+  "sources": [
+   "final_w2a-duel-zoo.md § Caveats (Unverified on the real API: the outside-limit penalty)"
+  ],
+  "verify_how": "Only observable if some deal closes outside a limit: GET /api/duels?done=true result < 0 for it. Not to be probed.",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "result",
+  "when": "never deliberately",
+  "flips": "Weight of #60's strictly-inside-limit guard (stays regardless)",
+  "if_unknown": "Assume severe; keep the guard",
+  "priority": "low"
+ },
+ {
+  "id": "exploiters-back-off-when-refused",
+  "assumption": "Informed rivals that squeeze our endgame (offer 1 P inside our limit) back off when refused; fewer than 84-89 % are stubborn.",
+  "sources": [
+   "final_b11-endgame.md § Risks (A bet that exploiters give in)",
+   "final_b11-exploiters.md § Findings 6 and What Marius must decide 1"
+  ],
+  "verify_how": "After Duels I: GET /api/duels?done=true messages: rivals offering within ~1-2 P of our limit on D-3..D-1, then on the last tick either improving (back off -> TRUE) or holding (stubborn).",
+  "endpoint": "GET /api/duels?done=true",
+  "field": "messages[] on the last 3 ticks, duels[].limit",
+  "when": "after Duels I (h6.5)",
+  "flips": "#103/#97 duel_endgame_min_share 0.3 (or 0.4-0.5) with duel_endgame_ticks = 1",
+  "if_unknown": "0.3 (the conservative point)",
+  "priority": "medium"
+ },
+ {
+  "id": "paired-duels-share-limits",
+  "assumption": "Role-swapped paired duels share limits (our limit in duel A is the rival's in duel B); 4 of 9 practice pairs fit identical limits.",
+  "sources": [
+   "final_b11-exploiters.md § Findings 3 and What Marius must decide 2",
+   "final_b11-endgame.md § Risks (The mirror threat is weaker than feared)"
+  ],
+  "verify_how": "GET /api/duels: for two duels on the same item with swapped roles, compare our limit in A with the rival's revealed final price/limit in B (from ?done=true). Equal -> TRUE.",
+  "endpoint": "GET /api/duels, GET /api/duels?done=true",
+  "field": "duels[].limit, item, role; messages[].price",
+  "when": "after Duels I (h6.5)",
+  "flips": "#103/#97 min-share preset choice (share05 if pairs share limits); possible use of our A-limit as the rival's B-limit",
+  "if_unknown": "Assume not shared",
+  "priority": "low"
+ },
+ {
+  "id": "chato-limits-28-32-rares-82-93",
+  "assumption": "El Chato's secret limits are uncommon 28–32 (p50 29, opening 33) and rare 82–93 (p50 91, opening 97), so no buy fills under max_price_uncommon 26 / max_price_rare 80 and a Chato cap of 31 (uncommon) / 93 (rare) fills; fitted on only 6 and 9 closed threads.",
+  "sources": [
+   "final_w3-ladder.md § Verdict, § Floors table, § Decision 1, § Risks (6 and 9 closed threads)",
+   "final_b21-levels.md § 5 'Without the cap proposal' (his limits 28–32 vs our 26), § Risks",
+   "final_w7-page-economics.md § Verdict and § 2 (Chato ~90 (82–93))",
+   "final_w4-trade-desk.md § LAV page list (Chato sold 82–93)"
+  ],
+  "verify_how": "GET /api/dealers chato menu.sells[].opening_ask = 33 (uncommon) / 97 (rare) → consistent; then GET /api/feed: Chato thread settlements (any team) on Saturday with uncommon prices within 28–32 and rares within 82–93 → TRUE; settlements ≤ 26 / ≤ 80 → FALSE (current caps already suffice); settlements > 31 → the cap 31 proposal is too low.",
+  "endpoint": "GET /api/dealers + GET /api/feed",
+  "field": "dealers[chato].menu.sells[class].opening_ask; feed settlement price for dealer=chato",
+  "when": "09:00 for openings; limits after the first Saturday Chato settlements (~09:15–10:00)",
+  "flips": "#81 decision 1 (`dealer_price_caps = chato:uncommon=31`, `chato:rare=93`); #119 L2 best three and early L3 unlock; #87 decision B (LAV page via Chato rares, ~181 P); #93 alternative of selling to Chato.",
+  "if_unknown": "Leave dealer_price_caps off (no Chato buys) until Marius approves; L3 then arrives at open-to-all.",
+  "priority": "high"
+ },
+ {
+  "id": "abuela-allotment-resets-per-clock-hour",
+  "assumption": "Abuela gives each team 8 deals per hour (packs 3 per hour), and the allotment resets per clock hour as in the simulator, so the plan books 8 slots 09:00–09:21 and 6 more from 10:00.",
+  "sources": [
+   "final_w3-ladder.md § The 09:00–10:30 plan and § Risks ('Abuela's deal allotment is assumed to reset per clock hour')",
+   "final_b9-packs-ev.md § Verdict 3 (3 packs per hour)",
+   "final_b21-levels.md § 3 (every dealer gives each team the same allotment per hour)"
+  ],
+  "verify_how": "GET /api/dealers: abuela menu.deals_per_team_per_hour = 8 and the pack's menu.sells[].per_team_per_hour = 3 → counts TRUE. For the reset semantics, watch GET /api/feed: a team (or us) settling a 9th Abuela deal less than an hour after its 1st but in a new clock hour → per-clock-hour reset TRUE; 9th deal only ≥ 60 min after the 1st → rolling window.",
+  "endpoint": "GET /api/dealers + GET /api/feed",
+  "field": "dealers[abuela].menu.deals_per_team_per_hour, menu.sells[].per_team_per_hour; feed settlements per team",
+  "when": "09:00 for the counts; reset semantics ~10:00",
+  "flips": "#81 ladder_plan.json slot timing (6 slots at 10:00–10:15); #119 first-hour spend; #109 pack allotment argument.",
+  "if_unknown": "Treat it as a rolling 60-minute window: do not book a 9th Abuela slot before 60 min after the 1st.",
+  "priority": "medium"
+ },
+ {
+  "id": "price-range-is-opening-to-limit",
+  "assumption": "The organisers' 'price range' for ladder scoring is the dealer's opening price → that conversation's secret limit, so share = (opening − price)/(opening − limit) and a deal at the limit scores ~1.0 while one at the opening scores 0.",
+  "sources": [
+   "final_w3-ladder.md § Backtest definition and § Risks ('The organisers' \"price range\" is unknown')",
+   "final_b3-personas.md § Selling to dealers (mirrored share for sales)",
+   "final_b12-dealer-jitter.md § Verdict (share metric)"
+  ],
+  "verify_how": "After our first Saturday Abuela deal, compare the change in GET /api/me score.ladder_points with the share implied by (opening − price)/(opening − our thread's final/limit) (`bazaar evals score-check`). A deal at Abuela's 'final' moving ladder points by ≈ a full-share deal → TRUE; points tied to list_price or book instead → FALSE.",
+  "endpoint": "GET /api/me",
+  "field": "score.ladder_points (delta per settlement)",
+  "when": "after the first Saturday dealer deal (~09:03)",
+  "flips": "#81 objective (floor plans 21→25 vs today's 17→26); #100 jitter evaluation metric; #93 sale ladders (share on mirrored prices).",
+  "if_unknown": "Keep the W3 ladder (it also maximises a pure 'lower price' objective); never close at the opening price.",
+  "priority": "medium"
+ },
+ {
+  "id": "unlock-excludes-dealer-sales",
+  "assumption": "Sales to a dealer do not count toward the early unlock (counts equal buy settlements for 6 of the 9 teams that also sold; counting sales matches none), so selling duplicates to Chato will not open L3 early (B3 had left it unverified).",
+  "sources": [
+   "final_b21-levels.md § 2 'Sales to the dealer do not count'",
+   "final_b3-personas.md § Early unlock evidence ('A sale may count, unverified') and § Decision 2",
+   "final_w3-ladder.md § Decision 1 last bullet"
+  ],
+  "verify_how": "In GET /api/feed, for every Saturday level.unlocked 'N deals with <dealer>': count that team's negotiated buy settlements vs buy+sale settlements with that dealer. N matches buys and not buys+sales → TRUE. GET /api/dealers unlock block wording (e.g. 'buys') also settles it.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=level.unlocked].payload text vs events[type=settlement] by team/dealer/side",
+  "when": "at the next level.unlocked event (L3)",
+  "flips": "#93 decision 2 (sell duplicates to Chato for L2 ladder deals and early L3 → ladder deals only); #119 L3 Collector 'dealer sell earns ladder deals but not the L4 unlock'.",
+  "if_unknown": "Count only negotiated buys toward unlocks; sales only for ladder share.",
+  "priority": "medium"
+ },
+ {
+  "id": "collector-l3-buys-cards",
+  "assumption": "The L3 Collector (only the tier name is known) most likely buys cards, so the plan is to sell duplicates to it with `bazaar dealer sell`; L5 Banker mechanics are unknown.",
+  "sources": [
+   "final_b3-personas.md § What is known (L3 'Likely buys cards (the name); nothing is verified') and § Plan per persona",
+   "final_b21-levels.md § 5 and § 6 (L3 row)"
+  ],
+  "verify_how": "At L3's level.activated read the 'how' text in GET /api/feed and GET /api/dealers[L3].menu: a buys[] list → TRUE; only sells[] → FALSE (use dealer buy; check caps for its class, rares 80, epics none).",
+  "endpoint": "GET /api/dealers + GET /api/feed",
+  "field": "dealers[L3].menu.sells / buys; feed level.activated.payload.how",
+  "when": "at L3 level.activated",
+  "flips": "#93 L3 plan (dealer sell vs dealer buy); #119 L3 best three and need for a new dealer_price_caps entry.",
+  "if_unknown": "Read 'how' first; no live action with L3 until its menu is read; inspector blocks unclassified structures.",
+  "priority": "medium"
+ },
+ {
+  "id": "trickster-lie-is-in-structure",
+  "assumption": "L4 Tricksters lie by slipping a lesser card into the structured offer while the text names a better one (the inspector's flag signature); a lie only in words about price/quantity with an honest structure is not flagged.",
+  "sources": [
+   "final_b3-personas.md § What is known (L4 row), § Trickster detection, § Risks ('assumes the lie is in the item')"
+  ],
+  "verify_how": "On the first L4 dealer threads in GET /api/feed, compare thread.message structured items (give/want) with the requested topic and the message text: lesser item + text naming the better one → TRUE; structure matches topic but text lies → FALSE (signature misses it). Also compare with `would flag message N` log lines.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=thread.message].payload (offer items/want/cash, text)",
+  "when": "at L4 level.activated and its first threads",
+  "flips": "#93 decision 1 (allow_flags on when L4 opens) and the inspector's flag signature.",
+  "if_unknown": "Keep allow_flags = false; the inspector still blocks every structural mismatch.",
+  "priority": "medium"
+ },
+ {
+  "id": "wrong-flag-cost-and-repeat-flag-scoring",
+  "assumption": "The cost of a wrong flag and how the server scores repeated flags (one per message vs one per thread) are unknown; the code sends at most 2 flags per process, one per trickster message.",
+  "sources": [
+   "final_b3-personas.md § Wiring ('Whether one per thread is wiser depends on how the server scores repeated flags (unknown)') and § Decision 1 ('the cost of a wrong flag is unknown')"
+  ],
+  "verify_how": "Read L4's level.activated 'how' in GET /api/feed and the L4 dealer entry in GET /api/dealers for flag rules; watch GET /api/me score.* for a flag component and GET /api/feed for other teams' flag outcomes (score/leaderboard deltas in GET /api/leaderboard after a public flag).",
+  "endpoint": "GET /api/feed + GET /api/me + GET /api/leaderboard",
+  "field": "feed level.activated.payload.how; me.score.* (flag term); leaderboard deltas",
+  "when": "at L4 level.activated",
+  "flips": "#93 max_flags_per_process (2) and allow_flags; one-flag-per-thread policy.",
+  "if_unknown": "allow_flags off; if turned on, keep max 2 flags and one per thread.",
+  "priority": "medium"
+ },
+ {
+  "id": "dealer-deal-scores-only-in-best-three",
+  "assumption": "A dealer purchase scores only its ladder share and only if it is among our best three deals at that level; a 4th Abuela deal scores 0, and private value (page bonus, holdings, pack luck) scores only as surplus in a team trade.",
+  "sources": [
+   "final_w7-page-economics.md § 1 'How page value scores' and § 3 (W7 keeps LAV-08/MAL-07/MAL-08 with W4)",
+   "final_b9-packs-ev.md § verdict table (4th Abuela deal = 0) and § Why a pack scores so little"
+  ],
+  "verify_how": "After the best three Abuela deals, one more Abuela deal at a lower share leaves GET /api/me score.ladder_points unchanged → TRUE. Check that score has no album/holdings term (score fields list).",
+  "endpoint": "GET /api/me",
+  "field": "score.ladder_points; score.* field list",
+  "when": "after the 3rd/4th Saturday Abuela deal",
+  "flips": "#87 step 3 (drop W3's other Abuela slots); #81 ladder_plan.json 14 slots → 3; #109 packs verdict.",
+  "if_unknown": "Only three Abuela deals per round; cards W4 plans to buy stay with W4.",
+  "priority": "medium"
+ },
+ {
+  "id": "rival-affinity-map-persists",
+  "assumption": "Rival top sets revealed Friday persist into Saturday (11 of 17 teams kept their top set between tick 80 and close; LAV chasers t05/t10/t14/t04, MAL t12, LAT t15/t18, SAL t02/t06), so W4's counterparties and prices remain right.",
+  "sources": [
+   "final_w4-trade-desk.md § 1 Rival affinity map and § Risks (RET opens Saturday; chasers invisible)",
+   "final_b9-packs-ev.md § What to do 3 (list to W4's chasers)",
+   "final_b4-rival-scanner.md § Rival profiles"
+  ],
+  "verify_how": "GET /api/feed from Saturday's first tick: chasers' new buys, bids and offer.listed per set (or `bazaar affinity` refit) still put each team's top set where the map says (P ≥ 0.5) → TRUE; a different top set for several mapped teams → FALSE.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=offer.listed|settlement|thread.message] by team and card set",
+  "when": "~10:00 (needs a morning of evidence)",
+  "flips": "#79 09:00 plan counterparties and `chaser_min_p = 0.5`; #109 listing duplicates to chasers; #98 B4 profiles (overbidders t10/t12/t17).",
+  "if_unknown": "Keep chaser_min_p = 0 (team flows) and addressed offers small.",
+  "priority": "medium"
+ },
+ {
+  "id": "opening-board-equals-friday-close",
+  "assumption": "Nothing settles while doors are closed, so the board at Friday's last tick (47 rival offers, 13 with surplus, 7 allowed) is the board that opens Saturday, and the two rare-snipe pattern (rivals take within 3–5 ticks) repeats.",
+  "sources": [
+   "final_b4-rival-scanner.md § What was built (board_at) and § The 09:00 board",
+   "final_b4-rival-scanner.md § Friday replay"
+  ],
+  "verify_how": "At 09:00 compare `bazaar opportunities --live` (live board) with the feed-rebuilt board; check GET /api/feed for offer expirations at the open (a clock jump to h4 may expire offers by tick). Same offers standing → TRUE.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=offer.listed / offer expired|cancelled] at Saturday's first ticks",
+  "when": "09:00",
+  "flips": "#98 decision 1 (run the taker live from 09:00, scanning every tick); conflicts with #79 plan trades.",
+  "if_unknown": "Rely on the live board read, never on the rebuilt one.",
+  "priority": "medium"
+ },
+ {
+  "id": "one-dealer-round-per-tick-and-abuela-patience",
+  "assumption": "Dealers answer one round per tick (Friday median 1.0 tick per bid; Abuela answered next tick 72% of the time) and real Abuela names her final after a median of 5 bids (the simulator waits 10), which is why starting at 17 costs 0.10–0.17 share.",
+  "sources": [
+   "final_w3-ladder.md § How Abuela haggles, § Simulator caveat, § Risks ('One round per tick is assumed')",
+   "final_b12-dealer-jitter.md § How it was measured (72%)"
+  ],
+  "verify_how": "GET /api/feed Saturday Abuela threads: tick gaps between our bid and her thread.message (median 1 → TRUE) and number of bids before her 'final' (median ~5 → TRUE).",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=thread.message, dealer=abuela].tick, text ('final')",
+  "when": "~09:15 after a few threads",
+  "flips": "#81 decision 2 (ladder_floor_quantile = 0.5) and slot timing (fill ≤ 8 ticks); #100 jitter time cost.",
+  "if_unknown": "Use ladder_floor_quantile 0.5 only if real threads still finalise around 5 bids.",
+  "priority": "medium"
+ },
+ {
+  "id": "each-dealer-same-allotment-per-team",
+  "assumption": "Every dealer gives each team its own equal hourly allotment and each conversation its own secret limit, so arriving early drains nothing and a rival predicting our dealer bids has no scored lever.",
+  "sources": [
+   "final_b21-levels.md § 3 'What an early unlock is worth'",
+   "final_b12-dealer-jitter.md § Verdict 'Value: unquantified'"
+  ],
+  "verify_how": "GET /api/dealers: menu.deals_per_team_per_hour and sells[].per_team_per_hour are per-team (field name) and no global stock field decreases as other teams trade in GET /api/feed → TRUE; a shared stock/out-of-stock signal → FALSE.",
+  "endpoint": "GET /api/dealers",
+  "field": "dealers[*].menu.deals_per_team_per_hour, menu.sells[].per_team_per_hour",
+  "when": "09:00",
+  "flips": "#119 'early unlock is worth time only'; #100 dealer jitter stays off.",
+  "if_unknown": "Keep jitter off; treat early unlock as time only.",
+  "priority": "low"
+ },
+ {
+  "id": "page-bonus-credited-to-completing-trade",
+  "assumption": "The server credits the page bonus (0.25 × Σ book × multiplier over the page) to the trade that completes a page, so the bonus can score as trade surplus on the last card bought from a team.",
+  "sources": [
+   "final_w7-page-economics.md § 1 ('Unverified: whether the server credits the bonus to the trade that completes the page') and § Risks"
+  ],
+  "verify_how": "Once the other page cards are held, GET /api/me/value?card=<last missing card>: value ≈ book × affinity + the page-bonus share → bonus enters your_value (credited via the trade) TRUE; value = book × affinity only → FALSE.",
+  "endpoint": "GET /api/me/value",
+  "field": "value (for card=<last missing page card>)",
+  "when": "only once a page is one card short (not reachable under today's caps)",
+  "flips": "#87 LAV page plan (buy the last card from a team) and decision D (page_bonus_weight).",
+  "if_unknown": "page_bonus_weight = 0; do not pay for page bonus in a single card's price.",
+  "priority": "low"
+ },
+ {
+  "id": "pack-draw-uniform-over-sets",
+  "assumption": "Each sobre_barrio slot (common, common, common 0.75/uncommon 0.25; expected book 33.8) draws uniformly from the released sets' cards of that rarity (LAV, MAL, LAT, SAL, plus RET on Saturday), skipping printed-out cards.",
+  "sources": [
+   "final_b9-packs-ev.md § Pack contents and § Risks ('a pack may weight its own neighbourhood')",
+   "final_w7-page-economics.md § Step 1 (welcome pack rare slot LAV p ≈ 0.4 × 2/10)"
+  ],
+  "verify_how": "GET /api/catalog packs[sobre_barrio] slot definitions and per-set weights; opened-pack contents in GET /api/me assets (and pack-open events in GET /api/feed) spread across sets → TRUE; concentrated in one set → FALSE.",
+  "endpoint": "GET /api/catalog",
+  "field": "catalog.packs[].slots / weights; catalog.sets[].released",
+  "when": "09:05 (after opening our two free packs)",
+  "flips": "#109 per-pack EV (+1.45 P scored resale); verdict 'buy no packs' stands on operational reasons regardless.",
+  "if_unknown": "Buy no packs; open the free ones.",
+  "priority": "low"
+ },
+ {
+  "id": "abuela-pack-thread-limit-above-cap",
+  "assumption": "Abuela's pack threads settle at a median of 22 P (only 3 of 22 Friday fills at ≤ 20), she sells 3 packs per hour, and pack threads share our one Abuela conversation and the hourly spend cap.",
+  "sources": [
+   "final_b9-packs-ev.md § Verdict 1–3",
+   "final_w3-ladder.md § Verdict 'Packs: NO-GO under max_price_pack 20' and § Decision 3"
+  ],
+  "verify_how": "GET /api/dealers abuela pack sells[]: opening_ask 30 and per_team_per_hour 3 → TRUE; GET /api/feed pack settlements on Saturday mostly > 20 → limit above cap TRUE.",
+  "endpoint": "GET /api/dealers + GET /api/feed",
+  "field": "dealers[abuela].menu.sells[class=sobre_barrio].{opening_ask, per_team_per_hour}; feed settlement price for packs",
+  "when": "09:00 for the menu; ~10:00 for fills",
+  "flips": "#109 packs verdict; #81 decision 3 (cap 20 vs 22–24).",
+  "if_unknown": "Keep max_price_pack 20 and buy no Abuela packs.",
+  "priority": "low"
+ },
+ {
+  "id": "catalog-minted-counts-stale",
+  "assumption": "The catalog fixture's minted counts are stale (our LAV-03 is #17 vs 15 minted), so 'minted ≥' uses the highest serial seen in the feed.",
+  "sources": [
+   "final_w7-page-economics.md § 2 notes"
+  ],
+  "verify_how": "GET /api/catalog minted counts vs highest serials in GET /api/feed and /api/me: live minted ≥ seen serials → live catalog current.",
+  "endpoint": "GET /api/catalog",
+  "field": "catalog.cards[].minted",
+  "when": "09:00",
+  "flips": "#87 scarcity of missing page cards.",
+  "if_unknown": "Use the max of catalog minted and highest seen serial.",
+  "priority": "low"
+ },
+ {
+  "id": "dealer-min-step-2pct-of-book",
+  "assumption": "A dealer never moves faster than our last step and a step under 2% of book earns nothing (dealer_min_step_pct = 0.02), a rule from the B12 brief not found in RULES.md, fixtures, feed or simulator.",
+  "sources": [
+   "final_b12-dealer-jitter.md § What changed (base step) and § Decision 2"
+  ],
+  "verify_how": "In GET /api/feed dealer threads, find our (or any team's) +1 steps on rares (< 2% of ~97 book): the dealer still moves its ask → rule FALSE; it holds still → TRUE.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=thread.message] bid/ask sequences per thread",
+  "when": "after the first Chato thread with step-1 bids",
+  "flips": "#100 dealer_min_step_pct (set 0 if the rule is not real); Chato rare plan 89/91/93.",
+  "if_unknown": "dealer_min_step_pct = 0 (jitter stays off).",
+  "priority": "low"
+ },
+ {
+  "id": "dealer-sale-limits",
+  "assumption": "Dealers' buy-side limits seen Friday hold: Abuela pays 12–16 for an uncommon (opening bid 12) and 5–6 for a common (opening 5); Chato 13–16 for an uncommon (opening 13), so a sale to Chato yields ~15–16 P.",
+  "sources": [
+   "final_b3-personas.md § Selling to dealers table and § Decision 2",
+   "final_w3-ladder.md § Decision 1 last bullet (he bids 13 → 15–16)"
+  ],
+  "verify_how": "GET /api/dealers buys[] opening bids (12 / 5 / 13) and GET /api/feed Saturday sale settlements within those ranges → TRUE.",
+  "endpoint": "GET /api/dealers + GET /api/feed",
+  "field": "dealers[*].menu.buys[].opening_bid; feed settlements where team sells to dealer",
+  "when": "09:00 (menu); later for fills",
+  "flips": "#93 `dealer sell` plans (ask 16→13, 8→6, 17→14).",
+  "if_unknown": "Do not sell to dealers unless for ladder share at a level where we cannot buy.",
+  "priority": "low"
+ },
+ {
+  "id": "trusted-dealers-never-lie",
+  "assumption": "Abuela and El Chato are honest: their offer structure matched the thread topic in 1,017 of 1,017 Friday offers, so they are blocked on mismatch but never flagged.",
+  "sources": [
+   "final_b3-personas.md § Trickster detection (Trusted dealers, Precision on Friday)"
+  ],
+  "verify_how": "GET /api/feed Saturday thread.message from abuela/chato: structured item equals the topic every time → TRUE.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=thread.message, dealer in (abuela, chato)].payload items vs topic",
+  "when": "09:00 onward",
+  "flips": "#93 flag_trusted_dealers list.",
+  "if_unknown": "Keep them in flag_trusted_dealers; inspector still blocks mismatches.",
+  "priority": "low"
+ },
+ {
+  "id": "fee-and-trade-scoring-per-leg",
+  "assumption": "On a bid accept the accepting side pays the fee (verified only for ask accepts; El Rastro 5% + 1 P rounded up, team venues 0/50/100 bps), and the organisers do not clip trades one at a time, so an arbitrage's negative buy leg nets out against its resale.",
+  "sources": [
+   "final_w8-arbitrage.md § Risks (scoring per leg; who pays the fee on a bid accept) and § When a switch is worth flipping (venue fees)"
+  ],
+  "verify_how": "GET /api/feed settlement events for a bid accept: fee charged to the accepter → TRUE. Per-leg scoring: GET /api/me score.negotiating after a held-card buy then resale (only if a switch is on).",
+  "endpoint": "GET /api/feed + GET /api/me",
+  "field": "settlement.fee / payer; me.score.negotiating",
+  "when": "first bid-accept settlement on the tape",
+  "flips": "#101 arb_enabled / dup_buy_enabled (stay off).",
+  "if_unknown": "Keep both switches off; charge ourselves the fee.",
+  "priority": "low"
+ },
+ {
+  "id": "team-venues-trade-saturday",
+  "assumption": "Team venues (0 bps t12/t02, 50/100 bps t06/t13) open and trade on Saturday (none traded Friday; they open at +3 h), which is the only setting where crossings of +3 P net appear.",
+  "sources": [
+   "final_w8-arbitrage.md § Friday, measured and § What Marius decides"
+  ],
+  "verify_how": "GET /api/feed offer.listed / settlement with a non-El-Rastro venue → TRUE; then `bazaar arb scan` for crossings ≥ +3 P more than once an hour.",
+  "endpoint": "GET /api/feed",
+  "field": "events[type=offer.listed|settlement].venue",
+  "when": "after h3 (team venues open)",
+  "flips": "#101 arb_enabled flip; #98 scanner venues.",
+  "if_unknown": "Switches off.",
+  "priority": "low"
+ },
+ {
+  "id": "duplicate-copy-worth-quarter",
+  "assumption": "One more copy of a held card is worth book × affinity × 0.25 (the copy marginal), so duplicate buys need e.g. a rare ≤ 25 P in our 1.6 set.",
+  "sources": [
+   "final_w8-arbitrage.md § Duplicates table",
+   "final_w7-page-economics.md § Decision D (copy marginal)"
+  ],
+  "verify_how": "GET /api/me/value?card=<a held card>: value of the next copy ≈ 0.25 × book × our multiplier → TRUE.",
+  "endpoint": "GET /api/me/value",
+  "field": "value (for a card we already hold)",
+  "when": "09:00",
+  "flips": "#101 dup_buy_enabled thresholds; #79 swap valuations.",
+  "if_unknown": "dup_buy_enabled off.",
+  "priority": "low"
+ },
+ {
+  "id": "dealer-take-does-not-use-accept-slot",
+  "assumption": "When Abuela takes our bid, the settlement does not consume the team's one accept per tick, so the taker (B4) and the ladder can run in the same tick.",
+  "sources": [
+   "final_w3-ladder.md § The 09:00–10:30 plan ('When Abuela takes our bid, the team's accept slot is not used')",
+   "final_b4-rival-scanner.md § Reviews 'Accept slot' (buys and sells share the one accept per tick; a dealer's final goes first)"
+  ],
+  "verify_how": "In the tick where Abuela takes our bid (settlement in GET /api/feed), a board accept of ours in the same tick also settles with no accept-quota refusal → TRUE; GET /api/clock limits documents what counts as an accept.",
+  "endpoint": "GET /api/feed + GET /api/clock",
+  "field": "feed settlement ticks for our dealer and board trades; clock.limits",
+  "when": "first tick with both a dealer settlement and a board accept (~09:05)",
+  "flips": "#98 decision 1 (taker live from 09:00 alongside the ladder); #81 accept-slot accounting; #101 exit-leg timing.",
+  "if_unknown": "Let a dealer's final take the accept first; the taker waits a tick.",
+  "priority": "low"
+ }
+]
