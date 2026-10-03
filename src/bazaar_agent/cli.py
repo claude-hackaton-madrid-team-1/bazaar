@@ -546,8 +546,10 @@ def duel_run(
                 first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        slots: int | None = None  # v2's planner only: v1 skips the read, its forced accept books one round trip sooner
         try:  # another process may have taken it already
-            slots: int | None = max(0, limit - ledger.accepts_in_tick(c.tick))
+            if v2:
+                slots = max(0, limit - ledger.accepts_in_tick(c.tick))
         except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, v2 holds every duel
             console.print(f"  ledger unreadable ({type(e).__name__}): v2 holds every duel this tick")
             slots = None
@@ -628,11 +630,11 @@ def duel_run(
         # it, so it is booked AND sent now, nearest deadline first, before Jev answers about the other duels and
         # before the taker's duel grace (2 s) ends. v2 sends its planner's accepts in the same early pass.
         forced: dict[int, DuelPick] = {}
+        endgame = rules.duel_endgame_ticks
         for d in duels if play and params is None else ():
             if (fid := duel_id(d)) is None:
                 continue
             try:
-                endgame = rules.duel_endgame_ticks
                 if (fp := forced_pick(d, c.tick, first_seen[fid], anchor, floor, endgame)) is not None:
                     forced[fid] = fp
             except Exception as e:  # a malformed row goes the usual way below
@@ -653,7 +655,7 @@ def duel_run(
         for d in early:
             play_safely(d)
         done = {duel_id(d) for d in early}
-        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
+        if duel_jev is not None:  # every live duel at once (early ones too: not asked, outcomes still tracked)
             endgame = rules.duel_endgame_ticks
             left = lambda: send_by - time.monotonic()  # noqa: E731
             try:

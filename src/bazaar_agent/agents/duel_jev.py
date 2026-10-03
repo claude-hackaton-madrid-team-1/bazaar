@@ -7,8 +7,8 @@ Spec §3 step 4 and §7.1. Per live duel and tick:
      is not close. In the endgame an inside-limit offer is the only move (any deal beats none,
      `duel_endgame_ticks`).
   2. Jev `duel_move` (questions/duels.json) picks one. It is asked once per duel and round (cached), only
-     with `min_budget_s` of the tick left, and for every live duel at once on worker threads, so a duel
-     accept still lands inside the taker's duel grace.
+     with `min_budget_s` of the tick left, and for every live duel at once on worker threads. A forced
+     accept (`forced_pick`: the only legal move) is not waited on: the duel player sends it before Jev.
   3. `choose`: Jev's pick only when it is a legal move (an early accept also needs `jev_can_accept_early`).
      `undecided`, a timeout, no budget, or an illegal pick keep today's move. Nothing blocks the tick.
 In a two-issue session, `rival_cares_about_days` = yes puts the rival's own days on our counter when its

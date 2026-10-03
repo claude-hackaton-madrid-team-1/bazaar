@@ -73,6 +73,14 @@ limit handling makes it 7/11/8 here; it was 6/12/8 on #72.
 
 Gates: ruff, black and mypy are clean; pytest 802 passed, 1 xfailed (the 5 s residual).
 
+**Third review (on this head).** v1 no longer reads the ledger for v2's `slots` (v2's planner is the only user).
+That makes the forced accept book one round trip sooner and keeps exactly the 6 round trips counted above. The
+order test now pins it: `count, reserve, …`, and it fails on the previous head. Also: stale comments fixed.
+Left as documented:
+- Jev-overrulable accepts still book after Jev.
+- A forced duel skipped on a ledger outage gets no decision row, the same as every v1 duel today.
+- `forced_pick` copies `pick`'s v1 branch; the equality test guards that.
+
 **Ledger outage:** the forced pass keeps the chain's fail-closed rule. Each forced duel is played inside the
 per-duel `try`, and its guard reads the ledger on `rules_t`. `test_a_ledger_outage_fails_a_forced_accept_closed`
 shows the result: skipped this tick, nothing sent.

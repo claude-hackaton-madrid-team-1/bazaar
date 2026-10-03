@@ -294,12 +294,14 @@ def test_under_v2_a_ledger_outage_holds_every_duel_instead_of_killing_the_tick(d
 
 
 def _book_order(monkeypatch, client):
-    """The order of the duel loop's ledger reservations, its accepts sent and its `DuelJev.pick` calls."""
+    """The order of the duel loop's ledger reads and reservations, its accepts sent and its `DuelJev.pick` calls."""
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents import duel_jev
 
     order: list[str] = []
     reserve, pick, accept = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick, client.duel_accept
+    count = gr.Ledger.accepts_in_tick
+    monkeypatch.setattr(gr.Ledger, "accepts_in_tick", lambda self, *a: order.append("count") or count(self, *a))
     monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
     monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
     monkeypatch.setattr(client, "duel_accept", lambda did: order.append("accept") or accept(did))
@@ -314,7 +316,9 @@ def test_a_forced_endgame_accept_is_booked_and_sent_before_jev_is_asked(duel_cli
     order = _book_order(monkeypatch, client)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert order == ["reserve", "accept", "jev"] and client.sent == [("accept", 95)] and asked == []
+    # one ledger read (the guard's accept count) before the booking: v1 skips v2's slot read (one round trip);
+    # the second "count" is the file ledger's own count inside reserve_accept, under its lock
+    assert order == ["count", "reserve", "count", "accept", "jev"] and client.sent == [("accept", 95)] and asked == []
     (row,) = decision_rows(tmp_path)
     assert (row["kind"], row["status"]) == ("duel_accept", "done")
     assert row["inputs"]["legal_moves"] == ["accept"] and "jev not asked" in row["reason"]  # as pick() wrote it
@@ -353,7 +357,8 @@ def test_an_accept_jev_may_still_overrule_is_booked_after_jev(duel_cli, monkeypa
     order = _book_order(monkeypatch, client)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert order == ["jev", "reserve", "accept"] and client.sent == [("accept", 95)] and len(asked) == 1
+    assert order == ["jev", "count", "reserve", "count", "accept"] and client.sent == [("accept", 95)]
+    assert len(asked) == 1
 
 
 def test_the_taker_claiming_the_accept_while_jev_thinks_no_longer_costs_the_deadline_deal(duel_cli, monkeypatch):
