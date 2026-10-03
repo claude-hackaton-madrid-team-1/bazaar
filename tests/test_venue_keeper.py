@@ -471,3 +471,19 @@ def test_the_broker_follows_the_listed_venues_mechanism_not_the_plan(tmp_path):
     s = snap(venues=(RASTRO, ours(rules={"mechanism": "auto"})), venue={"venue": "v09", "status": "open"})
     auto_by_hand.on_tick(s.clock, s, window())
     assert quiet.sent == []  # listed as auto: no broker, whatever the plan says
+
+
+def test_an_auto_venue_without_its_key_is_still_marked_so_no_second_one_opens(tmp_path):
+    store: dict = {}
+    k = keeper(tmp_path, Team(), store=store, venue_mechanism="auto")
+    s = snap(venues=(RASTRO, ours(rules={"mechanism": "auto"})), venue={"venue": "v09", "status": "open"})
+    k.on_tick(s.clock, s, window())  # an opening whose answer was lost: we run v09 and hold no key
+    assert ("", "v09") in store and store[("", "v09")][0] == ""
+    k.on_tick(s.clock, s, window())
+    assert len(store) == 1
+
+
+def test_venue_mechanism_is_read_in_any_case():
+    assert Guardrails(venue_mechanism="Auto").venue_mechanism == "auto"
+    with pytest.raises(ValueError):
+        Guardrails(venue_mechanism="hybrid")

@@ -1496,7 +1496,9 @@ def venue_open(
     name: str = typer.Option("Team 1 market", help="Venue name (at most 40 characters)"),
     fee_bps: int = typer.Option(0, help="Fee in basis points (0-1000, i.e. at most 10 %)"),
     fee_per_card: int = typer.Option(0, help="Fee per card in P (0-5)"),
-    mechanism: str = typer.Option("board", help="board (our broker matches) or auto (the engine crosses first)"),
+    mechanism: str = typer.Option(
+        "", help="board (our broker matches) or auto (the engine crosses first); default: venue_mechanism"
+    ),
     description: str = typer.Option("", help="Public description (at most 280 characters)"),
     live: bool = typer.Option(False, help=VENUE_LIVE_HELP),
 ) -> None:
@@ -1513,7 +1515,7 @@ def venue_open(
                 "name": name,
                 "fee_bps": fee_bps,
                 "fee_per_card": fee_per_card,
-                "mechanism": mechanism,
+                "mechanism": mechanism or rules.venue_mechanism,
                 "description": description,
             }
         )

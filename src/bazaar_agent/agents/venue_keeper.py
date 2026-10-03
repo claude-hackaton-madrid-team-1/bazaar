@@ -115,6 +115,7 @@ class VenueKeeper:
         self.opened_tick = 0
         self.held_claim = False  # the opening claim is still ours after a network error
         self._marked: set[str] = set()  # venues we run without a key, already marked in the vault
+        self._auto_known: set[str] = set()  # auto venues whose key or mark is settled: nothing more to do
         self._warned = -REMIND_TICKS
         self.retry_tick = 0
         self.final: str | None = None  # a refusal that ends our attempts (venue_exists, ...)
@@ -275,18 +276,22 @@ class VenueKeeper:
         # only while the public list does not show it yet. The engine crosses an auto venue: a broker is refused.
         listed = next((v for v in snap.venues if v.id == venue), None) if snap is not None else None
         mechanism = listed.mechanism if listed is not None and listed.mechanism else self.plan.mechanism
-        if mechanism == "auto":
-            if clock.tick - self.reminded >= REMIND_TICKS:
-                self.reminded = clock.tick
-                self.log(f"tick {clock.tick} venue: {venue} is auto: the engine matches, no broker")
-            return
         if self._broker is None or self._broker[0] != venue:
-            key = self._key(venue)
+            key = None if venue in self._auto_known else self._key(venue)
+            # whatever the mechanism: a venue we run without its key is marked, so it counts as opened and no
+            # second one follows a close or a restart
+            unmarked = key is None and venue not in self._auto_known and venue not in self._marked
+            # it counts as opened from now on; a mark Postgres did not take is tried again next tick
+            if unmarked and self._may_mark(venue, clock, snap) and self.vault.mark(venue, clock.tick):
+                self._marked.add(venue)
+            if mechanism == "auto":
+                if key is not None or venue in self._marked:
+                    self._auto_known.add(venue)  # recorded either way: no vault read every tick from now
+                if clock.tick - self.reminded >= REMIND_TICKS:
+                    self.reminded = clock.tick
+                    self.log(f"tick {clock.tick} venue: {venue} is auto: the engine matches, no broker")
+                return
             if key is None:
-                # it counts as opened from now on; a mark Postgres did not take is tried again next tick
-                fresh = venue not in self._marked and self._may_mark(venue, clock, snap)
-                if fresh and self.vault.mark(venue, clock.tick):
-                    self._marked.add(venue)
                 if clock.tick - self.reminded >= REMIND_TICKS:
                     self.reminded = clock.tick
                     self.log(f"tick {clock.tick} venue: we run {venue} but hold NO broker key for it: ask the desk")

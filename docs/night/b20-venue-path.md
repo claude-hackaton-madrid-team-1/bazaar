@@ -1,6 +1,6 @@
 # B20: the fastest safe path to an open venue
 
-Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at ffb0877 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
+Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at 1696789 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
 
 ## The premise needs one correction
 
@@ -38,7 +38,7 @@ Per session: 0.375 at the stall's level, 0.75 at the top-three mean. The edge nu
 
 ```diff
 -- `venue_open_after_game_hours` = 6.5 — ...
-+- `venue_open_after_game_hours` = 4.05 — the first tick after Saturday's 150 P grant (09:03)
++- `venue_open_after_game_hours` = 4.05 — the first tick after Saturday's 150 P grant (09:03 under the published calendar; ~10:24 if the clock resumes at h2.65, B6)
 -- `venue_mechanism` = board — ...            (new line in this PR; default board = #71's behaviour)
 +- `venue_mechanism` = auto — ONLY if the edge broker is not live by 09:00
 -- `cash_floor` = 100 — ...

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from bazaar_agent.config import REPO_ROOT
 
@@ -59,6 +59,11 @@ class Guardrails(BaseModel):
     venue_bond_reserve: int = Field(default=270, ge=0)
     venue_open_after_game_hours: float = Field(default=6.5, ge=0)
     venue_mechanism: Literal["board", "auto"] = "board"
+
+    @field_validator("venue_mechanism", mode="before")
+    @classmethod
+    def _mechanism_any_case(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value  # "Auto" must not stop every agent
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
