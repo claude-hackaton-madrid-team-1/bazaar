@@ -164,6 +164,26 @@ Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
 
+### PR72 / PR62 / PR60 — takeover of Marius's live-trading PRs (2026-10-03, coordinator task_378a4ee99754)
+Spec (external, no local spec file): the PR review comments on #72, #68, #62, #61 and #60 (ours are the
+authoritative ones) and Greptile's open threads; RULES.md "Dealers" (a deal at the opening price does not
+count) and "The clock" (pace 5–60 s, `/api/clock` `max_tick_seconds`). One PR merged at a time; each one is
+rebased on `main` after the previous one merges.
+- PR72 (lands #61 + #68 + #72; base retargeted to `main`). Steps: refund dating at `max_tick_seconds` ·
+  one open offer per dealer thread · `dealer buy` guard with open commitments except its own thread ·
+  never close at her opening ask (walk, reopen lower once; the taker rests the item 1 game hour) · desk
+  settle timeout clears `accepted_price`, deal booked at the settled offer · busy accept slot bids her ask ·
+  kill switch re-read before every send · partial flatten exits 1 · stale `dealer_buy` text.
+  · **Acceptance:** each step has a test that fails on the old code; gate + `scripts/sim_smoke.py` green;
+  taker `--live` on the simulator; `/pr-review` APPROVE.
+- PR62 (shared-ledger reconnect). Steps: merge `main` (cli.py conflict) · `idle_in_transaction_session_timeout
+  = '5s'` · reconnect with a plain connect (schema on the first connection only) · `LedgerUnavailable` in
+  `dealer buy` HOLDS the tick (never walks or closes) · `sell` exits cleanly on an outage · reply to the
+  private-IP Greptile P1 (false for us). · **Acceptance:** tests, gate, sim smoke, `/pr-review` APPROVE.
+- PR60 (two-issue duels). Steps: drop `round()` in the inside-limit checks · finite `_number` for days in
+  `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
+  raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
+
 ---
 
 ## Parallel-work notes
