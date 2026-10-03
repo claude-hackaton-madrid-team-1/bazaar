@@ -439,7 +439,7 @@ def test_a_refused_opening_never_reaches_the_public_events_at_all(tmp_path):
     hub = StatusHub("maker", True)
     k = keeper(tmp_path, Team(refuse=BazaarError("locked", "", 403)), hub=hub)
     k.on_tick(snap().clock, snap(), window())
-    assert not any("open_venue" in event for event in hub.replay())
+    assert not any("open_venue" in event or "venue_open" in event for event in hub.replay())  # nor the try
 
 
 def test_a_408_may_have_opened_the_venue_so_the_claim_is_kept(tmp_path):

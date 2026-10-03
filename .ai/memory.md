@@ -453,3 +453,9 @@ opening our own venue replaces the stall (RULES.md). `guardrails.runs_venue` rea
 reserve stays, our opening is not blocked). Unverified live: if the key stays after we open, the floor stays
 370 all game; set `venue_bond_reserve = 0` then. The broker-key table is `venue_broker_keys` (target, venue):
 #84 still creates an older `venue_keys` shape, which nothing reads.
+
+### [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
+`holdings.without_secrets` (#105) strips every key-named field from a stored or answered /me, so
+`guardrails.runs_venue` would take the free stall for our venue (bond reserve gone, h6.5 opening refused).
+It now keeps `has_starter_stall: true` in the key's place. A snapshot written by older code has neither:
+deploy taker and maker together, and pull before a laptop uses the shared database.

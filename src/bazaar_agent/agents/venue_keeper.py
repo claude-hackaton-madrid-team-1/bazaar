@@ -241,8 +241,9 @@ class VenueKeeper:
         )
 
     def _refused(self, clock: Clock, e: BazaarError) -> None:
-        did = self._record_open(clock, "approved", "allowed", True)
-        self.rec.executed(did, clock.tick, "open_venue", self._request(), None, e.code)
+        # Kept off the public status: a published try with no venue after it says we were refused.
+        did = self._record_open(clock, "approved", "allowed", True, publish=False)
+        self.quiet_rec.executed(did, clock.tick, "open_venue", self._request(), None, e.code)
         self.decisions.settle(did, "failed")
         if e.code in FINAL_REFUSALS:
             self.final = e.code

@@ -279,7 +279,11 @@ before its own offers, `agents/venue_keeper.py`:
    overlap or a laptop maker cannot open a second). Otherwise it waits `RETRY_TICKS` = 10 ticks. A refused
    opening costs nothing, gives the claim back (even inside the Postgres backoff) and is retried 10 ticks
    later; `venue_exists` stops it.
-   `/api/me` naming a venue next to `starter_broker_key` is the free stall, not ours (the kit's `me()`).
+   `/api/me` naming a venue next to `starter_broker_key` is the free stall, not ours (the kit's `me()`); a
+   stored /me (`holdings.without_secrets`) keeps `has_starter_stall: true` in the key's place. The claim
+   row holds a random per-process owner id (never a key): a process renews and gives back only its own.
+   A 408, a 5xx or no answer may have opened the venue: the claim is kept until the lists say it did not.
+   A refused opening is never published on `/state` or `/events`.
 3. **Brokers its book every tick**: `GET /api/broker/book`, then the exact maximum-surplus matching (bench
    first, ties in book order like the stall, never two offers of one maker, never ours, never an order
    already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.
