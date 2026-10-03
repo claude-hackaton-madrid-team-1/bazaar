@@ -28,6 +28,7 @@ Kind = Literal[
     "announcement",  # levels, venues, organiser notices
     "lesson",  # what one settled decision taught us (`learn.lessons`, from the evals' outcomes)
     "policy",  # a learned parameter set, e.g. a dealer ladder (`learn.evolve`), with its evidence
+    "tactic",  # what one bluff tactic earned with one counterparty (`agents.bluff`, N16); never in the default recall
 ]
 Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
 # What the outcome learner writes: everything else in the table is the feed reader's (N12).

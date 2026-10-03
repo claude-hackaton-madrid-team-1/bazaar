@@ -53,6 +53,7 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    bluff_enabled: bool = True
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -86,6 +87,7 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
 }
 
 

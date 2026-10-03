@@ -110,6 +110,7 @@ negotiates well.
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 worker (before Sat 08:30) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
+| N16 (new) | **P1 (Omar)** · Strategic bluffing: deterministic tactic bank in the words (budget cap, outside option, low need, walk threat, fake demand, cost floor; kindness for Abuela), a per-counterparty bandit over `tactic` lessons in the N3 store, kill switches `BAZAAR_BLUFF=0` + `bluff_enabled`; the lie lives only in the text, never in a structured field ([spec](./N16-spec.md)) | 1 → 2 | 🔵 worker (stacked on #96; before Duels II, Sat 18:00) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
@@ -164,6 +165,23 @@ Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
+
+### N16 — Strategic bluffing (steps; spec: [N16-spec.md](./N16-spec.md))
+Files: `src/bazaar_agent/agents/{tactics,bluff}.py`, `learn/model.py`, `guardrails.py`, `GUARDRAILS.md`,
+`agents/{taker,dealer}.py`, `cli.py`, `.railway/railway.py`, `tests/test_{tactics,bluff}.py`
+- Step 1 — Tactic bank: ids, es/en templates without digits, invented numbers from the structured price only,
+  collision-free with private numbers, Abuela kindness only. · **Acceptance:** tests: no digit in a template, one
+  language per message, no private number or counterparty text in any rendered message.
+- Step 2 — Chooser + learning: `TacticBook` (UCB1 per counterparty, seeded ties, rewards, cooloff/flag/strike
+  penalties, no-gain and day-scoped disables), lessons as `Learning(kind="tactic")` through the N3 store.
+  · **Acceptance:** tests: deterministic pick, best learned tactic wins, a cooloff disables for the day,
+  lessons round-trip through `LearningStore` memory.
+- Step 3 — Kill switches: `bluff_enabled` in GUARDRAILS.md + `Guardrails`, `BAZAAR_BLUFF` env,
+  `preserve()` in IaC. · **Acceptance:** `uv run bazaar rules` output; IaC allow-list test.
+- Step 4 — Wiring: taker dealer bids, `dealer buy`, `duel run --play`; tactic id + counterparty in the decision
+  row (private keys); outcomes observed each tick; flush after the sends. · **Acceptance:** property test
+  (structured move identical with and without a tactic), accept-beats-bluff test, `/state` never shows a tactic.
+- Step 5 — Simulator run with tactics on (`BAZAAR_SIM=local`). · **Acceptance:** transcript lines pasted in the PR.
 
 ---
 
