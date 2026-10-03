@@ -101,3 +101,36 @@ def test_an_addressed_ask_unfilled_for_n_ticks_falls_back_to_public_at_the_same_
     m.on_tick(clock(tick=TICK + 3))  # 3 ticks old: cancelled and reposted for anyone, same price
     assert ("cancel", posted_id) in team.sent
     assert (68, None) in asks(team)
+
+
+def test_with_jev_the_fallback_is_public_at_the_exact_price(tmp_path):
+    from bazaar_agent.agents.maker_jev import MakerJev
+    from tests.test_maker_jev import FakeJev
+
+    team, public = Team(), Public()
+    jev = MakerJev(FakeJev("fair"), FakeJev("no"))
+    rules = parts(tmp_path, buyer_rank_enabled=True, buyer_rank_fallback_ticks=3)
+    m = Maker(team, public, live=True, log=lambda line: None, now=lambda: 1000.0, jev=jev, **rules)
+    m.on_tick(clock())
+    [(price, to)] = [(p, t) for p, t in asks(team) if t is not None and p > 20]
+    lists = [s for s in team.sent if s[0] == "list_offer"]
+    posted_id = 5000 + next(i for i, s in enumerate(lists) if s[2].get("cash") == price)
+    team.sent.clear()
+    team.offers = [{**our_ask(posted_id, 5, "LAT-09", price, created=TICK, expires=TICK + 40), "to": to}]
+    m.on_tick(clock(tick=TICK + 3))
+    assert ("cancel", posted_id) in team.sent
+    assert (price, None) in asks(team) and all(t != to for p, t in asks(team) if p != price or t is not None)
+
+
+def test_a_hostile_feed_string_keeps_asks_public_and_the_tick_alive(tmp_path, monkeypatch):
+    from bazaar_agent import buyers
+
+    def boom(*a, **k):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(buyers, "market_inputs", boom)
+    team, public = Team(), Public()
+    m, lines = maker(tmp_path, team, public, buyer_rank_enabled=True)
+    m.on_tick(clock())
+    assert asks(team) and all(to is None for _, to in asks(team))
+    assert any("buyer rank failed (AttributeError)" in line for line in lines)

@@ -35,6 +35,7 @@ class BuyerConfig:
     complete_ratio: float = 1.5  # completing a top-n team's page needs price >= this × our value
     held_marginal: float = 0.25  # a second copy's worth to a team that holds one (copy_marginals)
     unknown_need: float = 0.6  # need when the card's holders are not known at all
+    min_willing_ratio: float = 0.8  # address an ask only to a team seen paying at least this share of its price
 
 
 @dataclass(frozen=True)
@@ -230,11 +231,18 @@ def market_inputs(
     return holders, {t: dict(a.p_top) for t, a in amap.teams.items() if a.signals > 0}
 
 
-def pick(rows: Iterable[BuyerRow], tried: Iterable[str] = ()) -> str | None:
-    """The team to address an ask to: the best row that is not blocked, not a rival, not known to hold the card
-    and not already tried at this price. None: the ask stays public."""
+def pick(
+    rows: Iterable[BuyerRow], tried: Iterable[str] = (), price: float | None = None, cfg: BuyerConfig | None = None
+) -> str | None:
+    """The team to address an ask to: the best row that is not blocked, not a rival, has a known rank (a team
+    missing from the leaderboard could be anyone), is not known to hold the card, was not already tried at this
+    price, and (with `price`) was seen paying at least `min_willing_ratio` of it. None: the ask stays public."""
+    cfg = cfg or BuyerConfig()
     skip = set(tried)
     for r in rows:
-        if not r.blocked and r.rival is None and r.missing is not False and r.team not in skip:
-            return r.team
+        if r.blocked or r.rival is not None or r.rank is None or r.missing is False or r.team in skip:
+            continue
+        if price is not None and r.willing < cfg.min_willing_ratio * price:
+            continue
+        return r.team
     return None

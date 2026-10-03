@@ -124,6 +124,7 @@ class Target:
     reason: str
     counterparties: tuple[str, ...] = ()  # asks: the teams that chase the set; bids: the likely holders
     to: str | None = None  # addressed to this team (`max_counterparty_share`); None: anyone on the venue
+    final: bool = False  # a buyer-rank fallback: posted for anyone at this exact price (no addressee, no Jev price)
 
 
 def targets_from(book: Playbook) -> list[Target]:
@@ -234,6 +235,7 @@ class _MakerRun:
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
     settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
     buyer_inputs: tuple[dict[str, dict[str, int]], dict[str, dict[str, float]]] | None = None  # (holders, interest)
+    buyer_failed: bool = False  # the buyer rank failed this tick: every ask stays public
 
 
 class Maker:
@@ -419,7 +421,7 @@ class Maker:
         if run.listings_left <= 0:
             refused: str | None = "no listing left"
         else:
-            hold, advice = self._jev_hold(run, offer, t)
+            hold, advice = (False, None) if t.final else self._jev_hold(run, offer, t)
             if hold:
                 return
             refused = self._refusal(self._without(run, offer), t)
@@ -535,7 +537,8 @@ class Maker:
         blocked = self._blocked(run)
         if venue is not None and not blocked:
             t = self._route(run, t, venue.id)
-        t, advice, candidates = self._jev_price(run, t, venue.id) if venue and not blocked else (t, None, None)
+        jev = venue is not None and not blocked and not t.final
+        t, advice, candidates = self._jev_price(run, t, venue.id) if jev and venue else (t, None, None)
         if venue is not None and not blocked:
             t = self._address(run, t, venue.id)
         inputs = {
@@ -645,25 +648,31 @@ class Maker:
         """An ask the maker already decided to post, addressed to the best buyer when that passes every guardrail.
         Public when the rank is off, the ask is already addressed, the leaderboard is unknown, this copy was
         already addressed at this price (the fallback), or no non-rival buyer passes."""
-        if not self.rules.buyer_rank_enabled or t.side != "ask" or t.to is not None or t.asset_id is None:
+        if not self.rules.buyer_rank_enabled or t.side != "ask" or t.to is not None or t.asset_id is None or t.final:
             return t
-        if not self._ranks or any(p == t.price for _, p in self._tried.get(t.asset_id, ())):
+        if run.buyer_failed or not self._ranks or any(p == t.price for _, p in self._tried.get(t.asset_id, ())):
             return t
-        if run.buyer_inputs is None:
-            run.buyer_inputs = buyer_rank.market_inputs(run.snap.me, run.snap.catalog, run.snap.events, run.snap.scan)
-        holders, interest = run.buyer_inputs
-        rows = buyer_rank.rank_buyers(
-            t.ref,
-            catalog=run.snap.catalog,
-            events=run.snap.events,
-            holders=holders,
-            interest=interest,
-            ranks=self._ranks,
-            us=run.snap.us,
-            our_value=t.value,
-            price=t.price,
-        )
-        team = buyer_rank.pick(rows)
+        try:  # feed strings are hostile: a ranking that fails keeps the ask public, never costs the tick
+            if run.buyer_inputs is None:
+                snap = run.snap
+                run.buyer_inputs = buyer_rank.market_inputs(snap.me, snap.catalog, snap.events, snap.scan)
+            holders, interest = run.buyer_inputs
+            rows = buyer_rank.rank_buyers(
+                t.ref,
+                catalog=run.snap.catalog,
+                events=run.snap.events,
+                holders=holders,
+                interest=interest,
+                ranks=self._ranks,
+                us=run.snap.us,
+                our_value=t.value,
+                price=t.price,
+            )
+            team = buyer_rank.pick(rows, price=t.price)
+        except Exception as e:
+            run.buyer_failed = True
+            self.log(f"tick {run.snap.clock.tick} maker: buyer rank failed ({type(e).__name__}); ask stays public")
+            return t
         if team is None or self._denied(run, replace(t, to=team), venue) is not None:
             return t
         best = next(r for r in rows if r.team == team)
@@ -684,7 +693,7 @@ class Maker:
             old = o.created_tick is not None and tick - o.created_tick >= self.rules.buyer_rank_fallback_ticks
             if o.id in self._ranked and o.id not in busy and t is not None and old:
                 why = f"addressed to {self._ranked[o.id]} for {tick - (o.created_tick or tick)} ticks unfilled: public"
-                fallbacks.append(MakerAction("reprice", why, replace(t, price=o.price), o))
+                fallbacks.append(MakerAction("reprice", why, replace(t, price=o.price, final=True), o))
         posts = [a for a in actions if a.kind == "post"]
         return [a for a in actions if a.kind != "post"] + fallbacks + posts
 

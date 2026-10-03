@@ -141,7 +141,7 @@ def test_pick_addressee_skips_blocked_rivals_and_tried_prices():
         events=events,
         holders={},
         interest={},
-        ranks=by.leaderboard_ranks(BOARD),
+        ranks={**by.leaderboard_ranks(BOARD), "t08": 16},
         us="t01",
         our_value=4.0,
     )
@@ -149,3 +149,10 @@ def test_pick_addressee_skips_blocked_rivals_and_tried_prices():
     assert by.pick(rows, tried={"t16"}) == "t08"
     assert by.pick([r for r in rows if r.rival]) is None  # only rivals: the ask stays public
     assert by.pick([]) is None
+
+
+def test_pick_needs_a_known_rank_and_a_buyer_seen_paying_near_the_price():
+    row = by.BuyerRow("SAL-01", "t16", 11, 10.0, 0.5, True, 7.0, None, False, "")
+    assert by.pick([row], price=12) == "t16"  # 10 >= 0.8 x 12
+    assert by.pick([row], price=13) is None  # 10 < 0.8 x 13: public
+    assert by.pick([by.BuyerRow("SAL-01", "t16", None, 10.0, 0.5, True, 7.0, None, False, "")]) is None
