@@ -127,7 +127,12 @@ def render_roadmap(phases: list[dict[str, Any]]) -> str:
     cards = []
     for ph in phases:
         items = "".join(_roadmap_item(it) for it in ph["items"])
-        events = "".join(f'<p class="events">⏱ {_inline(e)}</p>' for e in ph.get("events", []))
+        events_list = ph.get("events", [])
+        if not isinstance(events_list, list):
+            raise SystemExit(
+                f"architecture.status.json: roadmap events must be a list, got {type(events_list).__name__}"
+            )
+        events = "".join(f'<p class="events">⏱ {_inline(e)}</p>' for e in events_list)
         cards.append(
             f'<div class="item phase"><span class="mono">{html.escape(ph["when"])}</span>'
             f"<b>{html.escape(ph['title'])}</b>{events}<ul>{items}</ul></div>"

@@ -145,6 +145,11 @@ def test_every_roadmap_field_is_escaped() -> None:
     assert "<script>" not in out and out.count("&lt;script&gt;") == 5
 
 
+def test_roadmap_events_must_be_a_list() -> None:
+    with pytest.raises(SystemExit):
+        ap.render_roadmap([{"when": "x", "title": "y", "events": "09:00 open", "items": []}])
+
+
 def test_roadmap_is_optional_and_rejects_unknown_priorities() -> None:
     without = {k: v for k, v in DATA.items() if k != "roadmap"}
     assert "No roadmap yet" in ap.render_page(without, PLAN, TEMPLATE)
