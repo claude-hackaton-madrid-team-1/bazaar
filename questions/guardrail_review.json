@@ -1,0 +1,93 @@
+{
+  "about": "Guardrail review (SG1, Sat 3 Oct afternoon): one question per GUARDRAILS.md rule that may block points today, asked with the live state in questions/guardrail_review.state.json. Only a decided verdict changes a rule (cited in its GUARDRAILS.md line); undecided keeps today's value. Reproduce: set -a; . ./.env; set +a; uv run python -m bazaar_agent.jev judge --state questions/guardrail_review.state.json --questions questions/guardrail_review.json --log",
+  "questions": {
+    "cash_floor_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `cash_floor` should the agents keep: keep_50, lower_20 or lower_0?",
+        "note": "`cash_floor` is the cash no purchase may take us below (every process). Our venue is open already (no bond reserve held). The score counts duels, the dealer ladder (share of each dealer's price range captured on our best three deals per level), value gained in trades with other teams and the market; cash itself never scores, but a floor too low leaves no room for a fair counter, a fee or a duel day cost, and Sunday is a speed run."
+      },
+      "criteria": {
+        "keep_50": "50 still lets the cheap ladder buys and fees through, and the buffer is worth more than the extra room.",
+        "lower_20": "The buys that score need more than 31 P of room, and 20 still covers fees and a mistake.",
+        "lower_0": "Every primas should be usable now; nothing needs a buffer."
+      }
+    },
+    "dealer_sell_enabled_choice": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, should `dealer_sell_enabled` be turned back on (the maker sells duplicates to dealers), now that the backoff rules in `state.dealer_sell_fixes` are in and each new sell thread also needs a decided Jev yes?",
+        "note": "It was turned off because the desk reopened a sell thread with Abuela for the same card 4 times and blocked the taker's buys."
+      },
+      "criteria": {
+        "true": "The fixes stop the old failure, we hold duplicates worth little to us, and the dealers' bids clear our floor.",
+        "false": "The old failure could repeat, or no duplicate would sell above our floor."
+      }
+    },
+    "jev_accept_min_share_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `jev_accept_min_share` should a Jev early accept in a dealer thread need: keep_0_5, lower_0_3 or lower_0?",
+        "note": "The share of the gap between the dealer's opening ask and our first bid that her ask must give up before Jev may accept early. The ladder scores the share of the dealer's range we capture; a deal at her opening ask scores nothing."
+      },
+      "criteria": {
+        "keep_0_5": "Holding on meets the dealer near the middle; early accepts below half the gap waste ladder points.",
+        "lower_0_3": "0.3 is the share the ladder needs to score; deals are being lost by waiting.",
+        "lower_0": "Any ask inside our limit should be taken early."
+      }
+    },
+    "human_approval_above_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `human_approval_above` should card trades use: keep_60, raise_80 or raise_100?",
+        "note": "A card buy or sell priced at or above it needs a human approval first (fails closed). Our missing cards are rares (LAV-09/10 worth 112-165 to us, MAL-09/10 77-113) that dealers fill at 81-93; our spare SAL-10 drew team bids 61-71."
+      },
+      "criteria": {
+        "keep_60": "Large trades are rare and a human is around; the check costs little.",
+        "raise_80": "Trades between 60 and 80 are being lost waiting for a human and every other cap still bounds them.",
+        "raise_100": "Every rare trade should go without a human."
+      }
+    },
+    "max_price_uncommon_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `max_price_uncommon` should we keep: keep_26 or raise_32?",
+        "note": "The most we ever pay for an uncommon card. The official value of one more copy still caps every buy."
+      },
+      "criteria": {
+        "keep_26": "The uncommons we miss are worth less to us than the dealers' fills, or the official value already binds below 26.",
+        "raise_32": "An uncommon we need fills at 28-32 and is worth more than that to us at official value."
+      }
+    },
+    "team_swap_max_cash_per_hour_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `team_swap_max_cash_per_hour` should the team desk keep: keep_40, lower_20 or raise_60?",
+        "note": "The cash the team desk may add to swaps in one game hour. Swaps are how duplicates become page cards (Abuela's hint: swap your duplicates); every swap also needs our surplus, a fair split and a Jev yes."
+      },
+      "criteria": {
+        "keep_40": "40 fits our cash above the floor and has not been the binding limit.",
+        "lower_20": "Cash is short and swaps should mostly trade card for card.",
+        "raise_60": "Swaps with cash added are being refused by this cap while they would score."
+      }
+    },
+    "dealer_final_lift_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `dealer_final_lift` should we use: keep_0 or lift_0_15?",
+        "note": "A dealer's FINAL offer may be taken up to the rarity cap × (1 + lift), never above our value minus the minimum surplus or the official value."
+      },
+      "criteria": {
+        "keep_0": "The finals we see are within today's caps, or the official value binds first.",
+        "lift_0_15": "Finals just above our caps are lost while they are worth more than the price to us."
+      }
+    }
+  }
+}

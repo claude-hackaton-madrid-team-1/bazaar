@@ -79,6 +79,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
+from bazaar_agent.agents.strategy_gate import AskFn, StrategyGate
 from bazaar_agent.agents.team_desk import disabled, maker_may_list
 from bazaar_agent.decisions import RELIST_REST, DecisionLog, Status
 from bazaar_agent.guardrails import (
@@ -305,6 +306,7 @@ class Maker:
         market: Any = None,
         notices: VenueNotices | None = None,
         sell_market: Callable[[Any], SellMarket | None] | None = None,
+        strategy_jev: AskFn | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
@@ -331,7 +333,9 @@ class Maker:
         self._ranks_tick: int | None = None
         self._tried: dict[int, set[tuple[str, int]]] = {}
         self._ranked: dict[int, str] = {}
-        self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market)
+        # Jev gates new sell threads (SG1, `dealer_sell_duplicates_worth_it`); no Jev = no new sell thread.
+        gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks) if strategy_jev else None
+        self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)

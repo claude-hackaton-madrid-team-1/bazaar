@@ -2642,6 +2642,26 @@ def _swap_jev(settings: Any, rules: Any) -> Any:
     return ask
 
 
+def _strategy_jev(settings: Any, rules: Any) -> Any:
+    """Jev on `questions/strategies.json` (SG1) as `strategy_gate.AskFn`: each question's own bar (design,
+    0.75) and `jev_timeout_s`; anything but a decided yes keeps that strategy off."""
+    from bazaar_agent.agents.runtime import JevAdvice
+    from bazaar_agent.agents.strategy_gate import QUESTIONS_FILE
+    from bazaar_agent.jev import judge, load_questions
+
+    questions = load_questions(REPO_ROOT / "questions" / QUESTIONS_FILE)
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+    timeout_s = rules.jev_timeout_s
+
+    def ask(name: str, state: dict[str, Any]) -> JevAdvice:
+        result = judge(state, {name: questions[name]}, api_key=key, timeout_s=timeout_s)
+        tm.record_jev(result, name)
+        verdict = result.verdicts[name]
+        return JevAdvice(verdict.verdict, verdict.value, verdict.probabilities, verdict.reason)
+
+    return ask
+
+
 def _status_port(port: int | None) -> int:
     """`--port`, else Railway's PORT, else 0 (no status server on a laptop unless asked)."""
     import os
@@ -2886,6 +2906,7 @@ def agent_taker(
             lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
             swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
+            strategy_jev=_strategy_jev(settings, rules) if jev else None,  # no Jev: no ladder probe (SG1)
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             cards=_cards_heartbeat(kw, settings),
@@ -2927,7 +2948,16 @@ def agent_maker(
             from bazaar_agent.agents.dealer_sell_data import db_loader
 
             sell_market = db_loader(lambda: db.connect(app="bazaar-maker-sell", connect_timeout_s=3), kw["log"])
-        return Maker(team, public, jev=jev_, market=market, notices=notices, sell_market=sell_market, **kw)
+        return Maker(
+            team,
+            public,
+            jev=jev_,
+            market=market,
+            notices=notices,
+            sell_market=sell_market,
+            strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
+            **kw,
+        )
 
     _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 

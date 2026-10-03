@@ -542,6 +542,21 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 4 — find out whether a duel accept counts against `accepts_per_team_per_tick`. · 🚫 unknown from the data
   (never observed either way); live probe proposed in the PR, a human runs it.
 
+### SG1 — Jev-gated strategy pack + guardrail review ([spec](SG1-spec.md))
+- Step 1 — guardrail review: one Jev question per rule that may block points (`questions/guardrail_review.json`,
+  live state in `questions/guardrail_review.state.json`); apply only decided changes, cite each verdict in its
+  GUARDRAILS.md line. · **Acceptance:** `uv run bazaar rules` loads; every reviewed line names its verdict.
+- Step 2 — `agents/strategy_gate.py` + `questions/strategies.json`: a strategy runs only on a decided yes, asked
+  again every `strategy_jev_refresh_ticks`, every answer a `strategy_gate` row. · **Acceptance:** tests/test_strategy_gate.py.
+- Step 3 — (a) ladder probe in the taker (`agents/ladder_probe.py`): one small dealer buy per dealer per game hour,
+  top ≤ official value, cap, cash room, ≥ `ladder_probe_min_share` of her range, never below her lowest fill.
+  · **Acceptance:** tests/test_ladder_probe.py.
+- Step 4 — (b) dealer sells: Jev gate on new sell threads, no thread with a dealer the taker wanted
+  (`dealer_sell_taker_window_ticks`), a final taken only at ≥ max(floor, 0.5 × first ask). · **Acceptance:**
+  tests/test_strategy_gate.py (maker section).
+- Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
+  key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

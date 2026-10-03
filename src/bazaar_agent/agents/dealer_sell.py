@@ -28,6 +28,7 @@ from bazaar_agent.agents.dealer import (
     newest_dealer_offer,
     settled_price,
     whole_primas,
+    with_name,
 )
 from bazaar_agent.guardrails import OFF_PAGE_RARITIES
 
@@ -122,9 +123,12 @@ def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     return Move("bid", price, reason=f"counter above her unraised bid {bid}")
 
 
-def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool) -> Move:
-    """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask."""
+def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool, final_min: int = 0) -> Move:
+    """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask.
+    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`)."""
     neg.see_bid(bid)
+    if final and bid is not None and bid < final_min:
+        return Move("walk", reason=f"her final {bid} is below {final_min} (share of our first ask)")
     if bid is None and neg.asks and neg.opening_bid is None:
         neg.awaiting_reply = True
         return _patient(neg, "waiting for her first bid") or Move("walk", reason="no bid from her", rest=True)
@@ -166,8 +170,8 @@ def ask_schedule(plan: AskPlan) -> list[int]:
 
 def sell_words(step: int, price: int, dealer: str = "") -> str:
     """Kind, varied words for an ask. The structured price is what binds; the text never changes it."""
-    name = DEALER_NAMES.get(dealer, "amigo")
-    return SELL_WORDS[step % len(SELL_WORDS)].format(p=price, n=name)
+    name = DEALER_NAMES.get(dealer, "")
+    return with_name(SELL_WORDS[step % len(SELL_WORDS)], price, name)
 
 
 def sell_topic(asset_id: int) -> dict[str, Any]:
