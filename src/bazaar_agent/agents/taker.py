@@ -106,6 +106,7 @@ from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, S
 from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving
 from bazaar_agent.agents.trickster import note as forgiving_note
 from bazaar_agent.agents.words import WordsRequest
+from bazaar_agent.buyers import leaderboard_ranks
 from bazaar_agent.cards_heartbeat import CardsHeartbeat
 from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
 from bazaar_agent.evals.dealers import price_class
@@ -154,6 +155,7 @@ from bazaar_agent.ticks import Clock, action_budget_s
 from bazaar_agent.watchdog import Watchdog
 
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
+DESK_RANKS_EVERY = 10  # ticks between leaderboard reads for the team desk's partner order (keyless)
 THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
 
 
@@ -571,6 +573,7 @@ class Taker:
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
         # AF1: the desk asks teams their multipliers and stores what they say (and what we infer) off the tick.
         self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger, affinity=affinity)
+        self._desk_ranks_tick: int | None = None
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
@@ -700,6 +703,7 @@ class Taker:
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
         self.team_desk.matrix = self.news.matrix if self.news is not None else None
+        self._refresh_desk_ranks(run.snap.clock.tick)
         view = run.team_view = self._team_view(run, threads)
         proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
         self._accept(run, proposals)
@@ -810,6 +814,20 @@ class Taker:
             scan=snap.scan,
             round=snap.clock.round,
         )
+
+    def _refresh_desk_ranks(self, tick: int) -> None:
+        """The leaderboard's ranks for the team desk's partner order (weaker teams first), read keyless at most once
+        per `DESK_RANKS_EVERY` ticks (it refreshes every few minutes); unreadable: the last ranks stand."""
+        if self._desk_ranks_tick is not None and 0 <= tick - self._desk_ranks_tick < DESK_RANKS_EVERY:
+            return
+        self._desk_ranks_tick = tick
+        read = getattr(self.public, "leaderboard", None)
+        if read is None:
+            return
+        try:
+            self.team_desk.ranks = leaderboard_ranks(read())
+        except Exception as e:  # noqa: BLE001 — the order is a preference, never a reason to lose the tick
+            self.log(f"tick {tick} taker: leaderboard unreadable ({type(e).__name__}); team desk keeps its order")
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
         """`offer_is_worth_accepting` for this state. The same state (tick aside) asked within `jev_cache_ticks`

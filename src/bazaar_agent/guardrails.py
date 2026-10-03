@@ -206,6 +206,7 @@ class Guardrails(BaseModel):
     team_swap_jev_gate: bool = True
     team_swap_jev_min_confidence: float = Field(default=0.75, ge=0.5, le=1)
     team_swap_max_cash_per_hour: int = Field(default=40, ge=0)
+    team_words_venue_invite: str = Field(default="none", max_length=8)
     team_desk_never_trade: str = "none"  # GUARDRAILS.md sets the live list (code without the file: no list)
     dealer_sell_enabled: bool = False
     dealer_sell_max_per_game_hour: int = Field(default=4, ge=0, le=8)
@@ -389,6 +390,7 @@ ENFORCED_BY: dict[str, str] = {
     "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
     "team_swap_jev_gate": "agents.team_desk.jev_gate (every swap proposal and accept; fail closed)",
     "team_swap_jev_min_confidence": "agents.team_desk.jev_gate (Jev team_swap_worth_it threshold)",
+    "team_words_venue_invite": "agents.team_desk (one invite line to our venue in every team proposal)",
     "team_desk_never_trade": "agents.team_desk (no open, proposal or accept with these teams)",
     "team_swap_max_cash_per_hour": "agents.team_desk (cash we add to swaps, `team:` spend rows in the ledger)",
     "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
