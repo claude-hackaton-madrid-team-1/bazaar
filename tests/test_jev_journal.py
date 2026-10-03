@@ -751,3 +751,18 @@ def test_a_lone_surrogate_in_a_rivals_text_never_stops_the_duel_tick(duel_cli, t
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1", "--no-jev"])
     assert result.exit_code == 0, result.output
     assert client.sent == [("accept", 95)]
+
+
+def test_a_failing_duel_injection_tagger_never_costs_the_duel_its_move(duel_cli, monkeypatch):
+    """#152 review r5 P3: the duel tag is calibration only."""
+    from bazaar_agent.agents import injection_tags
+
+    cli, client, asked, tmp_path = duel_cli
+
+    def broken(self, *a, **kw):
+        raise RuntimeError("tagger bug")
+
+    monkeypatch.setattr(injection_tags.InjectionTags, "tag", broken)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)] and "injection tagging failed (RuntimeError)" in result.output

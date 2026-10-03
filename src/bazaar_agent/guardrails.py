@@ -147,6 +147,10 @@ class Guardrails(BaseModel):
     team_swap_min_surplus: float = Field(default=3.0, ge=0)
     team_swap_max_their_share: float = Field(default=0.6, gt=0, le=1)
     team_swap_max_our_share: float = Field(default=0.85, gt=0, le=1)
+    dealer_sell_enabled: bool = False
+    dealer_sell_max_per_game_hour: int = Field(default=4, ge=0, le=8)
+    dealer_sell_open_above_top: float = Field(default=1.6, ge=1.0, le=5.0)
+    dealer_sell_rounds: int = Field(default=5, ge=1, le=20)
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -240,6 +244,10 @@ ENFORCED_BY: dict[str, str] = {
     "team_swap_max_their_share": "swaps.judge (every proposal and accept)",
     "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
     "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
+    "dealer_sell_enabled": "agents.maker → agents.dealer_sell_desk.SellDesk (the maker only; not `dealer sell`)",
+    "dealer_sell_max_per_game_hour": "agents.dealer_sell_desk.SellDesk (openings per game hour, this process)",
+    "dealer_sell_open_above_top": "agents.dealer_sell_desk.plan_for (our opening ask over the dealer's top fill)",
+    "dealer_sell_rounds": "agents.dealer_sell_desk.plan_for (steps from the opening ask to the typical fill)",
 }
 
 
@@ -528,8 +536,11 @@ ActionKind = Literal[
     "venue_fee",
     "venue_announce",
     "broker_match",
+    "dealer_sell",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
+# A sale: `sell` (a board ask), `accept_sell` (we take a bid), `dealer_sell` (our ask to a dealer on a sell thread).
+SELLING = ("sell", "accept_sell", "dealer_sell")
 TEAM_TRADES = ("buy", "sell", "accept_buy", "accept_sell", "bid")  # the kinds a counterparty cap applies to
 ANY_TEAM = "*"  # the counterparty of an offer anyone may take: the worst case is the team we trade most with
 
@@ -727,11 +738,11 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         )
     if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0:
         v.append(f"we already hold {action.item} (block_buying_held_cards)")
-    if action.kind in ("sell", "accept_sell") and action.price is not None and action.your_value is not None:
+    if action.kind in SELLING and action.price is not None and action.your_value is not None:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
-    selling = action.kind in ("sell", "accept_sell")
+    selling = action.kind in SELLING
     copies = (ctx.held if ctx.sellable is None else ctx.sellable).get(action.item, 0)
     if selling and rules.protects(action.item, action.rarity, copies):
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
