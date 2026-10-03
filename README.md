@@ -930,14 +930,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
+- [2026-10-03] finding — six duels on one deadline can run out of accept ticks
+- [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
+- [2026-10-03] gotcha — the local simulator's port is hardcoded, so parallel workers collide on 8765
 - [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
-- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
-- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 
 <!-- BAZAAR:STATUS:END -->
 

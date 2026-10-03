@@ -334,3 +334,23 @@ symptom: maker reprice rows (approved, chosen=False, move.price = strategy targe
 reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent accept rows and refusal codes
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
+
+### [2026-10-03] gotcha — the local simulator's port is hardcoded, so parallel workers collide on 8765
+`BAZAAR_SIM=local` is `LOCAL_SIM_URL = http://127.0.0.1:8765` (config.py) and `scripts/sim_smoke.py` serves 8765, with no
+override. With several workers on one laptop, run the smoke or a proof from a scratch `git worktree` whose `config.py` and
+`sim_smoke.py` are patched to your own port (D1 used 8805 for the smoke, 8811-8824 for proofs), never committed.
+
+### [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
+`duel run --play --no-jev` over HTTP against `bazaar-sim` (3 seller/buyer pairs per team on one deadline, 12-tick duels,
+price-only and two-issue sessions, 96 finished duels per run). Mean score (share × kept): honest zoo v1 0.268, v2 0.364,
+v2 + B11 (min share 0.3, endgame 1) 0.383, + `duel_days_signed` 0.419; exploiters v1 0.169, v2 0.259, v2 + B11 0.318.
+Outside-limit closes: 0 of 776. Rounds per deal: v1 6.2, v2 1.1. Reproduce: `docs/night/d1-sim-proof.md`.
+
+### [2026-10-03] finding — six duels on one deadline can run out of accept ticks
+`plan_moves` counts only duels holding an acceptable offer; when more rivals cross into our limit on D − 3 than ticks are
+left, one duel ends with an acceptable offer unanswered (sim duel 86: rival 81 vs our value 87, three accepts wanted on
+D − 2). 1 of 96 duels for v2 and for v1 at decay 0.08. A planner that also counts converging duels would accept earlier.
+
+### [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
+`refused duel_closed (duel N is live)`: the rival accepted our previous offer earlier in the tick, the deal settles next
+tick, and the payload has no `accepted` flag to tell us. The deal still closes at our earlier offer; nothing is lost.
