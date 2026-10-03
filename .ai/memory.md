@@ -903,3 +903,17 @@ ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Po
 `duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
 move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
 owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.
+
+### [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
+`scripts/tick_profile.py` on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) against a
+local `bazaar-sim` at 15 s ticks, 40 ticks of taker + maker + duels together (SP1): at 100 ms per request the taker
+took p50 1.12 s / p95 1.43 s, the maker 0.65 / 1.07 s, the duels 0.60 / 0.69 s of a 12.6 s budget; with 250 ms per
+request and Jev 1 s slower, 3.31 / 1.55 / 2.04 s p50. 0 ticks over budget, 0 decisions dropped, 0 × 429, busiest
+second 8-12 keyed requests (bucket 20), mean 0.66-0.68 keyed req/s for all three (limit 5). The taker asked Jev
+`spend_pack_slot_now` on every tick for an unchanged state (40 calls in 40 ticks): `jev_cache_ticks` cut it to 12-13,
+and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms + slow Jev).
+
+### [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
+Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
+sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
+measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
