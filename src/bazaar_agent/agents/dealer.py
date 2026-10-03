@@ -135,6 +135,7 @@ def counter_below(neg: Negotiation, ask: int) -> Move:
 
 
 MAX_WAITS = 2  # the feed: every answered bid was answered within 0-1 tick; ~2 % of first bids never were
+MAX_TICK_WAIT_S = 61.0  # RULES.md: the pace is 5-60 s; a longer wait for one tick is never trusted
 
 
 def patient(neg: Negotiation, waiting: bool, reason: str) -> Move | None:
@@ -518,6 +519,8 @@ def negotiate(
         "accepted": False,
         "reopen": None,
         "clock": None,
+        "limited_at": None,  # the tick a close was refused with a rate limit (its retry waits for the next)
+        "walk_reopen": False,  # our walk (refused) was one after she held her opening: reopen lower once closed
     }
 
     def holding(when: str) -> bool:
@@ -555,8 +558,9 @@ def negotiate(
         crash the caller: an unreadable thread or a failed booking is said loudly, with the thread id."""
         try:
             thread = client.thread(tid)
-        except BazaarError as e:
-            log(f"thread {tid} unreadable ({e.code}): check it by hand, a deal there would be unbooked")
+        except Exception as e:  # a refusal, or a cut connection the SDK lets through (IncompleteRead)
+            code = e.code if isinstance(e, BazaarError) else type(e).__name__
+            log(f"thread {tid} unreadable ({code}): check it by hand, a deal there would be unbooked")
             return
         try:
             ended(thread, clock)
@@ -573,6 +577,7 @@ def negotiate(
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
+                state["limited_at"] = clock.tick
                 return "open"
         else:
             status = answer.get("status") if isinstance(answer, dict) else None
@@ -594,13 +599,15 @@ def negotiate(
             for _ in range(5):
                 if not now.is_live or now.tick > first.tick:
                     break
-                sleep(seconds_until_next_tick(now))
+                sleep(min(seconds_until_next_tick(now), MAX_TICK_WAIT_S))  # never trust a huge next_tick_in
                 now = Clock.model_validate(client.clock())
-        except BazaarError as e:
-            log(f"thread {tid}: clock unreadable ({e.code}), no second close")
+        except Exception as e:  # like run_per_tick's clock read: an empty body or a cut connection never crashes
+            log(f"thread {tid}: clock unreadable ({type(e).__name__}), no second close")
+            reread(state["clock"] or Clock(tick=0))  # a "Deal!" that landed is still booked
             return
         if not now.is_live or now.tick <= first.tick:
             log(f"thread {tid}: no live tick for a second close ({now.doors}, paused={now.paused})")
+            reread(now)  # a "Deal!" that landed is still booked
             return
         if holding(f"tick {now.tick}, before closing thread {tid} again"):
             reread(now)  # a "Deal!" that landed is booked; otherwise the thread stays open, never closed
@@ -712,13 +719,16 @@ def negotiate(
                 with obs.tool("accept"):
                     client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
+                state["walk_reopen"] = False  # a later timeout close is not that refused walk
             elif move.kind == "bid" and move.price is not None and text is not None:
                 with obs.tool("say"):
                     body = client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
+                state["walk_reopen"] = False  # a later timeout close is not that refused walk
                 if bluff is not None and choice is not None:
                     bluff.sent(choice, their_price=ask, their_offer=offer_id, tick=clock.tick, message=message_id(body))
             elif move.kind == "walk":
+                state["walk_reopen"] = move.reopen
                 state["status"] = close("walked", clock)
                 if state["status"] in ("walked", "closed"):
                     state["reopen"] = reopen_start(neg) if move.reopen else None
@@ -741,6 +751,8 @@ def negotiate(
         # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
         run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
+            reread(state["clock"] or Clock(tick=0))  # both settle-wait reads may have failed: one more read
+        if state["status"] == "open":
             state["status"] = "accepted_pending"
     last: Clock | None = state["clock"]  # on_deal's tick and game hour: the last tick we handled
     if last is None:
@@ -752,9 +764,14 @@ def negotiate(
         reread(last)  # a "Deal!" may have landed while we held: book it; the thread stays open otherwise
         state["status"] = "held" if state["status"] == "open" else state["status"]
     elif state["status"] == "open":
-        state["status"] = close("timeout", last)
+        if state["limited_at"] != last.tick:  # our walk's close was not refused this very tick: close now
+            state["status"] = close("timeout", last)
         if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the NEXT tick
             retry_close_next_tick()
+        if state["status"] in ("timeout", "closed") and state["walk_reopen"]:
+            state["reopen"] = reopen_start(neg)  # the held-opening walk closed late: still reopen lower
+        if state["status"] == "open":
+            reread(last)  # the retry gave up too: a "Deal!" that landed is still booked
         if state["status"] == "open":
             standing = neg.bids[-1] if neg.bids else "-"
             log(f"thread {tid} is still open with our bid {standing} standing: close it by hand")
