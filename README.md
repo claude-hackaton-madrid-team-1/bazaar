@@ -1178,6 +1178,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
@@ -1189,7 +1190,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
 | [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
-| [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
 
 ### Open pull requests
 
@@ -1197,7 +1197,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 |---|---|---|
 | [#164](../../pull/164) | feat(n17): bazaar team-checks — spec Q1-Q6 from stored data, read-only (N17-10) | `ogarciarevett/n17-live-checks` |
 | [#163](../../pull/163) | B27: duel settings card + e2e runner + one done-read per tick (into #150) | `night/b27-card` |
-| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | `ogarciarevett/ledger-156` |
 | [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
 | [#160](../../pull/160) | docs(pitch): Sunday presentation pack, first draft (P1) | `ogarciarevett/docs-pitch` |
 | [#159](../../pull/159) | DO NOT MERGE: B27 duel stack integration (merge order #60→#86→#103→#113→#115→#130) + settings card | `night/b27-duel-stack` |
@@ -1215,5 +1214,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
+| [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 
 <!-- BAZAAR:ACTIVITY:END -->
