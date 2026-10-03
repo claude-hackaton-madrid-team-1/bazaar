@@ -16,7 +16,7 @@ Draft PR #81, stacked on #61. Nothing went live: Friday's public feed (273 deale
 | chato | uncommon | 33 | 12 | 6 | 28 / 28 / **29** / 31 / 32 | 6 |
 | chato | rare | 97 | 15 | 9 | 82 / 90 / **91** / 91 / 93 | 5 |
 
-How Abuela haggles: she opens, drops 2–5 on her first counter, then 0–2 per round. She names a final after a median of 5 bids, and she takes our bid the moment it reaches her limit. Chato holds his first move, then moves about as far as we do. A minority of threads opened at 17 (13 pack threads, 5 uncommon); #61's `counter_below` handles that case.
+How Abuela haggles: she opens, drops 2–5 on her first counter, then 0–2 per round. She names a final after a median of 5 bids, and takes our bid the moment it reaches her limit. Chato holds his first move, then matches ours. A minority of threads opened at 17; #61's `counter_below` handles that.
 
 ## Backtest: the real `decide()` (#61) against dealers fitted to these threads
 Share = (opening − price) / (opening − that conversation's limit); no deal = 0. "Replay" re-runs each real thread with its own counters and patience, the limit at the top / bottom of its bracket.
@@ -61,14 +61,14 @@ Inputs: cash 353 at the open plus the 150 grant at 09:03, `cash_floor` 270, and 
 When Abuela takes our bid, the team's accept slot is not used. Blocked, each with its numbers: the Chato uncommon, Chato rare and Chato silver pack, and the Abuela pack.
 
 ## What Marius must decide
-1. **Chato (L2 ladder and early L3).** Set `dealer_price_caps = chato:uncommon=31` in GUARDRAILS.md. This rule is new, defaults to `none`, and applies to Chato only (Abuela and team buys keep 26).
-   - At 31 the model gives deal rate 0.83 and share 0.70 (replays 0.83).
-   - At 32, starting at 23 (`dealer buy <ref> --start 23 --max 32 --dealer chato`), it gives deal rate 1.00 and share 0.97. Thin data: 6 threads.
+1. **Chato (L2 ladder and early L3): two new switches, both off by default.**
+   - `dealer_price_caps = chato:uncommon=31` in GUARDRAILS.md. It applies to Chato only, so Abuela and team buys keep 26. Model: deal rate 0.83. In the simulator, `dealer buy <ref> --start 27 --max 31 --dealer chato --live` made 3 of 3 deals at the limit.
+   - At 32 with a 23 start, the model gives deal rate 1.00 and share 0.97, but that rests on 6 threads.
    - Rares need `chato:rare=93`.
-   - In the simulator, with `chato:uncommon=31`, `dealer buy <ref> --start 27 --max 31 --dealer chato --live` made 3 of 3 negotiated deals, each exactly at the limit. With `none` it refuses before opening a thread.
-   - For the desk to do it by itself, also set `ladder_level_deals = 3` in STRATEGY.md (new; the default 0 keeps buying each card from the cheapest dealer). The simulator run (desk, `ladder_floor_quantile` 0.5, Chato open) went: 3 Chato uncommons at 27, 27 and 28, each exactly at his limit, then back to Abuela; 7 of 7 deals, mean share 0.97. Otherwise Chato's three deals run from the plan's commands.
-   - The alternative is selling duplicates to Chato: he bids 13 and goes to 15–16 for an uncommon. That needs a sell negotiation (`dealer.py` is buy-only), and it is unverified that sales count.
-2. **Runtime:** set `ladder_floor_quantile = 0.5` in STRATEGY.md (default 0 = today's ladder), so the desk opens Abuela uncommons at 21 instead of 17. Real threads say yes; the simulator, whose Abuela is more patient, shows no gain.
+   - `ladder_level_deals = 3` in STRATEGY.md lets the desk do it by itself. In the simulator the desk made 3 Chato uncommons at his limit, then went back to Abuela: 7 of 7 deals, share 0.97.
+   - Caveats on `ladder_level_deals`: the count runs over the whole feed the desk holds, not per day (raise it to 6 on Sunday). Once an L3 dealer opens, it becomes the "newest" dealer and gets these buys with no floor learned yet. Buys are still ranked by surplus, so Chato is not strictly first.
+   - The alternative is selling duplicates to Chato: he bids 13 → 15–16 for an uncommon. That needs a sell negotiation (`dealer.py` is buy-only), and it is unverified that sales count.
+2. **`ladder_floor_quantile = 0.5`** in STRATEGY.md (default 0 = today's ladder): the desk opens Abuela uncommons at 21 instead of 17. Real threads say yes; the simulator's more patient Abuela shows no gain.
 3. **Packs:** keep the cap at 20 and buy no Abuela packs, or lift it to 22–24 (deal rate 0.81–0.96).
 
 ## 09:00 runbook
