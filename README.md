@@ -15,8 +15,81 @@ first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 | Taker | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` |
 | Maker | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` |
 | Phoenix | https://phoenix-production-6aa3.up.railway.app |
+| Simulator (a fake Bazaar for tests, key `sim-team1`) | https://bazaar-sim-production-1d48.up.railway.app · see [Simulator](#simulator-test-every-agent-while-the-game-is-closed) |
 
 Endpoints, event envelope and examples for the dashboard: [`docs/services.md`](docs/services.md).
+
+## Simulator (test every agent while the game is closed)
+
+`bazaar-sim` is an HTTP API that behaves like `https://bazaar.causaprima.ai`: the same routes, the
+same JSON shapes (checked against `docs/api/openapi.json` and the captured fixtures), the same rules.
+The vendored SDK and every `bazaar` command work against it unchanged. It never talks to the real
+game. Public instance: **https://bazaar-sim-production-1d48.up.railway.app** (`/api/health`, `/api/clock`, `/sim/state`).
+
+**The target is one flag, `BAZAAR_SIM`, over hardcoded URLs** (`src/bazaar_agent/config.py` decides,
+every client goes through it: CLI, agents, runtime, MCP server, monitor):
+
+| `BAZAAR_SIM` | Target | Key |
+|---|---|---|
+| unset or `0` | the real game, https://bazaar.causaprima.ai | `BAZAAR_KEY` (the team slip) |
+| `1` | the simulator, https://bazaar-sim-production-1d48.up.railway.app | `BAZAAR_SIM_KEY` (default `sim-team1`) |
+| `local` | a simulator on this laptop, http://127.0.0.1:8765 (`uv run bazaar-sim serve`) | `BAZAAR_SIM_KEY` |
+
+Every command prints its target first (`target: real game …` or `target: SIMULATOR …`), and so do
+`bazaar status`, the taker's and maker's `/health` and the MCP server's `/health` (`target`).
+`BAZAAR_URL` is gone: if it is still set (old `.env` files had it), every command stops at once and
+says so. Remove the line.
+
+```sh
+BAZAAR_SIM=1 uv run bazaar status                                   # Team 1 in the simulator: 400 P, 15 cards
+BAZAAR_SIM=1 uv run bazaar clock                                    # one tick every 10 s
+BAZAAR_SIM=1 uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live   # haggle with the simulated Abuela
+BAZAAR_SIM=1 uv run bazaar sell list <ref> --price 10 --live        # a rival team may buy it a few ticks later
+BAZAAR_SIM=1 uv run bazaar duel run --play --max-ticks 20           # a simulated duel session
+BAZAAR_SIM=1 uv run bazaar agent taker --live --max-ticks 10        # the taker/maker against the simulator
+BAZAAR_SIM=1 uv run bazaar monitor --no-db                          # the live SSE stream works too
+BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another simulated team (sim-team1 ... 8)
+```
+
+- **Keys.** `sim-team1` … `sim-team8` are teams `t01` … `t08` (not secrets: it is a simulator).
+  With `BAZAAR_SIM=1` the real `BAZAAR_KEY` is not even read, so it cannot reach the simulator; on
+  top, only a `sim-` key is ever sent to a simulator and a `sim-` key is refused for the real game,
+  before any request. The simulator itself answers `401 bad_key` to anything that is not one of its
+  keys and never logs a presented key.
+- **Its own files and database.** Against a simulator our files default to `.local/sim-client/`
+  (the real feed capture and ledger in `.local/` never see simulated play), and Postgres is
+  `BAZAAR_SIM_DATABASE_URL`: the `bazaar_sim` database on the team's server (same host, port and
+  password as `DATABASE_URL`, database `bazaar_sim` instead of `railway`; schema already applied).
+  A database URL naming `railway` is refused while `BAZAAR_SIM` is on; without
+  `BAZAAR_SIM_DATABASE_URL` the ledger falls back to the local JSONL file.
+- **Rules it enforces** (RULES.md): structured offers settle at the next tick, all at once or not
+  at all; per tick one accept per team, one message per conversation, twelve new listings (a
+  cancelled one counts), `429 wait_for_tick` with `next_tick`; six conversations (one per dealer),
+  thirty open offers; `insufficient_cash`, `not_owner`, `asset_locked`, `self_venue`,
+  `persona_quota`, `locked`, `cooloff`, `sold_out`, `missing_days`; 5 requests/s per key (bursts of
+  20) and the wrong-key lockout; strict JSON bodies; six live streams per key.
+- **What lives in it.** Abuela and El Chato haggle as the real feed shows (Abuela opens commons at
+  12 and fills them at 7–9, packs at 30 with a floor of 17; Chato opens uncommons at 33 and rares at
+  97, holds your first move, then matches you), never concede on a repeated price, name a `final`
+  offer when patience runs out, and remember rudeness lightly (kindness lowers Abuela's floor once).
+  El Chato unlocks after three negotiated Abuela deals, or for everyone after an hour. Private values
+  follow the catalog (affinity × copy marginals), packs open by their slot odds, print runs are
+  finite. Six synthetic rival teams list duplicates, bid for missing cards and take good offers, so
+  the taker and the maker have a market. Duel sessions (the real payload shape; even sessions add
+  delivery days) start every 15 minutes, the Market Test every 20; team venues get broker keys
+  (`simbk-…`), `auto` crossing and bench offers. `/api/me` carries a live score (an approximation).
+- **Not simulated:** flags score nothing, no starter stalls, no gifts or easter eggs, a single
+  always-open day (no calendar), scoring weights are approximate.
+- **Reset** to tick 0 (the token is only in Railway: `bazaar-sim` → Variables → `SIM_ADMIN_TOKEN`):
+  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`
+  (add `--seed N` for another world).
+  `POST /sim/tick` with the same `X-Admin-Token` header advances one tick at once.
+- **Run one locally:** `uv run bazaar-sim serve` (http://127.0.0.1:8765; `SIM_TICK_SECONDS=2` for a
+  faster clock; the world persists in `.local/sim/world.sqlite`, `SIM_DATABASE_URL=memory` for none),
+  then `BAZAAR_SIM=local uv run bazaar status`.
+- **Code and tests:** `src/bazaar_sim/` (`app.py` routes, `world.py` clock and ticks, `threads.py` and
+  `dealers.py` the haggling, `market.py` and `broker.py` offers and venues, `duels.py`, `rivals.py`).
+  `tests/test_sim_*.py` run the unchanged vendored SDK and our CLI against an in-process server.
 
 ## Start in two minutes
 
@@ -352,12 +425,15 @@ server's answer or refusal code. Without Postgres they go to `.local/agents/*.js
 **Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
 `GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
 the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
-offers, the last 50 decisions with move, reason, strategy, Jev, guardrail and sent/would-send), and
+offers, the last 50 decisions with kind, card, counterparty, the move sent, Jev verdict, guardrail label and
+sent/would-send), and
 `WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
 `{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
 `agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
 there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
-(public read-only data). It runs on its own thread: publishing from the tick loop is an append and a
+(public read-only data), so only an allow-listed public view is published: never our card values, max
+prices, bid ladders, surplus, cash, limits or reasons (`docs/services.md`, "Public by design"). It runs
+on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
 
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
@@ -461,9 +537,9 @@ uv run bazaar agent tools                # every tool, read or write, which agen
 ### The tools as a remote MCP server (`bazaar-mcp`)
 
 `bazaar mcp serve` serves the same tool specs over the MCP Python SDK 2.x Streamable HTTP transport
-(`/mcp`, stateless JSON responses) for a teammate's own Claude Code. It holds no Claude token: each
+(`/mcp`, stateless JSON responses) for a teammate's own Claude Code: **https://bazaar-mcp-production.up.railway.app/mcp**. It holds no Claude token: each
 teammate's Claude Code is the client. Railway service `bazaar-mcp` (declared in
-`.railway/railway.py`; generate its public domain once with `railway domain --service bazaar-mcp --port 8080`).
+`.railway/railway.py`; its public domain was generated once with `railway domain --service bazaar-mcp --port 8080`).
 
 - `Authorization: Bearer <BAZAAR_MCP_TOKEN>` on every request (constant-time compare), else `401`;
   `GET /health` is the only public route (no mode, no game state). The server refuses to start without
@@ -487,12 +563,12 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' \
   | railway variable set BAZAAR_MCP_TOKEN --stdin --service bazaar-mcp
 ```
 
-A teammate gets the value from the service's Railway variables, exports it in their shell
+A teammate gets the value from the service's Railway variables (or the team lead's `.env`), exports it in their shell
 (`export BAZAAR_MCP_TOKEN=...`, never in a committed file), and adds the server to Claude Code
 ([docs](https://code.claude.com/docs/en/mcp)):
 
 ```sh
-claude mcp add --transport http bazaar https://<bazaar-mcp domain>/mcp \
+claude mcp add --transport http bazaar https://bazaar-mcp-production.up.railway.app/mcp \
   --header "Authorization: Bearer ${BAZAAR_MCP_TOKEN}"
 ```
 
@@ -553,8 +629,9 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
-| `bazaar-mcp` | `https://<generated domain>/mcp` (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | declared in `.railway/railway.py`, dry run (no `BAZAAR_LIVE`) |
+| `bazaar-mcp` | https://bazaar-mcp-production.up.railway.app/mcp (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | running, dry run (no `BAZAAR_LIVE`) |
 | `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
+| `bazaar-sim` | https://bazaar-sim-production-1d48.up.railway.app (`/api/health`, `/sim/state`) | `bazaar-sim.railway.internal:8080` | the simulated Bazaar for testing agents (keys `sim-team1`…`8`), world in the `bazaar_sim` database | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -577,6 +654,7 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-evals` | `bazaar evals run --every-ticks 6` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: only the keyless `/api/clock` paces it |
+| `bazaar-sim` | `bazaar-sim serve` on `PORT` 8080 (healthcheck `/api/health`), one tick every 10 s | database `bazaar_sim` (schema `sim`) on the team's Postgres | https://bazaar-sim-production-1d48.up.railway.app; the generated domain is not IaC (Railway does not declare generated domains) |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
@@ -594,7 +672,7 @@ Code, Python authoring, beta): change it by PR.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
   `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
-  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `PHOENIX_SECRET`,
+  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `SIM_ADMIN_TOKEN`, `PHOENIX_SECRET`,
   `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`, `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
   it touching a command line: `printf %s "$VALUE" | railway variable set NAME --stdin --service <svc>`.
 - **Pause every write** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
@@ -684,9 +762,15 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
   Keep `.ai/specs/02-plan.md`'s task index current: it is what the backlog table shows.
 - **Architecture page is generated too:** `scripts/architecture_page.py` renders `docs/architecture.html`
   from `docs/architecture.status.json` (box statuses, lists, links; edit the JSON, never the HTML) plus the
-  plan's task index, in the same hook and CI job. Git hooks and CI cannot publish claude.ai artifacts, so
+  plan's task index, in the same hook and CI job. The **roadmap** is `roadmap` in that JSON: one entry per time slot with
+  `when`, `title`, optional `events` (the organisers' schedule) and `items` of `{priority: P0-P3, status: done|wip|partial|todo,
+  text, owner?}` (the page shows `wip` as "doing"). Git hooks and CI cannot publish claude.ai artifacts, so
   after every merge that changes `docs/architecture.html`, the coordinator republishes it to
   https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39.
+- **Every PR is reviewed before it merges (Greptile is disabled):** run `/pr-review <PR number>`. The
+  `pr-reviewer` sub-agent merges the PR onto current `main` in a scratch worktree, runs the gate, and posts
+  a P0-P3 verdict on the PR. Fix every P0 and P1, re-run until it says APPROVE, then ask for the merge.
+  Run `sh scripts/sync-ai-docs.sh` once per clone or worktree so Claude Code sees the agent and the command.
 - **Backlog:** GitHub issues are the source of truth; the plan mirrors them.
 - **Never** push from an agent, never commit `.env`, one team key only.
 
@@ -699,17 +783,17 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | Task id | Title | Phase | Status |
 |---|---|---|---|
-| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | ✅ `bazaar monitor` (#32); real-time SSE + ours/theirs tagging 🔵 worker |
+| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | 🔵 `bazaar monitor` (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela `open`/`limit`/β estimate, ladder view (PR #43) |
 | [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
 | [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | 🔵 tick loop + budget + `.local/PAUSE` done; cancel-open-offers kill switch ⬜ |
 | [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
-| [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24) |
-| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 `bazaar duel run --play` running, waiting for practice duels |
+| [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is `bazaar evals report` (#58); `egg.found` alert and the L2 rule write-up ⬜ |
+| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
 | N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ not started (after strategy + LLM) |
 | [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`, dry run on Railway; live switch-on ⬜ |
-| [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); executor ⬜ |
+| [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); `untrusted_text` wrapping (#59); open: executor, flags, hostile-text tests, public `/state` follow-up, duel limit (PR #60) |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
 | N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ later |
@@ -717,12 +801,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored; `bazaar-evals` service; Market Test stub until we run a venue |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 worker (first version before Duels I) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
-| [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | 🔵 worker |
+| [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (dry run); our own venue ⬜ |
 | [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
-| [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | ⬜ |
+| [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | 🔵 outcome evals (#58) partly cover it; top-3 normalisation ⬜, dashboard in PR #43 |
 | [#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17) | Pitch + scoring tracker | 3 | ⬜ |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
@@ -769,14 +854,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
-- [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
-- [2026-10-03] gotcha — `right` is a reserved word in Postgres
-- [2026-10-03] build-error — dealer fills went to an abandoned older thread
-- [2026-10-03] finding — a finished duel's `result` is our surplus after decay; there is no pie or share
-- [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
-- [2026-10-03] finding — Agent SDK subagents run in the background by default
-- [2026-10-03] gotcha — MCP Python SDK 2.x renamed FastMCP and moved low-level handlers to the constructor
-- [2026-10-03] gotcha — `tm.scrub` (Jev masking) breaks JSON and reads game numbers as hostnames
+- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
+- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+- [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+- [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
+- [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -789,29 +874,42 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#82](../../pull/82) | feat: timed roadmap on the architecture page | Sat 02:37 | `16552b7` |
+| [#83](../../pull/83) | chore: make the agent harness Claude-only and remove unused files | Sat 02:34 | `e91a8de` |
+| [#76](../../pull/76) | chore: pr-reviewer sub-agent + /pr-review merge gate (replaces Greptile) | Sat 02:16 | `6d729ce` |
+| [#74](../../pull/74) | docs: status page after #55 and #69 | Sat 02:10 | `7c10b7b` |
+| [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | Sat 02:08 | `d5e769e` |
+| [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | Sat 02:06 | `9c8cbda` |
+| [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | Sat 01:48 | `3e5a4a6` |
+| [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | Sat 01:45 | `c73ee77` |
+| [#67](../../pull/67) | docs: sync the plan's task index with the triaged GitHub issues | Sat 01:42 | `68aa1b7` |
 | [#66](../../pull/66) | docs: first eval target is a nice-to-have; evals merged | Sat 01:30 | `3f737f0` |
 | [#58](../../pull/58) | feat: online-outcome evals in Postgres + Phoenix annotations (bazaar-evals) | Sat 01:29 | `c2f122b` |
 | [#65](../../pull/65) | docs: architecture status after #57/#59, token no longer blocked | Sat 01:24 | `be99f75` |
-| [#63](../../pull/63) | chore: add black as the formatter, checked in CI | Sat 01:19 | `65dc0b5` |
-| [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | Sat 01:10 | `e75f4b9` |
-| [#57](../../pull/57) | feat: Jev decides duel moves and maker prices among legal candidates | Sat 00:54 | `488a7fb` |
-| [#56](../../pull/56) | feat: generate the architecture status page in the README hook and CI | Sat 00:49 | `2d2f0bf` |
-| [#54](../../pull/54) | docs: architecture diagram with build status | Sat 00:31 | `8f585bd` |
-| [#53](../../pull/53) | chore: the Jev questions that designed our evals | Sat 00:23 | `e5d770e` |
-| [#52](../../pull/52) | docs: re-read the vendor rules every phase; one key, one request budget | Sat 00:20 | `3b09a5b` |
-| [#51](../../pull/51) | feat: runtime LLM on the Claude subscription (Claude Agent SDK, no API key) | Sat 00:16 | `c895269` |
-| [#50](../../pull/50) | docs: plan the nice-to-have Bazaar Live show | Sat 00:05 | `8e05ad6` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | `ogarciarevett/docs-architecture-runtime` |
+| [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | `ogarciarevett/feat-feed-reader-rag` |
+| [#88](../../pull/88) | feat: Linear-style roadmap timeline (Fri 2 → Sun 4, freeze Sun 06:00, deadline Sun 14:00) | `feat/roadmap-timeline` |
+| [#87](../../pull/87) | feat(plan): page economics and the cash plan (W7, read-only) | `night/w7-page-economics` |
+| [#86](../../pull/86) | Night W2b: duel policy v2 behind duel_policy = v1 (silence is free, one accept per tick) | `night/w2b-duel-v2` |
+| [#85](../../pull/85) | feat: declare bazaar-live (the show + TTS proxy) in .railway/railway.py | `ogarciarevett/railway-bazaar-live` |
+| [#84](../../pull/84) | feat(market): bench broker edge for the Market Test (W1b, stacked on #71) | `night/w1b-broker-edge` |
+| [#81](../../pull/81) | feat(ladder): ladder maximiser: floor table, bid plans, backtest, 09:00 schedule (W3, stacked on #61) | `night/w3-ladder` |
+| [#80](../../pull/80) | Night W2a: duel rival zoo + replay harness on the real practice payloads | `night/w2a-duel-zoo` |
+| [#79](../../pull/79) | feat(trade-desk): rival affinity map, per-counterparty cap, 09:00 dry-run trade plan (W4) | `night/w4-trade-desk` |
+| [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
+| [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
+| [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | `ogarciarevett/sim-merge-gate` |
+| [#73](../../pull/73) | fix: no OFF services on Railway (monitor + evals removed); BAZAAR_LIVE kept; docs say taker/maker are LIVE | `ogarciarevett/fix-railway-live-monitor` |
+| [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
+| [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
+| [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
 | [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 | [#60](../../pull/60) | fix(duels): keep two-issue duel offers strictly inside our limit (+ duel_inside_limit guardrail) | `fix/duel-offers-inside-limit` |
-| [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | `ogarciarevett/feat-bazaar-sim` |
 | [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
-| [#43](../../pull/43) | feat: web dashboard on the real live feed, terminal UI removed | `feat/web-live` |
 
 <!-- BAZAAR:ACTIVITY:END -->

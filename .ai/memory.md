@@ -1,7 +1,7 @@
 # MEMORY — Bazaar (shared team working log)
 
-Shared, **committed** working log for every teammate and every agent (Claude Code, Codex, Gemini,
-opencode). Protocol: see the "Memory protocol" section of `.ai/context.md`.
+Shared, **committed** working log for every teammate and every agent (Claude Code sessions
+and sub-agents). Protocol: see the "Memory protocol" section of `.ai/context.md`.
 
 Append only, newest at the bottom of `## Log`, terse. The latest headings are mirrored into the
 README status block on every commit.
@@ -256,3 +256,57 @@ A view column `as right` is accepted, but `select right from eval_jev_calibratio
 `.railway/railway.py` is a named partial: a service it created and no longer declares is deleted.
 `bazaar-sim` is declared only on PR #55's branch, so a plan from main (or a branch without it) shows
 "- Delete service bazaar-sim". Never apply a plan with a destructive change nobody asked for.
+
+### [2026-10-03] gotcha — how bazaar-mcp was applied while bazaar-sim lives only on PR #55
+`railway config apply --file <scratch>/.railway/railway.py`, that file = main's railway.py + PR #55's
+`simulator()` verbatim with #55's own BUILD (main's adds RUNTIME.md to watchPatterns, which would have
+changed bazaar-sim). Plan first: "2 to add, 4 to change, 0 to destroy", bazaar-sim untouched; check
+`applyResult.status` in `--json` (all "applied"); the re-plan said "already up to date".
+
+### [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
+`assert elapsed < 2.0` failed at 2.065 s and 2.080 s on GitHub runners (PR #59 and docs-only PR #64); it
+passes locally in 0.2 s and on a rerun. A slow runner, not a regression: rerun the failed job.
+
+### [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
+`bazaar agent chat --once` on the subscription token: desk → buyer (foreground), then the hook denied
+`dealer_buy` (max 90 > `max_price_rare` 80) and `sell_bid 500`; the CLI hands the model
+`PreToolUse:mcp__bazaar__<tool> hook error: <reason>`. Nothing was sent; the rows are in `decisions`
+(`desk/buyer`, rejected). The desk answered in Spanish to an English request: tighten its language line.
+
+### [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
+13 of 13 Abuela deals where she accepted our bid (message with no offer, "Deal!"/"Venga") show the
+`settlement` event in that same tick (feed, ticks 8–46). Our own accept of her offer settles at the
+next tick. The simulator (`bazaar-sim`) does the same; settling a tick later made the taker walk.
+
+### [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+docs.railway.com/infrastructure-as-code/reference: "Generated Railway service domains are not included
+in `.railway/railway.ts`" (custom domains only). `bazaar-sim`'s domain was made once with
+`railway domain --service bazaar-sim`; `railway config plan` still reports up to date afterwards.
+
+### [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+Created with `create database bazaar_sim` (connected to `postgres`, never `railway`); our schema is
+applied there. Against a simulator our client refuses a database URL naming `railway`
+(`BAZAAR_SIM_DATABASE_URL`), and its files default to `.local/sim-client/`, never the real `.local/`.
+
+### [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+symptom: PR #55's `test` job failed with no summary right after `test_bodies_are_strict_json` →
+root cause: the 413 case's parameter (65 KB of "x") became the test id printed by `pytest -v`, and the
+log/step died there; locally and in a Linux container the suite passed → fix: `ids=[...]` short names.
+
+### [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+`railway config plan --file <main's railway.py>` (01:50): "Delete variable bazaar-taker.BAZAAR_LIVE",
+"...bazaar-maker.BAZAAR_LIVE" and "Delete service bazaar-sim". The named partial owns those services, so
+a variable set by hand but not declared is removed: the live agents would drop to dry run. Fix: declare
+it `preserve()` (no value in the file). PR #55 does that for BAZAAR_LIVE and keeps bazaar-sim declared.
+
+### [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+`BAZAAR_SIM=1 uv run bazaar status` talks to the simulator with `BAZAAR_SIM_KEY` (default sim-team1);
+unset is the real game with `BAZAAR_KEY`. `BAZAAR_URL` makes every command stop: delete it from `.env`.
+
+
+### [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
+From 2026-10-03 ~02:15 Greptile answered "reached the 50-credit limit for trial accounts" and stopped
+reviewing new heads. Omar disabled it. Every PR now runs `/pr-review <n>` (`.ai/agents/pr-reviewer.md`):
+a fresh-context sub-agent that merges the PR onto current main, runs the gate and posts a P0-P3 verdict.
+Tonight's manual reviews in that shape caught a test that only failed after merging with main (#62) and
+leaks of our limits on the public `/state` (#69).

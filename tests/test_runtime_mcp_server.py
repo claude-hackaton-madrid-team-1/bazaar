@@ -51,7 +51,8 @@ def tool(c, name, arguments, rid=1):
 
 def test_every_request_but_health_needs_the_bearer_token(tmp_path):
     with client(backend(tmp_path)) as c:
-        assert c.get(ms.HEALTH_PATH).json() == {"ok": True, "server": "bazaar", "tools": 18}  # no mode, no state
+        target = {"mode": "real", "url": "https://bazaar.causaprima.ai"}  # a mode and a public URL, never a key
+        assert c.get(ms.HEALTH_PATH).json() == {"ok": True, "server": "bazaar", "tools": 18, "target": target}
         for token in (None, "", "wrong-token", MCP_TOKEN[:-1], MCP_TOKEN + "x"):
             reply = rpc(c, "tools/list", token=token)
             assert reply.status_code == 401 and reply.json() == {"error": "unauthorized"}

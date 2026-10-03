@@ -8406,6 +8406,9 @@
       "DuelOffer": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "integer"
+          },
           "price": {
             "type": "integer"
           },
@@ -8413,16 +8416,32 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 10
+          },
+          "tick": {
+            "type": "integer"
           }
         },
         "additionalProperties": true,
-        "x-verified": false
+        "x-verified": true,
+        "description": "A standing duel offer (`rival_offer`, `your_offer`), observed 2026-10-02 (practice session, ticks 120-146): `days` is 0 in a price-only session."
       },
       "Duel": {
         "type": "object",
         "properties": {
-          "id": {
+          "duel": {
+            "type": "integer",
+            "description": "The duel id (the SDK's `duel_id`)"
+          },
+          "session": {
             "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "examples": [
+              "live",
+              "deal",
+              "no_deal"
+            ]
           },
           "role": {
             "type": "string",
@@ -8431,17 +8450,8 @@
               "buyer"
             ]
           },
-          "rival": {
-            "type": "string",
-            "description": "Alias"
-          },
-          "your_limit": {
-            "type": "integer",
-            "description": "Seller's cost or buyer's value; a deal outside it loses points"
-          },
-          "your_days_weight": {
-            "type": "number",
-            "description": "Primas per delivery day (two-issue sessions)"
+          "item": {
+            "type": "string"
           },
           "issues": {
             "type": "array",
@@ -8453,6 +8463,53 @@
               ]
             }
           },
+          "your_days_weight": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Primas per delivery day (two-issue sessions); null when the session is price only"
+          },
+          "days_meaning": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "your_limit": {
+            "type": "integer",
+            "description": "Seller's cost or buyer's value; a deal outside it loses points"
+          },
+          "limit_meaning": {
+            "type": "string",
+            "examples": [
+              "never sell below your cost",
+              "never pay above your value"
+            ]
+          },
+          "rival": {
+            "type": "string",
+            "description": "Alias, e.g. Rival Azul"
+          },
+          "deadline_tick": {
+            "type": "integer"
+          },
+          "decay_per_round": {
+            "type": "number"
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "your_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DuelOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rival_offer": {
             "anyOf": [
               {
@@ -8463,23 +8520,64 @@
               }
             ]
           },
-          "deadline": {
-            "type": "integer",
-            "description": "Tick"
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tick": {
+                  "type": "integer"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "price": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "days": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": true,
+              "x-verified": true
+            }
           },
-          "done": {
-            "type": "boolean"
-          },
-          "share": {
+          "result": {
             "type": [
-              "number",
+              "object",
+              "null"
+            ],
+            "x-verified": false,
+            "description": "Set when the duel ends; its fields were not observed live (we never finished a duel on Friday)"
+          },
+          "price": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "days": {
+            "type": [
+              "integer",
               "null"
             ]
           }
         },
         "additionalProperties": true,
-        "x-verified": false,
-        "description": "From the SDK docstring (role, your_limit, rival_offer, deadline) and RULES.md; empty list until a session runs."
+        "x-verified": true,
+        "description": "Observed on the live API 2026-10-02 (practice session, ticks 120-146, `.local/duels/duels.jsonl`). Earlier drafts guessed `id`/`deadline`/`done`/`share`; the real names are `duel`, `deadline_tick` and `status`."
       },
       "DuelList": {
         "type": "object",

@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 SPEC = json.loads((Path(__file__).resolve().parent.parent / "docs" / "api" / "openapi.json").read_text())
-BASE = os.environ.get("BAZAAR_URL", "https://bazaar.causaprima.ai").rstrip("/")
+BASE = "https://bazaar.causaprima.ai"  # live recording is against the real game only (no BAZAAR_URL any more)
 LIVE = os.environ.get("BAZAAR_LIVE") == "1"
 RECORD = os.environ.get("BAZAAR_RECORD") == "1"
 KEY = os.environ.get("BAZAAR_KEY", "") if LIVE else "replay"

@@ -5,7 +5,7 @@
 # `.ai/context.md` (its project contract) — and leaves everything else generic. This script
 # refreshes the generic half (the lifecycle, commands, agents, skills, the sync machinery and
 # the dispatcher hooks) from the template, NEVER touching your project-specific files, then
-# re-runs `sh scripts/sync-ai-docs.sh` so every tool's generated config matches again.
+# re-runs `sh scripts/sync-ai-docs.sh` so the generated Claude Code config matches again.
 #
 # It can't auto-merge `.ai/context.md` (that interleaves new template conventions with YOUR
 # filled-in values), so it saves the template's version as `.ai/context.md.incoming` for you —
@@ -21,8 +21,6 @@
 #   --template <git-url>     template repo URL               (default: canonical GitHub HTTPS)
 #   --source <dir>           use an already-cloned template (skip clone; used by the npx wrapper)
 #   --target <dir>           downstream repo to update       (default: current git repo root)
-#   --with-tooling           ALSO refresh root tool configs (.mcp.json, opencode.json, .codex/,
-#                            .agents/) — OFF by default, since a project usually customizes these
 #   --dry-run                print what WOULD change; touch nothing
 #   --force                  proceed even if the target working tree is dirty
 #   -h, --help               show this help
@@ -42,7 +40,6 @@ main() {
 	REF="main"
 	SOURCE=""
 	TARGET=""
-	WITH_TOOLING=0
 	DRY_RUN=0
 	FORCE=0
 
@@ -52,7 +49,6 @@ main() {
 			--template) TEMPLATE_URL="${2:?--template needs a value}"; shift 2;;
 			--source) SOURCE="${2:?--source needs a value}"; shift 2;;
 			--target) TARGET="${2:?--target needs a value}"; shift 2;;
-			--with-tooling) WITH_TOOLING=1; shift;;
 			--dry-run) DRY_RUN=1; shift;;
 			--force) FORCE=1; shift;;
 			-h|--help) usage; exit 0;;
@@ -132,23 +128,14 @@ main() {
 	mirror_dir .ai/agents
 	mirror_dir .ai/skills
 	mirror_dir .ai/references
-	mirror_dir .ai/templates          # banner.md / cursor.header.mdc — sync `cat`s these; required
+	mirror_dir .ai/templates          # banner.md — sync `cat`s it; required
 	for _t in "$SOURCE"/.ai/specs/_*; do   # underscore-prefixed spec TEMPLATES, not numbered specs
 		[ -f "$_t" ] && copy_file ".ai/specs/$(basename "$_t")"
 	done
 	copy_file scripts/sync-ai-docs.sh
-	mirror_dir scripts/lib
 	copy_file scripts/install.sh
 	copy_file .githooks/pre-commit
 	copy_file .githooks/post-commit
-
-	# ---- root tool configs: opt-in, since projects customize them --------------
-	if [ "$WITH_TOOLING" -eq 1 ]; then
-		copy_file .mcp.json
-		copy_file opencode.json
-		copy_file .codex/config.toml
-		mirror_dir .agents
-	fi
 
 	# ---- the project contract: surface, never auto-merge -----------------------
 	if cmp -s "$SOURCE/.ai/context.md" "$TARGET/.ai/context.md"; then
@@ -158,10 +145,10 @@ main() {
 		[ "$DRY_RUN" -eq 0 ] && cp -p "$SOURCE/.ai/context.md" "$TARGET/.ai/context.md.incoming"
 	fi
 
-	# ---- record provenance + regenerate every tool's config --------------------
+	# ---- record provenance + regenerate the Claude Code config --------------------
 	if [ "$DRY_RUN" -eq 0 ]; then
 		printf 'template=%s\nref=%s\nsha=%s\n' "$TEMPLATE_URL" "$REF" "$SRC_REF" >"$TARGET/.ai/.template-ref"
-		printf '→ regenerating tool configs (sync-ai-docs.sh) ...\n' >&2
+		printf '→ regenerating Claude Code config (sync-ai-docs.sh) ...\n' >&2
 		( cd "$TARGET" && sh scripts/sync-ai-docs.sh >/dev/null ) || die "sync failed after update"
 	fi
 
@@ -179,7 +166,7 @@ main() {
 		identical) printf '  .ai/context.md: already matches the template — no merge needed\n';;
 		diverged)  printf '  .ai/context.md: template version saved to .ai/context.md.incoming — reconcile, then delete it\n';;
 	esac
-	printf '  preserved (yours): .ai/context.md, .ai/specs/[0-9]*, scripts/opencode-model-routing.sh, .githooks/*.d/, .gitignore, .gitattributes\n'
+	printf '  preserved (yours): .ai/context.md, .ai/specs/[0-9]*, .githooks/*.d/, .gitignore, .gitattributes\n'
 	if [ "$DRY_RUN" -eq 0 ]; then
 		printf '\nNext: review with `git status` / `git diff`, reconcile .ai/context.md, then COMMIT LOCALLY.\n'
 		printf '      This script NEVER pushes. Tip: run /update-from-template to let the agent merge .ai/context.md.\n'
