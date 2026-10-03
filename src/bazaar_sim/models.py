@@ -217,7 +217,7 @@ class BenchRun(Model):
     matched: dict[str, list[list[str]]] = Field(default_factory=dict)  # venue -> [[sell id, buy id], ...]
     scored: bool = False
     preset: str = "static"
-    rule: str = "quote"  # "quote" or "limit": what a broker's match must cross at (`bench.check_match`)
+    rule: str = "quote"  # "quote" or "limit": what a broker's match must cross at (`bench.refusal`)
 
 
 class Event(Model):

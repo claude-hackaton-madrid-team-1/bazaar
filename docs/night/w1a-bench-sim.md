@@ -4,7 +4,7 @@ Night shift of 3–4 Oct 2026. Branch `night/w1a-bench-sim`, draft PR #77, stack
 
 ## What it is
 
-`src/bazaar_sim/bench.py` is the Market Test with no `World` attached. The simulator's venues run it tick by tick, and a broker under test runs it in-process (1,000 books in about 0.3 s):
+`src/bazaar_sim/bench.py` is the Market Test with no `World` attached. The simulator's venues run it tick by tick, and a broker under test runs it in-process (1,000 books in about 1 s with the stall and the oracle):
 
 ```python
 from bazaar_sim.bench import HARD, NORMAL, make_book, simulate, stall_policy
@@ -34,7 +34,7 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 | hard | quote | 0.56 / 0.82 / 0.79 | 0.67 / 0.91 / 0.87 | 0.042 / 0.076 | 68.7 % | 0.84 |
 | hard | limit | 0.56 / 0.82 / 0.79 | 0.69 / 0.93 / 0.88 | 0.062 / 0.091 | 76.4 % | 0.88 |
 
-\* Mean session points against two stall-level rival venues. Our reading of RULES.md: matching the stall gives 0.5, matching the top-three mean gives 1.0, and points are linear in between. The stall itself scores 0.50.
+\* Mean session points against two stall-level rival venues. Our reading of RULES.md: matching the stall gives 0.5, matching the top-three mean gives 1.0, and points are linear in between. The stall itself scores 0.50. Against such a field the column equals 0.5 + 0.5 × the win rate: any edge earns the full point for the session, and a tie earns half.
 
 **Sensitivity (median oracle − stall, 1,000 books per cell; 72 cells were run, these are the corners):**
 
@@ -61,7 +61,7 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 
 ## Go / no-go
 
-- Simulator deliverable: **go.** The bench is in, both presets are in, the stall replica is scored in the same run, and the oracle bounds every policy. Refusals are counted by reason, and reads and posts are counted per tick. Gates: 814 passed (22 new), ruff, black and mypy clean.
+- Simulator deliverable: **go.** The bench is in, both presets are in, the stall replica is scored in the same run, and the oracle bounds every policy. Refusals are counted by reason, and reads and posts are counted per tick. Gates: 816 passed (24 new), ruff, black and mypy clean. `/code-review` (high) raised 10 candidates; 7 are fixed, and 3 are left as noted duplications that tests pin equal.
 - The W1b criteria as written: **no-go by construction** (see 1). Proposed instead, per preset and per rule over 1,000 books:
   - never below the stall on any book (issue #12's own "never worse than greedy");
   - 0 refused matches under `quote`, and refusals reported under `limit`;
@@ -71,9 +71,10 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 
 ## Risks
 
-- Arrivals, relaxing, the shades, the stall's fee and the match rule are not in any official text. Every one of them is a parameter, and the grid shows the headroom moves by 10× across them.
+- Arrivals, relaxing, the shades, the stall's fee and the match rule are not in any official text. Every one of them is a parameter, and the grid shows the headroom moves by 10× across them. The shape of the relax curve does not matter: relaxing late (age³) instead of linearly moves the median edge by < 0.003.
 - The points curve between 0, the stall and the top three is our reading of one sentence in RULES.md.
 - The two old bench tests in `test_sim_world.py` pass only because `bench_ticks=3` collapses the arrival spread to 0. The staggered regime is covered in `tests/test_sim_bench.py`.
+- Simulator standings still add `10 × efficiency` to `mm_points` (unchanged #55 behaviour). The stall-relative curve lives in `bench.points` and in the `bench.finished` fields; it is not wired into the simulator's leaderboard.
 - `bench.finished` gains `preset`, `stall_efficiency` and `top3_efficiency`. They are simulator-only, so code must not expect them from the real feed.
 - Bench offers now carry both sides in full. Before this change the kit's `starter_broker.py` crashed on a simulator book (`KeyError` on `want.cash`).
 

@@ -121,6 +121,24 @@ def test_a_trader_who_left_or_has_not_arrived_cannot_be_matched():
         BenchSession([], rule="midpoint")
 
 
+def test_the_book_tick_is_the_game_tick_as_the_simulators_venues_show_it():
+    ticks = []
+    simulate(lambda book: ticks.append(book["tick"]) or [], NORMAL, 2, start_tick=31)
+    assert ticks == list(range(31, 47))
+
+
+def test_the_bench_command_prints_the_stall_and_the_oracle_and_refuses_bad_options():
+    from typer.testing import CliRunner
+
+    from bazaar_sim.cli import app
+
+    runner = CliRunner()
+    ok = runner.invoke(app, ["bench", "--seeds", "20", "--presets", "hard", "--rules", "limit", "--relax", "0.2,0.6"])
+    assert ok.exit_code == 0 and "hard     limit" in ok.output
+    for bad in (["--relax", "0.5"], ["--relax", "0.5,1.5"], ["--seeds", "0"], ["--rules", "mid"]):
+        assert runner.invoke(app, ["bench", "--seeds", "5", *bad]).exit_code != 0
+
+
 def test_simulate_counts_every_read_and_post_against_the_rate_budget():
     sent = []
 

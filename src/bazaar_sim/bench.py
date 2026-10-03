@@ -29,12 +29,14 @@ The contract for a broker under test:
 
     from bazaar_sim.bench import HARD, NORMAL, make_traders, simulate, stall_policy
     result = simulate(policy, NORMAL, seed=7, rule="quote")   # policy(book) -> [(sell, buy, price), ...]
-    result.efficiency, result.stall, result.oracle, result.refused, result.max_requests_per_tick
+    result.efficiency, result.stall, result.oracle, result.points(), result.refused, result.max_requests_per_tick
 
-`policy` gets the payload `GET /api/broker/book` returns (`bench_offers` in the real shape, `tick` the
-run-relative tick) and returns the matches to send; it is called `reads_per_tick` times a tick, each
-time on the book left by the matches before. Keep state across calls in the policy object (a class with
-`__call__`). A refused match costs nothing but is counted by reason in `result.refused`.
+`policy` gets the payload `GET /api/broker/book` returns (`bench_offers` in the real shape; `tick` the game
+tick, as the simulator's venues show it, the run starting at `simulate(start_tick=...)`, default 0) and
+returns the matches to send. It is called `reads_per_tick` times a tick, each time on the book left by the
+matches before; keep state across calls in the policy object (a class with `__call__`). A refused match
+costs nothing but is counted by reason in `result.refused`. `result.points(rivals)` is the session's share
+of the bench points; `references(traders, ticks, rule)` gives the stall and the oracle once per book.
 """
 
 from __future__ import annotations
@@ -231,7 +233,8 @@ class BenchSession:
     fee_bps: int = 0
     fee_per_card: int = 0
     rule: str = "quote"
-    tick: int = 0
+    tick: int = 0  # run-relative: 0 is the run's first tick
+    start_tick: int = 0  # the game tick the run started at: the book's `tick` is start_tick + tick, as the game's
     pairs: list[tuple[str, str, int, int]] = field(default_factory=list)  # (sell, buy, price, tick)
     refused: Counter[str] = field(default_factory=Counter)
 
@@ -260,7 +263,7 @@ class BenchSession:
             "fee_bps": self.fee_bps,
             "fee_per_card": self.fee_per_card,
             "settlements": [],
-            "tick": self.tick,
+            "tick": self.start_tick + self.tick,
         }
 
     def match(self, sell: str, buy: str, price: int) -> dict[str, Any]:
@@ -380,6 +383,20 @@ def oracle_schedule(
 # ---------------------------------------------------------------- the in-process harness
 
 
+def references(
+    traders: list[BenchTrader], ticks: int, rule: str, *, fee_bps: int = 0, fee_per_card: int = 0
+) -> tuple[int, int, int]:
+    """(possible gains, what the free stall realises, what the oracle realises) on one book: what every policy
+    run on it is scored against. Compute it once per book when running several policies."""
+    by_id = {t.id: t for t in traders}
+    oracle = oracle_schedule(traders, ticks, rule, fee_bps=fee_bps, fee_per_card=fee_per_card)
+    return (
+        possible_gains(traders),
+        run_stall(traders, ticks).realised(),
+        sum(gain(by_id[s], by_id[b]) for s, b, _, _ in oracle),
+    )
+
+
 @dataclass(frozen=True)
 class BenchResult:
     preset: str
@@ -427,10 +444,13 @@ def simulate(
     fee_per_card: int = 0,
     reads_per_tick: int = 1,
     traders: list[BenchTrader] | None = None,
+    start_tick: int = 0,
 ) -> BenchResult:
     """Run one Market Test with `policy` as the venue's broker, and score it against the stall and the oracle."""
     traders = traders if traders is not None else make_book(p, seed)
-    session = BenchSession(traders, ticks=p.ticks, fee_bps=fee_bps, fee_per_card=fee_per_card, rule=rule)
+    session = BenchSession(
+        traders, ticks=p.ticks, fee_bps=fee_bps, fee_per_card=fee_per_card, rule=rule, start_tick=start_tick
+    )
     reads = posts = peak = 0
     while not session.done:
         in_tick = 0
@@ -442,17 +462,15 @@ def simulate(
                     session.match(sell, buy, price)
         peak = max(peak, in_tick)
         session.advance()
-    stall = run_stall(traders, p.ticks)
-    oracle = oracle_schedule(traders, p.ticks, rule, fee_bps=fee_bps, fee_per_card=fee_per_card)
-    by_id = {t.id: t for t in traders}
+    possible, stall, oracle = references(traders, p.ticks, rule, fee_bps=fee_bps, fee_per_card=fee_per_card)
     return BenchResult(
         preset=p.name,
         seed=seed,
         rule=rule,
-        possible=possible_gains(traders),
+        possible=possible,
         realised=session.realised(),
-        stall_realised=stall.realised(),
-        oracle_realised=sum(gain(by_id[s], by_id[b]) for s, b, _, _ in oracle),
+        stall_realised=stall,
+        oracle_realised=oracle,
         matches=len(session.pairs),
         refused=dict(session.refused),
         reads=reads,

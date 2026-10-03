@@ -196,7 +196,7 @@ def match(w: World, venue: Venue, body: dict[str, Any]) -> dict[str, Any]:
     ref = _sell_ref(s, w)
     if ref is None or _buy_ref(b) != ref or s.maker == b.maker:
         raise invalid("the pair does not cross: one card for cash against cash for that card, two makers")
-    fee = round(price * venue.fee_bps / 10_000) + venue.fee_per_card
+    fee = bench.fee_of(price, venue.fee_bps, venue.fee_per_card)
     if not s.want.cash <= price or price + fee > b.give.cash:
         raise invalid(f"needs ask <= price and price + fee <= bid (fee {fee})")
     _queue_match(w, venue, s, b, price, fee, by="broker")
@@ -322,7 +322,7 @@ def _auto_cross(w: World, venue: Venue) -> None:
     for s in sells:
         ref = _sell_ref(s, w)
         price = s.want.cash
-        fee = round(price * venue.fee_bps / 10_000) + venue.fee_per_card
+        fee = bench.fee_of(price, venue.fee_bps, venue.fee_per_card)
         b = next(
             (
                 b
