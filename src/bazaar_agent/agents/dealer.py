@@ -78,14 +78,17 @@ class Negotiation:
             self.opening_ask, self.bids_at_opening = ask, len(self.bids)
         self.lowest_ask = ask if self.lowest_ask is None else min(self.lowest_ask, ask)
 
+    @property
+    def came_down(self) -> bool:
+        """She lowered her ask below her opening at least once."""
+        return self.opening_ask is not None and self.lowest_ask is not None and self.lowest_ask < self.opening_ask
+
     def bid_cap(self) -> int | None:
         """The highest bid that can never close at her opening price: one below it until she came down,
         then her lowest ask (a bid there closes below her opening). None before she named a price."""
-        if self.opening_ask is None:
+        if self.opening_ask is None or self.lowest_ask is None:
             return None
-        if self.lowest_ask is not None and self.lowest_ask < self.opening_ask:
-            return self.lowest_ask
-        return self.opening_ask - 1
+        return self.lowest_ask if self.came_down else self.opening_ask - 1
 
     def may_take(self, ask: int) -> bool:
         """Her ask may be taken: it is below her opening ask, so the deal captures part of her range. At her
@@ -143,9 +146,11 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
         return Move("walk", reason="no higher bid left inside our limit")
     cap = neg.bid_cap()
     if cap is not None and nxt > cap:  # e.g. no ask of hers stands this tick: never bid up to her opening
-        if cap <= (neg.bids[-1] if neg.bids else 0):
-            return Move("wait", reason=f"no bid left below her opening ask {neg.opening_ask}")
-        return Move("bid", cap, reason=f"capped below her opening ask {neg.opening_ask}")
+        if cap > (neg.bids[-1] if neg.bids else 0):
+            return Move("bid", cap, reason=f"capped below her opening ask {neg.opening_ask}")
+        if neg.came_down:  # cap is her lowest ask, and our bid already meets it
+            return Move("wait", reason=f"our bid stands at her lowest ask {neg.lowest_ask}")
+        return Move("walk", reason=f"she held her opening ask {neg.opening_ask}: no bid left below it", reopen=True)
     return Move("bid", nxt, reason="small distinct step up")
 
 
@@ -197,13 +202,26 @@ def newest_dealer_offer(thread: dict[str, Any], dealer: str) -> dict[str, Any] |
     return offers[-1] if offers else None
 
 
+MAX_PRIMAS = 10_000_000  # RULES.md: prices are whole primas from 1 to 10,000,000
+
+
+def whole_primas(value: object) -> int | None:
+    """A price as the rules define it, else None: never a bool, a float, a string or a negative."""
+    return value if type(value) is int and 1 <= value <= MAX_PRIMAS else None
+
+
+def offer_cash(offer: dict[str, Any]) -> int | None:
+    """The cash an offer asks for (or gives), read strictly (`whole_primas`)."""
+    return whole_primas((offer.get("want") or {}).get("cash")) or whole_primas((offer.get("give") or {}).get("cash"))
+
+
 def latest_dealer_offer(thread: dict[str, Any], dealer: str) -> tuple[int | None, int | None, bool]:
-    """(ask, offer id, final) of the dealer's newest open structured offer."""
+    """(ask, offer id, final) of the dealer's newest open structured offer; no valid price: no ask."""
     o = newest_dealer_offer(thread, dealer)
-    if o is None:
+    if o is None or not isinstance(o.get("id"), int):
         return None, None, False
-    cash = (o.get("want") or {}).get("cash") or (o.get("give") or {}).get("cash")
-    return (int(cash) if cash else None), int(o["id"]), bool(o.get("final"))
+    cash = offer_cash(o)
+    return cash, (int(o["id"]) if cash is not None else None), bool(o.get("final"))
 
 
 def requested_item(topic: dict[str, Any]) -> str | None:
@@ -264,8 +282,7 @@ def settled_price(thread: dict[str, Any]) -> int | None:
     for m in reversed(thread.get("messages") or []):
         o = m.get("offer") if isinstance(m, dict) else None
         if isinstance(o, dict) and o.get("status") in ("settled", "accepted"):
-            cash = (o.get("give") or {}).get("cash") or (o.get("want") or {}).get("cash")
-            return int(cash) if isinstance(cash, int) and cash > 0 else None
+            return offer_cash(o)
     return None
 
 
@@ -371,6 +388,9 @@ def negotiate(
 
     neg = Negotiation(plan)
     item = requested_item(topic)
+    if kill_switch is not None and (stops := kill_switch()):  # opening a thread is a write too
+        log(f"kill switch on: no thread opened with {dealer} ({'; '.join(stops)})")
+        return Outcome(None, "held", None, (), 0)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
     obs.opened(tid)

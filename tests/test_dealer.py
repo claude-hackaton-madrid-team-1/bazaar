@@ -425,7 +425,7 @@ def test_with_no_ask_standing_we_never_bid_up_to_her_opening_ask():
     # pr-reviewer #72 row 2: opening 9, our 6, 7, 8, a tick with no standing offer of hers → we bid 9,
     # and if she takes it, the deal is at her opening price (scores nothing).
     assert decide(neg(bids=[6, 7, 8], opened=(9, 1)), None, None, False) == Move(
-        "wait", reason="no bid left below her opening ask 9"
+        "walk", reason="she held her opening ask 9: no bid left below it", reopen=True
     )
     wide = neg(start=6, step=5, max_price=20, bids=[6], opened=(9, 1))
     assert decide(wide, None, None, False) == Move("bid", 8, reason="capped below her opening ask 9")
@@ -433,3 +433,79 @@ def test_with_no_ask_standing_we_never_bid_up_to_her_opening_ask():
     came_down.see_ask(10)  # she conceded to 10: a bid at 10 closes below her opening
     assert decide(came_down, None, None, False) == Move("bid", 10, reason="capped below her opening ask 12")
     assert decide(neg(), None, None, False).kind == "bid"  # before she named a price: no cap
+
+
+class LapsingAbuela:
+    """Her opening ask 7, held; her offers lapse 2 ticks after they are made (every dealer offer in the
+    feed has expires - created = 2). Our bid at or above 7 she takes at once (security audit, v7)."""
+
+    OPENING = 7
+
+    def __init__(self, hold_ticks):
+        self.tick, self.hold_ticks, self.status, self.deal = 1, hold_ticks, "open", None
+        self.offers, self.next_id, self.sent = [], 100, []
+
+    def _offer(self, ask):
+        self.offers = [
+            {
+                "id": self.next_id,
+                "maker": "abuela",
+                "status": "open",
+                "final": False,
+                "give": {"types": ["card:LAV-03"]},
+                "want": {"cash": ask},
+                "expires_tick": self.tick + 2,
+            }
+        ]
+        self.next_id += 1
+
+    def open_thread(self, dealer, topic=None):
+        self._offer(self.OPENING)
+        return {"id": 9}
+
+    def clock(self):
+        return {"tick": self.tick, "tick_seconds": 60, "next_tick_in": 50}
+
+    def thread(self, tid):
+        live = [o for o in self.offers if o["expires_tick"] >= self.tick]
+        settled = [{"offer": {"status": "settled", "give": {"cash": self.deal}}}] if self.deal else []
+        return {"status": self.status, "standing_offers": live, "messages": settled}
+
+    def say(self, tid, text, price=None):
+        self.sent.append((self.tick, "bid", price))
+        if price >= self.OPENING:
+            self.status, self.deal = "deal", price
+        else:
+            self._offer(self.OPENING)
+
+    def accept(self, oid):
+        self.sent.append((self.tick, "accept", oid))
+
+    def close_thread(self, tid):
+        self.sent.append((self.tick, "close", tid))
+        self.status = "closed"
+
+
+@pytest.mark.parametrize("hold", [(), (2, 3, 4)])
+def test_a_hold_that_lets_her_offer_lapse_never_ends_at_her_opening_ask(hold):
+    from bazaar_agent.agents.dealer import negotiate
+
+    a = LapsingAbuela(hold)
+    out = negotiate(
+        a,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: setattr(a, "tick", a.tick + 1),
+        kill_switch=lambda: ("pause",) if a.tick in a.hold_ticks else (),
+    )
+    assert a.deal is None and [s[2] for s in a.sent if s[1] == "bid"] == [6]  # before the fix: bid 7, deal 7
+    assert (out.status, out.reopen_start) == ("walked", 5)
+
+
+@pytest.mark.parametrize("cash", [True, "17", 17.9, -5, 0, 10_000_001])
+def test_a_dealer_price_must_be_whole_primas(cash):
+    offer = {"id": 3, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-03"]}, "want": {"cash": cash}}
+    assert latest_dealer_offer({"standing_offers": [offer]}, "abuela") == (None, None, False)
+    assert settled_price({"messages": [{"offer": {**offer, "status": "settled"}}]}) is None
