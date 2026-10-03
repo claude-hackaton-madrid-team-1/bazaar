@@ -194,7 +194,7 @@ def evals_import_duels(
 
 @evals_app.command("score-sim")
 def evals_score_sim(
-    data: Annotated[Path, typer.Option(help="Calibration fixture")] = Path("tests/fixtures/evals/friday_score.json"),
+    data: Annotated[Path | None, typer.Option(help="Calibration fixture (default: the repo's Friday fixture)")] = None,
     feed: Annotated[Path | None, typer.Option(help="Rebuild the dealer deals from a feed capture (JSONL)")] = None,
     fit: bool = typer.Option(False, help="Refit the level-2 weight on our official series first"),
     as_json: bool = typer.Option(False, "--json", help="Calibration and marginals as JSON"),
@@ -206,7 +206,7 @@ def evals_score_sim(
 
     from bazaar_agent.evals import score_sim as ss
 
-    d = ss.load_data(data, feed)
+    d = ss.load_data(data or ss.FRIDAY_DATA, feed)
     model = ss.ScoreModel()
     if fit:
         w2, _ = ss.fit_level2_weight(d.deals, d.ours, d.team, model)

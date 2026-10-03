@@ -34,11 +34,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.evals.dealers import card_rarity
 
 LEVEL_OF: dict[str, int] = {"abuela": 1, "chato": 2}
 TOP_N = 3  # "the full points go to the mean of the top three"
-FRIDAY_DATA = Path("tests/fixtures/evals/friday_score.json")
+FRIDAY_DATA = REPO_ROOT / "tests" / "fixtures" / "evals" / "friday_score.json"
 
 
 @dataclass(frozen=True)

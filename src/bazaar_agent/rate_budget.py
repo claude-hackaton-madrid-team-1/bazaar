@@ -23,6 +23,7 @@ calls through a token bucket to count the `429 rate_limited` refusals the bounda
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -127,6 +128,24 @@ def broker(book_reads: int = 1, max_matches: int = 15) -> LoopBudget:
 
 def evals() -> LoopBudget:
     return LoopBudget("evals", team=0, team_at_boundary=0, public=1, source="evals/cli.py: public clock only")
+
+
+def operator(req_per_s: float, tick_seconds: float) -> LoopBudget:
+    """On-demand callers of the team key, as an average rate: the MCP tools (`status`, `strategy`,
+    `threads` read `/me`; every write tool's check reads clock + `/me` + offers, even in a dry run), the
+    desk and `bazaar ask`, an operator's `bazaar status`. Not per tick, so not in the plans: add it."""
+    calls = math.ceil(req_per_s * tick_seconds)
+    return LoopBudget(
+        "operator tools",
+        team=calls,
+        team_at_boundary=0,
+        source=f"bazaar-mcp, desk, `bazaar ask`/`status` at {req_per_s:g} req/s on average",
+    )
+
+
+def flatten(open_offers: int = 30) -> LoopBudget:
+    """`bazaar flatten` (PR #68): reads, then one cancel per open offer, back to back, once."""
+    return LoopBudget("flatten", team=2 + open_offers, team_at_boundary=2 + open_offers, source="PR #68 bazaar flatten")
 
 
 def saturday_plan(*, dealer_children: int = 0, duel_concurrency: int = 3, book_reads: int = 1) -> list[LoopBudget]:

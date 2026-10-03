@@ -214,3 +214,24 @@ def test_the_budget_command_prints_the_table_and_the_verdict_offline():
     assert "64 team-key calls, 12 refused 429" in out.output
     staggered = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15", "--stagger"])
     assert "fits the key" in staggered.output
+
+
+def test_operator_tools_on_top_of_a_sunday_ceiling_break_the_key_but_not_on_saturday():
+    from bazaar_agent import rate_budget as rb
+
+    sunday = rb.saturday_plan() + [rb.operator(0.5, rb.SUNDAY_TICK_S)]
+    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(78 / 15)
+    assert not rb.check(sunday, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
+    saturday = rb.saturday_plan() + [rb.operator(1.0, rb.SATURDAY_TICK_S)]
+    assert rb.check(saturday, rb.SATURDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
+
+
+def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday():
+    from bazaar_agent import rate_budget as rb
+
+    plan = rb.saturday_plan()
+    refused = {lat: rb.burst(plan, offsets=rb.PROPOSED_STAGGER, latency_s=lat).refused for lat in (0.15, 0.10, 0.05)}
+    assert refused == {0.15: 0, 0.10: 3, 0.05: 14}
+    shared = rb.check(plan, rb.SUNDAY_TICK_S, broker_shares_team_bucket=True)
+    assert not shared.ok and "5.80 req/s" in shared.problems[0]
+    assert rb.flatten().team == 32
