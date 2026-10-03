@@ -1761,6 +1761,9 @@ class Taker:
                 action = replace(action, price=lower)
                 verdict = check(action, ctx, self.rules)
                 verdict_text = str(verdict)
+                if not verdict.allowed and unread_only(verdict.violations):  # its first value read failed: hold
+                    self.log(f"tick {tick} taker: {conv.dealer} hold on thread {conv.thread_id} ({verdict})")
+                    return
         if not verdict.allowed:
             # A guardrail walk RESTS on the item (UB1): the next tick would reopen it and replay the same ladder up to
             # the same refused rung (RET-10 at its official value, Sat ticks 1205-1227; or our cash room).

@@ -293,3 +293,17 @@ def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tm
     t.on_tick(at(team, TICK + 3))
     opened = [s[2] for s in team.sent if s[0] == "open_thread"]
     assert opened.count({"buy": {"card": "LAV-08"}}) == 1
+
+
+def test_a_failed_value_read_on_the_cash_room_bid_holds_and_never_walks(tmp_path):
+    # #248 review r2 P1: the rung refused for cash never read the official value, so the substituted bid's re-check
+    # is the first read; a failed read must hold the thread (#177 P1-2), never walk and rest.
+    team = ValuedTeam(me={**ME, "cash": 290})
+    t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
+    t.on_tick(clock())
+    t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)
+    her_ask(team, 5000, 800, 30)
+    team.fail = True
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[-1] == ("say", 5000, 18) and ("close_thread", 5000) not in team.sent
+    assert t.cooling == {} and "abuela" in t.convs
