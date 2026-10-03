@@ -55,7 +55,7 @@ def dealer_buy(monkeypatch, tmp_path):
 
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
-        monkeypatch.setattr(cli, "_ledger", lambda source: ledger)
+        monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)
         result = CliRunner().invoke(cli.app, ["dealer", "buy", "sobre_barrio", "--start", "6", "--max", "20", "--live"])
         return result, seen.get("verdicts")

@@ -517,9 +517,10 @@ The maker owns our **board** offers: a hand-listed offer that is not a strategy 
 stop the maker before trading by hand. Offers inside a dealer thread belong to the taker's desk.
 
 **One accept per tick for the whole team, across machines.** The guardrail ledger is the Postgres
-`ledger` table (`bazaar db init` creates it; the JSONL file only when Postgres is unreachable at
-start). `bazaar-duels`, the taker, `dealer buy` and the CLI all reserve accepts through
-`ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
+`ledger` table (`bazaar db init` creates it). A live process against the real game refuses to start
+unless DATABASE_URL is the shared (non-local) Postgres, and fails closed while it is unreachable; only a
+dry run (or a simulator) may count on the JSONL file. `bazaar-duels`, the taker, `dealer buy` and the
+CLI all reserve accepts through `ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
 take the same slot. **Duels first**: the duel player decides right after the tick lands; the taker
 waits until 2 s into the tick (15 % on fast ticks) and steps back when a `duel:<id>` accept is already
 recorded for the tick. The maker never accepts. Spend per game hour and packs per hour come from the
@@ -1019,9 +1020,11 @@ then redeploy `bazaar-duels`.
 
 - **The guardrail ledger is shared.** Accepts per tick, spend per game hour and listings per tick
   live in the Postgres `ledger` table, so `bazaar-duels`, `bazaar-taker`, `bazaar-maker` and a laptop's
-  `dealer buy` see one count (see "Autonomous agents"). A process that cannot reach Postgres at start
-  falls back to its own `ledger.jsonl` and says so in its log; a ledger failure mid-run sends nothing
-  that tick (fail closed).
+  `dealer buy` see one count (see "Autonomous agents"). Every service that runs live needs
+  `DATABASE_URL` set to the shared Postgres: without it a live process exits at start ("refusing to
+  trade"). The ledger reconnects after a drop (retried at most every 15 s); while Postgres is down a live
+  process sends nothing (fail closed), and a dry run counts on its own `ledger.jsonl` until Postgres answers.
+  The log line `ledger: postgres ledger table on <host>:<port> (shared, …)` says which one is in use.
 - **Live or dry run** (a team decision, not a deploy). **The taker and the maker are LIVE since
   Sat 2026-10-03 01:45 Madrid** (`BAZAAR_LIVE=1` set by hand on both; nothing trades before the doors
   open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
@@ -1172,14 +1175,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
+- [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
 - [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
 - [2026-10-03] finding — six duels on one deadline can run out of accept ticks
 - [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
 - [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
 - [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
 - [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
-- [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
-- [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1192,6 +1195,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
@@ -1203,14 +1207,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
 | [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
-| [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#164](../../pull/164) | feat(n17): bazaar team-checks — spec Q1-Q6 from stored data, read-only (N17-10) | `ogarciarevett/n17-live-checks` |
 | [#163](../../pull/163) | B27: duel settings card + e2e runner + one done-read per tick (into #150) | `night/b27-card` |
-| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | `ogarciarevett/ledger-156` |
 | [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
 | [#160](../../pull/160) | docs(pitch): Sunday presentation pack, first draft (P1) | `ogarciarevett/docs-pitch` |
 | [#159](../../pull/159) | DO NOT MERGE: B27 duel stack integration (merge order #60→#86→#103→#113→#115→#130) + settings card | `night/b27-duel-stack` |
