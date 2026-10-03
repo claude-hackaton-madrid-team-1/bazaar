@@ -16,8 +16,7 @@ from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.sdk import PublicBazaar, team_client
 from bazaar_agent.ticks import Clock
-from bazaar_sim.broker import _auto_bench, possible_gains
-from bazaar_sim.models import BenchRun, Venue
+from bazaar_sim.bench import possible_gains, run_stall
 from tests.simkit import QUIET, running_sim
 from tests.test_venue import FakeConn
 
@@ -63,10 +62,9 @@ def test_the_keeper_opens_a_board_venue_and_its_broker_matches_the_bench_at_leas
         )
         run = sim.world.state.bench[0]
         assert run.scored
-        stall = BenchRun(run=run.run, start_tick=run.start_tick, end_tick=run.end_tick, traders=run.traders)
-        _auto_bench(Venue(venue="s", name="s", owner="-", owner_name="-", fee_bps=0, fee_per_card=0), stall)
+        stall = run_stall(run.traders, run.end_tick - run.start_tick + 1, run=run.run).realised()
         ours = realised(run.traders, run.matched[venue])
-        assert ours >= realised(run.traders, stall.matched["s"]) and ours > 0
+        assert ours >= stall and ours > 0
         assert me["score"]["bench_efficiency"] == round(ours / possible_gains(run.traders), 3)
         key = keeper.opened.key.get_secret_value()
         assert key.startswith("simbk-") and not any(key in line for line in lines)
