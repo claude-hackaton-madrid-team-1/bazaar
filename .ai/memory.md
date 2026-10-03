@@ -362,6 +362,18 @@ never in a tick loop.
 `insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
 window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
 
+### [2026-10-03] gotcha — a "free" simulator port may already be another worker's simulator: check before you run
+An e2e taker patched to 127.0.0.1:8815 ran LIVE in another worktree's `bazaar-sim` (my own failed to bind,
+"address already in use") and closed 4 Abuela deals as sim-team1 in that world. Before any sim run: check the
+port with `lsof -nP -iTCP:<port> -sTCP:LISTEN`, start the simulator, confirm the listener's process is yours,
+and abort otherwise. `scripts/sim_smoke.py` refuses a busy 8765 on its own.
+
+### [2026-10-03] finding — the taker now keeps our dealer threads (N12 part 3), with zero extra requests
+On the simulator the live taker stored 3 threads (`deal`, opened/closed ticks) and 6 messages (our bid 25 and
+our Spanish words, Abuela's "Deal! … for 25 P") from the reads it already makes. A thread opened by ANOTHER
+process (a laptop's `dealer buy`) that closes before the taker sees it is not stored: the taker lists only open
+threads. Follow-up: list all our threads in the same request and keep only the ones that changed.
+
 ### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
 `holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
 the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
