@@ -937,7 +937,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 |---|---|---|---|
 | N2 · was #21 | Feed capture + dealer curves | 0 → 1 | 🔵 `bazaar monitor` (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela `open`/`limit`/β estimate, ladder view (PR #43) |
 | N4 · was #2 | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
-| N9 · was #3 | Tick loop, governor, scheduler, kill switch | 0 → 1 | 🔵 tick loop + budget + `.local/PAUSE` done; cancel-open-offers kill switch ⬜ |
+| N9 · was #3 | Tick loop, governor, scheduler, kill switch | 0 → 1 | ✅ tick loop + budget + `.local/PAUSE`; the kill switch HOLDS (no writes, offers stay open) and `bazaar flatten` is the explicit cancel-everything (PR #72, from #68) |
 | [N14](N14-spec.md) · was #8 | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
 | [N14](N14-spec.md) · was #9 | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is `bazaar evals report` (#58); `egg.found` alert and the L2 rule write-up ⬜ |
 | [D1](D1-spec.md) · was #4 | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
@@ -980,7 +980,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me, or its current snapshot). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
-| `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
+| `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask. |
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
 | `uv run bazaar duel done` | Read our finished duels once (`/api/duels?done=true`, one request) and store them for the evals. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
@@ -1003,21 +1003,22 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
-| `uv run bazaar sell cancel` | Withdraw one of our open offers. |
+| `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
+| `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
+- [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
+- [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+- [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
+- [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+- [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+- [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 - [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
-- [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
-- [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
-- [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
-- [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
-- [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
-- [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
-- [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
 
 <!-- BAZAAR:STATUS:END -->
 
