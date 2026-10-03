@@ -48,14 +48,17 @@ def test_a_read_keeps_the_bench_offers_and_any_unknown_field_and_skips_junk():
 
 
 def test_the_watcher_reads_once_a_tick_writes_only_during_a_test_and_never_matches(tmp_path):
-    broker = FakeBroker([{"bench_offers": []}, {"bench_offers": [sell("b3-0", 40)]}])
+    broker = FakeBroker(
+        [{"bench_offers": []}, {"bench_offers": [sell("b3-0", 40)]}, {"bench_offers": []}, {"bench_offers": []}]
+    )
     lines: list[str] = []
     watch = BenchWatch(broker, tmp_path / "bench_book.jsonl", lines.append)
-    watch.on_tick(Clock(tick=1))
-    watch.on_tick(Clock(tick=2))
-    assert (watch.reads, watch.rows, broker.calls) == (2, 1, 2)
+    for tick in (1, 2, 3, 4):
+        watch.on_tick(Clock(tick=tick))
+    assert (watch.reads, watch.rows, broker.calls) == (4, 2, 4)
     rows = read_rows(tmp_path / "bench_book.jsonl")
-    assert [r["tick"] for r in rows] == [2] and len(lines) == 1
+    assert [(r["tick"], len(r["offers"])) for r in rows] == [(2, 1), (3, 0)] and len(lines) == 1
+    assert calibrate(rows)["3"]["stays_of_leavers"] == [1]  # the empty read closes the session
 
 
 def test_calibration_tells_crossed_from_left_and_measures_arrivals_firmness_and_relax(tmp_path):

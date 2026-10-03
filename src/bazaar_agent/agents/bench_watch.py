@@ -77,19 +77,29 @@ class BenchWatch:
     def __init__(self, broker: Any, path: Path, log: Callable[[str], None]) -> None:
         self.broker, self.path, self.log = broker, path, log
         self.reads = self.rows = 0
+        self._live = False  # the last read had bench offers: an empty one is logged once, to close the session
 
     def on_tick(self, clock: Clock) -> None:
         book = self.broker.book()
         self.reads += 1
         row = snapshot(book if isinstance(book, dict) else {}, clock)
+        if row is None and self._live:  # the session's last traders are gone: one empty read records it
+            row = {"tick": clock.tick, "t_hours": clock.t_hours, "book_tick": book.get("tick"), "offers": []}
+            self._live = False
+            self._write(row)
+            return
         if row is None:
             return
+        self._live = True
+        self._write(row)
+        runs = sorted({str(o["run"]) for o in row["offers"]})
+        self.log(f"tick {clock.tick} bench watch: {len(row['offers'])} offers (run {', '.join(runs)}) -> {self.path}")
+
+    def _write(self, row: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, sort_keys=True) + "\n")
         self.rows += 1
-        runs = sorted({str(o["run"]) for o in row["offers"]})
-        self.log(f"tick {clock.tick} bench watch: {len(row['offers'])} offers (run {', '.join(runs)}) -> {self.path}")
 
 
 # ---------------------------------------------------------------- what the reads say about the bench
@@ -127,13 +137,19 @@ def calibrate(rows: Iterable[Mapping[str, Any]], *, tolerance: float = 0.15) -> 
     Read off the free stall, it is biased: a trader the engine crosses on arrival is never seen, so arrivals
     and the trader count are undercounted and the firm share is the share among traders not crossed at once.
     Read off our own board venue (`broker watch --ours`), nothing is crossed before the read."""
+    ordered = sorted(rows, key=lambda r: r["tick"])
     by_run: dict[str, list[Mapping[str, Any]]] = {}
-    for r in rows:
-        for o in r.get("offers") or []:
-            by_run.setdefault(str(o.get("run")), [])
+    last: dict[str, int] = {}  # run -> index of the last read that showed it
+    for i, r in enumerate(ordered):
         runs = {str(o.get("run")) for o in r.get("offers") or []}
         for run in runs:
-            by_run[run].append({"tick": r["tick"], "offers": [o for o in r["offers"] if str(o.get("run")) == run]})
+            by_run.setdefault(run, []).append(
+                {"tick": r["tick"], "offers": [o for o in r["offers"] if str(o.get("run")) == run]}
+            )
+            last[run] = i
+    for run, i in last.items():  # the read after a run's last one: its remaining traders are gone by then
+        if i + 1 < len(ordered):
+            by_run[run].append({"tick": ordered[i + 1]["tick"], "offers": []})
     out: dict[str, Any] = {}
     for run, reads in sorted(by_run.items()):
         reads = sorted(reads, key=lambda r: r["tick"])

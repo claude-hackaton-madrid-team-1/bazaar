@@ -456,4 +456,18 @@ def test_venue_mechanism_auto_opens_an_auto_venue_and_runs_no_broker(tmp_path):
     k.on_tick(first.clock, first, window())
     assert team.opened == [("Team 1 market", 0, 0, {"mechanism": "auto"})]
     assert broker.sent == [] and k.made == []
-    assert any("is auto (venue_mechanism)" in line for line in lines)
+    assert any("is auto: the engine matches" in line for line in lines)
+
+
+def test_the_broker_follows_the_listed_venues_mechanism_not_the_plan(tmp_path):
+    store = {("", "v09"): (KEY, 300)}
+    broker = FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    board_by_hand = keeper(tmp_path, Team(), store=store, broker=broker, venue_mechanism="auto")
+    s = snap(venues=(RASTRO, ours()), venue={"venue": "v09", "status": "open"})
+    board_by_hand.on_tick(s.clock, s, window())
+    assert broker.sent == [("b7-0", "b7-1", 35)]  # listed as board: brokered although the plan says auto
+    quiet = FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    auto_by_hand = keeper(tmp_path / "b", Team(), store={("", "v09"): (KEY, 300)}, broker=quiet)
+    s = snap(venues=(RASTRO, ours(rules={"mechanism": "auto"})), venue={"venue": "v09", "status": "open"})
+    auto_by_hand.on_tick(s.clock, s, window())
+    assert quiet.sent == []  # listed as auto: no broker, whatever the plan says
