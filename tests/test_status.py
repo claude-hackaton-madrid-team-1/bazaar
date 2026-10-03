@@ -558,3 +558,11 @@ def test_random_rows_never_publish_a_private_key_or_number(served, seed):
         assert "quick_sale" not in text and "denied" not in text and "cash_floor" not in text
     assert all(d["jev"] is None for d in state["decisions"])
     assert not any(d["kind"].startswith("accept") and d["status"] != "approved" for d in state["decisions"])
+
+
+def test_a_flag_row_is_never_published_even_approved_and_live():
+    """#152 audit r2: a flag row is written before its send; a refused or retried flag must never read as sent."""
+    from bazaar_agent.agents.status import publishable
+
+    row = {"kind": "flag", "status": "approved", "chosen": True, "dry_run": False, "inputs": {"dealer": "trile"}}
+    assert not publishable(row) and publishable({**row, "kind": "accept_ask"})

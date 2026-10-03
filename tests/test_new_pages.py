@@ -197,6 +197,19 @@ def test_an_ask_the_maker_posted_this_tick_does_not_block_a_new_pages_duplicate(
     assert 5 in listed and ({300, 301} & set(listed))
 
 
+def test_a_malformed_album_reads_as_no_pages():
+    # #145 security P3: `album` that is not a dict raised before the kill-switch hold.
+    from bazaar_agent.agents.runtime import album_pages
+
+    assert album_pages({"album": "x"}) == frozenset() and album_pages({"album": {"pages": 3}}) == frozenset()
+
+
+def test_an_accepted_ask_without_our_id_as_maker_still_counts_as_sold():
+    # #145 security P3: an accepted row with no maker (or a pseudonym) fails closed like an open one.
+    accepted = {**our_ask(73, 301, "RET-01", 30), "status": "accepted", "maker": None}
+    assert not sell_verdict(released_ret(ME, copies=2), "300", [accepted]).allowed
+
+
 def test_page_watch_reports_a_page_once_and_nothing_on_the_first_tick():
     watch = PageWatch()
     assert watch.new(ME) == ()
