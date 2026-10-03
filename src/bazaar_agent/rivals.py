@@ -2,15 +2,18 @@
 
 Pure functions over feed events. The feed names the maker of every listing (`offer.listed` carries the team
 id the board hides behind a pseudonym), says when one is cancelled (`offer.cancelled`), and shows every
-settlement; an offer that filled is the settlement of its copy (an ask) or of the card it wanted (a bid) from
-or to its maker after it was listed, and one that neither filled nor was cancelled lapsed at `expires_tick`.
+settlement. A settlement fills the offer it was accepted from, matched at its own price: the seller's ask of
+that copy, else the buyer's bid for the card; when no offer matches the price, the oldest one for the card is
+marked filled with `exact = False` (profiles and the replay leave those out). An offer that neither filled
+nor was cancelled lapsed at `expires_tick`.
 Nothing settles while the doors are closed, so the board at the last tick of a day is the board that opens
 the next one.
 
 A profile says how a team prices and how fast it moves:
-  - its asks against the tape (median team-to-team price of the card, else of its rarity) and against its
-    own value of the card (book × its expected multiplier from the affinity map × the copy marginal): a
-    team that asks below its own value sells cheap (a snipe source);
+  - its asks against the tape (median team-to-team price of the card, else of its rarity): a team whose asks
+    sit below the tape on at least 3 distinct copies sells cheap (a snipe source); and against its own value
+    of the card (book × its expected multiplier × the marginal of the copies we saw it list), shown but not
+    acted on: unseen duplicates make that value too high for teams we know little about;
   - its bids against the tape and against our value: a team that bids above the tape overpays (sell to it);
   - how often its offers fill, how fast it takes other teams' offers (ticks from listing to settlement),
     how often it reprices and by how much.
@@ -193,6 +196,8 @@ class TeamProfile:
     takes: int = 0  # other teams' board offers this team took
     take_latency: list[int] = field(default_factory=list)  # ticks from listing to the settlement it took
     sold_below_own: int = 0  # asks that filled below the team's own expected value
+    ask_vs_tape_by_copy: dict[str, float] = field(default_factory=dict)  # each copy's latest ask / tape
+    inexact: int = 0  # its offers marked filled by a card-only match (left out of fills and takes)
 
     @staticmethod
     def _med(values: Sequence[float]) -> float | None:
@@ -228,7 +233,8 @@ class TeamProfile:
         value, which depends on copies we may not have seen), `overbidder` (bids a median above the tape),
         `fast taker` (takes within 2 ticks), `relister` (reprices often)."""
         out = []
-        if self.median_ask_vs_tape is not None and self.median_ask_vs_tape < 1.0 and len(self.ask_vs_tape) >= 3:
+        by_copy = list(self.ask_vs_tape_by_copy.values())
+        if len(by_copy) >= 3 and median(by_copy) < 1.0:  # copies, not relistings of one copy
             out.append("cheap seller")
         if self.median_bid_vs_tape is not None and self.median_bid_vs_tape > 1.0 and len(self.bid_vs_tape) >= 3:
             out.append("overbidder")
@@ -287,16 +293,19 @@ def profiles(
             continue
         p = prof(r.maker)
         ref_price = market_price(r.ref, rarity_of.get(r.ref), refs, rarities)
+        filled = r.outcome == "filled" and r.exact  # a card-only match says too little to count
+        p.inexact += r.outcome == "filled" and not r.exact
         if r.side == "ask":
             p.asks += 1
-            p.asks_filled += r.outcome == "filled"
+            p.asks_filled += filled
             if ref_price:
                 p.ask_vs_tape.append(r.price / ref_price)
+                p.ask_vs_tape_by_copy[str(r.asset_id) if r.asset_id is not None else f"o{r.id}"] = r.price / ref_price
             copies = len(distinct.get((r.maker, r.ref), ())) or 1
             mine = own_value(amap, r.maker, r.ref, book.get(r.ref, 0.0), copies)
             if mine > 0:
                 p.ask_vs_own.append(r.price / mine)
-                if r.outcome == "filled" and r.price < mine:
+                if filled and r.price < mine:
                     p.sold_below_own += 1
             if r.asset_id is not None:
                 key = (r.maker, r.asset_id)
@@ -306,11 +315,11 @@ def profiles(
                 last_ask[key] = r.price
         else:
             p.bids += 1
-            p.bids_filled += r.outcome == "filled"
+            p.bids_filled += filled
             if ref_price:
                 p.bid_vs_tape.append(r.price / ref_price)
         p.cancels += r.outcome == "cancelled"
-        if r.outcome == "filled" and r.taker and r.taker not in skip and intel.TEAM_ID.match(r.taker):
+        if filled and r.taker and r.taker not in skip and intel.TEAM_ID.match(r.taker):
             t = prof(r.taker)
             t.takes += 1
             t.take_latency.append(int(r.end_tick or r.tick) - r.tick)

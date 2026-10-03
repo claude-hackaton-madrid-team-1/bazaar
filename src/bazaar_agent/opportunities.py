@@ -204,7 +204,7 @@ class Replay:
 
     @property
     def left_surplus(self) -> float:
-        return round(sum(op.ours for r, op in self.worth_it if r.outcome != "filled"), 1)
+        return round(sum(op.ours for r, op in self.worth_it if not (r.outcome == "filled" and r.exact)), 1)
 
 
 def replay(
@@ -231,7 +231,7 @@ def replay(
         op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, copies)
         if op is not None and op.ours > min_surplus and op.allowed:
             worth.append((by_id[o.id], op))
-    taken = [(r, op) for r, op in worth if r.outcome == "filled"]
+    taken = [(r, op) for r, op in worth if r.outcome == "filled" and r.exact]  # a card-only match: unknown
     takers: dict[str, int] = {}
     for r, _ in taken:
         takers[str(r.taker)] = takers.get(str(r.taker), 0) + 1

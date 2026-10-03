@@ -94,9 +94,10 @@ def test_profiles_price_fill_take_and_reprice():
 
 
 def test_tags_name_cheap_sellers_and_overbidders():
-    p = rv.TeamProfile("t09", ask_vs_tape=[0.5, 0.6, 0.7], bid_vs_tape=[1.2, 1.3, 1.5], takes=3, take_latency=[1, 2, 2])
+    by_copy = {"71": 0.5, "72": 0.6, "73": 0.7}
+    p = rv.TeamProfile("t09", ask_vs_tape_by_copy=by_copy, bid_vs_tape=[1.2, 1.3, 1.5], takes=3, take_latency=[1, 2, 2])
     assert p.tags == ("cheap seller", "overbidder", "fast taker")
-    assert rv.TeamProfile("t09", ask_vs_tape=[0.5]).tags == ()  # one data point is not a habit
+    assert rv.TeamProfile("t09", ask_vs_tape_by_copy={"71": 0.5}).tags == ()  # one copy is not a habit
     assert rv.TeamProfile("t09", ask_vs_own=[0.5, 0.6, 0.7]).tags == ()  # below own value: maybe a duplicate
 
 
@@ -332,3 +333,15 @@ def test_a_settlement_fills_the_offer_at_its_own_price():
 def test_an_unknown_venue_is_never_priced():
     o = BoardOffer(6, "v77", "t06", "ask", "LAV-08", 15, 73, None, 80, 30)
     assert op.score_offer(o, market(), ME, PARAMS, Guardrails(), AMAP, None, ctx()) is None
+
+
+def test_relistings_of_one_copy_are_one_copy_and_inexact_fills_do_not_count():
+    events = [settle(5, 2, "t18", "t10", "LAT-03", 500, 10)]  # the tape: LAT-03 at 10
+    events += [ask(i, 10 + i, "t06", "LAT-03", 5, 71, expires=11 + i) for i in range(1, 5)]  # one copy, 4 times
+    events += [{"id": 99, "tick": 30, "type": "clock", "payload": {}}]
+    found = rv.profiles(rv.listings(events), events, AMAP, CATALOG)
+    assert found["t06"].asks == 4 and found["t06"].ask_vs_tape_by_copy == {"71": 0.5}
+    assert "cheap seller" not in found["t06"].tags  # four relistings at half the tape, but one copy
+    odd = [ask(1, 10, "t06", "LAT-10", 84, 90, expires=40), settle(1, 14, "t06", "t15", "LAT-10", 90, 70)]
+    prof = rv.profiles(rv.listings(odd), odd, AMAP, CATALOG)
+    assert (prof["t06"].asks_filled, prof["t06"].inexact, prof.get("t15")) == (0, 1, None)  # no take credited
