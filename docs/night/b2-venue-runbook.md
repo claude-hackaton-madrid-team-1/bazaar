@@ -4,6 +4,12 @@ Night backlog item B2, 4 Oct 2026. Branch `night/b2-venue-runbook`, draft PR #92
 
 **Rewritten at 03:50 for the new #71** (e82ba8d at 03:14–03:23, then e489449 at ~03:50: the venue opens once across restarts, a venue closed by hand is never reopened). It now opens our board venue from the **maker's venue keeper** at game hour 6.5 (11:30) with an exact broker, keeps the broker key in Postgres, and sets `allow_venue_open = true`, `cash_floor = 100`, `venue_bond_reserve = 270` and `venue_open_after_game_hours = 6.5`. Nothing here touched the live game. Every guardrail change below is a **proposal against #71's values**.
 
+> **Reconciled proposal: #118 (W1a, B20)** merges this runbook with #71. Two differences, both endorsed here:
+> 1. Open at 09:03 (`venue_open_after_game_hours` 4.05), as insurance in case the free stall does not count.
+> 2. Fall back to `venue_mechanism = auto` if the edge is not live on `bazaar-maker` by then.
+>
+> **Caveat on the fallback:** a venue's mechanism is set only at opening (RULES.md and the SDK offer only a fee change). An auto venue therefore gives up the edge and the limit probe for the whole of Saturday. Decide before 09:03, from the maker's startup line `venue keeper: broker bench edge`.
+
 ## What the venue is worth on Saturday (500 simulated Saturdays per row, W1a's bench #77)
 
 Saturday has 8 Market Tests (schedule fixture): h5, h7, h9, h11, h13, h15, h17, plus the hard test at **h16 = 21:00**. Game hour = wall hour, h4 = 09:00.
