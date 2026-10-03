@@ -2,7 +2,7 @@
 
 Night shift of 3–4 Oct 2026. Branch `night/w2a-duel-zoo`, draft PR #80, stacked on #55 (`ogarciarevett/feat-bazaar-sim`).
 Refs #5, #7. Every number below is in [w2a-duel-zoo-tables.md](w2a-duel-zoo-tables.md), except where marked (n = 200; v1 = PR #60's `duel_move`,
-v2 = W2b's `single_duel_move` @ 8116b2c). Offline only: nothing touched the live game.
+v2 = W2b's `single_duel_move` @ bce15e3). Offline only: nothing touched the live game.
 
 ## What it is
 
@@ -29,27 +29,28 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 | Oracle cross-check | best rival offer accepted at once on the 12 unanswered duels = **195 P**, the plan's figure |
 | Classifier on its own styles, silent | linear 200/200, convex 198/200, one_shot 200/200, no_show 200/200; holdout vs v1 147/200 |
 | Realism (median, zoo vs real) | final gap toward us: linear 0.38 vs 0.39, one-shot 0.18 vs 0.11, tit-for-tat 0.25 vs 0.22, holdout 0.34 vs 0.36 (fraction of our limit) |
-| Noise | sd of mean P/duel over 5 seeds: 0.07 (v1) to 0.15 (v2) |
-| Gates | 851 tests pass; ruff, black, mypy clean |
+| Noise | sd of mean P/duel over 5 seeds: 0.07 (v1) to 0.14 (v2); sd of the v2/v1 lift 0.005 |
+| Gates | 852 tests pass; ruff, black, mypy clean |
 
 ## What the zoo says
 
 | Policy | P/duel, 16,800 price-only duels | deal rate | rounds/deal | practice-mix P/duel (bracket) | replay P (12 duels) |
 |---|---|---|---|---|---|
 | v1 (#60) | 14.35 | 0.829 | 6.85 | 13.6 – 14.5 | 121.7 |
-| **v2 (W2b)** | **21.56** | 0.834 | 1.16 | **16.2 – 20.5** | **173.5** |
+| **v2 (W2b)** | **22.06** | 0.834 | 1.23 | **16.7 – 21.3** | **173.5** |
 | endgame accept (silent) | 21.93 | 0.739 | 0 | 14.1 – 20.9 | 185.0 |
 | accept first inside | 11.22 | 0.739 | 0 | 10.2 – 11.3 | 85.0 |
 
 1. **Talking is what decays the result.** v1 averages 6.85 rounds per deal (0.94^6.85 keeps 65 %). The real practice shows the same: we scored 0 P on the 12 duels we never answered, and the oracle on them is 195 P.
 2. **Pure silence is not enough.** Silent endgame-accept fails 3 of 5 checks. Against tit-for-tat its deal rate is 0.49 vs v1's 0.99, and against listening one-shots it is 0.76 vs v1's 0.87. v2 talks about once per deal and keeps both deal rates (0.999 and 0.895).
 3. **Two-issue duels.** This branch's v1 (`days=5`) closes outside our limit in 70 of 2,800 two-issue duels: 23 signed, 47 worst case (not in the tables; `scripts/duel_zoo.py --policy v1` without `PYTHONPATH` runs this branch's agent). PR #60's v1 closes 0, and so does v2 in 14,400 duels. **#60 should land.**
-4. **Independent gate of W2b's v2.**
-   - GO at decays 0.08/0.10 (lift 1.518) and 0.06/0.10 (1.449).
-   - At 0.06/0.08 it sits **on the bar**. The gate's seed reads 1.388, but 5 more seeds read 1.394–1.408 (mean 1.401, sd 0.006): n = 200 cannot call that pair either way. W2b reproduces 1.388 / 1.399 / 1.403.
-   - The other 4 checks pass in every pair. Silent endgame-accept fails 3 of 5 at 0.06/0.08.
-   - v2's one losing style is the one-shot: 21.9 vs v1's 23.7 P/duel. That is the most frequent label in the practice (7 of 25), and the place where v2 pays for talking less. It is already inside the mix bracket.
-5. **Robust to the zoo's assumptions.** Pinning any one assumption gives a v2/v1 lift of 1.27–1.43 (8 rows in the tables). Within-tick order also matters: if we move before the rival, v2 drops 13 % (20.42 → 17.75 P) vs v1's 6 %, and v2's replay drops from 173.5 to 152.8 P. W2b already acted on this finding; the replay was at 140.1 before.
+4. **Independent gate of W2b's v2 @ bce15e3: GO at every decay pair.**
+   - Lift 1.420 at 0.06/0.08, 1.550 at 0.08/0.10, 1.483 at 0.06/0.10. Seeds 1–5 at 0.06/0.08 read 1.427–1.439 (sd 0.005).
+   - The other 4 checks pass in every pair. Silent endgame-accept fails 3 of 5.
+   - Two earlier v2 commits sat on or under the bar at 0.06/0.08 (8116b2c: 1.388, seeds 1.394–1.408). The current head added free descending offers to quiet rivals and fixed the one-shot gap: 24.4 vs v1's 23.7 P/duel, where it was 21.9.
+5. **Robust to the zoo's assumptions, less so to tick order.**
+   - Pinning any one assumption gives a v2/v1 lift of 1.29–1.44 (9 rows in the tables), including conceders and holdouts that never accept (1.44).
+   - If we move before the rival in a tick, v2 drops 12 % (20.89 → 18.33 P) vs v1's 6 %, so its lift at 0.06/0.08 falls to 1.33. v2's replay drops from 173.5 to 152.8 P; W2b acted on this finding, and it was at 140.1 before.
 
 ## Caveats (stated, not fixed)
 
@@ -65,7 +66,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 
 ## What Marius must decide
 
-1. **Which decays the W2b gate uses.** Fact 1 of the plan puts the remaining scored sessions at 8 % (Duels II) and 10 % (Sunday). There v2 is a clear GO (1.518). On the flat 0.06/0.08 grid it sits on the 1.4 bar within seed noise (1.39–1.41).
+1. **Whether v2 ships as the default.** It is GO on all five checks at every decay pair here. The open risk is the within-tick order (lift 1.33 if we move first), which the morning probe below settles.
 2. **Whether to keep the live-sim rounds/decay fix** in #55 (verified on all 26 payloads).
 3. **A morning probe**, in the next real duel session: does a silent rival's standing offer stay acceptable, and is the within-tick order the sim's?
 
