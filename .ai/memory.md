@@ -1219,3 +1219,16 @@ Two real bugs: (1) the taker runs BAZAAR_DECIDER=llm and `needed_budget_s` = 13 
 move would read "no tick budget for jev" (20 team opens already did at 30 s ticks); `decider()` now answers Jev below
 BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
 offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
+
+### [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+Claim-only storage made `opened_before()` true (regression: `2 failed, 22 deselected`) → it excluded `_claim`
+but counted `_once:bench_match_probe` → exclude the literal `_once:` prefix from both venue count and load.
+Keep real keyless venue markers; an in-memory SQL regression covers both states and target isolation.
+Validation also hit local Postgres contention: the full suite stalled inside psycopg, then a retry failed
+the `rival_board` lock-timing test; the parallel coverage run hit a schema lock timeout in approvals setup.
+Both affected tests passed alone (`2 passed in 2.89s`); the final full gate without competing coverage passed:
+`5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.
+
+### [2026-10-04] build-error: PR #263 merge verification separator
+The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
+The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.

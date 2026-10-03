@@ -368,6 +368,9 @@ class VenueKeeper:
                 hub=self.hub,
                 books=self._bench_books(venue),
             )
+            if self.broker_config.match_probe:
+                agent.probe_claim = self.vault.claim_once  # durable and shared: one probe per game
+                self.log(f"tick {clock.tick} venue: bench match probe ARMED (one request ever, durable claim)")
             self._broker = (venue, agent)
             self.log(
                 f"tick {clock.tick} venue: broker on for {venue} ({'LIVE' if self.live else 'dry run'}), "
