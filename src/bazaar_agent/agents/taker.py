@@ -1186,6 +1186,8 @@ class Taker:
         run.offers.append(  # our copy is promised too: later checks this tick never offer it again
             {"id": -2, "status": "open", "maker": run.snap.us, "give": {"assets": [{"id": a.trade.asset_id}]}}
         )
+        if self.live:
+            self._after_deal(run, f"swap accept in thread {a.thread_id}")  # album first (#105), as after any accept
         return True
 
     def _duel_grace(self, run: _TickRun) -> None:
