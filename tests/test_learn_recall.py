@@ -173,6 +173,7 @@ def test_only_the_fused_top_reaches_the_reranker():
 
 
 def test_local_models_fail_open_when_fastembed_cannot_load(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     import builtins
 
     real_import = builtins.__import__
@@ -193,6 +194,7 @@ def test_local_models_fail_open_when_fastembed_cannot_load(monkeypatch, tmp_path
 
 
 def test_local_models_warm_in_the_background_without_blocking(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     gate = threading.Event()
     models = LocalModels(tmp_path)
 
@@ -274,6 +276,7 @@ class _FakeCrossEncoder:
 
 
 def test_local_models_load_embed_cache_and_rerank_with_fastembed_faked(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     import fastembed
     import fastembed.rerank.cross_encoder as xenc
 
@@ -331,6 +334,7 @@ def test_many_rows_about_other_subjects_never_push_the_relevant_lesson_out():
 
 
 def test_a_failed_model_load_is_retried_after_some_warms(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     from bazaar_agent.learn import embed
 
     models = LocalModels(tmp_path)
@@ -426,3 +430,16 @@ def test_without_the_reranker_recall_is_bm25_only_above_a_lexical_floor():
     lessons = Lessons(r)
     assert lessons("buy LAV-08 uncommon from chato", tick=120)[0]["about"] == "chato"
     assert len(lessons._cache) == 1  # cached for its tick bucket only: the reranker may be ready a few ticks on
+
+
+def test_bazaar_models_off_never_loads_nor_warms(monkeypatch, tmp_path):
+    import fastembed
+
+    def boom(*args, **kwargs):
+        raise AssertionError("fastembed must not be touched")
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", boom)
+    models = LocalModels(tmp_path)
+    assert models.load() is False and models.status.startswith("off")
+    models.warm()
+    assert models._loading is None and not models.ready
