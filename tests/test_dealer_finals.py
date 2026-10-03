@@ -78,3 +78,16 @@ def test_a_lifted_final_needs_lift_after_bids_but_a_final_inside_the_top_never_d
     assert decide(late, 29, 7, True).kind == "accept"
     c = Conversation("chato", "LAV-08", "uncommon", 45, "r", early, 187, TICK)
     assert meet_the_ask(DeskMove(c, Move("accept", 29, 9), 29, True, offer_id=9)).move.kind == "wait"
+
+
+def test_a_lifted_final_at_the_dealers_opening_price_is_never_taken_nor_met():
+    # review #158 round 2: pin `may_take` on the lifted paths (a deal at the opening price scores nothing)
+    at_opening = Negotiation(BidPlan(18, 1, 26, 33, lift_after=4), [18, 19, 20, 21], opening_ask=33, lowest_ask=33)
+    move = decide(at_opening, 33, 7, True)
+    assert move.kind == "walk" and move.reopen and "opening price" in move.reason
+    c = Conversation("chato", "LAV-08", "uncommon", 45, "r", at_opening, 187, TICK)
+    assert meet_the_ask(DeskMove(c, Move("accept", 33, 9), 33, True, offer_id=9)).move.kind == "wait"
+    below = Negotiation(BidPlan(18, 1, 26, 33, lift_after=4), [18, 19, 20, 21], opening_ask=33, lowest_ask=33)
+    assert decide(below, 32, 7, True).kind == "accept"  # one below his opening: taken
+    c = Conversation("chato", "LAV-08", "uncommon", 45, "r", below, 187, TICK)
+    assert meet_the_ask(DeskMove(c, Move("accept", 32, 9), 32, True, offer_id=9)).move.price == 32

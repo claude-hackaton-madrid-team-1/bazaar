@@ -703,10 +703,14 @@ A dealer's final offer is its limit: refuse it and the dealer walks. `dealer_fin
 GUARDRAILS.md (0 = today) lets the desk take a final on a card, or bid exactly at it, up to the rarity
 cap × (1 + lift). The price is never above our value minus `min_buy_surplus`, never above what the cash
 floor and the hourly spend still allow, and never on packs. Our own bids still never pass the cap.
+Such a final is taken only after 4 of our bids, and only from a dealer whose price history for that
+class we have seen (an unknown dealer, an L4 trickster, gets no lifted final). A final at the dealer's
+opening price is never taken (`may_take`).
 
-With the lift on, two things change:
-- **The patience play.** The ladder starts low enough that the final arrives before our bids run
-  out: step 1, the dealer's median patience + 3 distinct bids, at least 9.
+With the lift on, two more things change:
+- **The patience play, only where the dealer fills above our top (Chato).** The ladder starts low
+  enough that the final arrives before our bids run out: step 1, the dealer's median patience + 3
+  distinct bids, at least 9. Where the dealer fills inside our top (Abuela), today's ladder stays.
 - **The pricier dealer gets a thread too.** The strategy also offers the pricier dealer for a card
   (`level_ladder`), because the ladder scores each level's best three deals. El Chato is level 2,
   and his uncommon fills (28-32) sit above our cap of 26.
