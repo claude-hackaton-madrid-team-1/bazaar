@@ -390,3 +390,10 @@ keepalives see a proxy that ACKs but never answers as alive; nothing bounded the
 holdings Postgres call runs on a worker thread per connection (`SharedDb.call`), callers wait a deadline
 (send 0.2 s, read 5 s) and then go live; a stuck worker makes later reads skip the database at once.
 Second bug found by the test: the worker's starter took the lock the hung worker held (own lock now).
+
+### [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
+symptom: behind a proxy that black-holed the link right after `/me` returned, the tick-start read stayed
+blocked 20 s+ → root cause: the caller extended its wait with `done.wait()` (no timeout) once the worker had
+asked the game, and the worker then hung on the store/COMMIT → fix: a `Ticket` per read: the worker hands
+the game's answer to the caller BEFORE storing it, the caller waits at most `ME_BUDGET_S` (the SDK's own
+budget) for that answer, and a caller that gave up first cancels the job so it never asks the game.

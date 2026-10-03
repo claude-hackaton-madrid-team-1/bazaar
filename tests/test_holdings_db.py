@@ -257,6 +257,38 @@ def test_a_slow_game_read_is_awaited_not_asked_twice(opener, monkeypatch):
     assert (read.source, game.calls) == ("live", 1) and 0.7 < took < 1.5
 
 
+def test_a_database_that_hangs_after_the_game_answered_costs_the_caller_nothing(opener, monkeypatch):
+    monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
+    real_save = hd.save
+
+    def hung_save(*args, **kwargs):  # the link hangs during the store, after /me answered
+        time.sleep(2.0)
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(hd, "save", hung_save)
+    game = Game()
+    started = time.monotonic()
+    read = reader(opener, game).me(clock(tick=TICK))
+    took = time.monotonic() - started
+    assert (read.source, game.calls) == ("live", 1) and took < 1.0  # handed over before the store
+    time.sleep(2.2)  # let the worker finish the store before the schema is dropped
+
+
+def test_a_job_whose_caller_gave_up_never_asks_the_game(opener, monkeypatch):
+    monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
+    real_epoch = hd.current_epoch
+
+    def slow_epoch(*args, **kwargs):  # Postgres is slow before the game is asked
+        time.sleep(1.0)
+        return real_epoch(*args, **kwargs)
+
+    monkeypatch.setattr(hd, "current_epoch", slow_epoch)
+    game = Game()
+    read = reader(opener, game).me(clock(tick=TICK))
+    time.sleep(1.2)  # the job wakes up after its caller left
+    assert (read.source, read.why, game.calls) == ("live", "postgres too slow", 1)
+
+
 def test_two_writers_in_one_tick_never_move_the_row_backwards(opener):
     from bazaar_agent.holdings import parse_me, save
 
