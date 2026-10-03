@@ -348,3 +348,37 @@ create table if not exists leaderboard_snapshots (
   negotiating numeric, market numeric, level int, pages int, deals int, venue text,
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
+
+-- The team matrix (`team_matrix.py`, kept by `team_matrix_store.py`): every team × card we can place and one
+-- summary per team, as the news sentinel last built them. A save replaces its world's rows in one transaction, so
+-- each world holds exactly one matrix. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
+create table if not exists team_matrix (
+  world text not null, team text not null, card text not null, holds int not null, spare int not null,
+  missing_for_page bool not null, page_have int, page_of int, confidence numeric, tick int not null,
+  primary key (world, team, card));
+create table if not exists team_matrix_summary (
+  world text not null, team text not null, rank int, score numeric, trend int, top_set text, venue text,
+  rival bool not null, rival_why text, wants text, has_for_us text, last_trades text, us text, tick int not null,
+  primary key (world, team));
+
+-- Every role that reads `feed_events` (the teammates' read-only logins, `readonly_user.sql`) reads the matrix too:
+-- their default privileges cover only tables created by the role that ran that file. Only a missing grant is made
+-- (a re-run writes no catalog row), and a grant that fails never stops a process from starting.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select distinct g.grantee::text as role from information_schema.role_table_grants g
+     where g.table_schema = current_schema() and g.table_name = 'feed_events' and g.privilege_type = 'SELECT'
+       and g.grantee::text not in (current_user::text, 'PUBLIC')
+  loop
+    if not (has_table_privilege(r.role, format('%I.team_matrix', current_schema()), 'SELECT')
+            and has_table_privilege(r.role, format('%I.team_matrix_summary', current_schema()), 'SELECT')) then
+      execute format('grant select on %I.team_matrix, %I.team_matrix_summary to %I',
+                     current_schema(), current_schema(), r.role);
+    end if;
+  end loop;
+exception when others then
+  raise notice 'team matrix grants skipped (%)', sqlerrm;
+end $$;

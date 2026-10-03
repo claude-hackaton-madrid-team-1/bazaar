@@ -565,6 +565,20 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
   **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
 
+### N20 — Team matrix in the sentinel, fed to the negotiators
+Spec: Omar via the lead (2026-10-03 18:00): "the sentinel MUST know the entire matrix of teams and let the negotiators
+know". Inputs already in the taker (no request): the supply map (feed + scan + /me), the rank watch's leaderboard
+snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_store.py`, `news.py`,
+`agents/{taker,team_desk,maker}.py`, `cli.py`, `sql/schema.sql`, `tests/test_team_matrix{,_store}.py`.
+- Step 1 — `team_matrix.build_matrix`: per team × card holds / spare / missing on a page close to complete (≤ 2
+  missing, ≥ 70 % held), with a confidence; per team rank, trend, top set, venue, last trades, podium rival,
+  wants, has_for_us. · **Acceptance:** `tests/test_team_matrix.py`.
+- Step 2 — tables `team_matrix`, `team_matrix_summary` (per world), granted to every read-only role; the taker's
+  sentinel rebuilds and stores it once per 10-tick window. · **Acceptance:** `tests/test_team_matrix_store.py`.
+- Step 3 — negotiators: `market_teams` (counterparty row + top-5 teams per card holding it spare / missing it) in
+  the decider states of board and dealer accepts (taker), team swaps (team desk, plus the plan rows), and our asks
+  (maker, from the stored matrix). No price or guardrail change. · **Acceptance:** `tests/test_team_matrix.py`.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

@@ -27,6 +27,8 @@ from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
 from bazaar_agent.rank_watch import RankWatch
 from bazaar_agent.schedule_watch import ScheduleWatch
+from bazaar_agent.team_matrix import TeamMatrix, build_matrix
+from bazaar_agent.team_matrix_store import TeamMatrixStore
 
 READ_EVERY_TICKS = 10
 READS = ("news", "schedule", "levels", "leaderboard")  # one window, one read per tick
@@ -238,6 +240,7 @@ class NewsSentinel:
         out_dir: Path,
         every: int = READ_EVERY_TICKS,
         history: LeaderboardStore | None = None,
+        matrix_store: TeamMatrixStore | None = None,
     ) -> None:
         self.public, self.record, self.log, self.every = public, record, log, every
         self.path = out_dir / EVENTS_FILE
@@ -249,6 +252,8 @@ class NewsSentinel:
             boards = self.ranks.seed(history.load(self.ranks.history))
             log(f"news: rank history {boards} board(s) from Postgres")
         self.upcoming: list[dict[str, Any]] = []
+        self.matrix: TeamMatrix | None = None  # every team x card, rebuilt each window (`team_matrix.py`)
+        self.matrix_store = matrix_store
         self._last_read: int | None = None
         self._due: list[str] = []  # this window's reads still to make, one per tick
         self._payloads: dict[str, dict[str, Any]] = {}  # the last schedule and levels answers
@@ -261,9 +266,12 @@ class NewsSentinel:
         catalog: Mapping[str, Any],
         clock: Any = None,
         us: str | None = None,
+        market: Any = None,
     ) -> list[NewsItem]:
         """`clock`: the tick's `ticks.Clock` (t_hours, tick_seconds) for lead times; `us`: our team id (never a
-        rival of ours)."""
+        rival of ours); `market`: the tick's `strategy.Market` (its supply map feeds the team matrix)."""
+        if market is not None:
+            self._matrix_tick(tick, events, catalog, market, us)
         try:
             return self._run(tick, events, catalog, clock, us)
         except Exception as e:  # noqa: BLE001 — logging only: the sentinel never breaks a tick
@@ -303,6 +311,26 @@ class NewsSentinel:
         if fresh or changed:
             self._write()
         return fresh
+
+    def _matrix_tick(
+        self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], market: Any, us: str | None
+    ) -> None:
+        """Rebuild the team matrix once per read window (after the window's reads, so the leaderboard is fresh)
+        and store it; never raises."""
+        due = self.matrix is None or tick - self.matrix.tick >= self.every
+        if not due or (self._due and self.matrix is not None):  # wait for the window's last read
+            return
+        try:
+            self.matrix = build_matrix(
+                tick, us or str(getattr(market, "us", "") or ""), catalog, getattr(market, "supply", None),
+                getattr(market, "held", {}), getattr(market, "released", ()), getattr(market, "chasers", {}),
+                self.ranks.snapshots, events,
+            )  # fmt: skip
+        except Exception as e:  # noqa: BLE001 — the matrix is advice: a bug in it never costs the tick
+            self._once(f"tick {tick} team matrix: skipped ({type(e).__name__})")
+            return
+        if self.matrix_store is not None:
+            self.matrix_store.save(self.matrix)
 
     def _schedule_tick(self, tick: int, clock: Any) -> bool:
         t_hours, seconds = getattr(clock, "t_hours", None), getattr(clock, "tick_seconds", None)
