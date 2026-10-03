@@ -440,7 +440,7 @@ class Taker:
         lower = self.reopen_at.get((op.dealer, op.item))
         if lower is not None and lower < op.plan.start:  # she held her opening ask last time: start lower
             op = replace(op, plan=replace(op.plan, start=lower), reason=f"{op.reason}; reopened lower")
-        verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        verdict = check(Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         inputs = {
             "dealer": op.dealer,
@@ -550,7 +550,7 @@ class Taker:
     def _desk_send(self, run: _TickRun, dm: DeskMove, thread: dict[str, Any]) -> None:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
         if move.kind == "bid":
-            action = Action("bid", conv.item, conv.rarity, move.price)
+            action = Action("bid", conv.item, conv.rarity, move.price, dealer=conv.dealer)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
         verdict = check(action, self._ctx(run, skip_thread=conv.thread_id), self.rules)
@@ -678,7 +678,8 @@ class Taker:
         skip_thread = p.desk.conv.thread_id if p.desk else None
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
-        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price), ctx, self.rules)
+        dealer = None if p.source == "board" else p.source  # a dealer's ask: its own dealer_price_caps entry
+        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price, dealer=dealer), ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False

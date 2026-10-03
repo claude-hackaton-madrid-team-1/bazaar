@@ -27,7 +27,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Score: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
 - Sell ask: the highest of what we lose × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price. What we lose is our `your_value`, plus the page bonus when we sell our only copy of a page card (all of it on a complete page, else its weighted share). A copy without `your_value` is never offered.
 - A buy whose guardrail price cap sits below the market price is not proposed ("cap below market"): that ladder cannot fill.
-- Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`.
+- Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`. With `ladder_floor_quantile` above 0, a card buy uses the floor table instead (`bazaar ladder floors`): floor − 2 → floor + 2, step 1, under the cap and our value.
 - Pack EV: per slot, rarity odds × the mean value to us of one more copy of a released card of that rarity (copy marginals applied); a printed-out rarity gives the next one down.
 
 ## Parameters
@@ -40,3 +40,5 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `rare_fallback_price` = 70 — expected price of a rare when the tape has none for that card.
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.
+- `ladder_floor_quantile` = 0 — 0 keeps the lowest-fill dealer ladder; above 0 a dealer card buy opens 2 under that quantile of the limits every team's conversations closed at and stops 2 over it (`bazaar ladder floors`; 0.5 is the W3 plan).
+- `ladder_level_deals` = 0 — 0 buys each card from the cheapest dealer; above 0 the newest dealer gets card buys (when its ladder fits our caps and value) until we closed this many deals with it (counted over the whole feed held, not per day): the ladder counts each level's best three, and they unlock the next level early.

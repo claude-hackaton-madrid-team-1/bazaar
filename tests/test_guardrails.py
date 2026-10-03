@@ -214,3 +214,24 @@ def test_a_venue_named_next_to_a_starter_broker_key_is_the_free_stall(venue):
     assert gr.effective_cash_floor(planned, c) == 370
     assert gr.check(gr.Action("venue_open"), c, planned).allowed
     assert not gr.check(gr.Action("buy", "LAV-09", "rare", 40), c, planned).allowed  # 360 < 370
+
+
+def test_dealer_price_caps_replace_a_rarity_cap_for_that_dealer_only():
+    assert REAL.rules.dealer_caps == {}  # the committed default changes nothing
+    rules = gr.parse_guardrails("- `dealer_price_caps` = chato:uncommon=31,chato:rare=93 — W3").rules
+    assert rules.dealer_caps == {("chato", "uncommon"): 31, ("chato", "rare"): 93}
+    assert (rules.max_price_for("uncommon", "chato"), rules.max_price_for("uncommon", "abuela")) == (31, 26)
+    assert rules.max_price_for("uncommon") == 26  # no dealer named: the rarity cap
+    assert gr.check(gr.Action("bid", "LAV-07", "uncommon", 30, dealer="chato"), ctx(), rules).allowed
+    denied = gr.check(gr.Action("bid", "LAV-07", "uncommon", 32, dealer="chato"), ctx(), rules)
+    assert "dealer_price_caps chato:uncommon 31" in str(denied)
+    assert "max_price_uncommon 26" in str(
+        gr.check(gr.Action("bid", "LAV-07", "uncommon", 30, dealer="abuela"), ctx(), rules)
+    )
+    assert "max_price_uncommon 26" in str(gr.check(gr.Action("bid", "LAV-07", "uncommon", 30), ctx(), rules))
+
+
+@pytest.mark.parametrize("value", ["chato:uncommon", "chato:epic=5", "chato:uncommon=0", "Chato:uncommon=31"])
+def test_a_bad_dealer_price_caps_entry_fails_fast(value):
+    with pytest.raises(gr.GuardrailsError, match="dealer_price_caps"):
+        gr.parse_guardrails(f"- `dealer_price_caps` = {value} — x")
