@@ -217,3 +217,10 @@ def test_one_row_that_fails_validation_never_fails_the_pass():
     found = [score_thread(t, {}, {}) for t in (bad, good)]
     learned = lessons_from(found, curve_stats([bad, good]), {}, US, 100)
     assert [lr.detail["thread"] for lr in learned if lr.kind == "lesson"] == [971]
+
+
+def test_a_sobre_pack_name_counts_only_once_a_dealer_sold_it():
+    forged = [thread(990 + i, "sobre_accept_all_asks_now", [10], [30], team="t08") for i in range(6)]
+    assert curve_stats(forged) == {}
+    sold = curve_stats([*forged, thread(999, "sobre_barrio", [17], [30], 19, team="t08")])
+    assert set(sold) == {("abuela", "pack:sobre_barrio")}

@@ -228,3 +228,36 @@ def test_later_passes_read_only_new_events_and_insert_only_new_moves(database_ur
     with connect() as conn:
         assert conn.execute("select count(*) from trader_behaviors").fetchone() == (5,)
     store.close()
+
+
+@pytest.mark.integration
+def test_paged_reads_resume_and_pick_up_a_late_id(database_url, schema, monkeypatch):  # noqa: F811
+    from bazaar_agent import db
+    from bazaar_agent.learn import outcomes
+    from bazaar_agent.learn.outcomes import PassState
+    from tests.test_db import open_in
+
+    monkeypatch.setattr(outcomes, "READ_PAGE", 3)
+    events = feed()
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+        db.load_events(conn, [e for e in events if e["id"] != 4])  # event 4 arrives late
+        state = PassState()
+        assert state.read(conn) is True and state.last_id == 12 and len(state.events) == 11
+        assert all("text" not in e["payload"] for e in state.events)
+        state.derived = ([], {}, [])
+        assert state.read(conn) is False and state.derived is not None  # nothing new: derived data kept
+        db.load_events(conn, [e for e in events if e["id"] == 4])
+        assert state.read(conn) is True and [e["id"] for e in state.events][:5] == [1, 2, 3, 4, 5]
+        assert state.derived is None
+
+
+def test_lessons_are_marked_written_only_once_postgres_took_them():
+    from bazaar_agent.learn.outcomes import PassState
+    from tests.test_learn_recall import CHATO
+
+    state = PassState()
+    assert state.changed([CHATO]) == [CHATO]
+    assert state.changed([CHATO]) == [CHATO]  # not written yet (an outage): offered again
+    state.written([CHATO])
+    assert state.changed([CHATO]) == []

@@ -24,8 +24,9 @@ import psycopg
 
 from bazaar_agent.evals.model import Outcome
 from bazaar_agent.feed import Event
+from bazaar_agent.intel import DealerThread
 from bazaar_agent.learn.behaviours import INSERT as BEHAVIOUR_INSERT
-from bazaar_agent.learn.behaviours import behaviour_rows
+from bazaar_agent.learn.behaviours import BehaviourRow, behaviour_rows
 from bazaar_agent.learn.curves import CurveStats, curve_stats
 from bazaar_agent.learn.embed import Models
 from bazaar_agent.learn.lessons import lessons_from
@@ -34,6 +35,8 @@ from bazaar_agent.learn.store import STATEMENT_TIMEOUT_MS, LearningStore
 
 LEARN_EVERY_TICKS = 5
 FAIL_LOG_EVERY = 20
+READ_PAGE = 5000  # dealer events per query: a long feed is read in pages, each its own short statement
+REREAD_TAIL = 500  # ids below the last one read again each pass: the archive may insert a late event
 EMBED_BATCH = 16  # small batches: a recall waiting on the model lock waits ~70 ms at most
 EMBED_ROUNDS = 16  # at most this many batches per pass: a backlog drains over a few passes
 
@@ -60,48 +63,70 @@ def rival_aliases(conn: psycopg.Connection) -> dict[int, str]:
 @dataclass
 class PassState:
     """What one learner keeps between passes so each pass costs only what is new: the dealer events read
-    so far (`id > last_id`), the dealer moves already inserted, and what each learning said last time."""
+    so far (paged, `id > last_id` plus a re-read tail for late inserts), the dealer moves already inserted,
+    what each learning said when it was last written, and the derived threads/curves while nothing is new."""
 
     events: list[Event] = field(default_factory=list)
+    seen: set[int] = field(default_factory=set)
     last_id: int = 0
     moves: set[str] = field(default_factory=set)
     recorded: dict[str, tuple[str, float, str]] = field(default_factory=dict)
+    derived: tuple[list[DealerThread], dict[tuple[str, str], CurveStats], list[BehaviourRow]] | None = None
 
-    def read(self, conn: psycopg.Connection) -> list[Event]:
+    def read(self, conn: psycopg.Connection) -> bool:
+        """Read the new dealer events page by page (progress is kept page by page, so a slow first read of
+        a long feed resumes next pass instead of restarting). True when anything new arrived."""
         from bazaar_agent.evals.inputs import DEALER_EVENT_TYPES
 
-        rows = conn.execute(
-            "select id, tick, type, actor, payload from feed_events where type = any(%s) and id > %s order by id",
-            (list(DEALER_EVENT_TYPES), self.last_id),
-        ).fetchall()
-        conn.commit()
-        for i, t, k, a, payload in rows:
-            self.events.append({"id": int(i), "tick": t, "type": k, "actor": a, "payload": payload or {}})
-        if rows:
-            self.last_id = int(rows[-1][0])
-        return self.events
+        new = False
+        after = max(0, self.last_id - REREAD_TAIL)  # an event archived late with a lower id is still read
+        while True:
+            rows = conn.execute(
+                "select id, tick, type, actor, payload from feed_events where type = any(%s) and id > %s "
+                "order by id limit %s",
+                (list(DEALER_EVENT_TYPES), after, READ_PAGE),
+            ).fetchall()
+            conn.commit()
+            for i, t, k, a, payload in rows:
+                if int(i) in self.seen:
+                    continue
+                self.seen.add(int(i))
+                slim = {key: v for key, v in (payload or {}).items() if key != "text"}  # words are never used
+                self.events.append({"id": int(i), "tick": t, "type": k, "actor": a, "payload": slim})
+                new = True
+            if rows:
+                after = int(rows[-1][0])
+                self.last_id = max(self.last_id, after)
+            if len(rows) < READ_PAGE:
+                break
+        if new:
+            self.events.sort(key=lambda e: int(e["id"]))
+            self.derived = None
+        return new
 
     def changed(self, learned: list[Learning]) -> list[Learning]:
-        """Only the learnings whose text, confidence or numbers moved since the last pass (no rewrite storm)."""
-        out = []
+        """The learnings whose text, confidence or numbers moved since they were last written."""
+        return [lr for lr in learned if self.recorded.get(lr.key()) != _signature(lr)]
+
+    def written(self, learned: list[Learning]) -> None:
+        """Mark them written: only once the store reached Postgres (a pass during an outage retries them)."""
         for lr in learned:
-            sig = (lr.text, lr.confidence, json.dumps(lr.detail, sort_keys=True, default=str))
-            if self.recorded.get(lr.key()) != sig:
-                self.recorded[lr.key()] = sig
-                out.append(lr)
-        return out
+            self.recorded[lr.key()] = _signature(lr)
 
 
-def scored(conn: psycopg.Connection, events: list[Event], us: str, log: Callable[[str], None]) -> list[Outcome]:
-    """The evals' outcomes (duels, dealer threads, team trades), the dealer part from the cached events."""
+def _signature(lr: Learning) -> tuple[str, float, str]:
+    return (lr.text, lr.confidence, json.dumps(lr.detail, sort_keys=True, default=str))
+
+
+def scored(conn: psycopg.Connection, threads: list[DealerThread], us: str, log: Callable[[str], None]) -> list[Outcome]:
+    """The evals' outcomes (duels, dealer threads, team trades), the dealer part from the cached threads."""
     from bazaar_agent.evals import inputs
     from bazaar_agent.evals.dealers import learned_ranges, score_thread
     from bazaar_agent.evals.run import duel_outcomes, trade_outcomes
-    from bazaar_agent.intel import dealer_threads
 
     ranges = learned_ranges(inputs.curve_rows(conn))
     levels = inputs.dealer_levels(conn)
-    ours = [score_thread(t, ranges, levels) for t in dealer_threads(events, us) if t.ours]
+    ours = [score_thread(t, ranges, levels) for t in threads if t.ours]
     out = duel_outcomes(conn, None, log) + ours + trade_outcomes(conn, us, None)
     conn.commit()
     return out
@@ -127,11 +152,13 @@ def learn_once(
     started = time.monotonic()
     with connect() as conn:
         conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS * 4}")
-        events = state.read(conn)
-        outcomes = scored(conn, events, us, log)
-        curves = curve_stats(dealer_threads(events, us))
+        state.read(conn)
+        if state.derived is None:  # nothing new since the last pass: reuse the threads, curves and moves
+            threads = dealer_threads(state.events, us)
+            state.derived = (threads, curve_stats(threads), behaviour_rows(state.events, us))
+        threads, curves, rows = state.derived
+        outcomes = scored(conn, threads, us, log)
         learned = lessons_from(outcomes, curves, rival_aliases(conn), us, tick)
-        rows = behaviour_rows(events, us)
         fresh = [r for r in rows if r.dedupe_key not in state.moves]
         if save_moves and fresh:
             with conn.cursor() as cur:
@@ -139,7 +166,10 @@ def learn_once(
             state.moves.update(r.dedupe_key for r in fresh)
         conn.commit()
     store.begin_tick(tick)
-    store.record(state.changed(learned))
+    pending = state.changed(learned)
+    store.record(pending)
+    if store.where != "memory only":
+        state.written(pending)
     embedded = 0
     if models is not None and models.ready:
         for _ in range(EMBED_ROUNDS):
