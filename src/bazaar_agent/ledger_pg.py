@@ -15,7 +15,7 @@ from pathlib import Path
 
 import psycopg
 
-from bazaar_agent.guardrails import Ledger, LedgerStore, is_pack
+from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack
 
 ACCEPT_LOCK = "bazaar_agent.ledger.accept"
 STATEMENT_TIMEOUT_MS = 3000  # a stuck query must not eat the tick
@@ -74,6 +74,17 @@ class PgLedger:
         except psycopg.Error as e:
             raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
         return [str(item or "") for (item,) in rows]
+
+    def hands_off_ids(self) -> set[int]:
+        """Offer ids a person posted by hand (`guardrails.HANDS_OFF` listing rows), from every machine."""
+        try:
+            rows = self._conn.execute(
+                "select item from ledger where kind = 'listing' and item like %s", (HANDS_OFF + "%",)
+            ).fetchall()
+        except psycopg.Error as e:
+            raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
+        ids = (hands_off_id(str(item or "")) for (item,) in rows)
+        return {i for i in ids if i is not None}
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._one("select count(*) from ledger where kind = %s and tick = %s", (kind, tick))
