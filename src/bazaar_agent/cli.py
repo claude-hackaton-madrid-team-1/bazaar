@@ -17,7 +17,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import flags_cli, intel, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -836,6 +836,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     from rich.markup import escape
 
     from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
     try:
@@ -844,6 +845,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
         cards = CardIndex.from_catalog({})
     book = FlagBook.from_rules(rules)
+    tags = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)
 
     def log(line: str) -> None:
         console.print(escape(f"inspector: {line}"))
@@ -851,6 +853,8 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     def on_thread(thread: dict[str, Any]) -> None:
         guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
         flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+        mid, text = latest_message(thread, dealer)
+        tags.tag(dealer, mid, text, None, log)  # `negotiate` keeps the tick; the row needs no more
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
@@ -914,6 +918,8 @@ def duel_run(
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from contextlib import suppress
+
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
@@ -936,7 +942,8 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
-    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
+    from bazaar_agent.agents.runtime import Recorder, cost_nothing
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
@@ -974,6 +981,7 @@ def duel_run(
     # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
+    injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
     us = _our_team_id(client)
     shared = ledger.where.startswith("postgres")
     say = lambda m: console.print(escape(m))  # noqa: E731
@@ -1015,6 +1023,9 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            if move.kind == "accept" and cost_nothing(e.code, e.status):  # a 4xx: it cost nothing (RULES.md)
+                with suppress(LedgerUnavailable):  # unreachable: the slot stays taken (fail closed)
+                    ledger.release_accept(c.tick, f"duel:{did}")
             duel_traces.refused(did, e)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
             return "failed"
@@ -1143,6 +1154,9 @@ def duel_run(
             if did is None:
                 return
             gate: Gate | None = None
+            offer = d.get("rival_offer")
+            key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
+            injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
                 pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
@@ -1905,6 +1919,7 @@ def strategy(
 
 sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
 app.add_typer(sell_app, name="sell")
+app.add_typer(flags_cli.flags_app, name="flags")
 EXPIRES_HELP = "Ticks the offer stays open"
 POST_HELP = "Actually post. Without it: dry run, nothing is sent"
 TO_HELP = "Address the offer to one team (t05): only it may accept. Default: anyone on the venue"
@@ -2291,6 +2306,7 @@ def _run_agent(
     from bazaar_agent.decisions import DecisionLog
     from bazaar_agent.ledger_pg import LedgerNotShared, ledger_health, open_ledger
     from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+    from bazaar_agent.supply_db import ScanStore
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
@@ -2312,7 +2328,8 @@ def _run_agent(
     except LedgerNotShared as e:
         _fail(f"{name}: refusing to trade: {e}")
     decisions = DecisionLog(settings.data_dir, connect, log)
-    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, archive=learn)
+    scans = ScanStore(settings.data_dir / "supply", connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, scans, archive=learn)
     extra: dict[str, Any] = {}
     if learn:
         from bazaar_agent.learn.live import LiveLearner
@@ -2469,7 +2486,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
     """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
     from bazaar_agent import db
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.venue_keeper import VenueKeeper
+    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_GAME_HOURS, VenueKeeper
 
     return VenueKeeper(
         team,
@@ -2482,6 +2499,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
+        announce_every_game_hours=ANNOUNCE_EVERY_GAME_HOURS,
     )
 
 
@@ -2707,6 +2725,7 @@ def broker_run(
 
 llm_cli.register(app)
 evals_cli.register(app)
+supply_cli.register(app)
 learn_cli.register(app)
 dealer_finals.register(dealer_app)
 

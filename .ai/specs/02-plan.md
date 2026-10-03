@@ -274,6 +274,25 @@ rebased on `main` after the previous one merges.
   `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
   raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
 
+### TO114 / TO116 / TO126 / TO133 / TO110 / TO128 — takeover of Marius's night "bite" PRs (2026-10-03, task_edf74300462e)
+Spec (external, no local spec file): each PR's body and its report under `docs/night/` (B17, B18, B14, B16, B19,
+B10); RULES.md "Dealers", "The clock" and "Your own market". Marius is offline: each one is squashed onto the
+current base (his night history is dropped), every default kept (no flag flips), the gate + `scripts/sim_smoke.py`
+run, then `/pr-review` (pr-reviewer + security-auditor: money paths). His PR is closed with a pointer to ours.
+- TO114 (B17, base #72). Steps: restart wrap-up books deals of threads the old process drove · adopt an orphan
+  whose old bid stands (no fresh wait for her answer: it already had `orphan_after_ticks`) or close it after 3 quiet
+  ticks · kill switch / dry run hold. · **Acceptance:** the r2 bite tests flip; `tests/test_taker_restart.py`.
+- TO116 (B18, on TO114). Steps: a refused accept gives the team's accept back · the team client never re-sends a
+  429 or a write · 4 s timeouts. · **Acceptance:** its bite tests flip; gate; sim smoke.
+- TO126 (B14, on TO116). Steps: a maker bid that lapses unfilled books a refund dated at its spend · a bid listed
+  again on the confirming tick is alive. · **Acceptance:** its bite tests flip; the hour's spend never < 0.
+- TO133 (B16, on TO126). Steps: an accept `/api/me` does not show yet counts as held and its cash as gone.
+  · **Acceptance:** its bite tests flip.
+- TO110 (B19, base #106 + #71). Steps: an announced venue fee that applies by settlement is priced in.
+  · **Acceptance:** its tests; no conflict with the #71 venue code.
+- TO128 (B10). Steps: maker cancel cap, per-service tick offset, injection detector gaps. · **Acceptance:**
+  its tests; every new limit in GUARDRAILS.md at today's behaviour.
+
 ### N14b — Packs, supply and new pages (spec: N14-spec.md, criteria 4–6)
 PR 1 (new pages, before the 09:30 window). Files: `GUARDRAILS.md`, `STRATEGY.md`, `guardrails.py`,
 `strategy.py`, `agents/{runtime,taker,maker}.py`, `tests/test_new_pages.py`.
@@ -347,8 +366,9 @@ are not part of S1). Three PRs: A (inspector, target 10:30 Sat), B (flags), C (i
 - Step A4 — Would-flag log on every dealer thread read (desk + `dealer buy`), `allow_flags` stays false.
 - Step B1 — Flags as decision rows (`kind=flag`, evidence = the inspection), sent through the Recorder only
   when `allow_flags` is true; one flag per message, a 4xx never re-sent. · **Acceptance:** tests.
-- Step B2 — `bazaar inspect feed`: precision of the flag rule over the captured feed (the evidence Jev reads
-  before `allow_flags` goes on). · **Acceptance:** report on the real capture.
+- Step B2 — `bazaar flags precision [--json]`: precision of the flag rule over the captured feed (the evidence
+  Jev reads before `allow_flags` goes on); flags go only to opted-in `flag_dealers`. · **Acceptance:** report on
+  the real capture.
 - Step C1 — Hostile-text tests on every counterparty-text path (words LLM, runtime tools, duel text, dealer
   words): injection, fake offer JSON, fake limits, markup, odd Unicode, long input; none changes a binding
   field. · **Acceptance:** tests green; injection attempts tagged whether or not `llm_words` is on.

@@ -22,6 +22,7 @@ from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
+from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -29,6 +30,18 @@ ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer 
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def cost_nothing(code: str | None, status: int | None) -> bool:
+    """A refusal that gave the team's accept back: a 4xx (RULES.md: a refused request "costs nothing and moves
+    nothing") other than KEEPS_THE_ACCEPT. A 5xx is not one: the game may have applied it before failing."""
+    return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
+
+
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -102,9 +115,11 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        scans: ScanStore | None = None,
         archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self.scans = scans  # the stored card scan (supply map), when there is one
         self._archive, self._archive_failed = archive, False
         self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
@@ -113,6 +128,7 @@ class MarketFeed:
         self._loaded_store = False
         self._db_down = False
         self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+        self.window_ok = False  # the last `events()` read the live window: its newest events are in
 
     def _from_db(self) -> bool:
         if self._connect is None:
@@ -151,11 +167,17 @@ class MarketFeed:
             window = self._read_window(DEFAULT_WINDOW)
             for event in window:
                 self._events[event["id"]] = event
+            self.window_ok = True
         except Exception as e:
+            self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         if self._archive and from_db:
             self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
+
+    def scan(self, tick: int) -> tuple[dict[str, Any], ...]:
+        """The stored card scan (`bazaar supply scan`) for the supply map; empty when none is stored."""
+        return tuple(self.scans.rows(tick)) if self.scans is not None else ()
 
     def archive_pending(self) -> None:
         """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
@@ -184,7 +206,11 @@ class MarketFeed:
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
-    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, dict) else None
+    return (
+        frozenset(str(p.get("set")) for p in pages if isinstance(p, dict)) if isinstance(pages, list) else frozenset()
+    )
 
 
 class PageWatch:
@@ -222,6 +248,7 @@ class Snapshot:
     venues: list[Venue]
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
+    scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
 
     @property
     def us(self) -> str:
@@ -258,6 +285,7 @@ def read_snapshot(
         venues=venues_from(public.venues(), clock.tick),
         events=feed.events(),
         holdings=read,
+        scan=feed.scan(clock.tick),
     )
 
 

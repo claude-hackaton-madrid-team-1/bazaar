@@ -161,6 +161,8 @@ uv run bazaar curves --dealer abuela      # Abuela's concession curve from every
 uv run bazaar teams                       # the competition: flow, spend, inferred ×1.6 set (us apart)
 uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams (ours apart)
 uv run bazaar tape                        # every settlement with price
+uv run bazaar supply                      # who holds each card, how many complete pages can exist (--save: Postgres)
+uv run bazaar supply scan --rate 1        # GET /api/cards/{id} for every asset (doors closed: it shares the 5 req/s)
 uv run bazaar status                      # our cash, level, score, cards (needs BAZAAR_KEY)
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
@@ -353,6 +355,15 @@ Guardrail verdicts count our open offers (`/api/me/offers`): cash they promise, 
 assets already listed. Packs are scarce: at most `max_packs_per_game_hour` (GUARDRAILS.md) and each
 dealer's own quota, so a pack move is kept only when Jev (`questions/packs.json`) says the slot is
 worth spending now; the header shows the slots used and left this game hour.
+With `pack_ev_album` the pack EV is card by card: each card still mintable in a released set, at what the
+next copy is worth to us plus its page-bonus share when our album lacks it (off for buys on Saturday:
+B9 #109 says buy no Abuela packs). A sealed pack we hold (the
+09:00 grant) is opened by the taker, one per tick, only with `open_sealed_packs` (GUARDRAILS.md) and only
+when its cards are worth more to us than any price a team paid for one sealed (`pack_open.choose`).
+`uv run bazaar supply` is the supply map (N14b): the 270 starting assets (team k was dealt ids
+15k−14…15k), the feed's settlements, listings and `pack.opened`, and the catalog's minted counts; the
+agents read the stored scan back (`supply_assets`, else `.local/supply/scan.jsonl`) to name the holders of
+a rare and, with `supply_scarcity`, to count only the copies a non-chasing team could sell us.
 
 - `uv run bazaar sell list <asset_id|ref> --price N` lists a card for cash, never below its `your_value`.
 - `uv run bazaar sell bid <ref> --price N` bids cash for any copy (how we buy rares only teams hold).
@@ -554,12 +565,13 @@ reason, Jev's verdict with its floats, the guardrail verdict, chosen or not, `dr
 server's answer or refusal code. Without Postgres they go to `.local/agents/*.jsonl`. With
 `BAZAAR_TRACING=1`, each tick is a `taker tick N` / `maker tick N` trace with one `decision` event per move.
 
-**Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
+**Read-only status (for [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)).** With `--port` (or Railway's `PORT`), each agent serves
 `GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
 the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
 offers, the last 50 decisions: kind, card, counterparty and the move only for a row actually sent; unsent accepts are
 not published, `jev` is always null; read `mode` from `/health` or `agent.tick`), and
-`WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
+`WS /events`: every decision and execution as it happens in the game envelope the
+[bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live) game screens read:
 `{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
 `agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
 there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
@@ -1284,14 +1296,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
-- [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
-- [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
-- [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
-- [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
-- [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
-- [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
-- [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
-- [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+- [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+- [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
+- [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
+- [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
+- [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
+- [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
+- [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1304,6 +1316,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#172](../../pull/172) | docs: the game screens live in bazaar-live now | Sat 10:24 | `7b0a0ce` |
 | [#131](../../pull/131) | Omar's order (merge all approved). N16 bluffing in the words: both reviewers APPROVE round 2; narrow pr-reviewer APPROVE on 2d9f262 (issuecomment-5966874029); later rounds only merge main (import/docs unions; test fixture pins v1 like #170). Gate 3229 passed + smoke; CI green. Tactics: on for dealer words, off for duels under v2; kill switch BAZAAR_BLUFF / bluff_enabled. | Sat 10:20 | `7cb41ae` |
 | [#171](../../pull/171) | Open our venue now: allow_venue_open = true from game hour 3.0, cash_floor 100 | Sat 10:19 | `d113167` |
 | [#170](../../pull/170) | Omar's order (live session): duel_policy v2. pr-reviewer: all four safety checks verified (issuecomment-5967024103); its only P1 (merge conflict in sim_smoke.py/README with #123) resolved exactly as the reviewer tested (main's swaps step + the PR's duel-to-deadline block); gate 3150 passed, smoke duels deal inside limit (gains 26, 27); CI green. | Sat 10:12 | `90b0bdf` |
@@ -1315,13 +1328,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#71](../../pull/71) | Merged during the session on Omar's order (09:07). pr-reviewer + security narrow APPROVE on e265626/1accc4e; 24b8583 only merges main (#146): code diff identical (0 lines), gate 2829 passed, smoke passed, CI green. allow_venue_open=false, effective cash floor 100. | Sat 09:14 | `04ce5d6` |
 | [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
 | [#146](../../pull/146) | Merged during the session on Omar's order (09:07: merge everything approved ASAP). Approved on this exact head; CI green. | Sat 09:08 | `f9a193b` |
-| [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#172](../../pull/172) | docs: the game screens live in bazaar-live now | `docs/web-view-in-bazaar-live` |
 | [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
 | [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
@@ -1341,5 +1352,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
 | [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
+| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
