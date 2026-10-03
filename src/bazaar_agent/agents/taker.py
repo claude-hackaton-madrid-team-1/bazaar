@@ -61,7 +61,7 @@ from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
@@ -318,6 +318,7 @@ class Taker:
         try:
             snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
             threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
             self._tick(snap, threads, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")

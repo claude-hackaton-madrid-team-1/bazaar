@@ -468,3 +468,11 @@ AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last
 (`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
 `200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
 as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
+Offline repro (two temp dirs, connector raising ConnectionError, `reserve_accept(999999, limit=1)` each):
+main gave `[True, True]` on two `ledger.jsonl` files; now `open_ledger(live=True)` on the real game returns the
+reconnecting `PgLedger` → `['refused', 'refused']` and no file, and two processes on one Postgres → `[True, False]`.
+A live taker/maker pings the ledger before its tick's first write (`ensure_writable`), `/health` carries
+`ledger: shared|down|local file`, and `dealer buy` HOLDS on a ledger blip (no walk). DATABASE_URL must be the
+shared Postgres on every live service, or the process exits at start ("refusing to trade").

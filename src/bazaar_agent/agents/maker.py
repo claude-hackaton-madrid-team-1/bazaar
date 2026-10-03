@@ -72,7 +72,7 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
@@ -213,7 +213,9 @@ class Maker:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            self._tick(read_snapshot(self.team, self.public, self.feed, clock, self.holdings), window)
+            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
+            self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
