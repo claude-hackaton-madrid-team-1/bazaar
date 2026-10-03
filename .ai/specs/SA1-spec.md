@@ -61,3 +61,26 @@ Honest Implementation Metric: 3/4 criteria verified, 75%.
 Unverified: full-suite completion, coverage, live Workshop response and settlement timing.
 Could-not-do: obtain a green full test gate after the native abort without exceeding the user's one-run limit.
 The branch must remain unpushed until that gate is completed.
+
+
+## #244 final verification, 2026-10-04
+
+Merged `origin/main` at `50832d70` in `f3c7f594`; preserved both memory appendices and regenerated README
+and architecture output. Independent read-only review confirmed that #259 does not supersede the remaining
+before-send reservations, dealer-sell interlock, copy validation, thread-input checks and output sanitization.
+This verification clears the earlier push block. Tests ran with DATABASE_URL, BAZAAR_SIM and BAZAAR_ENV_FILE
+unset, with no competing Postgres suite. No psycopg abort or retry occurred.
+
+### Honest Implementation Report
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Preserve TL1 integration behavior | Verified | Full suite: `5406 passed, 1 skipped, 2 xfailed, 42 subtests passed in 101.57s (0:01:41)`; `git ls-files -u`: empty |
+| Reserve assets before send; release only on definite refusal | Verified | Same full suite includes both reservation regressions in `tests/test_taller.py` |
+| Dealer-sell interlock, copy validation and thread-input hardening | Verified | Same full suite includes the guard and dealer-thread regressions in `tests/test_taller.py` |
+| Requested gate | Verified | Ruff: `All checks passed!`; format: `683 files already formatted`; Black: `450 files would be left unchanged.`; mypy: `Success: no issues found in 208 source files`; sync: `sync-ai-docs: regenerated`; README check and rules: exit 0; port 8974: `SMOKE PASSED in 55 s` |
+
+Honest Implementation Metric: 4/4 criteria verified, 100% for this requested gate.
+
+Unverified: skipped and expected-failure cases, coverage percentage (not requested in this gate), live Workshop
+response and settlement timing. Could-not-do: none for the requested merge, verification and branch push.
