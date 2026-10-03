@@ -1,0 +1,76 @@
+# W1b: a bench broker edge for the Market Test
+
+Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stacked on #71** (`feat/venue-broker-build-only`). Refs #12, #71, #77. Nothing live: `allow_venue_open` stays false, and every new switch defaults to today's behaviour.
+
+## What was built
+
+| Piece | What it does |
+|---|---|
+| `agents/bench_model.py` `TraderModel` | One model per bench trader id. The limit band comes from its quotes: cost ∈ [ask₀/1.30, ask₀/1.05] and never above an ask it has shown; value likewise from the bid. The leave hazard comes from #12's patience prior (normal: 0.125, 0.143, 0.25, 0.33, 0.5, 1 at ages 1–6). If the offer carries an explicit expiry, that tick is used instead. |
+| `agents/bench_edge.py` `BenchEdge` | Takes the exact max-weight matching (#71's Hungarian) of the crossing pairs, weighted by **estimated true surplus**, and sends it at once (holding does not pay; see below). Optional `cross="limit"` probe: after the crossing pairs, it proposes non-crossing pairs at the price most likely to sit inside both limits. A refusal narrows the bands, by exact inclusion–exclusion. The probe gives up on evidence: no acceptance, at least 8 refusals, and P(all refused \| limits honoured) < 1 %. |
+| `agents/broker.py`, `bazaar broker run` | New options: `--bench-policy exact\|edge` (default exact), `--bench-preset`, `--bench-cross quote\|limit` (default quote), `--bench-reads 1–3` (default 1). Extra reads are spaced over the tick window and never re-propose an offer already proposed that tick. The first read of each run logs the bench offer's keys to `broker_bench_shapes.jsonl`, so the first real Market Test shows its shape. |
+| `evals/bench.py` | In-process tournament: stall, greedy (= `starter_broker.bench_plan`, checked against the kit), exact (#71), edge and edge_limit, plus three bounds: prescient (knows present limits and departures), oracle_quote and oracle_limit. Run with `uv run python -m bazaar_agent.evals.bench`. |
+| `evals/bench_w1a.py` | The same policies on **W1a's bench** (`bazaar_sim.bench`, #77), with W1a's stall, oracle and session points. It needs bazaar_sim; tonight it ran on a local copy of W1a's four files. |
+
+Gates: 1,268 passed and 35 skipped (the W1a adapter test skips until bazaar_sim is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 13 ms with the probe (#12's limit is 50 ms).
+
+## Evidence: W1a's bench, 1,000 books per row, p50 efficiency
+
+Points are against two stall-level rivals (W1a's reading of RULES.md): 0.5 at the stall, 1.0 above it, below the stall 0.5 × eff/stall. Won/lost is per session against the stall.
+
+| preset | world | stall | **edge** | edge_limit | oracle | edge pts (won/lost) | edge_limit pts (won/lost) |
+|---|---|---|---|---|---|---|---|
+| normal | quote, default | 0.827 | 0.827 | 0.827 | 0.864¹ | 0.527 (6 %/5 %) | 0.527, 10 refused in total |
+| hard | quote, default | 0.821 | 0.823 | 0.823 | 0.867¹ | 0.543 (9 %/6 %) | 0.543, 24 refused |
+| normal | limit, default | 0.827 | 0.827 | 0.828 | 0.878¹ | 0.527 | 0.611 (24 %/14 %) |
+| hard | limit, default | 0.821 | 0.823 | 0.827 | 0.882¹ | 0.543 | 0.646 (31 %/17 %) |
+| normal | limit, 2× shade | 0.753 | 0.758 | 0.831 | 0.878¹ | 0.532 | 0.755 (53 %/16 %) |
+| hard | limit, 2× shade | 0.717 | 0.721 | 0.821 | 0.882¹ | 0.551 | 0.819 (66 %/14 %) |
+| normal | limit, 2× shade, all firm | 0.619 | 0.625 | 0.813 | 0.878¹ | 0.524 | 0.875 (76 %/9 %) |
+| normal | quote, tick 0 | 0.991 | **1.000** | 1.000 | 0.999¹ | 0.690 (38 %/9 %) | same |
+| hard | quote, tick 0 | 0.977 | **1.000** | 1.000 | 0.999¹ | 0.765 (53 %/10 %) | same |
+| normal | quote, tick 0, 2× shade, firm | 0.728 | **0.862** | 0.862 | 0.856¹ | 0.781 (56 %/0 %) | same |
+| hard | quote, tick 0, 2× shade, firm | 0.726 | **0.867** | 0.867 | 0.874¹ | 0.838 (68 %/0 %) | same |
+| hard | limit, tick 0, 2× shade, firm | 0.726 | 0.867 | **0.976** | 1.000¹ | 0.838 | 0.966 (93 %/0 %) |
+
+¹ Oracle column = mean (W1a reports the oracle's mean). In every cell the edge's mean efficiency is ≥ the stall's, and its points are ≥ 0.52. The edge never sends a match the quote rule refuses: 0 refused in all quote cells. At most 15 requests per tick (3 reads + 12 matches), which is 0.5 req/s on a 30 s tick.
+
+## Evidence: own bench (#55 generator, relax 75 %), 1,000 books, p50
+
+| preset | world | stall | edge | edge_limit | prescient | oracle_quote | oracle_limit |
+|---|---|---|---|---|---|---|---|
+| normal / hard | base (spread arrivals, quote) | 0.802 / 0.803 | 0.801 / 0.803 | same | 0.819 / 0.832 | 0.890 / 0.889 | 0.902 |
+| normal / hard | offers carry `expires_tick` | 0.802 / 0.803 | **0.816 / 0.825** | same | 0.819 / 0.832 | | |
+| normal / hard | stall crosses 1 pair/tick, tick 0 | 0.875 / 0.785 | **1.000 / 1.000** | same | | | |
+| normal / hard | wide shade, limit rule | 0.732 / 0.716 | 0.733 / 0.718 | **0.804 / 0.795**² | 0.827 / 0.840 | | |
+
+² p50 for normal; hard is the same order (mean 0.780 vs stall 0.698).
+
+## What it means
+
+1. **With the quote rule and staggered arrivals (the default, our best guess), no broker beats the stall by much.** The clairvoyant oracle gets +0.04–0.09. A broker that knew every present limit and departure gets +0.02–0.03. Ours gets +0.00. Under the quote rule, all a broker can choose is *which* crossing pairs to cross, and in thin books there is rarely a choice. Holding pairs for better crosses loses (hold threshold 0.13–0.34: −0.04 to −0.45). So does saving flexible traders (−0.02 to −0.04).
+2. **The edge pays when the book is thick or the quotes are far from the limits.** With the whole book at tick 0 it wins 38–68 % of sessions and loses ≤ 10 %; with 2× shade and firm traders it is +0.13 p50 and wins 56–68 %. If the offers say when they leave, it is +0.014–0.022, close to the prescient bound.
+3. **Under the limit rule, the probe is the big lever:** +0.08–0.25 p50 when the shades are wide, and points 0.61–0.97. If the server checks quotes, the probe costs 8–82 refused requests over 1,000 sessions, then switches itself off.
+4. **The stall's own rule matters as much as ours.** If the free stall crosses one pair per tick (RULES.md: "crosses its best bid and ask every tick"), then any broker, even greedy, is +0.12–0.19.
+
+## Go / no-go against PLAN.md
+
+- **p50 ≥ 0.85 and ≥ stall + 0.15 in both presets: NO-GO** in the default world, under both rules. The bar is met only in the corners: limit rule + tick 0 + wide/firm (0.98, +0.25); one-pair stall at tick 0 (+0.13/+0.22). Quote + tick 0 + wide/firm comes close (+0.13/+0.14, p50 ≥ 0.86).
+- **0 infeasible matches: GO.** 0 refused by quote in every quote cell. The edge_limit refusals are probes by design.
+- **Rate budget: GO.** ≤ 15 requests per tick.
+- **W1a's points bar** (never below the stall on any book; mean points ≥ 0.70): the edge loses 1–10 % of sessions, so "never below" fails. Mean points ≥ 0.70 holds only in the tick-0 and limit-rule cells. The edge is never below 0.5 in mean.
+
+**Recommendation:** merge as build-only (defaults unchanged). On the day a board venue opens, run `--bench-policy edge --bench-reads 3`: in every world modelled it is ≥ the stall in mean, and it never sends a refused match by quote. Add `--bench-cross limit` only if Marius accepts refused probe requests, a handful in total.
+
+## Risks
+
+- **The bench model.** No real Market Test has been observed: the feed capture and the shared DB have no `bench.*` event. Arrivals, relax, shades and patience are assumptions from #55/#12, and the edge's priors use the same numbers. If the shading is wider than the prior, selection degrades to stall level (`wide`: +0.00).
+- **Losing sessions.** The edge loses 0–10 % of sessions to the stall, edge_limit up to 17 %. Under W1a's curve a loss scores 0.5 × eff/stall: a session 6 % short of the stall costs 0.03 against a tie. The real curve below the stall is unpublished.
+- **Refused probes might count against a venue.** RULES.md says nothing about refused matches; suspension is "for breaking the rules". The SDK's `Broker.match` docstring reads "(ask <= price, price + fee <= bid)", which is evidence for the quote rule.
+- **Extra reads have not been tested against a real server** (fakes only). In W1a's bench the book does not change within a tick, so their value there is the probe's retries only.
+
+## What Marius must decide
+
+1. **The bar:** keep "stall + 0.15" (no-go) or adopt W1a's points bar.
+2. **The morning probe:** one manual non-crossing match, or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue, which means `allow_venue_open` and 540 P with today's `cash_floor`. Neither changes tonight.
+3. **Default after the first real Market Test:** read `broker_bench_shapes.jsonl` (an expiry field would turn on the hold, +0.02). Compare our `/me` `bench_efficiency` with W1a's calibration table, then choose `bench_policy`.
