@@ -27,6 +27,7 @@ class Venue:
     mechanism: str
     trades: int
     house: bool
+    starter: bool = False  # a free starter stall (`auto`, given to a team without its own venue)
 
     def fee(self, price: int, cards: int = 1) -> int:
         raw = price * self.fee_bps / 10_000 + self.fee_per_card * cards
@@ -48,6 +49,7 @@ def venues_from(payload: dict[str, Any]) -> list[Venue]:
                 mechanism=str((v.get("rules") or {}).get("mechanism") or ("board" if v.get("house") else "")),
                 trades=int(v.get("trades") or 0),
                 house=bool(v.get("house")),
+                starter=v.get("starter") is True,
             )
         )
     return rows

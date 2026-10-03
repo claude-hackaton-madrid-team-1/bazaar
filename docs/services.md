@@ -29,7 +29,7 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 
 ```json
 {"ok": true, "agent": "taker", "mode": "dry",
- "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "tick": null, "last_tick_at": null,
+ "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "ledger": "shared", "tick": null, "last_tick_at": null,
  "doors": "closed", "paused": true, "next_opens": "2026-10-03T09:00:00+02:00",
  "tick_seconds": 60.0, "server_tick": 159}
 ```
@@ -37,6 +37,8 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 - `mode`: `dry` or `live`.
 - `target`: where the agent's requests go: `{"mode": "real", "url": "https://bazaar.causaprima.ai"}`, or
   `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` (README "Simulator").
+- `ledger`: the guardrail ledger it counts on: `shared` (the team's Postgres), `down` (a live agent sends
+  nothing until it answers, then resumes by itself), or `local file` (dry run or simulator only). No host.
 - `tick`, `last_tick_at`: the last game tick the agent handled.
 - `doors`, `paused`, `next_opens`, `tick_seconds`, `server_tick`: the game clock as the agent sees it.
   The tick length changes every day (60 s Friday, 30 s Saturday, 15 s Sunday) and the organisers may move it.
@@ -98,7 +100,8 @@ A decision, as published:
 - `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
   default, `--accept-bids`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
-  maker's `reprice_or_hold` verdict).
+  maker's `reprice_or_hold` verdict), and `broker_match` / `venue_open` from our venue's broker (`agent:
+  "broker"`, inside the maker's tick loop): a sent one shows only its kind and status, no inputs or move.
 - `status` is `approved`, `rejected` or `expired`. `sent` and `dry_run` are only on a **sent** row (see below),
   where `sent` is `sending`; read the agent's `mode` (`dry` or `live`) from `agent.tick` or `/health`.
 - `guardrail` is `allowed` on a sent row and `-` on every other: a denial would name the limit we hit.
@@ -153,10 +156,10 @@ there, create your own key in Phoenix (Settings → API Keys) and follow README,
 on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
 (burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
 minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
-"tools": 20, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
+"tools": 21, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
 target is a mode and a public URL; nothing about the live/dry mode or the game state).
 
-Tools: the 14 reads (`status`, `holdings`, `cards`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`,
+Tools: the 15 reads (`learnings`, `status`, `holdings`, `cards`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`,
 `traders`, `alerts`, `rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
 `duel_move`, `steer`). Each answer is one text block holding JSON. A write answers
 `{"tool", "tick", "status": "approved"|"rejected"|"expired"|"done"|"failed"|"hold", "sent", "guardrail",
@@ -268,6 +271,70 @@ Railway-generated domain of service `bazaar-live` (generated once by hand; liste
   `POST /api/tts`: a proxy to ElevenLabs / Gemini TTS with the keys server-side (`ELEVENLABS_API_KEY`,
   `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
   (`Origin`), under per-address and global rate limits and a daily character budget.
+
+## Our venue: opened by the maker at game hour 6.5 (OFF for now)
+
+**Switched off by team decision (Sat 06:08):** `allow_venue_open = false` in `GUARDRAILS.md`. Opening our
+venue replaces the free stall on the spot (RULES.md), and a broker that only matches as well as the stall
+earns the same half of the bench points; ours equals the stall in every simulation and cannot be verified
+live before opening. While off: nothing below opens or matches, and NO bond reserve is held (the floor is
+`cash_floor` alone). Turning it on is a closed-door decision with Omar once the broker has an edge or
+organic trades to serve. What follows is what happens when it is on.
+
+Our board venue runs inside the **maker** on Railway (`bazaar-maker`, no new service). Every maker tick,
+before its own offers, `agents/venue_keeper.py`:
+
+1. **Finds the venue we run**: `/api/me` `venue` and the public `/api/venues` (owner `t01`, not the house,
+   not a starter stall, `open` or `closing`).
+2. **Opens it once** when we run none, `allow_venue_open = true` and `/api/clock` `t_hours` has reached
+   `venue_open_after_game_hours` (6.5, about 11:30 Madrid, before the h7.0 Market Test at 12:00): a
+   `board` venue, 0 bps + 0 P per card, named "Team 1 market". It is tick-driven: no wall clock. The opening
+   goes through `guardrails.check()`: cash must stay at or above `cash_floor` (100) after the 250 P bond +
+   20 P fee (on the cash our open offers do not already promise), never a second venue, never before that
+   game hour. Before the request goes out, the shared Postgres must be able to hold the broker key, must
+   show that no venue was ever opened on this target (a venue closed or suspended since is never reopened
+   automatically: a human opens it by hand), and must grant this process the one opening claim (a deploy
+   overlap or a laptop maker cannot open a second). Otherwise it waits `RETRY_TICKS` = 10 ticks. A refused
+   opening costs nothing, gives the claim back (even inside the Postgres backoff) and is retried 10 ticks
+   later; `venue_exists` stops it.
+   `/api/me` naming a venue next to `starter_broker_key` is the free stall, not ours (the kit's `me()`); a
+   stored /me (`holdings.without_secrets`) keeps `has_starter_stall: true` in the key's place. The claim
+   row holds a random per-process owner id (never a key): a process renews and gives back only its own.
+   A 408, a 5xx or no answer may have opened the venue: the claim is kept until the lists say it did not.
+   A refused opening is never published on `/state` or `/events`.
+3. **Brokers its book every tick**: `GET /api/broker/book`, then the exact maximum-surplus matching (bench
+   first, ties in book order like the stall, never two offers of one maker, never ours, never an order
+   already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.
+
+**The bond reserve.** Until we run a venue, every purchase by every writer (taker, maker, duels, dealer,
+MCP/runtime: all through `guardrails.check()`) keeps `cash_floor + venue_bond_reserve` = 370 P in cash;
+once `/api/me` shows our venue the floor is 100.
+
+**The broker key** comes back once, in the opening's answer. It is saved at once to the shared Postgres
+table `venue_broker_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
+from the answer before anything is logged, and kept in memory if both saves fail (the log then says
+"NOWHERE"). It is never logged, printed, put in a decision or execution row, published on `/state` or
+`/events` (broker and venue rows show only their kind and status there), or sent to any host but its own.
+No public route reads `venue_broker_keys`. A venue we run without its key logs "NO broker key" every 20 ticks:
+ask the desk.
+
+**Once, for the whole game.** The automatic opening happens once per target: a venue closed or suspended
+later (by hand, by the organisers, or between days) is reopened only by hand (`bazaar venue open --live`).
+The once-only claim lives in the database the maker writes to, so run the LIVE maker only on Railway (a
+laptop maker on the local default database does not share it). If the maker logs "we run a venue but
+/api/me does not show it as ours", `/me` still carries `starter_broker_key` after our opening: set
+`venue_bond_reserve = 0` so purchases stop keeping the 270 P reserve.
+
+**Turn it off**: `allow_venue_open = false` in `GUARDRAILS.md` (redeploy) stops the opening and every
+broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes back after a cooldown; a
+Market Test session counts the best venue open during it). The kill switch stops all of it.
+
+**By hand** (laptop, dry run unless `--live`): `uv run bazaar venue status | open | close | fee | announce`
+and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`
+(an in-process `bazaar_sim`, the maker live against it, our efficiency next to the stall's per session).
+
+A real broker key (`bk_...`) is only sent to `https://bazaar.causaprima.ai`, a simulator key (`simbk-...`)
+only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is never loaded.
 
 ## Not public
 

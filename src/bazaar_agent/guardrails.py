@@ -6,14 +6,15 @@ first. A denied action is not sent; the caller turns it into a walk or a hold. A
 threads stay as they are. `kill_switch()` answers "is it on right now?": it re-reads `trading_enabled`
 from GUARDRAILS.md on every call (cached by mtime) and checks the pause file. An append-only ledger
 shared by all processes counts spend per game hour and accepts per tick: the Postgres `ledger` table
-when DATABASE_URL is reachable (`ledger_pg.open_ledger`, shared across machines), else
-`.local/ledger.jsonl` (this machine).
+(`ledger_pg.open_ledger`, shared across machines; required by a live process), or `.local/ledger.jsonl`
+(this machine, dry run only).
 """
 
 from __future__ import annotations
 
 import fcntl
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -71,9 +72,43 @@ class Guardrails(BaseModel):
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
+    duel_inside_limit: bool = True
+    duel_policy: Literal["v1", "v2"] = "v1"
+    duel_max_own_offers: int = Field(default=3, ge=1)
+    duel_stall_ticks: int = Field(default=3, ge=1)
+    duel_open_wait_ticks: int = Field(default=0, ge=0)
+    duel_free_offers: int = Field(default=16, ge=0)
+    duel_answer_share: float = Field(default=0.2, ge=0, le=1)
+    duel_accept_margin_ticks: int = Field(default=1, ge=0)
+    duel_endgame_min_share: float = Field(default=0.0, ge=0, le=1)
+    duel_jitter: float = Field(default=0.0, ge=0, le=0.9)
+    duel_jitter_seed: int = 0
+    duel_days_signed: bool = False
+    duel_days_auto: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    allow_venue_open: bool = False
+    venue_bond_reserve: int = Field(default=270, ge=0)
+    venue_open_after_game_hours: float = Field(default=6.5, ge=0)
+    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
+    inspect_accepts: bool = True
+
+    @field_validator("flag_trusted_dealers")
+    @classmethod
+    def _trusted_parse(cls, value: str) -> str:
+        if value.strip().lower() == "none":
+            return value
+        ids = [d.strip() for d in value.split(",")]
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
+            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+        return value
+
+    @property
+    def trusted_dealers(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
+
     protect_page_sets: str = "none"
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
@@ -122,9 +157,28 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
+    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move + agents.duel_v2",
+    "duel_policy": "cli duel run + runtime duel_move + agents.duel_jev (v2: agents.duel_v2.plan_moves)",
+    "duel_max_own_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_stall_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_open_wait_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_free_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_answer_share": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_accept_margin_ticks": "agents.duel_v2.duel_plan + plan_moves (v2 only)",
+    "duel_endgame_min_share": "agents.duel_v2.squeeze_threshold (v2 only)",
+    "duel_jitter": "agents.duel_v2.jittered (v2 only)",
+    "duel_jitter_seed": "agents.duel_v2.jittered (v2 only)",
+    "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
+    "duel_days_auto": "cli duel run + runtime duel_move (agents.duel_days.effective_rules; v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches); agents.venue_keeper opens it",
+    "venue_bond_reserve": "guardrails.check (effective_cash_floor while a planned venue is not open yet)",
+    "venue_open_after_game_hours": "guardrails.check (venue_open) + agents.venue_keeper (first tick past it)",
+    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
@@ -259,7 +313,8 @@ def hands_off_id(item: str) -> int | None:
 class LedgerStore(Protocol):
     """What the guardrails read and the agents write: the JSONL file or the shared Postgres table."""
 
-    where: str
+    @property
+    def where(self) -> str: ...  # where the counts live, for logs: "file ledger.jsonl", "postgres ledger table on …"
 
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None: ...
     def spent_since(self, t_hours: float) -> int: ...
@@ -355,10 +410,32 @@ def refund_row(
 # ---------------------------------------------------------------- the check
 
 
+DUEL_DAYS_MAX = 10  # RULES.md: two-issue duels trade delivery days 0 to 10
+
+
+def duel_days_ok(days: float) -> bool:
+    """Inside the rules' 0 to 10 days. Anything else (negative, NaN) would turn the days penalty into a bonus."""
+    return 0 <= days <= DUEL_DAYS_MAX
+
+
 # `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
 # kill switch applies to them.
 ActionKind = Literal[
-    "buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag", "cancel", "close_thread"
+    "buy",
+    "sell",
+    "accept_buy",
+    "accept_sell",
+    "bid",
+    "duel_offer",
+    "duel_accept",
+    "flag",
+    "cancel",
+    "close_thread",
+    "venue_open",
+    "venue_close",
+    "venue_fee",
+    "venue_announce",
+    "broker_match",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 TEAM_TRADES = ("buy", "sell", "accept_buy", "accept_sell", "bid")  # the kinds a counterparty cap applies to
@@ -376,6 +453,10 @@ class Action:
     # (a dealer), and `max_counterparty_share` does not apply.
     counterparty: str | None = None
     volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
+    limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
+    role: str | None = None  # duels: "seller" | "buyer"
+    days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
+    days_weight: float | None = None  # two-issue duels: `your_days_weight`
 
 
 @dataclass(frozen=True)
@@ -443,12 +524,50 @@ class Context:
     accepts_this_tick: int = 0
     paused: bool = False
     packs_last_hour: int = 0
+    has_venue: bool = False  # we run a venue we opened (open or closing), from /api/me `venue`
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
     sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
     # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
     trades: TradeBook | None = None
+
+
+# What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
+STARTER_STALL_MARKER = "has_starter_stall"
+
+
+def runs_venue(me: dict[str, Any]) -> bool:
+    """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one:
+    /me carries `starter_broker_key` while we have the stall (the kit's `Bazaar.me`), and opening our own
+    venue replaces the stall (RULES.md), so a venue named next to that key is the stall. The same answer
+    drives the bond reserve and the refusal of a second opening."""
+    venue = me.get("venue")
+    if not venue:
+        return False
+    if isinstance(venue, dict) and venue.get("starter") is False:  # said outright: ours, whatever the key says
+        return str(venue.get("status") or "open") in ("open", "closing")
+    if me.get("starter_broker_key") or me.get(STARTER_STALL_MARKER):  # live /me, or one without its secrets
+        return False
+    if isinstance(venue, str):
+        return True
+    if not isinstance(venue, dict) or venue.get("starter") is True:
+        return False
+    return str(venue.get("status") or "open") in ("open", "closing")
+
+
+def effective_cash_floor(rules: Guardrails, ctx: Context) -> int:
+    """`cash_floor`, plus `venue_bond_reserve` while a planned venue (`allow_venue_open`) is not open yet:
+    every purchase leaves the bond and opening fee in cash until the venue opens. The same for every writer."""
+    # Zero unless a venue is planned: with allow_venue_open = false no bond reserve is ever held.
+    reserve = rules.venue_bond_reserve if rules.allow_venue_open and not ctx.has_venue else 0
+    return rules.cash_floor + reserve
+
+
+def floor_text(rules: Guardrails, ctx: Context) -> str:
+    if effective_cash_floor(rules, ctx) == rules.cash_floor:
+        return f"cash_floor {rules.cash_floor}"
+    return f"cash_floor {rules.cash_floor} + venue_bond_reserve {rules.venue_bond_reserve}"
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -465,6 +584,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         accepts_this_tick=ledger.accepts_in_tick(tick),
         paused=(REPO_ROOT / rules.pause_file).exists(),
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
+        has_venue=runs_venue(me),
         stops=kill_switch(rules),
     )
 
@@ -487,8 +607,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
         elif action.price > cap:
             v.append(f"price {action.price} > max_price_{action.rarity} {cap}")
-        if ctx.cash - action.price < rules.cash_floor:
-            v.append(f"cash {ctx.cash} - {action.price} < cash_floor {rules.cash_floor}")
+        if ctx.cash - action.price < effective_cash_floor(rules, ctx):
+            v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
         if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
             v.append(
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
@@ -517,7 +637,41 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(refusal)
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
+        v2 = rules.duel_policy == "v2"
+        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
+    v.extend(_venue_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
+
+
+# Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
+VENUE_BOND = 250
+VENUE_OPENING_FEE = 20
+VENUE_COST = VENUE_BOND + VENUE_OPENING_FEE
+# Writes that only make sense while we run a venue: all of them wait for `allow_venue_open`. Closing does not,
+# so a venue opened by hand can still be closed from the CLI (the kill switch still stops it).
+VENUE_SWITCHED: frozenset[str] = frozenset({"venue_open", "venue_fee", "venue_announce", "broker_match"})
+
+
+def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """Venue writes: the switch, opening once and not before `venue_open_after_game_hours`, and the bond +
+    opening fee never taking cash below `cash_floor` (the reserve is what the opening spends, so it is not
+    added on top here).
+
+    The bond is not a purchase: it is never counted against `max_spend_per_game_hour` or a rarity cap
+    (`action.price` is the cash the open takes, `VENUE_COST` when the caller leaves it out)."""
+    v: list[str] = []
+    if action.kind in VENUE_SWITCHED and not rules.allow_venue_open:
+        v.append("allow_venue_open = false (build only: flip it in GUARDRAILS.md to run our venue)")
+    if action.kind == "venue_open":
+        cost = VENUE_COST if action.price is None else action.price
+        if ctx.cash - cost < rules.cash_floor:
+            v.append(f"cash {ctx.cash} - venue bond and fee {cost} < cash_floor {rules.cash_floor}")
+        if ctx.has_venue:
+            v.append("we already run a venue: never open a second one")
+        if ctx.t_hours < rules.venue_open_after_game_hours:
+            v.append(f"game hour {ctx.t_hours:g} < venue_open_after_game_hours {rules.venue_open_after_game_hours:g}")
+    return v
 
 
 def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
@@ -528,3 +682,30 @@ def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
     if ctx.paused:
         stops.append(f"pause file {rules.pause_file} exists")
     return tuple(stops)
+
+
+def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:
+    """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
+    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here.
+    `signed` (`duel_days_signed`, v2 only): the weight is primas gained (+) or lost (−) per day instead.
+    `zero_days_free` (v2 only): 0 days cost nothing under either sign, so a missing weight does not block them."""
+    if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
+        return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
+    missing = action.days is not None and action.days_weight is None
+    if missing and (action.days or not zero_days_free):  # v2: 0 days cost nothing whatever the weight (B2c)
+        return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
+    if action.days is not None and not duel_days_ok(action.days):
+        return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
+    if action.days_weight is not None and not math.isfinite(action.days_weight):
+        return [f"your_days_weight {action.days_weight}: cannot value the duel move (duel_inside_limit)"]
+    weight = action.days_weight or 0.0
+    penalty = (-weight if signed else abs(weight)) * (action.days or 0.0)
+    seller = action.role == "seller"
+    worth = action.price - penalty if seller else action.price + penalty
+    if (worth > action.limit) if seller else (worth < action.limit):
+        return []
+    side = "above" if seller else "below"
+    return [
+        f"duel {action.role} price {action.price} is worth {worth:g}, not strictly {side} limit "
+        f"{action.limit} (duel_inside_limit)"
+    ]

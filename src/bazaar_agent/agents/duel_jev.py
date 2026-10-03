@@ -3,15 +3,17 @@
 Spec §3 step 4 and §7.1. Per live duel and tick:
   1. `legal_moves`: today's deterministic move (`duelist.duel_move`) plus the other moves that stay inside
      our own limit: accept only a rival offer strictly inside it after the worst-case cost of days,
-     counter only on our side of it, hold only while the deadline is not close. In the endgame an
-     inside-limit offer is the only move (any deal beats none, `duel_endgame_ticks`).
+     counter only strictly inside it after the worst-case cost of its own days, hold only while the deadline
+     is not close. In the endgame an inside-limit offer is the only move (any deal beats none,
+     `duel_endgame_ticks`).
   2. Jev `duel_move` (questions/duels.json) picks one. It is asked once per duel and round (cached), only
      with `min_budget_s` of the tick left, and for every live duel at once on worker threads, so a duel
      accept still lands inside the taker's duel grace.
   3. `choose`: Jev's pick only when it is a legal move (an early accept also needs `jev_can_accept_early`).
      `undecided`, a timeout, no budget, or an illegal pick keep today's move. Nothing blocks the tick.
 In a two-issue session, `rival_cares_about_days` = yes puts the rival's own days on our counter when its
-price stays on our side of the limit after those days at our worst-case weight; otherwise days stay 5.
+price stays strictly inside the limit after those days at our worst-case weight; otherwise days stay at
+today's (`duelist.OUR_DAYS`, 0).
 
 `DuelOutcomes` writes one outcome line per decided verdict when its duel leaves `/api/duels`.
 """
@@ -24,6 +26,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from bazaar_agent.agents.duel_v2 import V2Params, counter_offer, may_counter, plan_moves, value_of
 from bazaar_agent.agents.duelist import (
     DuelMove,
     duel_deadline,
@@ -32,7 +35,10 @@ from bazaar_agent.agents.duelist import (
     duel_move,
     effective_price,
     inside_limit,
+    our_price,
+    worth,
 )
+from bazaar_agent.agents.duelist import _number as _number  # finite only: NaN days never abort a tick (#60 r2)
 from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
 
@@ -67,11 +73,8 @@ class DuelPick:
 
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
-    return "days" in (duel.get("issues") or [])
-
-
-def _number(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+    issues = duel.get("issues")
+    return isinstance(issues, list | tuple) and "days" in issues
 
 
 def _limit_role(duel: Mapping[str, Any]) -> tuple[int, str] | None:
@@ -102,20 +105,9 @@ def surplus(worth: float, limit: int, role: str) -> float:
     return worth - limit if role == "seller" else limit - worth
 
 
-def on_our_side(worth: float, limit: int, role: str) -> bool:
-    """Not worse than our limit: a seller at or above its cost, a buyer at or below its value."""
-    return worth >= limit if role == "seller" else worth <= limit
-
-
 def own_worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
     """One of OUR offers at the worst-case cost of its days (as `effective_price` values the rival's)."""
-    if not two_issue(duel):
-        return float(price)
-    weight, n_days = _number(duel.get("your_days_weight")), _number(days)
-    if weight is None or n_days is None:
-        return None
-    penalty = abs(weight) * n_days
-    return price - penalty if duel.get("role") == "seller" else price + penalty
+    return worth(duel, price, days)
 
 
 def _rival_history(duel: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -150,38 +142,54 @@ def accept_move(duel: Mapping[str, Any]) -> DuelMove | None:
     if limit_role is None or rival is None:
         return None
     worth = effective_price(dict(duel), rival["price"])
-    if worth is None or not inside_limit(round(worth), *limit_role):
+    if worth is None or not inside_limit(worth, *limit_role):
         return None
     return DuelMove("accept", rival["price"], reason="inside our limit")
 
 
-def _dominated(duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str) -> bool:
+def _dominated(
+    duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str, signed: bool = False, v2: bool = False
+) -> bool:
     """True when the rival's standing offer is already at least as good for us as our own counter."""
-    rival = effective_price(dict(duel), int(accept.price or 0))
-    ours = own_worth(duel, int(counter.price or 0), counter.days)
+    rival_days = (duel.get("rival_offer") or {}).get("days")
+    rival = value_of(duel, int(accept.price or 0), rival_days, signed, v2)
+    ours = value_of(duel, int(counter.price or 0), counter.days, signed, v2)
     if rival is None or ours is None:
         return False
     return rival >= ours if role == "seller" else rival <= ours
 
 
 def legal_moves(
-    duel: Mapping[str, Any], tick: int, default: DuelMove, counter: DuelMove, endgame_ticks: int
+    duel: Mapping[str, Any],
+    tick: int,
+    default: DuelMove,
+    counter: DuelMove,
+    endgame_ticks: int,
+    v2: V2Params | None = None,
 ) -> dict[str, DuelMove]:
     """The moves that stay inside our limit, by `duel_move` option. Today's move stands for its own option.
     A counter that asks less than the rival already offers (a seller) or more (a buyer) is dominated by
-    accepting, so it is not a move."""
+    accepting, so it is not a move. Under v2 (`duel_policy` = v2) an accept is legal only where the accept
+    planner gave this duel the team's slot, and is then the only move (Jev cannot see the queue of accepts);
+    a counter is legal only within v2's caps on our priced messages."""
     limit_role = _limit_role(duel)
     if limit_role is None or duel_done(duel):
         return {"hold": default}
     left = ticks_left(duel, tick)
     endgame = left is not None and left <= endgame_ticks
-    accept = default if default.kind == "accept" else accept_move(duel)
-    if accept is not None and endgame:
+    accept = default if default.kind == "accept" else (None if v2 is not None else accept_move(duel))
+    if accept is not None and (endgame or v2 is not None):  # v2: the planner timed it across every duel
         return {"accept": accept}
     moves: dict[str, DuelMove] = {} if accept is None else {"accept": accept}
     offer = default if default.kind == "offer" else counter
-    priced = offer.kind == "offer" and offer.price is not None and on_our_side(offer.price, *limit_role)
-    if priced and (accept is None or not _dominated(duel, offer, accept, limit_role[1])):
+    signed = v2 is not None and v2.days_signed
+    price, days = offer.price, offer.days
+    worth = value_of(duel, price, days, signed, v2 is not None) if offer.kind == "offer" and price is not None else None
+    priced = worth is not None and inside_limit(worth, *limit_role)  # after the cost of our days
+    within_caps = v2 is None or default.kind == "offer" or may_counter(duel, v2)
+    rival = accept or accept_move(duel)
+    dominated = rival is not None and _dominated(duel, offer, rival, limit_role[1], signed, v2 is not None)
+    if priced and within_caps and not dominated:
         moves["counter"] = offer
     if not endgame:
         moves["hold"] = DuelMove("hold", reason="wait for the rival's answer")
@@ -204,19 +212,44 @@ def choose(
     return pick, f"jev {advice.verdict} ({advice.value:.2f})"
 
 
-def with_rival_days(move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | None) -> tuple[DuelMove, str]:
-    """On a yes to `rival_cares_about_days`, give the rival its own days, if our price still holds after them."""
-    if days is None or days.verdict != "yes" or move.kind != "offer" or move.price is None:
+def forced_pick(
+    duel: Mapping[str, Any], tick: int, start: int, anchor: float, floor: float, endgame_ticks: int
+) -> DuelPick | None:
+    """The pick `DuelJev.pick` makes for a duel whose only legal move is today's accept (an inside-limit
+    offer in the endgame), else None. Jev is never asked about such a duel, so the duel player may book and
+    send its accept before Jev answers about the others (r2 bite X17: the taker claims the accept 2 s in)."""
+    default = duel_move(dict(duel), tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
+    if default.kind != "accept":
+        return None
+    counter = duel_move({**duel, "rival_offer": None}, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
+    legal = legal_moves(duel, tick, default, counter, endgame_ticks)
+    if set(legal) != {"accept"}:
+        return None
+    return DuelPick(
+        default, default, tuple(legal), "jev not asked", state=duel_state(duel, tick, legal, default, counter)
+    )
+
+
+def with_rival_days(
+    move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | None, signed: bool = False
+) -> tuple[DuelMove, str]:
+    """On a yes to `rival_cares_about_days`, give the rival its own days and price them in at their worst-case
+    cost, so our offer keeps its worth (#60 review: copying the days at the same price thinned our margin to
+    just above the limit). Under v2 with signed days, v2 already chose our days by their sign: no change."""
+    if signed or days is None or days.verdict != "yes" or move.kind != "offer" or move.price is None:
         return move, ""
     rival, limit_role = _offer(duel, "rival_offer"), _limit_role(duel)
-    if rival is None or limit_role is None or _number(rival.get("days")) is None:
+    weight = _number(duel.get("your_days_weight"))
+    if rival is None or limit_role is None or weight is None or _number(rival.get("days")) is None:
         return move, ""
     their_days = int(rival["days"])
-    worth = own_worth(duel, move.price, their_days)
-    if worth is None or not on_our_side(worth, *limit_role):
-        return move, f"; kept days {move.days}: the rival's {their_days} would cross our limit"
-    reason = f"{move.reason}; days {their_days}: the rival cares about days (jev {days.value:.2f})"
-    return replace(move, days=their_days, reason=reason), f"; days → {their_days}"
+    ours = own_worth(duel, move.price, move.days)
+    price = our_price(ours, limit_role[1], their_days, weight) if ours is not None else 0
+    worth = own_worth(duel, price, their_days) if price >= 1 else None
+    if worth is None or not inside_limit(worth, *limit_role):
+        return move, f"; kept days {move.days}: the rival's {their_days} cannot be priced inside our limit"
+    reason = f"{move.reason}; days {their_days} at {price}: the rival cares about days (jev {days.value:.2f})"
+    return replace(move, price=price, days=their_days, reason=reason), f"; days → {their_days} at {price}"
 
 
 def duel_state(
@@ -393,17 +426,26 @@ class DuelJev:
         floor: float,
         endgame_ticks: int,
         left: Callable[[], float],
+        v2: V2Params | None = None,
+        slots: int = 1,
     ) -> dict[int, DuelPick]:
-        """Each live duel's move this tick (keyed by duel id). `left` is the seconds left in the tick."""
+        """Each live duel's move this tick (keyed by duel id). `left` is the seconds left in the tick.
+        With `v2` (`duel_policy` = v2), today's move is `duel_v2.plan_moves` across every duel at once."""
+        duels = list(duels)
+        planned = plan_moves(duels, tick, first_seen, v2, slots) if v2 is not None else {}
         plans: dict[int, tuple[dict[str, Any], DuelMove, dict[str, DuelMove], dict[str, Any]]] = {}
         for d in duels:
             did = duel_id(d)
             if did is None:
                 continue
             start = first_seen.get(did, tick)
-            default = duel_move(d, tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
-            counter = duel_move({**d, "rival_offer": None}, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
-            legal = legal_moves(d, tick, default, counter, endgame_ticks)
+            if v2 is not None:
+                default, counter = planned[did], counter_offer(d, tick, start, v2)
+            else:
+                default = duel_move(d, tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
+                no_rival = {**d, "rival_offer": None}
+                counter = duel_move(no_rival, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
+            legal = legal_moves(d, tick, default, counter, endgame_ticks, v2)
             plans[did] = (d, default, legal, duel_state(d, tick, legal, default, counter))
         self._cache = {key: advice for key, advice in self._cache.items() if key[0] in plans}  # live duels only
         answers = self._ask(self._questions(plans), left)
@@ -411,7 +453,7 @@ class DuelJev:
         for did, (d, default, legal, state) in plans.items():
             advice, days = answers.get((did, MOVE_QUESTION)), answers.get((did, DAYS_QUESTION))
             move, why = choose(default, legal, advice, self.can_accept_early)
-            move, days_why = with_rival_days(move, d, days)
+            move, days_why = with_rival_days(move, d, days, signed=v2 is not None and v2.days_signed)
             picks[did] = DuelPick(default, move, tuple(legal), why + days_why, advice, days, state)
             self.outcomes.decided(did, d, picks[did])
         return picks

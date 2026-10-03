@@ -2,6 +2,7 @@
 
 from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation
 from bazaar_agent.agents.desk import Conversation, DeskMove, deal_price, meet_the_ask, openings, plan_conversation
+from bazaar_agent.agents.inspector import FlagBook
 from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
@@ -273,7 +274,7 @@ def test_plan_conversation_ignores_an_offer_that_is_not_our_buy_and_walks_after_
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     trick = {"id": 9, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-02"]}, "want": {"cash": 5}}
     dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14, TICK)
-    assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [LAV-08]" in dm.ignored
+    assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [card:LAV-08]" in dm.ignored
     conv.ticks = 14
     assert plan_conversation(conv, {"status": "open"}, 14, TICK).move.kind == "walk"
     assert plan_conversation(conv, {"status": "deal"}, 14, TICK).status == "deal"
@@ -551,3 +552,118 @@ def test_a_rest_walk_whose_close_answer_was_lost_still_rests_the_item(tmp_path):
     for n in range(1, 4):
         t.on_tick(at(team, TICK + n))
     assert t.cooling == {("abuela", "LAV-08"): 1.5 + 1.0} and "abuela" not in t.convs
+
+
+# ---------------------------------------------------------------- the accept gate (S1)
+
+
+def test_a_board_copy_of_a_lesser_rarity_than_its_card_is_never_accepted(tmp_path):
+    bait = ask(2, "LAV-08", 20, asset=901, rarity="common")  # LAV-08 is an uncommon: the copy says common
+    team = FakeTeam()
+    t, lines, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [bait]}), live=True)
+    t.on_tick(clock())
+    assert team.sent == [] and ledger.accept_items(TICK) == []
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask"]
+    assert (row["status"], row["chosen"], row["inputs"]["inspector"]["verdict"]) == ("rejected", False, "block")
+    assert row["inputs"]["inspector"]["findings"] == ["the copy says common; the catalog has LAV-08 as uncommon"]
+    assert any("inspector block on offer 2" in line for line in lines)
+
+
+def test_the_inspect_accepts_kill_flag_keeps_the_older_checks_only(tmp_path):
+    bait = ask(2, "LAV-08", 20, asset=901, rarity="common")
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(boards={"rastro": [bait]}), live=True, inspect_accepts=False)
+    t.on_tick(clock())
+    assert team.sent == [("accept", 2)]
+    assert "inspector" not in next(r for r in rows(tmp_path) if r.get("kind") == "accept_ask")["inputs"]
+
+
+def test_a_clean_dealer_accept_carries_the_inspection_in_its_decision_row(tmp_path):
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    her(team, 5000, dealer_ask(800, 24))  # her opening ask, above our max (#72: never taken at her opening)
+    t.on_tick(at(team, TICK + 1))
+    offer = dealer_ask(801, 21, final=True)
+    message = {"message": 9000, "sender": "abuela", "text": "LAV-08, 21 P, cariño", "offer": offer}
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [offer]}
+    t.on_tick(at(team, TICK + 2))
+    assert team.sent[-1] == ("accept", 801)
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
+    assert row["inputs"]["inspector"] == {
+        "kind": "dealer",
+        "offer_id": 801,
+        "message_id": 9000,
+        "verdict": "clean",
+        "findings": [],
+        "words": None,
+    }
+
+
+def test_a_dealer_trickster_is_never_accepted_and_only_logged_as_would_flag(tmp_path):
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}  # a common, for the LAV-08 we asked
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    for allow in (False, True):
+        team = FakeTeam()
+        root = tmp_path / str(allow)
+        root.mkdir()
+        config = TakerConfig(max_dealer_threads=3)
+        t, lines, _ = taker(root, team, FakePublic(), live=True, config=config, allow_flags=allow)
+        t.flags = FlagBook(trusted=frozenset())  # the fake trickster plays Abuela, a trusted dealer by default
+        t.on_tick(clock())
+        team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+        t.on_tick(at(team, TICK + 1))
+        assert ("accept", 802) not in team.sent and not [s for s in team.sent if s[0] == "flag"]
+        (would,) = [line for line in lines if "would flag message 9001" in line]
+        assert ("allow_flags" in would) is (not allow) and ("dry run" in would) is allow
+
+
+def test_the_gate_refuses_a_dealer_trick_even_if_the_desks_own_check_is_bypassed(tmp_path, monkeypatch):
+    """Defence in depth (review P2): the desk's structure check is patched out, so only the accept gate stands."""
+    from bazaar_agent.agents import taker as taker_module
+
+    def careless(conv, thread, max_ticks, tick):
+        if not thread.get("standing_offers"):
+            return plan_conversation(conv, thread, max_ticks, tick)
+        offer = thread["standing_offers"][0]
+        move = Move("accept", 21, offer["id"], "a desk that forgot to read the structure")
+        return DeskMove(conv, move, 21, True, offer_id=offer["id"])
+
+    monkeypatch.setattr(taker_module, "plan_conversation", careless)
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = FakeTeam()
+    t, lines, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))
+    assert ("accept", 802) not in team.sent and ledger.accept_items(TICK + 1) == []
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
+    assert row["status"] == "rejected" and row["inputs"]["inspector"]["verdict"] in ("block", "flag")
+    assert any("inspector" in line and "offer 802" in line for line in lines)
+
+
+def test_a_malformed_dealer_offer_is_refused_and_never_costs_the_desk_its_tick(tmp_path, monkeypatch):
+    """Security audit P2: the gate fails closed on a payload it cannot read; the other threads still talk."""
+    from bazaar_agent.agents import taker as taker_module
+
+    def careless(conv, thread, max_ticks, tick):
+        if not thread.get("standing_offers"):
+            return plan_conversation(conv, thread, max_ticks, tick)
+        offer = thread["standing_offers"][0]
+        return DeskMove(conv, Move("accept", 21, offer["id"], "careless desk"), 21, True, offer_id=offer["id"])
+
+    monkeypatch.setattr(taker_module, "plan_conversation", careless)
+    broken = {"id": 802, "maker": "abuela", "status": "open", "final": True, "give": ["not", "a", "dict"], "want": 21}
+    team = FakeTeam()
+    t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [broken]}
+    t.on_tick(at(team, TICK + 1))
+    assert ("accept", 802) not in team.sent
+    assert any("unreadable offer" in line for line in lines)
+    assert any(
+        f"tick {TICK + 1} taker:" in line and "accept candidate" in line for line in lines
+    )  # tick ran to the end

@@ -1,5 +1,6 @@
 """The shared guardrail ledger: one accept per slot per tick across processes (file lock, Postgres advisory
-lock + unique slot), refunds, the Postgres → file fallback, and the decision log (Postgres or JSONL)."""
+lock + unique slot), refunds, reconnecting after a drop, which ledger a live or dry process may use, and the
+decision log (Postgres or JSONL)."""
 
 import threading
 
@@ -8,7 +9,7 @@ import pytest
 
 from bazaar_agent.decisions import Decision, DecisionLog
 from bazaar_agent.guardrails import Ledger, refund_row
-from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
+from bazaar_agent.ledger_pg import FallbackLedger, LedgerNotShared, LedgerUnavailable, PgLedger, open_ledger
 from tests.test_db import database_url, open_in, schema  # noqa: F401  (pytest fixtures)
 
 
@@ -68,15 +69,108 @@ def test_a_refund_with_an_unknown_created_tick_never_loosens_the_cap(tmp_path):
     assert refund_row(40, "LAV-09", 105, 100, 1.6, 60.0)[1:3] == (100, pytest.approx(1.6 - 1 / 60))  # future: now
 
 
-def test_open_ledger_falls_back_to_the_file_when_postgres_is_down(tmp_path):
+RAILWAY = "postgresql://postgres:Never-Printed-pw@shuttle.proxy.rlwy.net:41234/railway"
+GAME = "https://bazaar.causaprima.ai"
+SIM = "http://localhost:8800"
+
+
+def refused():
+    raise psycopg.OperationalError("connection refused")
+
+
+def test_a_dry_run_falls_back_to_the_file_when_postgres_is_down(tmp_path):
     lines = []
+    ledger = open_ledger(
+        tmp_path, source="taker", database_url=RAILWAY, game_url=GAME, connect=refused, log=lines.append
+    )
+    assert isinstance(ledger, FallbackLedger) and ledger.where == "file ledger.jsonl (this machine only)"
+    assert lines == [
+        "ledger: Postgres on shuttle.proxy.rlwy.net:41234 unavailable (OperationalError); "
+        "using file ledger.jsonl (this machine only) until it answers"
+    ]
+    ledger.record("spend", 10, 1.0, 17, "sobre_barrio")
+    assert ledger.spent_since(0) == 17 and (tmp_path / "ledger.jsonl").is_file()
+
+
+def test_a_dry_run_reads_hand_posted_offers_from_the_file_while_postgres_is_down(tmp_path):
+    # The maker's hands-off read (#79) goes through the fallback too: a dry run never crashes on it.
+    from bazaar_agent.guardrails import HANDS_OFF
+
+    ledger = open_ledger(tmp_path, source="maker", database_url=RAILWAY, game_url=GAME, connect=refused, log=print)
+    ledger.record("listing", 10, 1.0, 40, f"{HANDS_OFF}321")
+    assert isinstance(ledger, FallbackLedger) and ledger.hands_off_ids() == {321}
+
+
+def test_live_refuses_a_ledger_that_is_not_shared(tmp_path):
+    from bazaar_agent.config import DEFAULT_DATABASE_URL
+
+    local = [
+        DEFAULT_DATABASE_URL,
+        "postgresql://me:pw@127.0.0.1:5432/bazaar",
+        "postgresql://me:pw@host.docker.internal:5433/bazaar",
+        "postgresql://me:pw@db.localhost/bazaar",
+        "postgresql://me:pw@192.168.1.20:5432/bazaar",
+        "postgresql://me:pw@[::1]:5432/bazaar",
+        "not a url",
+    ]
+    for url in local:
+        with pytest.raises(LedgerNotShared, match="live trading needs the team's shared ledger") as refusal:
+            open_ledger(tmp_path, source="duels", live=True, database_url=url, game_url=GAME, connect=refused)
+        assert "pw" not in str(refusal.value)
+    # dry, the same URLs are fine: a local count is allowed when nothing is sent
+    assert open_ledger(tmp_path, source="duels", database_url=DEFAULT_DATABASE_URL, game_url=GAME, connect=refused)
+
+
+def test_the_official_game_is_recognised_however_its_url_is_written(tmp_path):
+    from bazaar_agent.config import DEFAULT_DATABASE_URL
+    from bazaar_agent.ledger_pg import official_game
+
+    for url in (GAME, "https://BAZAAR.causaprima.ai./", "https://bazaar.causaprima.ai:443/api"):
+        assert official_game(url), url
+        with pytest.raises(LedgerNotShared):
+            open_ledger(tmp_path, source="duels", live=True, database_url=DEFAULT_DATABASE_URL, game_url=url)
+    assert not official_game(SIM) and not official_game("https://bazaar.causaprima.ai.evil.example")
+
+
+def test_live_on_a_down_shared_ledger_fails_closed_and_never_counts_on_the_file(tmp_path):
+    lines = []
+    ledger = open_ledger(
+        tmp_path, source="taker", live=True, database_url=RAILWAY, game_url=GAME, connect=refused, log=lines.append
+    )
+    assert isinstance(ledger, PgLedger) and ledger.where.startswith("postgres ledger table on shuttle.proxy")
+    assert "Never-Printed-pw" not in " ".join(lines) and "no game write until it answers (fail closed)" in lines[0]
+    with pytest.raises(LedgerUnavailable):
+        ledger.accepts_in_tick(100)
+    with pytest.raises(LedgerUnavailable):
+        ledger.reserve_accept(100, 1.5, 10, "LAV-02", 1)
+    assert not (tmp_path / "ledger.jsonl").exists()
+
+
+def test_live_against_a_simulator_may_keep_the_file(tmp_path):
+    from bazaar_agent.config import DEFAULT_DATABASE_URL
+
+    lines = []
+    ledger = open_ledger(
+        tmp_path, source="taker", live=True, database_url=DEFAULT_DATABASE_URL, game_url=SIM, connect=refused,
+        log=lines.append,
+    )  # fmt: skip
+    assert isinstance(ledger, FallbackLedger) and "localhost is a simulator" in lines[-1]
+    assert ledger.reserve_accept(100, 1.5, 10, "LAV-02", 1) and not ledger.reserve_accept(100, 1.5, 9, "x", 1)
+
+
+def test_a_down_ledger_is_retried_at_most_once_per_window():
+    attempts, clock = [], [0.0]
 
     def down():
-        raise psycopg.OperationalError("connection refused")
+        attempts.append(clock[0])
+        raise psycopg.OperationalError("down")
 
-    ledger = open_ledger(tmp_path, source="taker", connect=down, log=lines.append)
-    assert isinstance(ledger, Ledger) and ledger.where == "file ledger.jsonl"
-    assert "Postgres unavailable (OperationalError)" in lines[0] and "this machine only" in lines[0]
+    ledger = PgLedger(down, "taker", retry_every_s=15.0, now=lambda: clock[0])
+    for step in range(10):
+        clock[0] = 2.0 * step
+        with pytest.raises(LedgerUnavailable):
+            ledger.spent_since(0)
+    assert attempts == [0.0, 16.0]
 
 
 def decision(**extra):
@@ -136,7 +230,7 @@ def pg_ledgers(database_url, schema):  # noqa: F811
     first = open_in(database_url, schema)
     db.init_schema(first)
     second = open_in(database_url, schema)
-    ledgers = [PgLedger(first, "taker"), PgLedger(second, "duels")]
+    ledgers = [PgLedger(lambda: first, "taker"), PgLedger(lambda: second, "duels")]
     yield ledgers
     for ledger in ledgers:
         ledger.close()
@@ -156,7 +250,7 @@ def test_the_unique_slot_refuses_a_second_accept_even_without_the_lock(pg_ledger
     taker, _ = pg_ledgers
     assert taker.reserve_accept(300, 4.0, 10, "LAV-02", 1)
     with pytest.raises(psycopg.errors.UniqueViolation):
-        taker._conn.execute(
+        taker._pg.get().execute(
             "insert into ledger (kind, tick, t_hours, price, item, slot) values ('accept', 300, 4.0, 1, 'x', 1)"
         )
 
@@ -173,13 +267,52 @@ def test_postgres_spend_packs_listings_and_refunds(pg_ledgers):
 
 
 @pg
-def test_a_broken_connection_fails_closed(pg_ledgers):
-    taker, _ = pg_ledgers
-    taker._conn.close()
+def test_a_dropped_connection_fails_closed_once_then_reconnects(database_url, schema):  # noqa: F811
+    """A Postgres restart or a lost proxy kills the connection: that call sends nothing, the next one works."""
+    from bazaar_agent import db
+
+    admin = open_in(database_url, schema)
+    db.init_schema(admin)
+    opened = []
+
+    def connect():
+        opened.append(open_in(database_url, schema))
+        return opened[-1]
+
+    ledger = PgLedger(connect, "duels")
+    assert ledger.reserve_accept(400, 5.0, 0, "duel:1", 1)
+    admin.execute("select pg_terminate_backend(%s)", (opened[0].info.backend_pid,))
+    admin.commit()
     with pytest.raises(LedgerUnavailable):
-        taker.reserve_accept(400, 5.0, 1, "x", 1)
-    with pytest.raises(LedgerUnavailable):
-        taker.spent_since(0)
+        ledger.accepts_in_tick(400)
+    assert ledger.accepts_in_tick(400) == 1 and len(opened) == 2  # reopened, the row is still there
+    assert ledger.reserve_accept(401, 5.1, 12, "LAV-02", 1) and ledger.accept_items(401) == ["LAV-02"]
+    ledger.close()
+    admin.close()
+
+
+@pg
+def test_a_dry_run_moves_back_to_postgres_when_it_answers(database_url, schema, tmp_path):  # noqa: F811
+    from bazaar_agent import db
+
+    admin = open_in(database_url, schema)
+    db.init_schema(admin)
+    up, clock = [False], [0.0]
+
+    def connect():
+        if not up[0]:
+            raise psycopg.OperationalError("down")
+        return open_in(database_url, schema)
+
+    pg_ledger = PgLedger(connect, "taker", retry_every_s=15.0, now=lambda: clock[0])
+    ledger = FallbackLedger(pg_ledger, Ledger(tmp_path / "ledger.jsonl"))
+    ledger.record("spend", 10, 1.0, 17, "sobre_barrio")  # Postgres down: this machine's file
+    up[0], clock[0] = True, 20.0
+    ledger.record("spend", 11, 1.1, 9, "LAV-02")  # back: the shared table
+    assert ledger.where.startswith("postgres") and ledger.spent_since(0) == 9
+    assert admin.execute("select item from ledger").fetchall() == [("LAV-02",)]
+    pg_ledger.close()
+    admin.close()
 
 
 @pg
