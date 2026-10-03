@@ -1298,14 +1298,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
+- [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
 - [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 - [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 - [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates
 - [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 - [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 - [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
-- [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
-- [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
 
 <!-- BAZAAR:STATUS:END -->
 
