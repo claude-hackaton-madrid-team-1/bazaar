@@ -1306,7 +1306,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 - [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
 - [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
-- [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
 
 <!-- BAZAAR:STATUS:END -->
 
