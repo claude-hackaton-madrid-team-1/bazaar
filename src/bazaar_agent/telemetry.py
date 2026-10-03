@@ -39,6 +39,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from rich.console import Console, ConsoleRenderable, RenderHook
+from rich.text import Text
 
 from bazaar_agent.config import env_file_path, read_env_file
 from bazaar_agent.jev.mask import JEV_REDACTION, mask_text
@@ -80,9 +81,12 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 _SECRET_NAME = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD)\Z", re.IGNORECASE)
 _TEAM_KEY = re.compile(r"\btk-[A-Za-z0-9_-]{6,}")
 # A private number (our limit, cost, value, ceiling) next to its name, in prose, a repr or JSON: cut out by pattern.
+_PRIVATE_NAME = r"\w*(?:limit|max|cost|value|worth|floor|ceil|cap|budget|reserv|ladder|plan)\w*"
 _PRIVATE_NUMBER = re.compile(
-    r"(\b\w*(?:limit|max|cost|value|worth|floor)\w*\b[\"']?\s*[:=]?\s*)-?\d+(?:\.\d+)?", re.IGNORECASE
+    rf"(\b{_PRIVATE_NAME}\b[\"']?(?:\s*(?:[:=]|is|of|at|about|to)|\s)*[\[\(\{{$€]*\s*)-?\d+(?:[.,]\d+)*(?:,\s+\d+(?:[.,]\d+)*)*",
+    re.IGNORECASE,
 )
+_PRIVATE_RANGE = re.compile(r"\d+\s*(?:→|->|\.\.)\s*\d+")  # a bid ladder "17→26"
 _LOG = logging.getLogger(__name__)
 _SESSION: contextvars.ContextVar[str | None] = contextvars.ContextVar("bazaar_session", default=None)
 
@@ -278,6 +282,7 @@ def scrub(text: str) -> str:
 def scrub_for_span(text: str) -> str:
     """`scrub`, and a number named like a limit, cost or value is cut out too: our private numbers must not
     reach Phoenix in a console line, a log string or a decision line."""
+    text = _PRIVATE_RANGE.sub(JEV_REDACTION, text)
     return scrub(_PRIVATE_NUMBER.sub(lambda m: m.group(1) + JEV_REDACTION, text))
 
 
@@ -342,7 +347,8 @@ def session_scope(session_id: str | None) -> Iterator[None]:
     try:
         yield
     finally:
-        _SESSION.reset(token)
+        with suppress(ValueError):  # finished in another Context: nothing to undo here
+            _SESSION.reset(token)
 
 
 @contextmanager
@@ -412,7 +418,7 @@ def record_failure(target: Span, exc: BaseException) -> None:
         attributes(
             {
                 "exception.type": type(exc).__qualname__,
-                "exception.message": str(exc),
+                "exception.message": str(exc)[:1000],
                 "exception.stacktrace": "".join(traceback.format_exception(exc)),
                 "bazaar.error.code": code if isinstance(code, str) else None,
                 "bazaar.error.status": getattr(exc, "status", None),
@@ -508,7 +514,8 @@ class ConsoleToSpans(RenderHook):
         self._command, self._width = command, width
 
     def process_renderables(self, renderables: list[ConsoleRenderable]) -> list[ConsoleRenderable]:
-        self._emit(renderables)
+        # Tables, panels and trees hold columns of numbers no pattern can tell apart: only lines of text are mirrored.
+        self._emit([r for r in renderables if isinstance(r, str | Text)])
         return renderables
 
     @never_raise

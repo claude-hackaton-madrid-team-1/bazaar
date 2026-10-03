@@ -233,7 +233,6 @@ class Recorder:
                 "chosen": chosen,
                 "guardrail": guardrail,
                 "dry_run": not self.live,
-                "line": line,
                 "jev": jev.verdict if jev is not None else None,
             },
         )

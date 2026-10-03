@@ -16,8 +16,9 @@ shared one on Railway (see README "Services and public URLs"), project `bazaar`.
 | `taker tick N`, `maker tick N`, `duels tick N` | AGENT | `tick:{n}` | one agent tick; its Jev, TOOL and LLM spans are children |
 | `monitor tick N`, `feed.capture` | CHAIN | `tick:{n}` | the watchers |
 
-What a span never carries: our limits, ceilings, values or bid ladder (`scrub_for_span` cuts a number named like a
-limit, cost, value or floor; the plan and `your_limit` are not attributes at all), request bodies and prices of the
+What a span never carries: our limits, ceilings, values or bid ladder. This is enforced by what we emit (the plan,
+`your_limit`, free-text decision lines, unsent prices and tables are not sent); `scrub_for_span` (numbers named like a
+limit, cost, value, cap, ceiling, ladder, or a `17→26` range) is a best-effort backstop, not the control, request bodies and prices of the
 requests we send (those are in the `decisions` and `executions` tables), prompts of any LLM call except `words`
 (that text is sent to the counterparty anyway), keys and tokens.
 

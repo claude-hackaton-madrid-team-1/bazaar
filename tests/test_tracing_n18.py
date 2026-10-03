@@ -233,3 +233,54 @@ def test_no_private_limit_or_value_reaches_any_span(spans, seed):
     texts = list(all_text(spans))
     for secret in (limit, ceiling, value):
         assert not any(str(secret) in t for t in texts), secret
+
+
+# ---------------------------------------------------------------- review findings (security-auditor)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "open thread with abuela for LAV-08 (ladder 17→26, worth 157)",
+        "ladder (17, 26) ceiling 26 cap 90 budget 120",
+        "limit is $80 and limit of 80, worth about 80",
+        "maximum: 1,200 reservation 70",
+    ],
+)
+def test_ladders_ceilings_and_caps_are_cut_from_span_text(line):
+    cleaned = tm.scrub_for_span(line)
+    for number in ("26", "157", "90", "120", "80", "1,200", "200", "70"):
+        assert number not in cleaned.replace("LAV-08", ""), (line, cleaned)
+
+
+def test_a_decision_event_carries_no_free_text_line(spans):
+    rec = Recorder("taker", _Log(), live=False, log=lambda line: None)
+    with tm.span("taker tick", tm.AGENT, root=True):
+        rec.decide(
+            5, "open_thread", "ladder 17→26 worth 157", inputs={}, reason="r", guardrail="ok", chosen=True,
+            status="approved",
+        )  # fmt: skip
+    assert not any("26" in t or "157" in t for t in all_text(spans))
+
+
+def test_tables_are_not_mirrored_but_text_lines_are(spans):
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console(width=120, file=__import__("io").StringIO())
+    tm.capture_console(console, "rules show")
+    table = Table("rule", "value")
+    table.add_row("max_price_rare", "80")
+    with tm.span("cli rules", tm.CHAIN, root=True):
+        console.print(table)
+        console.print("tick 5 hello")
+    texts = list(all_text(spans))
+    assert not any("80" in t for t in texts) and any("tick 5 hello" in t for t in texts)
+
+
+def test_unsent_prices_and_the_duel_limit_stay_out_of_the_duel_trace(spans):
+    duels = traces.DuelTraces()
+    duel = {"id": 4, "role": "buyer", "your_limit": 7351, "done": True}
+    duels.seen(duel, 100, DuelMove("offer", 6123, None, "concede"))
+    duels.close()
+    assert not any("6123" in t or "7351" in t for t in all_text(spans))

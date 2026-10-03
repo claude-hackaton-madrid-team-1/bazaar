@@ -48,14 +48,14 @@ class TracedProvider:
             "bazaar.llm.input_chars": len(request.user),
         }
         if request.purpose in TEXT_PURPOSES:
-            values[tm.INPUT] = request.user[:MAX_TEXT]
+            values[tm.INPUT] = tm.scrub(request.user)[:MAX_TEXT]  # scrub first: a cut secret no longer matches
         return values
 
     @staticmethod
     def _answer(request: TextRequest, text: str) -> dict[str, object]:
         values: dict[str, object] = {"bazaar.llm.output_chars": len(text)}
         if request.purpose in TEXT_PURPOSES:
-            values[tm.OUTPUT] = text[:MAX_TEXT]
+            values[tm.OUTPUT] = tm.scrub(text)[:MAX_TEXT]
         return values
 
     @staticmethod

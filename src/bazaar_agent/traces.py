@@ -31,7 +31,7 @@ def message_event(line: Line) -> dict[str, object]:
         "message.id": line.id,
         "tick": line.tick,
         "sender": line.sender,
-        "text": line.text,
+        "text": line.text[:512] if isinstance(line.text, str) else line.text,  # untrusted: capped
         "price": line.price,
         "offer_id": line.offer_id,
         "offer_status": line.offer_status,
@@ -92,9 +92,7 @@ class NegotiationTrace(Observer):
     @tm.never_raise
     def guardrail(self, move: Move, denied: str | None) -> None:
         violations = denied.split("; ") if denied else []
-        tm.event(
-            "guardrail", {"allowed": denied is None, "violations": violations, "move": move.kind, "price": move.price}
-        )
+        tm.event("guardrail", {"allowed": denied is None, "violations": violations, "move": move.kind})
 
     @tm.never_raise
     def move(self, move: Move, said: str | None) -> None:
@@ -160,6 +158,9 @@ def _under(parent: Span, name: str, session: str) -> Iterator[Span]:
         yield current
 
 
+PRIVATE_DUEL_KEYS = frozenset({"your_limit", "your_value", "your_days_weight"})
+
+
 class DuelTraces:
     """One trace per duel across ticks: a `duel` root per id, a `duel tick N` child per tick it is live.
 
@@ -205,8 +206,7 @@ class DuelTraces:
         )
         self._ticks[did], self._last[did] = child, duel
         tm.add_event(child, "rival_offer", {"offer": duel.get("rival_offer")})
-        values = {"kind": move.kind, "price": move.price, "days": move.days, "reason": move.reason}
-        tm.add_event(child, "our_move", values)
+        tm.add_event(child, "our_move", {"kind": move.kind, "reason": move.reason})  # the price is in move_sent
 
     @tm.never_raise
     def jev(self, duel_id: int, pick: Any) -> None:
@@ -268,7 +268,12 @@ class DuelTraces:
         root = self._roots.pop(duel_id)
         last = self._last.pop(duel_id, {})
         tm.set_attributes(
-            root, {"bazaar.outcome": outcome, tm.OUTPUT: tm.as_json(last), "bazaar.duel.done": bool(last.get("done"))}
+            root,
+            {
+                "bazaar.outcome": outcome,
+                tm.OUTPUT: tm.as_json({k: v for k, v in last.items() if k not in PRIVATE_DUEL_KEYS}),
+                "bazaar.duel.done": bool(last.get("done")),
+            },
         )
         root.end()
 
