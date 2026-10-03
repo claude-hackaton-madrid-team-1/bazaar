@@ -1410,6 +1410,11 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
     from bazaar_agent.agents.broker import BrokerConfig, bench_config_from_env
     from bazaar_agent.agents.venue_keeper import VenueKeeper
 
+    config = bench_config_from_env(BrokerConfig(pace_s=0.2), log=kw["log"])
+    kw["log"](
+        f"venue keeper: broker bench {config.bench_policy} ({config.bench_preset}, accepts by {config.bench_cross}); "
+        "BAZAAR_BENCH_POLICY / _PRESET / _CROSS change it"
+    )
     return VenueKeeper(
         team,
         settings=settings,
@@ -1420,7 +1425,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
-        broker_config=bench_config_from_env(BrokerConfig(pace_s=0.2), log=kw["log"]),
+        broker_config=config,
     )
 
 

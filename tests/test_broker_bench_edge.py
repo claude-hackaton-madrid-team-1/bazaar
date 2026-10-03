@@ -300,3 +300,17 @@ def test_the_keepers_broker_takes_its_bench_options_from_the_environment():
     kept = bench_config_from_env(base, {"BAZAAR_BENCH_POLICY": "magic", "BAZAAR_BENCH_CROSS": "limit"}, lines.append)
     assert (kept.bench_policy, kept.bench_cross) == ("exact", "limit")  # a typo never stops the maker
     assert lines and "IGNORED BAZAAR_BENCH_POLICY='magic'" in lines[0]
+
+
+def test_the_maker_builds_its_venue_keeper_with_the_bench_options_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("BAZAAR_BENCH_POLICY", "edge")
+    monkeypatch.setattr(cli, "_db_connect", lambda app: None)
+    lines = []
+    settings = Settings(data_dir=tmp_path, team_id="t01")
+    keeper = cli._venue_keeper(
+        object(),
+        settings,
+        {"rules": Guardrails(), "decisions": DecisionLog(tmp_path), "live": False, "log": lines.append},
+    )
+    assert keeper.broker_config.bench_policy == "edge" and keeper.broker_config.pace_s == 0.2
+    assert any("broker bench edge" in line for line in lines)
