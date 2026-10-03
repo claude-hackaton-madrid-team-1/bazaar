@@ -292,16 +292,18 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
         return "the offer gives cash on a buy"
     if item is None:
         return None
-    refs = [str(t).split(":", 1)[-1] for t in give.get("types") or []]
-    refs += [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
-    if refs != [item]:
-        return f"the offer gives {refs or 'nothing'} instead of exactly [{item}]"
+    kinds = [str(t) for t in give.get("types") or []]  # 'card:LAV-08' / 'pack:sobre_barrio': the kind binds too
+    kinds += [f"{a.get('kind') or 'card'}:{a.get('ref')}" for a in give.get("assets") or [] if isinstance(a, dict)]
+    expected = f"{'card' if '-' in item else 'pack'}:{item}"
+    if kinds != [expected] or len(give.get("assets") or []) + len(give.get("types") or []) != 1:
+        return f"the offer gives {kinds or 'nothing'} instead of exactly [{expected}]"
     return None
 
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move, int], str | None]  # (move, our thread id) → a deny reason, or None when allowed
 Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
+Inspect = Callable[[dict[str, Any], Move], str | None]  # the accept gate on this tick's thread: a refusal, or None
 
 
 class Hold(Exception):
@@ -424,6 +426,8 @@ def negotiate(
     words_fn: WordsFn = template_words,
     reserve: Reserve | None = None,
     kill_switch: KillSwitch | None = None,
+    on_thread: Callable[[dict[str, Any]], None] | None = None,
+    inspect: Inspect | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
@@ -436,6 +440,11 @@ def negotiate(
     stays open, and a held tick does not count toward `max_ticks`, so the negotiation resumes where it
     was when the switch goes off. It is read again just before every send. Any other guard denial still
     turns the move into a walk. A walk because she held her opening ask returns `Outcome.reopen_start`.
+
+    `on_thread` sees each tick's thread payload first (the offer inspector's would-flag log); it never
+    changes the move, and its failures are logged, not raised. `inspect` is the accept gate (S1): it runs
+    before `guard` and before the team's accept slot is claimed; a refusal means no accept this tick, never
+    a walk.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -552,6 +561,11 @@ def negotiate(
         state["ticks"] += 1
         thread = client.thread(tid)
         obs.thread_read(thread)
+        if on_thread is not None:
+            try:
+                on_thread(thread)
+            except Exception as e:  # inspection must never change or break the negotiation
+                log(f"tick {clock.tick}: offer inspection failed ({type(e).__name__}); negotiation continues")
         if ended(thread, clock):
             return
         if hold(f"tick {clock.tick}"):  # a held tick does not count toward max_ticks
@@ -576,6 +590,12 @@ def negotiate(
             f"tick {clock.tick}: her ask {ask}{' FINAL' if final else ''} → {move.kind} {move.price or ''} "
             f"({move.reason})"
         )
+        if inspect is not None and move.kind == "accept":
+            refused = inspect(thread, move)
+            if refused:
+                log(f"tick {clock.tick}: INSPECTOR refused the accept of offer {move.offer_id}: {refused}")
+                obs.guardrail(move, f"inspector: {refused}")
+                return
         if guard is not None and move.kind in ("accept", "bid"):
             try:
                 denied = guard(move, tid)

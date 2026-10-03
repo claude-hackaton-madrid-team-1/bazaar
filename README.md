@@ -1150,6 +1150,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
+| TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1221,6 +1222,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
+| [#146](../../pull/146) | Merged during the session on Omar's order (09:07: merge everything approved ASAP). Approved on this exact head; CI green. | Sat 09:08 | `f9a193b` |
 | [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
 | [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
@@ -1231,13 +1234,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | Sat 06:24 | `d4b243e` |
 | [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | Sat 06:15 | `90191ec` |
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | Sat 06:07 | `26c40fd` |
-| [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
-| [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
+| [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
+| [#165](../../pull/165) | fix(duels): D1 follow-up: days-latch pre-flip hardening and duel-loop resilience (after 23:00) | `ogarciarevett/d1-duel-followups` |
 | [#164](../../pull/164) | feat(n17): bazaar team-checks — spec Q1-Q6 from stored data, read-only (N17-10) | `ogarciarevett/n17-live-checks` |
 | [#163](../../pull/163) | B27: duel settings card + e2e runner + one done-read per tick (into #150) | `night/b27-card` |
 | [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
@@ -1246,10 +1250,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#158](../../pull/158) | feat: hard dealers: per-dealer plan from recall, dealer finals behind dealer_final_lift (0), L3-L5 readiness, sim proof (N14a, stacked on #112) | `ogarciarevett/work-n14a` |
 | [#157](../../pull/157) | perf(agents): every agent inside Sunday's 15 s tick: Jev answer cache, concurrent reads, tick profiler (SP1) | `ogarciarevett/work-speed-sp1` |
 | [#155](../../pull/155) | feat(supply): supply map, pack EV with our album need, open or keep a sealed pack (N14b, part 2) | `ogarciarevett/feat-n14b-supply-packs` |
-| [#154](../../pull/154) | docs(night): salvage the reports of Marius's closed night PRs, with an index of findings and decisions | `docs/night-salvage` |
 | [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
 | [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
-| [#146](../../pull/146) | feat(safety): offer inspector before every accept — dealer, board, duel (S1 part A, takes over #93) | `ogarciarevett/s1-inspector` |
 | [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
 | [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
 | [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
@@ -1257,6 +1259,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
-| [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 
 <!-- BAZAAR:ACTIVITY:END -->

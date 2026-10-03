@@ -241,3 +241,9 @@ def test_a_duel_move_outside_our_limit_is_denied():
     assert "cannot value" in str(duel_check(role=None))
     off = gr.parse_guardrails("- `duel_inside_limit` = false — x").rules
     assert duel_check(price=50, rules=off).allowed
+
+
+@pytest.mark.parametrize("value", ["abuela;chato", "Abuela", "abuela, ,chato"])
+def test_a_bad_trusted_dealer_list_fails_fast(value):
+    with pytest.raises(gr.GuardrailsError, match="flag_trusted_dealers"):
+        gr.parse_guardrails(f"- `flag_trusted_dealers` = {value} — x")

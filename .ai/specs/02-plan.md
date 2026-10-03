@@ -121,6 +121,7 @@ negotiates well.
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
+| TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -254,6 +255,26 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
   Marius's PRs closed with a pointer once ours are open. · **Acceptance:** APPROVE on both, merge asked, never done by us.
 - Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
+
+### S1 — Safety: offer inspector on every accept, bad-faith flags, injection hardening
+Spec: [`S1-spec.md`](S1-spec.md). Takes over Marius's #93 inspector (credit kept, squashed; #81/#61 under it
+are not part of S1). Three PRs: A (inspector, target 10:30 Sat), B (flags), C (injection hardening).
+- Step A1 — Port `agents/inspector.py` + tests + Friday fixture from #93 onto main. · **Acceptance:** its
+  tests green on main; precision on Friday's 1,022 dealer offers: 0 flags.
+- Step A2 — `agents/accept_gate.py`: one gate per accept kind (dealer thread offer by id, board ask, duel
+  re-read); a block never spends the accept slot. · **Acceptance:** bait tests per kind (lesser card, lesser
+  rarity, changed duel offer) refused; consistent offers pass.
+- Step A3 — Wire the gate into every accept: taker `_accept_one` (dealer + board), `dealer buy`
+  (`negotiate`), `duel run --play`, runtime `duel_move`; the inspection lands in the decision row's inputs.
+  Kill flag `inspect_accepts` (GUARDRAILS.md, true). · **Acceptance:** taker/dealer/duel tests + sim smoke.
+- Step A4 — Would-flag log on every dealer thread read (desk + `dealer buy`), `allow_flags` stays false.
+- Step B1 — Flags as decision rows (`kind=flag`, evidence = the inspection), sent through the Recorder only
+  when `allow_flags` is true; one flag per message, a 4xx never re-sent. · **Acceptance:** tests.
+- Step B2 — `bazaar inspect feed`: precision of the flag rule over the captured feed (the evidence Jev reads
+  before `allow_flags` goes on). · **Acceptance:** report on the real capture.
+- Step C1 — Hostile-text tests on every counterparty-text path (words LLM, runtime tools, duel text, dealer
+  words): injection, fake offer JSON, fake limits, markup, odd Unicode, long input; none changes a binding
+  field. · **Acceptance:** tests green; injection attempts tagged whether or not `llm_words` is on.
 
 ### #71 (#11 / #12) — Market Test at 12:00: our board venue inside the maker (Jev `open_noon`, 0.82)
 Spec (citations, no separate file): the coordinator's brief (items 1–6); RULES.md "Your own market" (level 2,

@@ -62,6 +62,9 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Flags
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
+- `max_flags_per_process` = 2 — the offer inspector sends at most this many flags per process (each certain trickster is still logged); S1, from Marius's #93.
+- `flag_trusted_dealers` = abuela,chato — dealers the offer inspector blocks but never flags (their structure matched the thread in 1,017 of 1,017 Friday offers).
+- `inspect_accepts` = true — kill flag (S1): every accept (dealer, board, duel) first passes the offer inspector, which refuses a structure that is not what we decided on; false = the older structure checks only.
 
 ## Our venue (market making, #11)
 - `allow_venue_open` = false — OFF by team decision (Sat 06:08: opening replaces the free stall, and a broker that only matches as well as the stall earns the same half of the bench points; reopen it in a closed-door window once the broker is verified live). While false: no opening, fee change, announcement or broker match, even with `--live` (closing stays allowed), and NO bond reserve is held: the floor is `cash_floor` alone. True: the maker opens our BOARD venue (0 bps) once and runs its broker every tick; turning it on needs cash (after what open offers promise) of at least `cash_floor` + `venue_bond_reserve` (370): below that every purchase stops until cash recovers, and the opening waits.
