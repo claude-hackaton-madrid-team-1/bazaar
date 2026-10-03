@@ -101,21 +101,22 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
 VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
 
 
-def test_the_committed_file_runs_our_venue_with_a_20_floor_and_holds_no_reserve_once_it_is_open():
+def test_the_committed_file_runs_our_venue_with_a_5_floor_and_holds_no_reserve_once_it_is_open():
     """Our venue v19 opened Sat 3 Oct at game hour 3.5 (allow_venue_open = true from 3.0); cash_floor then went
-    100 -> 50 so the taker can buy again, and 50 -> 20 (with max_spend_per_game_hour 150 -> 250) at ~16:35 by
-    team decision. With our venue open the floor is `cash_floor` alone; without one (the starter stall does not
+    100 -> 50 so the taker can buy again, 50 -> 20 (with max_spend_per_game_hour 150 -> 250) at ~16:35 by
+    team decision, and 20 -> 5 at ~17:20 (Opus decider, to unblock LAV-10 from Los Pícaros). With our venue
+    open the floor is `cash_floor` alone; without one (the starter stall does not
     count) every purchase would still keep `cash_floor` + `venue_bond_reserve`."""
     rules = REAL.rules
     assert rules.allow_venue_open is True
-    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (20, 270, 3.0)
+    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (5, 270, 3.0)
     assert rules.max_spend_per_game_hour == 250
     opened = ctx(cash=119, has_venue=True)
-    assert gr.effective_cash_floor(rules, opened) == 20 and gr.floor_text(rules, opened) == "cash_floor 20"
+    assert gr.effective_cash_floor(rules, opened) == 5 and gr.floor_text(rules, opened) == "cash_floor 5"
     buy = gr.Action("buy", "LAV-09", "rare", 92)
     assert gr.check(buy, opened, rules).allowed  # 119 - 92 = 27: refused at the old 50 floor
-    assert "cash 119 - 100 < cash_floor 20" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 100), opened, rules))
-    assert gr.effective_cash_floor(rules, ctx(cash=400)) == 290  # no venue of ours: 20 + 270
+    assert "cash 119 - 115 < cash_floor 5" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 115), opened, rules))
+    assert gr.effective_cash_floor(rules, ctx(cash=400)) == 275  # no venue of ours: 5 + 270
     assert gr.Guardrails().allow_venue_open is False  # the model's default stays off: only the file turns it on
 
 
