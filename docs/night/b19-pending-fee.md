@@ -58,6 +58,11 @@ item if bench numbers need to match the tape to the P.
 - **Cost of being conservative:** while a hike is pending (1–2 ticks per announcement), we price that venue's
   asks at the higher fee and may skip a fill that would have settled at the old fee. On Friday this would have
   cost ≤ 1 P per trade.
+- **Maker:** `best_venue` sees a pending hike only once it is effective by T+1, even though our offers live up
+  to 40 ticks. No money is at risk (the accepting side pays the fee), only a tick or two of venue scoring.
+- **Cross-PR:** #101 builds `Venue(...)` positionally (8 args), which is safe because the new field has a default
+  and comes last. The read-only CLIs in #79, #98 and #101 call `venues_from` without a tick, so they show prices
+  with any pending hike included. No overlap with #72; #71 only logs `pending_fee`.
 - **Stack:** this PR is based on `night/b13-wake-opening` (#106). On its own it touches only
   `agents/market.py`, `agents/runtime.py` and tests.
 - **Merge note:** `tests/bites/test_c2_fee_at_settlement.py` and `tests/bites/strictness.py` are copies of r2's
