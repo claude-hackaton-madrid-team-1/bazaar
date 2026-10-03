@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#113](../../pull/113) | Night B8: v2 values delivery days with their sign once a real payload says so (duel_days_auto) | `night/b8-days-wiring` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | `ogarciarevett/feat-learner-evolve` |
 | [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | `ogarciarevett/feat-feed-reader-llm` |
 | [#110](../../pull/110) | fix(market): price an announced venue fee that applies by settlement (B19, bite X8) | `night/b19-pending-fee` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#93](../../pull/93) | feat(personas): L3–L5 prep: Trickster inspector, high-precision flag policy (off), persona plans (B3, stacked on #81) | `night/b3-personas` |
 | [#92](../../pull/92) | feat(market): venue go-live runbook + Saturday bench simulation (B2, stacked on #84) | `night/b2-venue-runbook` |
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | `ogarciarevett/feat-evals-in-agents` |
-| [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | `ogarciarevett/feat-feed-reader-rag` |
 
 <!-- BAZAAR:ACTIVITY:END -->
