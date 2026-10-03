@@ -473,6 +473,43 @@ def open_pack(w: World, team_id: str, aid: int) -> dict[str, Any]:
     return {"cards": [asset_view(w, team, counts, a) for a in pulled], "luck": luck}
 
 
+TALLER_INPUTS = 3
+
+
+def taller(w: World, team_id: str, assets: Any) -> dict[str, Any]:
+    """El Taller, as `/api/levels` describes it (the real answer is unpublished; this shape is ours): three cards of
+    one rarity, the team keeps at least one copy of each card, one random card of the next rarity in return."""
+    from collections import Counter
+
+    from bazaar_sim.scoring import asset_view
+
+    ok = isinstance(assets, list) and all(isinstance(a, int) and not isinstance(a, bool) for a in assets)
+    if not ok or len(assets) != TALLER_INPUTS or len(set(assets)) != TALLER_INPUTS:
+        raise invalid(f"assets must be {TALLER_INPUTS} different asset ids")
+    picked = [w.asset(a) for a in assets]
+    for a in picked:
+        if a.owner != team_id:
+            raise SimError("not_owner", f"asset {a.id} is not yours", 403)
+        if a.kind != "card":
+            raise invalid(f"asset {a.id} is a pack, not a card")
+        if a.id in locked_assets(w):
+            raise SimError("asset_locked", f"asset {a.id} is promised in an accepted offer", 400)
+    rarities = {catalog.cards()[a.ref].rarity for a in picked}
+    rarity = rarities.pop() if len(rarities) == 1 else None
+    order = catalog.RARITY_ORDER
+    if rarity is None or rarity == order[-1]:
+        raise invalid("three copies of one rarity below the top one")
+    held, used = w.held_counts(team_id), Counter(a.ref for a in picked)
+    if any(held[ref] - n < 1 for ref, n in used.items()):
+        raise SimError("keep_one", "you keep at least one copy of each card", 400)
+    (ref,) = _draw(w, [{order[order.index(rarity) + 1]: 1.0}], w.rng("taller", *assets))
+    for a in picked:
+        w.transfer(a, "taller", "taller")
+    pulled = w.mint(ref, team_id, "taller")
+    w.emit("taller.used", {"team": team_id, "rarity": rarity, "card": pulled.ref}, actor=team_id)
+    return {"card": asset_view(w, w.team(team_id), w.held_counts(team_id), pulled), "spent": list(assets)}
+
+
 def _draw(w: World, slots: list[dict[str, float]], rng: Any) -> list[str]:
     """One card ref per slot, counting the copies this pack already took, so a sold-out rarity gives
     the next one down and a pack that cannot be filled is refused before any copy is minted."""

@@ -171,6 +171,11 @@ class TeamBazaar(TrackedBazaar):
         failure refuses the buy (`official_values`), never re-asks inside the tick."""
         return TrackedBazaar._call(self, "GET", "/api/me/value", query={"card": card})
 
+    def taller(self, assets: list[int]) -> Any:
+        """POST /api/taller {"assets": [a, b, c]} (El Taller, `/api/levels` id `taller`; not in the kit or the
+        OpenAPI). A write: sent once through `_call`, never re-sent after a 429, a 5xx or a network error."""
+        return self._call("POST", "/api/taller", {"assets": [int(a) for a in assets]})
+
 
 def _pace(value: object) -> float | None:
     """A sane tick length in seconds (the rules say 5-60), else None: never a bool, NaN, inf or a huge value."""

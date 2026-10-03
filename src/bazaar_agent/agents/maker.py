@@ -171,6 +171,16 @@ def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guard
     return kept
 
 
+def taller_stock(targets: Iterable[Target], mine: Iterable[OpenOffer], rules: Guardrails) -> list[Target]:
+    """While `taller_enabled`, spare commons are El Taller stock: no NEW ask for a common. An ask already open keeps
+    its target, so `plan_offers` never cancels it to free a copy: it fills or lapses by itself."""
+    targets = list(targets)
+    if not rules.taller_enabled:
+        return targets
+    standing = {o.asset_id for o in mine if o.side == "ask"}
+    return [t for t in targets if not (t.side == "ask" and t.rarity == "common" and t.asset_id not in standing)]
+
+
 def _other_copy(t: Target, me: dict[str, Any], rules: Guardrails, asked: set[int | None]) -> Target | None:
     """The ask moved to our cheapest other listable copy of its card, if that copy costs us no more."""
     others = [
@@ -419,6 +429,7 @@ class Maker:
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
         targets = self._relisted(snap, targets, mine)
+        targets = taller_stock(targets, mine, self.rules)  # spare commons go to El Taller (TL1)
         held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
         margin = self.rules.official_value_margin
 

@@ -376,6 +376,13 @@ def _team_routes(app: FastAPI, sim: Sim) -> None:
         with sim.world.lock:
             return market.open_pack(sim.world, team, aid)
 
+    @app.post("/api/taller")
+    async def use_taller(request: Request) -> dict[str, Any]:
+        team = _team(sim, request)
+        body = await _body(request)
+        with sim.world.lock:
+            return market.taller(sim.world, team, body.get("assets"))
+
     @app.post("/api/flags")
     async def flag(request: Request) -> dict[str, Any]:
         team = _team(sim, request)

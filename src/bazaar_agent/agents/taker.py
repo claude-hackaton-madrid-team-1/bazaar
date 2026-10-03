@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 
+from bazaar_agent import deploy_guard
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
@@ -87,6 +88,7 @@ from bazaar_agent.agents.runtime import (
     window_for,
 )
 from bazaar_agent.agents.seller import (
+    UNSETTLED_TICKS,
     Commitments,
     committed_context,
     offers_in,
@@ -142,12 +144,14 @@ from bazaar_agent.strategy import (
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
+from bazaar_agent.taller import TALLER_KIND, convert, plan_taller, taller_context
 from bazaar_agent.team_affinity import AffinityBook
 from bazaar_agent.ticks import Clock, action_budget_s
 from bazaar_agent.watchdog import Watchdog
 
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
 THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
+TALLER_MIN_LEFT_S = 10.0  # El Taller: no conversion with less of the tick left (capped at 40 % of a short tick)
 
 
 @dataclass(frozen=True)
@@ -699,6 +703,7 @@ class Taker:
 
         self._team_desk("converse", converse)
         self._open_pack(run, market)
+        self._taller(run)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
@@ -951,6 +956,70 @@ class Taker:
         pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
         if pulled:
             self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")
+
+    # ------------------------------------------------------------ (d) El Taller (TL1)
+
+    def _taller(self, run: _TickRun) -> None:
+        """At most one El Taller conversion a tick, after every other send, behind `taller_enabled`: three free
+        spares of one rarity (`taller.plan_taller`, deterministic: no Jev, no LLM) for one card of the next. Never
+        in the `deploy_guard_duel_ticks` before a live duel's deadline nor near a Market Test or a scheduled event
+        (`deploy_guard.verdict`), never on a short tick, and never the team's accept slot. Album first: planned
+        again on a fresh /me, then /me is read once more to see the pull."""
+        if not self.rules.taller_enabled:
+            return
+        clock = run.snap.clock
+        if run.window.left() < max(self.config.jev_min_budget_s, min(TALLER_MIN_LEFT_S, clock.tick_seconds * 0.4)):
+            return
+        if plan_taller(run.snap.me, run.offers, self.rules, run.snap.catalog) is None:
+            return  # nothing to feed in: no request at all
+        if self.ledger.count_since(TALLER_KIND, clock.t_hours - 1.0) >= self.rules.max_taller_per_game_hour:
+            return
+        try:
+            blocked = deploy_guard.verdict(self.team.duels(), self.team.schedule(), clock.model_dump(), self.rules)
+            me = self.team.me()
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} taker: El Taller skipped, a read failed ({e.code})")
+            return
+        if not blocked.safe:
+            self.log(f"tick {clock.tick} taker: El Taller waits: {'; '.join(blocked.reasons)[:160]}")
+            return
+        plan = plan_taller(me, run.offers, self.rules, run.snap.catalog)
+        if plan is None or not run.window.open():
+            return
+        recent = {
+            item.split(":")[-1]
+            for t in range(clock.tick - UNSETTLED_TICKS, clock.tick + 1)
+            for item in self.ledger.accept_items(t)
+        }
+        if busy := sorted(set(plan.refs) & recent):  # a sale of ours may still be settling one of these copies
+            self.log(f"tick {clock.tick} taker: El Taller waits: {', '.join(busy)} in an accept still settling")
+            return
+        ctx = taller_context(me, run.offers, clock.tick, clock.t_hours, self.ledger, self.rules)
+        done = convert(
+            self.team,
+            plan,
+            ctx,
+            self.rules,
+            self.rec,
+            self.ledger,
+            tick=clock.tick,
+            t_hours=clock.t_hours,
+            live=self.live,
+        )
+        if done.result is None:
+            return
+        try:
+            after = self.team.me()  # album first: what the pull added
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} taker: /me after El Taller failed ({e.code}); the next tick reads it")
+            return
+        before = {a.get("id") for a in me.get("assets") or [] if isinstance(a, dict)}
+        new = [
+            str(a.get("ref")) for a in after.get("assets") or [] if isinstance(a, dict) and a.get("id") not in before
+        ]
+        self.log(
+            f"tick {clock.tick} taker: El Taller {', '.join(plan.refs)} -> {', '.join(new) or 'nothing new in /me'}"
+        )
 
     # ------------------------------------------------------------ (b) the dealer desk
 

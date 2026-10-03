@@ -25,7 +25,15 @@ import psycopg
 
 log = logging.getLogger(__name__)
 
-SCOPES: tuple[str, ...] = ("duel_accept", "team_swap", "dealer_buy", "board_accept", "maker_post", "dealer_sell")
+SCOPES: tuple[str, ...] = (
+    "duel_accept",
+    "team_swap",
+    "dealer_buy",
+    "board_accept",
+    "maker_post",
+    "dealer_sell",
+    "taller",
+)
 NOTHING: frozenset[str] = frozenset()
 STATEMENT_TIMEOUT_MS = 1000
 CONNECT_TIMEOUT_S = 2

@@ -151,6 +151,20 @@ class FakeTeam:
         self.sent.append(("list_offer", give, want, venue))
         return {"id": next(self._ids), "status": "open"}
 
+    def duels(self, done=False):
+        self.reads.append("duels")
+        return {"duels": deepcopy(getattr(self, "live_duels", []))}
+
+    def schedule(self):
+        self.reads.append("schedule")
+        return deepcopy(getattr(self, "schedule_payload", {"now_hours": 1.5, "upcoming": []}))
+
+    def taller(self, assets):
+        """A fake POST /api/taller: the real answer is unpublished, so this one is a guess the code must not rely on."""
+        self.sent.append(("taller", list(assets)))
+        pulled = {"id": next(self._ids), "kind": "card", "ref": "RET-06", "rarity": "uncommon"}
+        return {"ok": True, "card": pulled, "luck": "shown"}
+
 
 class FakePublic:
     def __init__(self, boards=None, venues=(RASTRO, CHEAP), catalog=None, dealers=None, events=None):

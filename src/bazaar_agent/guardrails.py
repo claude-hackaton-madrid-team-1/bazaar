@@ -201,6 +201,10 @@ class Guardrails(BaseModel):
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
     watchdog_refusal_storm: int = Field(default=50, ge=1)
+    # El Taller (TL1). Off here, so code built without GUARDRAILS.md behaves as before; the file turns it on.
+    taller_enabled: bool = False
+    max_copies_kept: int = Field(default=2, ge=1, le=10)
+    max_taller_per_game_hour: int = Field(default=6, ge=0, le=60)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -345,6 +349,9 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
+    "taller_enabled": "guardrails.check (taller) + taller.plan_taller + agents.maker (no asks for spare commons)",
+    "max_copies_kept": "taller.plan_taller (copies of cards held more often than this go in first)",
+    "max_taller_per_game_hour": "guardrails.check (taller) + ledger (`taller` rows, every process)",
 }
 
 
@@ -484,6 +491,7 @@ class LedgerStore(Protocol):
     def packs_since(self, t_hours: float) -> Counter[str]: ...
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
+    def count_since(self, kind: str, t_hours: float) -> int: ...  # rows of `kind` after `t_hours`
     def accept_items(self, tick: int) -> list[str]: ...
     def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
@@ -532,6 +540,9 @@ class Ledger:
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
+
+    def count_since(self, kind: str, t_hours: float) -> int:
+        return sum(1 for e in self.entries() if e.get("kind") == kind and e["t_hours"] > t_hours)
 
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
@@ -636,6 +647,7 @@ ActionKind = Literal[
     "venue_announce",
     "broker_match",
     "dealer_sell",
+    "taller",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 # A sale: `sell` (a board ask), `accept_sell` (we take a bid), `dealer_sell` (our ask to a dealer on a sell thread).
@@ -742,6 +754,8 @@ class Context:
     breakers: frozenset[str] | None = None
     # Human approvals (`approvals.py`). None: read this process's board for `tick` (once per tick, fail closed).
     approvals: ApprovalBook | None = None
+    # El Taller conversions booked in the shared ledger this game hour. None: not read, so a conversion is refused.
+    tallers_last_hour: int | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -860,6 +874,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append("allow_flags = false")
     if action.kind == "open_pack" and not rules.open_sealed_packs:
         v.append("open_sealed_packs = false")
+    if action.kind == "taller":
+        v.extend(_taller_violations(action, ctx, rules))
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
@@ -883,6 +899,8 @@ def breaker_scope(action: Action) -> str | None:
         return "board_accept"
     if action.kind == "dealer_sell":
         return "dealer_sell"
+    if action.kind == "taller":
+        return "taller"
     if action.kind == "sell" or (action.kind == "bid" and action.counterparty is not None):
         return "maker_post"
     if action.kind in ("buy", "bid"):
@@ -955,6 +973,41 @@ def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) 
         return []
     held = ctx.held.get(action.item, 0)
     return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules)
+
+
+TALLER_INPUTS = 3  # /api/levels `taller`: three spare copies of one rarity
+
+
+def last_copy_refusals(refs: list[str], copies: dict[str, int]) -> list[str]:
+    """Each card a conversion would leave us without (`copies`: the copies we may still give, per card)."""
+    used = Counter(refs)
+    return [
+        f"{ref}: feeding {n} of {copies.get(ref, 0)} free copies leaves none (we keep one of each card)"
+        for ref, n in sorted(used.items())
+        if copies.get(ref, 0) - n < 1
+    ]
+
+
+def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """El Taller (TL1): the switch, the hourly cap (shared ledger), three copies of one page rarity, and never the
+    last copy of a card on any set (the free copies: `ctx.sellable` when read, else what /me holds)."""
+    v: list[str] = []
+    if not rules.taller_enabled:
+        v.append("taller_enabled = false")
+    if ctx.tallers_last_hour is None:
+        v.append("El Taller conversions this game hour were not read (max_taller_per_game_hour)")
+    elif ctx.tallers_last_hour >= rules.max_taller_per_game_hour:
+        v.append(
+            f"{ctx.tallers_last_hour} El Taller conversion(s) this game hour "
+            f"(max_taller_per_game_hour {rules.max_taller_per_game_hour})"
+        )
+    refs = [r.strip() for r in action.item.split(",") if r.strip()]
+    if len(refs) != TALLER_INPUTS:
+        v.append(f"El Taller takes {TALLER_INPUTS} copies, got {len(refs)}")
+    if str(action.rarity or "") not in ("common", "uncommon"):
+        v.append(f"El Taller input rarity {action.rarity!r}: only commons or uncommons are fed in")
+    v.extend(last_copy_refusals(refs, ctx.held if ctx.sellable is None else ctx.sellable))
+    return v
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.

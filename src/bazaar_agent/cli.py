@@ -2658,6 +2658,73 @@ def flatten_cmd(
         _fail(f"{len(out.failed)} refused; check `bazaar sell offers` / `bazaar threads` and run it again")
 
 
+@app.command("taller")
+def taller_cmd(
+    assets: Annotated[list[int] | None, typer.Argument(help="Three asset ids to feed in; none: the best plan")] = None,
+    live: bool = typer.Option(False, help="Actually convert. Without it: dry run, nothing is sent"),
+) -> None:
+    """El Taller: three spare copies of one rarity become one card of the next rarity (guardrails first)."""
+    from rich.markup import escape
+
+    from bazaar_agent import db
+    from bazaar_agent import taller as tl
+    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.decisions import DecisionLog
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules = _rules().rules
+    settings = load_settings()
+    client, me = _team_me()
+    offers = _my_offers(client)
+    try:
+        now = Clock.model_validate(client.clock())
+    except BazaarError as e:
+        _fail(f"clock refused: {e.code} ({e.status}); nothing sent")
+        return
+    try:
+        catalog = public_client(settings).catalog()
+    except BazaarError:
+        catalog = None  # /me carries each copy's rarity; the catalog only fills a gap
+    if assets:
+        try:
+            plan = tl.plan_from_ids(me, assets, offers, catalog)
+        except tl.TallerError as e:
+            _fail(escape(str(e)))
+            return
+    else:
+        found = tl.plan_taller(me, offers, rules, catalog)
+        if found is None:
+            off = "" if rules.taller_enabled else " (taller_enabled = false)"
+            console.print(f"no spare triple of commons or uncommons to convert{off}")
+            return
+        plan = found
+    console.print(f"plan: {plan.rarity} x{len(plan.spares)} -> one {plan.pulls} (your_value {plan.your_value})")
+    for s in plan.spares:
+        console.print(f"  asset {s.asset_id} {escape(s.ref)} {s.rarity} your_value {s.your_value} ({s.copies} held)")
+    decisions = DecisionLog(settings.data_dir, lambda: db.connect(app="bazaar-taller"), console.print)
+    decisions.begin_tick(now.tick)
+    rec = Recorder("taller", decisions, live, lambda line: console.print(escape(line), highlight=False))
+    try:
+        ledger = _ledger("taller", live)
+        ctx = tl.taller_context(me, offers, now.tick, now.t_hours, ledger, rules)
+        done = tl.convert(client, plan, ctx, rules, rec, ledger, tick=now.tick, t_hours=now.t_hours, live=live)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+        return
+    finally:
+        decisions.close()
+    if not done.verdict.allowed:
+        _fail(f"refused by the guardrails: {escape(str(done.verdict))}")
+    if not live:
+        console.print(f"[yellow]dry run[/yellow] would convert {plan.assets}. Add --live to send.")
+        return
+    if done.result is None:
+        _fail(f"El Taller refused: {escape(rec.last_code or 'no answer')}; the hourly cap counts it (fail safe)")
+        return
+    console.print(json.dumps(done.result.model_dump(), indent=2, default=str), markup=False, highlight=False)
+    console.print(f"pulled: {escape(', '.join(done.result.pulled()) or 'a card the answer does not name')}")
+
+
 # ---------------------------------------------------------------- autonomous agents (needs BAZAAR_KEY)
 
 PORT_HELP = "Serve the read-only status (GET /health, /state, WS /events) on this port; default $PORT, else off"

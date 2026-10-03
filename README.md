@@ -1316,6 +1316,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| [TL1](TL1-spec.md) (new) | El Taller (Omar's hard rule, Sat 19:37): the taker feeds three FREE spare copies of one rarity (commons first, never a last copy of any card) into `POST /api/taller` at most once per tick, behind `taller_enabled`, `max_copies_kept`, `max_taller_per_game_hour` and `guardrails.check()`; the maker posts no new ask for a spare common; `bazaar taller [ids] [--live]` | 0 | 🟡 PR (feat/taller) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1366,6 +1367,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
 | `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
+| `uv run bazaar taller` | El Taller: three spare copies of one rarity become one card of the next rarity (guardrails first). |
 | `uv run bazaar venue open` | Open our venue: 250 P bond + 20 P; saves the broker key (Postgres + 0600 file), never prints it. |
 | `uv run bazaar venue close` | Close our venue; the bond comes back after a cooldown (a session counts the best venue open in it). |
 | `uv run bazaar venue fee` | Announce new fees on our venue; they take effect after the public notice. |
