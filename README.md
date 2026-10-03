@@ -1011,6 +1011,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
 - [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 - [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
 - [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
@@ -1018,7 +1019,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
 - [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
 - [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
-- [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 
 <!-- BAZAAR:STATUS:END -->
 
