@@ -334,3 +334,22 @@ symptom: maker reprice rows (approved, chosen=False, move.price = strategy targe
 reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent accept rows and refusal codes
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
+
+### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
+`holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
+the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
+thread message of ours this tick, younger than `holdings_max_age_s`), else read live. Counted server-side
+on a local simulator (8 s ticks, dry run, 10 ticks): `GET /api/me` 20 → 11. Live on the sim (20 ticks,
+7 dealer deals) 40 → 36, including 7 album-first re-reads after deals that main never made. Kill switch:
+`holdings_from_db = false` in GUARDRAILS.md. `bazaar status` prints `read: /me from db (tick, age, epoch)`.
+
+### [2026-10-03] gotcha — a /me snapshot can be stale without any send of ours
+A dealer may answer our bid and accept it inside the tick (it settles at once), and our accept settles at the
+next tick boundary. So the epoch (bumped by every send) is not enough: a tick with a thread message of ours
+is never served from the database, and every snapshot expires after 5 s. Postgres `now()` is the
+transaction start: freshness uses `clock_timestamp()`, or a reader that waited on the lock looks younger.
+
+### [2026-10-03] gotcha — another worker's simulator may own 127.0.0.1:8765
+`BAZAAR_SIM=local` hardcodes 8765, and a teammate's `bazaar-sim serve` may hold it. Never kill it: for a
+private run, patch `bazaar_agent.config.LOCAL_SIM_URL` in a wrapper (`config.LOCAL_SIM_URL = ...` before
+importing `bazaar_agent.cli`) and serve the sim elsewhere. `scripts/sim_smoke.py` refuses a busy 8765.
