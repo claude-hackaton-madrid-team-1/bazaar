@@ -1,0 +1,8 @@
+policy,replay_P_one_clock_no_cap,replay_P_one_clock_one_accept_per_tick,replay_P_per_duel_table_conservative,note
+oracle (best rival offer accepted at once),195,195,195,ideal; real result was 0 P on all 12
+"v1 (#60, counters every tick)",121.73,121.73,121.73,
+v2 (W2b),178.4,178.4,173.5,one-clock columns run plan_moves; the per-duel table runs single_duel_move (173.5)
+endgame accept (silent),185,140,185,collapses under the one-accept-per-tick cap
+accept first inside,85,89,85,
+anchor once,118.2,118.2,118.2,
+actual Friday (unanswered),0,0,0,we never answered these 12 practice duels
