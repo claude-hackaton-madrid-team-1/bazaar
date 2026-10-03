@@ -24,6 +24,9 @@ from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_fr
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
+# Refusals after which a write may have reached the game anyway: the connection failed after the request
+# went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
+MAYBE_LANDED = ("network", "bad_response")
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -194,6 +197,7 @@ class Recorder:
     ) -> None:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
+        self.maybe_landed = False  # the last send failed in a way that may still have reached the game
 
     def decide(
         self,
@@ -287,12 +291,16 @@ class Recorder:
     def send(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], call: Callable[[], Any]
     ) -> dict[str, Any] | None:
-        """Send one request; None when the server refused it (logged, recorded, the loop goes on)."""
+        """Send one request; None when the server refused it (logged, recorded, the loop goes on). After a
+        None, `maybe_landed` says whether the write may have gone through anyway (see MAYBE_LANDED): a
+        spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
+        self.maybe_landed = False
         try:
             response = call()
         except BazaarError as e:
+            self.maybe_landed = e.code in MAYBE_LANDED
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

@@ -38,7 +38,7 @@ class Team(FakeTeam):
 def test_only_our_open_offers_outside_threads_are_cancelled_and_threads_are_listed_apart():
     items = offers_to_cancel({"offers": OFFERS}, US)
     assert [(i.kind, i.id) for i in items] == [("cancel", 1), ("cancel", 2)]
-    assert items[1].refund == ("LAV-02", 9) and items[0].refund is None
+    assert items[1].refund == ("LAV-02", 9, 90) and items[0].refund is None  # card, cash, created tick
     assert [(i.kind, i.id) for i in threads_to_close({"threads": THREADS})] == [("close_thread", 85)]
 
 
@@ -68,6 +68,13 @@ def test_live_cancels_every_open_offer_paced_and_refunds_a_bids_spend(tmp_path):
     assert team.sent == [("cancel", 1), ("cancel", 2)] and [i.id for i in out.done] == [1, 2]
     assert ledger.spent_since(0) == 0 and sleeps == [0.3]  # paced under the key's 5 req/s
     assert {r["sdk_method"] for r in rows(tmp_path, "executions.jsonl")} == {"cancel"}
+
+
+def test_a_flattened_bid_is_refunded_in_the_hour_it_was_spent(tmp_path):
+    # Bid 2 was posted at tick 90 (10 ticks of 60 s before h1.5): its refund is booked there, not now.
+    _, ledger = _run(tmp_path, Team(), offers_to_cancel({"offers": OFFERS}, US))
+    (refund,) = [e for e in ledger.entries() if e["price"] < 0]
+    assert (refund["tick"], round(refund["t_hours"], 4), refund["price"]) == (90, round(1.5 - 10 / 60, 4), -9)
 
 
 def test_a_rate_limit_stops_the_pass_and_reports_what_is_left(tmp_path):

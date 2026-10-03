@@ -352,11 +352,11 @@ def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
     wanted = want.get("cards") or want.get("types")
     if not give.get("cash") or not wanted:
         return {}
-    created = offer.get("created_tick")
-    ticks_ago = clock.tick - created if isinstance(created, int) and created <= clock.tick else 0
-    t_hours = clock.t_hours - ticks_ago * clock.tick_seconds / 3600
-    tick = clock.tick - ticks_ago
-    return _book(b, [("spend", tick, t_hours, -int(give["cash"]), str(wanted[0]).split(":")[-1])])
+    ref = str(wanted[0]).split(":")[-1]
+    row = gr.refund_row(
+        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.tick_seconds
+    )
+    return _book(b, [row])
 
 
 def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None) -> dict[str, Any]:

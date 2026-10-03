@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from bazaar_agent.agents.market import parse_offer
 from bazaar_agent.agents.runtime import Recorder
-from bazaar_agent.guardrails import LedgerStore
+from bazaar_agent.guardrails import LedgerStore, refund_row
 
 WAIT_CODES = ("rate_limited", "wait_for_tick", "too_many_requests")
 PACE_S = 0.3  # between sends: ~3 req/s leaves room in the key's 5 req/s for the agents' reads
@@ -34,7 +34,8 @@ class Item:
     kind: Literal["cancel", "close_thread"]
     id: int
     what: str  # "bid LAV-02 at 9 on rastro", "thread 85 with abuela"
-    refund: tuple[str, int] | None = None  # a bid's (card, cash): its spend in the ledger is given back
+    # a bid's (card, cash, created tick): its spend in the ledger is given back in the hour it was spent
+    refund: tuple[str, int, int | None] | None = None
 
 
 @dataclass
@@ -60,7 +61,7 @@ def offers_to_cancel(response: dict[str, Any], us: str) -> list[Item]:
                 continue
             p = parse_offer(o)
             what = f"{p.side} {p.ref} at {p.price} on {p.venue}" if p else f"offer on {o.get('venue') or '-'}"
-            refund = (p.ref, p.price) if p is not None and p.side == "bid" else None
+            refund = (p.ref, p.price, p.created_tick) if p is not None and p.side == "bid" else None
             items.append(Item("cancel", int(o["id"]), what, refund))
     return items
 
@@ -84,6 +85,7 @@ def flatten(
     ledger: LedgerStore | None,
     live: bool,
     kill_switch: Sequence[str] = (),
+    tick_seconds: float = 60.0,
     pace_s: float | None = None,
     sleep: Callable[[float], None] | None = None,
 ) -> Report:
@@ -122,7 +124,8 @@ def flatten(
         if rec.send(did, tick, item.kind, {"id": item.id}, call) is not None:
             report.done.append(item)
             if item.refund is not None and ledger is not None:  # a bid's cash was counted as spend when posted
-                ledger.record("spend", tick, t_hours, -item.refund[1], item.refund[0])
+                ref, cash, created = item.refund
+                ledger.record(*refund_row(cash, ref, created, tick, t_hours, tick_seconds))
             continue
         error = refused[0] if refused else None
         code = error.code if error is not None else "refused"

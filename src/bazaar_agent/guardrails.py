@@ -279,6 +279,19 @@ class Ledger:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+LedgerRow = tuple[str, int, float, int, str]  # kind, tick, t_hours, price, item: `LedgerStore.record`'s arguments
+
+
+def refund_row(
+    price: int, item: str, created_tick: int | None, tick: int, t_hours: float, tick_seconds: float
+) -> LedgerRow:
+    """The ledger row that gives back a withdrawn bid's spend, booked in the game hour it was spent (the
+    bid's `created_tick`): a refund booked at cancel time would outlive its spend inside the one-hour
+    window and let `max_spend_per_game_hour` be spent twice. Unknown or future created tick: now."""
+    ticks_ago = tick - created_tick if isinstance(created_tick, int) and created_tick <= tick else 0
+    return ("spend", tick - ticks_ago, t_hours - ticks_ago * tick_seconds / 3600, -price, item)
+
+
 # ---------------------------------------------------------------- the check
 
 

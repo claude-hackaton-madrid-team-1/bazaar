@@ -10,9 +10,10 @@ Accepts from (a) and (b) compete for the team's accept quota (`accepts_per_team_
 across machines through the ledger): finals first, then the biggest surplus. Jev's
 `offer_is_worth_accepting` is advisory: a decided `no` vetoes a board accept, a decided `yes` may
 accept a dealer's ask early, and neither ever goes above a limit. Every accept, bid, walk and cancel
-passes `guardrails.check()` with the live context. While the kill switch is on the taker HOLDS: it
-reads, sends nothing (no opens, accepts, bids, walks or cancels), and its dealer threads stay open and
-resume when the switch goes off. Dry run (the default) sends nothing and logs WOULD-moves.
+passes `guardrails.check()` with the live context, which also counts what this tick already committed
+(an accept's cash, a new bid in place of its thread's old one). While the kill switch is on the taker
+HOLDS: it reads, sends nothing (no opens, accepts, bids, walks or cancels), and its dealer threads stay
+open and resume when the switch goes off. Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -254,9 +255,10 @@ class _TickRun:
     snap: Snapshot
     window: TickWindow
     params: StrategyParams
-    offers: list[dict[str, Any]]
+    offers: list[dict[str, Any]]  # our open offers as the server knows them, updated as we act this tick
     mine: list[OpenOffer]
     started: float  # monotonic time the tick's work began (the clock was read just before)
+    spent: int = 0  # dry run: this tick's board accepts, which only a live accept books in the ledger
     jev_calls: int = 0
     accepted: list[AcceptProposal] = field(default_factory=list)
 
@@ -339,14 +341,27 @@ class Taker:
         )
 
     def _ctx(self, run: _TickRun, *, skip_thread: int | None = None, skip_offer: int | None = None) -> Context:
-        """Live guardrail context; our open offers count, except the thread or bid this move replaces."""
+        """Live guardrail context; our open offers count (this tick's accepts and bids too, `_commit`),
+        except the thread or bid this move replaces."""
         kept = [
             o
             for o in run.offers
             if (skip_thread is None or o.get("thread") != skip_thread)
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
-        return guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent)
+
+    def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None) -> None:
+        """An accept or bid this tick (sent, would-be, or maybe landed): every later check this tick sees its
+        cash go out and the card as ours, as for an open offer (`/me` was read before it). In a thread it
+        replaces our earlier bid there and counts as spend until the deal settles (`committed_context`)."""
+        if thread is not None:
+            run.offers = [o for o in run.offers if o.get("thread") != thread]
+        give, want = {"cash": cash}, {"types": [item]}
+        run.offers.append(
+            {"id": -1, "status": "open", "maker": run.snap.us, "thread": thread, "give": give, "want": want}
+        )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
@@ -528,7 +543,11 @@ class Taker:
             thread_id=conv.thread_id,
             move={"kind": move.kind, "price": move.price},
         )
-        if status != "approved" or not self.live:
+        if status != "approved":
+            return
+        if not self.live:
+            if move.kind == "bid":
+                self._commit(run, int(move.price or 0), conv.item, conv.thread_id)
             return
         if move.kind == "walk":
             self.rec.send(
@@ -559,6 +578,9 @@ class Taker:
             is not None
         ):
             conv.neg.bids.append(price)
+        elif not self.rec.maybe_landed:
+            return
+        self._commit(run, price, conv.item, conv.thread_id)
 
     # ------------------------------------------------------------ accepts (shared quota)
 
@@ -638,18 +660,20 @@ class Taker:
             move={"accept": p.offer_id, "price": p.price},
         )
         if not self.live:
+            run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
+            self._commit(run, p.price, p.ref, skip_thread)
             return True
-        if (
-            self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
-            is None
-        ):
+        body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
+        if body is None and not self.rec.maybe_landed:
             return True  # the reserved slot stays spent: an accept that may have landed is never retried
+        # Accepted, or lost on the way back (a network error): booked as bought (fail safe for the caps).
         if p.desk is not None:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
         else:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
-            if p.candidate is not None and p.candidate.replaces_bid is not None:
+            if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
+        self._commit(run, p.price, p.ref, skip_thread)
         return True
 
     def _duel_grace(self, run: _TickRun) -> None:
@@ -685,4 +709,7 @@ class Taker:
         if not verdict.allowed:  # the kill switch holds: the bid stays open and its spend stays counted
             return
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
-            self.ledger.record("spend", clock.tick, clock.t_hours, -bid.price, bid.ref)
+            self.ledger.record(
+                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.tick_seconds)
+            )
+            run.offers = [o for o in run.offers if o.get("id") != bid.id]

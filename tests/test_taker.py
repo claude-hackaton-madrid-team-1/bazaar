@@ -6,7 +6,7 @@ from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
 from tests.agent_fakes import CHEAP, RASTRO, TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
-from tests.test_strategy import PARAMS, market, playbook
+from tests.test_strategy import ME, PARAMS, market, playbook
 
 VENUES = {v.id: v for v in venues_from({"venues": [RASTRO, CHEAP]})}
 
@@ -342,3 +342,43 @@ def test_a_pack_thread_opens_only_on_jevs_yes_with_time_to_ask(tmp_path):
     t2.pack_judge = judge
     t2.on_tick(clock(next_tick_in=5.0))  # 3 s of budget: no time for Jev, so no pack
     assert asked == ["sobre_barrio"] and not [s for s in late.sent if s[0] == "open_thread"]
+
+
+# ---------------------------------------------------------------- what this tick already committed
+
+
+def test_an_accept_and_a_bid_in_the_same_tick_never_break_the_cash_floor_together(tmp_path):
+    # Cash 295, floor 270. The board accept of LAV-02 (10 + fee 2 = 12) leaves 283 and the opening bid of 18
+    # to Abuela for LAV-08 leaves 277: each passes on its own, both would leave 265. /me was read before the
+    # accept, so the bid's check must count the 12 the accept just committed.
+    team = FakeTeam(me={**ME, "cash": 295})
+    public = FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]})
+    t, lines, _ = taker(tmp_path, team, public, live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    assert ("accept", 1) in team.sent and not [s for s in team.sent if s[0] == "say"]
+    assert any("cash 283 - 18 < cash_floor 270" in line for line in lines)
+
+
+def test_open_dealer_thread_bids_count_toward_the_hourly_spend_cap(tmp_path):
+    # 120 spent this hour + our standing bid of 20 in a dealer thread + a board accept of 12 = 152 > 150. The
+    # thread bid is booked as spend only when its deal settles, so the cap must count it while it stands.
+    team = FakeTeam(offers=[bid(70, "LAV-09", 20, thread=5000)])
+    t, lines, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True)
+    ledger.record("spend", TICK - 10, 1.4, 120, "LAV-06")
+    t.on_tick(clock())
+    assert team.sent == [] and any("spend 140 + 12 > max_spend_per_game_hour 150" in line for line in lines)
+
+
+def test_an_accept_lost_to_a_network_error_is_still_booked_as_spend(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class Flaky(FakeTeam):
+        def accept(self, offer_id, assets=None):
+            self.sent.append(("accept", offer_id))
+            raise BazaarError("network", "POST /api/offers/1/accept: timed out", 0)
+
+    team = Flaky()
+    t, _, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True)
+    t.on_tick(clock())
+    assert team.sent == [("accept", 1)]
+    assert ledger.spent_since(0) == 12  # it may have landed: the hourly cap counts it (never under-counts)
