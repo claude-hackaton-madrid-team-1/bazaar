@@ -190,7 +190,7 @@
           "note": true
         },
         {
-          "text": "venue + broker: blocked",
+          "text": "venue + broker: #71 approved, merges before 06:00",
           "note": true
         }
       ],
@@ -418,14 +418,25 @@
     ],
     "markers": [
       {
+        "at": "2026-10-03T06:00",
+        "kind": "deadline",
+        "label": "Sat 06:00 live fixes in",
+        "side": "left"
+      },
+      {
+        "at": "2026-10-03T09:00",
+        "kind": "deadline",
+        "label": "Sat 09:00 market opens"
+      },
+      {
         "at": "2026-10-04T06:00",
         "kind": "freeze",
-        "label": "Build freeze 06:00"
+        "label": "Sun 06:00 build freeze"
       },
       {
         "at": "2026-10-04T14:00",
         "kind": "deadline",
-        "label": "Deadline 14:00"
+        "label": "Sun 14:00 final"
       }
     ],
     "events": [
