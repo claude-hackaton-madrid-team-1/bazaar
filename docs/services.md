@@ -22,12 +22,15 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 ### `GET /health`
 
 ```json
-{"ok": true, "agent": "taker", "mode": "dry", "tick": null, "last_tick_at": null,
+{"ok": true, "agent": "taker", "mode": "dry",
+ "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "tick": null, "last_tick_at": null,
  "doors": "closed", "paused": true, "next_opens": "2026-10-03T09:00:00+02:00",
  "tick_seconds": 60.0, "server_tick": 159}
 ```
 
 - `mode`: `dry` or `live`.
+- `target`: where the agent's requests go: `{"mode": "real", "url": "https://bazaar.causaprima.ai"}`, or
+  `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` (README "Simulator").
 - `tick`, `last_tick_at`: the last game tick the agent handled.
 - `doors`, `paused`, `next_opens`, `tick_seconds`, `server_tick`: the game clock as the agent sees it.
   The tick length changes every day (60 s Friday, 30 s Saturday, 15 s Sunday) and the organisers may move it.
@@ -111,7 +114,8 @@ there, create your own key in Phoenix (Settings → API Keys) and follow README,
 on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
 (burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
 minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
-"tools": 18}` with no token (nothing about the mode or the game).
+"tools": 18, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
+target is a mode and a public URL; nothing about the live/dry mode or the game state).
 
 Tools: the 12 reads (`status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`, `traders`, `alerts`,
 `rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
@@ -173,10 +177,13 @@ stays server-side: a browser never holds the key.
 
 ## Simulator
 
-https://bazaar-sim-production-1d48.up.railway.app serves the same routes as the organiser API (`/api/clock`, `/api/feed`, `/api/me`,
-`/api/events/stream`, ...) with the same JSON, plus `GET /sim/state` (a public summary). A dashboard
-can point its base URL there to develop against live-looking data; team routes take
-`X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). README, "Simulator".
+https://bazaar-sim-production-1d48.up.railway.app serves the same routes as the organiser API
+(`/api/clock`, `/api/feed`, `/api/me`, `/api/events/stream`, ...) with the same JSON, plus
+`GET /sim/state` (a public summary). Our CLI and agents reach it with the flag `BAZAAR_SIM=1` (no URL
+to type: the targets are hardcoded in `src/bazaar_agent/config.py`), e.g. `BAZAAR_SIM=1 uv run bazaar
+status`. A dashboard can point its base URL there to develop against live-looking data; team routes
+take `X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). The taker's,
+maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. README, "Simulator".
 
 ## Not public
 

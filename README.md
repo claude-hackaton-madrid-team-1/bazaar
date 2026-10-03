@@ -26,26 +26,41 @@ same JSON shapes (checked against `docs/api/openapi.json` and the captured fixtu
 The vendored SDK and every `bazaar` command work against it unchanged. It never talks to the real
 game. Public instance: **https://bazaar-sim-production-1d48.up.railway.app** (`/api/health`, `/api/clock`, `/sim/state`).
 
+**The target is one flag, `BAZAAR_SIM`, over hardcoded URLs** (`src/bazaar_agent/config.py` decides,
+every client goes through it: CLI, agents, runtime, MCP server, monitor):
+
+| `BAZAAR_SIM` | Target | Key |
+|---|---|---|
+| unset or `0` | the real game, https://bazaar.causaprima.ai | `BAZAAR_KEY` (the team slip) |
+| `1` | the simulator, https://bazaar-sim-production-1d48.up.railway.app | `BAZAAR_SIM_KEY` (default `sim-team1`) |
+| `local` | a simulator on this laptop, http://127.0.0.1:8765 (`uv run bazaar-sim serve`) | `BAZAAR_SIM_KEY` |
+
+Every command prints its target first (`target: real game …` or `target: SIMULATOR …`), and so do
+`bazaar status`, the taker's and maker's `/health` and the MCP server's `/health` (`target`).
+`BAZAAR_URL` is gone: if it is still set (old `.env` files had it), every command stops at once and
+says so. Remove the line.
+
 ```sh
-export BAZAAR_URL=https://bazaar-sim-production-1d48.up.railway.app BAZAAR_KEY=sim-team1     # this shell only: .env keeps the real game
-uv run bazaar status                                     # Team 1 in the simulator: 400 P, 15 cards
-uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live   # haggle with the simulated Abuela
-uv run bazaar sell list <ref> --price 10 --live          # a rival team may buy it a few ticks later
-uv run bazaar duel run --play --max-ticks 20             # a simulated duel session
-uv run bazaar agent taker --live                         # the taker/maker against the simulator
-uv run bazaar monitor --no-db                            # the live SSE stream works too
+BAZAAR_SIM=1 uv run bazaar status                                   # Team 1 in the simulator: 400 P, 15 cards
+BAZAAR_SIM=1 uv run bazaar clock                                    # one tick every 10 s
+BAZAAR_SIM=1 uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live   # haggle with the simulated Abuela
+BAZAAR_SIM=1 uv run bazaar sell list <ref> --price 10 --live        # a rival team may buy it a few ticks later
+BAZAAR_SIM=1 uv run bazaar duel run --play --max-ticks 20           # a simulated duel session
+BAZAAR_SIM=1 uv run bazaar agent taker --live --max-ticks 10        # the taker/maker against the simulator
+BAZAAR_SIM=1 uv run bazaar monitor --no-db                          # the live SSE stream works too
+BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another simulated team (sim-team1 ... 8)
 ```
 
 - **Keys.** `sim-team1` … `sim-team8` are teams `t01` … `t08` (not secrets: it is a simulator).
-  Both ways are guarded in our client (`src/bazaar_agent/config.py`): a `BAZAAR_URL` that is not
-  the official host only ever receives a `sim-` key, and the official host refuses a `sim-` key,
-  so the real team key can never reach the simulator. The simulator itself answers `401 bad_key`
-  to anything that is not one of its keys and never logs a presented key.
+  With `BAZAAR_SIM=1` the real `BAZAAR_KEY` is not even read, so it cannot reach the simulator; on
+  top, only a `sim-` key is ever sent to a simulator and a `sim-` key is refused for the real game,
+  before any request. The simulator itself answers `401 bad_key` to anything that is not one of its
+  keys and never logs a presented key.
 - **Its own files and database.** Against a simulator our files default to `.local/sim-client/`
   (the real feed capture and ledger in `.local/` never see simulated play), and Postgres is
   `BAZAAR_SIM_DATABASE_URL`: the `bazaar_sim` database on the team's server (same host, port and
   password as `DATABASE_URL`, database `bazaar_sim` instead of `railway`; schema already applied).
-  A database URL naming `railway` is refused while `BAZAAR_URL` is a simulator; without
+  A database URL naming `railway` is refused while `BAZAAR_SIM` is on; without
   `BAZAAR_SIM_DATABASE_URL` the ledger falls back to the local JSONL file.
 - **Rules it enforces** (RULES.md): structured offers settle at the next tick, all at once or not
   at all; per tick one accept per team, one message per conversation, twelve new listings (a
@@ -66,11 +81,12 @@ uv run bazaar monitor --no-db                            # the live SSE stream w
 - **Not simulated:** flags score nothing, no starter stalls, no gifts or easter eggs, a single
   always-open day (no calendar), scoring weights are approximate.
 - **Reset** to tick 0 (the token is only in Railway: `bazaar-sim` → Variables → `SIM_ADMIN_TOKEN`):
-  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app` (add `--seed N` for another world).
+  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`
+  (add `--seed N` for another world).
   `POST /sim/tick` with the same `X-Admin-Token` header advances one tick at once.
 - **Run one locally:** `uv run bazaar-sim serve` (http://127.0.0.1:8765; `SIM_TICK_SECONDS=2` for a
   faster clock; the world persists in `.local/sim/world.sqlite`, `SIM_DATABASE_URL=memory` for none),
-  then `BAZAAR_URL=http://127.0.0.1:8765 BAZAAR_KEY=sim-team1 uv run bazaar status`.
+  then `BAZAAR_SIM=local uv run bazaar status`.
 - **Code and tests:** `src/bazaar_sim/` (`app.py` routes, `world.py` clock and ticks, `threads.py` and
   `dealers.py` the haggling, `market.py` and `broker.py` offers and venues, `duels.py`, `rivals.py`).
   `tests/test_sim_*.py` run the unchanged vendored SDK and our CLI against an in-process server.
