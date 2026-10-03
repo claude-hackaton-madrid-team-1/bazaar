@@ -38,9 +38,9 @@ def duel(did=1, role="seller", limit=100, deadline=112, rival=(), ours=(), issue
     }
 
 
-def test_the_default_is_todays_policy_and_every_v2_knob_is_in_guardrails_md():
+def test_the_committed_policy_is_v2_and_every_v2_knob_is_in_guardrails_md():
     rules = gr.load_guardrails().rules
-    assert rules.duel_policy == "v1" and not rules.duel_days_signed
+    assert rules.duel_policy == "v2" and not rules.duel_days_signed  # Omar, Sat 3 Oct: v2; days stay unsigned
     params = V2Params.from_rules(rules)
     assert (params.max_own_offers, params.stall_ticks, params.open_wait_ticks) == (3, 3, 0)
     assert V2Params.from_rules(rules, anchor=0.4, floor=0.1).anchor == 0.4  # steering still applies

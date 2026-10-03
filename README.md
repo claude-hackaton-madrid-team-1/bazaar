@@ -1243,6 +1243,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
 - [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
 - [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 - [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
@@ -1250,7 +1251,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
 - [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
 - [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
-- [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
 
 <!-- BAZAAR:STATUS:END -->
 
