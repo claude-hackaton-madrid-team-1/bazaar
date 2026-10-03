@@ -326,7 +326,7 @@ class BrokerAgent:
             self.log(f"tick {tick} broker: bench edge failed ({type(e).__name__}); exact matching this tick")
             self.edge = BenchEdge(PRIORS["normal"])
             return plan_matches(quotes.quotes, fee, cap)
-        if picked.edge:
+        if picked.edge and picked.matches:  # an empty bench with a margin <= 0 is no news
             self.edge_pairs = {(str(m.sell.id), str(m.buy.id)) for m in picked.matches}
             self.log(
                 f"tick {tick} broker: bench edge over exact by {picked.gain:.1f} estimated P "

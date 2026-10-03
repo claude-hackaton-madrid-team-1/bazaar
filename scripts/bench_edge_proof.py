@@ -16,7 +16,7 @@ Variants (each an unverified assumption, so both sides of it are run): `default`
 three sessions), `tick0` (the whole book at once), `shade2` (quotes twice as far from the limits), `firm` (nobody
 relaxes), and two where the edge's priors are WRONG: `narrow` and `x2narrow` (quotes half as far from the limits as the
 edge believes, so it overestimates every gain). Per row: mean and p50 efficiency, the share of books where the
-policy realises less / more than the stall, the worst book (policy − stall), and the mean session points under three
+policy realises less / more than the stall, the worst book (policy − stall), and the mean session points under four
 readings of RULES.md ("matching as well as the free auto stall earns half the bench points; the full points go to the
 mean of the top three"; the curve below the stall is unpublished):
   - points: #77's reading, the field at the stall (`BenchResult.points`): 0.5 at the stall, 1.0 above it (we are then

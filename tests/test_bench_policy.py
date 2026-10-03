@@ -317,3 +317,20 @@ def test_the_regret_table_names_the_policy_whose_worst_regret_is_smallest():
     assert table["unguarded"] == (0.05, 0.0125, 0.5475)  # best but for the harsh reading, where exact wins by 0.05
     assert table["edge5"][0] == 0.02 and min(table.values())[0] == 0.02
     assert proof.regret_markdown(rows_).splitlines()[2].startswith("| edge5 | 0.020 |")
+
+
+def test_an_unguarded_edge_on_an_empty_bench_says_nothing(tmp_path):
+    lines: list[str] = []
+    broker = FakeBroker(offers=[book_sell(5, "SAL-01", 10, "mA"), book_buy(6, "SAL-01", 30, "mB")])
+    a = agent(tmp_path, broker, lines=lines, allow_venue_open=True)
+    a.config = BrokerConfig(bench_policy="edge", bench_guard_margin=float("-inf"))
+    a.on_tick(clock())
+    assert [d["move"] for d in rows(tmp_path)] == [{"sell": 5, "buy": 6, "price": 20}]
+    assert not any("bench edge over exact" in line for line in lines)
+
+
+def test_an_exported_bench_switch_never_reaches_the_suite(monkeypatch, tmp_path):
+    import os
+
+    assert all(os.environ.get(n) is None for n in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN"))
+    assert keeper(tmp_path, Team()).broker_config == BrokerConfig(pace_s=0.0)
