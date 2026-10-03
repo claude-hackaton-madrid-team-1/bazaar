@@ -967,6 +967,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | `ogarciarevett/feat-dealer-threads-store` |
 | [#146](../../pull/146) | feat(safety): offer inspector before every accept — dealer, board, duel (S1 part A, takes over #93) | `ogarciarevett/s1-inspector` |
 | [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | `ogarciarevett/feat-n14b-new-pages` |
 | [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
@@ -986,6 +987,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#129](../../pull/129) | night(B26): new sets mid-game robustness (dealer_mints_unminted) + Sunday playbook and decisions | `night/b26-sunday` |
 | [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
 | [#127](../../pull/127) | feat(team-desk): negotiate direct deals in team threads, structured offers only (B24) | `night/b24-team-negotiator` |
-| [#126](../../pull/126) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (B14, bite X15) | `night/b14-expired-bids` |
 
 <!-- BAZAAR:ACTIVITY:END -->
