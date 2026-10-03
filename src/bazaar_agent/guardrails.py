@@ -79,6 +79,9 @@ class Guardrails(BaseModel):
     dealer_max_ticks_per_thread: int = 14
     jev_can_accept_early: bool = True
     jev_timeout_s: float = 3.0
+    # Speed (SP1). Off here, so code built without GUARDRAILS.md behaves as before; the file turns them on.
+    jev_cache_ticks: int = Field(default=0, ge=0, le=60)
+    parallel_reads: bool = False
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
@@ -134,6 +137,7 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     open_sealed_packs: bool = False
+    news_signals_enabled: bool = False
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
     team_threads_enabled: bool = False
@@ -200,6 +204,8 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice; agents.duel_jev.choose",
     "jev_timeout_s": "jev.judge (dealer buy, taker, duels, maker)",
+    "jev_cache_ticks": "agents.jev_cache (taker offer Jev, pack gate)",
+    "parallel_reads": "agents.runtime.read_together (snapshot, taker boards and threads)",
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
@@ -228,6 +234,7 @@ ENFORCED_BY: dict[str, str] = {
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
+    "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",

@@ -244,6 +244,7 @@ class WorldState(Model):
     minted: dict[str, int] = Field(default_factory=dict)
     usage: dict[str, int] = Field(default_factory=dict)  # "<team>:<what>:<tick>" -> count (per-tick caps)
     chato_open_tick: int = 0
+    pilar_open_tick: int | None = None  # None: a world saved before Pilar existed uses the config's tick
     leaderboard: list[dict[str, Any]] = Field(default_factory=list)
     leaderboard_tick: int = 0
     duel_session: int = 0

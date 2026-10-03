@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 from functools import partial
@@ -1151,6 +1152,7 @@ def duel_run(
     )
     days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
     done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
+    days_failed: list[int] = []  # the last tick the latch failed: its line is printed once per tick
     real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
@@ -1249,14 +1251,37 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
-    def observe_days(rows: list[dict[str, Any]]) -> None:
-        before = days_switch.verdict
-        days_switch.observe(rows, real)
-        if days_switch.verdict != before:
-            console.print(
-                f"  duel days sign: {days_switch.verdict} (duel {escape(str(days_switch.duel))}: "
-                f"{escape(str(days_switch.text))})"
-            )
+    def latch_failed(tick: int, e: Exception) -> None:
+        """This tick's session is unknown (#165 r1 P2): no sign from an older one; one dim line per tick says why."""
+        days_switch.session = None
+        if days_failed[-1:] != [tick]:
+            days_failed[:] = [tick]
+            why = f"{type(e).__name__}: {str(e)[:80]}"
+            console.print(f"[dim]  duel days sign unchanged: the latch failed ({escape(ascii(why)[1:-1])})[/dim]")
+
+    def observe_days(tick: int, rows: list[dict[str, Any]]) -> None:
+        """Feed the days-sign latch. It never costs a tick its moves (#150 security r3): when it raises (a malformed
+        server field, a latch file that cannot be written) the latch keeps the verdict it had before the call, one
+        dim line per tick says why, and the tick goes on. The rollback copy and the verdict line sit inside the
+        protection too (#165 security P3-1, P3-2): a value `deepcopy` cannot copy skips this tick's observe, and a
+        server text is printed through `ascii()`, so a lone surrogate never fails the stdout write."""
+        nonlocal days_switch
+        try:
+            kept = deepcopy(days_switch)
+        except Exception as e:  # noqa: BLE001 - RecursionError on a pathological server value: keep the switch as is
+            latch_failed(tick, e)
+            return
+        try:
+            days_switch.observe(rows, real)
+            if days_switch.verdict != kept.verdict:
+                console.print(
+                    f"  duel days sign: {days_switch.verdict} (duel {escape(ascii(days_switch.duel))}: "
+                    f"{escape(ascii(days_switch.text))})"
+                )
+        except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
+            if days_switch.verdict not in ("cost", "reversed", "conflict"):  # a safer verdict found stays
+                days_switch = kept  # never a half-merged `signed` for the policy and the guard
+            latch_failed(tick, e)
 
     def read_done_days(tick: int) -> None:
         """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
@@ -1264,7 +1289,7 @@ def duel_run(
         if tick % done_every_ticks or not reads_done(rules, days_switch, real):
             return
         try:
-            observe_days([d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
+            observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
 
@@ -1284,7 +1309,7 @@ def duel_run(
             if (did := duel_id(d)) is not None:
                 observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
         store.save(tick, finished)
-        observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
+        observe_days(tick, duel_list(data))  # free scored evidence for the days sign: this read happens anyway
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -1301,7 +1326,7 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = duel_list(data)
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
-        observe_days(duels)
+        observe_days(c.tick, duels)
         rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
@@ -2077,11 +2102,11 @@ def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, An
     return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
-def _pack_judge(settings: Any, timeout_s: float) -> Any:
+def _pack_judge(settings: Any, timeout_s: float, cache_ticks: int = 0) -> Any:
     """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
     from bazaar_agent.pack_gate import jev_pack_judge
 
-    return jev_pack_judge(settings, timeout_s)
+    return jev_pack_judge(settings, timeout_s, cache_ticks)
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
@@ -2623,6 +2648,20 @@ def _run_agent(
         decisions.close()
 
 
+def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
+    """Radio Rastro and the schedule, read by the taker after its sends on its own keyless client (2 s, never
+    retried: a hung or rate-limited read costs one attempt, never the next tick): stored in the feed reader's
+    learnings store (Postgres + memory) when it runs, else in memory only; logging and storage only (news.py)."""
+    from bazaar_agent.learn.store import LearningStore
+    from bazaar_agent.news import READ_TIMEOUT_S, NewsSentinel
+    from bazaar_agent.sdk import PublicBazaar
+
+    learner = kw.get("learner")
+    store = learner.store if learner is not None else LearningStore(None, kw["log"])
+    reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
+    return NewsSentinel(reader, store.record, kw["log"], settings.data_dir / "agents")
+
+
 @agent_app.command("taker")
 def agent_taker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
@@ -2665,9 +2704,10 @@ def agent_taker(
             bluff=bluff,
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
-            pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
+            pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            news=_news_sentinel(kw, settings),
             **kw,
         )
 

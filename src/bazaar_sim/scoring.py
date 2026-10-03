@@ -18,8 +18,8 @@ from bazaar_sim.models import Team
 from bazaar_sim.views import asset_brief, asset_name, venues_view
 from bazaar_sim.world import World
 
-LEVEL_OF = {"abuela": 1, "chato": 2}
-LEVEL_WEIGHT = {1: 1.0, 2: 1.5}
+LEVEL_OF = {"abuela": 1, "chato": 2, "pilar": 3}
+LEVEL_WEIGHT = {1: 1.0, 2: 1.5, 3: 2.0}  # "higher levels weigh more" (RULES.md); the real weights are not published
 LADDER_SCALE = 10.0
 REFRESH_TICKS = 5
 

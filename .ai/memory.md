@@ -688,6 +688,14 @@ someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
 
+### [2026-10-03] finding — organisers' Saturday opening (09:19): 17 teams played Friday, duels now score
+Source: `docs/transcripts/2026-10-03-morning-voice-memo.md` § 2 (organisers' talk before the Saturday market). Friday had
+17 teams, not 18 (one never showed up); four team markets opened. Today: another pack drop, team markets open, duels later
+in the day and now scored, and new dealers may arrive during the day with cards nobody has seen yet; 2 deals per minute.
+Their hints: some teams paid a first offer above the card's value to them (know `your_value` before buying); repeating the
+same "last price" moves nothing (matches the N14a finding above: repeating our top price drew a final in 1 of 11 threads);
+half of Friday's practice duels ended with no deal. The 03:22 memo in the same file reads back the night's docs: no new facts.
+
 ### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
 From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
 1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
@@ -905,6 +913,13 @@ ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Po
 move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
 owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.
 
+### [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
+`/api/levels` (tick ~330): Radio Rastro active since game hour 3.675; `news.posted` events (payload id, source, headline,
+body) are in `/api/feed` too, so the taker's sentinel reads them at no request cost and backfills `/api/news` +
+`/api/schedule` once per 10 ticks. `/api/dealers`: Doña Pilar `kind: "collector"`, level 3, opens to all at game hour
+5.508; she sells only `sobre_oro` (list 420, 1/team/hour) and buys uncommon/rare/epic (SAL, RET loved). Our taker never
+buys her pack while `max_price_pack` = 20; selling to her needs `bazaar dealer sell --dealer pilar` (no runner sells
+to dealers). Schedule: "Salamanca fever: Pilar pays 25 % over book for Salamanca" from game hour 9.15 to 11.15.
 ### [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 `console.print(f"    {words}")` indents only the first line: the wrapped rest starts at column 0, and padding made
 of "printable" blanks (U+2800 braille blank, U+3164/U+FFA0 Hangul fillers) can push a forged line there (#176 review).
@@ -917,3 +932,28 @@ modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself 
 `app._clock_loop` had no try/except: a raising rival (or a failed world save) killed the background task, the world
 froze at that tick and every health check still answered ok. #178 holds a raising rival for the tick and makes the loop
 log a failed tick or save and go on (the tick counter moves first, so a failure never retries in a hot loop).
+
+### [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
+`scripts/tick_profile.py` on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) against a
+local `bazaar-sim` at 15 s ticks, 40 ticks of taker + maker + duels together (SP1): at 100 ms per request the taker
+took p50 1.12 s / p95 1.43 s, the maker 0.65 / 1.07 s, the duels 0.60 / 0.69 s of a 12.6 s budget; with 250 ms per
+request and Jev 1 s slower, 3.31 / 1.55 / 2.04 s p50. 0 ticks over budget, 0 decisions dropped, 0 × 429, busiest
+second 8-12 keyed requests (bucket 20), mean 0.66-0.68 keyed req/s for all three (limit 5). The taker asked Jev
+`spend_pack_slot_now` on every tick for an unchanged state (40 calls in 40 ticks): `jev_cache_ticks` cut it to 12-13,
+and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms + slow Jev).
+
+### [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
+Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
+sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
+measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
+
+### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
+practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
+team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
+(a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
+
+### [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
+`run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
+a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
+on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.
