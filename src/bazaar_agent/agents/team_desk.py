@@ -68,6 +68,19 @@ def team_words(req: WordsRequest) -> str:
     return "Me acerco a ti: esta es una oferta justa para los dos. Si te encaja, acéptala."
 
 
+def spare(me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str) -> bool:
+    """We give only a DUPLICATE: at least two free copies of the card (not in one of our open offers), so
+    a swap never takes the last copy a page of ours needs (N17 spec, criterion 1)."""
+    listed = open_commitments(offers, us).listed
+    free = [a for a in me.get("assets") or [] if a.get("ref") == ref and a.get("id") not in listed]
+    return len(free) >= 2
+
+
+def _ours_taken(o: Any, us: str) -> bool:
+    """Our offer in the thread, accepted by them and settling at the next tick."""
+    return isinstance(o, dict) and o.get("maker") == us and o.get("status") == "accepted"
+
+
 @dataclass
 class Talk:
     """One swap thread we run: the planned trade, how far we conceded, our standing offer."""
@@ -143,6 +156,7 @@ class TeamDesk:
         self.first_seen: dict[int, int] = {}  # inbound thread -> the tick we first saw it
         self._payloads: dict[int, dict[str, Any]] = {}
         self._closed: set[int] = set()  # threads we closed this tick: still in this tick's list, never adopted
+        self._refused: set[int] = set()  # their offers we refused (logged once)
         self._plan: _Plan | None = None
 
     # ------------------------------------------------------------ reads
@@ -191,6 +205,8 @@ class TeamDesk:
             talk = self.talks.get(tid)
             if talk is not None:
                 talk.heard_tick = max(talk.heard_tick, self._heard(payload, v.us))
+                if any(_ours_taken(o, v.us) for o in payload.get("standing_offers") or []):
+                    talk.accepted = True  # they took our offer: the deal settles at the next tick, say nothing
             else:
                 self.first_seen.setdefault(tid, v.tick)
             venue = venues.get(str(payload.get("venue") or t.get("venue") or HOUSE_VENUE))
@@ -206,14 +222,16 @@ class TeamDesk:
     ) -> SwapAccept | None:
         trades = [talk.trade] if talk is not None else [t for t in self._trades(v) if t.counterparty == offer.team]
         trade = next((t for t in trades if is_the_planned_swap(offer, t)), None)
-        if trade is None:
+        if trade is None or not spare(v.me, v.offers, v.us, trade.refs[0]):
             return None
         fee = venue.fee(
             offer.cash_in or offer.cash_out, len(offer.get_assets) + len(offer.give_assets or offer.give_refs)
         )
         verdict = judge(trade, offer.net_cash, fee, self.rules, repeat=self.deals[offer.team] > 0)
         if not verdict.ok:
-            self.log(f"tick {v.tick} team desk: {offer.team}'s offer {offer.offer_id} refused: {verdict.reason}")
+            if offer.offer_id not in self._refused:  # once per offer: a standing offer is read every tick
+                self._refused.add(offer.offer_id)
+                self.log(f"tick {v.tick} team desk: {offer.team}'s offer {offer.offer_id} refused: {verdict.reason}")
             return None
         return SwapAccept(
             tid,
@@ -280,7 +298,14 @@ class TeamDesk:
             team = self._other(t, v.us)
             busy = {k.trade.asset_id for k in self.talks.values()} | {k.trade.refs[1] for k in self.talks.values()}
             trade = next(
-                (x for x in self._trades(v) if x.counterparty == team and not {x.asset_id, x.refs[1]} & busy), None
+                (
+                    x
+                    for x in self._trades(v)
+                    if x.counterparty == team
+                    and not {x.asset_id, x.refs[1]} & busy
+                    and spare(v.me, v.offers, v.us, x.refs[0])
+                ),
+                None,
             )
             if trade is not None:
                 talk = Talk(tid, team, trade, v.tick)
@@ -305,7 +330,7 @@ class TeamDesk:
         for trade in self._trades(v):
             if trade.counterparty in busy_teams or {trade.asset_id, trade.refs[1]} & used:
                 continue
-            if trade.asset_id in listed:
+            if trade.asset_id in listed or not spare(v.me, v.offers, v.us, trade.refs[0]):
                 continue
             verdict = self._guard(v, trade, cash_at(trade, 0, self.ladder), None)
             if not verdict.allowed:

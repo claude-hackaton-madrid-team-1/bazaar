@@ -346,3 +346,47 @@ def test_words_persuade_but_never_change_the_structured_offer(tmp_path):
     assert says(team) == [("say", 42, offer_terms(trade(), cash_at(trade(), 0, Ladder())))]
     assert seen == ["Mi última oferta: te lo dejo por 1 P [/red]"]
     assert requests[0].counterparty == "team:t05" and requests[0].step == 0 and requests[0].item == "LAV-02"
+
+
+def test_once_they_take_our_offer_we_say_nothing_more_in_that_thread(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    ours = {**their_offer(oid=702), "maker": US, "to": THEM, "status": "accepted"}
+    done = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "Deal."}])
+    done["standing_offers"] = [ours]
+    team.sent.clear()
+    d.proposals(view([done], tick=TICK + 1))
+    d.converse(view([done], tick=TICK + 1), set())
+    assert team.sent == [] and d.talks[42].accepted  # no cancel of an accepted offer, no new proposal
+
+
+def test_only_a_duplicate_is_ever_offered_never_the_last_copy(tmp_path):
+    # Found in the simulator: the trade desk plans any copy we hold, and a swap gave away our only LAV-09.
+    # The desk gives a card only while we hold two free copies of it (LAT-03 #3/#4 here, LAT-09 #5 alone).
+    last = Trade(
+        "swap",
+        THEM,
+        {"assets": [5]},
+        {"cards": ["LAV-02"], "cash": 20},
+        ("LAT-09", "LAV-02"),
+        5,
+        20,
+        2,
+        30.0,
+        30.0,
+        0.9,
+        80,
+        "plan",
+        "common",
+    )
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d._plan = _Plan(TICK, (last,), {"LAV-02": 16.0})
+    d.converse(view(), set())
+    assert team.sent == []
+    ask4 = {"id": 9, "maker": US, "to": None, "status": "open", "give": {"assets": [{"id": 4}]}, "want": {"cash": 5}}
+    d2, _ = desk(tmp_path / "listed", Team())
+    v = DeskView(**{**view().__dict__, "offers": [ask4]})  # #4 is in our ask: #3 is the last FREE LAT-03
+    d2.converse(v, set())
+    assert d2.team.sent == []
