@@ -2,6 +2,8 @@
 
 The server ticks every 60 s (Fri), 30 s (Sat) or 15 s (Sun) and the organisers may change it
 (5-60 s), pause the clock, or close the doors. `GET /api/clock` is the only source of truth.
+The one exception: with the doors closed, `next_opens` is a wall-clock time, so the sleep until it uses ours,
+bounded to 1-300 s; a skewed clock moves the wake-up by the skew (or a 5 s poll), never by minutes.
 """
 
 from __future__ import annotations
@@ -87,8 +89,10 @@ def _until_opening(clock: Clock, now: float) -> float:
     return min(CLOSED_POLL_MAX_S, max(CLOSED_POLL_MIN_S, min(upcoming) - now + AFTER_TICK_S))
 
 
-def seconds_until_next_tick(clock: Clock, now: float | None = None) -> float:
-    """How long to sleep so the next read lands just after the next tick (or the next poll)."""
+def seconds_until_next_tick(clock: Clock, *, now: float | None = None) -> float:
+    """How long to sleep so the next read lands just after the next tick (or the next poll).
+
+    `now` (epoch seconds, default the wall clock) only matters while the doors are closed."""
     if clock.doors != "open":
         try:
             return _until_opening(clock, time.time() if now is None else now)
