@@ -968,6 +968,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
@@ -987,6 +988,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#123](../../pull/123) | feat(N17): team-to-team swap threads in the taker (off by default) + simulator rivals that swap | `ogarciarevett/feat-team-threads` |
 | [#122](../../pull/122) | night(B22): bazaar cockpit, read-only Saturday operator screen (stacked on #102) | `night/b22-cockpit` |
 | [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
-| [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
 
 <!-- BAZAAR:ACTIVITY:END -->
