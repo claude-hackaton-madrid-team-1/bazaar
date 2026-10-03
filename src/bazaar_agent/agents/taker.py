@@ -222,7 +222,9 @@ def accept_kind(p: AcceptProposal) -> str:
 
 def swap_proposal(a: SwapAccept) -> AcceptProposal:
     """A team's swap offer as an accept candidate, ranked by our gain against the board's asks."""
-    inputs = {"thread": a.thread_id, "offer_id": a.offer.offer_id, "card": a.trade.refs[0], "ref": a.trade.refs[1]}
+    # Public view: only the thread and the fee (the cards and their offer stay private: a team thread is private)
+    inputs = {"thread": a.thread_id, "their_offer": a.offer.offer_id, "give_card": a.trade.refs[0]}
+    inputs["want_card"] = a.trade.refs[1]
     return AcceptProposal(
         "team",
         a.trade.refs[1],

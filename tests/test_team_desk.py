@@ -7,7 +7,7 @@ import pytest
 
 from bazaar_agent.agents.market import venues_from
 from bazaar_agent.agents.runtime import Recorder
-from bazaar_agent.agents.team_desk import TOPIC, DeskView, TeamDesk, _Plan
+from bazaar_agent.agents.team_desk import TOPIC, DeskView, SwapAccept, TeamDesk, _Plan
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Context, Guardrails
 from bazaar_agent.swaps import Ladder, cash_at, offer_terms
@@ -408,7 +408,7 @@ def test_the_public_view_of_a_team_thread_decision_names_no_team_and_no_value(tm
         shown = public_decision({**row, "dry_run": False})
         flat = repr(shown)
         assert "t05" not in flat and "plan" not in flat and "reason" not in shown  # counterparty, our reasons
-        assert set(shown["inputs"]) <= {"thread", "card", "ref", "venue", "fee"} and "give" not in flat
+        assert set(shown["inputs"]) <= {"thread", "venue", "fee"} and "give" not in flat and "LAV-02" not in flat
 
 
 def test_the_public_record_of_a_team_send_names_no_team_and_no_terms(tmp_path):
@@ -933,3 +933,15 @@ def test_a_cancel_answered_settled_keeps_the_spend(tmp_path):
     d.proposals(view([reply], tick=TICK + 1))
     d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: + 3 P, no refund
     assert d.ledger.spent_since(0) == 1 + 3
+
+
+def test_a_team_accept_shows_only_its_thread_and_fee_on_the_public_view():
+    from bazaar_agent.agents.status import public_decision
+    from bazaar_agent.agents.taker import swap_proposal
+    from bazaar_agent.swaps import SwapVerdict, read_offer
+
+    offer = read_offer(their_offer(cash_out=1), US)
+    assert offer is not None
+    a = SwapAccept(42, offer, trade(), SwapVerdict(True, 10.8, 9.0, "fair"), 3, None)
+    row = {"kind": "team_accept", "status": "approved", "dry_run": False, "inputs": swap_proposal(a).inputs}
+    assert public_decision(row)["inputs"] == {"thread": 42, "fee": 3}

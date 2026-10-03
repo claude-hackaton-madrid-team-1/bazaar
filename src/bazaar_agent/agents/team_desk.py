@@ -204,6 +204,7 @@ class TeamDesk:
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
+        self._synthetic = 0  # negative ids for the refund of a send the server refused
         self._plan: _Plan | None = None
 
     # ------------------------------------------------------------ reads
@@ -664,7 +665,8 @@ class TeamDesk:
             if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back
                 if cash < 0:
                     refused = {"give": {"cash": -cash}, "want": {"cards": [talk.trade.refs[1]]}, "created_tick": v.tick}
-                    self._refund(v, {"id": -(v.tick * 1000 + talk.thread_id), **refused})  # a synthetic id: once
+                    self._synthetic -= 1  # a refused send has no offer id: a fresh synthetic one, refunded once
+                    self._refund(v, {"id": self._synthetic, **refused})
                 return
             offer_id = (body or {}).get("offer")  # lost on the way back: the next tick reads it from the thread
             talk.offer_id = offer_id if isinstance(offer_id, int) else None
