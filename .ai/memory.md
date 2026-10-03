@@ -1159,3 +1159,12 @@ and the Workshop's kept copy (most valued, then lowest id) are the same asset: a
 the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
 every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
 crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.
+
+### [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+`tools.TOOLS` feeds the desk's in-process server, every subagent allow-list and the remote MCP server at once, so a
+spec added there is callable by our own LLMs. The human tools (HA2) live in `runtime/human_tools.py` and only
+`mcp_server.build_app(..., approver=...)` serves them, behind `X-Approver-Token`. Testing them over the TestClient: the
+per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the fake clock between calls.
+`tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
+GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
+
