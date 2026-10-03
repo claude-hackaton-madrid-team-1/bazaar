@@ -65,9 +65,9 @@ from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.holdings import Holdings
+from bazaar_agent.intel import book_values, listed_makers, settled_volume
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
-from bazaar_agent.intel import book_values, listed_makers, settled_volume
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
