@@ -166,7 +166,11 @@ class DealerThread:
         return len(self.team_prices)
 
 
-def _topic_item(topic: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
+def _topic_item(topic: Any) -> tuple[str, str, tuple[int, ...]]:
+    """The item a dealer thread is about. The topic is chosen by the team that opened the thread, so any
+    shape may arrive (a string, a list, `assets` that is not a list): an unknown shape reads as "?"."""
+    if not isinstance(topic, dict):
+        return "?", "?", ()
     for side in ("buy", "sell"):
         spec = topic.get(side)
         if isinstance(spec, dict):
@@ -175,7 +179,8 @@ def _topic_item(topic: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
             if "card" in spec:
                 return side, str(spec["card"]), ()
             if "assets" in spec:
-                ids = tuple(int(a) for a in spec["assets"] if isinstance(a, int))
+                assets = spec["assets"] if isinstance(spec["assets"], list) else []
+                ids = tuple(int(a) for a in assets if isinstance(a, int))
                 return side, f"assets:{','.join(map(str, ids))}", ids
             if "rarity" in spec:
                 return side, f"{spec.get('rarity')}:{spec.get('set', '*')}", ()
