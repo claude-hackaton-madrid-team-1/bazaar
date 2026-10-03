@@ -189,7 +189,8 @@ def dealers_table(personas: list) -> Table:
     return t
 
 
-def status_table(me: dict, target: str | None = None) -> Table:
+def status_table(me: dict, target: str | None = None, snapshot: str | None = None) -> Table:
+    """`snapshot`: where /me came from (the shared Postgres snapshot with its tick and age, or a live read)."""
     t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False)
     t.add_column("field", style="bold")
     t.add_column("value")
@@ -206,6 +207,8 @@ def status_table(me: dict, target: str | None = None) -> Table:
         ("collection value", me.get("collection_value")),
         ("score", score.get("score")),
         ("rank", score.get("rank")),
+        ("tick", me.get("tick")),
+        ("read", snapshot),
     ]:
         t.add_row(k, "-" if v is None else str(v))
     return t

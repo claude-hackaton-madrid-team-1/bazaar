@@ -254,6 +254,53 @@ Our team id comes from `BAZAAR_TEAM_ID` (env or `.env`), else `.local/team_id`, 
 | alerts | never for our own actions (our level-up, our venue, our listing, a dealer answering us) |
 | `feed_events`, `tape` | keep everything; the SQL view `their_events` is the feed minus our activity |
 
+## Holdings: what we hold, in real time (album first, shared)
+
+Every agent decides on what we hold right now, and every process shares one key's 5 req/s. So `/api/me`
+lives in Postgres too (`src/bazaar_agent/holdings.py`): the first of our processes that needs it in a
+tick (taker, maker, MCP server, CLI) reads it and upserts `me_snapshots` (one row per team and game tick:
+cash, level, cards with asset ids, duplicates, sealed packs, album pages, affinity, score, the whole
+payload). The others answer from that row **only while it is provably current**:
+
+| Rule | The stored snapshot is used only when | Else |
+|---|---|---|
+| tick | it was read in the reader's current game tick (the server's `tick` in `/me`, exactly) | live read |
+| epoch | no send of ours, from any process, started or finished since it was read: every request that can move cards or cash bumps `holdings_state.epoch` before it goes and after it returns (`sdk.TrackedBazaar`, in every `team_client()`; duel moves and flags move nothing) | live read |
+| calm | no thread message of ours went out this tick (conservative: Friday's feed shows dealer answers and their settlements at the tick boundary, 27 of 27) | live read |
+| age | it is younger than `holdings_max_age_s` (GUARDRAILS.md, 5 s): the backstop for what we cannot see coming | live read |
+
+The row must also match itself (its payload names our team, its tick and its digest), and it belongs to
+one **world**: `real`, or `sim:<host:port>` for a simulator (whose `sim-team1` is `t01` too), so a
+simulator never answers for the game even in a shared database; a simulator writes the world-less tables
+(`cards`, the evals' `snapshots`) only in a database of its own (`BAZAAR_SIM_DATABASE_URL`).
+
+Any doubt is a live read (and every live read is stored): Postgres not connected yet, no clock, a clock
+less than 1 s from its tick's end, team id not known yet, a row that does not match, a send of this
+process whose bump was lost, a lock wait over 3 s. One reader at a time reads `/me` for the team
+(`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two. After a deal
+(our accept, or a dealer thread that ended in a deal) the acting agent books it, bumps the epoch and
+re-reads `/me`. **Nothing here holds up a send or a tick**: every Postgres call runs on one worker thread
+per connection; a send waits at most 0.2 s for its bump and a read at most 5 s for the database, then reads
+`/me` live (a hung network costs a deadline, never a tick); a read that has already asked the game waits for
+that answer as a direct `/me` would, and gets it before the store, which finishes on its own. A lost bump is caught up by the next one, when the
+connection reopens, or when the process exits.
+`holdings_from_db = false` in GUARDRAILS.md turns the shared answers off (snapshots are still written).
+
+```sh
+uv run bazaar status            # "read: /me from db (tick 812, 0.4 s old, epoch 57, read by taker)" or "/me live (why)"
+uv run bazaar status --no-db    # always a live /api/me
+```
+
+Measured on the simulator (`BAZAAR_SIM=local`, taker + maker, dry run, 10 ticks): `GET /api/me` went from
+2 per tick to 1 (11 calls instead of 20; the extra one is tick 0, before the team id is known). The MCP
+tools `status`, `holdings` and `strategy` and every runtime write answer through the same rule, with the
+snapshot's tick, age and source in their answer.
+
+**Card catalog.** `cards` holds every card of every set (`set_code`, `rarity`, `book`, `print_run`,
+`minted`, `released`, `page`), written from the `/api/catalog` the agents already read: the first time,
+when a set is released (El Retiro on Saturday, Chamberí on Sunday) and every 10 ticks for `minted`. A row
+never moves back to an older tick. The MCP tool `cards` reads it (the live catalog when the table is empty).
+
 ## Ticks: the rule every loop follows
 
 The game ticks every 60 s (Fri), 30 s (Sat) or 15 s (Sun), and the organisers may change it,
@@ -447,8 +494,8 @@ uv run bazaar agent maker            # dry run; --no-jev keeps the strategy's pr
 uv run bazaar agent taker --port 8080   # also serve the read-only status (GET /health, /state, WS /events)
 ```
 
-Every tick, both read `/api/me` once (album first), our open offers, the catalog, the dealers, the venues
-and the feed (the shared `feed_events` table when Postgres answers, else `.local/feed`, plus the live
+Every tick, both read our holdings once (album first, see "Holdings: what we hold, in real time" below),
+our open offers, the catalog, the dealers, the venues and the feed (the shared `feed_events` table when Postgres answers, else `.local/feed`, plus the live
 window), then rank with the strategy engine. A tick's deadline is `ticks.action_budget_s`; every send
 checks it right before it goes, and a move that would be late is logged `DROPPED` and not sent.
 
@@ -897,7 +944,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads; ours are tagged. |
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
-| `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
+| `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me, or its current snapshot). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
@@ -930,14 +977,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
-- [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
-- [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
-- [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
-- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
-- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
-- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+- [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
+- [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
+- [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
+- [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
+- [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
+- [2026-10-03] build-error — a reset simulator world's rows hid the current tick from the holdings
+- [2026-10-03] gotcha — parallel worktrees running `scripts/sim_smoke.py` collide on 127.0.0.1:8765
+- [2026-10-03] gotcha — another worker's simulator may own 127.0.0.1:8765
 
 <!-- BAZAAR:STATUS:END -->
 

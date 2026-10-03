@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import psycopg
@@ -21,6 +21,7 @@ from bazaar_agent.agents.seller import Commitments, committed_context
 from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -152,25 +153,43 @@ class Snapshot:
     dealers: list[dict[str, Any]]
     venues: list[Venue]
     events: list[Event]
+    holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
 
     @property
     def us(self) -> str:
         return str(self.me.get("id") or "")
 
+    def with_me(self, read: MeRead) -> Snapshot:
+        """The same view with fresher holdings (re-read after a deal)."""
+        return replace(self, me=read.me, holdings=read)
 
-def read_snapshot(team: Any, public: Any, feed: MarketFeed, clock: Clock) -> Snapshot:
-    """Team reads (`me`, our offers) with the key; everything public without it."""
-    me = team.me()
+
+def read_snapshot(
+    team: Any,
+    public: Any,
+    feed: MarketFeed,
+    clock: Clock,
+    holdings: Holdings | None = None,
+    clock_read_at: float | None = None,
+) -> Snapshot:
+    """Team reads (`me`, our offers) with the key; everything public without it. With `holdings`, /me
+    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live."""
+    read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
+    me = read.me if read is not None else team.me()
     offers = team.my_offers()
     personas = public.dealers()
+    catalog = public.catalog()
+    if holdings is not None:
+        holdings.observe_catalog(clock.tick, catalog)
     return Snapshot(
         clock=clock,
         me=me,
         offers=offers,
-        catalog=public.catalog(),
+        catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
         venues=venues_from(public.venues()),
         events=feed.events(),
+        holdings=read,
     )
 
 

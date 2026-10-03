@@ -42,7 +42,12 @@
           "text": "live stream + feed poll"
         },
         {
-          "text": "/me snapshots, alerts"
+          "text": "holdings in Postgres: /me per tick",
+          "mark": "✓"
+        },
+        {
+          "text": "1 /me per tick, shared (was 2)",
+          "mark": "✓"
         },
         {
           "text": "album checked first",
@@ -212,14 +217,14 @@
     },
     "db_cards": {
       "title": "DB · cards",
-      "status": "wip",
+      "status": "done",
       "lines": [
         {
           "text": "holdings N13 approved (#105), 09:30 window",
           "note": true
         }
       ],
-      "mark": "◑"
+      "mark": "✓"
     },
     "db_traders_behaviors": {
       "title": "DB · traders_behaviors",
