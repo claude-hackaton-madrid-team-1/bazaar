@@ -30,8 +30,8 @@ our limit hold firm and then offer 1 P inside it. Measured at decays 0.08/0.10 (
   - On its own it changes nothing for v2. v2 has a second last-ticks accept path, `left ≤ duel_accept_margin_ticks + 1`,
     which takes anything inside the limit at D − 2 and D − 1.
   - The share threshold is applied before both paths: a squeeze stops being acceptable until `left ≤ duel_endgame_ticks`.
-    So the mitigation is the pair `duel_endgame_min_share` + `duel_endgame_ticks`. This is why the first sweep row with
-    `duel_endgame_ticks` = 1 alone equals today.
+    So the mitigation is the pair `duel_endgame_min_share` + `duel_endgame_ticks`; W2a's `eg1` preset (ticks 1, share 0)
+    measures the same as today.
 - **`duel_jitter` (+ `duel_jitter_seed`), 0 = today.** Seeded per-duel noise on anchor, floor and share.
 
 ## Trade-off curve (decays 0.08/0.10, n = 200; honest results relative to v2 today)
