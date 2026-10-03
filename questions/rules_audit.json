@@ -1,0 +1,90 @@
+{
+  "about": "Rules audit (Sat 3 Oct ~17:50, _night/RULES_AUDIT.md outside git): one question per GUARDRAILS.md rule or build decision the audit found may cost points, asked with questions/rules_audit.state.json. Only a decided verdict changes a rule (cited on its GUARDRAILS.md line); undecided keeps today's value. Reproduce: TYPESAFE_API_KEY=... uv run python -m bazaar_agent.jev judge --state questions/rules_audit.state.json --questions questions/rules_audit.json --log",
+  "questions": {
+    "dealer_sell_final_min_first_ask_share_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `dealer_sell_final_min_first_ask_share` should a dealer's FINAL bid on our sell thread need: keep_0_5 or lower_0?",
+        "note": "Today a dealer's final bid is taken only at or above max(our value floor + 2, this x our first ask). 0 = our value floor alone. The ladder scores the share of the dealer's own range, and its final is its limit."
+      },
+      "criteria": {
+        "keep_0_5": "A final far below our opening ask is a poor deal and the ladder slot is better filled another way.",
+        "lower_0": "The final is the dealer's limit and captures its whole range on the ladder; our value floor already protects us; walking it wastes a ladder slot."
+      }
+    },
+    "dealer_final_lift_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `dealer_final_lift` should we use: keep_0 or lift_0_15?",
+        "note": "A dealer's FINAL offer on a card we buy may be taken up to max_price_<rarity> x (1 + this), never above our official value minus the minimum surplus. 0.15 lifts the uncommon cap from 26 to 29.9, which reaches Chato's finals of 28-29."
+      },
+      "criteria": {
+        "keep_0": "Paying a few primas above our caps is not worth a level-2 ladder slot, or the cash is needed elsewhere.",
+        "lift_0_15": "Chato's level-2 slots are empty, cash never scores, the official-value cap still bounds every buy, and a final is the dealer's limit so it captures his whole range."
+      }
+    },
+    "duel_accept_margin_ticks_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `duel_accept_margin_ticks` should the duel planner use from Duels III on: keep_1 or lower_0?",
+        "note": "1 plans every accept by the deadline minus 2; 0 by the deadline minus 1. The planner still accepts at deadline minus 1 when more duels queue than ticks remain."
+      },
+      "criteria": {
+        "keep_1": "One tick of safety is worth more than one more tick of rival concessions; a missed tick at deadline minus 1 loses the deal (no deal scores zero).",
+        "lower_0": "An accept at deadline minus 1 is proven to settle as a deal, so the extra margin only gives up a tick of rival concessions in short 12-tick duels."
+      }
+    },
+    "flag_dealers_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which `flag_dealers` should we set: keep_none or picaros?",
+        "note": "Opt-in list of dealers our agent may flag (POST /api/flags) for bad faith. A correct flag scores; a wrong one costs. Proposed scope for picaros: only an offer whose structure gives a different card than the thread topic."
+      },
+      "criteria": {
+        "keep_none": "The value of a flag is unknown and a wrong flag costs; the inspector already refuses the trick.",
+        "picaros": "The organisers say Los Picaros trick and flags score; a card swap in the offer's structure is unambiguous evidence, and we have four such cases."
+      }
+    },
+    "workshop_build_noul": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state.workshop`, should we build Workshop (taller) crafting before Sunday?",
+        "note": "Effort M; build time competes with the overnight candidates in `state.overnight_candidates`."
+      },
+      "criteria": {
+        "true": "Crafted uncommons fill dealer ladder slots that are otherwise empty, and the inputs are worth little to us.",
+        "false": "The pull is luck, duplicates earn more as team trades, and the build time is better spent on the overnight candidates."
+      }
+    },
+    "overnight_first_build_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state.overnight_candidates` and `state.scoring_fitted`, which build should the team do first overnight (doors closed 23:00-09:00): bench_edge, ladder_round_tracker or team_trades_round_3?",
+        "note": "All three can be attempted; this picks the order. Round 3 starts Sunday ~11:34 and lasts ~3.4 h."
+      },
+      "criteria": {
+        "bench_edge": "The largest points at stake and the code already exists; Market Tests on Sunday morning and in round 3 reward any edge over the stall.",
+        "ladder_round_tracker": "Round 3's ladder starts at zero, is quick to fill with dealer finals, and the code is small and low-risk.",
+        "team_trades_round_3": "Team trades weigh the most in negotiating and we have made none since tick 386."
+      }
+    },
+    "allow_flags_noul": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state.picaros` and `state.flags_now`, should `allow_flags` be turned on, so that our taker sends a flag on a Los Picaros offer whose structure gives a different card than the thread topic?",
+        "note": "`flag_dealers` = picaros decides only WHO may be flagged; nothing is sent while `allow_flags` is false. `max_flags_sent` = 2 caps the flags that may land, ever; no message is flagged twice; Abuela and Chato can never be flagged. The opted-in dealer's future messages are flagged without a human reading each one."
+      },
+      "criteria": {
+        "true": "A card swap in the offer's structure is unambiguous bad faith, the organisers invite flags on Los Picaros, and two flags at most bound the cost of a wrong one.",
+        "false": "Without a human reading each message, an honest offer could be flagged and cost points; the inspector already refuses the trick."
+      }
+    }
+  }
+}
