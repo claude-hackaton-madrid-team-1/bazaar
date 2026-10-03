@@ -1,6 +1,8 @@
 # W4 · Trade desk (night of 3 Oct 2026)
 
-Draft PR #79, stacked on #72 (`fix/cash-spend-accounting`). Nothing touched the live game. Inputs: the public feed from the shared DB (read-only, 3,733 events, ticks 0–159), our `agent.me` at tick 149 (checked against the DB snapshot at tick 159: the same 20 assets, cash 353, no event of ours after tick 149), and the catalog and venues fixtures.
+Draft PR #79, stacked on #72 (`fix/cash-spend-accounting`). Nothing touched the live game. Inputs: the public feed from the shared DB (read-only, 3,733 events, ticks 0–159), our `agent.me` at tick 149 (checked against the DB snapshot at tick 159: the same assets and cash, no event of ours after tick 149), and the catalog and venues fixtures.
+
+Our private numbers are not in this file: our cash, our card values, asset ids and the exact planned prices are in `_night/w4-private-numbers.md` (outside the repo), and the full plan is what `bazaar trade-plan` writes to `.local/night/` (git-ignored).
 
 ## 1. Rival affinity map (`affinity.py`, `bazaar affinity`)
 
@@ -8,7 +10,7 @@ Every team holds the same six multipliers, shuffled. So the model computes, for 
 - **Interest:** buys, bids, dealer topics, sells and listings. Reprices are counted once, and the evidence is damped (sign × log1p) so that a bot repeating one policy counts as one decision.
 - **Prices:** a buy or bid above `book × a × 1.25` makes multiplier `a` unlikely. A 20 % noise floor keeps one overpaying bot from deciding the result.
 
-Calibration is a time split (fit on ticks < 60/80/100, then predict the set each team pushed hardest afterwards):
+Calibration is a time split (fit on ticks < 60/80/100, then predict the set each team pushed hardest afterwards). Reproduce it with `uv run python scripts/affinity_eval.py --events FEED.jsonl --me ME.json --catalog CATALOG.json`. β and damping were chosen on these same splits (in-sample), and the target measures persistence of revealed interest, not the private multipliers:
 
 | model | log loss | Brier | top set hit | event AUC |
 |---|---:|---:|---:|---:|
@@ -38,8 +40,10 @@ Other teams read the board the same way: t05 and t18 sent addressed LAT offers t
 - **Fails closed:** when our volume was not read, or when the maker is a board pseudonym the feed never resolved.
 - **Maker:** if the public offer would break the cap, it addresses the offer (`to`) to the strategy's counterparty with the most room.
 - **Taker:** names the board maker from `offer.listed`.
-- **CLI and runtime:** `bazaar sell list/bid` and the runtime's sell tools read our volume when the cap is on. `sell list/bid --to tNN` addresses an offer to one team.
-- 18 tests (plus 13 for the affinity map and 41 for the trade desk).
+- **CLI and runtime:** `bazaar sell list/bid/swap` and the runtime's sell tools read our volume from the whole feed history (the shared DB first, as the maker and the taker do) when the cap is on. `--to tNN` addresses an offer to one team.
+- **Guarded swaps:** `bazaar sell swap ASSET --for REF --to tNN [--give-cash N | --want-cash N]` posts a card-for-card offer addressed to one team. It is checked as a sale at what we receive (never below `your_value`) and as a bid for the cash we add (price cap, cash floor, spend cap); both count toward the team's share.
+- **Hands off:** a live `bazaar sell ...` post is booked in the shared ledger as a `hands-off:<offer id>` listing. The maker, which owns our board offers and cancels any that are not its targets, never cancels or reprices those, and posts nothing for the copy or card they cover.
+- Tests: 25 for the cap, swaps and hands-off; 15 for the affinity map; 46 for the trade desk.
 
 ## 3. The 09:00 dry-run plan (`trade_desk.py`, `bazaar trade-plan`)
 
@@ -49,31 +53,33 @@ How the plan is built:
 - **Swaps:** a cash leg splits the pie.
 - **Selection:** an exact branch and bound (it finished, so the result is proven best) picks the plan with the best expected surplus in which no counterparty passes 25 % of the planned volume.
 - **Selection pool:** the search sees at most 120 candidates (4 per copy or wanted card). It runs in 0.3 s on Friday's data.
-- **Posting:** every trade is posted through `guardrails.check()` with GUARDRAILS.md as it is, on top of our open offers and this game hour's spend. A trade it refuses is replaced by the next best plan.
-- **What-if:** while the cap is off, the plan also reports how it would post at cap bases 200 and 400. Today's 7 trades pass at both.
+- **Posting, fair in the worst case:** a listing posted for anyone can be taken by any holder, so it counts against every team (as the guardrail counts it). A listing goes public only while no team could pass 25 % of the planned volume by taking every public listing on top of what is addressed to it; otherwise it is addressed. Every trade then passes `guardrails.check()` with GUARDRAILS.md as it is, on top of our open offers and this game hour's spend; a refused trade is replaced by the next best plan.
+- **What-if:** while the cap is off, the plan also reports how it would post at cap bases 200 and 400, including listings that would be addressed instead of public.
+- **Commands:** each planned trade comes with its guarded command (`sell bid ... --to`, `sell swap ...`), dry run until `--live`.
 
 To regenerate the plan (reads only, writes `.local/night/trade-plan.{json,md}`):
 
 ```
-uv run bazaar trade-plan
+uv run bazaar trade-plan --live
 ```
 
-The plan:
+The plan (prices and asset ids are in `_night/w4-private-numbers.md`):
 
-| # | kind | trade | counterparty (posted to) | fee (theirs) | P(fill) | volume |
-|---|---|---|---|---:|---:|---:|
-| 1 | bid | 22 P for any LAV-08 | t03, which holds 2 (anyone) | 3 | 1.00 | 25 |
-| 2 | bid | 24 P for any SAL-08 | t04 (anyone) | 3 | 0.54 | 25 |
-| 3 | bid | 10 P for any MAL-02 | t06 (anyone) | 2 | 1.00 | 10 |
-| 4 | bid | 5 P for any LAT-04 | t06 (anyone) | 2 | 1.00 | 10 |
-| 5 | swap | LAT-03 #7 + 14 P for MAL-08 | t08 (thread) | 2 | 1.00 | 35 |
-| 6 | swap | SAL-03 #1 + 7 P for MAL-07 | t17 (thread) | 2 | 1.00 | 35 |
-| 7 | swap | MAL-01 #4 for SAL-05 + 1 P | t12 (thread) | 2 | 0.93 | 20 |
+| # | kind | trade | counterparty (posted to) | P(fill) | volume |
+|---|---|---|---|---:|---:|
+| 1 | bid | P₁ for any LAV-08 | t03, which holds 2 (t03) | 1.00 | 25 |
+| 2 | bid | P₂ for any SAL-08 | t04 (t04) | 0.54 | 25 |
+| 3 | bid | P₃ for any MAL-02 | t06 (t06) | 1.00 | 10 |
+| 4 | bid | P₄ for any LAT-04 | t06 (t06) | 1.00 | 10 |
+| 5 | swap | a LAT common + cash for MAL-08 | t08 (t08) | 1.00 | 35 |
+| 6 | swap | a SAL common + cash for MAL-07 | t17 (t17) | 1.00 | 35 |
+| 7 | swap | a MAL common for SAL-05 + cash | t12 (t12) | 0.93 | 20 |
 
 **Totals:**
-- **Expected surplus for us:** +79.9 P (+88.8 P if everything fills), on 160 P of volume.
-- **Counterparty shares:** t08 22 %, t17 22 %, t03 16 %, t04 16 %, t06 12 %, t12 12 %.
-- **Cash:** bids and cash legs promise 82 of the 83 P above `cash_floor`.
+- **Expected surplus for us:** +79.9 P if each trade fills whenever its counterparty values it (P(fill) above), on 160 P of volume.
+- **At Friday's fill rates:** +4.8 P. All 7 trades are addressed, and on Friday 6 % of addressed copies sold (19 % of public ones). The model's P(fill) only asks whether the counterparty values the price, not whether its bot is there to take it.
+- **Counterparty shares:** t08 22 %, t17 22 %, t03 16 %, t04 16 %, t06 12 %, t12 12 %. In the worst case (one team takes every public listing too): 22 %, because nothing is public.
+- **Cash:** bids and cash legs use all but 1 P of the cash above `cash_floor`.
 - **Checks:** every trade has surplus for both sides; 0 checks fail.
 
 **Robustness:** I re-scored the same 7 trades under other maps. Expected surplus stays between +73.4 and +81.2 P:
@@ -84,29 +90,25 @@ The plan:
 Most trades clear for any multiplier (duplicates, swaps with a cash leg). So the map earns its keep in choosing counterparties and prices, not in the fill estimate.
 
 **Why 4 listings + 3 proposals, not 12 + 3:**
-- **Cash:** only 83 P sits above `cash_floor`.
+- **Cash:** the cash above `cash_floor` is small (shared with W3's ladder).
 - **Commons:** `sell_min_surplus` 5 with a fair split rules out every common, because the pie is under 10 P.
-- **The 25 % rule:** it holds back LAT-09 (70 P on a 160 P plan). The best plan without it is +108.2 P, so the rule costs 28 P. The two biggest trades it holds back:
-  - LAT-09 + 59 P → LAV-09 with t07, +52 P expected, 140 P notional;
-  - LAT-08 + 8 P → LAV-08 with t03.
+- **The 25 % rule:** it holds back our one big sale, LAT-09 (70 P notional on a 160 P plan). The best plan without the rule is +108.2 P, so the rule costs 28 P of model surplus. The biggest trade it holds back is a LAT-09 + cash swap for LAV-09 with t07 (140 P notional).
 - **With no cash for bids** (`--cash-budget 0`), no plan meets the 25 % rule at all.
 
-**LAV page list (7/10, missing 08, 09, 10):**
-- **LAV-08:** worth 56 to us. Abuela sold it at 17–24 (4 fills), so that dealer is the route; t03 holds a duplicate.
-- **LAV-09 / LAV-10:** worth 157 each to us (×1.6 + page bonus share).
-  - Every known holder is a likely LAV chaser and loses 96–107 on a sale.
-  - Chato sold them at 82–93 (6 fills), above `max_price_rare` 80. A Chato buy at about 82–90 would gain about 67–75.
+**LAV page list (missing LAV-08, 09, 10):**
+- **LAV-08:** Abuela sold it at 17–24 (4 fills), so that dealer is the cheap route; t03 holds a duplicate.
+- **LAV-09 / LAV-10:** every known holder is a likely LAV chaser (P 0.43–0.78) and would lose ~96–107 on a sale. Chato sold them at 82–93 (6 fills), above `max_price_rare` 80. At Chato's price each would still be a large gain for us (exact value in `_night/`).
 
 ## Evidence that shaped the plan
 
 | | Friday |
 |---|---|
-| Public asks filled | 176/512 (34 %) |
-| Addressed asks filled | 2/27 (7 %) |
+| Copies listed publicly that sold | 25/133 (19 %); per listing 25/511 (5 %), every fill matched to an offer at its own price (B4) |
+| Copies listed to one team that sold | 1/18 (6 %); per listing 1/25 (4 %) |
 | Team-to-team settlements | 46, all on El Rastro |
 | Team-to-team threads | 0 |
 
-So listings go public wherever the cap allows. Direct proposals use a team thread, a path nobody has used yet. The fallback is the same offer posted on the board with `--to`.
+Public listings fill better, but they are only fair in the worst case when the plan has room for them. Direct proposals go out as addressed board offers (`sell swap`), the path t13 used for swaps on Friday; a team thread (`thread_proposal`) is the alternative, and nobody opened one on Friday.
 
 ## Verdict (W4 has no numeric gate in PLAN.md)
 
@@ -114,25 +116,35 @@ So listings go public wherever the cap allows. Direct proposals use a team threa
 |---|---|
 | Affinity map | **GO** (beats uniform on every metric). Confidence is moderate (top P 0.35–0.78). |
 | Cap | **GO** as code. It is off by default, so nothing changes until enabled. |
-| Enabling the cap at base 200 | **NO-GO.** Today's plan posts, but no single trade above 50 P (any rare, for example our LAT-09 at 70) passes until our team-to-team volume tops 200 P. |
-| 09:00 plan | **GO as a dry run.** Fair by construction and proven best. Expected surplus is a model value, not a fill rate. |
+| Enabling the cap at base 200 | **NO-GO.** No single trade above 50 P (any rare) passes until our team-to-team volume tops 200 P. Base 400 lets about 100 P per team through, roughly this whole plan, so for the morning it all but switches the 25 % rule off. |
+| 09:00 plan | **GO as a dry run, small.** Fair in the worst case and proven best among its candidates, but all 7 trades are addressed: +79.9 P in the model, about +4.8 P at Friday's fill rates. The scanner (B4, #98), which takes offers already standing, is the bigger lever. |
 
 ## Risks
 
 - **Holdings are partial.** Known: 204 rival copies from listings and settlements. Starting hands and pack pulls are unseen. A public bid also reaches holders we don't know about.
 - **RET opens Saturday.** RET/CHA chasers are invisible until then.
 - **P(fill) assumes an active bot that values the card as modelled.** It does not model whether the rival's bot is online.
-- **The swap path is untested live.**
+- **The swap path is untested live** (`sell swap` is checked, dry-run tested and addressed like t13's Friday swaps).
+- **Hand posts and the maker:** without the hands-off booking, the live maker cancels any plain board offer of ours that is not its target one tick later. Post hand trades only with `bazaar sell ... --live` (which books them), never with a raw API call.
 - **Data age:** the plan is built on Friday's close.
 
 ## Decisions for Marius
 
-1. Enable `max_counterparty_share` = 0.25 with `counterparty_cap_base` ≥ 400, or leave it off.
-2. `max_price_rare` 80 against Chato's 82–93: LAV-09/10 are the page's real lever (about 70 P each). No guardrail value was changed tonight.
-3. Swap cash legs route around the price caps. The caps apply to cash only, so "LAT-09 + 59 P for a rare" passes. Decide whether to cap swaps by value.
-4. Split the 83 P above the floor between the trade desk (bids) and W3's ladder (`--cash-budget`).
-5. At 09:00, run `uv run bazaar trade-plan --live`. It reads the feed history from the shared DB plus the live window, and our `/me`, open offers and this hour's spend; it sends nothing. Then post the plan (`sell bid`, `sell list --to`) or hand it to the maker.
+1. The cap: off (today), or `max_counterparty_share` = 0.25. At base 200 no rare can trade until our volume passes 200 P; at base 400 the rule barely binds this morning. The plan itself is fair in the worst case either way.
+2. `max_price_rare` 80 against Chato's 82–93: LAV-09/10 are the page's real lever. No guardrail value was changed tonight.
+3. Swap cash legs route around the price caps (the caps apply to cash only; `sell swap` checks the cash leg as a bid, not the card). Decide whether to cap swaps by value.
+4. Split the cash above the floor between the trade desk (bids) and W3's ladder (`--cash-budget`).
+5. At 09:00, run `uv run bazaar trade-plan --live` (reads only), then post with the commands it prints, which are `bazaar sell bid|list|swap ... --live`. That path is guarded and booked hands-off, so the live maker leaves the posts alone. Or keep only the maker running and skip hand trades.
 6. Set `chaser_min_p` = 0.5 in STRATEGY.md (default 0 = today) so the maker's buyers and its `to` candidates come from the map. On Friday's feed the map names MAL = t12 where team flows said t13/t15/t17, and LAT = t15/t18 where flows said t18 only.
+
+Second review (r1, on c2d1c50), all fixed on this branch:
+- public listings were scored for the intended counterparty only (now the worst case);
+- this file held our private numbers (now in `_night/`);
+- swaps had no guarded write path (`sell swap`);
+- the CLI and runtime read our volume from the capture, not the DB;
+- the what-if hid re-addressed listings;
+- `Action` was built positionally, and posting exposure used the cash, not the notional;
+- the eval script was not committed.
 
 Code review (`/code-review high`, 10 findings, all fixed in ec28ab1):
 - the search crashed on pools of 1,100+ candidates (RecursionError);

@@ -303,10 +303,12 @@ def trade_plan(
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "trade-plan.json").write_text(json.dumps(td.plan_dict(plan, venue), indent=2, default=str) + "\n")
     (folder / "trade-plan.md").write_text(td.plan_markdown(plan, pp))
+    floor = plan.expected_at(pp.friday_public_fill, pp.friday_addressed_fill)
     console.print(
         f"{len(plan.listings)} listing(s) + {len(plan.threads)} proposal(s), expected {plan.expected:+.1f} P "
-        f"(without the share rule {plan.unconstrained:+.1f} P), largest share "
-        f"{max(plan.shares.values(), default=0):.0%}, {len(plan.checks)} check(s) failing · written to {folder}"
+        f"if each fills when its counterparty values it ({floor:+.1f} P at Friday's fill rates; without the "
+        f"share rule {plan.unconstrained:+.1f} P), largest share {max(plan.shares.values(), default=0):.0%} "
+        f"(worst case {plan.worst_share:.0%}), {len(plan.checks)} check(s) failing · written to {folder}"
     )
     for check_line in plan.checks:
         console.print(f"[red]{check_line}[/red]")
@@ -1400,9 +1402,11 @@ def _team_to(to: str | None) -> str | None:
     return to
 
 
-def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    """(rules, ledger, guardrail context, commitments) for a write from the CLI: /me, the shared ledger, our
+    open offers and, with `max_counterparty_share` on, our team-to-team volume from the whole feed history
+    (`_history`: the shared DB first, as the maker and the taker read it)."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.seller import post
 
     rules = _rules().rules
     ledger = _ledger("sell")
@@ -1416,11 +1420,17 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
         us = str(me.get("id") or "")
         try:
             book = intel.book_values(public_client(load_settings()).catalog())
-            settled = intel.settled_volume(_events(live=True), us, book)
+            settled = intel.settled_volume(_history(None, live=True), us, book)
         except BazaarError as e:
             _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
-            return
         ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
+    return rules, ledger, ctx, commitments
+
+
+def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+    from bazaar_agent.agents.seller import post
+
+    rules, ledger, ctx, commitments = _sell_context(client, me)
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1428,6 +1438,22 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     except BazaarError as e:
         _fail(f"offer refused: {e.code} ({e.message[:80]})")
         return
+    _hands_off(ledger, ctx, out, listing.price)
+    _report_post(out)
+
+
+def _hands_off(ledger: Any, ctx: Any, out: Any, price: int) -> None:
+    """A live hand post is booked as a `HANDS_OFF` listing in the shared ledger: the maker (which owns our
+    board offers, on any machine) never cancels or reprices it, and the listing counts toward this tick's."""
+    from bazaar_agent.guardrails import HANDS_OFF
+
+    offer_id = (out.offer or {}).get("id") if out.sent else None
+    if isinstance(offer_id, int):
+        ledger.record("listing", ctx.tick, ctx.t_hours, price, f"{HANDS_OFF}{offer_id}")
+        console.print(f"[dim]offer {offer_id} booked hands-off: the maker leaves it alone[/dim]")
+
+
+def _report_post(out: Any) -> None:
     colour = "green" if out.verdict.allowed else "red"
     console.print(f"[{colour}]{out.message}[/{colour}]")
     if not out.verdict.allowed:
@@ -1474,6 +1500,67 @@ def sell_bid(
         _fail(str(e))
         return
     _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("swap")
+def sell_swap(
+    target: str = typer.Argument(help="The copy we give: asset id (15) or card ref (the copy we lose least by)"),
+    want: str = typer.Option(..., "--for", help="The card we want for it, any copy (e.g. MAL-08)"),
+    to: str = typer.Option(..., "--to", help="The team we propose it to (t08): only it may accept"),
+    give_cash: int = typer.Option(0, min=0, help="Cash we add"),
+    want_cash: int = typer.Option(0, min=0, help="Cash we ask them to add"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked.
+
+    The copy leaves at what we receive (the card's worth to us plus their cash), never below its
+    your_value; cash we add is checked as a bid (its price cap, the cash floor, the spend cap); both count
+    toward the team's share when the counterparty cap is on."""
+    from bazaar_agent.agents.seller import OfferError, Swap, find_copy, post_swap
+    from bazaar_agent.strategy import build_market, buy_case
+
+    client, me = _team_me()
+    team_to = _team_to(to)
+    try:
+        asset = find_copy(me, target)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    if not isinstance(asset.get("your_value"), int | float):
+        _fail(f"asset {asset['id']} has no your_value in /api/me: not pricing it blind")
+    catalog = public_client(load_settings()).catalog()
+    m = build_market(me, catalog, [], [])
+    card = m.cards.get(want)
+    if card is None or team_to is None:
+        _fail(f"unknown card {want!r}")
+        return
+    book = intel.book_values(catalog)
+    swap = Swap(
+        int(asset["id"]),
+        str(asset.get("ref")),
+        asset.get("rarity"),
+        float(asset["your_value"]),
+        want,
+        card.rarity,
+        buy_case(m, card, _strategy().params).value,
+        venue,
+        team_to,
+        give_cash,
+        want_cash,
+        max(give_cash + want_cash, round(book.get(str(asset.get("ref")), 0.0) + book.get(want, 0.0))),
+    )
+    rules, ledger, ctx, commitments = _sell_context(client, me)
+    try:
+        out = post_swap(
+            client, swap, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
+        )
+    except BazaarError as e:
+        _fail(f"offer refused: {e.code} ({e.message[:80]})")
+        return
+    _hands_off(ledger, ctx, out, swap.give_cash or swap.want_cash)
+    _report_post(out)
 
 
 @sell_app.command("offers")
