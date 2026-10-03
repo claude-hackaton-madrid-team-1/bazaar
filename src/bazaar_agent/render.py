@@ -444,7 +444,7 @@ def buy_order_table(wants: list) -> Table:
 
 def scenarios_table(scenarios: list) -> Table:
     t = Table(title="Cash plan · venue scenarios under GUARDRAILS.md (what-ifs say so)")
-    numbers = ("floor", "venue", "ladder deals", "page cards", "trade surplus", "end cash")
+    numbers = ("floor", "venue", "dealer deals", "page cards", "trade surplus", "end cash")
     for col in ("scenario", *numbers):
         t.add_column(col, justify="right" if col == "floor" or col in numbers else "left")
     t.add_column("held", overflow="fold")
@@ -464,7 +464,7 @@ def scenarios_table(scenarios: list) -> Table:
             s.name,
             str(s.floor),
             venue,
-            str(s.ladder_deals) + (f" ({extra})" if extra else ""),
+            str(s.dealer_deals) + (f" ({extra})" if extra else ""),
             str(len(cards)),
             f"{s.trade_surplus:.0f}",
             f"{s.end_cash:.0f}",

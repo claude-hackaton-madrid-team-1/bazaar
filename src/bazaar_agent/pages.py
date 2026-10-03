@@ -14,6 +14,7 @@ feed, `/api/schedule`), reusing its market, page-bonus shares, supply and holder
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -33,8 +34,9 @@ RASTRO_FEE_RATE = 0.05  # RULES.md: El Rastro charges 5 % plus 1 P per card
 RASTRO_FEE_PER_CARD = 1
 VENUE_BOND = 250  # RULES.md: a refundable bond of 250 P plus 20 P
 VENUE_FEE = 20
-SATURDAY_OPENS = 4  # game hours: Friday 19-23 is h0-4, Saturday 09-23 is h4-18, Sunday 09-15 is h18-24
-SUNDAY_OPENS = 18
+# Game hours (`t_hours`) count ticking time only: the clock stops overnight, so a day's wall opening is not a
+# fixed game hour (Friday froze at h2.65, so Saturday 09:00 is h2.65 unless the organisers jump the clock).
+# Rounds, grants and the end come from /api/schedule; these are its Friday values, used when it has none.
 GAME_ENDS = 24
 
 
@@ -181,26 +183,45 @@ class Source:
 
 
 DealerCaps = Mapping[tuple[str, str], int]  # (dealer, rarity) -> cap
+CAPPED_RARITIES = ("common", "uncommon", "rare", "pack")  # the rarities GUARDRAILS.md caps
+CAP_ENTRY = re.compile(r"\s*([a-z0-9][a-z0-9_-]{0,31}):([a-z]+)=(\d+)\s*")  # W3's dealer_price_caps grammar (#81)
 
 
-def dealer_cap(rules: Guardrails, rarity: str, dealer: str, what_if: DealerCaps | None = None) -> int | None:
-    """The guardrail cap a dealer buy meets: a what-if, else W3's `dealer_price_caps` (#81, read when the
-    loaded guardrails have it), else `max_price_<rarity>`."""
-    own = dict(getattr(rules, "dealer_caps", None) or {})
-    own.update(what_if or {})
-    cap = own.get((dealer, rarity))
-    return cap if cap is not None else rules.max_price_for(rarity)
+@dataclass(frozen=True)
+class Caps:
+    """The caps a dealer buy meets, resolved once per plan: `max_price_<rarity>`, replaced for one dealer by
+    W3's `dealer_price_caps` (#81: read when the loaded guardrails carry it) and then by a what-if."""
+
+    rules: Guardrails
+    loaded: Mapping[tuple[str, str], int]
+    what_if: Mapping[tuple[str, str], int]
+
+    @classmethod
+    def of(cls, rules: Guardrails, what_if: DealerCaps | None = None) -> Caps:
+        return cls(rules, dict(getattr(rules, "dealer_caps", None) or {}), dict(what_if or {}))
+
+    def cap(self, rarity: str, dealer: str) -> tuple[int | None, str]:
+        """(the cap, the rule it comes from)."""
+        key = (dealer, rarity)
+        if key in self.what_if:
+            return self.what_if[key], f"what-if {dealer}:{rarity}"
+        if key in self.loaded:
+            return self.loaded[key], f"dealer_price_caps {dealer}:{rarity}"
+        return self.rules.max_price_for(rarity), f"max_price_{rarity}"
+
+    def unloaded(self) -> dict[tuple[str, str], int]:
+        """What-ifs GUARDRAILS.md does not hold: buys at those prices would still be refused."""
+        return {k: v for k, v in self.what_if.items() if self.loaded.get(k) != v}
 
 
 def parse_caps(text: str) -> dict[tuple[str, str], int]:
-    """ "chato:rare=93,chato:uncommon=31" -> {("chato", "rare"): 93, ...}; a bad entry raises ValueError."""
+    """`chato:rare=93,chato:uncommon=31` -> {("chato", "rare"): 93, ...}, W3's grammar; a bad entry raises."""
     out: dict[tuple[str, str], int] = {}
     for entry in filter(None, (e.strip() for e in text.split(","))):
-        who, _, price = entry.partition("=")
-        dealer, _, rarity = who.partition(":")
-        if not (dealer and rarity and price.isdigit() and int(price) >= 1):
-            raise ValueError(f"cap {entry!r}: use dealer:rarity=price, e.g. chato:rare=93")
-        out[(dealer.strip(), rarity.strip())] = int(price)
+        m = CAP_ENTRY.fullmatch(entry)
+        if m is None or m[2] not in CAPPED_RARITIES or int(m[3]) < 1:
+            raise ValueError(f"cap {entry!r}: use dealer:rarity=price with a rarity in {', '.join(CAPPED_RARITIES)}")
+        out[(m[1], m[2])] = int(m[3])
     return out
 
 
@@ -211,9 +232,10 @@ def dealer_sources(
     table: Mapping[tuple[str, str], DealerFills],
     params: StrategyParams,
     rules: Guardrails,
-    what_if: DealerCaps | None = None,
+    caps: Caps | None = None,
 ) -> list[Source]:
     """Each unlocked dealer that sells this card's rarity for its set, priced at the median fill any team got."""
+    caps = caps or Caps.of(rules)
     out = []
     for q in m.quotes:
         if q.item != card.rarity or (q.sets is not None and card.set_code not in q.sets):
@@ -224,14 +246,14 @@ def dealer_sources(
         low, mid = (seen.low, seen.mid) if seen else (None, None)
         price = mid if mid is not None else float(q.list_price)
         basis = f"{q.dealer} fills ×{len(seen.fills)} {low}–{max(seen.fills)}" if seen and seen.fills else "list"
-        cap = dealer_cap(rules, card.rarity, q.dealer, what_if)
+        cap, rule = caps.cap(card.rarity, q.dealer)
         top = math.floor(value - params.min_buy_surplus)
         top = min(top, cap) if cap is not None else top
         blocked = None
         if cap is not None and low is not None and cap < low:
-            blocked = f"max_price_{card.rarity} {cap} < lowest {q.dealer} fill {low}"
+            blocked = f"{rule} {cap} < lowest {q.dealer} fill {low}"
         elif cap is not None and cap < price:
-            blocked = f"max_price_{card.rarity} {cap} < median {q.dealer} fill {price:g}: fills only at its luckiest"
+            blocked = f"{rule} {cap} < median {q.dealer} fill {price:g}: fills only at its luckiest"
         elif top < price:
             blocked = f"worth {value:.0f}, {q.dealer} fills ~{price:g}: surplus below min_buy_surplus"
         out.append(Source(q.dealer, "ladder", price, low, basis, top, (q.dealer,), blocked))
@@ -412,12 +434,12 @@ def card_economics(
     rules: Guardrails,
     expected: Multipliers | None = None,
     tape: TeamTape | None = None,
-    what_if: DealerCaps | None = None,
+    caps: Caps | None = None,
 ) -> CardEconomics:
     aff = m.affinity.get(card.set_code, 1.0)
     share = strategy.bonus_shares(m, card.set_code).get(card.ref, 0.0) * params.page_bonus_weight
     value = card.book * aff
-    sources: list[Source] = dealer_sources(m, card, value + share, table, params, rules, what_if)
+    sources: list[Source] = dealer_sources(m, card, value + share, table, params, rules, caps)
     team = team_source(m, card, value + share, asks, params, rules, expected, tape)
     if team is not None:
         sources.append(team)
@@ -533,11 +555,12 @@ def pages_of(
     table = dealer_fill_table(events)
     asks = open_asks(events, m.tick)
     tape = TeamTape.of(m)
+    caps = Caps.of(rules, what_if)
     pages = []
     for set_code in m.released:
         page = strategy.page_cards(m, set_code)
         missing = [
-            card_economics(m, c, table, asks, params, rules, expected, tape, what_if)
+            card_economics(m, c, table, asks, params, rules, expected, tape, caps)
             for c in page
             if m.held.get(c.ref, 0) == 0
         ]
@@ -594,15 +617,19 @@ class LadderSlot:
     ref: str | None = None
 
 
-def ladder_slots_from(plan: dict[str, Any]) -> list[LadderSlot]:
-    """W3's scheduled dealer deals (`schedule`), one slot per conversation, in schedule order."""
+def ladder_slots_from(plan: dict[str, Any], open_hour: int | None = None) -> list[LadderSlot]:
+    """W3's scheduled dealer deals (`schedule`), one slot per conversation, in schedule order. W3 plans the
+    first 90 minutes after the open from its `window.t_start`; with `open_hour` (the game hour the doors
+    actually open at) every slot moves by the difference."""
+    t_start = (plan.get("window") or {}).get("t_start")
+    shift = open_hour - math.floor(float(t_start)) if open_hour is not None and t_start is not None else 0
     out = []
     for row in plan.get("schedule") or []:
         if not row.get("plan"):
             continue
         out.append(
             LadderSlot(
-                int(row.get("game_hour") or 0),
+                int(row.get("game_hour") or 0) + shift,
                 str(row.get("dealer")),
                 str(row.get("price_class")),
                 float((row.get("expected") or {}).get("price") or row["plan"]["max"]),
@@ -647,7 +674,8 @@ class Scenario:
         return next((s.hour for s in self.steps if s.kind == "venue"), None)
 
     @property
-    def ladder_deals(self) -> int:
+    def dealer_deals(self) -> int:
+        """Planned deals with dealers (W3's slots and our own conversations); only a level's best three score."""
         return sum(1 for s in self.steps if s.kind == "ladder" or (s.kind == "buy" and s.source != "teams"))
 
     @property
@@ -807,6 +835,7 @@ def cash_plan(
     trades: Sequence[PlannedTrade] = (),
     floor: int | None = None,
     venue_floor_rule: bool = True,
+    ends: int = GAME_ENDS,
 ) -> Scenario:
     """Walk the game hours from `start_hour`: grants and planned sells in, the venue (bond + fee) out, W4's
     trades (tried every hour until they fit), W3's ladder slots (a slot that names a card buys it from its
@@ -821,9 +850,19 @@ def cash_plan(
     held_why: dict[str, str] = {}
     steps: list[Step] = []
     pending = list(wants)
+    bought: set[int] = set()  # id() of the wants bought so far
+    slots_waiting = [s for s in ladder if s.hour >= start_hour]  # earlier slots are history (the feed has them)
+    slot_why: dict[int, str] = {}
+
+    def waits_for(w: Want) -> list[str]:
+        """The card that completes a page comes last, or it completes nothing: the legs still to buy."""
+        if not w.completes:
+            return []
+        return [x.card.ref for x in pending if x is not w and id(x) not in bought and x.finishing and x.page == w.page]
+
     waiting = list(trades)
     opened = False
-    for hour in range(start_hour, GAME_ENDS):
+    for hour in range(start_hour, ends):
         # until the venue opens, its bond and fee are kept on top of the floor (PR #71 refuses the opening
         # when they would take cash below the floor)
         reserve_venue = venue_floor_rule and venue_hour is not None and not opened
@@ -861,28 +900,39 @@ def cash_plan(
             steps.append(
                 Step(hour, "trade", item, t.counterparty, t.cash_out - t.cash_in, None, cash, note, t.expected)
             )
-        for slot in (s for s in ladder if s.hour == hour):
+        slots_now = [s for s in slots_waiting if s.hour <= hour]  # a slot that did not fit waits for cash
+        for slot in slots_now:
             if slot.ref and slot.ref in taken:
+                slots_waiting.remove(slot)
                 note = f"duplicate: the trade plan already buys {slot.ref} from a team"
                 steps.append(Step(hour, "held", f"ladder {slot.ref}", slot.dealer, 0, slot.reserve, cash, note))
                 continue
             if slot.ref:  # the plan names the card: it is bought from the slot's dealer, whatever our list picked
                 match = next((w for w in pending if w.card.ref == slot.ref), None)
+                if match is not None and waits_for(match):
+                    slot_why[id(slot)] = f"waits for the page's other legs: {', '.join(waits_for(match))}"
+                    continue
                 price = slot.expected
             else:
                 match = next(
-                    (w for w in pending if w.source.source == slot.dealer and w.price_class == slot.price_class), None
+                    (
+                        w
+                        for w in pending
+                        if w.source.source == slot.dealer and w.price_class == slot.price_class and not waits_for(w)
+                    ),
+                    None,
                 )
                 price = match.source.price if match else slot.expected
             why = _blocker(cash, price, floor, spent, rules)
             if why:
-                item = f"ladder {slot.ref or slot.price_class}"
-                steps.append(Step(hour, "held", item, slot.dealer, 0, slot.reserve, cash, why))
+                slot_why[id(slot)] = why
                 continue
+            slots_waiting.remove(slot)
             cash -= price
             spent += price
             if match is not None:
                 pending.remove(match)
+                bought.add(id(match))
             if match is not None and match.source.source == slot.dealer:
                 steps.append(_buy_step(hour, match, price, cash, f"ladder slot {slot.price_class}"))
                 continue
@@ -894,20 +944,16 @@ def cash_plan(
                 note = f"W3 slot ({kind}): expected {slot.expected:g}, max {slot.reserve}"
             steps.append(Step(hour, "ladder", what, slot.dealer, price, slot.reserve, cash, note))
         still: list[Want] = []
-        done: list[Want] = []
         for w in pending:
             if w.slot_only:
                 still.append(w)
                 continue
             price = w.source.price
-            if w.completes:  # the card that completes the page comes last, or it completes nothing
-                before = [
-                    x.card.ref for x in pending if x is not w and x not in done and x.finishing and x.page == w.page
-                ]
-                if before:
-                    still.append(w)
-                    held_why[w.card.ref] = f"waits for the page's other legs: {', '.join(before)}"
-                    continue
+            before = waits_for(w)
+            if before:
+                still.append(w)
+                held_why[w.card.ref] = f"waits for the page's other legs: {', '.join(before)}"
+                continue
             # a team leg of a page we finish waits until the page's other team legs fit as well: a lone rare
             # bought without the card that completes the page earns its book value, not the bonus
             reserve = 0.0
@@ -915,7 +961,11 @@ def cash_plan(
                 reserve = sum(
                     x.source.price
                     for x in pending
-                    if x is not w and x not in done and x.finishing and x.page == w.page and x.source.channel == "trade"
+                    if x is not w
+                    and id(x) not in bought
+                    and x.finishing
+                    and x.page == w.page
+                    and x.source.channel == "trade"
                 )
             why = _blocker(cash, price, floor, spent, rules, reserve)
             if why:
@@ -924,16 +974,21 @@ def cash_plan(
                 continue
             cash -= price
             spent += price
-            done.append(w)
+            bought.add(id(w))
             steps.append(_buy_step(hour, w, price, cash, "own conversation" if w.source.channel == "ladder" else "bid"))
         pending = still
+    for slot in slots_waiting:
+        why = slot_why.get(id(slot), "never fitted an hour")
+        steps.append(
+            Step(ends, "held", f"ladder {slot.ref or slot.price_class}", slot.dealer, 0, slot.reserve, cash, why)
+        )
     for t in waiting:
         why = _blocker(cash, t.cash_out, base, 0.0, rules) or "never fitted an hour"
         item = f"trade {'+'.join(t.refs_in) or t.counterparty}"
-        steps.append(Step(GAME_ENDS, "held", item, t.counterparty, 0, None, cash, why))
+        steps.append(Step(ends, "held", item, t.counterparty, 0, None, cash, why))
     for w in pending:
         reason = "no planned ladder deal of its class left" if w.slot_only else held_why.get(w.card.ref, "")
-        steps.append(Step(GAME_ENDS, "held", w.card.ref, w.source.source, 0, w.source.max_price, cash, reason))
+        steps.append(Step(ends, "held", w.card.ref, w.source.source, 0, w.source.max_price, cash, reason))
     return Scenario(name, planned, base, tuple(steps), start_cash)
 
 
@@ -970,40 +1025,38 @@ def scoring_dealers(
     ladder: Sequence[LadderSlot] = (),
     *,
     start_hour: int = 0,
+    until_hour: float = GAME_ENDS,
     taken: Iterable[str] = (),
-    since_tick: int | None = 0,
+    since_tick: int | None = None,
 ) -> dict[str, int]:
-    """dealer -> how many more deals still count among our best three: three minus our deals this round
-    (ticks ≥ `since_tick`; None: none yet, the round has not opened in the feed) and the ladder plan's still
-    to come (from `start_hour`; a slot naming a card the trade plan buys never runs). Earlier rounds' deals
-    do not close a slot: if the ladder restarts each round they are gone, and if it does not, a better deal
-    replaces them (W5: unverified which), so a round's first three good deals always score."""
+    """dealer -> how many more deals still count among our best three: three minus the ladder plan's deals
+    still to come this round (`start_hour` to `until_hour`, the next round's start; a slot naming a card the
+    trade plan buys never runs) and, with
+    `since_tick`, our deals from that tick on. By default past deals close no slot: a planned deal sits
+    near the dealer's floor (W3: share ≥ 0.94), so it replaces a weaker one among our best three (Friday's
+    mean was 0.73) whether or not the ladder restarts each round (W5: unverified)."""
     skip = set(taken)
     ours: Counter[str] = Counter()
     for p in intel.tape(events):
         if since_tick is not None and p.tick >= since_tick and p.persona and us in (p.buyer, p.seller):
             ours[p.persona] += 1
     for slot in ladder:
-        if slot.hour >= start_hour and not (slot.ref and slot.ref in skip):
+        if start_hour <= slot.hour < until_hour and not (slot.ref and slot.ref in skip):
             ours[slot.dealer] += 1
     return {str(d.get("id")): 3 - ours[str(d.get("id"))] for d in dealers if ours[str(d.get("id"))] < 3}
 
 
-def day_of(hour: float) -> str:
-    """The game day (`day.opened` payload's `day`) a game hour falls in."""
-    return "fri" if hour < SATURDAY_OPENS else "sat" if hour < SUNDAY_OPENS else "sun"
+def rounds_from(schedule: dict[str, Any]) -> list[float]:
+    """Game hours at which an upcoming round starts (`round` actions), from /api/schedule."""
+    body = schedule.get("body", schedule)
+    return sorted(float(i["at_hours"]) for i in body.get("upcoming") or [] if i.get("action") == "round")
 
 
-def round_start_tick(events: Iterable[intel.Event], hour: float) -> int | None:
-    """The tick the feed shows the current day opening at; None when that day has not opened in the feed yet
-    (planning Saturday from Friday's feed)."""
-    day = day_of(hour)
-    ticks = [
-        int(e.get("tick") or 0)
-        for e in events
-        if e.get("type") == "day.opened" and (e.get("payload") or {}).get("day") == day
-    ]
-    return max(ticks) if ticks else None
+def ends_from(schedule: dict[str, Any]) -> int:
+    """The game hour scores freeze (`end_round`), rounded up; GAME_ENDS when the schedule has none."""
+    body = schedule.get("body", schedule)
+    ends = [float(i["at_hours"]) for i in body.get("upcoming") or [] if i.get("action") == "end_round"]
+    return math.ceil(max(ends)) if ends else GAME_ENDS
 
 
 def best_three(slots: Sequence[LadderSlot], keep: int = 3) -> list[LadderSlot]:
@@ -1046,24 +1099,26 @@ def build_plan(
     grants = grants_from(schedule, now_hours)
     body = schedule.get("body", schedule)
     hour_now = now_hours if now_hours is not None else float(body.get("now_hours") or 0)
-    start = max(SATURDAY_OPENS, math.floor(hour_now))
+    start = math.floor(hour_now)
+    ends = ends_from(schedule)
     taken = {ref for t in trades for ref in t.refs_in}
     us = str(me.get("id") or "")
-    since = round_start_tick(events, hour_now)
-    scoring = scoring_dealers(events, us, dealers, ladder, start_hour=start, taken=taken, since_tick=since)
+    next_round = min((r for r in rounds_from(schedule) if r > hour_now), default=float(ends))
+    scoring = scoring_dealers(events, us, dealers, ladder, start_hour=start, until_hour=next_round, taken=taken)
     wants = buy_list(pages, params.min_buy_surplus, skip=taken, scoring=scoring)
     cash = int(me.get("cash") or 0)
     sells = planned_sells(me, m, params, rules, start)
 
     def run(name: str, venue: int | None, **kw: Any) -> Scenario:
-        kw = {"ladder": ladder, "trades": trades, "venue_floor_rule": venue_floor_rule, **kw}
+        kw = {"ladder": ladder, "trades": trades, "venue_floor_rule": venue_floor_rule, "ends": ends, **kw}
         return cash_plan(name, cash, start, grants, wants, rules, venue_hour=venue, **kw)
 
     venues = [(f"venue at open (h{start})", start)]
-    if start < venue_later < GAME_ENDS:  # a later hour that is still to come
+    if start < venue_later < ends:  # a later hour that is still to come
         venues.append((f"venue at h{venue_later}", venue_later))
-    if venue_later < SUNDAY_OPENS and start < SUNDAY_OPENS:
-        venues.append((f"venue Sunday (h{SUNDAY_OPENS})", SUNDAY_OPENS))
+    last_round = max((math.ceil(r) for r in rounds_from(schedule) if r > max(start, venue_later)), default=None)
+    if last_round is not None and last_round < ends:  # the last round's start (Sunday's, on Friday's schedule)
+        venues.append((f"venue at the last round (h{last_round})", last_round))
     scenarios = [run(n, v) for n, v in venues] + [run("no venue", None)]
     if venue_floor_rule:  # the same opening without #71's floor check: the floor then blocks buys instead
         scenarios.append(run(f"venue at open (h{start}) · without #71's floor rule", start, venue_floor_rule=False))
@@ -1079,8 +1134,9 @@ def build_plan(
     if what_if_floor is not None:
         scenarios += [run(f"{n} · what-if cash_floor {what_if_floor}", v, floor=what_if_floor) for n, v in venues[:2]]
     notes = []
-    if what_if_caps:
-        caps = ", ".join(f"{d}:{r}={p}" for (d, r), p in what_if_caps.items())
+    unloaded = Caps.of(rules, what_if_caps).unloaded()
+    if unloaded:
+        caps = ", ".join(f"{d}:{r}={p}" for (d, r), p in unloaded.items())
         notes.append(f"what-if dealer caps {caps}: not in GUARDRAILS.md, so a buy at these prices is still refused")
     packs = unopened_packs(me)
     if packs:
@@ -1145,7 +1201,7 @@ def plan_dict(plan: PagePlan) -> dict[str, Any]:
                 "floor": s.floor,
                 "bought": list(s.bought),
                 "held": list(s.held),
-                "ladder_deals": s.ladder_deals,
+                "dealer_deals": s.dealer_deals,
                 "ladder_held": s.ladder_held,
                 "ladder_duplicates": s.ladder_duplicates,
                 "trade_surplus": round(s.trade_surplus, 1),

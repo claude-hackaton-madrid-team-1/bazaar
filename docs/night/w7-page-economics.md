@@ -12,8 +12,8 @@ Night of 3 Oct 2026. Draft PR #87, base `main`. Nothing touched the live game.
 |---|---|
 | Is finishing a page worth it, for score? | **No, not under today's caps.** All 7 missing rares fail at `max_price_rare` 80. Chato fills at 82–93. The team holders' reservations are 94–106 (book × W4's expected multiplier). |
 | Which page, if the caps move? | **LAV.** It is 7/10 and needs LAV-08 plus two rares. With a Chato rare cap of 93 (W3's `dealer_price_caps` line), the page costs about 204 P for +370 P of private value (+106 of it the bonus). That value scores nothing by itself. `--what-if-caps chato:rare=93` gives the timing under floor 270 with no venue: W4's plan takes LAV-08, LAV-09 comes from Chato on Saturday, LAV-10 on Sunday (the cash floor), and Saturday's spend is 225 P. |
-| Cash at Saturday 09:03 | 353 + 150 grant = **503 P**. The 150 P grant and the pack are verified in the `/api/schedule` fixture; Sunday adds another 150 P. With `cash_floor` 270, **233 P can be spent**. |
-| Venue Saturday morning | **Refused by our own guardrails.** PR #71's check makes the venue need bond + fee + floor = 540 P, and we have 503. |
+| Cash on Saturday | **353 P at 09:00, 503 P once the grant lands.** The 150 P grant and the pack are in the `/api/schedule` fixture at game hour 4.05, and Sunday's 150 P at 18.05. Game hours only run while the clock ticks: Friday froze at h2.65 (b6). So the grant lands at 09:03 if the organisers jump the clock to h4, or ~10:24 if it resumes. With `cash_floor` 270, **83 P can be spent before the grant and 233 P after it**. |
+| Venue Saturday morning | **Refused by our own guardrails.** PR #71's check (unmerged) makes the venue need bond + fee + floor = 540 P, and we have 503 at best (353 before the grant). |
 | What the 233 P should buy | W4's 7 trades (82 P, expected +80 P of trade surplus), then W3's three best Abuela deals on page cards W4 doesn't buy (~54 P). Hold the rest (~88 P Saturday, ~238 P by Sunday) for decision B (see the decisions section). |
 
 ## 1. How page value scores
@@ -52,15 +52,23 @@ The walk goes hour by hour and respects:
 - W3's ladder slots (a slot that names a card W4 already buys is flagged as a duplicate);
 - W4's trades, whose cash is committed at the open.
 
-| scenario (floor 270 unless stated; venue rows apply PR #71's rule, unmerged, unless stated) | venue | ladder deals | W4 trades placed | trade surplus | Saturday spend | end cash |
+Scenarios are for the clock jumping to h4 at 09:00; the h2.65 case follows the table.
+
+| scenario (floor 270 unless stated; venue rows apply PR #71's rule, unmerged, unless stated) | venue | W4's 7 trades | W3's 3 best Abuela deals | trade surplus | Saturday spend | end cash |
 |---|---|---|---|---|---|---|
-| no venue | – | 3 | 7 on Sat | **+82 P** | 144 | 510 |
-| venue at the open (h4) | **refused** (503 < 540) | 3 | 7 on Sat | +82 P | 144 | 510 |
-| venue at h9 (14:00) | **refused**: the 540 P reserve freezes the morning | 0 (all held) | 7, after 14:00 | +82 P | 90 | 563 |
-| venue Sunday (h18) | opens (653 ≥ 540) | 0 (all held) | 7 on Sunday | +82 P | 0 | 293 |
-| venue at the open, **without #71's floor rule** | opens (503 − 270 = 233) | 0 | 7 on Sunday | +82 P | 270 | 293 |
-| venue at the open + planned sells (LAT-09 and 2 more, +93 P) | opens | 0 | 4 Sat, 3 Sun | +82 P | 325 | 386 |
-| venue at the open, **what-if `cash_floor` 0** | opens | 3 | 7 on Sat | +82 P | 414 | 240 |
+| no venue | – | h4 | h4 | **+82 P** | 144 | 510 |
+| venue at the open (h4) | **refused** (503 < 540) | h4 | h4 | +82 P | 144 | 510 |
+| venue at h9 (14:00) | **refused** at h9; holding 540 P for it freezes everything until then | h9 | h9 | +82 P | 144 | 510 |
+| venue at the last round (h18) | opens (653 ≥ 540); nothing else on Saturday | h18 | 2 at h18 | +80 P | 0 | 271 |
+| venue at the open, **without #71's floor rule** | opens (233 left); the floor then blocks every buy until Sunday | h18 | 2 at h18 | +80 P | 270 | 271 |
+| venue at the open + planned sells (LAT-09 and 2 more, +93 P) | opens (596 ≥ 540) | 4 at h4, 3 at h18 | h18 | +82 P | 325 | 333 |
+| venue at the open, **what-if `cash_floor` 0** | opens | h4 | h4 | +82 P | 414 | 240 |
+
+**If the clock resumes (09:00 = h2.65):**
+- **No venue:** W4's trades fit at the open (82 of the 83 P), and W3's three Abuela deals wait for the grant at h4. Same 510 at the end.
+- **Venue at the open:** refused (353 < 540; with the sells, 446).
+- **Market Test:** the first one is the h3 session that never fired Friday, about 09:21.
+- **Command:** `bazaar plan pages --now-hours <t_hours from GET /api/clock>` gives the right column.
 
 W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-07 and MAL-08**. Five of W3's eight Abuela slots are duplicates. W7's call is that W4 keeps them, because a team buy scores and a fourth Abuela deal does not.
 
@@ -76,10 +84,10 @@ W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-0
 
 ## 5. Saturday 09:00 steps (within 1 accept per tick, 12 listings, 6 conversations, Abuela 8 deals an hour, 150 P an hour)
 1. **Open** the welcome pack (asset 425) and the pack in the grant. Opening is free and luck does not score. The welcome pack's rare slot gives a LAV rare with p ≈ 0.4 × 2/10. Then re-run `bazaar plan pages`.
-2. **Post W4's plan:** 4 bids and 3 thread swaps, 82 P committed, every counterparty under 25 %.
-3. **Run W3's best three Abuela deals** on SAL-02 (C), SAL-07 (U) and MAL-06 (U): about 54 P at 21→25 / 8→12. Drop W3's other slots; they score nothing.
+2. **Post W4's plan:** 4 bids and 3 thread swaps, 82 P committed, every counterparty under 25 %. It fits the 83 P above the floor before the grant.
+3. **Once the grant lands** (09:03, or ~10:24 if the clock resumes at h2.65), **run W3's best three Abuela deals** on SAL-02 (C), SAL-07 (U) and MAL-06 (U): about 54 P at 21→25 / 8→12. Drop W3's other slots; they score nothing.
 4. **Take t06's MAL-04 ask** #2633 (7 P + fee 2, +2 P), if it is still open.
-5. **Hold about 88 P.** Re-plan after the h5 Market Test (10:00): if `/me` shows `bench_points` > 0 with no venue, the free stall scores for us, and the venue is worth ~0.45 a round, so do not lock 270 P in it.
+5. **Hold about 88 P.** Re-plan after the first Market Test (h3 ≈ 09:21 if the clock resumes, h5 = 10:00 if it jumps): if `/me` shows `bench_points` > 0 with no venue, the free stall scores for us, and the venue is worth ~0.45 a round, so do not lock 270 P in it.
 
 ## Decisions for Marius
 A. **`cash_floor` after the venue decision.**
@@ -89,11 +97,12 @@ A. **`cash_floor` after the venue decision.**
 
 B. **Chato** (W3's `dealer_price_caps`). Uncommons at a cap of 31 give the level-2 ladder points for about 87 P. Rares at a cap of 93 cost 181 P for about the same points, plus a completed LAV page (not scored). `bazaar plan pages --what-if-caps chato:rare=93,chato:uncommon=31` plans either one without touching GUARDRAILS.md.
 
-C. **Venue timing.** Decide after the 10:00 Market Test result.
+C. **Venue timing.** Decide after the first Saturday Market Test result.
 
 ## Risks and what is unverified
 - How the server credits the page bonus to trades.
 - Whether the free stall scores for us, and whether the ladder restarts each round (W5).
 - The score weights for trades and the bench.
 - **Data age:** prices, holders and minted counts are Friday's, and RET enters Saturday. Re-run with the live feed at 09:00; every input can also be passed as a file.
+- **Game hours:** game hours are not wall hours (b6). The plan uses the schedule's game hours, and W3's slots move with the real opening hour.
 - **Team prices are models, not fills:** reservations come from book × multiplier and what the holder paid.

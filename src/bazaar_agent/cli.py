@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -1234,7 +1235,9 @@ def plan_pages(
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             _fail(f"{path} is not {what}: {type(e).__name__} {e}")
 
-    ladder = parsed(ladder_file, "a W3 ladder plan (schedule rows)", pg.ladder_slots_from, [])
+    schedule_hours = float((schedule.get("body", schedule) or {}).get("now_hours") or 0)
+    open_hour = math.floor(now_hours if now_hours is not None else schedule_hours)
+    ladder = parsed(ladder_file, "a W3 ladder plan (schedule rows)", lambda p: pg.ladder_slots_from(p, open_hour), [])
     trades = parsed(trades_file, "a W4 trade plan (listings, threads)", pg.trades_from, [])
     chasers, expected = parsed(affinity_file, "a W4 affinity map", pg.from_affinity_map, (None, None))
     if chasers_file:

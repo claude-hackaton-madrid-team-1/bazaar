@@ -93,6 +93,9 @@ SCHEDULE = {
         {"action": "grant_all", "at_hours": 4.05, "note": "Saturday", "params": {"cash": 150, "packs": ["x"]}},
         {"action": "grant_all", "at_hours": 18.05, "note": "Sunday", "params": {"cash": 150}},
         {"action": "grant_all", "at_hours": 0.2, "note": "past", "params": {"cash": 999}},
+        {"action": "round", "at_hours": 4.0, "params": {"name": "Saturday"}},
+        {"action": "round", "at_hours": 18.0, "params": {"name": "Sunday"}},
+        {"action": "end_round", "at_hours": 24.0, "params": {}},
     ],
 }
 
@@ -258,7 +261,7 @@ def test_a_ladder_slot_buys_the_page_card_it_fits_and_otherwise_spends_as_planne
     wants = [want("LAV-06", "abuela", 23, channel="ladder", rarity="uncommon")]
     s = pages.cash_plan("l", 400, 4, [], wants, RULES, ladder=slots)
     assert [(x.kind, x.item, x.amount) for x in s.steps] == [("buy", "LAV-06", 23), ("ladder", "card:common", 9)]
-    assert s.ladder_deals == 2
+    assert s.dealer_deals == 2
     assert "ladder slot card:uncommon" in s.steps[0].note
 
 
@@ -285,7 +288,7 @@ def test_a_page_leg_waits_until_the_card_that_completes_the_page_fits_too():
 def test_the_plan_runs_every_scenario_and_says_to_open_packs_first():
     plan = pages.build_plan(ME, CATALOG, EVENTS, DEALERS, SCHEDULE, PARAMS, RULES, now_hours=4.0, what_if_floor=0)
     names = [s.name for s in plan.scenarios]
-    assert names[:4] == ["venue at open (h4)", "venue at h9", "venue Sunday (h18)", "no venue"]
+    assert names[:4] == ["venue at open (h4)", "venue at h9", "venue at the last round (h18)", "no venue"]
     assert "venue at open (h4) · what-if cash_floor 0" in names
     assert plan.notes[0].startswith("open first (sobre_bienvenida)")
     data = pages.plan_dict(plan)
@@ -373,7 +376,7 @@ def test_a_dealer_still_inside_our_best_three_scores_and_each_pick_uses_one_of_i
     wants = pages.buy_list([page], 2, scoring={"chato": 2})
     assert sorted(w.source.source for w in wants) == ["chato", "chato", "teams"]  # the third deal would not score
     assert wants[-1].completes and wants[-1].source.source == "teams"  # the team leg completes the page
-    assert pages.scoring_dealers(EVENTS, "t10", DEALERS) == {"abuela": 3, "chato": 2}  # t10 dealt once with chato
+    assert pages.scoring_dealers(EVENTS, "t10", DEALERS, since_tick=0) == {"abuela": 3, "chato": 2}  # t10 + chato once
 
 
 def test_w4_affinity_map_gives_chasers_and_each_holders_expected_multiplier():
@@ -408,7 +411,7 @@ def test_a_ladder_slot_naming_a_card_the_trade_plan_buys_is_a_duplicate_and_spen
         ("ladder", "LAV-09", 70),  # the slot buys it from the dealer, so the team buy is dropped
     ]
     assert s.steps[1].note == "duplicate: the trade plan already buys LAV-06 from a team"
-    assert (s.ladder_deals, s.ladder_held, s.ladder_duplicates) == (1, 0, 1)
+    assert (s.dealer_deals, s.ladder_held, s.ladder_duplicates) == (1, 0, 1)
     assert (
         pages.ladder_slots_from(
             {
@@ -451,7 +454,7 @@ def test_a_later_venue_hour_already_past_is_not_planned():
     plan = pages.build_plan(ME, CATALOG, EVENTS, DEALERS, SCHEDULE, PARAMS, RULES, now_hours=12.0, venue_later=9)
     assert [s.name for s in plan.scenarios if s.venue_hour is not None][:2] == [
         "venue at open (h12)",
-        "venue Sunday (h18)",
+        "venue at the last round (h18)",
     ]
 
 
@@ -514,23 +517,24 @@ def test_plan_files_from_other_tools_are_checked_at_the_cli(tmp_path, monkeypatc
         pages.multipliers_from({"t07": {"LAV": None}})
 
 
-def test_only_this_rounds_deals_close_a_best_three_slot():
+def test_past_deals_close_no_slot_by_default_and_planned_slots_count_only_until_the_next_round():
     friday = [
-        {"id": 1, "tick": 0, "type": "day.opened", "payload": {"day": "fri"}},
         settle(2, 1, "abuela", "t01", "LAV-06", 22, tick=5, kind="card"),
         settle(3, 2, "abuela", "t01", "LAV-01", 9, tick=6, kind="card"),
         settle(4, 3, "abuela", "t01", "LAV-01", 9, tick=7, kind="card"),
     ]
-    assert pages.round_start_tick(friday, 2.0) == 0
-    assert pages.round_start_tick(friday, 4.0) is None  # Saturday has not opened in Friday's feed
+    # a planned deal near the floor replaces a weaker one among our best three: Friday's do not close a slot
+    assert pages.scoring_dealers(friday, "t01", DEALERS) == {"abuela": 3, "chato": 3}
     assert pages.scoring_dealers(friday, "t01", DEALERS, since_tick=0) == {"chato": 3}
-    assert pages.scoring_dealers(friday, "t01", DEALERS, since_tick=None) == {"abuela": 3, "chato": 3}
-    saturday = [*friday, {"id": 5, "tick": 240, "type": "day.opened", "payload": {"day": "sat"}}]
-    saturday.append(settle(6, 4, "abuela", "t01", "LAV-06", 21, tick=241, kind="card"))
-    assert pages.scoring_dealers(saturday, "t01", DEALERS, since_tick=pages.round_start_tick(saturday, 5)) == {
-        "abuela": 2,
-        "chato": 3,
-    }
+    slots = [pages.LadderSlot(h, "abuela", "card:common", 9, 12) for h in (4, 5, 18, 19)]
+    assert pages.scoring_dealers([], "t01", DEALERS, slots, start_hour=4, until_hour=18.0) == {"abuela": 1, "chato": 3}
+
+
+def test_w3_slots_move_with_the_real_opening_hour():
+    row = {"game_hour": 4, "dealer": "abuela", "price_class": "card:common", "plan": {"max": 12}, "expected": {}}
+    plan = {"window": {"t_start": 4.0}, "schedule": [row]}
+    assert pages.ladder_slots_from(plan)[0].hour == 4
+    assert pages.ladder_slots_from(plan, open_hour=2)[0].hour == 2  # the clock resumed at h2.65
 
 
 def test_without_71s_rule_the_venue_opens_and_the_floor_then_blocks_the_buys():
@@ -540,27 +544,35 @@ def test_without_71s_rule_the_venue_opens_and_the_floor_then_blocks_the_buys():
     assert s.steps[-1].note == "cash 233 − 75 < floor 270"
 
 
-def test_a_what_if_or_w3s_dealer_cap_unblocks_only_that_dealer():
+def test_a_what_if_or_w3s_dealer_cap_unblocks_only_that_dealer_and_says_which_rule():
     assert pages.parse_caps("chato:rare=93, chato:uncommon=31") == {("chato", "rare"): 93, ("chato", "uncommon"): 31}
-    with pytest.raises(ValueError, match="dealer:rarity=price"):
-        pages.parse_caps("chato=93")
-    assert pages.dealer_cap(RULES, "rare", "chato") == 80
-    assert pages.dealer_cap(RULES, "rare", "chato", {("chato", "rare"): 93}) == 93
-    assert pages.dealer_cap(RULES, "rare", "abuela", {("chato", "rare"): 93}) == 80
+    for bad in ("chato=93", "chato:rares=93", "Chato:rare=93", "chato: =93", "chato:rare=0"):
+        with pytest.raises(ValueError, match="dealer:rarity=price"):
+            pages.parse_caps(bad)
+    caps = pages.Caps.of(RULES, {("chato", "rare"): 93})
+    assert caps.cap("rare", "chato") == (93, "what-if chato:rare")
+    assert caps.cap("rare", "abuela") == (80, "max_price_rare")
+    assert caps.unloaded() == {("chato", "rare"): 93}
 
     class W3Rules(Guardrails):  # #81's guardrails expose `dealer_caps`
         @property
         def dealer_caps(self):
-            return {("chato", "rare"): 90}
+            return {("chato", "rare"): 93}
 
-    assert pages.dealer_cap(W3Rules(), "rare", "chato") == 90
+    w3 = pages.Caps.of(W3Rules(), {("chato", "rare"): 93})
+    assert w3.cap("rare", "chato") == (93, "what-if chato:rare") and w3.unloaded() == {}  # GUARDRAILS.md holds it
+    assert pages.Caps.of(W3Rules()).cap("rare", "chato") == (93, "dealer_price_caps chato:rare")
     page = next(
         p
-        for p in pages.page_economics(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES, what_if={("chato", "rare"): 93})
+        for p in pages.page_economics(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES, what_if={("chato", "rare"): 86})
         if p.set_code == "LAV"
     )
-    assert by_source(missing(page, "LAV-10"), "chato").blocked is None
-    assert by_source(missing(page, "LAV-10"), "teams").blocked == "max_price_rare 80 < team price 112"  # teams: 80
+    lav10 = missing(page, "LAV-10")
+    assert (
+        by_source(lav10, "chato").blocked
+        == "what-if chato:rare 86 < median chato fill 87.5: fills only at its luckiest"
+    )
+    assert by_source(lav10, "teams").blocked == "max_price_rare 80 < team price 112"  # teams keep max_price_rare
 
 
 def test_the_card_that_completes_a_page_waits_for_the_other_legs_or_it_completes_nothing():
@@ -571,3 +583,24 @@ def test_the_card_that_completes_a_page_waits_for_the_other_legs_or_it_completes
     s = pages.cash_plan("p", 1000, 4, [], legs, RULES)
     assert s.bought == () and s.trade_surplus == 0
     assert s.steps[-1].note == "waits for the page's other legs: LAV-09"
+
+
+def test_a_ladder_slot_never_buys_the_completing_card_before_the_other_legs():
+    legs = [
+        want("LAV-09", "chato", 200, channel="ladder", finishing=True),  # above the hour cap: never fits
+        want("LAV-10", "abuela", 70, channel="ladder", finishing=True, completes=True, page_bonus=70),
+    ]
+    named = pages.LadderSlot(4, "abuela", "card:rare", 70, 77, "LAV-10")
+    s = pages.cash_plan("s", 1000, 4, [], legs, RULES, ladder=[named])
+    assert s.steps[0].kind == "held" and s.steps[0].note == "waits for the page's other legs: LAV-09"
+    by_class = pages.LadderSlot(4, "abuela", "card:rare", 70, 77)
+    s = pages.cash_plan("s", 1000, 4, [], legs, RULES, ladder=[by_class])
+    assert s.bought == () and s.steps[0].note.startswith("W3 slot (no page card fits it)")
+
+
+def test_a_ladder_slot_that_does_not_fit_waits_for_the_grant():
+    slot = pages.LadderSlot(2, "abuela", "card:uncommon", 22, 25)
+    s = pages.cash_plan("w", 280, 2, [pages.Grant(4.05, 150, "Saturday")], [], RULES, ladder=[slot])
+    assert [(x.hour, x.kind) for x in s.steps] == [(4, "grant"), (4, "ladder")]  # 280 − 22 < 270 until then
+    early = pages.LadderSlot(1, "abuela", "card:common", 9, 12)  # before the plan starts: history
+    assert pages.cash_plan("w", 600, 2, [], [], RULES, ladder=[early]).steps == ()
