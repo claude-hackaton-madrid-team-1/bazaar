@@ -418,6 +418,24 @@ per PR (his history carried our private numbers), authored by him; the fixes fol
   `market.parse_offer` too (P1) · the sell path re-reads the kill switch after the duel-grace wait (P1) · the
   `taker.py` import conflict (P1) · `accept_bids` stays off. · **Acceptance:** as above.
 
+### SP1 — Speed: every agent inside Sunday's 15 s tick ([spec](SP1-spec.md))
+Files: `scripts/tick_profile.py`, `src/bazaar_agent/agents/{jev_cache,runtime,taker}.py`, `src/bazaar_agent/pack_gate.py`,
+`src/bazaar_agent/guardrails.py`, `GUARDRAILS.md`, `tests/test_speed.py`.
+- Step 1 — Profiler: run one agent against a local simulator with per-tick and per-request JSONL; `report`
+  aggregates wall p50/p95/max, over-budget and dropped ticks, stages and the key's busiest second.
+  · **Acceptance:** report pasted for taker + maker + duels at 15 s ticks.
+- Step 2 — Measure on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) at 0, 100 and
+  250 ms per request. · **Acceptance:** numbers in the PR body; hot spots named.
+- Step 3 — Jev answer cache (`jev_cache_ticks`): the taker's offer Jev and the pack gate reuse an answer for an
+  unchanged state. · **Acceptance:** `tests/test_speed.py` identical decisions, fewer calls.
+- Step 4 — Concurrent reads (`parallel_reads`): snapshot + open threads, venue boards, dealer threads.
+  · **Acceptance:** identical writes with the rule off and on; reads in flight together (barrier test).
+- Step 5 — Re-measure the scratch merge with the fixes; request budget across the three agents under 5 req/s.
+  · **Acceptance:** before/after table in the PR body.
+- Step 6 — Rebase onto main as the Sunday PRs land (#105 /me snapshot first in the keyed lane, #91, #108, #72 kill
+  switch, #145, #89, #148, #96 lessons behind the cache, #112, #150, #162 ledger, #111); re-run the gate.
+  · **Acceptance:** gate green on the rebased branch (done Sat 07:10).
+
 ---
 
 ### N15 — Jev picks the desk's model per request
