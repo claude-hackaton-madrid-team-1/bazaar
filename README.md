@@ -884,6 +884,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
 | [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
 | [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | `ogarciarevett/sim-merge-gate` |
 | [#73](../../pull/73) | fix: no OFF services on Railway (monitor + evals removed); BAZAAR_LIVE kept; docs say taker/maker are LIVE | `ogarciarevett/fix-railway-live-monitor` |
