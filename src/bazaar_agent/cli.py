@@ -182,7 +182,7 @@ def teams(
     console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
 
 
-def _json_file(path: str) -> Any:
+def _payload_file(path: str) -> Any:
     """A captured payload: a bare body, a fixture (`{"body": ...}`) or a feed event (`{"payload": ...}`)."""
     from pathlib import Path
 
@@ -233,8 +233,8 @@ def affinity(
 
     from bazaar_agent import affinity as af
 
-    me = _json_file(me_file) if me_file else _team_me()[1]
-    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
     events = _history(events_file, live)
     us = str(me.get("id") or "") or None
     amap = af.affinity_map(
@@ -276,10 +276,10 @@ def trade_plan(
     from bazaar_agent import trade_desk as td
     from bazaar_agent.agents.market import venues_from
 
-    me = _json_file(me_file) if me_file else _team_me()[1]
+    me = _payload_file(me_file) if me_file else _team_me()[1]
     public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _json_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_json_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
     where = next((v for v in venues if v.id == venue), None)
     if where is None:
         _fail(f"venue {venue!r} is not in /api/venues")
