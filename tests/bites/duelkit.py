@@ -136,7 +136,9 @@ def patch_cli(monkeypatch, tmp_path, server, rules=None, words=None):
         raise psycopg.OperationalError("no database in bite tests")
 
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(
+        cli, "load_settings", lambda: Settings(data_dir=tmp_path, bazaar_url="http://127.0.0.1:9")
+    )  # never the real game
     monkeypatch.setattr(cli, "team_client", lambda settings: server)
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
