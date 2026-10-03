@@ -1240,6 +1240,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
+| N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 | [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
@@ -1302,6 +1303,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
 - [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
+- [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
 - [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 - [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 - [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates

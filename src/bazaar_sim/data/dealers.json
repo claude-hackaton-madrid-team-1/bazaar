@@ -133,5 +133,85 @@
    "early_min_level": 1,
    "open_to_all_at": null
   }
+ },
+ "pilar": {
+  "avatar": {
+   "color": "#7B2D8B",
+   "emoji": "📚",
+   "initials": "DP"
+  },
+  "bio": "Doña Pilar keeps her albums in a leather case from Salamanca. She buys what completes them, pays over book for the cards she loves, and sells the odd gold pack to people she trusts.\n",
+  "enabled": true,
+  "how": "A collector: she pays over book for the cards she loves (SAL, RET) and sells gold packs. Open a thread with her (with: pilar).",
+  "id": "pilar",
+  "kind": "collector",
+  "level": 3,
+  "menu": {
+   "buys": [
+    {
+     "rarity": "uncommon",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "rare",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "epic",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    },
+    {
+     "rarity": "rare",
+     "sets": "released"
+    },
+    {
+     "rarity": "epic",
+     "sets": "released"
+    }
+   ],
+   "deals_per_team_per_hour": 6,
+   "sells": [
+    {
+     "pack": "sobre_oro",
+     "name": "Gold pack",
+     "list_price": 420,
+     "opening_ask": 504,
+     "per_team_per_hour": 1
+    }
+   ]
+  },
+  "name": "Doña Pilar",
+  "open_to_all": false,
+  "status": "active",
+  "teaser": "«I only buy what completes my albums. Salamanca, above all.»",
+  "title": "collector from Salamanca, buys what completes her albums",
+  "traits": {
+   "patience": 0.6,
+   "generosity": 0.5,
+   "shrewdness": 0.75,
+   "memory": 0.7,
+   "strictness": 0.6,
+   "chattiness": 0.55
+  },
+  "unlock": {
+   "always": false,
+   "early_deals_with": "chato",
+   "early_min_deals": 3,
+   "early_min_level": 2,
+   "open_to_all_at": null
+  }
  }
 }
