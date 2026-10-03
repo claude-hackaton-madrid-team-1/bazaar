@@ -38,6 +38,10 @@ rules_app = typer.Typer(help="Guardrails from GUARDRAILS.md: show them, or check
 app.add_typer(rules_app, name="rules")
 obs_app = typer.Typer(no_args_is_help=True, help="Observability: OpenTelemetry traces in Arize Phoenix")
 app.add_typer(obs_app, name="obs")
+arb_app = typer.Typer(
+    no_args_is_help=True, help="Arbitrage and duplicate buys: the Friday study and a live scan (read-only)"
+)
+app.add_typer(arb_app, name="arb")
 agent_app = typer.Typer(
     no_args_is_help=True,
     help="Autonomous agents: taker and maker every tick; the desk (chat) on the Claude Agent SDK. Dry run by default",
@@ -308,6 +312,94 @@ def trade_plan(
         console.print(f"[red]{check_line}[/red]")
     for line in plan.what_if:
         console.print(f"[yellow]if the cap were on: {line}[/yellow]")
+
+
+@arb_app.command("study")
+def arb_study_cmd(
+    stream: str = typer.Argument(help="Feed events as JSONL (the monitor's stream.jsonl or a feed_events export)"),
+    min_net: int = typer.Option(
+        3, help="Count crossings whose net after both fees is at least this (arb_min_net_spread)"
+    ),
+    min_surplus: float = typer.Option(3.0, help="Count duplicate asks with at least this surplus (dup_min_surplus)"),
+    out: str | None = typer.Option(None, help="Also write the Markdown tables to this file"),
+    me_file: str | None = typer.Option(
+        None,
+        "--me",
+        help="Our /api/me (or an agent.me event): also count duplicates at OUR values (private: console only)",
+    ),
+) -> None:
+    """Replay a captured feed: crossings across and within venues, tape exits, duplicate buys per tier."""
+    from pathlib import Path
+
+    from bazaar_agent import arb_study as st
+
+    events = st.load_events(Path(stream))
+    result = st.study(events, min_net=min_net, min_surplus=min_surplus)
+    text = st.render(result, min_net=min_net, min_surplus=min_surplus)
+    typer.echo(text)
+    if out:
+        Path(out).write_text(text, encoding="utf-8")
+    if me_file:
+        rows = st.spans(events)
+        fees = st.venues_by_tick(events, result.ticks[1])
+        hits = st.private_dups(rows, fees, _json_file(me_file), min_surplus=min_surplus)
+        typer.echo(f"At our values: {len(hits)} duplicate ask(s) with surplus ≥ {min_surplus:g} P")
+        for span, surplus in hits:
+            typer.echo(
+                f"  tick {span.start} {span.offer.ref} ask {span.offer.price} ({span.offer.maker}) {surplus:+g} P"
+            )
+
+
+@arb_app.command("scan")
+def arb_scan(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API (a read)"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    boards_dir: str | None = typer.Option(
+        None, "--boards", help="A folder of <venue>.json board payloads; else each venue's board from the API"
+    ),
+    min_net: int | None = typer.Option(None, help="Least net spread (default: arb_min_net_spread)"),
+    min_surplus: float | None = typer.Option(None, help="Least duplicate surplus (default: dup_min_surplus)"),
+) -> None:
+    """Live crossings and duplicate buys with the net after every fee. Read-only: sends nothing."""
+    from pathlib import Path
+
+    from bazaar_agent import arb
+    from bazaar_agent.agents.market import board_offers, tradable_venues, venues_from
+    from bazaar_agent.strategy import build_market
+
+    rules = _rules().rules
+    public = public_client(load_settings())
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    us = str(me.get("id") or "")
+    catalog = _json_file(catalog_file) if catalog_file else public.catalog()
+    venues = {
+        v.id: v for v in tradable_venues(venues_from(_json_file(venues_file) if venues_file else public.venues()), us)
+    }
+    makers = intel.listed_makers(_history(events_file, live))
+    offers = []
+    for vid in venues:
+        path = Path(boards_dir) / f"{vid}.json" if boards_dir else None
+        if path is not None and not path.is_file():
+            continue
+        try:
+            payload = _json_file(str(path)) if path is not None else public.board(vid)
+        except BazaarError as e:
+            console.print(f"[yellow]board {vid} refused {e.code}; skipped[/yellow]")
+            continue
+        offers += [replace(o, maker=makers.get(o.id, o.maker)) for o in board_offers(payload, vid, us)]
+    ours = {o.id for o in offers if o.maker == us}
+    market = build_market(me, catalog, [], [])
+    net = rules.arb_min_net_spread if min_net is None else min_net
+    surplus = rules.dup_min_surplus if min_surplus is None else min_surplus
+    result = arb.scan(market, venues, offers, ours=ours, min_net=net, min_surplus=surplus)
+    typer.echo(arb.render_scan(result, me.get("tick"), net, surplus))
+    console.print(
+        f"[dim]arb_enabled = {str(rules.arb_enabled).lower()}, dup_buy_enabled = {str(rules.dup_buy_enabled).lower()}: "
+        "this scan only reads; the taker acts only when a switch is on[/dim]"
+    )
 
 
 @app.command()
