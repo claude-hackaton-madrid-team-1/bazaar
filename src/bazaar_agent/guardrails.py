@@ -1,9 +1,13 @@
 """Guardrails: the rules in GUARDRAILS.md, parsed into a typed model and enforced before any write.
 
-Every write path (dealer bids and accepts, duel moves) calls `check()` first. A denied action is
-not sent; the caller turns it into a walk or a hold. An append-only ledger shared by all processes
-counts spend per game hour and accepts per tick: the Postgres `ledger` table when DATABASE_URL is
-reachable (`ledger_pg.open_ledger`, shared across machines), else `.local/ledger.jsonl` (this machine).
+Every write path (dealer bids and accepts, listings, cancels, thread closes, duel moves) calls `check()`
+first. A denied action is not sent; the caller turns it into a walk or a hold. A kill-switch denial
+(`Verdict.halted`) is always a HOLD: nothing is sent, not even a cancel or a close, and open offers and
+threads stay as they are. `kill_switch()` answers "is it on right now?": it re-reads `trading_enabled`
+from GUARDRAILS.md on every call (cached by mtime) and checks the pause file. An append-only ledger
+shared by all processes counts spend per game hour and accepts per tick: the Postgres `ledger` table
+when DATABASE_URL is reachable (`ledger_pg.open_ledger`, shared across machines), else
+`.local/ledger.jsonl` (this machine).
 """
 
 from __future__ import annotations
@@ -70,8 +74,8 @@ class Guardrails(BaseModel):
 
 # Which code enforces each rule: shown by `bazaar rules`, kept honest by a test.
 ENFORCED_BY: dict[str, str] = {
-    "trading_enabled": "guardrails.check",
-    "pause_file": "guardrails.check",
+    "trading_enabled": "guardrails.kill_switch (re-read every tick) + check: hold, never walk",
+    "pause_file": "guardrails.kill_switch + check: hold, never walk",
     "cash_floor": "guardrails.check",
     "max_spend_per_game_hour": "guardrails.check + ledger",
     "max_price_common": "guardrails.check",
@@ -163,6 +167,48 @@ def load_guardrails(path: Path = GUARDRAILS_FILE) -> LoadedRules:
     return parse_guardrails(path.read_text(encoding="utf-8"), path)
 
 
+# ---------------------------------------------------------------- the kill switch (read live)
+
+_SWITCH_CACHE: dict[Path, tuple[tuple[int, int], str | None]] = {}
+
+
+def _file_stop(path: Path) -> str | None:
+    """Why GUARDRAILS.md stops trading right now (None: `trading_enabled` = true). Parsed again only when
+    the file changed (mtime, size). Missing or invalid: every write holds (fail closed) until it is fixed."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return f"{path.name} is missing: holding"
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _SWITCH_CACHE.get(path)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    try:
+        loaded = load_guardrails(path)
+        if "trading_enabled" not in {line.rule_id for line in loaded.lines}:  # empty or truncated mid-save
+            stop: str | None = f"{path.name} has no trading_enabled line: holding"
+        else:
+            stop = None if loaded.rules.trading_enabled else "trading_enabled = false"
+    except (GuardrailsError, OSError, ValueError) as e:  # UnicodeDecodeError is a ValueError
+        stop = f"{path.name} is invalid ({type(e).__name__}: {str(e)[:160]}): holding; see `uv run bazaar rules`"
+    _SWITCH_CACHE[path] = (key, stop)
+    return stop
+
+
+def kill_switch(rules: Guardrails, path: Path | None = None) -> tuple[str, ...]:
+    """Is the kill switch on right now? Every reason it is (empty: trading may go on).
+
+    `trading_enabled` comes from GUARDRAILS.md as it is NOW (`path`, default `GUARDRAILS_FILE`), so an
+    edit takes effect on the next tick without a restart, both ways; the pause file is `rules.pause_file`.
+    While it is on our processes send NOTHING to the game (no bids, accepts, posts, cancels, thread
+    closes or walks); reads continue, and open offers and threads stay exactly as they are.
+    """
+    stops = [stop] if (stop := _file_stop(path or GUARDRAILS_FILE)) else []
+    if (REPO_ROOT / rules.pause_file).exists():
+        stops.append(f"pause file {rules.pause_file} exists")
+    return tuple(stops)
+
+
 # ---------------------------------------------------------------- ledger (shared by processes)
 
 
@@ -243,9 +289,32 @@ class Ledger:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+LedgerRow = tuple[str, int, float, int, str]  # kind, tick, t_hours, price, item: `LedgerStore.record`'s arguments
+
+
+def refund_row(
+    price: int, item: str, created_tick: int | None, tick: int, t_hours: float, max_tick_seconds: float
+) -> LedgerRow:
+    """The ledger row that gives back a withdrawn bid's spend, booked in the game hour it was spent (the
+    bid's `created_tick`): a refund booked at cancel time would outlive its spend inside the one-hour
+    window and let `max_spend_per_game_hour` be spent twice.
+
+    Only the spend's tick is known, and the pace may have changed since (60 s Friday ticks, 30 s on
+    Saturday), so every tick since is taken at the clock's slowest pace (`max_tick_seconds`), plus one tick
+    for the clock's rounded `t_hours`: the refund is never dated after its spend. Dated a little earlier, it
+    leaves the window first, and the hour's spend over-counts for a moment (fail safe). A future created
+    tick counts as now; an unknown one is dated an hour back, outside every window: no refund, fail safe."""
+    if not isinstance(created_tick, int):
+        return ("spend", tick, t_hours - 1.0, -price, item)
+    ticks_ago = max(0, tick - created_tick)
+    return ("spend", tick - ticks_ago, t_hours - (ticks_ago + 1) * max_tick_seconds / 3600, -price, item)
+
+
 # ---------------------------------------------------------------- the check
 
 
+# `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
+# kill switch applies to them.
 ActionKind = Literal[
     "buy",
     "sell",
@@ -255,6 +324,8 @@ ActionKind = Literal[
     "duel_offer",
     "duel_accept",
     "flag",
+    "cancel",
+    "close_thread",
     "venue_open",
     "venue_close",
     "venue_fee",
@@ -277,6 +348,7 @@ class Action:
 class Verdict:
     allowed: bool
     violations: tuple[str, ...] = field(default_factory=tuple)
+    halted: bool = False  # the kill switch is among the reasons: HOLD (send nothing), never walk
 
     def __str__(self) -> str:
         return "allowed" if self.allowed else "denied: " + "; ".join(self.violations)
@@ -293,6 +365,9 @@ class Context:
     paused: bool = False
     packs_last_hour: int = 0
     has_venue: bool = False  # we run a venue we opened (open or closing), from /api/me `venue`
+    # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
+    # falls back to `rules.trading_enabled` and `paused`.
+    stops: tuple[str, ...] | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -346,6 +421,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         paused=(REPO_ROOT / rules.pause_file).exists(),
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
         has_venue=runs_venue(me),
+        stops=kill_switch(rules),
     )
 
 
@@ -356,12 +432,9 @@ def action_kind(kind: str) -> ActionKind:
 
 
 def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
-    """Every rule that the action breaks. Empty → allowed."""
-    v: list[str] = []
-    if not rules.trading_enabled:
-        v.append("trading_enabled = false")
-    if ctx.paused:
-        v.append(f"pause file {rules.pause_file} exists")
+    """Every rule that the action breaks. Empty → allowed. The kill switch comes first and sets `halted`."""
+    v: list[str] = list(halts(ctx, rules))
+    halted = bool(v)
     buying = action.kind in ("buy", "accept_buy", "bid")
     accepting = action.kind in ("accept_buy", "accept_sell", "duel_accept")
     if buying and action.price is not None:
@@ -393,7 +466,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
     v.extend(_venue_violations(action, ctx, rules))
-    return Verdict(not v, tuple(v))
+    return Verdict(not v, tuple(v), halted)
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
@@ -424,3 +497,13 @@ def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[s
         if ctx.t_hours < rules.venue_open_after_game_hours:
             v.append(f"game hour {ctx.t_hours:g} < venue_open_after_game_hours {rules.venue_open_after_game_hours:g}")
     return v
+
+
+def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
+    """The kill-switch reasons in this context: the live read when there is one, else the loaded rules."""
+    if ctx.stops is not None:
+        return ctx.stops
+    stops = [] if rules.trading_enabled else ["trading_enabled = false"]
+    if ctx.paused:
+        stops.append(f"pause file {rules.pause_file} exists")
+    return tuple(stops)

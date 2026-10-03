@@ -419,6 +419,56 @@ browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title o
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
 
+### [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
+The simulator numbers duels and threads from 1 like the game, so sim duel 85 is not our duel 85. A
+simulator run must never write scores onto the real Phoenix traces: with `BAZAAR_SIM`, the agents'
+in-loop evals and `bazaar evals run` keep their outcomes in the simulator's Postgres (no annotation),
+and every trace goes to the `<project>-sim` Phoenix project (telemetry.tracing_config).
+
+### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
+`GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
+`cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)
+`cancelled`, her 681 (7) `settled` — her OPENING ask, so that deal scored nothing on the ladder. The deal
+price is the `settled` offer in the messages (`dealer.settled_price`); `open_commitments` counts one offer
+per thread (the most cash) in case an old bid still reads open mid-thread (not observed live yet).
+
+### [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+`t_hours` is game time played (tick 159 → 2.65 h at 60 s ticks) and the pace changes (60 s Fri, 30 s Sat).
+Back-dating a cancelled bid's refund by `ticks × tick_seconds` after a 60 → 30 s change dated it 5 min
+after its spend (hour's spend read −40). `refund_row` now uses `/api/clock` `max_tick_seconds` (+1 tick
+for the rounded `t_hours`); an unknown created tick books no refund in the window.
+
+### [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+`BAZAAR_SIM=local uv run bazaar agent taker --live` said "ledger: shared Postgres table": the default
+`DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
+real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
+address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.
+
+### [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
+All 1,024 dealer offers in the captured feed have `expires_tick - created_tick = 2` (security audit of #72).
+After a kill-switch hold of 2+ ticks there is no standing ask, and `decide()` bid up to her OPENING ask, which
+she took (a deal that scores nothing). Fix: `Negotiation.bid_cap()` keeps a bid below her opening until she
+came down; with no bid left below it, we walk and reopen lower.
+
+### [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+Fail safe but costly: at 30 s ticks a bid cancelled more than ~30 min after it was posted gets a refund dated
+outside the hour while its spend still counts (at 15 s, after ~15 min), so repriced bids can eat the 150 cap.
+The exact fix is to date the refund at the matching spend row's `t_hours` (a ledger lookup by offer id);
+left for after #62's ledger rewrite lands.
+
+### [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
+Several sessions run `scripts/sim_smoke.py` / `bazaar-sim serve` on this laptop, all on port 8765. If yours
+fails to bind (`[Errno 48] address already in use` in its log), every `BAZAAR_SIM=local` command you run next
+writes to another session's simulator (and can break its smoke). Before any write: check your server's log
+says it is serving, or `lsof -iTCP:8765 -sTCP:LISTEN` shows a process whose cwd is your worktree.
+
+### [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
+Real thread 187 (Chato): ids `1145 t01, 1159 t01, 1153 chato, 1169 chato, 1176 t01, …`, so a slow reply is listed
+AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last must be read by message id
+(`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
+`200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
+as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
 ### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
 On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
 identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the

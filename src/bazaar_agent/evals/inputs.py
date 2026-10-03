@@ -37,11 +37,13 @@ def day_openings(conn: psycopg.Connection) -> list[tuple[int, str]]:
     return [(int(tick), str(day)) for tick, day in rows if tick is not None and day]
 
 
-def dealer_events(conn: psycopg.Connection) -> list[Event]:
+def dealer_events(conn: psycopg.Connection, ours: str) -> list[Event]:
+    """Our dealer threads and our settlements only: every team's history would cost the agent's CPU."""
     rows = _rows(
         conn,
-        "select id, tick, type, actor, payload from feed_events where type = any(%s) order by id",
-        (list(DEALER_EVENT_TYPES),),
+        "select id, tick, type, actor, payload from feed_events where type = any(%s) "
+        "and (payload->>'team' = %s or (type = 'settlement' and payload->'parties' ? %s)) order by id",
+        (list(DEALER_EVENT_TYPES), ours, ours),
     )
     return [{"id": int(i), "tick": t, "type": k, "actor": a, "payload": p or {}} for i, t, k, a, p in rows]
 

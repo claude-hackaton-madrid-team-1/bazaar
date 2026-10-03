@@ -109,9 +109,15 @@ def test_allow_venue_open_false_refuses_every_match_even_live(tmp_path):
     assert all("allow_venue_open = false" in d["guardrail"] for d in decisions)
 
 
-def test_the_kill_switch_and_the_pause_file_block_broker_matches(tmp_path):
+def test_the_kill_switch_and_the_pause_file_block_broker_matches(tmp_path, monkeypatch):
+    from bazaar_agent import guardrails as gr
+
     broker = crossing_book()
-    agent(tmp_path, broker, live=True, allow_venue_open=True, trading_enabled=False).on_tick(clock())
+    stopped = tmp_path / "GUARDRAILS.stopped.md"  # the kill switch is read live from the file, every match
+    stopped.write_text(gr.GUARDRAILS_FILE.read_text().replace("`trading_enabled` = true", "`trading_enabled` = false"))
+    monkeypatch.setattr(gr, "GUARDRAILS_FILE", stopped)
+    agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock())
+    monkeypatch.undo()
     (tmp_path / "PAUSE").touch()
     agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock())
     assert broker.sent == []

@@ -41,7 +41,7 @@ from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.feed import Event
-from bazaar_agent.guardrails import Action, Context, Guardrails, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, check, kill_switch
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import Clock
 
@@ -154,7 +154,12 @@ class BenchSessions:
 def broker_context(rules: Guardrails, clock: Clock) -> Context:
     """A match moves no cash of ours: only the tick and the pause file matter to `check()`."""
     return Context(
-        cash=0, held={}, tick=clock.tick, t_hours=clock.t_hours, paused=(REPO_ROOT / rules.pause_file).exists()
+        cash=0,
+        held={},
+        tick=clock.tick,
+        t_hours=clock.t_hours,
+        paused=(REPO_ROOT / rules.pause_file).exists(),
+        stops=kill_switch(rules),  # GUARDRAILS.md as it is now: an edit stops the next match, no restart
     )
 
 
