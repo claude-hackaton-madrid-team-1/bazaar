@@ -1039,6 +1039,14 @@ class TeamDesk:
                 old = talk.offer_id
                 body = self.rec.send(did, v.tick, "cancel", {"offer": old}, partial(self.team.cancel, old))
                 if body is None:
+                    if self.rec.last_code == "offer_not_open":
+                        # It lapsed or was taken and no read shows it: cancelling it again every tick (36 times
+                        # on Sat 3 Oct, offer 13205 for 241 ticks) never frees the thread. Keep its spend booked
+                        # (it may have settled), read the thread for its end, and free the slot for a new offer.
+                        self._check_later(v, talk.thread_id, self._talk_offer(talk))
+                        talk.offer_id = None
+                        self.log(f"tick {v.tick} team desk: offer {old} is not open: no new offer this tick")
+                        return
                     self.log(f"tick {v.tick} team desk: cancel of offer {old} refused: no new offer this tick")
                     return  # never two standing offers in one thread; the next tick reads what stands
                 self._after_cancel(v, talk.thread_id, self._talk_offer(talk), body)
