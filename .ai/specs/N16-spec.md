@@ -44,9 +44,10 @@ becomes a `tactic` lesson that can switch that tactic off for that counterparty 
    `bluff_enabled` in GUARDRAILS.md (validated by `uv run bazaar rules`). Either off → every message uses
    today's template words.
 4. Learning in the N3 store: each tactic outcome is a `Learning(kind="tactic", source="outcome", team=us)`
-   written through `LearningStore.record()` after the tick's sends, and read back at start and after each
-   flush (another process's lessons count too). N3's recall defaults to lesson/behaviour/policy, so tactic rows
-   never reach Jev or the words context.
+   written through `LearningStore.record()` after the tick's sends, and read back at start and every 5 ticks
+   after the sends (another process's lessons count too). Each process's book has its OWN `LearningStore`
+   (own memory and connection), so tactic rows never trim the feed reader's blockers out of the LiveLearner's
+   memory. N3's recall defaults to lesson/behaviour/policy, so tactic rows never reach Jev or the words context.
 5. Wiring: the taker's dealer bids, `bazaar dealer buy`, and `bazaar duel run --play` offers. Each sent message
    records the tactic id and counterparty in its decision row under private input keys (the public status view
    is an allow-list and does not list them). The accept logic is untouched: an accept that is already good is

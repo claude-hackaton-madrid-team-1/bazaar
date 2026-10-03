@@ -373,3 +373,20 @@ and recall returns only `source = outcome` rows by default. Treat every feed str
 ### [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
 `git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
 `"${B}:src/file.py"` with braces in every shell one-liner.
+
+### [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
+symptom: the duel CLI tests exited 1 with `AttributeError: 'DuelClient' object has no attribute 'me'` → root
+cause: the new bluff book reads our team id once at start and only caught `BazaarError` → fix: `_our_team_id`
+fails open on any error (the tactic lessons then bind no team); a duel loop never waits on it.
+
+### [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+Sim run with tactics on (tick 0-17): Abuela got kindness only and dealt at 7 after 2 bids; El Chato moved one
+per our step ("You moved 1, I move 1") whatever the bluff, and both sim rivals conceded 1 P per tick, so every
+tactic scored "toward" (+1). The sim's dealers read words only for mood (kindness, rudeness, injection). Expect
+the same from real dealers ("their prices come from their own rules"): lying should pay, if anywhere, against
+LLM duel rivals; the no-gain rule switches a tactic off where it earns nothing.
+
+### [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
+BAZAAR_SIM=local has a fixed address, so two workers running `scripts/sim_smoke.py` at once collide
+("address already in use", the second sim exits 3). Wait until `lsof -iTCP:8765 -sTCP:LISTEN` is empty; never
+kill another worktree's simulator.

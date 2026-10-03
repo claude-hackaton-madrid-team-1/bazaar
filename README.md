@@ -572,6 +572,33 @@ uv run bazaar learnings --lessons --save          # ...and upsert + embed them, 
 uv run bazaar learnings --query "open a thread with chato to buy LAV-08; his ask 33" --json
 ```
 
+### Bluffing in the words (N16)
+
+Our agents may lie to win the card and the points, but only in the text. RULES.md: "Words persuade,
+structure binds. Your agent may say anything." The code and `guardrails.check()` decide each move
+(price, days, accept, walk) exactly as before. A tactic then writes the words of a dealer bid or a duel
+offer. It never writes an accept, so an accept is never delayed by a bluff.
+
+- **Tactics** (`agents/tactics.py`, Spanish and English): `budget_cap`, `outside_option`, `low_need`,
+  `walk_threat`, `fake_demand` and `cost_floor` (sells only). Abuela gets kindness only
+  (`kind_gratitude`, `kind_flattery`, `kind_patience`), because RULES.md says "Abuela likes kindness".
+  No template holds a digit. Every number is the structured price or one invented from it, never our
+  limit, max or value. The counterparty's words are never quoted.
+- **Chooser** (`agents/bluff.py`): one deterministic bandit (UCB1) per counterparty: each dealer, duel
+  rival and team. Each tactic is tried once, then the one with the best learned value wins. Ties are
+  broken by a seeded hash, so the simulator and the tests are reproducible.
+- **Learning:** every scored message becomes a `tactic` row in `learnings` (`source = outcome`). The
+  scores: their next price moved toward us +1, held 0, moved away −0.5, deal +1 (+0.5 within 3
+  messages), they walked −1. A cooloff, a strike or a flag on our message scores −10 and turns that
+  tactic off for that counterparty for the rest of the day. Two penalties in a day mute every tactic to
+  it. Three tries with no gain turn a tactic off for the day. N3's recall never returns `tactic` rows,
+  so they never reach Jev or the words context.
+- **Private:** the tactic id and why it was picked go to the decision row under input keys that
+  `/state`, `/events` and `/health` never list.
+- **Kill switches:** `BAZAAR_BLUFF=0` on a service turns its tactics off without a code deploy (the
+  variable is declared `preserve()` in `.railway/railway.py`). `bluff_enabled` = false in GUARDRAILS.md
+  turns them off everywhere at the next deploy. Either one brings back today's words.
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -1011,14 +1038,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
+- [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+- [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
 - [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
 - [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
 - [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
 - [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 - [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
-- [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
-- [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
-- [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
 
 <!-- BAZAAR:STATUS:END -->
 

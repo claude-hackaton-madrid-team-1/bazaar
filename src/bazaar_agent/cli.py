@@ -544,7 +544,8 @@ def duel_run(
         inputs = inputs or {"role": d.get("role"), "our_limit": d.get("your_limit"), "rival_price": rival.get("price")}
         if pick is not None and pick.days is not None:
             inputs = {**inputs, "jev_days": pick.days.as_dict()}
-        tactic = chosen.pop(duel_id(d) or -1, None)
+        row_id = duel_id(d)
+        tactic = chosen.pop(row_id, None) if row_id is not None else None
         if tactic is not None:
             inputs = {**inputs, **tactic.inputs()}  # private keys (N16)
         rec.decide(
@@ -1458,9 +1459,11 @@ def agent_taker(
     from bazaar_agent.agents.taker import Taker, TakerConfig
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        rules = kw["rules"]
-        learner = kw.get("learner")  # its store is the shared `learnings` (BAZAAR_LEARN=0: tactics in memory)
-        bluff = _tactic_book(rules, learner.store if learner is not None else None, None, kw["log"])
+        rules, log = kw["rules"], kw["log"]
+        # Its own store (own memory and connection): thousands of tactic lessons must never trim the feed
+        # reader's blockers out of the LiveLearner's memory, which the taker reads before its sends.
+        shared = kw["ledger"].where.startswith("postgres")
+        bluff = _tactic_book(rules, _learning_store("bazaar-taker-bluff", log) if shared else None, None, log)
         return Taker(
             team,
             public,

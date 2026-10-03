@@ -48,6 +48,8 @@ MUTE_AFTER = 2  # penalties in one day before every tactic to that counterparty 
 EXPLORE = 1.0  # UCB1 exploration weight
 RECENT_TICKS = 5  # a cooloff or strike this soon after a tactic message is blamed on that message
 LOAD_LIMIT = 2000
+LOAD_EVERY = 5  # ticks between reads of the other processes' tactic lessons (our own are in memory at once)
+SEEN_EVENTS_MAX = 20_000  # feed event ids remembered against double counting (the window is 500)
 CONFIDENCE = 0.8
 _SUBJECT = re.compile(SUBJECT_PATTERN)
 _SLUG = re.compile(r"[^A-Za-z0-9_.:\-]+")
@@ -179,6 +181,13 @@ class Arm:
         return None
 
 
+@dataclass
+class _Agg:
+    n: int = 0
+    total: float = 0.0
+    penalties: int = 0
+
+
 def _tie(seed: int, cp: Counterparty, conversation: str, step: int, tactic: str) -> str:
     return hashlib.sha256(f"{seed}|{cp.label}|{conversation}|{step}|{tactic}".encode()).hexdigest()
 
@@ -213,8 +222,12 @@ class TacticBook:
     recent: dict[str, str] = field(default_factory=dict)  # counterparty label -> its latest conversation
     messages: dict[int, tuple[Counterparty, str, str, int]] = field(default_factory=dict)  # our message ids
     unwritten: list[Learning] = field(default_factory=list)
-    _index: dict[str, dict[str, Learning]] = field(default_factory=dict)  # counterparty label -> lessons
+    # running sums, kept as lessons arrive or are replaced, so a choice never rescans the history
+    _per: dict[tuple[str, str], _Agg] = field(default_factory=dict)  # (counterparty label, tactic)
+    _per_day: dict[tuple[str, str, int | None], _Agg] = field(default_factory=dict)  # ... and game day
+    _per_kind: dict[tuple[str, str], _Agg] = field(default_factory=dict)  # (counterparty kind, tactic)
     _seen_events: set[int] = field(default_factory=set)
+    _loaded_tick: int | None = None
     _failed: set[str] = field(default_factory=set)
 
     # ---------------------------------------------------------------- per tick
@@ -230,30 +243,20 @@ class TacticBook:
     # ---------------------------------------------------------------- the choice
 
     def arms(self, cp: Counterparty) -> dict[str, Arm]:
+        """Each tactic's record with this counterparty (only the tactics it has a lesson for)."""
         out: dict[str, Arm] = {}
-        for learning in self._index.get(cp.label, {}).values():
-            scored = _reward(learning)
-            if scored is None:
+        for tactic in BY_ID:
+            every = self._per.get((cp.label, tactic))
+            if every is None or every.n == 0:
                 continue
-            tactic, reward, day, result = scored
-            arm = out.setdefault(tactic, Arm())
-            arm.n, arm.total = arm.n + 1, arm.total + reward
-            if day == self.day:
-                arm.today_n, arm.today_total = arm.today_n + 1, arm.today_total + reward
-                arm.penalties_today += result in PENALTY_RESULTS
+            today = self._per_day.get((cp.label, tactic, self.day)) or _Agg()
+            out[tactic] = Arm(every.n, every.total, today.n, today.total, today.penalties)
         return out
 
     def _prior(self, kind: str, tactic: str) -> float:
         """How this tactic did with every counterparty of the same kind: the order untried tactics are tried in."""
-        n, total = 0, 0.0
-        for label, lessons in self._index.items():
-            if not label.startswith(f"{kind}:"):
-                continue
-            for learning in lessons.values():
-                scored = _reward(learning)
-                if scored is not None and scored[0] == tactic:
-                    n, total = n + 1, total + scored[1]
-        return total / n if n else 0.0
+        agg = self._per_kind.get((kind, tactic))
+        return agg.total / agg.n if agg is not None and agg.n else 0.0
 
     def choose(
         self,
@@ -360,6 +363,8 @@ class TacticBook:
     def events(self, events: Iterable[Mapping[str, Any]], us: str | None, tick: int) -> None:
         """Feed events that punish a tactic: `persona.cooloff` / `persona.strike` for us soon after a tactic
         message to that dealer, and `flag.raised` on one of our tactic messages."""
+        if len(self._seen_events) > SEEN_EVENTS_MAX:  # the newest half is plenty against a 500-event window
+            self._seen_events = set(sorted(self._seen_events)[-SEEN_EVENTS_MAX // 2 :])
         for e in events:
             eid, payload = e.get("id"), e.get("payload")
             if not isinstance(eid, int) or eid in self._seen_events or not isinstance(payload, Mapping):
@@ -443,15 +448,34 @@ class TacticBook:
             self.log(f"bluff: {cp.id} {result} after {tactic}: off for {cp.id} today")
 
     def _add(self, learning: Learning) -> None:
+        """Keep a tactic lesson (a newer version of the same one replaces it) and update the running sums."""
         if _reward(learning) is None:
             return
         key = learning.key()
+        old = self.lessons.get(key)
+        if old is not None:
+            self._count(old, -1)
         self.lessons[key] = learning
-        self._index.setdefault(f"{learning.subject_kind}:{learning.subject}", {})[key] = learning
+        self._count(learning, +1)
         message, d = learning.detail.get("message"), learning.detail
         if isinstance(message, int) and isinstance(d.get("conversation"), str):
             cp = Counterparty(learning.subject_kind, learning.subject)  # type: ignore[arg-type]
             self.messages.setdefault(message, (cp, str(d["tactic"]), str(d["conversation"]), int(d.get("step") or 0)))
+
+    def _count(self, learning: Learning, sign: int) -> None:
+        scored = _reward(learning)
+        if scored is None:
+            return
+        tactic, reward, day, result = scored
+        label = f"{learning.subject_kind}:{learning.subject}"
+        for agg in (
+            self._per.setdefault((label, tactic), _Agg()),
+            self._per_day.setdefault((label, tactic, day), _Agg()),
+            self._per_kind.setdefault((learning.subject_kind, tactic), _Agg()),
+        ):
+            agg.n += sign
+            agg.total += sign * reward
+            agg.penalties += sign * (result in PENALTY_RESULTS)
 
     # ---------------------------------------------------------------- the store (after the sends only)
 
@@ -478,7 +502,9 @@ class TacticBook:
                 written = self.store.record(batch)
             except Exception as e:
                 self._fail("write", e)
-        self.load()
+        if self._loaded_tick is None or not 0 <= self.tick - self._loaded_tick < LOAD_EVERY:
+            self._loaded_tick = self.tick
+            self.load()
         return written
 
     def _fail(self, what: str, error: Exception) -> None:

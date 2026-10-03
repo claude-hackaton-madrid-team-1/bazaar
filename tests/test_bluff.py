@@ -306,3 +306,56 @@ def test_a_broken_store_never_raises_and_tactics_go_on():
     assert b.flush() == 0 and b.load() == 0
     assert any("bluff: write failed" in line for line in lines)
     assert b.choose(CHATO, "buy", "thread:2", 0, 30).tactic is not None
+
+
+def test_running_sums_match_a_full_recount_after_replacements():
+    from bazaar_agent.agents.bluff import PENALTY_RESULTS
+
+    rnd = random.Random(7)
+    b = book(seed=2)
+    for n in range(300):
+        cp = rnd.choice((CHATO, RIVAL, Counterparty.dealer("mercader")))
+        conv = f"thread:{rnd.randint(1, 30)}"
+        side = "sell" if cp is RIVAL and rnd.random() < 0.5 else "buy"
+        c = b.choose(cp, side, conv, rnd.randint(0, 5), rnd.randint(5, 90))
+        b.sent(c, their_price=50, their_offer=n, tick=100 + n)
+        b.observe(conv, their_price=rnd.randint(45, 55), their_offer=n + 10_000, tick=100 + n)
+        if rnd.random() < 0.1:
+            b.ended(conv, status="closed", closed_reason=rnd.choice(("cooloff", "walked", "deal")), tick=100 + n)
+    for (label, tactic), agg in b._per.items():
+        rows = [
+            lr
+            for lr in b.lessons.values()
+            if f"{lr.subject_kind}:{lr.subject}" == label and lr.detail["tactic"] == tactic
+        ]
+        assert agg.n == len(rows) and agg.total == pytest.approx(sum(lr.detail["reward"] for lr in rows))
+        assert agg.penalties == sum(lr.detail["result"] in PENALTY_RESULTS for lr in rows)
+
+
+def test_flush_reads_the_others_lessons_every_few_ticks_only():
+    from bazaar_agent.agents.bluff import LOAD_EVERY
+
+    class Counting(LearningStore):
+        loads = 0
+
+        def recall(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            Counting.loads += 1
+            return super().recall(*args, **kwargs)
+
+    b = book(store=Counting())
+    for tick in range(100, 100 + 2 * LOAD_EVERY):
+        b.begin_tick(tick, 1)
+        b.flush()
+    assert Counting.loads == 2
+    b.begin_tick(50, 1)  # the clock went back (a simulator reset): read again at once
+    b.flush()
+    assert Counting.loads == 3
+
+
+def test_the_seen_events_set_stays_bounded():
+    from bazaar_agent.agents.bluff import SEEN_EVENTS_MAX
+
+    b = book()
+    for start in range(0, SEEN_EVENTS_MAX + 2000, 500):
+        b.events([{"id": i, "type": "offer.listed", "payload": {}} for i in range(start, start + 500)], US, 1)
+    assert len(b._seen_events) <= SEEN_EVENTS_MAX + 500
