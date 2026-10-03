@@ -845,7 +845,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar db load` | Load the captured feed into feed_events, tape and dealer_curves (idempotent). |
 | `uv run bazaar db tables` | Every table with its row count. |
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
-| `uv run bazaar verify` | The morning assumption verifier (B25): every assumption the night's plans rest on, with its read-only |
+| `uv run bazaar verify` | The morning assumption verifier (B25): each assumption's read-only check, PASS / FAIL / UNKNOWN. |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |

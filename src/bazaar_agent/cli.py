@@ -1182,13 +1182,16 @@ def verify(
         str(REPO_ROOT / "tests" / "fixtures" / "api"), "--fixtures", help="A directory of captured API responses"
     ),
     feed_file: str | None = typer.Option(None, "--feed", help="A feed capture (JSONL) for the feed-based checks"),
-    since_tick: int = typer.Option(0, "--since-tick", help="Feed checks look at ticks from here (today's first)"),
+    since_tick: int | None = typer.Option(
+        None, "--since-tick", help="Feed checks look at ticks from here (default: 0, or today's first with --live)"
+    ),
     live: bool = typer.Option(False, "--live", help="Read the live API instead of --fixtures (GETs only)"),
     priority: str = typer.Option("", "--priority", help="Only high | medium | low"),
     as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
 ) -> None:
-    """The morning assumption verifier (B25): every assumption the night's plans rest on, with its read-only
-    check, PASS / FAIL / UNKNOWN and what flips on it. Never writes to the game."""
+    """The morning assumption verifier (B25): each assumption's read-only check, PASS / FAIL / UNKNOWN.
+
+    Every assumption the night's plans rest on, with what flips on it. Never writes to the game."""
     from rich.markup import escape
     from rich.table import Table
 
@@ -1200,7 +1203,7 @@ def verify(
         team = team_client(settings) if settings.bazaar_key else None
         snap = vf.snapshot_live(public_client(settings), team, events, since_tick)
     else:
-        snap = vf.snapshot_from_dir(Path(fixtures), events, since_tick=since_tick)
+        snap = vf.snapshot_from_dir(Path(fixtures), events, since_tick=since_tick or 0)
     checks = [c for c in vf.load_checks() if not priority or c.priority == priority]
     rows = vf.evaluate(checks, snap)
     order = {"high": 0, "medium": 1, "low": 2}

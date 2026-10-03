@@ -888,8 +888,9 @@
  },
  {
   "id": "unlock-excludes-opening-price-deals",
-  "assumption": "A dealer deal struck at the dealer's opening ask is 'not negotiated' (share 0) and does not count toward the level unlock / best-three, and the server counts deals at settlement (deals settling after the hour boundary count in the next hour).",
+  "assumption": "A dealer deal struck at the dealer's opening ask is 'not negotiated' (share 0) and does not count toward the level unlock (RULES.md), and the server counts deals at settlement. Contested: our own count of 4 includes LAV-03, taken at Abuela's first ask of 7 after we bid 6; t15 (3 of 4 buys at her opening) was not let in early.",
   "sources": [
+   "final_b21-levels.md § 2 'Which deals count is unverified' (r1 review of #119, 1317727)",
    "REVIEWS.md:29 (#81 low 3: opening ask = share 0, not counted for unlock)",
    "REVIEWS.md:30 (#81 low 4: server counts at settlement, ticks 115-119 settle next hour)",
    "REVIEWS.md:229 (#81 F3 fixed: top = min(floor+width, opening-1))",
@@ -1624,9 +1625,9 @@
  },
  {
   "id": "unlock-excludes-dealer-sales",
-  "assumption": "Sales to a dealer do not count toward the early unlock (counts equal buy settlements for 6 of the 9 teams that also sold; counting sales matches none), so selling duplicates to Chato will not open L3 early (B3 had left it unverified).",
+  "assumption": "Sales to a dealer do not count toward the early unlock. Unverified and contested: 5 of the 9 teams that also sold to Abuela have a count equal to their buys, but t08's 3 include a sale (and a pack at her opening price) and t16 got in the tick its sale settled, so a sale may count. Whether selling to Chato opens L3 early is open.",
   "sources": [
-   "final_b21-levels.md § 2 'Sales to the dealer do not count'",
+   "final_b21-levels.md § 2 'Which deals count is unverified' (r1 review of #119, 1317727)",
    "final_b3-personas.md § Early unlock evidence ('A sale may count, unverified') and § Decision 2",
    "final_w3-ladder.md § Decision 1 last bullet"
   ],
@@ -1634,8 +1635,8 @@
   "endpoint": "GET /api/feed",
   "field": "events[type=level.unlocked].payload text vs events[type=settlement] by team/dealer/side",
   "when": "at the next level.unlocked event (L3)",
-  "flips": "#93 decision 2 (sell duplicates to Chato for L2 ladder deals and early L3 → ladder deals only); #119 L3 Collector 'dealer sell earns ladder deals but not the L4 unlock'.",
-  "if_unknown": "Count only negotiated buys toward unlocks; sales only for ladder share.",
+  "flips": "#93 decision 2 (sell duplicates to Chato: ladder deals for sure; early L3 only if sales count); #119 L3 Collector (whether `dealer sell` earns the L4 unlock).",
+  "if_unknown": "Count only negotiated buys toward unlocks; never rely on a sale for one.",
   "priority": "medium"
  },
  {
