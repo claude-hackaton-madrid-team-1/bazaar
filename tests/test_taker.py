@@ -431,3 +431,16 @@ def test_an_accept_lost_to_a_network_error_is_still_booked_as_spend(tmp_path):
     t.on_tick(clock())
     assert team.sent == [("accept", 1)]
     assert ledger.spent_since(0) == 12  # it may have landed: the hourly cap counts it (never under-counts)
+
+
+def test_the_desk_learns_her_opening_ask_from_the_messages_even_after_it_lapsed():
+    # Our 6 was answered with her opening 7, which lapsed during a 3-tick hold: no standing offer is left,
+    # only the message. Bidding 7 blind would close at her opening price (pr-reviewer #72 round 2, P1).
+    neg = Negotiation(BidPlan(6, 1, 10), [6])
+    conv = Conversation("abuela", "LAV-03", "common", 16.0, "r", neg, 9, TICK)
+    lapsed = {**dealer_ask(100, 7, item="LAV-03"), "status": "expired"}
+    thread = {"status": "open", "standing_offers": [], "messages": [{"offer": None}, {"offer": lapsed}]}
+    dm = plan_conversation(conv, thread, 14, TICK + 4)
+    assert neg.opening_ask == 7 and dm.move == Move(
+        "walk", reason="she held her opening ask 7: no bid left below it", reopen=True
+    )

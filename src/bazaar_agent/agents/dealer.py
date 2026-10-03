@@ -215,6 +215,16 @@ def offer_cash(offer: dict[str, Any]) -> int | None:
     return whole_primas((offer.get("want") or {}).get("cash")) or whole_primas((offer.get("give") or {}).get("cash"))
 
 
+def see_history(neg: Negotiation, thread: dict[str, Any], dealer: str, item: str | None) -> None:
+    """Note every ask she made in this thread, from its messages, whatever their status now. Her opening
+    ask answers our first bid and lapses 2 ticks later: a hold (or two failed reads) can hide it from the
+    standing offers, and `bid_cap` must still know it. An offer that is not our plain buy is skipped."""
+    for m in thread.get("messages") or []:
+        o = m.get("offer") if isinstance(m, dict) else None
+        if isinstance(o, dict) and o.get("maker") == dealer and offer_terms_problem(o, item) is None:
+            neg.see_ask(offer_cash(o))
+
+
 def latest_dealer_offer(thread: dict[str, Any], dealer: str) -> tuple[int | None, int | None, bool]:
     """(ask, offer id, final) of the dealer's newest open structured offer; no valid price: no ask."""
     o = newest_dealer_offer(thread, dealer)
@@ -442,6 +452,7 @@ def negotiate(
         if problem:
             log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
             ask, offer_id, final = None, None, False
+        see_history(neg, thread, dealer, item)  # her opening ask, even if it lapsed while we held
         move = decide(neg, ask, offer_id, final)
         if advisor is not None and action_budget_s(clock) > 4.0:
             move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id)

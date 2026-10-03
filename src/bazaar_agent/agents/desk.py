@@ -21,6 +21,7 @@ from bazaar_agent.agents.dealer import (
     meet_ask,
     newest_dealer_offer,
     offer_terms_problem,
+    see_history,
     settled_price,
 )
 from bazaar_agent.strategy import Move as StrategyMove
@@ -86,6 +87,7 @@ def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: 
     problem = offer_terms_problem(newest, conv.item) if newest is not None else None
     if problem:
         ask, offer_id, final = None, None, False
+    see_history(conv.neg, thread, conv.dealer, conv.item)  # her opening ask, even if it lapsed while we held
     if conv.ticks >= max_ticks:
         walk = Move("walk", reason=f"{max_ticks} ticks without a deal")
         return DeskMove(conv, walk, ask, final, ignored=problem, offer_id=offer_id)

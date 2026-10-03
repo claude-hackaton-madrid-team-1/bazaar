@@ -441,35 +441,39 @@ class LapsingAbuela:
 
     OPENING = 7
 
-    def __init__(self, hold_ticks):
+    def __init__(self, hold_ticks, proactive=True):
         self.tick, self.hold_ticks, self.status, self.deal = 1, hold_ticks, "open", None
-        self.offers, self.next_id, self.sent = [], 100, []
+        self.offers, self.msgs, self.next_id, self.sent, self.proactive = [], [], 100, [], proactive
 
     def _offer(self, ask):
-        self.offers = [
-            {
-                "id": self.next_id,
-                "maker": "abuela",
-                "status": "open",
-                "final": False,
-                "give": {"types": ["card:LAV-03"]},
-                "want": {"cash": ask},
-                "expires_tick": self.tick + 2,
-            }
-        ]
+        offer = {
+            "id": self.next_id,
+            "maker": "abuela",
+            "status": "open",
+            "final": False,
+            "give": {"types": ["card:LAV-03"]},
+            "want": {"cash": ask},
+            "expires_tick": self.tick + 2,
+        }
+        self.offers = [offer]
+        self.msgs.append({"sender": "abuela", "offer": offer})  # the message keeps it, whatever its status
         self.next_id += 1
 
     def open_thread(self, dealer, topic=None):
-        self._offer(self.OPENING)
+        if self.proactive:
+            self._offer(self.OPENING)
         return {"id": 9}
 
     def clock(self):
         return {"tick": self.tick, "tick_seconds": 60, "next_tick_in": 50}
 
     def thread(self, tid):
-        live = [o for o in self.offers if o["expires_tick"] >= self.tick]
+        for o in self.offers:
+            if o["expires_tick"] < self.tick:
+                o["status"] = "expired"
+        live = [o for o in self.offers if o["status"] == "open"]
         settled = [{"offer": {"status": "settled", "give": {"cash": self.deal}}}] if self.deal else []
-        return {"status": self.status, "standing_offers": live, "messages": settled}
+        return {"status": self.status, "standing_offers": live, "messages": self.msgs + settled}
 
     def say(self, tid, text, price=None):
         self.sent.append((self.tick, "bid", price))
@@ -486,11 +490,12 @@ class LapsingAbuela:
         self.status = "closed"
 
 
+@pytest.mark.parametrize("proactive", [True, False])  # False: she answers only our first bid (thread 99)
 @pytest.mark.parametrize("hold", [(), (2, 3, 4)])
-def test_a_hold_that_lets_her_offer_lapse_never_ends_at_her_opening_ask(hold):
+def test_a_hold_that_lets_her_offer_lapse_never_ends_at_her_opening_ask(hold, proactive):
     from bazaar_agent.agents.dealer import negotiate
 
-    a = LapsingAbuela(hold)
+    a = LapsingAbuela(hold, proactive)
     out = negotiate(
         a,
         "abuela",
