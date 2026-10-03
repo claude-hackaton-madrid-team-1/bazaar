@@ -92,6 +92,15 @@ def test_a_dry_run_falls_back_to_the_file_when_postgres_is_down(tmp_path):
     assert ledger.spent_since(0) == 17 and (tmp_path / "ledger.jsonl").is_file()
 
 
+def test_a_dry_run_reads_hand_posted_offers_from_the_file_while_postgres_is_down(tmp_path):
+    # The maker's hands-off read (#79) goes through the fallback too: a dry run never crashes on it.
+    from bazaar_agent.guardrails import HANDS_OFF
+
+    ledger = open_ledger(tmp_path, source="maker", database_url=RAILWAY, game_url=GAME, connect=refused, log=print)
+    ledger.record("listing", 10, 1.0, 40, f"{HANDS_OFF}321")
+    assert isinstance(ledger, FallbackLedger) and ledger.hands_off_ids() == {321}
+
+
 def test_live_refuses_a_ledger_that_is_not_shared(tmp_path):
     from bazaar_agent.config import DEFAULT_DATABASE_URL
 

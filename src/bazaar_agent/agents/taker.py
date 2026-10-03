@@ -11,7 +11,9 @@ across machines through the ledger): finals first, then the biggest surplus. Jev
 `offer_is_worth_accepting` is advisory: a decided `no` vetoes a board accept, a decided `yes` may
 accept a dealer's ask early, and neither ever goes above a limit. Every accept, bid, walk and cancel
 passes `guardrails.check()` with the live context, which also counts what this tick already committed
-(an accept's cash, a new bid in place of its thread's old one). While the kill switch is on the taker
+(an accept's cash, a new bid in place of its thread's old one). With `max_counterparty_share` on (#14) a
+board accept is refused when its maker (the real team id from the feed's `offer.listed`; a pseudonym the
+feed never named is refused) would pass its share of our team-to-team volume. While the kill switch is on the taker
 HOLDS: it reads, sends nothing (no opens, accepts, bids, walks or cancels), and its dealer threads stay
 open and resume when the switch goes off. Dry run (the default) sends nothing and logs WOULD-moves.
 """
@@ -23,7 +25,9 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from bazaar_agent.agents.accept_gate import Gate, board_gate, dealer_gate
+from bazaar_agent.affinity import AffinityMap
+from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
+from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
 from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
@@ -31,8 +35,10 @@ from bazaar_agent.agents.dealer import (
     apply_advice,
     bid_words,
     reopen_start,
+    requested_item,
     template_words,
 )
+from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
@@ -61,18 +67,32 @@ from bazaar_agent.agents.runtime import (
     read_snapshot,
     window_for,
 )
-from bazaar_agent.agents.seller import offers_in, open_commitments
+from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
+from bazaar_agent.agents.tactics import private_numbers
+from bazaar_agent.agents.team_desk import DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.evals.dealers import price_class
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
+from bazaar_agent.guardrails import (
+    Action,
+    Context,
+    Guardrails,
+    LedgerStore,
+    check,
+    effective_cash_floor,
+    kill_switch,
+    refund_row,
+)
 from bazaar_agent.holdings import Holdings
+from bazaar_agent.intel import book_values, dealer_threads, listed_makers, settled_volume
 from bazaar_agent.learn.blockers import Blocks
+from bazaar_agent.learn.curves import curve_stats
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import (
@@ -83,7 +103,6 @@ from bazaar_agent.strategy import (
     build_market,
     build_playbook,
     buy_case,
-    dealer_command,
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
@@ -96,6 +115,9 @@ class TakerConfig:
     jev_min_budget_s: float = 4.0  # ask Jev only with this much of the tick left (a call takes ~0.3 s, max 3 s)
     max_jev_calls_per_tick: int = 3
     duel_grace_s: float = 2.0  # duels own the first seconds of a tick (capped at 15 % of the tick)
+    # Also accept standing BIDS for cards we hold when the bid, less the fee, beats what selling our least
+    # valuable copy costs us by `sell_min_surplus` (`opportunities.score_offer`). Off: today's taker.
+    accept_bids: bool = False
 
 
 FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
@@ -168,11 +190,17 @@ class AcceptProposal:
     inputs: dict[str, Any]
     candidate: AskCandidate | None = None
     desk: DeskMove | None = None
+    sell: Opportunity | None = None  # a standing bid we would sell into (`accept_bids`)
+    asset_id: int | None = None  # sells: the copy we hand over
+    swap: SwapAccept | None = None  # a team's offer in a swap thread (N17, `team_desk`)
     thread: dict[str, Any] | None = field(default=None, compare=False)  # the dealer thread read this tick
+    bid: BoardOffer | None = field(default=None, compare=False)  # sells: the board bid `sell` was priced on
 
     @property
     def surplus(self) -> float:
-        return self.value - self.price
+        if self.swap is not None:
+            return self.swap.verdict.ours
+        return self.sell.ours if self.sell is not None else self.value - self.price
 
     @property
     def scarce(self) -> bool:
@@ -183,10 +211,67 @@ class AcceptProposal:
         return self.candidate.score if self.candidate is not None else self.surplus
 
 
+def bid_proposal(op: Opportunity, asset_id: int, bid: BoardOffer | None = None) -> AcceptProposal:
+    inputs = {
+        "offer_id": op.offer_id,
+        "venue": op.venue,
+        "maker": op.maker,
+        "ref": op.ref,
+        "rarity": op.rarity,
+        "bid": op.price,
+        "fee": op.fee,
+        "surplus": op.ours,
+        "asset_id": asset_id,
+        "tag": op.tag,
+    }
+    return AcceptProposal(
+        "board",
+        op.ref,
+        op.rarity,
+        op.offer_id,
+        op.price,
+        op.price - op.ours,
+        False,
+        op.reason,
+        inputs,
+        sell=op,
+        asset_id=asset_id,
+        bid=bid,
+    )
+
+
 def rank_accepts(proposals: Iterable[AcceptProposal]) -> list[AcceptProposal]:
     """A dealer's final offer first (it walks otherwise), then scarce cards, then the best score
     (surplus raised by urgency, as the strategy ranks)."""
     return sorted(proposals, key=lambda p: (not p.final, not p.scarce, -p.score, p.offer_id))
+
+
+def accept_kind(p: AcceptProposal) -> str:
+    """The decision kind of an accept: a team swap, a sell into a bid, a board ask or a dealer's offer."""
+    if p.swap is not None:
+        return "team_accept"
+    if p.sell is not None:
+        return "accept_bid"
+    return "accept_ask" if p.source == "board" else "dealer_accept"
+
+
+def swap_proposal(a: SwapAccept) -> AcceptProposal:
+    """A team's swap offer as an accept candidate, ranked by our gain against the board's asks."""
+    # Public view: only the thread and the fee (the cards and their offer stay private: a team thread is private)
+    inputs = {"thread": a.thread_id, "their_offer": a.offer.offer_id, "give_card": a.trade.refs[0]}
+    inputs["want_card"] = a.trade.refs[1]
+    return AcceptProposal(
+        "team",
+        a.trade.refs[1],
+        a.trade.rarity,
+        a.offer.offer_id,
+        a.offer.cash_out + a.fee,
+        a.verdict.ours + a.offer.cash_out + a.fee,
+        False,
+        a.verdict.reason,
+        inputs | {"fee": a.fee},
+        swap=a,
+    )
 
 
 def board_proposal(c: AskCandidate) -> AcceptProposal:
@@ -219,7 +304,9 @@ def desk_proposal(dm: DeskMove, thread: dict[str, Any] | None = None) -> AcceptP
         "final": dm.final,
         "our_bids": list(conv.neg.bids),
         "max": conv.neg.plan.max_price,
+        "final_max": conv.neg.plan.final_max,
         "value": conv.value,
+        "changed_by": list(conv.notes),
     }
     reason = f"{dm.move.reason}; {conv.reason}"
     return AcceptProposal(
@@ -261,8 +348,8 @@ def offer_state(p: AcceptProposal, snap: Snapshot, ctx: Context, rules: Guardrai
             "how_the_value_was_computed": p.reason,
         },
         "cash": ctx.cash,
-        "cash_floor": rules.cash_floor,
-        "cash_above_floor": max(0, ctx.cash - rules.cash_floor),
+        "cash_floor": effective_cash_floor(rules, ctx),
+        "cash_above_floor": max(0, ctx.cash - effective_cash_floor(rules, ctx)),
         "accept_slots_left_this_tick": slots_left,
         "tick": snap.clock.tick,
     }
@@ -286,6 +373,11 @@ def conversation_view(c: Conversation) -> dict[str, Any]:
 # ---------------------------------------------------------------- the loop
 
 
+def _conversation(conv: Conversation) -> str:
+    """The bluff book's key for a dealer thread."""
+    return f"thread:{conv.thread_id}"
+
+
 @dataclass
 class _TickRun:
     snap: Snapshot
@@ -296,9 +388,12 @@ class _TickRun:
     started: float  # monotonic time the tick's work began (the clock was read just before)
     spent: int = 0  # dry run: this tick's board accepts, which only a live accept books in the ledger
     jev_calls: int = 0
+    settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
     accepted: list[AcceptProposal] = field(default_factory=list)
     cards: CardIndex | None = None  # the inspector's catalog index, built on first use this tick
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
+    team_view: DeskView | None = None  # what the team desk saw this tick (N17)
+    plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
 
 
 class Taker:
@@ -326,6 +421,7 @@ class Taker:
         outcome_learner: OutcomeLearner | None = None,
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
+        bluff: TacticBook | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -338,6 +434,7 @@ class Taker:
         self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
+        self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -353,6 +450,8 @@ class Taker:
         if self.flags.skipped:
             log(f"taker: {self.flags.skipped} unreadable line(s) in {FLAGS_FILE}, counted as sent flags")
         self.injections = InjectionTags(decisions.dir / INJECTIONS_FILE)  # S1: tagged, never obeyed
+        # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
+        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -380,6 +479,8 @@ class Taker:
             self.learner.flush()
         if self.thread_store is not None:
             self.thread_store.flush(tick)
+        if self.bluff is not None:
+            self.bluff.flush()
         self.feed.archive_pending()
 
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
@@ -399,6 +500,8 @@ class Taker:
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         if fresh := self.pages.new(snap.me):
             self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
+        if self.rules.max_counterparty_share < 1:
+            run.settled = settled_volume(snap.events, snap.us, book_values(snap.catalog))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -413,14 +516,29 @@ class Taker:
             known: dict[str, Any] = {str(d.get("id")): "dealer" for d in snap.dealers if d.get("id")}
             known.update({v.id: "venue" for v in snap.venues})
             run.blocks = self.learner.blocks(snap.events, snap.us, clock, known)
+        if self.bluff is not None:  # memory only before the sends: a cooloff, strike or flag after a tactic
+            self.bluff.begin_tick(clock.tick, clock.round, snap.us)
+            self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]
-        proposals += [board_proposal(c) for c in self._board(run, market)]
+        board, board_venues = self._board_offers(run)
+        proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
+        if self.config.accept_bids:
+            proposals += self._bids(run, market, board, board_venues)
+        view = run.team_view = self._team_view(run, threads)
+        proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
         self._accept(run, proposals)
         self._converse(run, desk)
+        taken = {p.swap.thread_id for p in run.accepted if p.swap is not None}
+
+        def converse() -> list[SwapAccept]:
+            self.team_desk.converse(view, taken)
+            return []
+
+        self._team_desk("converse", converse)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
@@ -441,17 +559,69 @@ class Taker:
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
-        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent)
+        book = book_values(run.snap.catalog)
+        trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
+        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
 
-    def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None) -> None:
+    def _commit(
+        self,
+        run: _TickRun,
+        cash: int,
+        item: str,
+        thread: int | None,
+        to: str | None = None,
+        notional: int | None = None,
+    ) -> None:
         """An accept or bid this tick (sent, would-be, or maybe landed): every later check this tick sees its
         cash go out and the card as ours, as for an open offer (`/me` was read before it). In a thread it
-        replaces our earlier bid there and counts as spend until the deal settles (`committed_context`)."""
+        replaces our earlier bid there and counts as spend until the deal settles (`committed_context`).
+        A board accept counts toward its maker's share (`to`) at its price without the fee (`notional`)."""
         if thread is not None:
             run.offers = [o for o in run.offers if o.get("thread") != thread]
         give, want = {"cash": cash}, {"types": [item]}
         run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "thread": thread, "give": give, "want": want}
+            {
+                "id": -1,
+                "status": "open",
+                "maker": run.snap.us,
+                "thread": thread,
+                "give": give,
+                "want": want,
+                "to": to,
+                "notional": notional,
+            }
+        )
+
+    def _team_desk(self, what: str, call: Callable[[], list[SwapAccept] | None]) -> list[SwapAccept]:
+        """The team desk never costs the taker its tick: an error there is reported and the desk skips."""
+        try:
+            return call() or []
+        except (BazaarError, LedgerUnavailable):
+            raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
+        except Exception as e:  # noqa: BLE001 — fail closed for the desk, never for the board or the dealers
+            self.log(f"team desk: {what} failed ({type(e).__name__}: {e}); no team-thread move this tick")
+            return []
+
+    def _team_view(self, run: _TickRun, threads: list[dict[str, Any]]) -> DeskView:
+        snap, listed = run.snap, {t.get("id") for t in threads}
+        opened_now = sum(1 for c in self.convs.values() if c.thread_id not in listed)  # this tick's dealer opens
+        return DeskView(
+            tick=snap.clock.tick,
+            t_hours=snap.clock.t_hours,
+            us=snap.us,
+            me=snap.me,
+            catalog=snap.catalog,
+            events=snap.events,
+            venues=snap.venues,
+            threads=threads,
+            offers=run.offers,
+            params=run.params,
+            max_threads=snap.clock.limits.max_open_threads_per_team,
+            in_use=len(threads) + opened_now,
+            ctx=lambda thread: self._ctx(run, skip_thread=thread),
+            window_open=run.window.open,
+            listing_cap=snap.clock.limits.offers_per_team_per_tick,
+            max_tick_seconds=snap.clock.max_tick_seconds,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
@@ -462,7 +632,8 @@ class Taker:
 
     # ------------------------------------------------------------ (a) boards
 
-    def _board(self, run: _TickRun, market: Market) -> list[AskCandidate]:
+    def _board_offers(self, run: _TickRun) -> tuple[list[BoardOffer], dict[str, Venue]]:
+        """Every plain standing offer on the venues we may trade on, makers named when the cap needs them."""
         venues = {v.id: v for v in tradable_venues(run.snap.venues, run.snap.us)}
         offers: list[BoardOffer] = []
         for venue in venues.values():
@@ -470,8 +641,67 @@ class Taker:
                 offers += board_offers(self.public.board(venue.id), venue.id, run.snap.us)
             except BazaarError as e:
                 self.log(f"tick {run.snap.clock.tick} taker: board {venue.id} refused {e.code}; skipped")
+        if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
+            makers = listed_makers(run.snap.events)
+            offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
+        return offers, venues
+
+    def _board(
+        self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
+    ) -> list[AskCandidate]:
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+
+    def _bids(
+        self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
+    ) -> list[AcceptProposal]:
+        """`accept_bids`: standing bids for cards we hold that pay at least `sell_min_surplus` over what
+        selling our least valuable copy costs us (fee and page bonus included). A copy already in one of
+        our open offers is never sold twice."""
+        clock = run.snap.clock
+        listed = open_commitments(run.offers, run.snap.us).listed
+        # An accept settles at the next tick: a copy sold last tick may still be in /me. Never sell it again.
+        sold = {
+            int(item[5:])
+            for t in (clock.tick - 1, clock.tick)
+            for item in self.ledger.accept_items(t)
+            if item.startswith("sell:") and item[5:].isdigit()
+        }
+        ours = {m.id for m in run.mine}
+        ctx, out = self._ctx(run), []
+        for o in offers:
+            if o.side != "bid" or o.id in ours:
+                continue
+            copies = sorted(
+                (
+                    a
+                    for a in run.snap.me.get("assets") or []
+                    if a.get("kind") == "card"
+                    and a.get("ref") == o.ref
+                    and isinstance(a.get("id"), int)
+                    and isinstance(a.get("your_value"), int | float)
+                    and int(a["id"]) not in listed | sold
+                ),
+                key=lambda a: (float(a["your_value"]), -int(a["id"])),
+            )
+            if not copies:
+                continue
+            copy_id = int(copies[0]["id"])  # the free copy we lose least by
+            op = score_offer(
+                o,
+                market,
+                run.snap.me,
+                run.params,
+                self.rules,
+                AffinityMap(),
+                venues.get(o.venue),
+                ctx,
+                asset_id=copy_id,
+                unavailable=frozenset(listed | sold),
+            )
+            if op is not None and op.ours >= run.params.sell_min_surplus:
+                out.append(bid_proposal(op, copy_id, o))
+        return out
 
     # ------------------------------------------------------------ (b) the dealer desk
 
@@ -502,8 +732,18 @@ class Taker:
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
-        moves = self._evolved(run, moves, busy)
-        for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
+        floor = effective_cash_floor(self.rules, ctx)  # the floor check() applies, bond reserve included (#71)
+        cash_room = min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
+        # The card of every DEALER thread of ours is busy, this process's or another's (security #158 r2 P3-B):
+        # with the lift on, two dealers may sell one card. Only threads with a dealer: we wrote their topic; a
+        # thread another team opened with us carries a topic that team chose (review #158 r3 P2).
+        busy_items = {c.item for c in self.convs.values()} | {
+            item
+            for t in threads
+            if str(t.get("with")) in dealer_ids and (item := requested_item(t.get("topic") or {})) is not None
+        }
+        for op in openings(moves, busy, busy_items, room):
             self._open_one(run, op, ctx)
 
     def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
@@ -536,29 +776,38 @@ class Taker:
             )
         return kept
 
-    def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
-        """The learned ladder per (dealer, price class) replaces the strategy's, never above its start nor its
-        top, and a class priced above what we may pay is skipped (N3). One `dealer_skip` row per dealer, class
-        and reason (not per tick), with keys the public status view does not list. No policy: unchanged."""
-        policies = self.outcome_learner.policies if self.outcome_learner is not None else {}
-        if not policies:
+    def _evolved(
+        self, run: _TickRun, moves: list[StrategyMove], busy: set[str], room: int | None = None
+    ) -> list[StrategyMove]:
+        """The per-dealer plan (N14a, `dealer_plan.py`): the learned ladder per (dealer, price class) replaces the
+        strategy's, never above its start nor its top, and a class priced above what we may pay is skipped (N3);
+        with `dealer_final_lift` on, a final above the cap may close it (the patience play). Each plan is kept in
+        `run.plans` for the open's `changed_by`. One `dealer_skip` row per dealer, class and reason (not per
+        tick), with keys the public status view does not list. No policy and the lift off: unchanged."""
+        learner = self.outcome_learner
+        policies = learner.policies if learner is not None else {}
+        if not policies and self.rules.dealer_final_lift <= 0:
             return moves
+        last = getattr(learner, "last", None)  # the last pass's curves (none before the first pass)
+        curves = last.curves if last is not None else {}
+        if not curves and self.rules.dealer_final_lift > 0:  # no pass yet: this tick's feed window is the history
+            curves = curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
         kept: list[StrategyMove] = []
         skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
         for mv in moves:
             cls = price_class(mv.ref)
-            policy = policies.get((mv.source, cls)) if mv.ladder is not None and cls is not None else None
-            if policy is None or mv.ladder is None or cls is None:
+            if mv.ladder is None or cls is None:
                 kept.append(mv)
                 continue
-            plan, why = policy.plan(mv.ladder)
-            if plan is None:
+            key = (mv.source, cls)
+            min_surplus = run.params.min_buy_surplus
+            plan = plan_dealer_buy(mv, policies.get(key), curves.get(key), self.rules, min_surplus, room)
+            if plan.move is None:
                 if mv.source not in busy:
-                    skipped.setdefault((mv.source, cls), (mv, why))
+                    skipped.setdefault(key, (mv, plan.skip or "skip"))
                 continue
-            start, top, step = plan
-            command = dealer_command(mv.ref, mv.source, start, top, step)
-            kept.append(replace(mv, ladder=plan, limit=top, reason=f"{mv.reason}; {why}", command=command))
+            run.plans[(mv.source, mv.ref)] = plan
+            kept.append(plan.move)
         for (dealer, cls), (mv, why) in skipped.items():
             if self._learned_skips.get((dealer, cls)) == why:
                 continue
@@ -583,8 +832,15 @@ class Taker:
         lower = self.reopen_at.get((op.dealer, op.item))
         if lower is not None and lower < op.plan.start:  # she held her opening ask last time: start lower
             op = replace(op, plan=replace(op.plan, start=lower), reason=f"{op.reason}; reopened lower")
+        dp = run.plans.get((op.dealer, op.item))
+        if dp is not None and dp.final_max is not None:
+            op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
+        final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""
+        # Private keys (not on the public /state allow-list): which learning changed the plan, and what was recalled.
+        notes = dp.changed_by if dp is not None else []
+        recalled = self._recalled(run, op) if verdict.allowed else []
         inputs = {
             "dealer": op.dealer,
             "item": op.item,
@@ -593,8 +849,12 @@ class Taker:
             "plan": plan,
             "score": op.move.score,
             "surplus": op.move.surplus,
+            "final_max": op.plan.final_max,
+            "changed_by": notes,
+            "learned": dp.lessons if dp is not None else [],
+            "recalled": recalled,
         }
-        what = f"open thread with {op.dealer} for {op.item} (ladder {plan}, worth {op.value:g})"
+        what = f"open thread with {op.dealer} for {op.item} (ladder {plan}{final}, worth {op.value:g})"
         status: Status = "approved" if verdict.allowed else "rejected"
         if verdict.allowed and not run.window.open():
             status = "expired"
@@ -633,7 +893,18 @@ class Taker:
                 int(body["id"]),
                 tick,
                 reopened=reopened,
+                notes=tuple(notes),
+                recalled=tuple(recalled),
             )
+
+    def _recalled(self, run: _TickRun, op: Opening) -> list[str]:
+        """The top lessons about this dealer and item, recalled once per opened thread (quoted data for the log;
+        they never set a price). None without the recall or with less than `jev_min_budget_s` of the tick left."""
+        if self.lessons is None or self.outcome_learner is None or run.window.left() < self.config.jev_min_budget_s:
+            return []  # no learner (BAZAAR_LEARN=0): no recall either (review #158 r3 P3)
+        situation = f"open a thread with {op.dealer} to buy {op.item} ({op.rarity})"
+        found = self.lessons(situation, subjects=(op.dealer,), tick=run.snap.clock.tick)
+        return [str(x.get("quoted_lesson")) for x in found if isinstance(x, dict)]
 
     def _desk_moves(self, run: _TickRun, *, held: bool = False) -> list[tuple[DeskMove, dict[str, Any]]]:
         """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped
@@ -648,6 +919,9 @@ class Taker:
             self._inspect(run, conv, thread)
             self._tag(run, conv, thread)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread, run.snap.clock.tick)
+            if self.bluff is not None and dm.status == "open":  # her new offer scores our last tactic
+                tick = run.snap.clock.tick
+                self.bluff.observe(_conversation(conv), their_price=dm.ask, their_offer=dm.offer_id, tick=tick)
             if dm.status != "open":
                 self._finished(run, conv, thread)
                 del self.convs[dealer]
@@ -773,11 +1047,22 @@ class Taker:
         try:
             return self._gate_unchecked(run, p)
         except Exception as e:  # a malformed counterparty payload: no accept, the desk goes on
-            return Gate(
-                "dealer" if p.desk else "board", p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",)
-            )
+            kind: GateKind = "dealer" if p.desk else "team" if p.swap else "board"
+            return Gate(kind, p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",))
 
     def _gate_unchecked(self, run: _TickRun, p: AcceptProposal) -> Gate:
+        if p.swap is not None:
+            a = p.swap
+            payload = self.team_desk.thread_payload(a.thread_id)
+            if payload is None:
+                return Gate("team", p.offer_id, "block", (f"thread {a.thread_id} was not read this tick",))
+            copy = next((x for x in run.snap.me.get("assets") or [] if x.get("id") == a.trade.asset_id), None)
+            return swap_gate(payload, run.snap.us, a.offer, a.trade, copy)
+        if p.sell is not None:
+            if p.bid is None:
+                return Gate("board", p.offer_id, "block", ("a sell with no bid to inspect",))
+            copy = next((a for a in run.snap.me.get("assets") or [] if a.get("id") == p.asset_id), None)
+            return bid_gate(p.bid, p.ref, p.sell.price, copy)
         if p.desk is not None:
             topic = p.desk.conv.topic
             return dealer_gate(p.thread or {}, p.source, p.offer_id, p.price, topic, self._card_index(run))
@@ -810,6 +1095,11 @@ class Taker:
             self._after_deal(run, f"deal in thread {conv.thread_id}")
         if self.learner is not None:
             self.learner.thread_closed(thread, run.snap.us, run.snap.clock)
+        if self.bluff is not None:
+            reason = thread.get("closed_reason")
+            self.bluff.ended(
+                _conversation(conv), status=status, closed_reason=reason if isinstance(reason, str) else None, tick=tick
+            )
         self.log(
             f"tick {tick} taker: thread {conv.thread_id} with {conv.dealer} {status} "
             f"({thread.get('closed_reason') or '-'}) price {price if status == 'deal' else '-'}"
@@ -817,7 +1107,7 @@ class Taker:
 
     def _converse(self, run: _TickRun, desk: list[tuple[DeskMove, dict[str, Any]]]) -> None:
         taken = {p.desk.conv.dealer for p in run.accepted if p.desk is not None}
-        bought = {p.ref for p in run.accepted if p.desk is None}  # from a board: the dealer thread is moot
+        bought = {p.ref for p in run.accepted if p.desk is None and p.sell is None}  # a board buy: thread moot
         for dm, thread in desk:
             if dm.conv.item in bought:
                 dm = replace(dm, move=Move("walk", reason=f"bought {dm.conv.item} on a board this tick"))
@@ -831,7 +1121,8 @@ class Taker:
     def _desk_send(self, run: _TickRun, dm: DeskMove, thread: dict[str, Any]) -> None:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
         if move.kind == "bid":
-            action = Action("bid", conv.item, conv.rarity, move.price)
+            at_final = dm.final and move.price is not None and move.price == dm.ask  # meeting her final (N14a)
+            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
         verdict = check(action, self._ctx(run, skip_thread=conv.thread_id), self.rules)
@@ -841,6 +1132,7 @@ class Taker:
             return
         if not verdict.allowed:
             move = Move("walk", reason=f"guardrail: {verdict}")
+        choice = self._tactic(conv, move, dm.ask)
         inputs = {
             "dealer": conv.dealer,
             "thread": conv.thread_id,
@@ -849,8 +1141,13 @@ class Taker:
             "final": dm.final,
             "our_bids": list(conv.neg.bids),
             "max": conv.neg.plan.max_price,
+            "final_max": conv.neg.plan.final_max,
+            "changed_by": list(conv.notes),
+            "recalled": list(conv.recalled),
+            **(choice.inputs() if choice is not None else {}),  # private keys: never in the public view
         }
         what = f"{move.kind} {move.price or ''} to {conv.dealer} on thread {conv.thread_id} for {conv.item}"
+        what += f" · tactic {choice.tactic}" if choice is not None and choice.tactic else ""
         status: Status = "approved" if run.window.open() else "expired"
         kind = f"dealer_{move.kind}"
         did = self.rec.decide(
@@ -885,6 +1182,8 @@ class Taker:
             ended = {**thread, "status": ended_as or "walked", "closed_reason": thread.get("closed_reason") or "walked"}
             self._keep(ended, run.snap, conv)
             self.convs.pop(conv.dealer, None)
+            if self.bluff is not None:
+                self.bluff.dropped(_conversation(conv))
             if move.reopen:
                 self._held_opening(run, conv)
             elif move.rest:  # she stopped answering: do not open, bid and walk on this item every few ticks
@@ -892,7 +1191,7 @@ class Taker:
             return
         price = int(move.price or 0)
         text = bid_words(
-            self.words_fn,
+            choice.words(self.words_fn) if choice is not None else self.words_fn,
             WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item, lessons=self._lessons_for(run, conv)),
             thread,
             run.snap.clock,
@@ -906,17 +1205,19 @@ class Taker:
             self.rec.decisions.settle(did, "rejected")
             self.log(f"tick {tick} taker: kill switch on: holding bid on thread {conv.thread_id} ({'; '.join(stops)})")
             return
-        if (
-            self.rec.send(
-                did,
-                tick,
-                "say",
-                {"thread": conv.thread_id, "price": price},
-                lambda: self.team.say(conv.thread_id, text, price=price),
-            )
-            is not None
-        ):
+        body = self.rec.send(
+            did,
+            tick,
+            "say",
+            {"thread": conv.thread_id, "price": price},
+            lambda: self.team.say(conv.thread_id, text, price=price),
+        )
+        if body is not None:
             conv.neg.bids.append(price)
+            if self.bluff is not None and choice is not None:
+                self.bluff.sent(
+                    choice, their_price=dm.ask, their_offer=dm.offer_id, tick=tick, message=message_id(body)
+                )
         elif not self.rec.maybe_landed:
             return
         self._commit(run, price, conv.item, conv.thread_id)
@@ -967,6 +1268,16 @@ class Taker:
         found = self.lessons(situation, subjects=(conv.dealer,), tick=run.snap.clock.tick)
         return tuple(str(x["quoted_lesson"]) for x in found)
 
+    def _tactic(self, conv: Conversation, move: Move, her_ask: int | None) -> Choice | None:
+        """The bluff tactic for a bid's words (N16): a dealer bid only, after the guardrails passed it. It never
+        changes the price; it never sees our max or value except to keep an invented number off them."""
+        if self.bluff is None or move.kind != "bid" or move.price is None:
+            return None
+        avoid = private_numbers(conv.neg.plan.max_price, conv.value)
+        cp = Counterparty.dealer(conv.dealer)
+        conversation, step = _conversation(conv), len(conv.neg.bids)
+        return self.bluff.choose(cp, "buy", conversation, step, int(move.price), avoid=avoid, their_price=her_ask)
+
     # ------------------------------------------------------------ accepts (shared quota)
 
     def _accept(self, run: _TickRun, proposals: list[AcceptProposal]) -> None:
@@ -995,7 +1306,7 @@ class Taker:
         jev: JevAdvice | None = None,
         gate: Gate | None = None,
     ) -> None:
-        kind = "accept_ask" if p.source == "board" else "dealer_accept"
+        kind = accept_kind(p)
         verb = "" if status == "expired" else "skip "
         self.rec.decide(
             run.snap.clock.tick,
@@ -1010,11 +1321,19 @@ class Taker:
         )
 
     def _accept_one(self, run: _TickRun, p: AcceptProposal, limit: int) -> bool:
+        if p.sell is not None:
+            return self._accept_bid(run, p, p.sell, limit)
+        if p.swap is not None:
+            return self._accept_swap(run, p, p.swap, limit)
         clock = run.snap.clock
         skip_thread = p.desk.conv.thread_id if p.desk else None
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
-        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price), ctx, self.rules)
+        maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
+        ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
+        final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
+        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final)
+        verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
@@ -1062,7 +1381,7 @@ class Taker:
         )
         if not self.live:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
-            self._commit(run, p.price, p.ref, skip_thread)
+            self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
         if body is None and not self.rec.maybe_landed:
@@ -1074,7 +1393,7 @@ class Taker:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
-        self._commit(run, p.price, p.ref, skip_thread)
+        self._commit(run, p.price, p.ref, skip_thread, maker, ask)
         self._after_deal(run, f"accept of offer {p.offer_id}")  # after the books: a failed re-read loses nothing
         return True
 
@@ -1090,6 +1409,156 @@ class Taker:
             self.log(f"tick {tick} taker: /me re-read after {what} failed ({code}); the next tick reads it")
             return
         self.log(f"tick {tick} taker: {what}: {run.snap.holdings.line() if run.snap.holdings else '/me re-read'}")
+
+    def _accept_bid(self, run: _TickRun, p: AcceptProposal, op: Opportunity, limit: int) -> bool:
+        """Sell our least valuable copy into a standing bid (`accept_bids`): the same gates as a buy (the
+        guardrails with this tick's commitments, the duel grace, the shared accept quota), then
+        `accept(offer, assets=[copy])`. Nothing is booked as spend: the bid's cash comes in."""
+        clock = run.snap.clock
+        your_value = next(
+            (float(a["your_value"]) for a in run.snap.me.get("assets") or [] if a.get("id") == p.asset_id), None
+        )
+        # The sell floor sees what we net (the fee comes out of the bid); the maker's share counts the bid.
+        action = Action(
+            "accept_sell",
+            p.ref,
+            p.rarity,
+            op.price - op.fee,
+            your_value=your_value,
+            counterparty=op.maker,
+            volume=op.price,
+        )
+        verdict = check(action, self._ctx(run), self.rules)
+        if not verdict.allowed:
+            self._skip(run, p, str(verdict), "rejected")
+            return False
+        gate = self._gate(run, p)  # S1: the bid's structure is what we priced, and the copy is one of ours
+        if gate is not None and not gate.allowed:
+            self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on bid {op.offer_id}: {gate.reason}")
+            self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
+            return False
+        if not self._slot(run, p, 0, f"sell:{p.asset_id}", limit, gate):
+            return False
+        did = self.rec.decide(
+            clock.tick,
+            "accept_bid",
+            f"sell {p.ref} #{p.asset_id} into {op.maker}'s bid {op.offer_id} on {op.venue} for {op.price} "
+            f"(fee {op.fee}, surplus {op.ours:.1f}) · guardrails {verdict}",
+            inputs=_with_gate(p.inputs, gate),
+            reason=p.reason,
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            move={"accept": op.offer_id, "assets": [p.asset_id]},
+        )
+        if self.live:
+            body = self.rec.send(
+                did,
+                clock.tick,
+                "accept",
+                {"offer": op.offer_id, "assets": [p.asset_id]},
+                lambda: self.team.accept(op.offer_id, assets=[p.asset_id]),
+            )
+            if body is None and not self.rec.maybe_landed:
+                return True  # the reserved slot stays spent, as for a buy
+        # This tick's later checks: the copy is promised and the maker's share counts the sale.
+        run.offers.append(
+            {
+                "id": -1,
+                "status": "open",
+                "maker": run.snap.us,
+                "give": {"assets": [{"id": p.asset_id, "ref": p.ref}]},
+                "want": {"cash": op.price},
+                "to": op.maker,
+                "notional": op.price,
+            }
+        )
+        if self.live:
+            self._after_deal(run, f"sale into bid {op.offer_id}")  # album first (#105), as after any accept
+        return True
+
+    def _slot(
+        self, run: _TickRun, p: AcceptProposal, price: int, item: str, limit: int, gate: Gate | None = None
+    ) -> bool:
+        """The gates every accept of a sell or a swap passes after its guardrails: the duel grace (duels
+        first), the tick window, a fresh clock, the kill switch read again, then the team's accept slot."""
+        clock = run.snap.clock
+        if self.live:
+            self._duel_grace(run)
+        if any(i.startswith("duel:") for i in self.ledger.accept_items(clock.tick)):
+            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected", gate=gate)
+            return False
+        if not run.window.open():
+            self._skip(run, p, "tick budget spent, not sent late", "expired", gate=gate)
+            return False
+        if self.live and not self._fresh_tick(clock):
+            run.window = TickWindow(clock.tick, 0.0, self.now)
+            self._skip(run, p, "the tick ended before the send", "expired", gate=gate)
+            return False
+        if stops := kill_switch(self.rules):  # the duel grace took seconds: it may have gone on since
+            self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected", gate=gate)
+            return False
+        if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, price, item, limit):
+            self._skip(run, p, "another process took the team's accept this tick", "rejected", gate=gate)
+            return False
+        return True
+
+    def _accept_swap(self, run: _TickRun, p: AcceptProposal, a: SwapAccept, limit: int) -> bool:
+        """Take a team's offer in a swap thread (N17): our copy (and any cash we add, plus the fee: we are the
+        accepting side) for their card, through the guardrails as #79's `Swap` describes it, then the same
+        gates as any accept. The cash we pay is booked as spend; the thread settles at the next tick."""
+        clock, view = run.snap.clock, run.team_view
+        if view is None:
+            self._skip(run, p, "denied: no team view this tick", "rejected")
+            return False
+        verdict = self.team_desk.guard_accept(view, a)
+        if not verdict.allowed:
+            self._skip(run, p, str(verdict), "rejected")
+            return False
+        gate = self._gate(run, p)  # S1: their standing offer, read again, is the swap we priced
+        if gate is not None and not gate.allowed:
+            self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on thread {a.thread_id}: {gate.reason}")
+            self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
+            return False
+        pay = a.offer.cash_out + a.fee
+        if not self._slot(run, p, pay, f"team:{a.thread_id}", limit, gate):
+            return False
+        did = self.rec.decide(
+            clock.tick,
+            "team_accept",
+            f"take {a.offer.team}'s swap offer {a.offer.offer_id} on thread {a.thread_id}: "
+            f"{a.trade.refs[0]} for {a.trade.refs[1]}, cash {a.offer.net_cash:+d}, fee {a.fee} · guardrails {verdict}",
+            inputs=_with_gate(p.inputs, gate),
+            reason=f"{a.verdict.reason}; {a.trade.reason}",
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            thread_id=a.thread_id,
+            move={"kind": "team_accept"},  # public: never their offer id (a private thread)
+        )
+        if self.live:
+            if not self.team_desk.clear_before_accept(view, a, did):  # our own offer there goes first
+                return True  # a cancel was refused: their offer is not taken (the slot stays spent)
+            pick = a.pick
+            body = self.rec.send(
+                did,
+                clock.tick,
+                "accept",
+                {"their_offer": a.offer.offer_id},  # not the public "offer" key: a team thread is private
+                lambda: self.team.accept(a.offer.offer_id, assets=pick),
+            )
+            if body is None and not self.rec.maybe_landed:
+                return True  # the reserved slot stays spent, as for a buy
+            if pay > 0:  # accepted, or maybe landed: booked (fail safe for the caps)
+                self.ledger.record("spend", clock.tick, clock.t_hours, pay, a.trade.refs[1])
+        self.team_desk.accepted(a, clock.tick)
+        self._commit(run, pay, a.trade.refs[1], a.thread_id, a.offer.team, pay)
+        run.offers.append(  # our copy is promised too: later checks this tick never offer it again
+            {"id": -2, "status": "open", "maker": run.snap.us, "give": {"assets": [{"id": a.trade.asset_id}]}}
+        )
+        if self.live:
+            self._after_deal(run, f"swap accept in thread {a.thread_id}")  # album first (#105), as after any accept
+        return True
 
     def _duel_grace(self, run: _TickRun) -> None:
         """Duels own the first `duel_grace_s` of a tick: the duel player decides right after the tick lands

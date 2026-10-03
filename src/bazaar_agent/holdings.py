@@ -49,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from bazaar_agent.catalog_db import CatalogSync, save_catalog
 from bazaar_agent.config import Settings
-from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.guardrails import STARTER_STALL_MARKER, Guardrails
 from bazaar_agent.identity import valid_team_id
 from bazaar_agent.sdk import TEAM_RETRIES, TEAM_TIMEOUT_S
 from bazaar_agent.ticks import Clock
@@ -129,7 +129,10 @@ def without_secrets(value: Any) -> Any:
     secret or password, and no value shaped like a key, is ever stored or answered (read the broker key
     from a live `team.me()` when you need it)."""
     if isinstance(value, dict):
-        return {k: without_secrets(v) for k, v in value.items() if not SECRET_FIELD.search(str(k))}
+        kept = {k: without_secrets(v) for k, v in value.items() if not SECRET_FIELD.search(str(k))}
+        if value.get("starter_broker_key"):  # the key goes; that we have the free stall stays (runs_venue)
+            kept[STARTER_STALL_MARKER] = True
+        return kept
     if isinstance(value, list):
         return [without_secrets(v) for v in value]
     if isinstance(value, str) and SECRET_VALUE.search(value):

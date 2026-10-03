@@ -712,7 +712,7 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Own venue + broker (#71 approved; merges before 06:00, Jev 0.99)",
+            "title": "Own venue + broker (#71: built, shipped OFF by team decision)",
             "start": "2026-10-03T03:20",
             "end": "2026-10-03T06:00",
             "status": "wip",
@@ -727,7 +727,7 @@
             "priority": "P2"
           },
           {
-            "title": "Venue open + broker live (Market Tests)",
+            "title": "Venue open + broker live (needs a closed-door go: edge or organic trades)",
             "start": "2026-10-03T11:30",
             "end": "2026-10-04T14:00",
             "status": "todo",

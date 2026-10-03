@@ -121,6 +121,33 @@ def test_a_live_maker_sends_nothing_while_postgres_is_down_then_posts_once_it_is
     assert ledger.spent_since(0) == 65
 
 
+class SpyMarket:
+    """Our venue keeper as the maker sees it: records every tick it is handed."""
+
+    def __init__(self):
+        self.ticks: list[int] = []
+
+    def on_tick(self, clock, snap, window):
+        self.ticks.append(clock.tick)
+
+
+def test_a_live_maker_with_our_venue_sends_nothing_at_all_while_postgres_is_down(tmp_path):
+    """#71 + #162: the venue keeper runs inside the maker tick, so a down ledger stops it too (no list, cancel,
+    reprice or venue call); once Postgres answers, the venue runs first and the held bid goes out."""
+    pg, now = FakePostgres(tmp_path / "shared.db"), [0.0]
+    ledger = live_ledger(tmp_path / "maker", pg.connect, "maker", now=lambda: now[0])
+    team, market = FakeTeam(), SpyMarket()
+    kw = {**parts(tmp_path / "maker"), "ledger": ledger}
+    maker = Maker(team, FakePublic(), live=True, log=[].append, now=lambda: 1000.0, market=market, **kw)
+    pg.up = False
+    maker.on_tick(clock())
+    assert team.sent == [] and market.ticks == [] and pg.rows() == []
+    pg.up, now[0] = True, now[0] + 16.0
+    maker.on_tick(clock(tick=TICK + 1))
+    assert market.ticks == [TICK + 1]
+    assert ("list_offer", {"cash": 65}, {"cards": ["LAV-09"]}, "rastro") in team.sent
+
+
 def test_a_password_with_a_raw_at_sign_is_never_logged_and_never_counts_as_shared(tmp_path):
     from bazaar_agent.ledger_pg import LedgerNotShared
 
