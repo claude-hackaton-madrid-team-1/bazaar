@@ -101,8 +101,8 @@ Most trades clear for any multiplier (duplicates, swaps with a cash leg). So the
 
 | | Friday |
 |---|---|
-| Public asks filled | 176/512 (34 %) |
-| Addressed asks filled | 2/27 (7 %) |
+| Copies listed publicly that sold | 26/133 (20 %); per listing 27/511 (5 %) |
+| Copies listed to one team that sold | 1/18 (6 %); per listing 1/25 (4 %) |
 | Team-to-team settlements | 46, all on El Rastro |
 | Team-to-team threads | 0 |
 

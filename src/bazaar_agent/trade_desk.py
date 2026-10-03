@@ -569,8 +569,8 @@ def post_as(
 ) -> tuple[list[Trade], list[str]]:
     """Each trade as it would be posted, in order, through `guardrails.check()` with what the earlier ones
     promise (cash out, cards wanted, our team-to-team exposure). A swap always goes in a thread with its
-    team. A listing goes for anyone when it can (on a board 34 % of Friday's asks filled, 7 % of the
-    addressed ones), but an offer anyone may take counts against every team's share: so as many listings
+    team. A listing goes for anyone when it can (on Friday 20 % of the copies listed for anyone sold, 6 %
+    of those addressed to one team), but an offer anyone may take counts against every team's share: so as many listings
     as possible, in order, go public while every trade still passes; the rest are addressed. (trades with
     `to` set, every refusal of the best such posting.)"""
     best: tuple[list[Trade], list[str]] | None = None
