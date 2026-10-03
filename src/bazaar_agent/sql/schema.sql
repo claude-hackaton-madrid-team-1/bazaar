@@ -156,6 +156,11 @@ begin
       ('outcomes', 'annotated_at', 'timestamptz'),
       ('outcomes', 'annotation_tries', 'int'),
       ('outcomes', 'scored_at', 'timestamptz'),
+      -- Our own dealer threads as the taker reads them (N12 part 3, `bazaar_agent.learn.threads`).
+      ('threads', 'until_tick', 'int'),  -- a cooloff's end (from the thread's own answer)
+      ('threads', 'updated_tick', 'int'),  -- the tick of the newest answer stored (a lagging writer never rolls back)
+      ('messages', 'ours', 'boolean'),  -- our own message
+      ('messages', 'tactic', 'text'),  -- which of our tactics sent it (N16), when known
       -- The live-feed reader (N12, `bazaar_agent.learn`): one structured fact per row, deduped by key.
       ('learnings', 'subject_kind', 'text'),  -- dealer | venue | team | organiser
       ('learnings', 'kind', 'text'),  -- blocker | cooloff | quota | sold_out | price_floor | behaviour | ...
