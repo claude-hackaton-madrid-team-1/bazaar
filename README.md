@@ -554,12 +554,13 @@ reason, Jev's verdict with its floats, the guardrail verdict, chosen or not, `dr
 server's answer or refusal code. Without Postgres they go to `.local/agents/*.jsonl`. With
 `BAZAAR_TRACING=1`, each tick is a `taker tick N` / `maker tick N` trace with one `decision` event per move.
 
-**Read-only status (for the web view).** With `--port` (or Railway's `PORT`), each agent serves
+**Read-only status (for [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)).** With `--port` (or Railway's `PORT`), each agent serves
 `GET /health` (`ok`, `agent`, `mode` dry|live, `tick`, `last_tick_at`, and the doors/paused state while
 the game is not ticking), `GET /state` (mode, tick, the taker's dealer threads or the maker's open
 offers, the last 50 decisions: kind, card, counterparty and the move only for a row actually sent; unsent accepts are
 not published, `jev` is always null; read `mode` from `/health` or `agent.tick`), and
-`WS /events`: every decision and execution as it happens in the web view's envelope (spec 003:
+`WS /events`: every decision and execution as it happens in the game envelope the
+[bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live) game screens read:
 `{id, tick, t, type, scope, actor, payload}`, negative made-up ids, plus `agent`), types
 `agent.decision`, `agent.execution`, `agent.tick`; a late client first gets the last 200 events. Nothing
 there can trade or change a parameter, every string passes the telemetry scrubber, and CORS is open
