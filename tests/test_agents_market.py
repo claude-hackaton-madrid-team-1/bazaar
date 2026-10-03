@@ -174,8 +174,19 @@ def test_bazaar_agent_taker_is_a_dry_run_by_default(agent_cli):
     team, cli = agent_cli
     result = CliRunner().invoke(cli.app, ["agent", "taker", "--max-ticks", "1", "--no-jev", "--threads", "0"])
     assert result.exit_code == 0, result.output
-    assert "taker · DRY RUN: nothing is sent" in result.output and "ledger: Postgres unavailable" in result.output
+    assert (
+        "taker · DRY RUN: nothing is sent" in result.output
+        and "ledger: Postgres on localhost:5433 unavailable" in result.output
+    )
     assert "WOULD accept LAV-02 on rastro for 12" in result.output and team.sent == []
+
+
+def test_a_live_agent_refuses_to_start_without_the_shared_ledger(agent_cli, monkeypatch):
+    team, cli = agent_cli
+    monkeypatch.setenv("BAZAAR_LIVE", "1")  # how Railway turns an agent live; DATABASE_URL is the local default
+    result = CliRunner().invoke(cli.app, ["agent", "taker", "--max-ticks", "1", "--no-jev", "--threads", "0"])
+    assert result.exit_code == 1 and team.sent == []
+    assert "taker: refusing to trade: live trading needs the team's shared ledger" in " ".join(result.output.split())
 
 
 def test_bazaar_agent_maker_serves_its_status_when_asked(agent_cli):

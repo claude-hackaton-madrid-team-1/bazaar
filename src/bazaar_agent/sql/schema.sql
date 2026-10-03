@@ -156,6 +156,24 @@ begin
       ('outcomes', 'annotated_at', 'timestamptz'),
       ('outcomes', 'annotation_tries', 'int'),
       ('outcomes', 'scored_at', 'timestamptz'),
+      -- Our own dealer threads as the taker reads them (N12 part 3, `bazaar_agent.learn.threads`).
+      ('threads', 'until_tick', 'int'),  -- a cooloff's end (from the thread's own answer)
+      ('threads', 'updated_tick', 'int'),  -- the tick of the newest answer stored (a lagging writer never rolls back)
+      ('messages', 'ours', 'boolean'),  -- our own message
+      ('messages', 'tactic', 'text'),  -- which of our tactics sent it (N16), when known
+      -- The live-feed reader (N12, `bazaar_agent.learn`): one structured fact per row, deduped by key.
+      ('learnings', 'subject_kind', 'text'),  -- dealer | venue | team | organiser
+      ('learnings', 'kind', 'text'),  -- blocker | cooloff | quota | sold_out | price_floor | behaviour | ...
+      ('learnings', 'until_tick', 'int'),  -- expiry, exclusive (null = no expiry)
+      ('learnings', 'team', 'text'),  -- whom it binds (null = everyone)
+      ('learnings', 'evidence', 'bigint[]'),  -- feed event ids
+      ('learnings', 'source', 'text'),  -- rules | llm
+      ('learnings', 'dedupe_key', 'text'),
+      ('learnings', 'updated_at', 'timestamptz'),
+      -- The outcome learner (N3, `learn.lessons` / `learn.recall`): md5 of the claim last embedded, so an
+      -- edited claim is embedded again; a per-move dedupe key so re-reading the feed adds no duplicate.
+      ('learnings', 'embedded_hash', 'text'),
+      ('trader_behaviors', 'dedupe_key', 'text'),
       ('messages', 'embedding', vec),
       ('trader_behaviors', 'embedding', vec),
       ('learnings', 'embedding', vec)) as c(tbl, name, type)
@@ -165,6 +183,21 @@ begin
   loop
     execute format('alter table %I add column %I %s', col.tbl, col.name, col.type);
   end loop;
+end $$;
+
+-- One row per learned fact, whoever read it first (the taker on Railway, a laptop's CLI).
+create unique index if not exists learnings_dedupe_key on learnings (dedupe_key);
+create index if not exists learnings_recall on learnings (subject_kind, subject, kind, until_tick);
+create unique index if not exists trader_behaviors_dedupe_key on trader_behaviors (dedupe_key);
+
+-- Cosine search for the hybrid recall (N3), only where pgvector made the embedding column.
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = current_schema()
+              and table_name = 'learnings' and column_name = 'embedding')
+     and to_regclass(format('%I.learnings_embedding_hnsw', current_schema())) is null then
+    execute 'create index learnings_embedding_hnsw on learnings using hnsw (embedding vector_cosine_ops)';
+  end if;
 end $$;
 
 -- One team accept per slot per tick, enforced by the database itself: two processes on two machines

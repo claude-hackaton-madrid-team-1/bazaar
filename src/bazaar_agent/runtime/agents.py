@@ -97,8 +97,9 @@ SUBAGENTS: tuple[AgentSpec, ...] = (
         "Duels: read a live duel and play one move with our duel policy (`duel_move`).",
         _prompt(
             "You are the duelist. `duel_move` reads the duel and plays our policy (anchor beyond our limit, "
-            "concede toward it, accept inside it). You choose WHICH duel to move, never the price. Report the "
-            "move and its reason."
+            "concede toward it, accept inside it). You choose WHICH duel to move, never the price. Call it for "
+            "every live duel each tick: under `duel_policy` = v2 the team's one accept is planned across all of "
+            "them, and a duel you skip may be the one due. Report the move and its reason."
         ),
         (*READ_TOOLS, "duel_move"),
     ),

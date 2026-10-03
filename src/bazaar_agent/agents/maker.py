@@ -44,9 +44,11 @@ from bazaar_agent.agents.market import OpenOffer, Side, best_venue, our_open_off
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
+    new_page_line,
     read_snapshot,
     window_for,
 )
@@ -72,7 +74,8 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.learn.venues import VenueNotices
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
@@ -200,29 +203,36 @@ class Maker:
         hub: Any = None,
         jev: MakerJev | None = None,
         holdings: Holdings | None = None,
+        notices: VenueNotices | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
+        self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            self._tick(read_snapshot(self.team, self.public, self.feed, clock, self.holdings), window)
+            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
+            self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} maker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} maker: {e}; no further write this tick (fail closed)")
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
         mine, total = our_open_offers(snap.offers, snap.us)
         stops = kill_switch(self.rules)
         if stops:
@@ -234,6 +244,8 @@ class Maker:
             )
             return
         params = self.params(clock.tick)
+        if self.notices is not None:
+            self.notices.update(snap.events, snap.us)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
@@ -368,7 +380,10 @@ class Maker:
     def _post(self, run: _MakerRun, t: Target, why: str) -> int | None:
         """Post one offer; the new offer's id when it went out live, else None."""
         tick = run.snap.clock.tick
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venues = run.snap.venues
+        if self.notices is not None:  # a fee announced for later in the listing's life counts now
+            venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
+        venue = best_venue(venues, run.snap.us, t.price)
         blocked = self._blocked(run)
         t, advice, candidates = self._jev_price(run, t, venue.id) if venue and not blocked else (t, None, None)
         inputs = {
@@ -437,9 +452,10 @@ class Maker:
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
         if t.side == "bid":
             run.spent += t.price
-        run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "give": listing.give, "want": listing.want}
-        )
+        give = listing.give  # our open offers this tick; an ask names its card (protect_page_sets counts it)
+        if listing.asset_id is not None:
+            give = {**give, "assets": [{"id": listing.asset_id, "ref": listing.ref}]}
+        run.offers.append({"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want})
         run.open_total += 1
         run.listings_left -= 1
         run.posted.append(t.ref)

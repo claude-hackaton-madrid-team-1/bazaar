@@ -29,7 +29,7 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 
 ```json
 {"ok": true, "agent": "taker", "mode": "dry",
- "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "tick": null, "last_tick_at": null,
+ "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}, "ledger": "shared", "tick": null, "last_tick_at": null,
  "doors": "closed", "paused": true, "next_opens": "2026-10-03T09:00:00+02:00",
  "tick_seconds": 60.0, "server_tick": 159}
 ```
@@ -37,6 +37,8 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 - `mode`: `dry` or `live`.
 - `target`: where the agent's requests go: `{"mode": "real", "url": "https://bazaar.causaprima.ai"}`, or
   `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` (README "Simulator").
+- `ledger`: the guardrail ledger it counts on: `shared` (the team's Postgres), `down` (a live agent sends
+  nothing until it answers, then resumes by itself), or `local file` (dry run or simulator only). No host.
 - `tick`, `last_tick_at`: the last game tick the agent handled.
 - `doors`, `paused`, `next_opens`, `tick_seconds`, `server_tick`: the game clock as the agent sees it.
   The tick length changes every day (60 s Friday, 30 s Saturday, 15 s Sunday) and the organisers may move it.
@@ -51,6 +53,13 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 The taker returns its active dealer threads, `{dealer, thread, item, ticks, opened_tick, accepted_price}`;
 the maker returns our open board offers, `{id, side, ref, price, venue, expires_tick, created_tick}`, and
 `posted_this_tick` (card refs).
+
+Since N12 the taker may log a `dealer_skip` decision (it skipped a dealer under a learned blocker:
+cooloff, hourly quota, sold out, locked). Like every row that was not sent, `/state` shows only its tick,
+kind, status and card: never the dealer or the blocker. The taker also writes two private Postgres
+tables: `learnings` (what the live-feed reader learned) and `feed_events` (the public feed window it
+reads every tick, so the archive keeps growing while the laptop monitor sleeps). `bazaar learnings`
+reads them.
 
 ## Public by design: what these routes never show
 
@@ -145,10 +154,10 @@ there, create your own key in Phoenix (Settings → API Keys) and follow README,
 on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
 (burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
 minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
-"tools": 20, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
+"tools": 21, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
 target is a mode and a public URL; nothing about the live/dry mode or the game state).
 
-Tools: the 14 reads (`status`, `holdings`, `cards`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`,
+Tools: the 15 reads (`learnings`, `status`, `holdings`, `cards`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`,
 `traders`, `alerts`, `rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
 `duel_move`, `steer`). Each answer is one text block holding JSON. A write answers
 `{"tool", "tick", "status": "approved"|"rejected"|"expired"|"done"|"failed"|"hold", "sent", "guardrail",

@@ -14,6 +14,19 @@ Every mechanic reads the learner's lessons through the hybrid recall and writes 
 - [ ] 2. Packs: buy only when EV (with supply and the page bonus) beats the price; at most 3/hour.
 - [ ] 3. Supply map: scarcity per card from the 270 assets + opened packs feeds valuation.
 
+## N14b slice — packs, supply and new pages (coordinator brief, Sat 2026-10-03 05:00)
+Shipped as two PRs: the new-page re-rank first (El Retiro is live from 09:00), then supply + packs.
+- [ ] 4. New pages: a page released mid-game (El Retiro Sat 09:00 with a `sobre_barrio` + 150 P grant; Chamberí
+  Sun 09:00) is ranked by the running taker and maker the first tick `/api/me` shows it, no restart; the
+  maker/taker never sell our only copy of a card the new page needs (`protect_page_sets`, GUARDRAILS.md).
+  Zero-minted cards of the new set become dealer buys only behind `dealer_mints_unminted` (STRATEGY.md,
+  default false; ported from the night shift's B26, #129).
+- [ ] 5. Supply map: the 270 starting assets (ids 1–270, 18 hands × 15, block 1 = ours) plus every pack the
+  feed shows opened → copies and holders per card and set, stored in Postgres, read by valuation.
+- [ ] 6. Packs: buy a `sobre` only when its EV (page-bonus share, supply, our album need from `/api/me`) beats
+  the price (Abuela's floor ~17), at most 3 per game hour; decide open vs keep sealed (reusing, with credit,
+  Marius's B9 #109 / W7 #87 analysis of packs as inventory vs ladder cash). Kill flags keep today's behaviour.
+
 ## Source (the original issue text, verbatim)
 
 ### #22 — [intel] Supply map: scan of the 270 cards and scarcity (no epics or legendaries)

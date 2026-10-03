@@ -6,27 +6,42 @@ first. A denied action is not sent; the caller turns it into a walk or a hold. A
 threads stay as they are. `kill_switch()` answers "is it on right now?": it re-reads `trading_enabled`
 from GUARDRAILS.md on every call (cached by mtime) and checks the pause file. An append-only ledger
 shared by all processes counts spend per game hour and accepts per tick: the Postgres `ledger` table
-when DATABASE_URL is reachable (`ledger_pg.open_ledger`, shared across machines), else
-`.local/ledger.jsonl` (this machine).
+(`ledger_pg.open_ledger`, shared across machines; required by a live process), or `.local/ledger.jsonl`
+(this machine, dry run only).
 """
 
 from __future__ import annotations
 
 import fcntl
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from bazaar_agent.config import REPO_ROOT
 
 GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
 PRINCIPLE_LINE = re.compile(r"^- (?!`)(?P<text>.+)$")
+SET_CODE = re.compile(r"^[A-Z]{3}$")
+OFF_PAGE_RARITIES = ("epic", "legendary")  # RULES.md: on top of the page; any other rarity counts as a page card
+NO_SETS = ("", "none", "-")
+
+
+def set_codes(value: str) -> tuple[str, ...]:
+    """'RET,CHA' -> ('RET', 'CHA'); 'none' -> (). A code that is not three capitals is refused."""
+    if value.strip().lower() in NO_SETS:
+        return ()
+    codes = tuple(c.strip() for c in value.split(",") if c.strip())
+    bad = [c for c in codes if not SET_CODE.match(c)]
+    if bad:
+        raise ValueError(f"not a set code: {', '.join(bad)} (use e.g. RET,CHA or none)")
+    return codes
 
 
 class GuardrailsError(ValueError):
@@ -56,9 +71,54 @@ class Guardrails(BaseModel):
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
+    duel_inside_limit: bool = True
+    duel_policy: Literal["v1", "v2"] = "v1"
+    duel_max_own_offers: int = Field(default=3, ge=1)
+    duel_stall_ticks: int = Field(default=3, ge=1)
+    duel_open_wait_ticks: int = Field(default=0, ge=0)
+    duel_free_offers: int = Field(default=16, ge=0)
+    duel_answer_share: float = Field(default=0.2, ge=0, le=1)
+    duel_accept_margin_ticks: int = Field(default=1, ge=0)
+    duel_endgame_min_share: float = Field(default=0.0, ge=0, le=1)
+    duel_jitter: float = Field(default=0.0, ge=0, le=0.9)
+    duel_jitter_seed: int = 0
+    duel_days_signed: bool = False
+    duel_days_auto: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
+    inspect_accepts: bool = True
+
+    @field_validator("flag_trusted_dealers")
+    @classmethod
+    def _trusted_parse(cls, value: str) -> str:
+        if value.strip().lower() == "none":
+            return value
+        ids = [d.strip() for d in value.split(",")]
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
+            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+        return value
+
+    @property
+    def trusted_dealers(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
+
+    protect_page_sets: str = "none"
+
+    @field_validator("protect_page_sets")
+    @classmethod
+    def _known_set_codes(cls, value: str) -> str:
+        set_codes(value)
+        return value
+
+    def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
+        """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
+        counts as a page card (fail closed); a duplicate may still be sold."""
+        code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
+        page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
+        return copies <= 1 and page_card and code in set_codes(self.protect_page_sets)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -91,9 +151,26 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
+    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move + agents.duel_v2",
+    "duel_policy": "cli duel run + runtime duel_move + agents.duel_jev (v2: agents.duel_v2.plan_moves)",
+    "duel_max_own_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_stall_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_open_wait_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_free_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_answer_share": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_accept_margin_ticks": "agents.duel_v2.duel_plan + plan_moves (v2 only)",
+    "duel_endgame_min_share": "agents.duel_v2.squeeze_threshold (v2 only)",
+    "duel_jitter": "agents.duel_v2.jittered (v2 only)",
+    "duel_jitter_seed": "agents.duel_v2.jittered (v2 only)",
+    "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
+    "duel_days_auto": "cli duel run + runtime duel_move (agents.duel_days.effective_rules; v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
+    "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
 }
 
 
@@ -217,7 +294,8 @@ LedgerKind = Literal["spend", "accept", "listing"]
 class LedgerStore(Protocol):
     """What the guardrails read and the agents write: the JSONL file or the shared Postgres table."""
 
-    where: str
+    @property
+    def where(self) -> str: ...  # where the counts live, for logs: "file ledger.jsonl", "postgres ledger table on …"
 
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None: ...
     def spent_since(self, t_hours: float) -> int: ...
@@ -307,6 +385,14 @@ def refund_row(
 # ---------------------------------------------------------------- the check
 
 
+DUEL_DAYS_MAX = 10  # RULES.md: two-issue duels trade delivery days 0 to 10
+
+
+def duel_days_ok(days: float) -> bool:
+    """Inside the rules' 0 to 10 days. Anything else (negative, NaN) would turn the days penalty into a bonus."""
+    return 0 <= days <= DUEL_DAYS_MAX
+
+
 # `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
 # kill switch applies to them.
 ActionKind = Literal[
@@ -322,6 +408,10 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
+    role: str | None = None  # duels: "seller" | "buyer"
+    days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
+    days_weight: float | None = None  # two-issue duels: `your_days_weight`
 
 
 @dataclass(frozen=True)
@@ -347,6 +437,7 @@ class Context:
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
+    sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -403,10 +494,17 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
+    selling = action.kind in ("sell", "accept_sell")
+    copies = (ctx.held if ctx.sellable is None else ctx.sellable).get(action.item, 0)
+    if selling and rules.protects(action.item, action.rarity, copies):
+        v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
+        v2 = rules.duel_policy == "v2"
+        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     return Verdict(not v, tuple(v), halted)
 
 
@@ -418,3 +516,30 @@ def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
     if ctx.paused:
         stops.append(f"pause file {rules.pause_file} exists")
     return tuple(stops)
+
+
+def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:
+    """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
+    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here.
+    `signed` (`duel_days_signed`, v2 only): the weight is primas gained (+) or lost (−) per day instead.
+    `zero_days_free` (v2 only): 0 days cost nothing under either sign, so a missing weight does not block them."""
+    if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
+        return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
+    missing = action.days is not None and action.days_weight is None
+    if missing and (action.days or not zero_days_free):  # v2: 0 days cost nothing whatever the weight (B2c)
+        return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
+    if action.days is not None and not duel_days_ok(action.days):
+        return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
+    if action.days_weight is not None and not math.isfinite(action.days_weight):
+        return [f"your_days_weight {action.days_weight}: cannot value the duel move (duel_inside_limit)"]
+    weight = action.days_weight or 0.0
+    penalty = (-weight if signed else abs(weight)) * (action.days or 0.0)
+    seller = action.role == "seller"
+    worth = action.price - penalty if seller else action.price + penalty
+    if (worth > action.limit) if seller else (worth < action.limit):
+        return []
+    side = "above" if seller else "below"
+    return [
+        f"duel {action.role} price {action.price} is worth {worth:g}, not strictly {side} limit "
+        f"{action.limit} (duel_inside_limit)"
+    ]

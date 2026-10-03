@@ -7,6 +7,7 @@ structure binds: the listing IS the structured offer (`give` / `want`) a counter
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
@@ -101,6 +102,8 @@ class Commitments:
     listed: frozenset[int] = frozenset()
     thread_cash: int = 0
     thread_packs: int = 0
+    listed_refs: tuple[str, ...] = ()  # the card of each asset our asks give (open, or accepted and settling)
+    unnamed_listed: int = 0  # such assets whose offer row does not name the card
 
 
 def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -111,7 +114,10 @@ def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
 def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
     """Our open or queued offers. An offer counts as ours unless another team addressed it to us, so an
     unknown maker fails closed: its cash and cards are counted as committed. A thread settles at most one
-    deal, so it counts once, at its biggest open bid (`one_per_thread`); every asset it lists stays listed."""
+    deal, so it counts once, at its biggest open bid (`one_per_thread`); every asset it lists stays listed.
+    For the sell count only, an ask of ours a team accepted is gone too: it settles at the next tick, while
+    /api/me still shows it."""
+    offers = list(offers)
     ours = [
         o
         for o in offers
@@ -132,7 +138,12 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
         for a in (o.get("give") or {}).get("assets") or []
         if isinstance(asset_id := a.get("id") if isinstance(a, dict) else a, int)
     }
-    return Commitments(cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs)
+    settling = [o for o in offers if o.get("status") == "accepted" and o.get("maker") == us]
+    given = [a for o in ours + settling for a in (o.get("give") or {}).get("assets") or []]
+    named = tuple(str(a["ref"]) for a in given if isinstance(a, dict) and a.get("ref"))
+    return Commitments(
+        cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs, named, len(given) - len(named)
+    )
 
 
 def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -158,16 +169,22 @@ def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 def committed_context(ctx: Context, commitments: Commitments) -> Context:
     """The guardrail context as if every open offer fills: less cash, the cards we bid for held, and our
     dealer-thread bids spent this game hour. Two open bids cannot both pass the cash floor or the spend
-    cap, and a second bid for the same card is refused."""
+    cap, and a second bid for the same card is refused.
+    For a sell, the copies we could still sell: what we hold now (a bid may never fill) minus the copies
+    already in our asks, so two asks cannot take a new page's last card (`protect_page_sets`). An ask that
+    does not name its card counts against every card (fail closed)."""
     held = dict(ctx.held)
     for ref in commitments.wanted:
         held[ref] = held.get(ref, 0) + 1
+    listed = Counter(commitments.listed_refs)
+    sellable = {ref: n - listed[ref] - commitments.unnamed_listed for ref, n in ctx.held.items()}
     return replace(
         ctx,
         cash=ctx.cash - commitments.cash,
         held=held,
         spent_last_hour=ctx.spent_last_hour + commitments.thread_cash,
         packs_last_hour=ctx.packs_last_hour + commitments.thread_packs,
+        sellable=sellable,
     )
 
 
