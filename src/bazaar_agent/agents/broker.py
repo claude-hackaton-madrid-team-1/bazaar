@@ -75,19 +75,24 @@ BENCH_ENV: dict[str, tuple[str, ...]] = {
 }
 
 
-def bench_config_from_env(base: BrokerConfig, environ: Mapping[str, str] | None = None) -> BrokerConfig:
+def bench_config_from_env(
+    base: BrokerConfig, environ: Mapping[str, str] | None = None, log: Callable[[str], None] | None = None
+) -> BrokerConfig:
     """The Market Test options of a broker that has no command line (the maker's venue keeper on Railway):
-    BAZAAR_BENCH_POLICY, BAZAAR_BENCH_PRESET and BAZAAR_BENCH_CROSS. Unset: `base` unchanged (exact, today).
-    A value outside its choices fails fast. Reads stay at one a tick: inside the maker, an extra read would
+    BAZAAR_BENCH_POLICY, BAZAAR_BENCH_PRESET and BAZAAR_BENCH_CROSS, case-insensitive. Unset: `base` unchanged
+    (exact, today). A value outside its choices is IGNORED, loudly (its default stays): a typo must never stop
+    the maker, which also posts our offers. Reads stay at one a tick: inside the maker, an extra read would
     sleep in the maker's own tick."""
     env = os.environ if environ is None else environ
     picked: dict[str, Any] = {}
     for name, allowed in BENCH_ENV.items():
-        value = (env.get(name) or "").strip()
+        value = (env.get(name) or "").strip().lower()
         if not value:
             continue
         if value not in allowed:
-            raise ValueError(f"{name}={value!r}: expected one of {', '.join(allowed)}")
+            if log is not None:
+                log(f"broker: IGNORED {name}={value!r} (expected one of {', '.join(allowed)}); its default stays")
+            continue
         picked[name.removeprefix("BAZAAR_").lower()] = value
     return replace(base, **picked) if picked else base
 

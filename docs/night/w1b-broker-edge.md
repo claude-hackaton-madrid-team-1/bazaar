@@ -1,13 +1,13 @@
 # W1b: a bench broker edge for the Market Test
 
-Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stacked on #71** (`feat/venue-broker-build-only`). Refs #12, #71, #77. Nothing live: `allow_venue_open` stays false, and every new switch defaults to today's behaviour.
+Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stacked on #71** (`feat/venue-broker-build-only`). Refs #12, #71, #77. Nothing went live tonight. This PR changes no guardrail value: #71 now sets `allow_venue_open = true` and opens the venue from the maker. Every switch added here defaults to today's behaviour.
 
-## Since 03:40: rebased onto the new #71 (venue keeper, e489449)
+## Since 03:40: rebased onto the new #71 (venue keeper, ffb0877)
 
 #71 now opens our board venue from the maker at game hour 6.5 (`agents/venue_keeper.py`), with an exact broker whose ties follow the stall's book order. This PR was re-applied onto it as one commit (the old history is in `backup/w1b-old` locally).
 
 - Every switch still defaults to today's behaviour.
-- The keeper's broker takes the edge from the Railway environment: `BAZAAR_BENCH_POLICY=edge` (and optionally `BAZAAR_BENCH_PRESET`, `BAZAAR_BENCH_CROSS=limit`) on `bazaar-maker`. Unset means exact.
+- The keeper's broker takes the edge from the Railway environment: `BAZAAR_BENCH_POLICY=edge` (and optionally `BAZAAR_BENCH_PRESET`, `BAZAAR_BENCH_CROSS=limit`) on `bazaar-maker`. Values are case-insensitive. Unset means exact. A value it does not know is ignored with a loud log line, and its default stays: a typo never stops the maker.
 - Reads stay at one a tick inside the maker, so its tick is never blocked.
 - With #71's tie-break, exact equals the stall on every modelled bench (its own memory note, and this PR's tournament). So the keeper's venue as configured earns the stall's bench points, no more. Setting `BAZAAR_BENCH_POLICY=edge` is the switch that gives the numbers below.
 
@@ -21,7 +21,7 @@ Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stac
 | `evals/bench.py` | In-process tournament: stall, greedy (= `starter_broker.bench_plan`, checked against the kit), exact (#71), edge and edge_limit, plus three bounds: prescient (knows present limits and departures), oracle_quote and oracle_limit. Run with `uv run python -m bazaar_agent.evals.bench`. |
 | `evals/bench_w1a.py` | The same policies on **W1a's bench** (`bazaar_sim.bench`, #77), with W1a's stall, oracle and session points. It needs bazaar_sim; tonight it ran on a local copy of W1a's four files. |
 
-Gates (on #71 @ e489449): 2,056 passed and 35 skipped (the W1a adapter test skips until `bazaar_sim.bench` (#77) is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 14 ms with the probe, retries included (#12's limit is 50 ms). `bazaar broker probe <sell> <buy> <price> [--live]` sends one match and prints the venue's verdict: the morning probe as a command, logged as a decision and gated like any match.
+Gates (on #71 @ ffb0877): 2,065 passed and 35 skipped (the W1a adapter test skips until `bazaar_sim.bench` (#77) is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 14 ms with the probe, retries included (#12's limit is 50 ms). `bazaar broker probe <sell> <buy> <price> [--live]` sends one match and prints the venue's verdict: the morning probe as a command, logged as a decision and gated like any match.
 
 ## Evidence: W1a's bench, 1,000 books per row, p50 efficiency
 
@@ -83,5 +83,5 @@ Greedy (the starter broker) and exact (#71) equal the stall in every cell of bot
 ## What Marius must decide
 
 1. **The bar:** keep "stall + 0.15" (no-go) or adopt W1a's points bar.
-2. **The morning probe:** one manual non-crossing match during a Market Test (`uv run bazaar broker probe b12-3 b12-4 <price between the quotes> --live`; a 400 means quotes), or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue, which means `allow_venue_open` and 540 P with today's `cash_floor`. Neither changes tonight.
+2. **The morning probe:** one manual non-crossing match during a Market Test (`uv run bazaar broker probe b12-3 b12-4 <price between the quotes> --live`; a 400 means quotes), or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue: #71's keeper opens one at game hour 6.5. **Setting `BAZAAR_BENCH_POLICY=edge` with `BAZAAR_BENCH_CROSS=limit` on a live maker IS the decision to send live probes.** No other switch gates them. The rules do not say whether a refused match counts against a venue.
 3. **Default after the first real Market Test:** read `broker_bench_shapes.jsonl` (an expiry field would turn on the hold, +0.01–0.02; check what the field means before setting `expiry_margin` to 0). Compare our `/me` `bench_efficiency` with W1a's calibration table, then choose `bench_policy`.

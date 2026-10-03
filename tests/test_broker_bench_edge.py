@@ -244,7 +244,6 @@ def test_cli_broker_probe_never_sends_on_bazaar_live_alone(tmp_path, monkeypatch
 
 
 def test_the_keepers_broker_takes_its_bench_options_from_the_environment():
-    import pytest
 
     from bazaar_agent.agents.broker import bench_config_from_env
 
@@ -252,5 +251,8 @@ def test_the_keepers_broker_takes_its_bench_options_from_the_environment():
     assert bench_config_from_env(base, {}) is base
     edge = bench_config_from_env(base, {"BAZAAR_BENCH_POLICY": "edge", "BAZAAR_BENCH_CROSS": "limit"})
     assert (edge.bench_policy, edge.bench_cross, edge.pace_s, edge.bench_reads_per_tick) == ("edge", "limit", 0.2, 1)
-    with pytest.raises(ValueError, match="BAZAAR_BENCH_POLICY"):
-        bench_config_from_env(base, {"BAZAAR_BENCH_POLICY": "magic"})
+    lines = []
+    assert bench_config_from_env(base, {"BAZAAR_BENCH_POLICY": "Edge", "BAZAAR_BENCH_CROSS": "LIMIT"}) == edge
+    kept = bench_config_from_env(base, {"BAZAAR_BENCH_POLICY": "magic", "BAZAAR_BENCH_CROSS": "limit"}, lines.append)
+    assert (kept.bench_policy, kept.bench_cross) == ("exact", "limit")  # a typo never stops the maker
+    assert lines and "IGNORED BAZAAR_BENCH_POLICY='magic'" in lines[0]
