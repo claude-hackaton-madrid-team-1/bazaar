@@ -6,7 +6,7 @@ which is stacked on #60:
 
     PYTHONPATH=<night/w2b-duel-v2>/src uv run python scripts/duel_zoo.py --policy v1 \
       --policy v2=bazaar_agent.agents.duel_v2:single_duel_move --policy endgame_accept --policy accept_first_inside \
-      --policy anchor_once --gate v2=bazaar_agent.agents.duel_v2:single_duel_move \
+      --policy anchor_once --gate v2=bazaar_agent.agents.duel_v2:single_duel_move --gate endgame_accept \
       --gate-decays 0.06,0.08 --gate-decays 0.08,0.10 --gate-decays 0.06,0.10 --n 200
 
 The one-page reading of these tables is in [w2a-duel-zoo.md](w2a-duel-zoo.md).
@@ -219,7 +219,7 @@ Our days valued `signed` (weight × days, the simulator) or `worst` (−|weight|
 | anchor_once | signed | 1400 | 0.723 | 20.248 | 0.39 | 0.642 | 0.741 | 0 | 0 |
 | anchor_once | worst | 1400 | 0.723 | 15.192 | 0.288 | 0.642 | 0.741 | 0 | 0 |
 
-## Seed stability: mean P per duel on the go/no-go grid (4800 duels per seed)
+## Seed stability: mean P per duel on the go/no-go grid, decays 0.06/0.08 (4800 duels per seed)
 
 | policy | seed 1 | seed 2 | seed 3 | seed 4 | seed 5 | mean | sd |
 |---|---|---|---|---|---|---|---|
@@ -228,6 +228,15 @@ Our days valued `signed` (weight × days, the simulator) or `worst` (−|weight|
 | endgame_accept | 19.35 | 19.53 | 19.36 | 19.56 | 19.56 | 19.47 | 0.11 |
 | accept_first_inside | 9.43 | 9.66 | 9.53 | 9.79 | 9.59 | 9.6 | 0.13 |
 | anchor_once | 13.35 | 13.53 | 13.28 | 13.52 | 13.48 | 13.43 | 0.11 |
+
+Lift per seed (the gate's `mean_result`, threshold 1.4):
+
+| ratio | seed 1 | seed 2 | seed 3 | seed 4 | seed 5 | mean | sd |
+|---|---|---|---|---|---|---|---|
+| v2 / v1 | 1.394 | 1.405 | 1.401 | 1.408 | 1.396 | 1.401 | 0.006 |
+| endgame_accept / v1 | 1.345 | 1.348 | 1.336 | 1.348 | 1.341 | 1.344 | 0.005 |
+| accept_first_inside / v1 | 0.656 | 0.667 | 0.658 | 0.675 | 0.657 | 0.663 | 0.008 |
+| anchor_once / v1 | 0.928 | 0.934 | 0.917 | 0.932 | 0.924 | 0.927 | 0.007 |
 
 ## Sensitivity: mean P per duel when one zoo assumption is pinned (5600 duels, 7 styles)
 
@@ -308,3 +317,33 @@ Per duel, conservative counterfactual: P after decay (rounds). The oracle (best 
 | deals_one_shot | 0.89 | 0.787 | pass | baseline 0.875 |
 | outside_limit | 0 | 0 | pass | over 14400 duels (price only + two-issue) |
 | replay | 173.5 | 121.73 | pass | P on the 12 unanswered practice duels |
+
+## Go/no-go: endgame_accept vs v1, decays 0.06/0.08 → NO-GO
+
+| check | value | threshold |  | detail |
+|---|---|---|---|---|
+| mean_result | 1.333 | 1.4 | FAIL | 19.61 P vs 14.70 P per duel |
+| deals_conceders | 0.862 | 0.992 | FAIL | baseline 0.992 |
+| deals_one_shot | 0.766 | 0.789 | FAIL | baseline 0.876 |
+| outside_limit | 0 | 0 | pass | over 14400 duels (price only + two-issue) |
+| replay | 185 | 121.73 | pass | P on the 12 unanswered practice duels |
+
+## Go/no-go: endgame_accept vs v1, decays 0.08/0.1 → NO-GO
+
+| check | value | threshold |  | detail |
+|---|---|---|---|---|
+| mean_result | 1.48 | 1.4 | pass | 19.76 P vs 13.35 P per duel |
+| deals_conceders | 0.866 | 0.993 | FAIL | baseline 0.993 |
+| deals_one_shot | 0.75 | 0.777 | FAIL | baseline 0.864 |
+| outside_limit | 0 | 0 | pass | over 14400 duels (price only + two-issue) |
+| replay | 185 | 121.73 | pass | P on the 12 unanswered practice duels |
+
+## Go/no-go: endgame_accept vs v1, decays 0.06/0.1 → NO-GO
+
+| check | value | threshold |  | detail |
+|---|---|---|---|---|
+| mean_result | 1.405 | 1.4 | pass | 19.84 P vs 14.12 P per duel |
+| deals_conceders | 0.858 | 0.991 | FAIL | baseline 0.991 |
+| deals_one_shot | 0.764 | 0.787 | FAIL | baseline 0.875 |
+| outside_limit | 0 | 0 | pass | over 14400 duels (price only + two-issue) |
+| replay | 185 | 121.73 | pass | P on the 12 unanswered practice duels |

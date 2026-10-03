@@ -168,19 +168,30 @@ def tournament_section(policies: dict[str, Policy], n: int) -> str:
 
 
 def seeds_section(policies: dict[str, Policy], n: int, seeds: Sequence[int] = (1, 2, 3, 4, 5)) -> str:
-    """The go/no-go grid (6 plan styles × 2 roles × 2 decays) redrawn with other seeds: how much the means move."""
-    rows = []
+    """The go/no-go grid (6 plan styles × 2 roles × 2 decays) redrawn with other seeds: how much the means move,
+    and each policy's lift over the first one seed by seed (the gate's `mean_result` check, seed by seed)."""
+    rows, means_by = [], {}
     for name, p in policies.items():
         means = []
         for seed in seeds:
             grid = duel_zoo.scenarios(duel_zoo.PLAN_STYLES, n=n, decays=(0.06, 0.08), seed=seed)
             means.append(duel_zoo.summarize(duel_zoo.run(p, grid)).mean_result)
+        means_by[name] = means
         spread = statistics.stdev(means) if len(means) > 1 else 0.0
         rows.append((name, *(round(m, 2) for m in means), round(statistics.fmean(means), 2), round(spread, 2)))
+    first = next(iter(means_by))
+    lifts = []
+    for name, means in list(means_by.items())[1:]:
+        ratio = [m / b if b > 0 else float("nan") for m, b in zip(means, means_by[first], strict=True)]
+        lifts.append((f"{name} / {first}", *(round(r, 3) for r in ratio), round(statistics.fmean(ratio), 3),
+                      round(statistics.stdev(ratio), 3) if len(ratio) > 1 else 0.0))  # fmt: skip
     head = ("policy", *(f"seed {s}" for s in seeds), "mean", "sd")
     return (
-        f"## Seed stability: mean P per duel on the go/no-go grid ({len(duel_zoo.PLAN_STYLES) * n * 4} duels per seed)"
-        "\n\n" + table(head, rows)
+        f"## Seed stability: mean P per duel on the go/no-go grid, decays 0.06/0.08 "
+        f"({len(duel_zoo.PLAN_STYLES) * n * 4} duels per seed)\n\n"
+        + table(head, rows)
+        + "\n\nLift per seed (the gate's `mean_result`, threshold 1.4):\n\n"
+        + table(("ratio", *(f"seed {s}" for s in seeds), "mean", "sd"), lifts)
     )
 
 
