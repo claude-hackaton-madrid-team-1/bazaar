@@ -365,14 +365,14 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
 
 def _acceptable(duel: Mapping[str, Any], signed: bool) -> tuple[DuelMove | None, float]:
-    """Accepting the rival's standing offer when it is strictly inside our limit (rounded as #60 rounds it)."""
+    """Accepting the rival's standing offer when it is strictly inside our limit (unrounded, as the guard checks)."""
     offer = duel.get("rival_offer")
     if not isinstance(offer, dict) or _number(offer.get("price")) is None:
         return None, 0.0
     price = int(offer["price"])
     value = value_of(duel, price, offer.get("days"), signed)
     limit, role = duel["your_limit"], duel["role"]
-    if value is None or not inside_limit(round(value), limit, role):
+    if value is None or not inside_limit(value, limit, role):
         return None, 0.0
     return DuelMove("accept", price, reason="inside our limit"), surplus(value, limit, role)
 

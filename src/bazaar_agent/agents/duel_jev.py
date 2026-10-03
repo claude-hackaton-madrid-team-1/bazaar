@@ -35,8 +35,10 @@ from bazaar_agent.agents.duelist import (
     duel_move,
     effective_price,
     inside_limit,
+    our_price,
     worth,
 )
+from bazaar_agent.agents.duelist import _number as _number  # finite only: NaN days never abort a tick (#60 r2)
 from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
 
@@ -72,10 +74,6 @@ class DuelPick:
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
     return "days" in (duel.get("issues") or [])
-
-
-def _number(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def _limit_role(duel: Mapping[str, Any]) -> tuple[int, str] | None:
@@ -143,7 +141,7 @@ def accept_move(duel: Mapping[str, Any]) -> DuelMove | None:
     if limit_role is None or rival is None:
         return None
     worth = effective_price(dict(duel), rival["price"])
-    if worth is None or not inside_limit(round(worth), *limit_role):
+    if worth is None or not inside_limit(worth, *limit_role):
         return None
     return DuelMove("accept", rival["price"], reason="inside our limit")
 
@@ -231,19 +229,26 @@ def forced_pick(
     )
 
 
-def with_rival_days(move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | None) -> tuple[DuelMove, str]:
-    """On a yes to `rival_cares_about_days`, give the rival its own days, if our price still holds after them."""
-    if days is None or days.verdict != "yes" or move.kind != "offer" or move.price is None:
+def with_rival_days(
+    move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | None, signed: bool = False
+) -> tuple[DuelMove, str]:
+    """On a yes to `rival_cares_about_days`, give the rival its own days and price them in at their worst-case
+    cost, so our offer keeps its worth (#60 review: copying the days at the same price thinned our margin to
+    just above the limit). Under v2 with signed days, v2 already chose our days by their sign: no change."""
+    if signed or days is None or days.verdict != "yes" or move.kind != "offer" or move.price is None:
         return move, ""
     rival, limit_role = _offer(duel, "rival_offer"), _limit_role(duel)
-    if rival is None or limit_role is None or _number(rival.get("days")) is None:
+    weight = _number(duel.get("your_days_weight"))
+    if rival is None or limit_role is None or weight is None or _number(rival.get("days")) is None:
         return move, ""
     their_days = int(rival["days"])
-    worth = own_worth(duel, move.price, their_days)
+    ours = own_worth(duel, move.price, move.days)
+    price = our_price(ours, limit_role[1], their_days, weight) if ours is not None else 0
+    worth = own_worth(duel, price, their_days) if price >= 1 else None
     if worth is None or not inside_limit(worth, *limit_role):
-        return move, f"; kept days {move.days}: the rival's {their_days} would cross our limit"
-    reason = f"{move.reason}; days {their_days}: the rival cares about days (jev {days.value:.2f})"
-    return replace(move, days=their_days, reason=reason), f"; days → {their_days}"
+        return move, f"; kept days {move.days}: the rival's {their_days} cannot be priced inside our limit"
+    reason = f"{move.reason}; days {their_days} at {price}: the rival cares about days (jev {days.value:.2f})"
+    return replace(move, price=price, days=their_days, reason=reason), f"; days → {their_days} at {price}"
 
 
 def duel_state(
@@ -447,7 +452,7 @@ class DuelJev:
         for did, (d, default, legal, state) in plans.items():
             advice, days = answers.get((did, MOVE_QUESTION)), answers.get((did, DAYS_QUESTION))
             move, why = choose(default, legal, advice, self.can_accept_early)
-            move, days_why = with_rival_days(move, d, days)
+            move, days_why = with_rival_days(move, d, days, signed=v2 is not None and v2.days_signed)
             picks[did] = DuelPick(default, move, tuple(legal), why + days_why, advice, days, state)
             self.outcomes.decided(did, d, picks[did])
         return picks

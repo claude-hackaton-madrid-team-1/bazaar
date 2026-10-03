@@ -353,3 +353,8 @@ def test_under_v2_jev_may_counter_within_the_caps_and_its_counter_stays_inside_o
     hold = DuelJev(lambda state: JevAdvice("hold", 0.9))
     held = hold.pick([d], 104, {1: 100}, anchor=0.6, floor=0.05, endgame_ticks=2, left=lambda: 30.0, v2=V2Params())[1]
     assert held.default.kind == "offer" and held.move.kind == "hold"  # Jev may keep a v2 counter from costing a round
+
+
+def test_the_endgame_accepts_a_surplus_below_half_a_prima():
+    d = duel(rival=[(100, 101, 1)], ours=[(100, 160, 0)], issues=("price", "days"), weight=0.6)  # 100.4 > 100
+    assert duel_plan(d, 110, 100).move.kind == "accept"

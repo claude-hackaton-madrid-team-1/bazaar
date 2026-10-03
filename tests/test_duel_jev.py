@@ -204,20 +204,30 @@ def test_days_question_is_asked_only_in_two_issue_duels_and_moves_days_inside_th
     assert one_issue.states == []
 
 
-def test_the_rivals_days_are_refused_when_they_would_cross_our_limit():
+def test_the_rivals_days_are_priced_in_or_refused():
     d = two_issue(150, 10, weight=9.0)
     offer = DuelMove("offer", 157, 0, "concede")
     move, why = with_rival_days(offer, d, JevAdvice("yes", 0.7))
-    assert move.days == 0 and "cross our limit" in why  # 157 - 9 × 10 = 67 < cost 104
-    assert with_rival_days(offer, d, JevAdvice("undecided", 0.5))[0].days == 0
-    assert with_rival_days(offer, d, JevAdvice("no", 0.2))[0].days == 0
+    assert (move.days, move.price) == (10, 247) and "at 247" in why  # 247 - 9 × 10 = 157: our worth is kept
+    assert with_rival_days(offer, d, JevAdvice("undecided", 0.5))[0] == offer
+    assert with_rival_days(offer, d, JevAdvice("no", 0.2))[0] == offer
+    buyer = {**two_issue(150, 10, weight=9.0), "role": "buyer", "your_limit": 60}
+    move, why = with_rival_days(DuelMove("offer", 50, 0, "concede"), buyer, JevAdvice("yes", 0.7))
+    assert move.days == 0 and "cannot be priced" in why  # 50 - 90 is no price: we keep our days
+    out_of_range = with_rival_days(offer, two_issue(150, 11), JevAdvice("yes", 0.7))[0]
+    assert out_of_range == offer  # 11 days is outside the rules' 0-10: never copied
 
 
-def test_the_rivals_days_must_leave_our_price_strictly_inside_the_limit():
+def test_the_rivals_days_keep_our_offer_strictly_inside_the_limit():
     offer = DuelMove("offer", 114, 0, "concede")
-    move, why = with_rival_days(offer, two_issue(150, 5), JevAdvice("yes", 0.7))
-    assert move.days == 0 and "cross our limit" in why  # 114 - 2 × 5 = 104: exactly our cost, no surplus
-    assert with_rival_days(offer, two_issue(150, 4), JevAdvice("yes", 0.7))[0].days == 4  # worth 106
+    move, _ = with_rival_days(offer, two_issue(150, 5), JevAdvice("yes", 0.7))
+    assert (move.days, move.price) == (5, 124)  # 124 - 2 × 5 = 114 > cost 104, where 114 with 5 days was 104
+    assert move.price - 2 * move.days > 104
+
+
+def test_under_v2_with_signed_days_jevs_yes_never_moves_our_days():
+    offer = DuelMove("offer", 114, 10, "v2 picks our end of the days range by their sign")
+    assert with_rival_days(offer, two_issue(150, 4), JevAdvice("yes", 0.9), signed=True)[0] == offer
 
 
 def test_a_counter_whose_days_cross_our_limit_is_not_a_legal_move():
@@ -355,3 +365,31 @@ def test_on_the_real_practice_payloads_v1_ends_seven_duels_on_a_forced_accept():
                 break
         split[outcome] += 1
     assert split == {"forced at D-2": 7, "Jev may overrule": 11, "never accepts": 8}
+
+
+# ---------------------------------------------------------------- #60 review: rounding, NaN days, repricing
+
+
+def test_an_accept_worth_less_than_half_a_prima_above_our_limit_is_legal():
+    d = rival(105, days=1, issues=["price", "days"], your_days_weight=0.6)  # 105 - 0.6 = 104.4 > cost 104
+    legal = legal_moves(d, 143, default(d, 143), DuelMove("offer", 110, 0), endgame_ticks=2)
+    assert legal["accept"].price == 105
+
+
+def test_nan_days_in_one_duel_never_abort_the_ticks_picks():
+    bad = {**two_issue(150, float("nan")), "duel": 95}
+    good = {**two_issue(150, 0), "duel": 96}
+    jev = DuelJev(FakeJev("counter", 0.9), FakeJev("yes", 0.7))
+    picks = jev.pick([bad, good], 134, {95: 132, 96: 132}, anchor=0.6, floor=0.05, endgame_ticks=2, left=lambda: 30.0)
+    assert set(picks) == {95, 96}
+    assert picks[95].move.days in (0, None)  # NaN days are never copied into our offer
+
+
+def test_giving_the_rival_its_days_reprices_our_offer_to_keep_its_worth():
+    # #60 review 3: the rival's days were copied at the same price, so our margin fell to just above the limit.
+    offer = DuelMove("offer", 114, 0, "concede")  # worth 114 to us at 0 days
+    move, _ = with_rival_days(offer, two_issue(150, 4), JevAdvice("yes", 0.7))
+    assert move.days == 4 and move.price == 122  # 122 - 2 × 4 = 114: the days cost the rival, not us
+    buyer = {**two_issue(50, 3), "role": "buyer", "your_limit": 130}
+    move, _ = with_rival_days(DuelMove("offer", 90, 0, "concede"), buyer, JevAdvice("yes", 0.7))
+    assert move.days == 3 and move.price == 84  # 84 + 2 × 3 = 90

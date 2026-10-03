@@ -170,3 +170,14 @@ def test_the_guardrail_action_carries_the_terms_we_would_agree_to():
     assert duel_action(d, DuelMove("accept", 130)).price is None
     price_only = duel_action(duel(rival=60), DuelMove("accept", 60))
     assert (price_only.price, price_only.days, price_only.limit) == (60, None, 50)
+
+
+def test_the_endgame_takes_a_worst_case_surplus_below_half_a_prima():
+    # #60 review 1: round(100.4) == 100 refused a deal strictly inside our cost of 100 on the last ticks.
+    d = two_issue(weight=0.6, rival=101)
+    d["rival_offer"]["days"] = 1  # 101 - 0.6 × 1 = 100.4: worth 0.4 above our cost
+    move = duel_move(d, tick=111, started_tick=100)
+    assert (move.kind, move.price) == ("accept", 101)
+    b = two_issue(role="buyer", limit=60, weight=-0.6, rival=59)
+    b["rival_offer"]["days"] = 1  # 59 + 0.6 = 59.6 < 60
+    assert duel_move(b, tick=111, started_tick=100).kind == "accept"

@@ -109,7 +109,7 @@ def our_target(limit: int, role: str, progress: float, anchor: float = ANCHOR, f
     return max(1, math.floor(limit * (1 - reach) + ROUNDING_SLACK))
 
 
-def our_price(target: int, role: str, days: int, weight: float) -> int:
+def our_price(target: float, role: str, days: int, weight: float) -> int:
     """The price that keeps our target after the worst-case cost of `days`, rounded to our side."""
     penalty = abs(weight) * days
     if role == "seller":
@@ -145,7 +145,7 @@ def duel_move(
     price = our_price(target, role, days, weight or 0.0) if days is not None else target
     rival = _rival_price(duel)
     theirs = effective_price(duel, rival) if rival is not None else None
-    if rival is not None and theirs is not None and inside_limit(round(theirs), limit, role):
+    if rival is not None and theirs is not None and inside_limit(theirs, limit, role):
         good_enough = theirs >= target if role == "seller" else theirs <= target
         if good_enough or left <= endgame_ticks:
             return DuelMove(
