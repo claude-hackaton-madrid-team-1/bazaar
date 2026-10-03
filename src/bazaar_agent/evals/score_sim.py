@@ -321,6 +321,35 @@ def final_game_points(day_scores: Mapping[str, float], model: ScoreModel) -> flo
     return board_score([(model.round_weights[d], 1.0, s) for d, s in day_scores.items()])
 
 
+@dataclass(frozen=True)
+class RoundOutlook:
+    """One round's components, each as a ratio to the top-3 mean (the bench as its 0..1 fraction)."""
+
+    ladder: float = 0.0
+    duels: float = 0.0
+    trades: float = 0.0
+    bench: float = 0.0
+    venue: float = 0.0
+
+    def points(self, model: ScoreModel) -> dict[str, float]:
+        cap = model.cap
+        return {
+            "ladder": model.ladder_weight * min(cap, self.ladder),
+            "duels": model.duel_weight * min(cap, self.duels),
+            "trades": model.trade_weight * min(cap, self.trades),
+            "bench": model.bench_weight * min(1.0, self.bench),
+            "venue": model.venue_weight * min(cap, self.venue),
+        }
+
+    def total(self, model: ScoreModel) -> float:
+        return sum(self.points(model).values())
+
+
+def final_points_per_round_point(day: str, model: ScoreModel) -> float:
+    """What one point of a day's round score adds to the final 60 game points."""
+    return model.round_weights[day] / sum(model.round_weights.values())
+
+
 # ---------------------------------------------------------------- the calibration data
 
 

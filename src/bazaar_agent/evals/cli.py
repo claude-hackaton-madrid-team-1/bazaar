@@ -216,6 +216,15 @@ def evals_score_sim(
     raw = ss.ladder_raw(d.deals, ss.snapshot_tick(last, model), model, ss.learned_ranges(d.deals), teams=[d.team])
     top = ss.top_mean(raw.values())
     marginals = ss.ladder_marginals(raw[d.team], top, model)
+    friday = raw[d.team] / top if top else 0.0
+    per_point = ss.final_points_per_round_point("sat", model)
+    levers = [
+        ("Friday's pattern again: ladder only", ss.RoundOutlook(ladder=friday)),
+        ("+ Duels I at the top-3 mean", ss.RoundOutlook(ladder=friday, duels=1.0)),
+        ("+ Market Test at the stall's level", ss.RoundOutlook(ladder=friday, duels=1.0, bench=0.5)),
+        ("+ trades at half the top-3 mean", ss.RoundOutlook(ladder=friday, duels=1.0, bench=0.5, trades=0.5)),
+        ("everything at the top-3 mean", ss.RoundOutlook(1.0, 1.0, 1.0, 1.0, 1.0)),
+    ]
     if as_json:
         out = {
             "model": asdict(model),
@@ -227,6 +236,10 @@ def evals_score_sim(
             "board30_mae": round(cal.board_mae, 2),
             "ladder_raw": {"ours": round(raw[d.team], 4), "top3_mean": round(top, 4), "tick": last},
             "marginals": [asdict(m) for m in marginals],
+            "saturday_levers": [
+                {"scenario": name, **o.points(model), "round": round(o.total(model), 2)} for name, o in levers
+            ],
+            "final_points_per_saturday_point": round(per_point, 3),
         }
         print(json.dumps(out, indent=2))
         return
@@ -251,3 +264,12 @@ def evals_score_sim(
     for m in marginals:
         table.add_row(m.move, f"{m.raw_delta:.3f}", f"{m.points:+.2f}")
     console.print(table)
+    sat = Table(title=f"Saturday round levers (1 round point = {per_point:.2f} final game points)")
+    for col in ("scenario", "round points", "final +"):
+        sat.add_column(col, justify="right")
+    for name, outlook in levers:
+        sat.add_row(name, f"{outlook.total(model):.1f}", f"{outlook.total(model) * per_point:.1f}")
+    console.print(sat)
+    console.print(
+        "[dim]Weights: ladder 12.5 fitted; duels 12.5, trades 5, bench 15, venue 15 assumed (unverified).[/dim]"
+    )

@@ -124,3 +124,17 @@ def test_one_more_chato_deal_is_worth_about_a_point_at_tick_159() -> None:
     moves = {m.move: m.points for m in ss.ladder_marginals(raw[DATA.team], ss.top_mean(raw.values()), MODEL)}
     assert moves["first level-2 (Chato) deal at share 0.5"] == pytest.approx(0.94, abs=0.05)
     assert moves["three level-2 deals at share 0.5"] == pytest.approx(2.82, abs=0.05)
+
+
+def test_a_saturday_round_point_is_worth_two_fifths_of_a_final_point() -> None:
+    assert ss.final_points_per_round_point("sat", MODEL) == pytest.approx(0.4)
+    assert ss.final_points_per_round_point("fri", MODEL) == pytest.approx(0.2)
+    full = ss.RoundOutlook(1.0, 1.0, 1.0, 1.0, 1.0)
+    assert full.total(MODEL) == 60.0
+    assert ss.RoundOutlook(ladder=2.0, bench=0.5).points(MODEL) == {
+        "ladder": 12.5,
+        "duels": 0.0,
+        "trades": 0.0,
+        "bench": 7.5,
+        "venue": 0.0,
+    }
