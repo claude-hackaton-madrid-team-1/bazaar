@@ -275,6 +275,15 @@ def decide_forgiving(neg: Negotiation, ask: int | None, offer_id: int | None, fi
     return wait or Move("walk", reason=f"{its}no bid left below its ask {neg.lowest_ask} that we may pay", rest=True)
 
 
+def affordable_rung(violations: tuple[str, ...], bids: list[int], room: int) -> int | None:
+    """The bid to send instead of a rung refused ONLY for cash (`cash_floor`) or the hour's spend: the most we may
+    still commit (`room`), when it is a distinct step above our last bid (UB1: a refused rung used to walk the
+    thread). None: walk as before (another rule refused it, no bid yet, or no step left above our last bid)."""
+    if not bids or not violations or not all(v.startswith(("cash ", "spend ")) for v in violations):
+        return None
+    return room if room > bids[-1] else None
+
+
 def bid_schedule(plan: BidPlan) -> list[int]:
     """Every bid of the ladder, from `start` to the hard max: the dry run of one negotiation (live, a bid
     after the first waits for her answer and stays below her opening ask)."""

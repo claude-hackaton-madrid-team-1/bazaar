@@ -1168,3 +1168,18 @@ per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the 
 `tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
 GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
 
+### [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
+`executions` (sdk_method `broker_announce`, ticks 439-1166): 26 accepted, 12 refused `wait`, each 2-8 ticks after an
+accepted notice; accepted gaps went as low as 10 ticks (616 → 626), so the server's gap is about 10 ticks, not 20
+(UNVERIFIED: its exact message). The keeper remembered its notice in memory only, so every maker redeploy announced
+again. The 33 accepted notices on v19 were the same generic text naming no card; v19 had 0 organic trades. MM2: the
+notice names the page cards the most other teams miss (team matrix), one every 24 ticks, the feed's newest
+`venue.announcement` for our venue counting as the last one.
+
+### [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+`strategy.guarded` checked every dealer buy at `mv.limit` (the ladder's top): MAL-09 (top 67) read "cash 58 - 67 <
+cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 was affordable; `_all_denied` then said
+"none affordable". A ladder is now ranked at its first rung (caps still at its top); each rung is checked when sent,
+and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
+1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
+every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).

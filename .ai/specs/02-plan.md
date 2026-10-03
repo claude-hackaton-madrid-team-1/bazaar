@@ -135,6 +135,7 @@ negotiates well.
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
+| [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -606,6 +607,9 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   fill range (none seen: only bid), on every accept path (decide, meet_ask, Jev early accept, restart adoption,
   `dealer buy`). Abuela publishes strictness 0.1 but her FINAL is real: `trickster_max_strictness` ships at 0.
   · **Acceptance:** tests/test_trickster_final.py.
+- TF1 follow-up (#228 reviews): `bazaar dealer buy` leaves our own fills out of a trickster's range (our team id from
+  BAZAAR_TEAM_ID, `.local/team_id` or one /me read; unknown: nothing opened) and refuses a dealer missing from
+  `/api/dealers`. · **Acceptance:** tests/test_trickster_final.py (`test_dealer_buy_*`).
 - SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
   opens, not when it is planned. ❌ not done yet.
 
@@ -630,15 +634,31 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
   · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
   tests/test_guardrails.py; full gate.
-- Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
-  would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
-  sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
+- Step 2 (review of #240 + coordinator) — entries are REF:MIN (`LAT-10:80`): no sale of an excepted card below MIN,
+  maker floors at MIN; ASCII entries, exact item match, asset must be a copy of that card · **Acceptance:**
+  tests/test_page_exceptions.py.
+- Step 3 (Omar, ~22:20) — `LAT-09:90` added to the list · **Acceptance:** tests/test_page_exceptions.py.
 
 ### SP2 — The schedule playbook ([spec](SP2-spec.md))
 - Step 1 — `playbook.py` + news sentinel wiring, learnings rows per instruction, taker obeys `no_new_dealer_thread`
   behind `playbook_enabled` · **Acceptance:** tests/test_playbook.py; full gate.
 - Follow-ups: maker and duels obey their constraints (`keep_broker_up`, `yield_accepts`); a price probe that turns a
   rumour into a verified signal.
+
+### TP1 — weaker teams first + an invite to our venue (Omar, Sat 21:55)
+- The team desk orders partners: a team that answered our proposals first, then the weaker team by the leaderboard
+  (taker reads it keyless every 10 ticks), then page, affinity and gain; their share stays ≤ `team_swap_max_their_share`.
+- Every swap proposal adds one true line inviting the team to our venue (`team_words_venue_invite` = v19: 0 % vs
+  Rastro's 5 % + 1 P, broker crosses every tick). · **Acceptance:** tests/test_team_desk_partners.py.
+
+### UB1 — Unblock: guardrails that cost opportunities + an activity watchdog ([spec](UB1-spec.md))
+- Step 1 — a dealer ladder is ranked at its first rung, not its top (`strategy.guarded`); a rung refused only for
+  cash or the hour's spend bids the most we may still commit (`dealer.affordable_rung`); a walk at our official-value
+  top or cash room rests on the card (`Move(rest=True)`) · **Acceptance:** tests/test_strategy.py,
+  tests/test_dealer.py, tests/test_official_value_agents.py.
+- Step 2 — `activity.py` in the taker: a team-wide stall after `activity_stall_seconds` (at least one tick) with no
+  send, its top blocker, expected idle labelled; WARN + `activity_stall` decision + learning + /health · **Acceptance:**
+  tests/test_activity.py; full gate + sim smoke.
 
 ## Parallel-work notes
 

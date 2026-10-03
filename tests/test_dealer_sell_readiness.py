@@ -300,8 +300,8 @@ def test_every_floor_covers_the_value_ratio_and_what_we_lose_plus_the_surplus():
 
 
 def test_the_guard_refuses_an_ask_or_an_accept_below_the_value_ratio(tmp_path):
-    cand = desk.Candidate(5, "LAT-09", "rare", 35.0, 35.0, 37, "chato", 46.0, "El Chato")
-    ctx = gr.Context(cash=50, held={"LAT-09": 2}, tick=100, t_hours=1.5, stops=(), breakers=frozenset())
+    cand = desk.Candidate(5, "SAL-09", "rare", 35.0, 35.0, 37, "chato", 46.0, "El Chato")
+    ctx = gr.Context(cash=50, held={"SAL-09": 2}, tick=100, t_hours=1.5, stops=(), breakers=frozenset())
     hooks = approval_hooks(tmp_path, cand, ctx)
     for kind in ("dealer_sell", "accept_sell"):
         assert hooks.guard(kind, 34) is not None and "your_value" in str(hooks.guard(kind, 34))
@@ -359,7 +359,8 @@ def approval_hooks(tmp_path: Path, cand: desk.Candidate, ctx: gr.Context, rules:
     )
 
 
-RARE = desk.Candidate(5, "LAT-09", "rare", 35.0, 35.0, 37, "chato", 46.0, "El Chato", FILLS[("chato", "rare")])
+# SAL-09: a rare with no protect_page_exceptions MIN (LAT-09 has one since SX1)
+RARE = desk.Candidate(5, "SAL-09", "rare", 35.0, 35.0, 37, "chato", 46.0, "El Chato", FILLS[("chato", "rare")])
 
 
 def book(*rows: approvals.Approval) -> approvals.ApprovalBook:
@@ -367,7 +368,7 @@ def book(*rows: approvals.Approval) -> approvals.ApprovalBook:
 
 
 def ctx_with(approved: approvals.ApprovalBook | None) -> gr.Context:
-    held = {"LAT-09": 2}
+    held = {"SAL-09": 2}
     return gr.Context(cash=50, held=held, tick=100, t_hours=1.5, stops=(), breakers=frozenset(), approvals=approved)
 
 
@@ -377,18 +378,18 @@ def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_
     assert top > 0  # GUARDRAILS.md turns it on (60 on Sat 3 Oct)
     hooks = approval_hooks(tmp_path, RARE, ctx_with(book()))
     for kind in ("dealer_sell", "accept_sell"):  # our ask, and our accept of her bid
-        assert hooks.guard(kind, top) == f"needs human approval: LAT-09 sell {top}"
-        assert hooks.guard(kind, top + 9) == f"needs human approval: LAT-09 sell {top + 9}"
+        assert hooks.guard(kind, top) == f"needs human approval: SAL-09 sell {top}"
+        assert hooks.guard(kind, top + 9) == f"needs human approval: SAL-09 sell {top + 9}"
         assert hooks.guard(kind, top - 1) is None  # under the threshold no human is asked
-    assert [(r["card"], r["side"], r["price"]) for r in asked] == [("LAT-09", "sell", top)]  # asked once
-    approved = approval_hooks(tmp_path, RARE, ctx_with(book(approvals.Approval("LAT-09", "sell", None, top, 200))))
+    assert [(r["card"], r["side"], r["price"]) for r in asked] == [("SAL-09", "sell", top)]  # asked once
+    approved = approval_hooks(tmp_path, RARE, ctx_with(book(approvals.Approval("SAL-09", "sell", None, top, 200))))
     for kind in ("dealer_sell", "accept_sell"):
         assert approved.guard(kind, top) is None and approved.guard(kind, top + 9) is None
     for wrong in (
         approvals.Approval("LAT-03", "sell", None, top, 200),  # another card
-        approvals.Approval("LAT-09", "buy", top + 50, None, 200),  # the other side
-        approvals.Approval("LAT-09", "sell", None, top + 10, 200),  # a minimum above our price
-        approvals.Approval("LAT-09", "sell", None, top, 100),  # expired at this tick
+        approvals.Approval("SAL-09", "buy", top + 50, None, 200),  # the other side
+        approvals.Approval("SAL-09", "sell", None, top + 10, 200),  # a minimum above our price
+        approvals.Approval("SAL-09", "sell", None, top, 100),  # expired at this tick
     ):
         hooks = approval_hooks(tmp_path, RARE, ctx_with(book(wrong)))
         assert all(hooks.guard(kind, top) is not None for kind in ("dealer_sell", "accept_sell")), wrong
