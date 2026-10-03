@@ -81,7 +81,7 @@
       "when": "all day",
       "question": "Is this a safe moment to merge?",
       "check": "a merge to main touching src/**, GUARDRAILS.md, STRATEGY.md, RUNTIME.md, uv.lock, pyproject.toml, vendor/bazaar-kit/**, questions/** or .railway/** redeploys bazaar-duels, bazaar-taker and bazaar-maker (.railway/railway.py watchPatterns)",
-      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open",
+      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (on #61 -> #68) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE)",
       "owner": "Marius"
     },
     {

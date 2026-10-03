@@ -73,6 +73,7 @@ The feed has them at tick 120 = 22:20:48.
 ## What Marius must decide
 1. **At 08:55 (G0):** which column the day runs on.
 2. **Merges.** They redeploy the live services (r2's X16), so do them before 09:00 or between duel sessions:
+   - #61 → #68 → #72 before 09:00 (r2 X7: main's taker can break the floor and the hourly cap within one tick);
    - #60 before Duels II;
    - #62 before Duels I;
    - #86 (v2) before Duels I, or not at all.
