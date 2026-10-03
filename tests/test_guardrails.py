@@ -97,7 +97,7 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
 
 
 def test_dealer_final_lift_off_keeps_every_cap_as_today():
-    rules = REAL.rules
+    rules = gr.parse_guardrails("- `dealer_final_lift` = 0 — x").rules  # the committed file may set a lift (Omar)
     assert rules.dealer_final_lift == 0
     assert rules.final_cap_for("uncommon") == rules.max_price_uncommon
     final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 27, final=True), ctx(), rules)
