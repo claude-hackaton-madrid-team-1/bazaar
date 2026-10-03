@@ -268,3 +268,12 @@ def test_history_is_bounded() -> None:
         w.observe(board(t, [row("t14", 1, 1.0, 1.0, 0.0)]), [], t)
     assert min(s.tick for s in w.snapshots["t14"]) >= 290 - 60
     assert min(w.seen_ticks) >= 290 - 60
+
+
+def test_one_climb_is_said_once_even_while_its_base_is_still_inside_the_window() -> None:
+    stored: list[Learning] = []
+    w = RankWatch(stored.extend, lambda line: None, window_ticks=20)
+    w.observe(board(400, BEFORE["teams"]), [], 400)
+    w.observe(board(410, AFTER["teams"]), [], 410)
+    w.observe(board(420, AFTER["teams"]), [], 420)  # still rank 1; the tick-400 board is still in the window
+    assert [lr.detail["event_id"] for lr in stored] == ["t14:400-410"]

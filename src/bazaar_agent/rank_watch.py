@@ -303,6 +303,8 @@ class RankWatch:
             lines.append(f"tick {tick} rival move: {learnings[-1].text}")
         if learnings:
             self.record(learnings)  # a store that raises: nothing is kept, the same board is tried again
+        for _, row in climbs:
+            self.snapshots[row.team] = []  # said once: the next climb is measured from this board
         for line in lines:
             self.log(line)
         self._keep(rows, now)

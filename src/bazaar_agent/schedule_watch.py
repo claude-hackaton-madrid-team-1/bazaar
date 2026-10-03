@@ -10,6 +10,7 @@ deploy. Pure reading: the payloads come from the news sentinel's own keyless rea
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ from bazaar_agent.learn.model import Learning
 ALERT_TICKS = (20, 10, 3)  # a lead time crossing one of these is logged and stored again
 CONFIDENCE = 1.0  # the organisers' schedule happens
 FIELD_MAX = 200
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 # What each action asks of us, in a few words (quoted in the learning; never an instruction to a model).
 ADVICE = {
     "bench": "keep the maker and our venue's broker up, no deploy",
@@ -62,7 +64,9 @@ def events_from_schedule(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
         subject = params.get("persona") or params.get("id") or params.get("set") or params.get("name")
         at = _hours(s.get("at_hours"))
         action = _clean(s["action"], 32)
-        out.append(ScheduledEvent(f"{action}:{at}", action, _clean(s.get("note")), at, _clean(subject, 64) or None))
+        about = _clean(subject, 64) or None
+        event_id = f"{action}:{at}" + (f":{about}" if about else "")  # one time may close three stalls
+        out.append(ScheduledEvent(event_id, action, _clean(s.get("note")), at, about))
     return out
 
 
@@ -70,7 +74,12 @@ def events_from_levels(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
     """A level not open to all yet (a dealer opening later) or only announced (time not said)."""
     out = []
     for lv in payload.get("levels") or []:
-        if not isinstance(lv, dict) or not isinstance(lv.get("id"), str) or lv.get("open_to_all") is True:
+        if (
+            not isinstance(lv, dict)
+            or not isinstance(lv.get("id"), str)
+            or not SAFE_ID.match(lv["id"])
+            or lv.get("open_to_all") is True
+        ):
             continue
         name = _clean(lv.get("name") or lv["id"], 64)
         if lv.get("state") == "announced":

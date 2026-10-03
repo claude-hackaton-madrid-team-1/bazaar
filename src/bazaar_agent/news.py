@@ -28,6 +28,7 @@ from bazaar_agent.rank_watch import RankWatch
 from bazaar_agent.schedule_watch import ScheduleWatch
 
 READ_EVERY_TICKS = 10
+READS = ("news", "schedule", "levels", "leaderboard")  # one window, one read per tick
 READ_TIMEOUT_S = 2.0  # its own keyless client: a hung /api/news never holds the taker past this (no retries)
 EVENTS_FILE = "market_events.json"
 NEWS_CONFIDENCE = 0.5  # a Radio Rastro item may be a rumour: nothing tells which
@@ -226,7 +227,7 @@ def learning_of(item: NewsItem, tick: int) -> Learning:
 class NewsSentinel:
     """Run once per tick after the sends (`on_tick`): never raises, never blocks a send. Every read window it
     also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times) and `/api/leaderboard` to the
-    rank watch (rival jumps): four keyless GETs per `every` ticks, stopped at the first failure."""
+    rank watch (rival jumps): four keyless GETs per `every` ticks, one per tick, stopped at the first failure."""
 
     def __init__(
         self,
@@ -244,6 +245,8 @@ class NewsSentinel:
         self.ranks = RankWatch(record, log)
         self.upcoming: list[dict[str, Any]] = []
         self._last_read: int | None = None
+        self._due: list[str] = []  # this window's reads still to make, one per tick
+        self._payloads: dict[str, dict[str, Any]] = {}  # the last schedule and levels answers
         self._failed: set[str] = set()  # failures already logged (each said once)
 
     def on_tick(
@@ -266,22 +269,29 @@ class NewsSentinel:
         self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], clock: Any, us: str | None
     ) -> list[NewsItem]:
         items = items_from_feed(events)
-        reads: dict[str, Any] = {}
         if self._last_read is None or tick - self._last_read >= self.every:
-            self._last_read = tick
-            reads = self._read(tick)
-            items += items_from_api(reads.get("news") or {})
-            items += items_from_schedule(reads.get("schedule") or {}, tick)
-            self.schedule.update(reads.get("schedule"), reads.get("levels"))
-        if reads.get("leaderboard"):
+            self._last_read, self._due = tick, list(READS)
+        what, answer = self._read(tick)
+        if what == "news":
+            items += items_from_api(answer)
+        elif what == "schedule":
+            items += items_from_schedule(answer, tick)
+            self._payloads["schedule"] = answer
+        elif what == "levels":
+            self._payloads["levels"] = answer
+        elif what == "leaderboard":
             self.ranks.us = us
-            self.ranks.observe(reads["leaderboard"], events, tick)
+            self.ranks.observe(answer, events, tick)
+        if what in ("schedule", "levels"):
+            self.schedule.update(self._payloads.get("schedule"), self._payloads.get("levels"))
         changed = self._schedule_tick(tick, clock)
         fresh = [i for i in items if i.news_id not in self.seen]
         if fresh:
             self.record([learning_of(i, tick) for i in fresh])  # a store that raises: retried next tick
             for item in fresh:
                 self.seen[item.news_id] = item
+                if item.official:
+                    continue  # the schedule watch says it, with its lead time
                 kind = "official" if item.official else f"{item.source}, unverified"
                 self.log(f"tick {tick} news ({kind}): {item.headline}" + (f" · {item.body}" if item.body else ""))
             self.events = parse_events(list(self.seen.values()), set_names(catalog))
@@ -299,17 +309,19 @@ class NewsSentinel:
         self.upcoming = upcoming
         return changed
 
-    def _read(self, tick: int) -> dict[str, Any]:
-        reads: dict[str, Any] = {}
-        for what in ("news", "schedule", "levels", "leaderboard"):
-            try:
-                answer = self.public.call("GET", f"/api/{what}")
-            except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
-                self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
-                break  # the game is slow or refusing: the next read waits for the next window
-            if isinstance(answer, dict):
-                reads[what] = answer
-        return reads
+    def _read(self, tick: int) -> tuple[str | None, dict[str, Any]]:
+        """At most ONE read per tick (at most `READ_TIMEOUT_S` after the sends): the window's reads go one tick
+        after another; a failure ends the window."""
+        if not self._due:
+            return None, {}
+        what = self._due.pop(0)
+        try:
+            answer = self.public.call("GET", f"/api/{what}")
+        except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
+            self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
+            self._due = []  # the game is slow or refusing: the next read waits for the next window
+            return None, {}
+        return (what, answer) if isinstance(answer, dict) else (None, {})
 
     def _write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

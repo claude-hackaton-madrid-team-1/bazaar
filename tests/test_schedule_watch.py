@@ -105,9 +105,36 @@ class Public:
 def test_the_sentinel_writes_upcoming_events_with_lead_times(tmp_path):
     stored, lines = [], []
     s = NewsSentinel(Public(), stored.extend, lines.append, tmp_path)
-    s.on_tick(400, [], {}, at(4.9))
+    for tick in (400, 401, 402):  # news, schedule, levels: one read per tick
+        s.on_tick(tick, [], {}, at(4.9, tick=tick))
     body = json.loads((tmp_path / EVENTS_FILE).read_text())
     assert [(u["action"], u["lead_ticks"]) for u in body["upcoming"][:2]] == [("bench", 12), ("duels", 30)]
     assert any("schedule: The Market Test: every venue gets the same synthetic book at game hour 5 (in 12 ticks)" in x
                for x in lines)  # fmt: skip
-    assert s.on_tick(401, [], {}, None) == []  # no clock: no lead times, never raises
+    assert s.on_tick(403, [], {}, None) == []  # no clock: no lead times, never raises
+
+
+def test_one_time_closing_three_stalls_is_three_events():
+    stalls = {
+        "upcoming": [
+            {
+                "at_hours": 21.65,
+                "action": "persona",
+                "note": "Finale: stalls close",
+                "params": {"id": d, "enabled": False},
+            }
+            for d in ("abuela", "chato", "pilar")
+        ]
+    }
+    assert [e.event_id for e in events_from_schedule(stalls)] == [
+        "persona:21.65:abuela",
+        "persona:21.65:chato",
+        "persona:21.65:pilar",
+    ]
+
+
+def test_a_level_with_an_odd_id_is_skipped():
+    odd = {
+        "levels": [{"id": "x" * 65, "state": "announced"}, {"id": "a b", "state": "announced"}, {"state": "announced"}]
+    }
+    assert events_from_levels(odd) == []
