@@ -8,6 +8,19 @@ verdict, and leaves execution to a separate runtime that only acts on structured
 **Python only** (3.12 + `uv`). The organisers' SDK is vendored in `vendor/bazaar-kit/` and used
 first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 
+## Sunday schedule
+
+The [live schedule](https://bazaar.causaprima.ai/api/schedule), read 4 Oct, says "Sunday opens" and
+"Round 3 starts" at h16.65, 09:00 CEST, with Chamberí released and the ladder restarting. Sunday ticks are
+15 s; one game hour is one real hour. The 150 P grant is h16.7, about 09:03; Market Tests are h17/h19/h21,
+about 09:21/11:21/13:21; Duels III is h18.65, about 11:00, with two issues, 12-tick duels and decay 0.10.
+Finale warning is h21.45, about 13:48; all dealer stalls close and Grand Final duels start at h21.65,
+about 14:00. "Scores freeze" and doors close at h22.65, 15:00.
+
+The h14.65 hard Market Test and h15 Market Test precede the opening anchor. Whether they fire at opening
+or are skipped is **UNVERIFIED**. See the [quoted schedule entries](docs/briefing.md#windows-this-weekend-live-apischedule-sun-4-oct)
+and check the live schedule for changes before acting.
+
 ## Live services
 
 | Service | URL |
@@ -1358,6 +1371,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 | [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 | [TL1](TL1-spec.md) (new) | The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger `taller:` rows, CLI included), the duel/bench guard, the received card credited in the score impact | 2 | 🔵 PR #259 (feat/taller-harden) |
+| [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1426,9 +1440,9 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
 - [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
 - [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
-- [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
-- [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
-- [2026-10-04] build-error: PR #263 merge verification separator
+- [2026-10-04] finding
+- [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+- [2026-10-04] build-error — pitch recording fallback
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1441,6 +1455,9 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#268](../../pull/268) | docs: 3-minute motion pitch deck | Sun 01:49 | `bcdb73a` |
+| [#270](../../pull/270) | docs: correct the Sunday schedule | Sun 01:47 | `cd5ab1c` |
+| [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | Sun 01:35 | `36a6bef` |
 | [#265](../../pull/265) | feat: Sunday guardrails (uncommon 30, rare 105, dealer_sell reset after 40 ticks) | Sun 01:13 | `e0f3ca6` |
 | [#263](../../pull/263) | feat(broker): one live non-crossing match probe in the Market Test (off by default) | Sun 00:41 | `19457c9` |
 | [#264](../../pull/264) | docs: points ledger and bazaar-points skill | Sun 00:34 | `166f9ca` |
@@ -1450,18 +1467,15 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#261](../../pull/261) | feat: record the full Market Test bench book each tick | Sun 00:17 | `2c8b726` |
 | [#258](../../pull/258) | fix(guardrails): no_buyback_ticks skips unread sales on a simulator; a stale tape fails closed | Sun 00:13 | `deca8e7` |
 | [#260](../../pull/260) | docs: SAL-07 loss is price - your_value (measured); tag round rule [audit] | Sun 00:08 | `fc9cd61` |
-| [#230](../../pull/230) | docs: sync the repo with the rules audit (scoring, rounds, venue on, floor 5, hard rules) | Sun 00:02 | `9e4acc5` |
-| [#256](../../pull/256) | batch: Saturday close | Sat 23:54 | `6267eca` |
-| [#255](../../pull/255) | feat(buy-targets): a human orders an epic via MCP approve; the agents buy it from a team, always below our value | Sat 22:49 | `dd19e18` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#269](../../pull/269) | feat: calibrated Sunday scenario for bazaar-sim | `feat/sim-sunday` |
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
-| [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | `feat/injection-log` |
 | [#231](../../pull/231) | fix: bench policy edge needs BAZAAR_BENCH_EDGE_CONFIRM=yes on the maker (DO NOT MERGE before tick 1190) | `fix/bench-edge-needs-confirm` |
 
 <!-- BAZAAR:ACTIVITY:END -->

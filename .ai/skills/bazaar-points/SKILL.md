@@ -156,18 +156,24 @@ or an `auto` venue beside it (`max_venues` 2, opened by hand). **Never merge or 
 ## 6. Sunday checklist (15 s ticks, Jev timeout 3 s, doors 09:00 to 15:00)
 
 - [ ] 09:00 `uv run bazaar status`, `rules`, `deploy-guard`; `git pull --ff-only` on any laptop that runs hand commands.
-- [ ] Ladder restarts at round 3: **plan up to 3 legal deals per level** once it starts; Banco remains UNVERIFIED pending the checks above.
-- [ ] **Hard Market Test about 09:34**: board venue broker up before 09:20, no deploys from 09:24. Edge policy only if it was proven.
-- [ ] Before round 3 (about 11:34): spare duplicates sorted, Pilar sells queued, `bazaar buyers` fresh; Chamberí (CHA) released
-  at the round start with +150 P: scan `cards_heartbeat` for the 12 new cards and buy page cards below `your_value`.
+- [ ] Before 09:00 CEST: spare duplicates sorted, Pilar sells queued, `bazaar buyers` fresh, board venue broker ready.
+  The schedule says "Sunday opens" and "Round 3 starts" at h16.65, 09:00, with Chamberí released.
+  The ladder restarts then: **plan up to 3 legal deals per level**; Banco remains UNVERIFIED pending the checks above.
+  Scan `cards_heartbeat` for the 12 new cards and buy page cards below `your_value`. The 150 P grant follows at h16.7, about 09:03.
+- [ ] The h14.65 **hard Market Test** and h15 Market Test precede opening. Whether they fire at opening or are skipped
+  is UNVERIFIED; check the feed and round before assigning results. Edge policy only if it was proven.
+- [ ] Sunday has one game hour per real hour: Market Tests at h17/h19/h21 are about 09:21/11:21/13:21 CEST.
+  Keep the broker up and use `deploy-guard` before any deploy; each scheduled test lasts 16 ticks, 4 minutes.
 - [ ] Round 3 first 40 minutes (160 ticks) is the ramp: ladder deals count by the share of the day played; do the best three early.
-- [ ] **Duels III about 13:34** (12 ticks, decay 0.10, at most 4 at once): freeze main from 13:15; `duel run --play`;
+- [ ] **Duels III at h18.65, about 11:00 CEST** (two issues, 12-tick duels, decay 0.10, at most 4 at once): freeze main from 10:45; `duel run --play`;
   check the active round in `/api/schedule` and current-round score evidence before deprioritizing duels. Saturday's
   totals do not establish Sunday's saturation, and whether duel points restart is UNVERIFIED. Unless current-round
   evidence establishes saturation, preserve duels-first accepts and use remaining ticks for dealer accepts;
   dealer messages may continue within the per-thread and shared request limits.
 - [ ] Throughout: one move per tick that changes a raw leg (ledger section 6): a legal Pilar sale at her final, a Pícaros
   buy, a page-completing buy, a duplicate sold to the team that needs it. Skip if no candidate passes every hard rule.
-- [ ] The briefing says the dealer stalls close at game hour 21.65 (the finale): read `/api/clock` and `/api/schedule` for the
-  real time and finish dealer sales before it. Doors close 15:00: pause first, then `bazaar flatten --live --threads`.
+- [ ] Finale warning is h21.45, about 13:48 CEST. All dealer stalls close and Grand Final duels start at h21.65,
+  about 14:00; finish dealer sales before it. "Scores freeze" and doors close at h22.65, 15:00.
+  Read `/api/clock` and `/api/schedule` before acting; full quoted entries are in `docs/briefing.md`, "Windows this weekend".
+  At closing: pause first, then `bazaar flatten --live --threads`.
 - [ ] Append every error and finding to `.ai/memory.md`; end every task with the Honest Implementation Report.

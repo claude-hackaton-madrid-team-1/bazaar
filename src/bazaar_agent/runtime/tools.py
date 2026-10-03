@@ -206,6 +206,7 @@ def secrets_of(settings: Settings, extra: Iterable[str | None] = ()) -> tuple[st
         settings.openai_api_key,
         settings.claude_code_oauth_token,
         settings.database_url,
+        settings.broker_key,
     ]
     values = [s.get_secret_value() for s in held if s is not None] + [v for v in extra if v]
     values.append(urlsplit(settings.database_url.get_secret_value()).password or "")  # libpq may echo it alone

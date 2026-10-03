@@ -1246,6 +1246,57 @@ The first full gate stopped progressing after 1,838 passed tests and was interru
 The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
 showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
 
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
+
+### [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+`CREATE INDEX IF NOT EXISTS` still takes a ShareLock, so startup can wait behind a writer and a backfill can
+block live inserts until its transaction ends. Check `to_regclass` first, bound setup lock/statement waits
+to 1.5 s, and commit schema setup before backfill reads; `store()` now does no DDL. Local Postgres regression
+tests cover the held-write transaction, missing-index timeout and released setup locks.
+
+### [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+Ruff F811 on a local connection named `conn` → the module imports that name as a fixture → renamed the local
+connection to `fresh`; the fixture and its callers are unchanged.
+
+### [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+`Taker._keep()` sees every listed thread but labeled each `dealer_thread`; the later team-desk pass then
+recorded the same message under `team_thread`. Derive the source from thread kind and test both passes
+against one buffer. Keep extraction inside the recorder's never-raises guards; malformed metadata must not
+cost a taker move or stop the duel runner's post-send processing.
+
+### [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+`run_per_tick` catches tick exceptions, so a sent move plus CLI exit 0 can hide a failed recorder. The wiring
+regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
+The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
+
+### [2026-10-04] build-error — motion pitch browser and check tooling
+Computer-use and graph reads required unavailable approval; local Chrome failed its sandbox handshake → used the web-access cloud Chrome fallback, muted public reads only. Re-injecting HTML into one document retained its script context and broke the QA harness → navigate to a fresh blank page before each injection. A quoting edit broke the capture self-check → fixed with a triple-quoted JavaScript string. PPTX finalizer lacked RUNTIME_NODE_MODULES → passed the supplied runtime path. No game or Railway writes.
+
+### [2026-10-04] build-error — pitch recording fallback
+WebM capture could not encode without ffmpeg and the system Python lacked Pillow → captured checked real board frames and encoded a GIF with the bundled presentation Python runtime. The source is the muted idle board while doors are closed, not a trade recording.
+
+### [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+The full Ruff gate rejected `docs/pitch/motion/check.py` for a missing explicit `zip` strictness and long lines;
+its format check also failed. Added `strict=True` for the two script languages, wrapped the embedded JavaScript,
+and formatted the checker. Its offline self-check passed: 7 slides, 165 seconds, embedded images and source comments.
+### [2026-10-04] finding
+Sunday schedule correction: one keyless GET https://bazaar.causaprima.ai/api/schedule returned
+`now_hours: 13.367`, "Sunday opens" at h16.65 with wall `2026-10-04T09:00:00+02:00` and 15 s ticks,
+and "The Bazaar closes" at h22.65 with wall `2026-10-04T15:00:00+02:00`. One game hour is one real hour.
+"Round 3 starts" and "Chamberí released" are h16.65, 09:00 CEST, with the ladder restart;
+150 P grant h16.7 ~09:03; Market Tests h17/h19/h21 ~09:21/11:21/13:21; Duels III h18.65 ~11:00
+(two issues, 12-tick duels, decay 0.10); finale warning h21.45 ~13:48; all five dealer stalls close
+and Grand Final duels start h21.65 ~14:00; "Scores freeze" h22.65, 15:00. Intermediate wall times
+assume no further pause or schedule change. The hard Market Test h14.65 and Market Test h15 precede
+the opening anchor: whether they fire at opening or are skipped, and their round attribution if fired,
+are UNVERIFIED. The previous Sunday wall-time estimates are superseded; full entries: `docs/briefing.md`.
+
 ### [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
 `/api/schedule` has `day_opens sun` at h16.65 and `day_closes sun` at h22.65 (6 h = 1440 ticks of 15 s), Duels III at h18.65
 (tick 480), Market Tests h17/h19/h21 (ticks 84/564/1044), the finale at h21.65 (tick 1200), the Sunday allowance at h16.7

@@ -1,0 +1,86 @@
+{
+  "slides": [
+    {
+      "current": 0,
+      "id": "hook",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    },
+    {
+      "current": 1,
+      "id": "voice",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    },
+    {
+      "current": 2,
+      "id": "infra",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false,
+      "architecture": [
+        {
+          "caption": "Game API",
+          "count": 1
+        },
+        {
+          "caption": "5 req/s shared",
+          "count": 2
+        },
+        {
+          "caption": "Railway: taker \u00b7 maker \u00b7 duels \u00b7 mcp",
+          "count": 3
+        },
+        {
+          "caption": "Jev + LLM deciders",
+          "count": 4
+        },
+        {
+          "caption": "Guardrails + human approval",
+          "count": 5
+        },
+        {
+          "caption": "Postgres / pgvector RAG + Phoenix traces",
+          "count": 6
+        },
+        {
+          "caption": "Bazaar Live + ElevenLabs",
+          "count": 7
+        }
+      ]
+    },
+    {
+      "current": 3,
+      "id": "safe",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    },
+    {
+      "current": 4,
+      "id": "results",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    },
+    {
+      "current": 5,
+      "id": "memory",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    },
+    {
+      "current": 6,
+      "id": "close",
+      "imagesLoaded": true,
+      "overflow": [],
+      "sensitive": false
+    }
+  ],
+  "total_seconds": 165,
+  "browser": "cloud Chrome via agent-browser",
+  "navigation": "PASS: ArrowRight, ArrowLeft, Space, click, Home, PageDown, PageUp"
+}
