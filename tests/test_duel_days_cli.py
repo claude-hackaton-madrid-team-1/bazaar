@@ -97,7 +97,7 @@ def test_real_evidence_against_the_sign_overrides_a_hand_set_signed(tmp_path):
     assert not dd.effective_rules(rules, switch).duel_days_signed
 
 
-def test_a_latch_file_that_is_not_an_object_reads_as_unknown(tmp_path):
+def test_a_latch_file_that_is_not_an_object_is_a_conflict(tmp_path):
     (tmp_path / "duels").mkdir()
     (tmp_path / "duels" / "days_sign.json").write_text("[1, 2]")
-    assert dd.latch(tmp_path).verdict == "unknown"
+    assert dd.latch(tmp_path).verdict == "conflict"  # never silently undo a recorded conflict (security P3)

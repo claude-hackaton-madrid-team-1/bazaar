@@ -69,9 +69,9 @@ def test_the_switch_latches_the_first_real_evidence_and_persists_it(tmp_path):
     switch = dd.DaysSwitch.load(path)
     assert switch.observe([duel(days_meaning=SIM_TEXT)], real_game=False) == "unknown" and not path.exists()
     assert switch.observe([duel(days_meaning=None), duel(duel=8, days_meaning=SIM_TEXT)], real_game=True) == "signed"
-    assert switch.signed(allowed=True) and not switch.signed(allowed=False)
+    assert not switch.signed(allowed=True)  # a text alone is one signal: a score must agree (#150 security P1)
     again = dd.DaysSwitch.load(path)
-    assert (again.verdict, again.duel, again.text) == ("signed", 8, SIM_TEXT)
+    assert (again.verdict, again.duel, again.text, again.text_signed) == ("signed", 8, SIM_TEXT, True)
 
 
 def test_a_reversed_convention_latches_and_keeps_the_switch_off(tmp_path):
@@ -89,10 +89,11 @@ def test_real_payloads_that_disagree_switch_it_off_for_good(tmp_path):
     assert dd.DaysSwitch.load(tmp_path / "days.json").verdict == "conflict"
 
 
-def test_a_broken_state_file_reads_as_unknown(tmp_path):
+def test_an_unreadable_state_file_is_a_conflict_until_a_person_deletes_it(tmp_path):
     path = tmp_path / "days.json"
-    path.write_text("{not json")
-    assert dd.DaysSwitch.load(path).verdict == "unknown"
+    path.write_text("{not json")  # a truncated write must never silently undo a recorded conflict (security P3)
+    assert dd.DaysSwitch.load(path).verdict == "conflict"
+    assert dd.DaysSwitch.load(tmp_path / "missing.json").verdict == "unknown"
 
 
 def test_the_rivals_days_show_which_end_it_prefers():
@@ -177,3 +178,37 @@ def test_two_processes_on_one_file_never_undo_each_other(tmp_path):
     run.observe([duel(days_meaning=SIM_TEXT)], True)  # the stale "signed" in memory does not win
     assert run.verdict == "conflict" and dd.latch(tmp_path).verdict == "conflict"
     assert [p.name for p in (tmp_path / "duels").iterdir()] == ["days_sign.json"]  # no temp file left behind
+
+
+# ---------------------------------------------------------------- two real signals before the sign is trusted
+
+
+def signed_score(did: int) -> dict:
+    """A finished real deal whose score shows the days added +2 a day (5 days, kept 0.92 ** 2)."""
+    return {**done(2.0, round(30 * 0.92**2, 1)), "duel": did}
+
+
+def test_one_signal_alone_never_turns_the_sign_on(tmp_path):
+    # #150 security P1: one misread text (or one score) must not drop the guard's worst case for every duel.
+    text_only = dd.latch(tmp_path / "a")
+    assert text_only.observe([duel(days_meaning=SIM_TEXT)], True) == "signed" and not text_only.signed(True)
+    score_only = dd.latch(tmp_path / "b")
+    assert score_only.observe([signed_score(11)], True) == "signed" and not score_only.signed(True)
+    assert score_only.observe([signed_score(11)], True) == "signed" and not score_only.signed(True)  # same deal
+
+
+def test_a_text_and_a_score_or_two_scores_corroborate_the_sign(tmp_path):
+    both = dd.latch(tmp_path / "a")
+    both.observe([duel(days_meaning=SIM_TEXT)], True)
+    both.observe([signed_score(11)], True)
+    assert both.signed(True) and not both.signed(False)
+    scores = dd.latch(tmp_path / "b")
+    scores.observe([signed_score(11), signed_score(12)], True)
+    assert scores.signed(True)
+
+
+def test_corroboration_is_shared_through_the_file(tmp_path):
+    duel_run, runtime = dd.latch(tmp_path), dd.latch(tmp_path)
+    duel_run.observe([duel(days_meaning=SIM_TEXT)], True)
+    runtime.observe([signed_score(11)], True)
+    assert runtime.signed(True) and dd.latch(tmp_path).signed(True)

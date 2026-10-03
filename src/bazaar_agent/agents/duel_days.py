@@ -13,7 +13,10 @@ which way the weight points, every day must be valued at the worst case (|weight
     unknown  no text (null), any text read from the simulator, or a text with no sign tied to a gain or a cost
     conflict two real payloads disagree: never signed again (the safe side)
 
-It persists to a small JSON file, so a restart keeps the verdict. The caller passes `real_game` (from
+`signed` switches anything on only when two real signals agree (a signed text and a signed score, or the scores of
+two different finished deals): one misread signal must never drop the guard's worst case (#150 security review).
+It persists to a small JSON file, so a restart keeps the verdict; an unreadable file reads as a conflict.
+The caller passes `real_game` (from
 `Settings.simulator`), and decides whether the latch may switch anything on (a guardrail, default off).
 
 The rival's days. Whatever the sign convention, the days a rival puts in its own offers show which end it
@@ -36,7 +39,7 @@ import os
 import re
 import statistics
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -150,21 +153,28 @@ def _merge(a: Verdict, b: Verdict) -> Verdict:
 
 @dataclass
 class DaysSwitch:
-    """The first real evidence about the sign, latched and persisted. `signed(allowed)` is what a policy reads."""
+    """The first real evidence about the sign, latched and persisted. `signed(allowed)` is what a policy reads.
+
+    `signed` needs two real signals that agree (#150 security P1: one misread text or score would drop the guard's
+    worst case for every duel): a signed text and a signed score, or the scores of two different finished deals."""
 
     verdict: Verdict = "unknown"
     duel: int | None = None  # the payload that decided it
     text: str | None = None
     path: Path | None = None
+    text_signed: bool = False  # a real `days_meaning` text said signed
+    scored: list[int] = field(default_factory=list)  # finished real deals whose score said signed
 
     @classmethod
     def load(cls, path: Path) -> DaysSwitch:
         try:
             raw = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return cls(path=path)
+        except (OSError, ValueError):  # unreadable: never silently undo a recorded conflict (a person deletes it)
+            return cls(verdict="conflict", path=path)
         if not isinstance(raw, dict):
-            return cls(path=path)
+            return cls(verdict="conflict", path=path)
         verdicts: dict[str, Verdict] = {
             "signed": "signed",
             "reversed": "reversed",
@@ -172,23 +182,30 @@ class DaysSwitch:
             "conflict": "conflict",
         }
         verdict = verdicts.get(str(raw.get("verdict")), "unknown")
-        return cls(verdict=verdict, duel=raw.get("duel"), text=raw.get("text"), path=path)
+        scored = [d for d in raw.get("scored") or [] if isinstance(d, int) and not isinstance(d, bool)]
+        text_signed = raw.get("text_signed") is True
+        return cls(verdict, raw.get("duel"), raw.get("text"), path, text_signed, scored)
 
     def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> Verdict:
         """Read every payload, live or finished: its text and, for a finished deal, its score. The first real
         evidence latches; later evidence that disagrees is a conflict, for good. Another process's verdict in the
         file is merged in first, so `duel run` and the runtime never undo each other."""
         self.refresh()
-        before = self.verdict
+        before, before_corroborated = self.verdict, self.corroborated
         for duel in duels:
-            for seen in (evidence(duel, real_game), scored_evidence(duel, real_game)):
+            said, scored = evidence(duel, real_game), scored_evidence(duel, real_game)
+            self.text_signed = self.text_signed or said == "signed"
+            did = duel.get("duel")
+            if scored == "signed" and isinstance(did, int) and did not in self.scored:
+                self.scored.append(did)
+            for seen in (said, scored):
                 if seen == "unknown":
                     continue
                 merged = _merge(self.verdict, seen)
                 if self.verdict == "unknown":
                     self.duel, self.text = duel.get("duel"), duel.get("days_meaning")
                 self.verdict = merged
-        if self.verdict != before:
+        if (self.verdict, self.corroborated) != (before, before_corroborated):
             self._save()
         return self.verdict
 
@@ -200,10 +217,17 @@ class DaysSwitch:
         if disk.verdict != "unknown" and self.verdict == "unknown":
             self.duel, self.text = disk.duel, disk.text
         self.verdict = _merge(self.verdict, disk.verdict)
+        self.text_signed = self.text_signed or disk.text_signed
+        self.scored = self.scored + [d for d in disk.scored if d not in self.scored]
+
+    @property
+    def corroborated(self) -> bool:
+        """Two real signals agree on signed: a text and a score, or the scores of two different deals."""
+        return self.verdict == "signed" and (len(self.scored) >= 2 or (bool(self.scored) and self.text_signed))
 
     def signed(self, allowed: bool) -> bool:
-        """Value days with their sign only when allowed (a guardrail) AND a real payload said so."""
-        return allowed and self.verdict == "signed"
+        """Value days with their sign only when allowed (a guardrail) AND two real signals said so."""
+        return allowed and self.corroborated
 
     def _save(self) -> None:
         """Merge with the file, then replace it atomically (a temp file and `os.replace`)."""
@@ -213,7 +237,10 @@ class DaysSwitch:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {k: v for k, v in asdict(self).items() if k != "path"}
         tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(record, ensure_ascii=False))
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.flush()
+            os.fsync(handle.fileno())  # durable before the rename: a crash never leaves a half-written verdict
         os.replace(tmp, self.path)
 
 

@@ -29,6 +29,10 @@ def duel(meaning: str | None = SIM_TEXT, weight: float = 2.0) -> dict:
     }
 
 
+# A finished real deal whose score shows +2 P a day (5 days, 2 rounds at 0.08): the second signal the latch needs.
+SCORED = duel() | {"duel": 9, "status": "deal", "price": 120, "days": 5, "rounds": 2, "result": round(30 * 0.92**2, 1)}
+
+
 def tick_rules(rules: gr.Guardrails, switch: dd.DaysSwitch, d: dict, real: bool) -> gr.Guardrails:
     """What `duel run` and the runtime do each tick."""
     switch.observe([d], real)
@@ -43,9 +47,11 @@ def test_with_duel_days_auto_off_the_rules_are_todays_even_after_a_signed_real_p
     assert switch.verdict == "signed"  # the evidence is still recorded for when Marius flips the switch
 
 
-def test_a_real_signed_payload_lets_v2_offer_ten_days_and_the_guard_allows_them(tmp_path):
+def test_a_real_signed_text_and_a_scored_deal_let_v2_offer_ten_days_and_the_guard_allows_them(tmp_path):
     rules = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
-    rules_t = tick_rules(rules, dd.latch(tmp_path), duel(weight=2.0), real=True)
+    switch = dd.latch(tmp_path)
+    assert tick_rules(rules, switch, duel(weight=2.0), real=True) is rules  # one signal: still the worst case
+    rules_t = tick_rules(rules, switch, SCORED, real=True)
     assert rules_t.duel_days_signed and not rules.duel_days_signed
     move = plan_moves([duel(weight=2.0)], 101, {1: 100}, V2Params.from_rules(rules_t))[1]
     assert move.kind == "offer" and move.days == 10
@@ -68,6 +74,7 @@ def test_the_simulators_words_and_null_never_turn_it_on(tmp_path):
 def test_disagreeing_real_payloads_turn_it_off_for_good_across_restarts(tmp_path):
     rules = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
     switch = dd.latch(tmp_path)
+    switch.observe([SCORED], True)
     assert tick_rules(rules, switch, duel(SIM_TEXT), real=True).duel_days_signed
     assert tick_rules(rules, switch, duel("each day costs you primas"), real=True) is rules
     restarted = dd.latch(tmp_path)
@@ -76,7 +83,9 @@ def test_disagreeing_real_payloads_turn_it_off_for_good_across_restarts(tmp_path
 
 def test_v1_never_goes_signed_even_when_the_rules_say_so(tmp_path):
     rules = gr.Guardrails(duel_policy="v1", duel_days_auto=True)
-    rules_t = tick_rules(rules, dd.latch(tmp_path), duel(), real=True)
+    switch = dd.latch(tmp_path)
+    switch.observe([SCORED], True)
+    rules_t = tick_rules(rules, switch, duel(), real=True)
     assert rules_t.duel_days_signed  # the flag flips ...
     action = gr.Action("duel_offer", "1", price=95, limit=100, role="seller", days=10, days_weight=2.0)
     assert not gr.check(action, CTX, rules_t).allowed  # ... but the guard keeps #60's worst case for v1
@@ -91,6 +100,7 @@ def test_the_runtimes_duel_move_follows_the_latch_too(tmp_path):
     rules = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
     b = backend(tmp_path, live=True, team=Team(duels=[two]), rules=rules, public=Public(now=clock(tick=101)))
     assert dd.real_game(b.settings.bazaar_url)
+    dd.latch(b.settings.data_dir).observe([SCORED], True)  # `duel run` scored a deal: the file carries it over
     moved, _ = run(b, "duel_move", {"duel_id": 7})
     assert moved["request"]["kind"] == "offer" and moved["request"]["days"] == 10
     assert dd.latch(b.settings.data_dir).verdict == "signed"
