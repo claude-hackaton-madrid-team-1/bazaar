@@ -90,8 +90,17 @@ simulator and fails the PR on any error, including an error a tick loop swallowe
 
    (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
    answers there, a `bazaar-sim serve` or the MCP server: stop it first.)
-4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it):
-   `SIM_ADMIN_TOKEN=<bazaar-sim → Variables in Railway> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`.
+4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
+   token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
+   never lands in your shell history:
+
+   ```sh
+   read -rs SIM_ADMIN_TOKEN && export SIM_ADMIN_TOKEN    # paste the token, then Enter (nothing echoes)
+   uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app
+   unset SIM_ADMIN_TOKEN
+   ```
+
+   `reset` sends the token only to an https simulator or one on this machine, never to the real game.
 
 - **Keys.** `sim-team1` … `sim-team8` are teams `t01` … `t08` (not secrets: it is a simulator).
   With `BAZAAR_SIM=1` the real `BAZAAR_KEY` is not even read, so it cannot reach the simulator; on
@@ -123,8 +132,8 @@ simulator and fails the PR on any error, including an error a tick loop swallowe
 - **Not simulated:** flags score nothing, no starter stalls, no gifts or easter eggs, a single
   always-open day (no calendar), scoring weights are approximate.
 - **Reset** to tick 0 (the token is only in Railway: `bazaar-sim` → Variables → `SIM_ADMIN_TOKEN`):
-  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`
-  (add `--seed N` for another world).
+  `uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app` with `SIM_ADMIN_TOKEN`
+  exported from a hidden prompt (see "Test on the simulator", step 4; add `--seed N` for another world).
   `POST /sim/tick` with the same `X-Admin-Token` header advances one tick at once.
 - **Run one locally:** `uv run bazaar-sim serve` (http://127.0.0.1:8765; `SIM_TICK_SECONDS=2` for a
   faster clock; the world persists in `.local/sim/world.sqlite`, `SIM_DATABASE_URL=memory` for none),

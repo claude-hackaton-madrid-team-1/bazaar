@@ -24,6 +24,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 SIM = "http://127.0.0.1:8765"
 KEY = "sim-team1"
@@ -32,21 +33,23 @@ PORT = 8765  # BAZAAR_SIM=local's hardcoded address (src/bazaar_agent/config.py 
 # Duel budget: the session opens at tick 2 and lasts SIM_DUEL_TICKS ticks of 2 s. The duel step starts
 # ~10 s in, so 60 ticks (120 s) leaves room for steps added before it.
 DUEL_TICKS = "60"
-CRASH_MARKERS = ("Traceback (most recent call last)", "tick loop:")
+CRASH_MARKERS = ("Traceback (most recent call last)", "tick loop:", " refused ", "SmokeNetworkError")
 DEAD_PROXY = "http://127.0.0.1:9"  # nothing listens there: any non-local request fails at once
 NOWHERE_DB = "postgresql://smoke:smoke@127.0.0.1:9/bazaar_sim_smoke"  # unreachable: ledgers fall back to JSONL
-SECRETS = (
-    "BAZAAR_URL",
-    "BAZAAR_KEY",
-    "TYPESAFE_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-)
+GUARD = Path(__file__).resolve().parent / "sim_guard"  # sitecustomize: loopback-only sockets in every child
+# An allow-list, not a deny-list: a child process inherits only these, so no token in the caller's
+# environment (MCP, Phoenix, GitHub, Railway, ...) can reach the smoke whatever its name.
+INHERITED = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "VIRTUAL_ENV")
+INHERITED_PREFIXES = ("LC_", "UV_")
+
+
+def inherited() -> dict[str, str]:
+    keep = {k: v for k, v in os.environ.items() if k in INHERITED or k.startswith(INHERITED_PREFIXES)}
+    return {**keep, "PYTHONPATH": str(GUARD), "PYTHONDONTWRITEBYTECODE": "1"}
 
 
 def base_env(data_dir: Path, env_file: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in SECRETS}
+    env = inherited()
     env.update(
         {
             "BAZAAR_ENV_FILE": str(env_file),  # an empty file: a laptop's real .env never loads
@@ -70,7 +73,7 @@ def base_env(data_dir: Path, env_file: Path) -> dict[str, str]:
 
 
 def sim_env() -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in SECRETS}
+    env = inherited()
     env.update(
         {
             "SIM_TICK_SECONDS": "2",
@@ -114,14 +117,18 @@ def wait_for_sim(server: subprocess.Popen[bytes], log: Path) -> None:
     fail("the simulator did not answer /api/health within 60 s", log.read_text(errors="replace"))
 
 
-def fail(why: str, output: str = "") -> None:
+def fail(why: str, output: str = "") -> NoReturn:
     print(f"\nSMOKE FAILED: {why}\n{output[-4000:]}", flush=True)
     raise SystemExit(1)
 
 
 def bazaar(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, "-m", "bazaar_agent.cli", *args]
-    return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=STEP_TIMEOUT_S, check=False)
+    try:
+        return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=STEP_TIMEOUT_S, check=False)
+    except subprocess.TimeoutExpired as e:
+        partial = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        fail(f"`bazaar {' '.join(args)}` ran past {STEP_TIMEOUT_S} s", partial)
 
 
 def step(name: str, run: Callable[[], subprocess.CompletedProcess[str]], check: Callable[[str], bool]) -> str:
@@ -145,7 +152,6 @@ def missing_common() -> str:
             if s.get("released") and c["rarity"] == "common" and c["id"] not in held:
                 return str(c["id"])
     fail("team t01 already holds every common")
-    return ""
 
 
 def our_duel_moves() -> int:

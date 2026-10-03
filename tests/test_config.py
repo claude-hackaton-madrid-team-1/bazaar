@@ -175,3 +175,10 @@ def test_bazaar_env_file_replaces_the_repo_dotenv(tmp_path, monkeypatch):
     monkeypatch.setenv("BAZAAR_ENV_FILE", str(empty))
     s = load_settings()
     assert s.typesafe_api_key is None and s.anthropic_api_key is None
+
+
+def test_a_missing_or_relative_env_file_fails_fast_instead_of_dropping_dotenv(tmp_path, monkeypatch):
+    for bad in (str(tmp_path / "typo.env"), "relative.env"):
+        monkeypatch.setenv("BAZAAR_ENV_FILE", bad)
+        with pytest.raises(ConfigError, match="BAZAAR_ENV_FILE"):
+            load_settings()

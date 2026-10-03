@@ -146,9 +146,17 @@ def database_name(url: str) -> str:
 
 
 def env_file_path() -> Path:
-    """The env file every reader uses: BAZAAR_ENV_FILE when set, else the repo's `.env`."""
+    """The env file every reader uses: BAZAAR_ENV_FILE when set, else the repo's `.env`.
+
+    The override REPLACES `.env`, so a typo must not silently drop it (a BAZAAR_SIM=1 kept in `.env`
+    would vanish and the target would become the real game): a missing or relative path fails fast."""
     override = os.environ.get("BAZAAR_ENV_FILE")
-    return Path(override) if override else REPO_ROOT / ".env"
+    if not override:
+        return REPO_ROOT / ".env"
+    path = Path(override)
+    if not path.is_absolute() or not path.is_file():
+        raise ConfigError("BAZAAR_ENV_FILE must name an existing file by absolute path (it replaces .env).")
+    return path
 
 
 def load_settings(env_file: Path | None = None) -> Settings:

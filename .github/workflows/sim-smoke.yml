@@ -3,6 +3,9 @@
 # through a dead proxy), so it can never reach the real game. Make it a required check on main.
 name: sim-smoke
 
+permissions:
+  contents: read  # the smoke needs nothing else, whatever the repo default becomes
+
 on:
   pull_request:
   push:
@@ -16,6 +19,8 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # the PR's code and build backends never see the token in .git/config
       - uses: astral-sh/setup-uv@v6
       - name: Install the project (pyproject.toml + uv.lock)
         run: uv sync --locked
