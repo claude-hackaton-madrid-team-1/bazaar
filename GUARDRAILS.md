@@ -40,9 +40,10 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `duel_endgame_ticks` = 2 — in the last ticks, accept any rival offer strictly inside our limit.
 - `duel_inside_limit` = true — refuse any duel offer or accept whose price, after the worst-case cost of its days (|`your_days_weight`| per day), is not strictly inside our limit.
 - `duel_policy` = v1 — v1 counters every tick; v2 anchors once, holds while the rival concedes, sends at most `duel_max_own_offers` priced messages and plans the team's one accept per tick across duels (docs/night/w2b-duel-v2.md). Flip to v2 only on the report's go/no-go.
-- `duel_max_own_offers` = 2 — v2 only: priced messages we send per duel (each costs a round of decay once the rival answers).
-- `duel_stall_ticks` = 2 — v2 only: the rival has stalled after this many ticks without a move in our favour (then counter once or accept).
+- `duel_max_own_offers` = 3 — v2 only: priced messages we send per duel once the rival has priced (each costs a round of decay once the rival answers).
+- `duel_stall_ticks` = 3 — v2 only: the rival has stalled after this many ticks without a move in our favour (then counter once or accept).
 - `duel_free_offers` = 16 — v2 only: priced messages we may send while the rival has not priced anything (stepping down v1's curve); they cost no round until the rival prices.
+- `duel_answer_share` = 0.2 — v2 only: before a stalled rival has shown how far it moves, expect a counter to win this share of the gap to our target (practice rivals moved 12–35 % of it); a counter must beat one round of decay.
 - `duel_open_wait_ticks` = 0 — v2 only: ticks of silence before our anchor (0 = anchor on the first tick).
 - `duel_days_signed` = false — v2 only: true reads `your_days_weight` as primas gained (+) or lost (−) per day, in the policy and in `duel_inside_limit`; false keeps the worst case (every day costs |weight|). Leave false until a real two-issue payload confirms the sign.
 

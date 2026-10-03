@@ -46,10 +46,11 @@ class V2Params:
     anchor: float = 0.6  # duel_anchor
     floor: float = 0.05  # duel_floor_margin
     endgame_ticks: int = 2  # duel_endgame_ticks
-    max_own_offers: int = 2  # duel_max_own_offers
-    stall_ticks: int = 2  # duel_stall_ticks
+    max_own_offers: int = 3  # duel_max_own_offers
+    stall_ticks: int = 3  # duel_stall_ticks
     open_wait_ticks: int = 0  # duel_open_wait_ticks
     free_offers: int = 16  # duel_free_offers
+    answer_share: float = 0.2  # duel_answer_share
     days_signed: bool = False  # duel_days_signed
 
     @classmethod
@@ -63,6 +64,7 @@ class V2Params:
             stall_ticks=rules.duel_stall_ticks,
             open_wait_ticks=rules.duel_open_wait_ticks,
             free_offers=rules.duel_free_offers,
+            answer_share=rules.duel_answer_share,
             days_signed=rules.duel_days_signed,
         )
 
@@ -129,6 +131,13 @@ def talking_offers(duel: Mapping[str, Any]) -> int:
         return 0
     first = min(rival)
     return sum(1 for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int) and m["tick"] >= first)
+
+
+def ignored(duel: Mapping[str, Any]) -> bool:
+    """True when the rival has priced nothing since our last priced message: it is not answering us."""
+    ours = [m["tick"] for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int)]
+    theirs = [m["tick"] for m in _priced(duel, ours=False) if isinstance(m.get("tick"), int)]
+    return bool(ours) and bool(theirs) and max(ours) >= max(theirs)
 
 
 def rival_values(duel: Mapping[str, Any], signed: bool) -> list[tuple[int, float]]:
@@ -236,8 +245,11 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
             return plan(replace(acceptable, reason="rival still conceding, but slower than a round costs"))
         if on_table >= target_surplus:
             return plan(replace(acceptable, reason="rival stalled at or above our target"))
+        if ignored(duel):
+            return plan(replace(acceptable, reason="rival stalled and ignored our last offer: take it"))
         counter = _offer(duel, target, signed, "stall-counter: the rival stopped conceding")
-        worth_a_round = (on_table + max(step, 1.0)) * (1 - decay) > on_table
+        prior = params.answer_share * max(0.0, target_surplus - on_table)  # before the rival has shown a step
+        worth_a_round = (on_table + max(step, prior, 1.0)) * (1 - decay) > on_table
         spare = params.max_own_offers - talking_offers(duel)
         if spare > 0 and counter is not None and _beats(duel, counter, on_table, signed) and worth_a_round:
             return plan(counter)
@@ -342,3 +354,13 @@ def plan_moves(
 def _by_urgency(dids: list[int], plans: Mapping[int, V2Plan]) -> list[int]:
     """Earliest deadline first; then the stalled ones (nothing more to wait for); then the biggest surplus."""
     return sorted(dids, key=lambda did: (plans[did].ticks_left, not plans[did].stalled, -plans[did].value))
+
+
+def single_duel_move(duel: dict[str, Any], tick: int, started_tick: int) -> DuelMove:
+    """v2 at its default knobs for ONE duel, with `duelist.duel_move`'s signature (the W2a zoo's policy shape,
+    `scripts/duel_zoo.py --gate bazaar_agent.agents.duel_v2:single_duel_move`). No other duel competes for the
+    accept here: the live loops call `plan_moves` with every live duel."""
+    did = duel_id(duel)
+    if did is None:
+        return DuelMove("hold", reason="duel without an id")
+    return plan_moves([duel], tick, {did: started_tick})[did]

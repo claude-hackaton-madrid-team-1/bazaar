@@ -42,7 +42,7 @@ def test_the_default_is_todays_policy_and_every_v2_knob_is_in_guardrails_md():
     rules = gr.load_guardrails().rules
     assert rules.duel_policy == "v1" and not rules.duel_days_signed
     params = V2Params.from_rules(rules)
-    assert (params.max_own_offers, params.stall_ticks, params.open_wait_ticks) == (2, 2, 0)
+    assert (params.max_own_offers, params.stall_ticks, params.open_wait_ticks) == (3, 3, 0)
     assert V2Params.from_rules(rules, anchor=0.4, floor=0.1).anchor == 0.4  # steering still applies
 
 
@@ -63,9 +63,10 @@ def test_anchors_once_then_waits_for_the_rival():
 def test_never_more_than_duel_max_own_offers_once_the_rival_talks():
     d = duel(rival=[(100, 70)], ours=[(100, 160), (103, 150)])
     assert talking_offers(d) == 2
+    two = V2Params(max_own_offers=2)
     for tick in range(104, 112):
-        assert duel_plan(d, tick, 100).move.kind == "hold", tick
-    last_call = duel_plan(d, 109, 100, V2Params(max_own_offers=3)).move  # the third is kept for the last call
+        assert duel_plan(d, tick, 100, two).move.kind == "hold", tick
+    last_call = duel_plan(d, 109, 100).move  # the default third offer is kept for the last call
     assert (last_call.kind, last_call.price) == ("offer", 105) and duel_plan(d, 104, 100).move.kind == "hold"
 
 
@@ -81,8 +82,11 @@ def test_a_stalled_rival_gets_one_counter_then_an_accept():
     counter = duel_plan(stalled, 104, 100).move
     assert counter.kind == "offer" and counter.price > 110 and "stall" in counter.reason
     spent = duel(rival=[(100, 110), (101, 110), (105, 110)], ours=[(100, 160), (104, 150)])
-    move = duel_plan(spent, 107, 100).move
+    move = duel_plan(spent, 108, 100, V2Params(max_own_offers=2)).move
     assert (move.kind, move.price) == ("accept", 110)
+    deaf = duel(rival=[(100, 110), (101, 110), (102, 110)], ours=[(100, 160), (104, 150)])
+    move = duel_plan(deaf, 108, 100).move  # it never answered our counter: no third round
+    assert (move.kind, move.price) == ("accept", 110) and "ignored" in move.reason
 
 
 def test_the_endgame_takes_any_offer_strictly_inside_the_limit_and_never_on_it():
@@ -136,7 +140,7 @@ def test_signed_days_reach_the_guardrail_only_under_v2():
 def test_jev_under_v2_may_not_take_the_accept_the_planner_gave_away_nor_pass_the_cap():
     d = duel(rival=[(100, 120)], ours=[(100, 160), (103, 150)])
     held = DuelMove("hold", reason="accept queued")
-    legal = legal_moves(d, 105, held, counter_offer(d, 105, 100), 2, V2Params())
+    legal = legal_moves(d, 105, held, counter_offer(d, 105, 100), 2, V2Params(max_own_offers=2))
     assert set(legal) == {"hold"}  # no accept (not this duel's slot) and no counter (2 offers spent)
     assert "accept" in legal_moves(d, 105, held, counter_offer(d, 105, 100), 2)  # v1 keeps its rules
 

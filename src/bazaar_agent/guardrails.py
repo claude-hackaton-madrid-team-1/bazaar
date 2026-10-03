@@ -53,10 +53,11 @@ class Guardrails(BaseModel):
     duel_endgame_ticks: int = 2
     duel_inside_limit: bool = True
     duel_policy: Literal["v1", "v2"] = "v1"
-    duel_max_own_offers: int = Field(default=2, ge=1)
-    duel_stall_ticks: int = Field(default=2, ge=1)
+    duel_max_own_offers: int = Field(default=3, ge=1)
+    duel_stall_ticks: int = Field(default=3, ge=1)
     duel_open_wait_ticks: int = Field(default=0, ge=0)
     duel_free_offers: int = Field(default=16, ge=0)
+    duel_answer_share: float = Field(default=0.2, ge=0, le=1)
     duel_days_signed: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
@@ -97,6 +98,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_stall_ticks": "agents.duel_v2.duel_plan (v2 only)",
     "duel_open_wait_ticks": "agents.duel_v2.duel_plan (v2 only)",
     "duel_free_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_answer_share": "agents.duel_v2.duel_plan (v2 only)",
     "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
