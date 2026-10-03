@@ -541,6 +541,14 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 4 — find out whether a duel accept counts against `accepts_per_team_per_tick`. · 🚫 unknown from the data
   (never observed either way); live probe proposed in the PR, a human runs it.
 
+### AF1 — Ask other teams their multipliers (said vs inferred)
+Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_desk.py`, `agents/taker.py`, `cli.py`,
+`render.py`, `sql/schema.sql`, `tests/test_team_affinity.py`, `tests/test_readonly_user.py`.
+- Step 1 — parser + rows + table/view. · **Acceptance:** parser cases, upsert never backwards, board view (tests).
+- Step 2 — the desk asks once per team per day in its first message, parses replies, writes inferred every 10 ticks
+  off the tick. · **Acceptance:** desk tests (offer unchanged, once per day, told teams not asked).
+- Step 3 — `bazaar affinity --teams` read-only. · **Acceptance:** CLI tests; read-only role test.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

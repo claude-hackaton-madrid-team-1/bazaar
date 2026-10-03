@@ -28,6 +28,7 @@ from functools import partial
 from typing import Any
 
 from bazaar_agent import affinity as af
+from bazaar_agent import team_affinity as ta
 from bazaar_agent.agents.market import Venue
 from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
 from bazaar_agent.agents.seller import Swap, open_commitments
@@ -57,6 +58,7 @@ REST_TICKS = 20  # after a walk, the team is left alone this long (no reopening 
 DEAD = ("cancelled", "expired", "failed")  # an offer of ours in one of these will never settle: its spend comes back
 CHECK_TICKS = 10  # how long an offer whose end we have not seen is re-read before its spend is simply kept
 TEAM_SPEND = "team:"  # the item prefix of the cash we add to swaps: `team_swap_max_cash_per_hour` sums these rows
+INFERRED_EVERY = 10  # ticks between two writes of the inferred multipliers (`team_affinity`)
 JEV_QUESTION = "team_swap_worth_it"  # questions/team_swaps.json
 NO_JEV_BUDGET = "no tick budget for jev"  # the taker's answer when the tick has no room for a Jev call
 
@@ -258,6 +260,8 @@ class TeamDesk:
         env: Mapping[str, str] | None = None,
         plan_ttl_ticks: int = 5,
         ledger: LedgerStore | None = None,
+        affinity: ta.AffinityBook | None = None,
+        today: Callable[[], str] = ta.game_day,
     ) -> None:
         self.team, self.rules, self.rec, self.log, self.live = team, rules, rec, log, live
         self.ledger = ledger  # the shared ledger: spend we add, listings we post (the maker's budget)
@@ -274,6 +278,13 @@ class TeamDesk:
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._synthetic = 0  # negative ids for the refund of a send the server refused
         self._plan: _Plan | None = None
+        # AF1: their multipliers, asked once per team per game day in our first message of a thread, parsed from
+        # their words (untrusted) and stored with the inferred ones. Nothing here changes an offer.
+        self.affinity, self.today = affinity, today
+        self.asked: dict[str, str] = {}  # team -> the game day we last asked it
+        self.told: set[str] = set()  # teams whose words named a multiplier: not asked again
+        self._read_msgs: set[Any] = set()  # their messages already parsed (id, or thread/tick/text)
+        self._inferred_tick: int | None = None
 
     # ------------------------------------------------------------ reads
 
@@ -313,6 +324,7 @@ class TeamDesk:
                 self._tried.add(int(t["id"]))
                 if payload := self._payload(t):  # is never closed under a deal, with no memory after a restart
                     self._payloads[int(t["id"])] = payload
+                    self._listen(v, int(t["id"]), self._other(t, v.us), payload)
             return []
         venues = {x.id: x for x in v.venues}
         out: list[SwapAccept] = []
@@ -323,6 +335,7 @@ class TeamDesk:
                 continue
             tid = int(t["id"])
             self._payloads[tid] = payload
+            self._listen(v, tid, self._other(t, v.us), payload)
             talk = self.talks.get(tid)
             if talk is None:
                 self.first_seen.setdefault(tid, v.tick)
@@ -342,6 +355,47 @@ class TeamDesk:
                 if accept is not None:
                     out.append(accept)
         return sorted(out, key=lambda a: -a.verdict.ours)[:1]  # one accept per tick for the whole team
+
+    def _listen(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> None:
+        """Their multipliers, if their words name any (`team_affinity.parse`: untrusted text, read once each)."""
+        if self.affinity is None or not TEAM_ID.match(team):
+            return
+        multiset = af.multipliers_from(v.me)
+        for m in payload.get("messages") or []:
+            if not isinstance(m, dict) or m.get("sender") != team or not isinstance(m.get("text"), str):
+                continue
+            key = m["id"] if isinstance(m.get("id"), int) else (tid, m.get("tick"), m["text"][: ta.READ_MAX])
+            if key in self._read_msgs:
+                continue
+            self._read_msgs.add(key)
+            tick = m["tick"] if isinstance(m.get("tick"), int) else v.tick
+            rows = ta.said_rows(team, m["text"], tick, tid, multiset)
+            if rows:
+                self.told.add(team)
+                self.affinity.add(rows)
+                said = ", ".join(f"{r.set_code} ×{r.multiplier:.1f}" for r in rows)
+                self.log(f"tick {v.tick} team desk: {team} says {said} (thread {tid}; words, not structure)")
+
+    def _remember_inferred(self, v: DeskView) -> None:
+        """The rival affinity map's likeliest multipliers, stored every `INFERRED_EVERY` ticks (source 'inferred')."""
+        if self.affinity is None or (self._inferred_tick is not None and v.tick - self._inferred_tick < INFERRED_EVERY):
+            return
+        self._inferred_tick = v.tick
+        try:
+            amap = af.affinity_map(
+                v.events, af.catalog_sets(v.catalog), af.multipliers_from(v.me), v.catalog, exclude=[v.us]
+            )
+        except Exception as e:  # noqa: BLE001 — a report for later; never a reason to stop the tick
+            self.log(f"tick {v.tick} team desk: no inferred multipliers ({type(e).__name__})")
+            return
+        self.affinity.add(ta.inferred_rows(amap, v.tick))
+
+    def _question(self, v: DeskView, team: str) -> str | None:
+        """The multiplier question for our first message in a thread: once per team per game day, never to a
+        team that already told us."""
+        if self.affinity is None or team in self.told or self.asked.get(team) == self.today():
+            return None
+        return ta.ask_line(af.multipliers_from(v.me))
 
     def _observe(self, v: DeskView, talk: Talk, payload: dict[str, Any]) -> None:
         """What changed in one of our threads: their last word, our standing offer, and whether they took it
@@ -461,6 +515,14 @@ class TeamDesk:
     # ------------------------------------------------------------ (2) what we say
 
     def converse(self, v: DeskView, taken: set[int]) -> None:
+        try:
+            self._converse(v, taken)
+        finally:  # after the sends: what we heard and inferred is written off the tick
+            if self.affinity is not None:
+                self._remember_inferred(v)
+                self.affinity.flush(v.tick)
+
+    def _converse(self, v: DeskView, taken: set[int]) -> None:
         self._check_refunds(v)  # also while the desk is off
         if (why := disabled(self.rules, self.env)) is not None:
             self._withdraw(v, why)
@@ -884,6 +946,9 @@ class TeamDesk:
             talk.offer_id = None
             self._spend(v, -cash, talk.trade.refs[1])  # booked before the send: an outage never leaves it unbooked
             text = self.words(WordsRequest(f"team:{talk.team}", cash, talk.step, talk.trade.refs[1], tick=v.tick))
+            question = self._question(v, talk.team) if talk.step == 0 else None
+            if question is not None:  # words only: the structured offer below is the same with or without it
+                text = f"{text} {question}"
             body = self.rec.send(
                 did,
                 v.tick,
@@ -898,6 +963,8 @@ class TeamDesk:
                     self._synthetic -= 1  # a refused send has no offer id: a fresh synthetic one, refunded once
                     self._refund(v, {"id": self._synthetic, **refused})
                 return
+            if question is not None:  # sent (or maybe landed): not asked again today
+                self.asked[talk.team] = self.today()
             offer_id = (body or {}).get("offer")  # lost on the way back: the next tick reads it from the thread
             talk.offer_id = offer_id if isinstance(offer_id, int) else None
         talk.step += 1

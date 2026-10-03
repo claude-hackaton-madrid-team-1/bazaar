@@ -1049,3 +1049,7 @@ duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not
 `scripts/sim_smoke.py` fails a step on any ` refused ` in its output (CRASH_MARKERS), our own WARN lines included: the
 human-approval board's first fail-closed note ("… is refused (fail closed)") failed `agent taker --live`. Word new
 WARN lines without " refused " (HA1 says "no trade at or above … goes out").
+
+### [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
+`db.init_schema` in that schema fails (`column "set_code" does not exist`): the fixture's `cards (id, name)` is
+not schema.sql's. Drop it before applying the schema there (AF1's read-only test does).
