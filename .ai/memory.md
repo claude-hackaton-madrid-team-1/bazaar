@@ -695,3 +695,10 @@ Postgres, else the file) did not have it → fix: `FallbackLedger.hands_off_ids`
 2. `market.parse_offer`'s bid branch never checked `want.assets`: a bid for `card:X` that also wants the id
    of our rare read as plain → any side key outside cash/assets/types/cards with a value is not plain.
 Also: the sell path must re-read the kill switch after the duel grace wait, as the buy path does.
+
+### [2026-10-03] build-error — #138's `accept_bids` sold into a bid without main's S1 accept gate (#146)
+symptom: after merging main into the N17 stack, a sell into a board bid sent `accept(offer, assets=[copy])` with
+no inspector row → root cause: #146 gated `_accept_one` (dealer + board asks); #138's `_accept_bid` is a separate
+accept path written before the gate existed, and `board_gate` refuses every bid → fix: `accept_gate.bid_gate`
+(a bid, the ref and price we priced, any copy, and the copy we hand over is that card in /me), checked in
+`_accept_bid` before the duel grace and the slot; a block never takes the accept slot (tests in test_rivals.py).

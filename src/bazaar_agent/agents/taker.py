@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bazaar_agent.affinity import AffinityMap
-from bazaar_agent.agents.accept_gate import Gate, board_gate, dealer_gate
+from bazaar_agent.agents.accept_gate import Gate, bid_gate, board_gate, dealer_gate
 from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
@@ -184,6 +184,7 @@ class AcceptProposal:
     sell: Opportunity | None = None  # a standing bid we would sell into (`accept_bids`)
     asset_id: int | None = None  # sells: the copy we hand over
     thread: dict[str, Any] | None = field(default=None, compare=False)  # the dealer thread read this tick
+    bid: BoardOffer | None = field(default=None, compare=False)  # sells: the board bid `sell` was priced on
 
     @property
     def surplus(self) -> float:
@@ -198,7 +199,7 @@ class AcceptProposal:
         return self.candidate.score if self.candidate is not None else self.surplus
 
 
-def bid_proposal(op: Opportunity, asset_id: int) -> AcceptProposal:
+def bid_proposal(op: Opportunity, asset_id: int, bid: BoardOffer | None = None) -> AcceptProposal:
     inputs = {
         "offer_id": op.offer_id,
         "venue": op.venue,
@@ -223,6 +224,7 @@ def bid_proposal(op: Opportunity, asset_id: int) -> AcceptProposal:
         inputs,
         sell=op,
         asset_id=asset_id,
+        bid=bid,
     )
 
 
@@ -595,7 +597,7 @@ class Taker:
                 unavailable=frozenset(listed | sold),
             )
             if op is not None and op.ours >= run.params.sell_min_surplus:
-                out.append(bid_proposal(op, copy_id))
+                out.append(bid_proposal(op, copy_id, o))
         return out
 
     # ------------------------------------------------------------ (b) the dealer desk
@@ -818,6 +820,11 @@ class Taker:
             )
 
     def _gate_unchecked(self, run: _TickRun, p: AcceptProposal) -> Gate:
+        if p.sell is not None:
+            if p.bid is None:
+                return Gate("board", p.offer_id, "block", ("a sell with no bid to inspect",))
+            copy = next((a for a in run.snap.me.get("assets") or [] if a.get("id") == p.asset_id), None)
+            return bid_gate(p.bid, p.ref, p.sell.price, copy)
         if p.desk is not None:
             topic = p.desk.conv.topic
             return dealer_gate(p.thread or {}, p.source, p.offer_id, p.price, topic, self._card_index(run))
@@ -1158,30 +1165,35 @@ class Taker:
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
+        gate = self._gate(run, p)  # S1: the bid's structure is what we priced, and the copy is one of ours
+        if gate is not None and not gate.allowed:
+            self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on bid {op.offer_id}: {gate.reason}")
+            self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
+            return False
         if self.live:
             self._duel_grace(run)
         if any(item.startswith("duel:") for item in self.ledger.accept_items(clock.tick)):
-            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected")
+            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected", gate=gate)
             return False
         if not run.window.open():
-            self._skip(run, p, "tick budget spent, not sent late", "expired")
+            self._skip(run, p, "tick budget spent, not sent late", "expired", gate=gate)
             return False
         if self.live and not self._fresh_tick(clock):
             run.window = TickWindow(clock.tick, 0.0, self.now)
-            self._skip(run, p, "the tick ended before the send", "expired")
+            self._skip(run, p, "the tick ended before the send", "expired", gate=gate)
             return False
         if stops := kill_switch(self.rules):  # the duel grace took seconds: it may have gone on since
-            self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected")
+            self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected", gate=gate)
             return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, f"sell:{p.asset_id}", limit):
-            self._skip(run, p, "another process took the team's accept this tick", "rejected")
+            self._skip(run, p, "another process took the team's accept this tick", "rejected", gate=gate)
             return False
         did = self.rec.decide(
             clock.tick,
             "accept_bid",
             f"sell {p.ref} #{p.asset_id} into {op.maker}'s bid {op.offer_id} on {op.venue} for {op.price} "
             f"(fee {op.fee}, surplus {op.ours:.1f}) · guardrails {verdict}",
-            inputs=p.inputs,
+            inputs=_with_gate(p.inputs, gate),
             reason=p.reason,
             guardrail=str(verdict),
             chosen=True,

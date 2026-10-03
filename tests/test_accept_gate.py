@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bazaar_agent.agents.accept_gate import board_gate, dealer_gate, duel_gate, price_claims
+from bazaar_agent.agents.accept_gate import bid_gate, board_gate, dealer_gate, duel_gate, price_claims
 from bazaar_agent.agents.duelist import DuelMove
 from bazaar_agent.agents.inspector import CardIndex
 from bazaar_agent.agents.market import BoardOffer
@@ -93,6 +93,34 @@ def test_a_board_ask_that_is_what_we_priced_passes():
 )
 def test_a_board_bait_is_refused(offer, why):
     g = board_gate(offer, "LAV-08", 22, 2, "uncommon")
+    assert not g.allowed and why in g.reason
+
+
+def their_bid(ref="LAT-09", price=70, side="bid", asset_id=None):
+    return BoardOffer(77, "rastro", "m9", side, ref, price, asset_id, None, None, None)
+
+
+COPY = {"id": 5, "kind": "card", "ref": "LAT-09", "your_value": 45}
+
+
+def test_a_board_bid_we_sell_into_that_is_what_we_priced_passes():
+    g = bid_gate(their_bid(), "LAT-09", 70, COPY)
+    assert g.allowed and (g.kind, g.offer_id) == ("board", 77)
+
+
+@pytest.mark.parametrize(
+    ("offer", "copy", "why"),
+    [
+        (their_bid(side="ask"), COPY, "is an ask, not a bid"),
+        (their_bid(ref="LAT-08"), COPY, "it wants LAT-08, our decision priced LAT-09"),
+        (their_bid(price=60), COPY, "it pays 60, our decision priced 70"),
+        (their_bid(asset_id=5), COPY, "it binds asset 5, not any copy of LAT-09"),
+        (their_bid(), None, "the copy we would hand over is not in /me"),
+        (their_bid(), {**COPY, "ref": "LAT-08"}, "the copy we would hand over is LAT-08, not LAT-09"),
+    ],
+)
+def test_a_board_bid_bait_is_refused(offer, copy, why):
+    g = bid_gate(offer, "LAT-09", 70, copy)
     assert not g.allowed and why in g.reason
 
 

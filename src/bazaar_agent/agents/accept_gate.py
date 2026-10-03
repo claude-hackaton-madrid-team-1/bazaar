@@ -111,6 +111,25 @@ def board_gate(offer: BoardOffer, ref: str, total: int, fee: int, catalog_rarity
     return Gate("board", offer.id, "block" if findings else "clean", tuple(findings))
 
 
+def bid_gate(offer: BoardOffer, ref: str, price: int, copy: Mapping[str, Any] | None) -> Gate:
+    """A board bid about to be accepted with one of our copies (`accept_bids`): cash for any copy of `ref`, at
+    the price we priced, and the copy we hand over (from /me) is a card of that ref."""
+    findings = []
+    if offer.side != "bid":
+        findings.append(f"offer {offer.id} is an {offer.side}, not a bid")
+    if offer.ref != ref:
+        findings.append(f"it wants {offer.ref}, our decision priced {ref}")
+    if offer.price != price:
+        findings.append(f"it pays {offer.price}, our decision priced {price}")
+    if offer.asset_id is not None:
+        findings.append(f"it binds asset {offer.asset_id}, not any copy of {offer.ref}")
+    if copy is None:
+        findings.append("the copy we would hand over is not in /me")
+    elif copy.get("kind", "card") != "card" or copy.get("ref") != offer.ref:
+        findings.append(f"the copy we would hand over is {copy.get('ref')}, not {offer.ref}")
+    return Gate("board", offer.id, "block" if findings else "clean", tuple(findings))
+
+
 def price_claims(text: str | None) -> list[int]:
     """Prices the words name ("80 P", "80 primas"), in order."""
     return [int(m) for m in PRICE_CLAIM.findall(text or "")]
