@@ -56,12 +56,15 @@ class DealerMemory:
     learnings: tuple[Learning, ...] = ()
     texts: tuple[DealerText, ...] = ()
     status: str = "ok"  # ok | error:<Type>
+    # Etiquette rows ("never address X as Y"), kept apart: another team can steer a dealer's words, so they never
+    # take one of the `MAX_LEARNINGS` lesson slots nor reach a Jev state as text (#221 reviews).
+    etiquette: tuple[Learning, ...] = ()
 
     def never_address(self) -> tuple[str, ...]:
         """The addresses the dealer forbade, folded: "amigo" and "amiga" always, then its newest words to us, then
         its newest learnings, at most `NEVER_ADDRESS_MAX` in all (a steered flood cannot fill the prompt)."""
         out = [*NEVER_ADDRESS, *(x for t in reversed(self.texts) for x in t.forbids)]
-        for lr in self.learnings:
+        for lr in (*self.etiquette, *self.learnings):
             parsed = parse_etiquette(lr.text)
             if parsed is not None and parsed[0] == "never" and parsed[1] == self.dealer:
                 out.append(fold(parsed[2]))
@@ -69,7 +72,7 @@ class DealerMemory:
 
     def preferred(self) -> list[str]:
         """The addresses its etiquette learnings ask for, newest first."""
-        found = (parse_etiquette(lr.text) for lr in self.learnings)
+        found = (parse_etiquette(lr.text) for lr in (*self.etiquette, *self.learnings))
         return [p[2] for p in found if p is not None and p[0] == "as" and p[1] == self.dealer]
 
     def facts(self) -> dict[str, Any]:
@@ -79,6 +82,7 @@ class DealerMemory:
             "learnings": [
                 {"kind": lr.kind, "tick": lr.tick, "source": lr.source, "text": lr.text} for lr in self.learnings
             ],
+            "etiquette": [{"tick": lr.tick, "source": lr.source, "text": lr.text} for lr in self.etiquette],
             "their_recent_texts": [{"tick": t.tick, "text": t.text, "flags": list(t.flags)} for t in self.texts],
             "never_address": list(self.never_address()),
             "status": self.status,
@@ -94,6 +98,7 @@ class DealerMemory:
                 for lr in self.learnings
                 if lr.source in SOURCES
             ],
+            "etiquette_rows": len(self.etiquette),
             "their_recent_texts": {
                 "count": len(self.texts),
                 "withheld": sum(1 for t in self.texts if t.flags),
@@ -118,16 +123,23 @@ def recall_dealer(
 ) -> DealerMemory:
     """The dealer's memory; an empty one (with `status` saying why) on any error."""
     try:
-        return DealerMemory(dealer_id, _learnings(store, dealer_id, us, tick, use_db), _texts(events, dealer_id, us))
+        lessons, etiquette = _learnings(store, dealer_id, us, tick, use_db)
+        return DealerMemory(dealer_id, lessons, _texts(events, dealer_id, us), etiquette=etiquette)
     except Exception as e:  # noqa: BLE001 — fail open: no memory is today's behaviour
         return DealerMemory(dealer_id, status=f"error:{type(e).__name__}")
 
 
-def _learnings(store: Any, dealer: str, us: str | None, tick: int | None, use_db: bool) -> tuple[Learning, ...]:
+def _learnings(
+    store: Any, dealer: str, us: str | None, tick: int | None, use_db: bool
+) -> tuple[tuple[Learning, ...], tuple[Learning, ...]]:
+    """(lessons, etiquette rows): the newest `MAX_LEARNINGS` of each from rules or outcomes."""
     if store is None:
-        return ()
+        return (), ()
     found = store.recall(dealer, KINDS, tick, subject_kind="dealer", team=us, limit=RECALL_POOL, use_db=use_db)
-    return tuple(lr for lr in found if lr.source in SOURCES)[:MAX_LEARNINGS]
+    kept = [lr for lr in found if lr.source in SOURCES]
+    etiquette = [lr for lr in kept if parse_etiquette(lr.text) is not None]
+    lessons = [lr for lr in kept if parse_etiquette(lr.text) is None]
+    return tuple(lessons[:MAX_LEARNINGS]), tuple(etiquette[:NEVER_ADDRESS_MAX])
 
 
 def _texts(events: Iterable[Mapping[str, Any]] | None, dealer: str, us: str | None) -> tuple[DealerText, ...]:

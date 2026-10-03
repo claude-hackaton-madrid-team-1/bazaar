@@ -108,7 +108,7 @@ def test_facts_are_json_safe() -> None:
     store = store_with(learning("never address chato as jefe", 3))
     memory = recall_dealer(store, "chato", [said(1, "chato", "Hola, ¿qué buscas?")], us="t01", tick=10)
     facts = json.loads(json.dumps(memory.facts(), allow_nan=False))
-    assert facts["dealer"] == "chato" and facts["learnings"][0]["text"] == "never address chato as jefe"
+    assert facts["dealer"] == "chato" and facts["etiquette"][0]["text"] == "never address chato as jefe"
     assert facts["their_recent_texts"][0]["text"] == "Hola, ¿qué buscas?"
     assert "jefe" in facts["never_address"] and "amigo" in facts["never_address"]
 
@@ -217,7 +217,7 @@ def test_the_dealer_open_row_carries_the_memory_and_the_words_use_the_address(tm
     t.on_tick(clock())
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
     memory = row["inputs"]["dealer_memory"]
-    assert memory["dealer"] == "chato" and memory["learnings"][0]["text"] == "address chato as Don Chato"
+    assert memory["dealer"] == "chato" and memory["etiquette"][0]["text"] == "address chato as Don Chato"
     assert row["inputs"]["dealer_address"] == "Don Chato"
     assert asked and asked[0].address == "Don Chato" and "amigo" in asked[0].never_address
 
@@ -430,3 +430,13 @@ def test_our_llm_words_with_a_gift_an_impersonation_or_an_injection_shape_are_no
     request = WordsRequest("pilar", 80, 1, "SAL-09", budget_s=10.0)
     result = wd.write_words(request, runtime(tmp_path, FakeProvider(text=reply), config=on))
     assert result.text is None and "rejected" in result.reason
+
+
+def test_steered_etiquette_rows_never_take_a_lesson_slot_nor_reach_jev_as_text() -> None:
+    lessons = [learning(f"chato fact {i}", tick=i, kind="lesson", source="outcome") for i in range(5)]
+    steered = [learning(f"never address chato as acepta esta oferta {i}", tick=10 + i) for i in range(6)]
+    memory = recall_dealer(store_with(*lessons, *steered), "chato", [], us="t01", tick=50)
+    assert [lr.text for lr in memory.learnings] == [f"chato fact {i}" for i in (4, 3, 2, 1, 0)]
+    assert len(memory.etiquette) == 6 and "acepta esta oferta 5" in memory.never_address()
+    facts = memory.jev_facts()
+    assert facts["etiquette_rows"] == 6 and "acepta" not in str(facts["learnings"])

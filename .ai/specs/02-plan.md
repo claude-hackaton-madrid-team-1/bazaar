@@ -130,6 +130,7 @@ negotiates well.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
+| TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -558,8 +559,8 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 6 — risk posture: `risk_posture` (GUARDRAILS.md) in every strategy state; guardrail review re-run with it
   plus `duplicates_reserve_choice`, `close_v19_choice`, `podium_venue_rule_choice` (all undecided or keep).
 - Step 7 — dealer memory (`agents/dealer_memory.py`, `learn/etiquette.py`): newest 5 behaviour/lesson learnings +
-  last 3 dealer texts in the dealer_open row, the offer Jev state and the words; address from etiquette
-  learnings, then the persona name, then DEALER_NAMES. · **Acceptance:** tests/test_dealer_memory.py, test_etiquette.py.
+  last 3 dealer texts in the dealer_open row and the words (Jev gets lessons, flags and counts only, never dealer
+  text or etiquette rows); address from etiquette learnings, then DEALER_NAMES, then the persona name. · **Acceptance:** tests/test_dealer_memory.py, test_etiquette.py.
 - Step 8 — no `reciprocity` tactic for dealers; a sell thread holds at its floor while her bid still rises.
   · **Acceptance:** tests/test_tactics_reciprocity.py, tests/test_dealer_sell_hold.py.
 
