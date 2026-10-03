@@ -974,3 +974,9 @@ command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; ru
 Keyless `GET /api/catalog`: LAV/MAL/LAT/SAL `+0h`, RET `sat+0h`, CHA `sun+0h` with `released: false`, 12 cards
 each, none `hidden`, CHA minted 0. The taker's cards heartbeat (`cards_heartbeat.py`) diffs the catalog it already
 reads each tick (no request): Sunday's flip reports 12 `set_released` events with the dealers that sell/buy each.
+### [2026-10-03] finding — the published traits predict Friday's dealer limits within 5 % (N19)
+Limit ≈ list × (1 + 0.25 × (shrewdness − generosity)): Abuela uncommon 22 (fills p50 22.5), packs 23 (21-22), Chato
+uncommon 30 (29-30), rare 89 (89.5-90.5). Opening ≈ list × (1.12 + 0.17 × shrewdness). The patience trait barely
+moves the bids before a final (4-6 for both). Replayed on Friday's threads (tests/test_persona_replay.py), the trait
+prior's ladder scores the same share as the learned one (Abuela uncommon 0.402 = 0.402, packs 0.471 vs 0.465, Chato
+uncommon 0.467 = 0.467, rare 0.476 vs 0.467). Step 1 beat step 2 on Abuela (0.40 vs 0.33).

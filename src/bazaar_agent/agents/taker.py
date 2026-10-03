@@ -65,6 +65,8 @@ from bazaar_agent.agents.market import (
     parse_offer,
     tradable_venues,
 )
+from bazaar_agent.agents.persona_book import PersonaBook
+from bazaar_agent.agents.persona_desk import shape as persona_shape
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     JevFn,
@@ -476,6 +478,7 @@ class Taker:
         swap_jev: JevFn = no_jev,
         cards: CardsHeartbeat | None = None,
         news: NewsSentinel | None = None,
+        personas: PersonaBook | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.swap_jev = swap_jev  # Jev `team_swap_worth_it`: the team desk sends a swap only on its decided yes
@@ -494,6 +497,9 @@ class Taker:
         self.news = news  # Radio Rastro + the schedule: logged and stored after the sends; no behaviour change
         self._event_skips: set[str] = set()  # scheduled events a dealer skip was recorded for (once each)
         self._news_view: tuple[int, list[Any], dict[str, Any], Clock, str] | None = None  # this tick's view
+        # The dealers' published traits and menus (the /api/dealers read of every tick), stored when they change.
+        self.personas = personas or PersonaBook(None, log)
+        self._tones: dict[str, str] = {}  # dealer -> the words' tone its traits ask for (persona model)
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
@@ -597,6 +603,10 @@ class Taker:
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
         run.listed = frozenset(int(t["id"]) for t in threads if isinstance(t.get("id"), int))
+        try:  # no request: the snapshot's /api/dealers. A hostile persona never costs the tick: last tick's stay
+            self.personas.observe(snap.dealers, clock.tick)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"tick {clock.tick} taker: personas not read ({type(e).__name__}); last tick's kept")
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
@@ -923,6 +933,7 @@ class Taker:
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
+        moves = self._persona_shaped(run, moves, busy)
         floor = effective_cash_floor(self.rules, ctx)  # the floor check() applies, bond reserve included (#71)
         cash_room = min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
         moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
@@ -1002,6 +1013,41 @@ class Taker:
     def _rival_moves(self) -> list[str]:
         """The newest `rival_move` lines (public facts about rivals' climbs), for Jev's state."""
         return [lr.text for lr in self.news.ranks.latest] if self.news is not None else []
+
+    def _persona_shaped(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """The persona model (`agents/persona_desk.py`, GUARDRAILS `persona_model_enabled`): drop a dealer whose
+        hourly deal budget we used, give a dealer with no price history its trait prior (only ever lowering the
+        ladder), and put the dealers whose deals unlock the next one early first. One `dealer_skip` row per
+        dealer and reason, with keys the public status view does not list."""
+        if not self.rules.persona_model_enabled or not self.personas.personas:
+            return moves
+        learner = self.outcome_learner
+        last = getattr(learner, "last", None)
+        curves = last.curves if last is not None else curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
+        learned = learner.policies.keys() if learner is not None else ()
+        clock = run.snap.clock
+        unlocked = [str(d) for d in run.snap.me.get("unlocked") or [] if isinstance(d, str)]
+        shaped = persona_shape(
+            moves, self.personas.personas, curves, learned, run.snap.events, run.snap.us, unlocked, clock.tick,
+            clock.tick_seconds,
+        )  # fmt: skip
+        for (dealer, _), params in shaped.params.items():
+            self._tones[dealer] = params.tone
+        for mv, why in shaped.skipped:
+            if mv.source in busy or self._learned_skips.get((mv.source, "persona")) == why:
+                continue
+            self._learned_skips[(mv.source, "persona")] = why
+            self.rec.decide(
+                clock.tick,
+                "dealer_skip",
+                f"skip {mv.source} for {mv.ref}: {why}",
+                inputs={"blocked_dealer": mv.source, "wanted": mv.ref, "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return shaped.moves
 
     def _evolved(
         self, run: _TickRun, moves: list[StrategyMove], busy: set[str], room: int | None = None
@@ -1462,7 +1508,14 @@ class Taker:
         price = int(move.price or 0)
         text = bid_words(
             choice.words(self.words_fn) if choice is not None else self.words_fn,
-            WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item, lessons=self._lessons_for(run, conv)),
+            WordsRequest(
+                conv.dealer,
+                price,
+                len(conv.neg.bids),
+                conv.item,
+                lessons=self._lessons_for(run, conv),
+                tone=self._tones.get(conv.dealer, ""),
+            ),
             thread,
             run.snap.clock,
             run.window.deadline,
