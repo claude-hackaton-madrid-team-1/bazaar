@@ -96,8 +96,15 @@ def test_the_ledger_counts_pack_spends_by_pack_id_in_the_last_game_hour(tmp_path
 
 def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
-    assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
+    legendary = gr.check(gr.Action("bid", "LAV-12", "legendary", 150), ctx(), rules)
+    assert "no max_price for rarity 'legendary'" in str(legendary)
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+    # An epic has a hard cap since buy targets (GUARDRAILS.md `max_price_epic`); without the file, none.
+    epic = gr.check(gr.Action("bid", "LAV-11", "epic", rules.max_price_epic + 1), ctx(), rules)
+    assert f"max_price_epic {rules.max_price_epic}" in str(epic)
+    assert "no max_price for rarity 'epic'" in str(
+        gr.check(gr.Action("bid", "LAV-11", "epic", 5), ctx(), gr.Guardrails())
+    )
 
 
 # ---------------------------------------------------------------- our venue (build only)

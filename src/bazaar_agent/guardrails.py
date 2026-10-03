@@ -94,6 +94,8 @@ class Guardrails(BaseModel):
     max_price_uncommon: int = 26
     max_price_rare: int = 80
     max_price_pack: int = 20
+    max_price_epic: int = Field(default=0, ge=0)  # 0: buying an epic is not allowed (no max_price for it)
+    off_page_min_surplus: int = Field(default=1, ge=1)  # an epic or legendary buy: at most official value minus this
     dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
     trickster_max_strictness: float = Field(default=0.0, ge=0, le=1)  # 0: the published kind alone decides
     trickster_accept_fill_share: float = Field(default=1 / 3, gt=0, le=1)
@@ -227,6 +229,11 @@ class Guardrails(BaseModel):
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
     watchdog_refusal_storm: int = Field(default=50, ge=1)
+    # Buy targets (`buy_targets.py`): a human's buy approval of an off-page card becomes a card the agents pursue.
+    buy_targets_enabled: bool = False
+    buy_target_start_share: float = Field(default=0.75, gt=0, le=1)
+    buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
+    buy_target_steps: int = Field(default=5, ge=1, le=50)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -269,7 +276,15 @@ class Guardrails(BaseModel):
             "uncommon": self.max_price_uncommon,
             "rare": self.max_price_rare,
             "pack": self.max_price_pack,
+            "epic": self.max_price_epic or None,
         }.get(rarity or "")
+
+    def value_margin_for(self, rarity: str | None) -> float:
+        """How far under the official value a card buy must stay: `official_value_margin`, and for an epic or
+        legendary at least `off_page_min_surplus` (at least 1, so such a buy is always strictly below our value)."""
+        if str(rarity or "").strip().lower() in OFF_PAGE_RARITIES:
+            return max(self.official_value_margin, float(self.off_page_min_surplus))
+        return self.official_value_margin
 
     def final_cap_for(self, rarity: str | None) -> int | None:
         """The most a dealer's FINAL offer on a card may be taken at: the rarity cap lifted by
@@ -290,6 +305,8 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "max_price_epic": "guardrails.check (0: no epic is ever bought) + runtime.human_tools.buy_refusals",
+    "off_page_min_surplus": "guardrails.check (every epic or legendary buy: official value minus this) + approve",
     "trickster_max_strictness": "agents.dealer.decide (a forgiving dealer's FINAL is not its limit)",
     "trickster_accept_fill_share": "agents.dealer.decide (a forgiving dealer: accept only low in its fill range)",
     "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
@@ -387,6 +404,10 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_ladder_score": "move_impact.estimate (every dealer deal)",
     "no_buyback_ticks": "guardrails.check (every card buy) → impact_board (our sales in feed_events, fail closed)",
     "live_watchdog_enabled": "agents.taker → watchdog.run (after the tick's sends)",
+    "buy_targets_enabled": "buy_targets.active → agents.maker (bid ladder) + agents.taker (asks within the ceiling)",
+    "buy_target_start_share": "buy_targets.ladder_price (the first bid: this × the ceiling)",
+    "buy_target_step_ticks": "buy_targets.ladder_price (ticks between two steps up)",
+    "buy_target_steps": "buy_targets.ladder_price (steps from the first bid to the ceiling)",
     "watchdog_window_ticks": "watchdog.run (every rule's window)",
     "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
     "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
@@ -1168,7 +1189,8 @@ def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) 
     if action.price is None or action.rarity == "pack" or is_pack(action.item):
         return []
     held = ctx.held.get(action.item, 0)
-    return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules)
+    margin = rules.value_margin_for(action.rarity)  # an epic or legendary: strictly below, never liftable
+    return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules, margin)
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.

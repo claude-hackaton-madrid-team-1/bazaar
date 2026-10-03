@@ -8,15 +8,17 @@ An approval (`approvals.py`, HA1) is the human's veto over our own agents, so no
   equal to the bearer token, the tools are not even listed (fail closed); the bearer alone never shows them. An
   approver request sees ONLY these three tools, so counterparty text never shares a context with `approve`.
 
-Every input is validated (a card of the catalog, a price in [1, 1000], a ttl in [1, 480] ticks), and an approval
-the agents could never use is refused. An approval lifts `human_approval_above` and, for a sell,
-`max_score_loss_per_move` (MI1 asks for the same approval); never a hard cap (the rarity cap, the official value,
-the hourly spend cap), never `protect_page_sets` (a page's last copy) and never a sell below
-`sell_min_value_ratio` × our value. Reads fail closed: an unreadable /me, catalog or official value refuses.
-Every call that changes something writes a `decisions` row (agent `guard`): approval_granted, approval_refused,
-approval_revoked or approval_denied. `by` is "human:mcp", or "human:<via>" when the caller names its relay (a slug:
-one approver token, so the relay's name is the caller's word, never free text). Approves and revokes run one at a
-time in this process, so a revoke sent right after an approve always lands after it.
+Every input is validated (a card of the catalog, a price in [1, 1000], a ttl in [1, 480] ticks), and an approval the
+agents could never use is refused. A buy approval of an off-page card (an epic or legendary) is also an ORDER: with
+`buy_targets_enabled` the agents pursue it as a buy target (`buy_targets.py`: the maker's bid ladder, the taker's
+accepts), always strictly below our value (`off_page_min_surplus`); the answer says the ladder. An approval lifts
+`human_approval_above` and, for a sell, `max_score_loss_per_move` (MI1 asks for the same approval); never a hard cap
+(the rarity cap, the official value, the hourly spend cap), never `protect_page_sets` (a page's last copy) and never a
+sell below `sell_min_value_ratio` × our value. Reads fail closed: an unreadable /me, catalog or official value
+refuses. Every call that changes something writes a `decisions` row (agent `guard`): approval_granted,
+approval_refused, approval_revoked or approval_denied. `by` is "human:mcp", or "human:<via>" when the caller names its
+relay (a slug: one approver token, so the relay's name is the caller's word, never free text). Approves and revokes
+run one at a time in this process, so a revoke sent right after an approve always lands after it.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from typing import Any, Literal, Protocol
 import psycopg
 from pydantic import Field
 
-from bazaar_agent import approvals
+from bazaar_agent import approvals, buy_targets
 from bazaar_agent.approvals import Approval
 from bazaar_agent.guardrails import OFF_PAGE_RARITIES
 from bazaar_agent.llm.intent import lowest_value_copy
@@ -153,11 +155,11 @@ def is_page_card(rarity: str | None) -> bool:
 
 def buy_cap(b: Backend, rarity: str | None) -> tuple[int, str] | None:
     """The most any buy of this rarity may pay, whatever a human approves: the rarity cap (lifted for a dealer's
-    final by `dealer_final_lift`), else None (buying this rarity is not allowed)."""
-    cap = b.rules.max_price_for(rarity)
+    final by `dealer_final_lift`, commons to rares only), else None (buying this rarity is not allowed)."""
+    cap = b.rules.final_cap_for(rarity)
     if cap is None:
         return None
-    return math.floor(cap * (1 + b.rules.dealer_final_lift) + 1e-9), f"max_price_{rarity}"
+    return cap, f"max_price_{rarity}"
 
 
 def album(me: dict[str, Any] | None, card: str, rarity: str | None) -> dict[str, Any] | None:
@@ -176,13 +178,45 @@ def buy_refusals(b: Backend, card: str, price: int, rarity: str, tick: int, me: 
         out.append(f"{cap[1]} {cap[0]}: an approval never lifts it")
     if price > rules.max_spend_per_game_hour:
         out.append(f"max_spend_per_game_hour {rules.max_spend_per_game_hour}: an approval never lifts it")
+    if not is_page_card(rarity) and _copies(me, card) > 0:
+        out.append(f"we already hold {card} (block_buying_held_cards): an approval never lifts it")
     official = b.values.value(card, tick, _copies(me, card))
+    margin = rules.value_margin_for(rarity)
     if official is None:
         out.append(f"the official value of {card} could not be read (fail closed)")
-    elif price > official - rules.official_value_margin + 1e-9:
-        margin = rules.official_value_margin
+    elif price > official - margin + 1e-9 and is_page_card(rarity):
         out.append(f"official value {official:g} (official_value_margin {margin:g}): every buy is capped at it")
+    elif price > official - margin + 1e-9:
+        top = math.floor(official - margin + 1e-9)
+        out.append(
+            f"official value {official:g} (off_page_min_surplus {margin:g}): an off-page card is bought strictly "
+            f"below our value, at {top} at most; an approval never lifts it"
+        )
     return out
+
+
+def target_plan(b: Backend, card: str, price: int, until_tick: int, rarity: str, tick: int) -> dict[str, Any] | None:
+    """What the agents will do with an approved buy of an off-page card: the ladder from the first bid to the
+    ceiling. None for a page card (the approval only lifts `human_approval_above` there)."""
+    if is_page_card(rarity):
+        return None
+    rules = b.rules
+    if not rules.buy_targets_enabled:
+        return {"pursued": False, "why": "buy_targets_enabled = false: approved, but no agent pursues it"}
+    t = buy_targets.BuyTarget(card, rarity, price, until_tick, tick)
+    top = buy_targets.ceiling(t, b.values.value(card, tick, 0), rules)
+    if top is None:
+        return {"pursued": False, "why": "no ceiling under our value and the caps (or the value is unread)"}
+    return {
+        "pursued": True,
+        "first_bid": buy_targets.first_bid(top, rules),
+        "ceiling": top,
+        "steps": rules.buy_target_steps,
+        "step_ticks": rules.buy_target_step_ticks,
+        "until_tick": until_tick,
+        "how": "the maker bids for any copy on the board, stepping up to the ceiling; the taker takes an ask "
+        "at or under the ceiling (fee included); revoke stops it",
+    }
 
 
 def sell_refusals(b: Backend, card: str, price: int, rarity: str, me: dict[str, Any]) -> list[str]:
@@ -305,9 +339,11 @@ def grant(b: Backend, store: ApprovalStore, args: ApproveArgs, secrets: Iterable
         a = store.approve(args.card, args.side, args.price, tick, tick + args.ttl_ticks, by, reason)
     notes = []
     threshold = b.rules.human_approval_above
-    if args.side == "buy" and args.price < threshold:  # a sell may still need it: max_score_loss_per_move
+    target = target_plan(b, a.card, args.price, a.until_tick, str(rarity), tick) if args.side == "buy" else None
+    if args.side == "buy" and args.price < threshold and target is None:  # a sell may still need it (MI1)
         notes.append(f"a buy at {args.price} is below human_approval_above {threshold}: it needed no approval")
     return {
+        **({"target": target} if target is not None else {}),
         "status": "approved",
         "card": a.card,
         "side": a.side,
@@ -340,9 +376,12 @@ def human_specs(store: ApprovalStore, secrets: Iterable[str] = ()) -> tuple[Tool
                  lambda b, a: read_approvals(b, store)),
         ToolSpec("approve", "HUMAN ONLY. Let the agents trade CARD on SIDE although it needs a human (at or above "
                  "human_approval_above, or a sell that max_score_loss_per_move holds): a buy up to PRICE (fee "
-                 "included), a sell down to PRICE, for ttl_ticks. Refused when a hard cap, the page's last copy or "
-                 "our value forbids it.", ApproveArgs, True, lambda b, a: grant(b, store, a, held)),
+                 "included), a sell down to PRICE, for ttl_ticks. A buy of an EPIC or LEGENDARY is an order: the "
+                 "agents pursue it (a bid ladder up to PRICE, never at or above our value) until ttl_ticks or a "
+                 "revoke. Refused when a hard cap, the page's last copy or our value forbids it.", ApproveArgs,
+                 True, lambda b, a: grant(b, store, a, held)),
         ToolSpec("revoke", "HUMAN ONLY. Remove the approval of CARD on SIDE (already posted offers stay: `bazaar "
-                 "flatten` cancels them), or with none deny its request. Either way the request reads denied.",
+                 "flatten` cancels them; a buy target's bid is cancelled by the maker at its next tick), or with "
+                 "none deny its request. Either way the request reads denied.",
                  RevokeArgs, True, lambda b, a: withdraw(b, store, a, held)),
     )  # fmt: skip
