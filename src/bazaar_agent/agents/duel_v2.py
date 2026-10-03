@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import functools
 import math
+import os
+import random
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -41,6 +43,7 @@ from bazaar_agent.guardrails import duel_days_ok
 
 OUR_SENDER = "you"  # how /api/duels names our own messages (verified, practice session)
 SIGNED_DAYS_MAX = 10
+PIE_PRIOR = 0.4  # before the rival shows more, assume the pie is this share of our limit (the simulator's median)
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,10 @@ class V2Params:
     free_offers: int = 16  # duel_free_offers
     answer_share: float = 0.2  # duel_answer_share
     accept_margin: int = 1  # duel_accept_margin_ticks
+    missed: int = 0  # ticks the loop just missed (r2 B4): accept and give in that much earlier, never price lower
+    min_share: float = 0.0  # duel_endgame_min_share
+    jitter: float = 0.0  # duel_jitter
+    jitter_seed: int = 0  # duel_jitter_seed
     days_signed: bool = False  # duel_days_signed
 
     @classmethod
@@ -69,6 +76,9 @@ class V2Params:
             free_offers=rules.duel_free_offers,
             answer_share=rules.duel_answer_share,
             accept_margin=rules.duel_accept_margin_ticks,
+            min_share=rules.duel_endgame_min_share,
+            jitter=rules.duel_jitter,
+            jitter_seed=int(os.environ.get("BAZAAR_DUEL_JITTER_SEED") or rules.duel_jitter_seed),
             days_signed=rules.duel_days_signed,
         )
 
@@ -239,8 +249,32 @@ def _beats(duel: Mapping[str, Any], move: DuelMove, rival_surplus: float, signed
 # ---------------------------------------------------------------- one duel
 
 
+def jittered(params: V2Params, duel: Mapping[str, Any]) -> V2Params:
+    """`duel_jitter`: this duel's anchor, floor margin and endgame share, each moved by up to ± jitter of itself, from
+    a generator seeded by `duel_jitter_seed` and the duel, so a rival cannot invert our offers into our limit (and
+    every tick of one duel sees the same draw)."""
+    if params.jitter <= 0:
+        return params
+    rng = random.Random(f"{params.jitter_seed}:{duel_id(duel)}:{duel.get('role')}")
+    move = lambda value: value * (1 + params.jitter * rng.uniform(-1, 1))  # noqa: E731
+    return replace(
+        params, anchor=move(params.anchor), floor=max(0.01, move(params.floor)), min_share=move(params.min_share)
+    )
+
+
+def squeeze_threshold(duel: Mapping[str, Any], history: list[tuple[int, float]], params: V2Params) -> float:
+    """`duel_endgame_min_share` × our estimate of the pie: the best surplus the rival has shown, at least `PIE_PRIOR`
+    of our limit. Below it, an offer is a squeeze: refused until the last `duel_endgame_ticks`."""
+    if params.min_share <= 0:
+        return 0.0
+    limit = duel["your_limit"]
+    best = max((s for _, s in history), default=0.0)
+    return params.min_share * max(best, PIE_PRIOR * limit)
+
+
 def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2Params = DEFAULTS) -> V2Plan:
     """v2's move for one duel, before the cross-duel accept planner. Strictly inside our limit always."""
+    params = jittered(params, duel)
     limit, role = duel.get("your_limit"), duel.get("role")
     deadline = duel_deadline(duel)
     left = (deadline - tick) if isinstance(deadline, int) else 12
@@ -261,11 +295,16 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     endgame = left <= params.endgame_ticks
 
     acceptable, on_table = _acceptable(duel, signed)
+    threshold = squeeze_threshold(duel, history, params)
+    # After missed ticks (B4) the true last tick may be missed too: the squeeze refusal ends that much earlier.
+    squeezed = acceptable is not None and on_table < threshold and left > params.endgame_ticks + params.missed
+    if squeezed:
+        acceptable, on_table = None, 0.0  # a squeeze (B11): wait; our last offer leaves the rival a fair way out
     if acceptable is not None:
         pace = recent_pace(history, tick, params.stall_ticks)
         plan = lambda move: V2Plan(move, acceptable, on_table, stalled, left, pace)  # noqa: E731
         step = mean_step(history)
-        if left <= params.accept_margin + 1 or (endgame and stalled):
+        if left <= params.accept_margin + params.missed + 1 or (endgame and stalled):
             return plan(replace(acceptable, reason="endgame, inside limit"))
         if endgame and ours <= theirs:  # still conceding, and the last safe accept tick is still ahead
             return plan(DuelMove("hold", reason=f"endgame, rival still conceding ({on_table:g}): accept later"))
@@ -302,11 +341,18 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         return send(target, "the rival has not priced: our offers cost no round yet")
     if quiet(duel, tick, params.stall_ticks) and ours < params.free_offers and left > params.endgame_ticks + 1:
         return send(target, "the rival went quiet: step down for free")
-    if 2 <= left <= params.endgame_ticks + 1:  # the rival's last chances to take a deal from us: no deal scores 0
+    if squeezed and left > 2:  # one fair offer at D − 2 is enough: against a squeezer each one costs a round
+        return wait
+    if 2 <= left <= max(params.endgame_ticks, 2) + 1:  # the rival's last chances to take a deal: no deal scores 0
         # Said twice (D − 3 and D − 2) so it is still the rival's freshest offer in its endgame, whichever of us
-        # moves first within a tick; it costs a round only in a duel that would otherwise score nothing.
-        return send(our_target(limit, str(role), 1.0, params.anchor, params.floor), "last offer at our floor")
-    if endgame:
+        # moves first within a tick; it costs a round only in a duel that would otherwise score nothing. Never
+        # below `duel_endgame_min_share` of the pie: the offer a squeezing rival can still take at its last tick.
+        floor = our_target(limit, str(role), 1.0, params.anchor, params.floor)
+        if threshold > 0:
+            fair = limit + threshold if role == "seller" else limit - threshold
+            floor = max(floor, math.ceil(fair)) if role == "seller" else min(floor, math.floor(fair))
+        return send(floor, "last offer at our floor")
+    if left <= 1 or endgame:
         return wait
     spare = params.max_own_offers - rounds_spent(duel)
     if spare <= 0:
@@ -339,6 +385,7 @@ def may_counter(duel: Mapping[str, Any], params: V2Params) -> bool:
 
 def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2Params = DEFAULTS) -> DuelMove:
     """Our offer at today's target (v2's valuation of days), for Jev's `counter`; a hold when out of reach."""
+    params = jittered(params, duel)
     limit, role, deadline = duel.get("your_limit"), duel.get("role"), duel_deadline(duel)
     if not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="unreadable duel")
@@ -376,7 +423,7 @@ def plan_moves(
     queue = sorted((p.ticks_left, -p.value, did) for did, p in plans.items() if p.acceptable is not None)
     chosen: list[int] = []
     for position, (left, _, _) in enumerate(queue, start=1):
-        room = max(1, left - params.accept_margin) * slots  # accept ticks left, keeping the margin
+        room = max(1, left - params.accept_margin - params.missed) * slots  # accept ticks left, keeping the margin
         if position >= room:  # the duels up to here need every remaining slot: accept the most urgent now
             urgent = [did for _, _, did in queue[:position] if did not in chosen]
             chosen.extend(_by_urgency(urgent, plans)[: slots - len(chosen)])
