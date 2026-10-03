@@ -65,6 +65,8 @@ When Abuela takes our bid, the team's accept slot is not used. Blocked, each wit
    - At 31 the model gives deal rate 0.83 and share 0.70 (replays 0.83).
    - At 32, starting at 23 (`dealer buy <ref> --start 23 --max 32 --dealer chato`), it gives deal rate 1.00 and share 0.97. Thin data: 6 threads.
    - Rares need `chato:rare=93`.
+   - In the simulator, with `chato:uncommon=31`, `dealer buy <ref> --start 27 --max 31 --dealer chato --live` made 3 of 3 negotiated deals, each exactly at the limit. With `none` it refuses before opening a thread.
+   - The desk will not do this by itself: `strategy.quote_for` buys each rarity from the cheapest dealer, which for uncommons is Abuela. Chato's three deals run from the plan's commands, or through rares once `chato:rare` is set.
    - The alternative is selling duplicates to Chato: he bids 13 and goes to 15–16 for an uncommon. That needs a sell negotiation (`dealer.py` is buy-only), and it is unverified that sales count.
 2. **Runtime:** set `ladder_floor_quantile = 0.5` in STRATEGY.md (default 0 = today's ladder), so the desk opens Abuela uncommons at 21 instead of 17. Real threads say yes; the simulator, whose Abuela is more patient, shows no gain.
 3. **Packs:** keep the cap at 20 and buy no Abuela packs, or lift it to 22–24 (deal rate 0.81–0.96).
