@@ -688,6 +688,92 @@ someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
 
+### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
+From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
+1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
+counterparty cap; the live maker cancelled hand-posted offers (now `hands-off:<id>` ledger rows it never
+touches); Friday's addressed vs public fill rates were first miscounted (34 % / 7 %, really 20 % / 6 %).
+
+### [2026-10-03] gotcha — CliRunner's `.output` includes stderr: parse `.stdout` in JSON CLI tests
+The CLI prints its target banner (`target: real game …`) to stderr, and click 8.2's `Result.output` mixes
+stderr in, so `json.loads(out.output)` fails once a branch meets main (#79's `test_affinity`, #98's
+`test_rivals`). Parse `out.stdout`, and keep every CLI note on `err_console` so `--json` stays pure.
+
+### [2026-10-03] build-error — a ledger outage made the dealer bid her ask instead of holding (#79 review)
+symptom: `_reserve_accept` caught `LedgerUnavailable` and returned False ("slot taken"), so `negotiate` sent
+`meet_ask` (a bid at her ask) whose spend the dead ledger could not book → root cause: one bool for two
+answers → fix: `Reserve` returns `None` when the slot cannot be read, and the dealer holds the tick
+(`test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask`).
+
+### [2026-10-03] build-error — merging main into the N17 stack: a new ledger method must reach FallbackLedger too
+symptom: `mypy` after merging main into #137: `open_ledger` returns `PgLedger | FallbackLedger`, not `LedgerStore`
+→ root cause: #79 added `hands_off_ids` to the `LedgerStore` protocol, and main's #162 `FallbackLedger` (dry run:
+Postgres, else the file) did not have it → fix: `FallbackLedger.hands_off_ids` + test. Same merge: #79's
+`_reserve_accept` returned None on a ledger outage, main's dealer raises `Hold`; `_reserve_accept` now raises
+`Hold` (main's message), and `negotiate` still holds on a `None` too.
+
+### [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
+1. A sell was priced from the copies `/me` holds, which still counts a copy in our own ask (or sold last
+   tick, settling next): the last FREE copy was sold as a duplicate (+6.8 shown, −3.2 real once the ask
+   fills and the page loses its bonus) → `score_offer(..., unavailable=)` prices from free copies only.
+2. `market.parse_offer`'s bid branch never checked `want.assets`: a bid for `card:X` that also wants the id
+   of our rare read as plain → any side key outside cash/assets/types/cards with a value is not plain.
+Also: the sell path must re-read the kill switch after the duel grace wait, as the buy path does.
+
+### [2026-10-03] build-error — #138's `accept_bids` sold into a bid without main's S1 accept gate (#146)
+symptom: after merging main into the N17 stack, a sell into a board bid sent `accept(offer, assets=[copy])` with
+no inspector row → root cause: #146 gated `_accept_one` (dealer + board asks); #138's `_accept_bid` is a separate
+accept path written before the gate existed, and `board_gate` refuses every bid → fix: `accept_gate.bid_gate`
+(a bid, the ref and price we priced, any copy, and the copy we hand over is that card in /me), checked in
+`_accept_bid` before the duel grace and the slot; a block never takes the accept slot (tests in test_rivals.py).
+
+### [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
+`trade_desk.build_plan` refuses any plan where one team passes `max_share` (0.25) of the PLANNED volume, so a
+swaps-only plan of fewer than four teams is empty (fixtures: 0 swaps at 0.25 and 0.5, 2 at 1.0). The team
+desk (N17) plans with `max_share = 1.0` and keeps fairness per deal (`swaps.judge`: our gain >= 3 P, their
+share <= 0.6) plus the cumulative `max_counterparty_share` guardrail.
+
+### [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
+symptom: the desk's end-to-end run settled LAV-09 (held 1) for LAT-02 + 62 P → root cause: the trade desk's
+`our_copies` offers one copy of EVERY card we hold (its loss includes the page bonus) → fix: the desk gives a
+card only while we hold two free copies (`team_desk.spare`), at opening, adoption and accept.
+
+### [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
+After a rival accepted our swap offer, the desk read its message as a reply and tried to concede: the cancel
+was refused `offer_accepted`. An offer of ours reading `accepted` in the thread's `standing_offers` now marks
+the thread as waiting for its deal. The simulator's rivals also stack one counter per tick (old ones stay
+open): read every standing offer, judge each, log a refusal once.
+
+### [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
+symptom: the sim smoke's `bazaar swaps --json` step failed: stdout started with `WARNING bazaar_agent.holdings:
+... Postgres unavailable` → root cause: the CLI's `logging.basicConfig(stream=sys.stdout)` (stdout because
+Railway files stderr as errors) → fix: `cli.log_stream()`: stdout only when RAILWAY_ENVIRONMENT is set, as the
+target banner already does; stderr elsewhere, so every `--json` command stays pure JSON on a laptop.
+
+### [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
+A rival can accept our swap offer and close the thread in the same tick: the deal settles, the thread reads
+`closed`. So the team desk never refunds a spend because a thread ended or a close answered 200: it books the
+cash we add when the offer is POSTED and gives it back only when a read shows that offer `cancelled`,
+`expired` or `failed` (a cancel's own answer, or the thread re-read for at most 10 ticks); otherwise it stays
+booked (over-count, fail safe). Found by security-auditor rounds 2-5 on #123 against the in-process simulator.
+
+### [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
+symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspector row once main's #146 gate was in
+→ root cause: #123 checks the swap structure when it proposes (`read_offer` + `is_the_planned_swap`) but the accept
+was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
+offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
+the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
+### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
+Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
+ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
+tick is unknown; the simulator charges the old one (`settle_due` runs before `venue_tick`) and rounds fees
+half-to-even while the tape rounds up. The taker prices the higher fee from `effective_tick ≤ tick + 2` (B19).
+
+### [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+Twice on Sat morning (load from ~10 parallel review agents), `uv run pytest` ended with no summary and a
+"Extension modules: psycopg_binary.pq, …" dump instead; the same commit passed on an immediate rerun (1127 and
+1172 passed). Rerun before blaming the change; a crash that repeats on an idle machine is real.
+
 ### [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
 symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squashed onto #72's round-3 head: thread
 40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that
