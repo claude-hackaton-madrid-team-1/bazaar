@@ -780,12 +780,34 @@ def _jev_fns(settings: Any, rules: Any, journal: Any, pack: str, *questions: str
     return [question_fn(path, q, api_key=key, timeout_s=rules.jev_timeout_s, journal=journal) for q in questions]
 
 
+_LESSONS: Any = None
+
+
+def _lessons(log: Callable[[str], None] | None = None) -> Any:
+    """This process's lessons for Jev and the words (N3): the hybrid recall over the shared `learnings`.
+    The models load in the background; until then (and on any error) every call answers no lessons."""
+    global _LESSONS
+    if _LESSONS is None:
+        from bazaar_agent import db
+        from bazaar_agent.learn.embed import shared_models
+        from bazaar_agent.learn.recall import HybridRecall, Lessons
+        from bazaar_agent.learn.store import LearningStore
+
+        models = shared_models(log or (lambda line: None))
+        models.warm()
+        _LESSONS = Lessons(HybridRecall(LearningStore(lambda: db.connect(app="bazaar-lessons")), models))
+    return _LESSONS
+
+
 def _duel_jev(settings: Any, rules: Any) -> Any:
     """Jev `duel_move` + `rival_cares_about_days` (questions/duels.json) as the duel player's decision model."""
     from bazaar_agent.agents.duel_jev import DAYS_QUESTION, MOVE_QUESTION, DuelJev
 
     journal = _jev_journal(settings)
+    from bazaar_agent.learn.jev_context import duel_situation, with_lessons
+
     move_fn, days_fn = _jev_fns(settings, rules, journal, "duels.json", MOVE_QUESTION, DAYS_QUESTION)
+    move_fn = with_lessons(move_fn, _lessons(), duel_situation)
     return DuelJev(move_fn, days_fn, can_accept_early=rules.jev_can_accept_early, journal=journal)
 
 
@@ -794,7 +816,10 @@ def _maker_jev(settings: Any, rules: Any) -> Any:
     from bazaar_agent.agents.maker_jev import PRICE_QUESTION, REPRICE_QUESTION, MakerJev
 
     journal = _jev_journal(settings)
+    from bazaar_agent.learn.jev_context import listing_situation, with_lessons
+
     price_fn, reprice_fn = _jev_fns(settings, rules, journal, "maker.json", PRICE_QUESTION, REPRICE_QUESTION)
+    price_fn = with_lessons(price_fn, _lessons(), listing_situation)
     return MakerJev(price_fn, reprice_fn, journal=journal)
 
 
@@ -1546,6 +1571,19 @@ def _run_agent(
         store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
         extra["learner"] = LiveLearner(store, log)
+        if name == "taker":  # one outcome learner per team: lessons + embeddings every few ticks (N3)
+            from bazaar_agent.learn.embed import shared_models
+            from bazaar_agent.learn.outcomes import OutcomeLearner
+
+            models = shared_models(log)
+            models.warm()  # background download/load: lessons start once the models are ready
+            outcome_store = LearningStore(connect, log)
+            outcome_store.open()  # connect now, never inside a tick
+            extra["outcome_learner"] = OutcomeLearner(connect, outcome_store, models, log, rules=rules)
+        from bazaar_agent.learn.threads import ThreadStore
+
+        extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
+        extra["thread_store"].open()  # connect now, never inside a tick
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
@@ -1611,13 +1649,15 @@ def agent_taker(
     from bazaar_agent.agents.dealer import template_words
     from bazaar_agent.agents.runtime import no_jev
     from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.learn.jev_context import offer_situation, with_lessons
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         rules = kw["rules"]
         return Taker(
             team,
             public,
-            jev=_offer_jev(settings, rules.jev_timeout_s) if jev else no_jev,
+            jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
+            lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads),

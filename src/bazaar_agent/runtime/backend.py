@@ -466,6 +466,49 @@ def traders(b: Backend) -> dict[str, Any]:
         return _cut(db.trader_rows(conn))
 
 
+_recall: Any = None  # one hybrid recall per server process (the models load once, in the background)
+_recall_lock = threading.Lock()
+
+
+def learnings(b: Backend, query: str, subject: str | None = None, limit: int = 5) -> dict[str, Any]:
+    """`bazaar learnings --query`: the lessons the agents would recall, and the learned dealer ladders."""
+    global _recall
+    from bazaar_agent import db
+    from bazaar_agent.learn.embed import shared_models
+    from bazaar_agent.learn.evolve import policies_from
+    from bazaar_agent.learn.recall import HybridRecall, Query
+    from bazaar_agent.learn.store import LearningStore
+
+    def connect() -> Any:
+        return db.connect(b.settings.database_url.get_secret_value(), app="bazaar-runtime")
+
+    models = shared_models()
+    models.warm()
+    with _recall_lock:  # two first calls at once build one recall, one connection
+        if _recall is None:
+            _recall = HybridRecall(LearningStore(connect), models)
+    subjects = (subject,) if subject else None
+    found = _recall.recall(Query(query, subjects=subjects, k=limit, budget_s=5.0))
+    policies = policies_from(_recall.store.recall(None, {"policy"}, None, subject_kind="dealer", limit=200))
+    return {
+        "status": found.status,
+        "models": models.status,
+        "elapsed_ms": found.elapsed_ms,
+        "lessons": found.as_quoted(limit),
+        "ladders": [
+            {
+                "dealer": p.dealer,
+                "class": p.price_class,
+                "ladder": str(p.ladder) if p.ladder else "skip",
+                "why": p.reason,
+                "since_tick": p.tick,
+                "replay": dict(p.replay),
+            }
+            for p in sorted(policies.values(), key=lambda p: p.key)
+        ],
+    }
+
+
 def alerts(b: Backend, limit: int = 20) -> dict[str, Any]:
     """`bazaar alerts`: the monitor's latest alerts (new dealers, level changes, announcements)."""
     from bazaar_agent.monitor import read_alerts

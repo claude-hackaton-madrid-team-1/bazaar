@@ -213,8 +213,12 @@
           "text": "pgvector 0.8.6, PG 18.6"
         },
         {
-          "text": "no embeddings written yet",
-          "note": true
+          "text": "learnings embedded (bge-small, 384-d)",
+          "mark": "✓"
+        },
+        {
+          "text": "HNSW cosine for the hybrid recall",
+          "mark": "✓"
         }
       ],
       "mark": "✓"
@@ -232,19 +236,18 @@
     },
     "db_traders_behaviors": {
       "title": "DB · traders_behaviors",
-      "status": "todo",
+      "status": "part",
       "lines": [
         {
-          "text": "empty; dealer_curves, traders and",
-          "note": true
+          "text": "every dealer move: open/concede/hold/final/deal",
+          "mark": "✓"
         },
         {
-          "text": "competitor_profiles are filled",
-          "mark": "✓",
+          "text": "written by the outcome learner (N3)",
           "note": true
         }
       ],
-      "mark": "○"
+      "mark": "◐"
     },
     "db_learnings": {
       "title": "DB · learnings",
@@ -263,8 +266,16 @@
           "note": true
         },
         {
-          "text": "learner N3 approved (#96), 09:30 window",
-          "note": true
+          "text": "lessons from every outcome (N3)",
+          "mark": "✓"
+        },
+        {
+          "text": "hybrid recall: BM25+vector+RRF+rerank",
+          "mark": "✓"
+        },
+        {
+          "text": "auto-evolved ladders + skip (N3)",
+          "mark": "✓"
         }
       ],
       "mark": "◐"

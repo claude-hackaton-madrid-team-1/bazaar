@@ -39,7 +39,7 @@ def full_team(**kw):
 
 
 def test_every_tool_has_one_self_contained_schema_and_a_unique_name():
-    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 20
+    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 21
     assert set(tl.WRITE_TOOLS) == set(WRITES)
     for spec in tl.TOOLS:
         schema = spec.schema()
