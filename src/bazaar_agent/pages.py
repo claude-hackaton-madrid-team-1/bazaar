@@ -652,7 +652,13 @@ class Scenario:
 
     @property
     def ladder_held(self) -> int:
-        return sum(1 for s in self.steps if s.kind == "held" and s.item.startswith("ladder"))
+        """Planned ladder deals that did not fit (the floor or the hour cap); duplicates are counted apart."""
+        return sum(1 for s in self.steps if s.kind == "held" and s.item.startswith("ladder")) - self.ladder_duplicates
+
+    @property
+    def ladder_duplicates(self) -> int:
+        """Planned ladder deals for a card the trade plan already buys from a team: never run."""
+        return sum(1 for s in self.steps if s.kind == "held" and s.note.startswith("duplicate:"))
 
     @property
     def trade_surplus(self) -> float:
@@ -1140,6 +1146,8 @@ def plan_dict(plan: PagePlan) -> dict[str, Any]:
                 "bought": list(s.bought),
                 "held": list(s.held),
                 "ladder_deals": s.ladder_deals,
+                "ladder_held": s.ladder_held,
+                "ladder_duplicates": s.ladder_duplicates,
                 "trade_surplus": round(s.trade_surplus, 1),
                 "end_cash": round(s.end_cash, 1),
                 "steps": [asdict(x) for x in s.steps],

@@ -408,6 +408,7 @@ def test_a_ladder_slot_naming_a_card_the_trade_plan_buys_is_a_duplicate_and_spen
         ("ladder", "LAV-09", 70),  # the slot buys it from the dealer, so the team buy is dropped
     ]
     assert s.steps[1].note == "duplicate: the trade plan already buys LAV-06 from a team"
+    assert (s.ladder_deals, s.ladder_held, s.ladder_duplicates) == (1, 0, 1)
     assert (
         pages.ladder_slots_from(
             {

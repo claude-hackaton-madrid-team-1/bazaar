@@ -452,12 +452,19 @@ def scenarios_table(scenarios: list) -> Table:
         venue = "-" if s.venue_hour is None else (f"h{s.venue_opened}" if s.venue_opened is not None else "refused")
         cards = list(s.bought)
         held = [x for x in s.held if not x.startswith("ladder")]
-        ladder_held = s.ladder_held
+        extra = ", ".join(
+            x
+            for x in (
+                f"{s.ladder_held} held" if s.ladder_held else "",
+                f"{s.ladder_duplicates} dup" if s.ladder_duplicates else "",
+            )
+            if x
+        )
         t.add_row(
             s.name,
             str(s.floor),
             venue,
-            str(s.ladder_deals) + (f" ({ladder_held} held)" if ladder_held else ""),
+            str(s.ladder_deals) + (f" ({extra})" if extra else ""),
             str(len(cards)),
             f"{s.trade_surplus:.0f}",
             f"{s.end_cash:.0f}",
