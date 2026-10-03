@@ -159,7 +159,7 @@ def _fake_time(monkeypatch) -> dict[str, float]:
 
 def _team_client():
     settings = types.SimpleNamespace(bazaar_url="http://127.0.0.1:9", require_team_key=lambda: "tk-test-test")
-    return sdk.team_client(settings)
+    return sdk.team_client(settings, track=False)
 
 
 def test_sdk_sends_a_429_refused_call_once(monkeypatch):

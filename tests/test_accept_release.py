@@ -185,7 +185,8 @@ def _fake_time(monkeypatch):
 
 
 def _client():
-    return sdk.team_client(types.SimpleNamespace(bazaar_url="http://127.0.0.1:9", require_team_key=lambda: "tk-t-t"))
+    settings = types.SimpleNamespace(bazaar_url="http://127.0.0.1:9", require_team_key=lambda: "tk-t-t")
+    return sdk.team_client(settings, track=False)  # the holdings hook is tested in tests/test_holdings*
 
 
 def test_the_team_client_is_a_team_bazaar_with_a_short_timeout():
@@ -250,6 +251,20 @@ def test_a_write_and_a_429_are_never_sent_twice(monkeypatch):
         with pytest.raises(BazaarError):
             call()
     assert Counter(s.split()[0] for s in sent) == Counter({"POST": 2, "GET": 1})
+
+
+def test_the_team_client_still_tells_the_holdings_about_every_write_once(monkeypatch):
+    """TeamBazaar is a TrackedBazaar (#105): a write bumps the holdings epoch before and after, even refused,
+    and is still never re-sent; a read tells nothing."""
+    _fake_time(monkeypatch)
+    calls: list[tuple[str, str, str]] = []
+    client = TeamBazaar("http://127.0.0.1:9", "tk-t-t", on_write=lambda m, path, phase: calls.append((m, path, phase)))
+    sent = _answers(monkeypatch, _http_429(), {"ok": True})
+    with pytest.raises(BazaarError):
+        client.accept(1)
+    client.me()
+    assert [s.split()[0] for s in sent] == ["POST", "GET"]
+    assert [c[2] for c in calls] == ["before", "after"] and calls[0][0] == "POST"
 
 
 def test_the_public_client_keeps_the_sdk_retries():
