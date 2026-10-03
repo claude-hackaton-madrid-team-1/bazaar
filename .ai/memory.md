@@ -328,6 +328,13 @@ then the monitor left `.railway/railway.py` (Omar deletes its service and volume
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
 
+
+### [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
+symptom: maker reprice rows (approved, chosen=False, move.price = strategy target) published a price that
+reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent accept rows and refusal codes
+(`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
++ live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
+
 ### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 `GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
 `cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)
