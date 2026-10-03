@@ -703,3 +703,11 @@ time-critical: do them directly, no team fan-out.
 - Step 3: run the four checks, verify the workflow configuration and complete the CI1 evidence report.
 - Older sim-smoke acceptance entries above are historical; CI1 removes sim smoke as a merge requirement.
 - Status: implementation and verification in progress; evidence belongs in CI1-spec.md.
+
+### DOC1 — repository documentation cleanup ([spec](DOC1-spec.md))
+
+- Replace the sprawling README with setup and navigation; keep practical operations in the docs.
+- Replace the architecture roadmap with an implementation map, checked against current source.
+- Simplify generated metadata, repair references, verify links and desktop/mobile rendering.
+- Parallel slices: README and its generator; architecture and its generator; independent source audit.
+- Status: implementation and local verification complete; evidence in DOC1-spec.md. Awaiting PR merge and post-merge hosted architecture publication.

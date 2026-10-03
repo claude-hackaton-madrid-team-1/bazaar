@@ -2,7 +2,7 @@
 
 Spec of record: [ADR 0001](adr/0001-agent-behavior-tracing.md) (Jhonny) and `.ai/specs/N18-spec.md` (what the lean
 take-over changed). Tracing is off unless `BAZAAR_TRACING=1`; `BAZAAR_TRACING=0` is the kill flag. Phoenix is the
-shared one on Railway (see README "Services and public URLs"), project `bazaar`.
+shared service on Railway ([access and endpoints](services.md#phoenix)), project `bazaar`.
 
 ## What a span means
 
@@ -52,9 +52,17 @@ spelling is **unverified against the live Phoenix** (the key is on Railway only)
 | LLM calls that failed | `span_kind == 'LLM' and status_code == 'ERROR'` |
 | one session | `attributes['session.id'] == 'duel:131'` |
 
-## Not done yet
+## Outcome annotations
 
-- Evals (#91) as Phoenix annotations on the decision's span.
-- LLM token counts: our providers do not return usage, so none is recorded.
+Evals write settled outcomes to Postgres and attach scores to matching Phoenix spans when Phoenix
+is configured and the spans are available. This is implemented in
+[`evals/phoenix.py`](../src/bazaar_agent/evals/phoenix.py) and
+[`evals/run.py`](../src/bazaar_agent/evals/run.py).
+Missing credentials or spans can leave an outcome unannotated while scoring still completes.
+Use `uv run bazaar evals report` to inspect annotation status.
+
+## Current limits
+
+- The LLM tracing wrapper does not record token usage.
 - `strategy.py` and `agents/seller.py` spans, and team-to-team threads (`team:{team}:thread:{id}`, N17).
 - A negotiation root still lands only when the negotiation ends; a hard kill loses it (the tick spans are live).

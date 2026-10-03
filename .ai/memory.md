@@ -1252,3 +1252,12 @@ uses the writer's own locked session to wait for the commit. No production code 
 Local isolation harness: BAZAAR_ENV_FILE=/dev/null was rejected because the setting requires a
 regular file; replacing it with an empty temporary file fixed setup. The four holdings synchronization
 fixes passed all 26 holdings DB tests against a private ephemeral Postgres (12.07 s).
+
+### [2026-10-04] gotcha — DOC1 generated documentation drift
+The README refresh copied backlog, memory and activity into a roughly 1,500-line entry point, while the
+architecture generator retained a Saturday roadmap and old worker state. DOC1 keeps only bounded
+project metadata in the README and generates a source-linked implementation overview; operations
+live in `docs/operations.md`. Historical reports stay in their original sources. During validation,
+Ruff disagreed with Black on f-string quote choices; Ruff's formatting passes both tools.
+Review also caught a bare coverage command that could inherit the shared game database: the
+documented command now explicitly selects the local development database. No runtime policy changed.

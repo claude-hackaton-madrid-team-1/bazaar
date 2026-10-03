@@ -1,316 +1,138 @@
-<title>Bazaar Architecture</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<style>
-/* Layout: Omar's whiteboard on top (the architecture, status-coloured), then a ledger of what is pending, by who acts next. */
-:root {
-  --bg: #f6f7f4; --paper: #ffffff; --ink: #1d2320; --muted: #5b655f; --line: #c9d0cb;
-  --done: #c6ecd0; --done-ink: #17643a; --wip: #cfe3ff; --wip-ink: #1d4f9c;
-  --part: #ffefb0; --part-ink: #7a5a00; --todo: #e7e9e6; --todo-ink: #4a524d; --accent: #c2410c;
-  --hand: "Kalam", "Comic Sans MS", cursive; --body: "Atkinson Hyperlegible", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
-}
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
-  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
-  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
-  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
-  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
-body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
-.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px }
-header { display: grid; gap: 6px }
-.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
-h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
-.sub { color: var(--muted); max-width: 70ch; margin: 0 }
-.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--muted) }
-.legend span { display: inline-flex; align-items: center; gap: 6px }
-.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--ink) }
-.board { background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px; overflow-x: auto }
-.board svg { display: block; width: 100%; min-width: 760px; height: auto }
-.board text { font-family: var(--hand); fill: var(--ink) }
-.board .t { font-size: 30px; font-weight: 700 } .board .s { font-size: 19px } .board .n { font-size: 17px; fill: var(--muted) }
-.board .edge { stroke: var(--ink); stroke-width: 2.2; fill: none }
-.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
-section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
-.list { display: grid; gap: 10px }
-.item { background: var(--paper); border: 1.5px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0 }
-.item b { font-weight: 700 }
-.item p { margin: 0; color: var(--muted); font-size: 14px }
-.pill { justify-self: start; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px }
-.p-done { background: var(--done); color: var(--done-ink) } .p-wip { background: var(--wip); color: var(--wip-ink) }
-.p-part { background: var(--part); color: var(--part-ink) } .p-todo { background: var(--todo); color: var(--todo-ink) }
-code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
-a { color: var(--accent) }
-footer { color: var(--muted); font-size: 13px }
-.tl-wrap { overflow-x: auto; background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px }
-.tl { min-width: 1680px; padding: 6px 14px 14px }
-.tl-row { display: grid; grid-template-columns: 150px 1fr; border-top: 1px solid var(--line) }
-.tl-axis { border-top: 0 } .tl-axis .tl-track { height: 44px }
-.tl-name { font: 700 13px var(--body); padding: 9px 10px 0 0 }
-.tl-track { position: relative; min-height: 38px }
-.tl-events { height: 52px }
-.tl-closed { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, transparent 0 7px, var(--line) 7px 8px); opacity: .7 }
-.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line) }
-.tl-tick span { position: absolute; top: 4px; left: 4px; font: 500 11px var(--mono); color: var(--muted); white-space: nowrap }
-.tl-marker { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--accent); z-index: 2 }
-.tl-marker.freeze { border-left-style: dashed }
-.tl-marker span { position: absolute; bottom: 2px; left: 4px; font: 700 11px var(--mono); color: var(--accent); white-space: nowrap; background: var(--paper); padding: 0 3px }
-.tl-now { position: absolute; top: 0; bottom: 0; border-left: 2px solid #e11d48; z-index: 3 }
-.tl-event { position: absolute; top: 6px; transform: translateX(-50%); text-align: center; z-index: 1 }
-.tl-event.low { top: 28px }
-.tl-event.last { transform: translateX(-100%) }
-.tl-event::before { content: ""; display: block; width: 9px; height: 9px; margin: 0 auto 1px; transform: rotate(45deg); background: var(--ink) }
-.tl-event span { font: 500 10px var(--mono); white-space: nowrap; color: var(--ink); background: var(--paper); padding: 0 2px }
-.tl-bar { position: absolute; min-width: 30px; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 1.5px solid var(--ink); border-radius: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; z-index: 1; box-sizing: border-box }
-.tl-bar span { overflow: hidden; text-overflow: ellipsis }
-.tl-bar.out { overflow: visible }
-.tl-bar.out span { position: absolute; left: calc(100% + 6px); overflow: visible; color: var(--ink); font-weight: 500 }
-.tl-marker.end span { left: auto; right: 4px }
-.tl-bar.done { background: var(--done); color: var(--done-ink) } .tl-bar.wip { background: var(--wip); color: var(--wip-ink) }
-.tl-bar.part { background: var(--part); color: var(--part-ink) } .tl-bar.todo { background: var(--todo); color: var(--todo-ink) }
-.tl-bar .prio { font-size: 10px; padding: 0 4px }
-.prio { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1.5px solid var(--ink) }
-.prio.P0 { background: var(--accent); border-color: var(--accent); color: var(--paper) }
-</style>
-
-<div class="wrap">
-  <header>
-    <div class="eyebrow">Team 1 · Causa Prima hackathon · Madrid · status before Saturday 09:00 (30 s ticks)</div>
-    <h1>Bazaar Architecture</h1>
-    <p class="sub">Omar's original design, mapped to what runs today. Every box carries its status: Jev decides inside the guardrails, the LLM proposes and executes, Postgres remembers, and the buy/sell agents act on the game one tick at a time.</p>
-    <div class="legend">
-      <span><i class="sw" style="background:var(--done)"></i>Done / live</span>
-      <span><i class="sw" style="background:var(--wip)"></i>In progress (Orca worker)</span>
-      <span><i class="sw" style="background:var(--part)"></i>Partial</span>
-      <span><i class="sw" style="background:var(--todo)"></i>Pending / blocked</span>
-    </div>
-  </header>
-
-  <div class="board" role="img" aria-label="Architecture diagram: Postgres feeds STATE and the proposer LLM; the LLM proposes to Jev; Jev and the runtime LLM exchange decisions; Jev drives BUY/SELL, which reports back to the runtime; guardrails constrain Jev; Railway hosts the runtime.">
-    <svg viewBox="0 0 2000 1320" xmlns="http://www.w3.org/2000/svg">
-      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker></defs>
-      <!-- edges -->
-      <path class="edge" marker-end="url(#ah)" d="M372,430 L448,412"/>
-      <path class="edge" marker-end="url(#ah)" d="M782,408 L862,388"/>
-      <path class="edge" marker-end="url(#ah)" marker-start="url(#ah)" d="M1272,380 L1588,380"/>
-      <path class="edge" marker-end="url(#ah)" d="M1160,592 L1480,760"/>
-      <path class="edge" marker-end="url(#ah)" d="M1640,760 L1720,576"/>
-      <path class="edge" marker-end="url(#ah)" d="M330,700 L250,560"/>
-      <path class="edge" marker-end="url(#ah)" d="M600,700 L610,578"/>
-      <path class="edge" marker-end="url(#ah)" d="M860,250 L960,356"/>
-      <path class="edge" marker-end="url(#ah)" d="M1780,322 L1780,376"/>
-
-      <!-- Postgres container -->
-      <rect x="50" y="700" width="790" height="580" rx="12" fill="none" stroke="var(--ink)" stroke-width="2" stroke-dasharray="10 8"/>
-      <text x="74" y="740" class="s">Railway Postgres 18.6 + pgvector 0.8.6 ✓</text>
-      <rect x="470" y="70" width="400" height="220" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="490" y="112" class="t">Guardrails / hard rules</text>
-      <text x="490" y="148" class="s">✓ GUARDRAILS.md checked before every write</text>
-      <text x="490" y="176" class="s">✓ buys capped at official value (#177)</text>
-      <text x="490" y="204" class="s">✓ 1 accept per tick, shared ledger (#162)</text>
-      <text x="490" y="232" class="s">✓ offer inspector before accepts (#146)</text>
-      <text x="490" y="260" class="s">✓ rare cap 95, Jev 0.95 (#186)</text>
-      <rect x="110" y="370" width="262" height="190" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="130" y="412" class="t">STATE ✓</text>
-      <text x="130" y="448" class="s">CLI monitor (laptop)</text>
-      <text x="130" y="476" class="s">live stream + feed poll</text>
-      <text x="130" y="504" class="s">holdings in Postgres: /me per tick ✓</text>
-      <text x="130" y="532" class="s">1 /me per tick, shared (was 2) ✓</text>
-      <text x="130" y="562" class="n">album checked first</text>
-      <rect x="450" y="340" width="332" height="238" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="470" y="382" class="t">LLM → Jev picks ✓</text>
-      <text x="470" y="418" class="s">Claude via subscription ✓ (#51)</text>
-      <text x="470" y="446" class="s">tick loop: Jev per move ✓</text>
-      <text x="470" y="474" class="s">strategy proposes moves ✓</text>
-      <text x="470" y="502" class="s">desk + subagents: Jev per request ✓</text>
-      <text x="470" y="532" class="n">token on duels, taker, maker</text>
-      <rect x="862" y="300" width="410" height="292" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="882" y="342" class="t">JEV (decision / orchestrator) ◑</text>
-      <text x="882" y="378" class="s">jev-1.13.0, every decision logged ✓</text>
-      <text x="882" y="406" class="s">dealer, taker, duels, maker moves ✓</text>
-      <text x="882" y="434" class="s">ops calls: v2, rare 95, venue ✓</text>
-      <text x="882" y="462" class="s">team swaps gated by Jev (#188) ◑</text>
-      <text x="882" y="490" class="s">undecided is never a yes</text>
-      <rect x="1588" y="70" width="380" height="280" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="1608" y="112" class="t">runtime (Railway) ✓</text>
-      <text x="1608" y="148" class="s">taker, maker, duels: LIVE, real game ✓</text>
-      <text x="1608" y="176" class="s">Postgres ledger shared by all ✓</text>
-      <text x="1608" y="204" class="s">phoenix traces (#139) · bazaar-mcp ✓</text>
-      <text x="1608" y="232" class="s">news sentinel in the taker (#182) ✓</text>
-      <text x="1608" y="260" class="s">team matrix → negotiators (#225) ✓</text>
-      <text x="1608" y="288" class="s">bazaar-live: agent screen fixed (#19) ✓</text>
-      <text x="1608" y="316" class="s">CI: Blacksmith queued, local gate</text>
-      <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="1608" y="418" class="t">LLM → Jev picks ✓</text>
-      <text x="1608" y="454" class="s">Claude Agent SDK runtime (#59) ✓</text>
-      <text x="1608" y="482" class="s">MCP tools + guardrail hook ✓</text>
-      <text x="1608" y="510" class="s">desk + subagents: Jev per request (N15) ✓</text>
-      <text x="1608" y="540" class="n">bazaar-mcp: live, bearer, dry run</text>
-      <rect x="1420" y="760" width="400" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="1440" y="802" class="t">BUY / SELL ◐</text>
-      <text x="1440" y="838" class="s">taker: SAL-09 from Chato, SAL page done ✓</text>
-      <text x="1440" y="866" class="s">maker: asks + LAT-09 68, SAL-10 76 ✓</text>
-      <text x="1440" y="894" class="s">duels v2 live (#170): accept 169 &gt; 130 ✓</text>
-      <text x="1440" y="922" class="s">venue v19 open, broker matches ✓</text>
-      <text x="1440" y="950" class="s">dealer sell (#179 #183 #190): OFF again</text>
-      <text x="1440" y="978" class="s">team threads ON + Jev gate (#188)</text>
-      <rect x="74" y="770" width="320" height="140" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="94" y="812" class="t">Pg vectors ✓</text>
-      <text x="94" y="848" class="s">pgvector 0.8.6, PG 18.6</text>
-      <text x="94" y="876" class="s">learnings embedded (bge-small, 384-d) ✓</text>
-      <text x="94" y="904" class="s">HNSW cosine for the hybrid recall ✓</text>
-      <rect x="430" y="770" width="390" height="120" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="450" y="812" class="t">DB · cards ✓</text>
-      <text x="450" y="848" class="n">holdings N13 approved (#105), 09:30 window</text>
-      <rect x="430" y="910" width="390" height="140" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="450" y="952" class="t">DB · traders_behaviors ◐</text>
-      <text x="450" y="988" class="s">every dealer move: open/concede/hold/final/deal ✓</text>
-      <text x="450" y="1018" class="n">written by the outcome learner (N3)</text>
-      <rect x="430" y="1070" width="390" height="120" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="450" y="1112" class="t">DB · learnings ◐</text>
-      <text x="450" y="1148" class="s">feed reader: blockers, fees, notices ✓</text>
-      <text x="450" y="1176" class="s">taker skips blocked dealers ✓</text>
-      <text x="450" y="1204" class="s">LLM pass (opt-in, background, never blocks) ✓</text>
-      <text x="450" y="1232" class="s">maker reads fee notices ✓</text>
-      <text x="450" y="1260" class="s">lessons from every outcome (N3) ✓</text>
-      <text x="450" y="1288" class="s">news + schedule (#182, #187) ◑</text>
-      <text x="450" y="1316" class="s">card releases heartbeat (#185) ◑</text>
-      <rect x="74" y="930" width="320" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="94" y="972" class="t">Also stored ✓</text>
-      <text x="94" y="1008" class="s">feed · tape · dealer_curves</text>
-      <text x="94" y="1036" class="s">traders · snapshots · alerts</text>
-      <text x="94" y="1064" class="s">decisions · executions</text>
-      <text x="94" y="1092" class="s">ledger (accept slot)</text>
-      <text x="94" y="1122" class="n">supply_assets · supply_cards · supply_sets (N14b) ◑</text>
-      <text x="94" y="1148" class="n">outcomes + scorecard ◑</text>
-      <text x="94" y="1174" class="n">team_affinity: said vs inferred (AF1) ◑</text>
-      <rect x="880" y="760" width="480" height="230" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="900" y="802" class="t">Observability + evals ◑</text>
-      <text x="900" y="838" class="s">Phoenix: session per negotiation ✓</text>
-      <text x="900" y="866" class="s">agents /health /state /events ✓</text>
-      <text x="900" y="894" class="s">Bazaar Live: real decisions view ✓</text>
-      <text x="900" y="922" class="s">read-only DB login for the team ✓</text>
-    </svg>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Bazaar's implemented trading agents, safety gates, shared memory and deployment architecture.">
+  <title>Bazaar — architecture</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f4f3ee; --paper: #fffefa; --ink: #222c2a; --muted: #596963; --line: #cbd4cc; --green: #195942; --soft: #e4ece4; --accent: #a74923; }
+    * { box-sizing: border-box; }
+    html { scroll-padding-top: 1.5rem; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: var(--green); text-underline-offset: .2em; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, .table-wrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+    .skip { position: absolute; left: 1rem; top: -5rem; padding: .6rem 1rem; background: var(--paper); z-index: 2; }
+    .skip:focus { top: 1rem; }
+    .wrap { max-width: 1240px; margin: auto; padding: 0 2.5rem; }
+    header { border-top: 7px solid var(--green); border-bottom: 1px solid var(--line); padding: 3rem 0 2rem; }
+    .eyebrow, .section-label { color: var(--green); font-size: .75rem; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
+    .eyebrow { display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
+    h1 { font-size: clamp(2.5rem, 7vw, 5rem); letter-spacing: -.04em; line-height: 1.05; margin: 1.4rem 0 1rem; }
+    .lead { max-width: 760px; font-size: 1.15rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .note { max-width: 860px; font-size: .87rem; color: var(--muted); }
+    nav { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: 1.5rem; font-size: .9rem; }
+    main { padding-bottom: 3rem; }
+    section { padding-top: 3rem; }
+    h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); letter-spacing: -.035em; line-height: 1.2; margin: .4rem 0 1rem; }
+    h3 { font-size: 1.06rem; line-height: 1.3; margin: 0 0 .6rem; }
+    p { margin: 0 0 1rem; }
+    .section-intro { color: var(--muted); max-width: 820px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; padding: 0; margin: 1.3rem 0 0; }
+    .card { border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 1.4rem; min-width: 0; }
+    .card p { font-size: .9rem; }
+    .step { display: block; color: var(--green); font: 600 1.7rem/1.1 ui-monospace, monospace; margin-bottom: 1.5rem; }
+    .flow .card { border-top: 3px solid var(--green); }
+    .sources { font-size: .78rem; line-height: 1.7; overflow-wrap: anywhere; }
+    code { font: .88em/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .feedback { color: var(--green); background: var(--soft); border-radius: 6px; padding: .8rem 1rem; margin-top: 1rem; font-size: .86rem; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+    table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+    th, td { padding: 1rem 1.2rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    thead { background: var(--soft); font-size: .75rem; text-transform: uppercase; letter-spacing: .07em; }
+    tbody th { min-width: 130px; width: 15%; }
+    td:nth-child(2) { width: 27%; }
+    tr:last-child > * { border-bottom: 0; }
+    .guard .card { background: var(--soft); }
+    footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .82rem; }
+    footer p { max-width: 850px; }
+    @media (max-width: 900px) { .grid, .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 600px) {
+      .wrap { padding: 0 1.2rem; } header { padding: 2rem 0 1.5rem; } section { padding-top: 2rem; }
+      .grid, .flow { grid-template-columns: 1fr; } .card { padding: 1.2rem; } .step { margin-bottom: .8rem; }
+      th, td { padding: .8rem; } table { min-width: 560px; } .lead { font-size: 1.05rem; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #14201c; --paper: #1c2a24; --ink: #e8eee6; --muted: #b3c3b7; --line: #3c5145; --green: #a3d5b4; --soft: #243a2e; --accent: #f3b28b; }
+    }
+    @media print { body { background: white; color: black; } header { padding-top: 1rem; } nav, .skip { display: none; } .card, tr { break-inside: avoid; } .wrap { max-width: none; padding: 0; } }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to architecture</a>
+<header>
+  <div class="wrap">
+    <div class="eyebrow"><span>Bazaar / Team 1</span><a href="../README.md">Repository guide ↗</a></div>
+    <h1>One market.<br>Several agents. Shared limits.</h1>
+    <p class="lead">Autonomous negotiation for the Causa Prima hackathon. Python workers buy, sell and negotiate while a shared ledger and explicit guardrails gate every game action.</p>
+    <p class="note">This is a map of the implemented system and its declared deployment. It does not report current uptime, enabled feature flags or game standings. Source links below identify the code behind each part.</p>
+    <nav aria-label="Architecture sections">
+      <a href="#flow">Decision flow</a><a href="#intelligence">Reasoning</a><a href="#services">Services</a><a href="#memory">Shared memory</a><a href="#boundaries">Boundaries</a><a href="#development">Development</a>
+    </nav>
   </div>
-
-  <section>
-    <h2>Roadmap · Fri 2 → Sun 4 October</h2>
-    <p class="sub" style="margin-bottom:12px">Madrid time. Hatched = doors closed (build time). Solid lines = deadlines: <b>Sat 06:00</b> the live fixes are in (then no merges until ~09:30), <b>Sat 09:00</b> the market opens and every agent is live, Sun 14:00 final. Dashed = Sunday build freeze 06:00. Red = now. Game events follow the organisers' <code>/api/schedule</code> (game hour 4 = Sat 09:00, 18 = Sun 09:00). Hover a bar for its owner and times.</p>
-<div class="tl-wrap"><div class="tl" id="tl" data-start="1790953200000" data-end="1791118800000">
-      <div class="tl-row tl-axis"><div class="tl-name"></div><div class="tl-track"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"><span>Fri 17:00</span></div><div class="tl-tick" style="left:6.522%"><span>Fri 20:00</span></div><div class="tl-tick" style="left:13.043%"><span>Fri 23:00</span></div><div class="tl-tick" style="left:19.565%"><span>Sat 02:00</span></div><div class="tl-tick" style="left:26.087%"><span>Sat 05:00</span></div><div class="tl-tick" style="left:32.609%"><span>Sat 08:00</span></div><div class="tl-tick" style="left:39.13%"><span>Sat 11:00</span></div><div class="tl-tick" style="left:45.652%"><span>Sat 14:00</span></div><div class="tl-tick" style="left:52.174%"><span>Sat 17:00</span></div><div class="tl-tick" style="left:58.696%"><span>Sat 20:00</span></div><div class="tl-tick" style="left:65.217%"><span>Sat 23:00</span></div><div class="tl-tick" style="left:71.739%"><span>Sun 02:00</span></div><div class="tl-tick" style="left:78.261%"><span>Sun 05:00</span></div><div class="tl-tick" style="left:84.783%"><span>Sun 08:00</span></div><div class="tl-tick" style="left:91.304%"><span>Sun 11:00</span></div><div class="tl-tick" style="left:97.826%"><span>Sun 14:00</span></div><div class="tl-marker deadline end" style="left:28.261%"><span>Sat 06:00 live fixes in</span></div><div class="tl-marker deadline" style="left:34.783%"><span>Sat 09:00 market opens</span></div><div class="tl-marker freeze" style="left:80.435%"><span>Sun 06:00 build freeze</span></div><div class="tl-marker deadline end" style="left:97.826%"><span>Sun 14:00 final</span></div><div class="tl-now" hidden></div></div></div>
-      <div class="tl-row"><div class="tl-name">Game events</div><div class="tl-track tl-events"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-event" style="left:4.348%" title="Fri 19:00 · Doors open, Round 1 (Friday · El Rastro), 60 s ticks"><span>Open</span></div><div class="tl-event low" style="left:13.043%" title="Fri 23:00 · Doors close, Friday counts half"><span>Close</span></div><div class="tl-event" style="left:34.783%" title="Sat 09:00 · Round 2 (Saturday · Gran Vía), El Retiro, a pack + 150 primas, 30 s ticks"><span>R2</span></div><div class="tl-event low" style="left:36.957%" title="Sat 10:00 · Market Test"><span>MT</span></div><div class="tl-event" style="left:40.217%" title="Sat 11:30 · Duels I: price only, round-robin"><span>Duels I</span></div><div class="tl-event low" style="left:41.304%" title="Sat 12:00 · Market Test"><span>MT</span></div><div class="tl-event" style="left:45.652%" title="Sat 14:00 · Market Test"><span>MT</span></div><div class="tl-event low" style="left:50.0%" title="Sat 16:00 · Market Test"><span>MT</span></div><div class="tl-event" style="left:54.167%" title="Sat 17:55 · Market Test (round 2)"><span>MT</span></div><div class="tl-event low" style="left:58.514%" title="Sat 19:55 · Market Test (round 2)"><span>MT</span></div><div class="tl-event" style="left:59.928%" title="Sat 20:34 · Duels II: price + delivery day, 16 ticks, decay 0.08"><span>Duels II</span></div><div class="tl-event low" style="left:62.862%" title="Sat 21:55 · Market Test (round 2)"><span>MT</span></div><div class="tl-event" style="left:65.217%" title="Sat 23:00 · Doors close"><span>Close</span></div><div class="tl-event low" style="left:86.957%" title="Sun 09:00 · Sunday doors open, 15 s ticks; still round 2 until round 3 starts"><span>Open</span></div><div class="tl-event" style="left:88.188%" title="Sun 09:34 · Hard Market Test (12 traders), then a Market Test at 09:55: both still count for round 2"><span>Hard MT</span></div><div class="tl-event low" style="left:92.536%" title="Sun 11:34 · Round 3 starts (Sunday · Chamberí released, 150 primas that do not score); its weight ramps up over about 160 ticks"><span>R3</span></div><div class="tl-event" style="left:93.297%" title="Sun 11:55 · Market Test (round 3)"><span>MT</span></div><div class="tl-event low" style="left:96.884%" title="Sun 13:34 · Duels III: price + delivery day, 12 ticks, decay 0.10"><span>Duels III</span></div><div class="tl-event last" style="left:97.645%" title="Sun 13:55 · Market Test (round 3)"><span>MT</span></div><div class="tl-event low last" style="left:100.0%" title="Sun 15:00 · The Bazaar closes. The finale, all four stalls closing, the Grand Final and the score freeze are scheduled after the close: watch for the organisers moving the hours"><span>Close</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Platform</div><div class="tl-track" style="height:278px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar done out" style="left:0.0%;width:14.13%;top:4px" title="P0 · done · Railway: Postgres, Phoenix, agents (Fri 17:00 → Fri 23:30)"><b class="prio P0">P0</b><span>Railway: Postgres, Phoenix, agents</span></div><div class="tl-bar done out" style="left:13.043%;width:7.247%;top:34px" title="P0 · done · Simulator + BAZAAR_SIM (#55) (Fri 23:00 → Sat 02:20)"><b class="prio P0">P0</b><span>Simulator + BAZAAR_SIM (#55)</span></div><div class="tl-bar done out" style="left:19.022%;width:1.992%;top:64px" title="P0 · done · Review gate /pr-review, Claude-only (#76 #83) (Sat 01:45 → Sat 02:40)"><b class="prio P0">P0</b><span>Review gate /pr-review, Claude-only (#76 #83)</span></div><div class="tl-bar done out" style="left:19.203%;width:5.072%;top:94px" title="P1 · done · IaC: BAZAAR_LIVE kept, no off services (#73) (Sat 01:50 → Sat 04:10)"><b class="prio P1">P1</b><span>IaC: BAZAAR_LIVE kept, no off services (#73)</span></div><div class="tl-bar done out" style="left:19.565%;width:4.167%;top:124px" title="P0 · done · Sim smoke = merge gate (#75) (Sat 02:00 → Sat 03:55)"><b class="prio P0">P0</b><span>Sim smoke = merge gate (#75)</span></div><div class="tl-bar wip out" style="left:23.37%;width:13.587%;top:154px" title="P0 · doing · Our cards in the DB, real time (N13 #105 approved) · worker (Sat 03:45 → Sat 10:00)"><b class="prio P0">P0</b><span>Our cards in the DB, real time (N13 #105 approved)</span></div><div class="tl-bar wip out" style="left:23.732%;width:13.225%;top:184px" title="P1 · doing · Jev picks the desk model per role (N15 #108 approved) · worker (Sat 03:55 → Sat 10:00)"><b class="prio P1">P1</b><span>Jev picks the desk model per role (N15 #108 approved)</span></div><div class="tl-bar part out" style="left:24.457%;width:19.021%;top:214px" title="P1 · partial · Instant pause on Railway (SSH PAUSE) ✓; shared DB switch later · coordinator (Sat 04:15 → Sat 13:00)"><b class="prio P1">P1</b><span>Instant pause on Railway (SSH PAUSE) ✓; shared DB switch later</span></div><div class="tl-bar done out" style="left:24.638%;width:0.362%;top:244px" title="P2 · done · Infra clean: bazaar-monitor deleted, IaC 0 drift · coordinator (Sat 04:20 → Sat 04:30)"><b class="prio P2">P2</b><span>Infra clean: bazaar-monitor deleted, IaC 0 drift</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Trading (live)</div><div class="tl-track" style="height:188px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar wip out" style="left:13.406%;width:14.855%;top:4px" title="P0 · doing · Live fixes #72 (+#61 #68), #62, #60: before 06:00 · worker (takeover) (Fri 23:10 → Sat 06:00)"><b class="prio P0">P0</b><span>Live fixes #72 (+#61 #68), #62, #60: before 06:00</span></div><div class="tl-bar wip" style="left:24.638%;width:28.623%;top:34px" title="P1 · doing · Bluffing + negotiation psychology in words (N16) · worker (Sat 04:20 → Sat 17:30)"><b class="prio P1">P1</b><span>Bluffing + negotiation psychology in words (N16)</span></div><div class="tl-bar wip" style="left:25.0%;width:28.261%;top:64px" title="P1 · doing · Team-to-team swap threads (N17; triage #79 #98 #101) · worker (Sat 04:30 → Sat 17:30)"><b class="prio P1">P1</b><span>Team-to-team swap threads (N17; triage #79 #98 #101)</span></div><div class="tl-bar done out" style="left:34.783%;width:8.695%;top:94px" title="P1 · done · Dealer ladder: walk, not the opening ask (N14) · Marius (Sat 09:00 → Sat 13:00)"><b class="prio P1">P1</b><span>Dealer ladder: walk, not the opening ask (N14)</span></div><div class="tl-bar wip" style="left:34.783%;width:63.043%;top:124px" title="P0 · doing · Taker + maker + duels LIVE · agents (Sat 09:00 → Sun 14:00)"><b class="prio P0">P0</b><span>Taker + maker + duels LIVE</span></div><div class="tl-bar todo out" style="left:41.304%;width:11.957%;top:154px" title="P2 · todo · Duels II/III policy + days (D1) (Sat 12:00 → Sat 17:30)"><b class="prio P2">P2</b><span>Duels II/III policy + days (D1)</span></div><div class="tl-bar todo out" style="left:58.696%;width:17.391%;top:4px" title="P2 · todo · One agent instead of three (ask Jev) (Sat 20:00 → Sun 04:00)"><b class="prio P2">P2</b><span>One agent instead of three (ask Jev)</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Market making</div><div class="tl-track" style="height:98px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar done out" style="left:22.464%;width:5.797%;top:4px" title="P1 · done · Own venue + broker (#71): ON by team decision, v19 open · worker (Sat 03:20 → Sat 06:00)"><b class="prio P1">P1</b><span>Own venue + broker (#71): ON by team decision, v19 open</span></div><div class="tl-bar part" style="left:40.217%;width:57.609%;top:34px" title="P1 · partial · v19 exact broker = stall&#x27;s 0.5; edge broker (#218) behind BAZAAR_BENCH_POLICY · maker (Sat 11:30 → Sun 14:00)"><b class="prio P1">P1</b><span>v19 exact broker = stall's 0.5; edge broker (#218) behind BAZAAR_BENCH_POLICY</span></div><div class="tl-bar todo" style="left:43.478%;width:15.218%;top:64px" title="P2 · todo · Organic market making (M1) (Sat 13:00 → Sat 20:00)"><b class="prio P2">P2</b><span>Organic market making (M1)</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Intelligence</div><div class="tl-track" style="height:188px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar wip out" style="left:19.928%;width:17.029%;top:4px" title="P1 · doing · Feed reader v1 (N12 #89 approved, 09:30 window) · worker (Sat 02:10 → Sat 10:00)"><b class="prio P1">P1</b><span>Feed reader v1 (N12 #89 approved, 09:30 window)</span></div><div class="tl-bar wip out" style="left:20.652%;width:16.305%;top:34px" title="P2 · doing · Evals inside the agents (#91 approved, 09:30 window) · worker (Sat 02:30 → Sat 10:00)"><b class="prio P2">P2</b><span>Evals inside the agents (#91 approved, 09:30 window)</span></div><div class="tl-bar wip out" style="left:22.826%;width:20.652%;top:64px" title="P1 · doing · Feed reader v2: LLM over free text (#111 in review) · worker (Sat 03:30 → Sat 13:00)"><b class="prio P1">P1</b><span>Feed reader v2: LLM over free text (#111 in review)</span></div><div class="tl-bar wip out" style="left:23.188%;width:13.769%;top:94px" title="P0 · doing · Learner v1: lessons + hybrid RAG (N3 #96 approved) · worker (Sat 03:40 → Sat 10:00)"><b class="prio P0">P0</b><span>Learner v1: lessons + hybrid RAG (N3 #96 approved)</span></div><div class="tl-bar wip" style="left:23.913%;width:34.783%;top:124px" title="P0 · doing · Auto-evolve: learned dealer curves (N3 #112 in review) · worker (Sat 04:00 → Sat 20:00)"><b class="prio P0">P0</b><span>Auto-evolve: learned dealer curves (N3 #112 in review)</span></div><div class="tl-bar todo out" style="left:45.652%;width:17.391%;top:154px" title="P2 · todo · Trade scanner + scarcity (T1, N14) (Sat 14:00 → Sat 22:00)"><b class="prio P2">P2</b><span>Trade scanner + scarcity (T1, N14)</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Strategy (RAG)</div><div class="tl-track" style="height:218px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar wip out" style="left:34.783%;width:6.521%;top:4px" title="P2 · doing · New pages + grants: El Retiro, Chamberí (N14) (Sat 09:00 → Sat 12:00)"><b class="prio P2">P2</b><span>New pages + grants: El Retiro, Chamberí (N14)</span></div><div class="tl-bar todo out" style="left:41.304%;width:13.044%;top:34px" title="P1 · todo · Hard dealers: learned curves + blockers + walk (N14) · worker (Sat 12:00 → Sat 18:00)"><b class="prio P1">P1</b><span>Hard dealers: learned curves + blockers + walk (N14)</span></div><div class="tl-bar todo out" style="left:41.304%;width:15.218%;top:64px" title="P1 · todo · Custom markets: venue choice, our fee, rivals (N14) (Sat 12:00 → Sat 19:00)"><b class="prio P1">P1</b><span>Custom markets: venue choice, our fee, rivals (N14)</span></div><div class="tl-bar wip out" style="left:43.478%;width:8.696%;top:94px" title="P1 · doing · Packs: EV with supply, 3/hour (N14) (Sat 13:00 → Sat 17:00)"><b class="prio P1">P1</b><span>Packs: EV with supply, 3/hour (N14)</span></div><div class="tl-bar wip out" style="left:45.652%;width:13.044%;top:124px" title="P1 · doing · Supply + scarcity: print runs, holders (N14) (Sat 14:00 → Sat 20:00)"><b class="prio P1">P1</b><span>Supply + scarcity: print runs, holders (N14)</span></div><div class="tl-bar todo out" style="left:47.826%;width:13.044%;top:154px" title="P1 · todo · Duels: rival profiles + delivery days (N14) (Sat 15:00 → Sat 21:00)"><b class="prio P1">P1</b><span>Duels: rival profiles + delivery days (N14)</span></div><div class="tl-bar todo out" style="left:60.87%;width:17.391%;top:184px" title="P1 · todo · Speed: Sunday 15 s ticks, all strategies in budget (Sat 21:00 → Sun 05:00)"><b class="prio P1">P1</b><span>Speed: Sunday 15 s ticks, all strategies in budget</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Safety</div><div class="tl-track" style="height:68px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar wip out" style="left:14.674%;width:13.587%;top:4px" title="P0 · doing · Public /state leak follow-up (#121, before 06:00, Jev 0.99) · worker (Fri 23:45 → Sat 06:00)"><b class="prio P0">P0</b><span>Public /state leak follow-up (#121, before 06:00, Jev 0.99)</span></div><div class="tl-bar todo out" style="left:36.957%;width:13.043%;top:34px" title="P1 · todo · Counterparty text hardening (S1) · worker (Sat 10:00 → Sat 16:00)"><b class="prio P1">P1</b><span>Counterparty text hardening (S1)</span></div></div></div>
-      <div class="tl-row"><div class="tl-name">Show &amp; pitch</div><div class="tl-track" style="height:158px"><div class="tl-closed" style="left:13.043%;width:21.74%"></div><div class="tl-closed" style="left:65.217%;width:21.74%"></div><div class="tl-tick" style="left:0.0%"></div><div class="tl-tick" style="left:6.522%"></div><div class="tl-tick" style="left:13.043%"></div><div class="tl-tick" style="left:19.565%"></div><div class="tl-tick" style="left:26.087%"></div><div class="tl-tick" style="left:32.609%"></div><div class="tl-tick" style="left:39.13%"></div><div class="tl-tick" style="left:45.652%"></div><div class="tl-tick" style="left:52.174%"></div><div class="tl-tick" style="left:58.696%"></div><div class="tl-tick" style="left:65.217%"></div><div class="tl-tick" style="left:71.739%"></div><div class="tl-tick" style="left:78.261%"></div><div class="tl-tick" style="left:84.783%"></div><div class="tl-tick" style="left:91.304%"></div><div class="tl-tick" style="left:97.826%"></div><div class="tl-marker deadline end" style="left:28.261%"></div><div class="tl-marker deadline" style="left:34.783%"></div><div class="tl-marker freeze" style="left:80.435%"></div><div class="tl-marker deadline end" style="left:97.826%"></div><div class="tl-now" hidden></div><div class="tl-bar done out" style="left:19.384%;width:4.529%;top:4px" title="P3 · done · Bazaar Live v1 deployed (bazaar-live #1 #2) · worker (Sat 01:55 → Sat 04:00)"><b class="prio P3">P3</b><span>Bazaar Live v1 deployed (bazaar-live #1 #2)</span></div><div class="tl-bar wip" style="left:24.275%;width:56.16%;top:34px" title="P2 · doing · Bazaar Live v2: fantasy-RPG art, ES/EN voices (P2) · worker (Sat 04:10 → Sun 06:00)"><b class="prio P2">P2</b><span>Bazaar Live v2: fantasy-RPG art, ES/EN voices (P2)</span></div><div class="tl-bar wip out" style="left:24.457%;width:15.76%;top:64px" title="P2 · doing · Bazaar Live: real dealer + duel transcripts (Postgres read-only) · worker (Sat 04:15 → Sat 11:30)"><b class="prio P2">P2</b><span>Bazaar Live: real dealer + duel transcripts (Postgres read-only)</span></div><div class="tl-bar todo" style="left:34.783%;width:19.565%;top:94px" title="P3 · todo · Web dashboard #43: own repo · Marius (Sat 09:00 → Sat 18:00)"><b class="prio P3">P3</b><span>Web dashboard #43: own repo</span></div><div class="tl-bar todo" style="left:45.652%;width:13.044%;top:124px" title="P2 · todo · Score tracker (K1) (Sat 14:00 → Sat 20:00)"><b class="prio P2">P2</b><span>Score tracker (K1)</span></div><div class="tl-bar todo" style="left:63.043%;width:33.696%;top:4px" title="P0 · todo · Presentation + decision log (P1) · Omar + team (Sat 22:00 → Sun 13:30)"><b class="prio P0">P0</b><span>Presentation + decision log (P1)</span></div></div></div>
-    </div></div>
+</header>
+<main id="main" class="wrap">
+  <section id="flow" aria-labelledby="flow-title">
+    <div class="section-label">01 / The trading loop</div>
+    <h2 id="flow-title">Read → decide → check → act</h2>
+    <p class="section-intro">The organisers’ API owns the clock, inventory and settlement. Workers respond to game ticks; they share one team key and one action budget.</p>
+    <ol class="grid flow"><li class="card"><span class="step" aria-hidden="true">01</span><h3>Read the game</h3><p>Clock, holdings, available dealers and venue books form the current snapshot. The monitor archives the event stream and fills gaps from the feed.</p><div class="sources"><a href="../src/bazaar_agent/agents/runtime.py">Snapshots</a> · <a href="../src/bazaar_agent/monitor.py">Monitor</a></div></li>
+<li class="card"><span class="step" aria-hidden="true">02</span><h3>Choose a move</h3><p>Taker and maker policies rank trades and manage conversations. Duel policies negotiate their own price and delivery terms. Jev or the configured LLM supplies advisory verdicts.</p><div class="sources"><a href="../src/bazaar_agent/agents/taker.py">Taker</a> · <a href="../src/bazaar_agent/agents/maker.py">Maker</a> · <a href="../src/bazaar_agent/agents/duelist.py">Duels</a></div></li>
+<li class="card"><span class="step" aria-hidden="true">03</span><h3>Pass the gates</h3><p>Validate the structured action against inventory, guardrails, approvals, breakers and the remaining tick window. The shared Postgres ledger coordinates accepts and listings.</p><div class="sources"><a href="../src/bazaar_agent/guardrails.py">Guardrails</a> · <a href="../src/bazaar_agent/ledger_pg.py">Shared ledger</a></div></li>
+<li class="card"><span class="step" aria-hidden="true">04</span><h3>Send and record</h3><p>Python sends approved actions through the game client, backed by the vendored SDK. The organisers settle accepted trades on the next tick. Decisions and execution outcomes are recorded.</p><div class="sources"><a href="../src/bazaar_agent/sdk.py">Game client</a> · <a href="../src/bazaar_agent/decisions.py">Decision records</a> · <a href="../vendor/bazaar-kit/RULES.md">Official rules</a></div></li></ol>
+    <p class="feedback">↩ Outcomes return through the game feed and fresh inventory reads, updating memory for the next decision.</p>
   </section>
-
-  <div class="cols">
-    <section>
-      <h2>Waiting on you</h2>
-      <div class="list">
-<div class="item"><span class="pill p-wip">Omar</span><b>Blacksmith runners</b><p>Every CI job is queued since 11:44: check the Blacksmith GitHub App and runner group access for the bazaar repo. Merges use the full local gate + pr-reviewer meanwhile.</p></div>
-        <div class="item"><span class="pill p-wip">Omar</span><b>One merger on main</b><p>Merges outside the release train race it and redeploy mid-duel; send PR numbers to the coordinator instead.</p></div>
-      </div>
-    </section>
-    <section>
-      <h2>Being built now</h2>
-      <div class="list">
-<div class="item"><span class="pill p-wip">queued</span><b>Sentinel: schedule + rival jumps (#187)</b><p>Approved. Lead-time warnings for Market Tests, duels, Pilar, fevers; a rival_move learning when a team climbs 3+ ranks (t14: market +4.4 from one trade on its free stall).</p></div>
-        <div class="item"><span class="pill p-wip">review</span><b>Cards heartbeat (#185)</b><p>/cards releases become ranking hints for 30 ticks; fixing a P1 (a malformed hint file could stop taker ticks).</p></div>
-        <div class="item"><span class="pill p-wip">review</span><b>Team threads with a Jev gate (#188)</b><p>N17 on: every swap needs a Jev yes (&gt;= 0.75), spare-copy reservation from the maker, cash cap per hour; missing cards first (LAV-09/10, MAL-09/10).</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>Who to sell to (#193)</b><p>bazaar buyers + team_buyer_rank: best-paying non-podium team per card; maker addresses asks to it.</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>Persona model</b><p>/api/personas traits + menus drive opening, step, patience, tone and what each dealer buys; priors for L4/L5, learned curves win for Abuela and Chato.</p></div>
-        <div class="item"><span class="pill p-wip">Pilar</span><b>Sell to Doña Pilar</b><p>Open to all at h5.51: she buys uncommons, rares and epics (SAL and RET preferred), never commons, and sells only Gold packs. Salamanca fever: +25 % over book for SAL until about 20:04 (/api/schedule).</p></div>
-      </div>
-    </section>
-    <section>
-      <h2>Not started</h2>
-      <div class="list">
-<div class="item"><span class="pill p-todo">tonight</span><b>Ops hardening for 15 s ticks (#128)</b><p>Maker cancel cap and a tick offset per service: Sunday's model puts us at 5.3-5.7 req/s against 5.</p></div>
-        <div class="item"><span class="pill p-todo">Sunday P0</span><b>Presentation (40 %)</b><p>Three proofs: a real dealer deal, an injection refused, v2 vs v1; real/simulated/pending labels.</p></div>
-        <div class="item"><span class="pill p-part">gap</span><b>Market points from other teams</b><p>v19 is open at 0 %, but no trade between other teams on it yet; one such trade gave t14 +4.4.</p></div>
-      </div>
-    </section>
-  </div>
-
-  <section>
-    <h2>Live links</h2>
-    <div class="list">
-<div class="item"><b>Taker</b><span class="mono">https://bazaar-taker-production.up.railway.app · wss://bazaar-taker-production.up.railway.app/events</span></div>
-      <div class="item"><b>Maker</b><span class="mono">https://bazaar-maker-production.up.railway.app · wss://bazaar-maker-production.up.railway.app/events</span></div>
-      <div class="item"><b>Phoenix</b><span class="mono">https://phoenix-production-6aa3.up.railway.app</span></div>
-      <div class="item"><b>bazaar-mcp</b><span class="mono">https://bazaar-mcp-production.up.railway.app/mcp</span></div>
-      <div class="item"><b>bazaar-sim</b><span class="mono">https://bazaar-sim-production-1d48.up.railway.app</span></div>
-      <div class="item"><b>Bazaar Live</b><span class="mono">https://bazaar-live-production.up.railway.app</span></div>
+  <section id="intelligence" aria-labelledby="intelligence-title">
+    <div class="section-label">02 / Reasoning paths</div>
+    <h2 id="intelligence-title">Policies, verdicts and operator tools</h2>
+    <p class="section-intro">Autonomous loops and the interactive desk have different entry points. Model output informs choices; validated Python actions own execution.</p>
+    <div class="grid"><article class="card"><h3>Autonomous workers</h3><p>Trading and duel policies run on game ticks. A configurable Jev/LLM decider advises under a bounded budget; short ticks can fall back to Jev. Optional generated words do not replace structured prices.</p><div class="sources"><a href="../src/bazaar_agent/jev/decider.py">Decider</a> · <a href="../RUNTIME.md">Runtime settings</a></div></article>
+<article class="card"><h3>Interactive desk + MCP</h3><p>The Claude Agent SDK desk routes operator requests to strategist, buyer, seller and duelist roles. CLI and authenticated MCP tools use the same Python actions and guardrails; writes default to dry run.</p><div class="sources"><a href="../src/bazaar_agent/runtime/desk.py">Desk</a> · <a href="../src/bazaar_agent/runtime/actions.py">Write actions</a> · <a href="../src/bazaar_agent/runtime/mcp_server.py">MCP server</a></div></article>
+<article class="card"><h3>Feed learning + recall</h3><p>Feed and thread readers extract counterparty behaviour and outcomes. Optional LLM interpretation and local embeddings add context for future decisions; learning scopes keep duels and trading separate.</p><div class="sources"><a href="../src/bazaar_agent/learn/live.py">Learner</a> · <a href="../src/bazaar_agent/learn/recall.py">Recall</a> · <a href="../RUNTIME.md">Settings</a></div></article></div>
+  </section>
+  <section id="services" aria-labelledby="services-title">
+    <div class="section-label">03 / Deployment inventory</div>
+    <h2 id="services-title">Workers and their interfaces</h2>
+    <p class="section-intro">The Railway partial declares these services. Deployment variables select live mode and optional capabilities; a declaration is not a health check. The CLI monitor runs separately.</p>
+    <div class="table-wrap" role="region" aria-label="Declared Railway services" tabindex="0">
+      <table><thead><tr><th scope="col">Service</th><th scope="col">Entry point</th><th scope="col">Responsibility and interface</th></tr></thead><tbody><tr><th scope="row">bazaar-taker</th><td><code>bazaar agent taker</code></td><td>Buys from venue asks and negotiates dealer purchases. Public read-only /health, /state and WebSocket /events.<div class="sources"><a href="../src/bazaar_agent/agents/taker.py">Taker source</a> · <a href="https://bazaar-taker-production.up.railway.app/health">Health endpoint</a></div></td></tr>
+<tr><th scope="row">bazaar-maker</th><td><code>bazaar agent maker</code></td><td>Posts and maintains asks/bids; runs the venue broker. An optional dealer-sell desk can negotiate sales when enabled. Public read-only status and events.<div class="sources"><a href="../src/bazaar_agent/agents/maker.py">Maker source</a> · <a href="https://bazaar-maker-production.up.railway.app/health">Health endpoint</a></div></td></tr>
+<tr><th scope="row">bazaar-duels</th><td><code>bazaar duel run --play</code></td><td>Negotiates scheduled duels and coordinates the shared accept slot with trading workers. Duel scoring is separate from card trading.<div class="sources"><a href="../src/bazaar_agent/agents/duelist.py">Duel policy</a> · <a href="../.railway/railway.py">Railway declaration</a></div></td></tr>
+<tr><th scope="row">bazaar-mcp</th><td><code>bazaar mcp serve</code></td><td>Team tools over authenticated Streamable HTTP at /mcp. Human approval tools require a separate approver credential. /health is public.<div class="sources"><a href="../src/bazaar_agent/runtime/mcp_server.py">Server</a> · <a href="../src/bazaar_agent/runtime/human_tools.py">Human tools</a></div></td></tr>
+<tr><th scope="row">bazaar-sim</th><td><code>bazaar-sim serve</code></td><td>Standalone simulated game API with synthetic team keys and an isolated bazaar_sim database. Real workers are not configured to target it.<div class="sources"><a href="../src/bazaar_sim">Simulator</a> · <a href="https://bazaar-sim-production-1d48.up.railway.app/api/health">Health endpoint</a></div></td></tr>
+<tr><th scope="row">phoenix</th><td><code>arizephoenix/phoenix</code></td><td>OpenTelemetry trace collection and a login-protected inspection UI. Persistent storage is separate from the trading database.<div class="sources"><a href="../src/bazaar_agent/telemetry.py">Telemetry</a> · <a href="https://phoenix-production-6aa3.up.railway.app">Phoenix UI</a></div></td></tr>
+<tr><th scope="row">bazaar-live</th><td><code>node server/index.ts</code></td><td>Separate presentation repository: agent views, voice narration and operator screens. Server-side credentials protect game views and approval flows.<div class="sources"><a href="https://github.com/claude-hackaton-madrid-team-1/bazaar-live">Companion repository</a> · <a href="../.railway/railway.py">Railway declaration</a></div></td></tr></tbody></table>
     </div>
   </section>
-  <section>
-    <h2>Backlog</h2>
-    <div class="list">
-<div class="item"><span class="mono">N2 · was #21</span><b>Feed capture + dealer curves</b><p>🔵 <code>bazaar monitor</code> (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela <code>open</code>/<code>limit</code>/β estimate, ladder view (PR #43)</p></div>
-      <div class="item"><span class="mono">N4 · was #2</span><b>Team key + API client + fixtures</b><p>✅ key works; SDK bridge; API fixtures (#26)</p></div>
-      <div class="item"><span class="mono">N9 · was #3</span><b>Tick loop, governor, scheduler, kill switch</b><p>✅ tick loop + budget + <code>.local/PAUSE</code>; the kill switch HOLDS (no writes, offers stay open) and <code>bazaar flatten</code> is the explicit cancel-everything (PR #72, from #68)</p></div>
-      <div class="item"><span class="mono">[N14](N14-spec.md) · was #8</span><b>Abuela negotiator (concession curve)</b><p>✅ 4 negotiated deals (7/9/9/22)</p></div>
-      <div class="item"><span class="mono">[N14](N14-spec.md) · was #9</span><b>Ladder maximizer + reach L2</b><p>🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is <code>bazaar evals report</code> (#58); <code>egg.found</code> alert and the L2 rule write-up ⬜</p></div>
-      <div class="item"><span class="mono">[D1](D1-spec.md) · was #4</span><b>Duel logger (practice h2)</b><p>🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in <code>tests/fixtures/duels/</code>, live deadline proof</p></div>
-      <div class="item"><span class="mono">N1 (new)</span><b>Memory schema + repository + Railway-ready DB</b><p>✅ (#29, #32, #33)</p></div>
-      <div class="item"><span class="mono">N2 (new)</span><b>Intel: order book, tape, competitor profiles</b><p>✅ (#29, #32)</p></div>
-      <div class="item"><span class="mono">N3 (new)</span><b>**P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder <code>recall()</code>, learned ladder parameters inside GUARDRAILS</b><p>🔵 merged: PR A #96: lessons + <code>trader_behaviors</code> + embeddings + hybrid <code>recall()</code> in the taker · PR B #112: auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (<code>offer_is_worth_accepting</code>, <code>duel_move</code>, <code>list_price_choice</code>) + words, <code>Query.where</code> + <code>record_lesson</code> for N14, MCP <code>learnings</code>, <code>bazaar learnings --policy</code></p></div>
-      <div class="item"><span class="mono">N5 · was #1</span><b>Decision model: decider + Jev packs + policy</b><p>🔵 autonomous taker + maker (<code>bazaar agent</code>), every move in <code>decisions</code>; LIVE on Railway since Sat 01:45 Madrid (<code>BAZAAR_LIVE=1</code> by hand)</p></div>
-      <div class="item"><span class="mono">[S1](S1-spec.md) · was #10, #24</span><b>Executor firewall, offer inspector, flags</b><p>✅ offer inspector before every accept: dealer, board, duel (#146, takes over Marius #93); bad-faith flags as proven decision rows, off and opt-in per dealer, injection tagging + hostile-text tests (#152); forge-proof flags report (#176). Open (98-nice-to-haves): per-message human confirmation of a flag, team-wide flag cap</p></div>
-      <div class="item"><span class="mono">N4 (new)</span><b><code>service.py</code> + CLI + bazaar skill + commands</b><p>🔵 CLI + skill done; <code>service.py</code> seam ⬜</p></div>
-      <div class="item"><span class="mono">N5 (new)</span><b>Jev port to Python (judge, mask, log, report, parity)</b><p>✅ (#29, #31); recorded-fixture parity test ⬜</p></div>
-      <div class="item"><span class="mono">N6 (new)</span><b>Voice interface: ElevenLabs agent + Python tool server</b><p>⬜ later</p></div>
-      <div class="item"><span class="mono">N7 (new)</span><b>Observability: OTel traces → Phoenix, <code>bazaar thread(s)</code></b><p>✅ (#34, #35)</p></div>
-      <div class="item"><span class="mono">N8 (new)</span><b>Runtime LLM: Jev-chosen model, <code>--llm-runtime</code>, ask, words, steer</b><p>🔵 worker</p></div>
-      <div class="item"><span class="mono">N9 (new)</span><b>Guardrails rule book (GUARDRAILS.md)</b><p>✅ (#30)</p></div>
-      <div class="item"><span class="mono">N11 (new)</span><b>Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, <code>questions/evals.json</code>)</b><p>🔵 inside the agents merged (#91); the Market Test eval was a stub while our venue was not open (it is open now)</p></div>
-      <div class="item"><span class="mono">N12 (new)</span><b>**P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (<code>learnings</code>, <code>traders_behaviors</code>, embeddings) for the live taker and maker</b><p>🔵 PR 1: deterministic reader (<code>bazaar_agent.learn</code>), <code>learnings</code> columns + <code>recall()</code>, the taker skips dealers under a blocker, the taker archives the feed window, <code>bazaar learnings</code>; PR 2 🔵: LLM pass over free text (background thread in the taker, Jev's <code>read_feed</code> model, never blocks), maker fee notices; embeddings, <code>trader_behaviors</code>, Jev/words context and the MCP tool moved to N3; PR 3 🔵: our dealer threads + <code>closed_reason</code> into <code>threads</code>/<code>messages</code> from the answers the taker already reads (0 extra requests)</p></div>
-      <div class="item"><span class="mono">N13 (new)</span><b>**P0 · Real-time holdings + card catalog in Postgres**: per-tick <code>/api/me</code> snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB</b><p>🔵 merged #105</p></div>
-      <div class="item"><span class="mono">N14 (new)</span><b>**P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back</b><p>🔵 merged slices: N14a #158 (hard dealers, <code>dealer_final_lift</code> = 0), N14b #145 (new pages) and #155 (supply + packs); see N14-spec.md for the rest</p></div>
-      <div class="item"><span class="mono">N15 (new)</span><b>**Jev picks the desk's model per request**: orchestrator + each subagent (<code>desk_model</code> = auto, one batched <code>model_for_desk_role</code> Jev call, cache, per-role defaults, pin wins); spec [<code>N15-spec.md</code>](./N15-spec.md)</b><p>🔵 merged #108</p></div>
-      <div class="item"><span class="mono">N16 (new)</span><b>**P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill <code>wondelai/skills</code>), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag <code>BAZAAR_BLUFF=0</code>; spec [<code>N16-spec.md</code>](./N16-spec.md)</b><p>🔵 merged #131</p></div>
-      <div class="item"><span class="mono">N17 (new)</span><b>**P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag <code>BAZAAR_TEAM_THREADS=0</code>)</b><p>🔵 merged #123 (swap threads) and #137 (trade desk); ON since #188 behind the Jev gate (<code>team_threads_enabled</code> = true, GUARDRAILS.md)</p></div>
-      <div class="item"><span class="mono">N18 (new)</span><b>Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): <code>session.id</code> per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96)</b><p>🔵 merged #139</p></div>
-      <div class="item"><span class="mono">N19 (new)</span><b>**P1 · Persona model**: each dealer's published traits, menu and unlock rules (<code>/api/dealers</code>) become negotiation params (<code>persona_model.py</code>); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in <code>traders</code>; flag <code>persona_model_enabled</code>; spec [<code>N19-spec.md</code>](./N19-spec.md)</b><p>🔵 merged #195</p></div>
-      <div class="item"><span class="mono">N20 (new)</span><b>Team matrix in the sentinel: every team × card (holds, spare, missing for a near page) and per-team rank, trend, rival, wants, has-for-us; stored in <code>team_matrix</code> + <code>team_matrix_summary</code>; fed to the decider states of accepts, team swaps and our asks (<code>market_teams</code>)</b><p>🔵 merged #225 (follow-ups #229)</p></div>
-      <div class="item"><span class="mono">N10 (new)</span><b>NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo <code>bazaar-live</code></b><p>🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch</p></div>
-      <div class="item"><span class="mono">[T1](T1-spec.md) · was #14, #23</span><b>Strategy engine (scarcity, valuation, buy/sell, 3-pack quota)</b><p>#23 closed (done in #37: <code>bazaar strategy</code>); #14 open: <code>/api/me/value</code> check on 20 cards, <code>delta(give, want)</code>, per-counterparty cap</p></div>
-      <div class="item"><span class="mono">[M1](M1-spec.md) · was #11, #12</span><b>Venue + limit-estimating broker</b><p>🔵 #71 merged; our board venue v19 is ON (<code>allow_venue_open</code> = true, team decision Sat 3 Oct, PR #171) and open since about game hour 3.6, replacing the free starter stall; the maker runs the exact broker (the edge broker is BE1, behind <code>BAZAAR_BENCH_POLICY</code>); so far the venue scores the stall's 0.5 bench (docs/briefing.md "Our own market")</p></div>
-      <div class="item"><span class="mono">[M1](M1-spec.md) · was #13</span><b>Organic market making</b><p>🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue v19 is open but our key cannot trade on it (<code>self_venue</code>), so organic trades there are 0 so far</p></div>
-      <div class="item"><span class="mono">[D1](D1-spec.md) · was #5, #7</span><b>Duel policy, days module</b><p>🔵 Marius's duel PRs merged as #150 (Sat 06:50): two-issue offers strictly inside the limit, v2 + B11 + days latch behind flags; <code>duel_policy</code> = v2 LIVE since #170 (Omar, Sat ~10:00; Jev had been undecided at 0.76) and B11 (min share 0.3, endgame 1) since #174; <code>duel_days_auto</code> ON for Duels II (GUARDRAILS.md); sim harness #151 merged (Sat 10:42); pre-flip latch hardening #165 for the 23:00 window; duel-log surrogate fix #173 merged (Sat 11:08, emergency); calibration ⬜</p></div>
-      <div class="item"><span class="mono">[P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17</span><b>Pitch + scoring reference</b><p>⬜ pitch Sunday (P0); K1 is the scoring reference</p></div>
-      <div class="item"><span class="mono">TO (new)</span><b>Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (<code>docs/night/README.md</code>); afternoon: #84 + #77, #78 + #128</b><p>🔵 #140, #143, #144 and #154 merged; #141 and #142 closed; per-PR steps in #140's plan section</p></div>
-      <div class="item"><span class="mono">DS1 (new)</span><b>Dealer sell for ladder deals and cash: <code>bazaar dealer sell &lt;REF&gt; --min --start [--dealer]</code>, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like <code>dealer buy</code>; taker plan behind <code>dealer_sell_enabled</code> later</b><p>🔵 merged #179 (the maker's sell desk is #183, behind <code>dealer_sell_enabled</code>, off in GUARDRAILS.md)</p></div>
-      <div class="item"><span class="mono">N19 (new)</span><b>Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro <code>/api/news</code>, <code>news.posted</code>, <code>/api/schedule</code> fevers) that logs and stores each item; signals behind <code>news_signals_enabled</code> (on since #214)</b><p>🔵 merged #182</p></div>
-      <div class="item"><span class="mono">[RO1](RO1-spec.md) (new)</span><b>Read-only Postgres login for teammates (DataGrip): <code>bazaar db readonly-user</code>, SELECT only, no secrets</b><p>🔵 merged #184</p></div>
-      <div class="item"><span class="mono">BR1 (new)</span><b>Buyer rank: <code>bazaar buyers [--card] [--json] [--save]</code> ranks the other teams per card (what they paid for the set and rarity, set interest, whether they miss the card, a rival penalty for the top 5 and the 3 ranks above us, no page completion for a top-5 team below 1.5 × our value); <code>team_buyer_rank</code> table; the maker addresses asks to the best non-rival buyer behind <code>buyer_rank_enabled</code> (ships false) with a public fallback after <code>buyer_rank_fallback_ticks</code></b><p>🔵 merged in the Sat batch #206 (PR #193 closed), shipped OFF: <code>buyer_rank_enabled</code> = false in GUARDRAILS.md</p></div>
-      <div class="item"><span class="mono">CH1 (new)</span><b>Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (<code>card_release</code>), a log line and <code>agents/card_events.json</code>; fresh releases rank and open first for <code>card_release_boost_ticks</code> behind <code>card_release_boost_enabled</code> (order only, guardrails + official-value cap unchanged)</b><p>🔵 merged #185</p></div>
-      <div class="item"><span class="mono">DA1 (new)</span><b>Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back</b><p>🔵 merged #201</p></div>
-      <div class="item"><span class="mono">[HA1](HA1-spec.md) (new)</span><b>Human approval for big trades: <code>human_approval_above</code> (60 P) refuses any card buy or sell at or above it without a <code>human_approvals</code> row covering card, side and price (fail closed, read once per tick like the breakers); one <code>approval_needed</code> decisions row per card, side and game hour; <code>bazaar approve</code> / <code>bazaar approvals</code>; duels and packs excluded; never loosens another cap</b><p>🔵 merged #209 (<code>human_approval_above</code> = 60 in GUARDRAILS.md)</p></div>
-      <div class="item"><span class="mono">[HA2](HA2-spec.md) (new)</span><b>Approve big trades from chat and Bazaar Live: bazaar-mcp's human-only tools <code>approvals</code>, <code>approve</code>, <code>revoke</code> (not in any agent's tool set; served only with <code>X-Approver-Token</code> = BAZAAR_APPROVER_TOKEN, fail closed, lockout, 10 writes/min; refused when an approval could only loosen a hard cap, a page's last copy or our value) + bazaar-live #53's Approvals screen calling them server-side</b><p>🔵 PR (feat/approval-mcp-tools)</p></div>
-      <div class="item"><span class="mono">TS1 (new)</span><b>Tick stagger vs 429s on our one key (Sat ticks 646–650): <code>BAZAAR_TICK_OFFSET_S</code> capped at 10 s (already 40 % of the tick), declared <code>preserve()</code> on Railway; <code>duel run</code> re-reads a 429'd <code>/api/duels</code> once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time</b><p>🔵 merged #210</p></div>
-      <div class="item"><span class="mono">[BE1](BE1-spec.md) (new)</span><b>Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and <code>BAZAAR_BENCH_POLICY</code> = exact or edge on the maker (default exact, <code>preserve()</code>); proof <code>scripts/bench_edge_proof.py</code></b><p>🔵 merged #218; the edge policy is OFF by default (<code>BAZAAR_BENCH_POLICY</code> = exact)</p></div>
-      <div class="item"><span class="mono">[RV1](RV1-spec.md) (new)</span><b>Rival board: <code>rival_board</code> view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it</b><p>🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46</p></div>
-      <div class="item"><span class="mono">[MM2](MM2-spec.md) (new)</span><b>Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last <code>venue.announcement</code> remembered across restarts, a <code>wait</code> refusal honoured; SDK parity audit of the broker vs <code>starter_broker.py</code> in the PR body</b><p>🔵 PR #238</p></div>
-      <div class="item"><span class="mono">[TL1](TL1-spec.md) (new)</span><b>The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger <code>taller:</code> rows, CLI included), the duel/bench guard, the received card credited in the score impact</b><p>🔵 PR #259 (feat/taller-harden)</p></div>
-    </div>
+  <section id="memory" aria-labelledby="memory-title">
+    <div class="section-label">04 / State and feedback</div>
+    <h2 id="memory-title">Shared memory, separate records</h2>
+    <p class="section-intro">Postgres is shared by the trading processes and referenced by the Railway partial; the partial does not create or manage that database service.</p>
+    <div class="grid"><article class="card"><h3>Operational state</h3><p>Postgres stores holdings, feed history, traders, decisions, executions, approvals and the action ledger. The CLI monitor uses SSE plus feed polling; agents also read the market through their runtime.</p><div class="sources"><a href="../src/bazaar_agent/sql/schema.sql">Database schema</a> · <a href="../src/bazaar_agent/holdings.py">Holdings</a> · <a href="../src/bazaar_agent/monitor.py">Monitor</a></div></article>
+<article class="card"><h3>Memory for decisions</h3><p>Learnings retain their evidence and scope. Retrieval can combine text search with local fastembed vectors when pgvector is available. The simulator keeps its world in a separate database.</p><div class="sources"><a href="../src/bazaar_agent/learn/store.py">Learning store</a> · <a href="../src/bazaar_agent/learn/embed.py">Embeddings</a> · <a href="../src/bazaar_sim/store.py">Simulator store</a></div></article>
+<article class="card"><h3>Logs + observability</h3><p>Decisions and executions are inspectable records, with local JSONL fallbacks for supported logs. Per-service volumes hold local state and PAUSE files; Phoenix receives traces. A local log does not replace shared write coordination.</p><div class="sources"><a href="../src/bazaar_agent/decisions.py">Decision log</a> · <a href="../src/bazaar_agent/telemetry.py">Telemetry</a> · <a href="../docs/observability.md">Observability guide</a></div></article></div>
   </section>
-  <footer>Source of truth: the bazaar repo (<code>.ai/specs/01-spec.md</code>, <code>02-plan.md</code>, <code>docs/services.md</code>). Editable copy of this diagram: <code>docs/architecture.excalidraw</code>.</footer>
-</div>
-<script>
-(function () {
-  var tl = document.getElementById("tl");
-  if (!tl) return;
-  var s = Number(tl.dataset.start), e = Number(tl.dataset.end), n = Date.now();
-  if (n < s || n > e) return;
-  var left = ((n - s) / (e - s) * 100).toFixed(3) + "%";
-  tl.querySelectorAll(".tl-now").forEach(function (x) { x.style.left = left; x.hidden = false; });
-})();
-</script>
-
+  <section id="boundaries" class="guard" aria-labelledby="boundaries-title">
+    <div class="section-label">05 / Safety boundaries</div>
+    <h2 id="boundaries-title">A proposal is not permission</h2>
+    <div class="grid"><article class="card"><h3>Money and inventory</h3><p>GUARDRAILS.md is the checked-in policy source for holdings protection, price limits and approval thresholds. Actions recheck inventory and refuse moves that fail their gates; model verdicts cannot grant an override.</p><div class="sources"><a href="../GUARDRAILS.md">Policy</a> · <a href="../src/bazaar_agent/approvals.py">Approvals</a></div></article>
+<article class="card"><h3>One team budget</h3><p>Every process shares the game key and its request limits. Game ticks set deadlines; the ledger coordinates action quotas across machines. Local PAUSE files stop writes for the processes using that data directory.</p><div class="sources"><a href="../src/bazaar_agent/ticks.py">Tick runtime</a> · <a href="../src/bazaar_agent/ledger_pg.py">Ledger</a> · <a href="../docs/services.md">Service contracts</a></div></article>
+<article class="card"><h3>Public vs privileged</h3><p>Agent status endpoints expose a redacted view. Runtime tools require authentication, approvals have a separate privilege, and counterparty messages remain untrusted data. Live mode is an operator-controlled setting.</p><div class="sources"><a href="../src/bazaar_agent/agents/status.py">Status server</a> · <a href="../src/bazaar_agent/runtime/mcp_server.py">MCP boundary</a></div></article></div>
+  </section>
+  <section id="development" aria-labelledby="development-title">
+    <div class="section-label">06 / Local development</div>
+    <h2 id="development-title">Test without the live game</h2>
+    <div class="grid"><article class="card"><h3>Python + Postgres</h3><p>Python 3.12, uv, Pydantic, Typer and psycopg form the application stack. Docker Compose supplies local Postgres with pgvector and Phoenix. The presentation UI lives in bazaar-live.</p><div class="sources"><a href="../pyproject.toml">Dependencies</a> · <a href="../docker-compose.yml">Local services</a></div></article>
+<article class="card"><h3>Focused CI</h3><p>Depot runs the linter, formatter, unit tests and Postgres integration tests. Simulator scenarios and evaluation tools are available for targeted experiments outside the required CI checks.</p><div class="sources"><a href="../.depot/workflows/tests.yml">Depot workflow</a> · <a href="../tests">Tests</a> · <a href="../src/bazaar_agent/evals">Evaluations</a></div></article>
+<article class="card"><h3>Reproducible docs</h3><p>The README status and this page have deterministic generators. Architectural facts live here; task history and implementation plans remain in the local backlog rather than a stale deployment timeline.</p><div class="sources"><a href="../scripts/architecture_page.py">Page generator</a> · <a href="../.ai/specs/02-plan.md">Local backlog</a></div></article></div>
+  </section>
+</main>
+<footer><div class="wrap">
+  <p>Generated from <a href="architecture.status.json">architecture.status.json</a> and a <a href="../scripts/templates/architecture.html.tmpl">static template</a>. Edit those sources, then run <code>python3 scripts/architecture_page.py</code>. No live credentials or browser scripts are needed to view this page.</p>
+  <div class="sources"><a href="../README.md">README</a> · <a href="../docs/services.md">Service contracts</a> · <a href="../.railway/railway.py">Infrastructure declaration</a> · <a href="../RUNTIME.md">Runtime settings</a> · <a href="../docs/briefing.md">Game briefing</a></div>
+</div></footer>
+</body>
+</html>
