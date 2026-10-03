@@ -808,8 +808,7 @@ def build_plan(
         if not refused:
             break
         banned |= {(t.kind, t.counterparty, t.refs) for t in posted if _refused(t, refused)}
-        dropped += refused
-    dropped += refused  # still refused after the last round: out of the plan
+        dropped += refused  # replaced in the next round, or (the last round) left out of the plan
     posted = [t for t in posted if not _refused(t, refused)]
     what_if: tuple[str, ...] = ()
     if rules.max_counterparty_share >= 1:

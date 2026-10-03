@@ -392,6 +392,7 @@ def test_what_if_reports_the_cap_and_refused_trades_leave_the_plan():
     on = Guardrails(max_counterparty_share=0.25, counterparty_cap_base=60)  # 15 P per team: most trades refused
     plan = td.build_plan(me, catalog, EVENTS, amap, PARAMS, on, td.PlanParams(), VENUE)
     assert plan.what_if == () and plan.dropped and plan.checks == ()
+    assert len(plan.dropped) == len(set(plan.dropped))
     for t in (*plan.listings, *plan.threads):
         assert not td._refused(t, plan.dropped)
     assert "## Refused by the guardrails and replaced" in td.plan_markdown(plan, td.PlanParams())
@@ -408,3 +409,33 @@ def test_a_large_pool_is_cut_before_the_search():
     began = time.monotonic()
     listings, _, _, _ = td.choose(big, [], td.PlanParams(threads=0), cash_room=0, max_nodes=50_000)
     assert time.monotonic() - began < 30 and td._fair(listings, 0.25)
+
+
+def test_without_a_file_the_feed_comes_from_the_db_then_the_capture_then_the_live_window(monkeypatch, tmp_path):
+    from bazaar_agent import cli
+
+    monkeypatch.setenv("BAZAAR_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
+
+    class Row:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Conn:
+        closed, autocommit = False, False
+
+        def execute(self, sql, args):
+            return Row([(e["id"], e["tick"], e["type"], "", e["payload"]) for e in EVENTS])
+
+    monkeypatch.setattr(cli, "_db_connect", lambda app: lambda: Conn())
+    assert [e["id"] for e in cli._history(None, live=False)] == [e["id"] for e in EVENTS]
+
+    def down():
+        raise OSError("no db")
+
+    monkeypatch.setattr(cli, "_db_connect", lambda app: down)
+    monkeypatch.setattr(cli, "_events", lambda live: [{"id": 1, "tick": 0, "type": "clock", "payload": {}}])
+    assert [e["id"] for e in cli._history(None, live=False)] == [1]  # nothing captured: the live window

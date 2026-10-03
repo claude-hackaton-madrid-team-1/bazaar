@@ -194,6 +194,24 @@ def _json_file(path: str) -> Any:
     return data
 
 
+def _history(events_file: str | None, live: bool) -> list[Event]:
+    """The whole feed history, as the agents read it: the shared `feed_events` table when Postgres answers
+    (the monitor writes it), else this machine's capture, merged with the live window when `live`. A
+    `--events` JSONL file wins. A fresh worktree has no capture: the DB is what holds Friday."""
+    if events_file:
+        return _events_file(events_file)
+    from bazaar_agent.agents.runtime import MarketFeed
+
+    settings = load_settings()
+    window = public_client(settings).feed_window if live else (lambda limit: [])
+    feed = MarketFeed(window, FeedStore(settings.feed_dir), _db_connect("bazaar-intel"), lambda m: console.print(m))
+    events = feed.events()
+    if not events:
+        console.print("[yellow]no feed history (no DB, no capture): reading the live window[/yellow]")
+        return _events(live=True)
+    return events
+
+
 def _events_file(path: str) -> list[Event]:
     """Feed events from a JSONL file (one event per line, e.g. a `feed_events` export)."""
     from pathlib import Path
@@ -217,7 +235,7 @@ def affinity(
 
     me = _json_file(me_file) if me_file else _team_me()[1]
     catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
-    events = _events_file(events_file) if events_file else _events(live)
+    events = _history(events_file, live)
     us = str(me.get("id") or "") or None
     amap = af.affinity_map(
         events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, af.ModelParams(beta=beta), [us or ""]
@@ -265,7 +283,7 @@ def trade_plan(
     where = next((v for v in venues if v.id == venue), None)
     if where is None:
         _fail(f"venue {venue!r} is not in /api/venues")
-    events = _events_file(events_file) if events_file else _events(live)
+    events = _history(events_file, live)
     us = str(me.get("id") or "")
     amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
     pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cash_budget=cash_budget)
