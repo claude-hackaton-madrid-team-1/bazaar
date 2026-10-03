@@ -386,6 +386,19 @@ def test_the_cli_proposes_a_swap_dry_run(cli_env):  # noqa: F811
     assert bad.exit_code == 1 and "--to takes a team id" in bad.output
 
 
+def test_a_hand_sell_or_swap_never_offers_a_pages_last_free_copy(cli_env):  # noqa: F811
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+
+    # ask 77 already holds asset 3, so asset 4 is the last free LAT-03: #223 protects every set
+    swap = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "t05", "--give-cash", "5"])
+    listing = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--to", "t09"])
+    for out in (swap, listing):
+        assert out.exit_code == 1 and "protect_page_sets" in out.output.replace("\n", " "), out.output
+    assert cli_env.sent == []
+
+
 # ---------------------------------------------------------------- hands off: the maker leaves hand posts alone
 
 
