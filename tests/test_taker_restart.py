@@ -355,6 +355,7 @@ def test_thread_trails_skip_rows_that_are_not_objects_or_have_bad_ticks(tmp_path
                     "agent": "taker",
                     "thread_id": 3,
                     "tick": 100,
+                    "kind": "dealer_bid",
                     "inputs": "x",
                     "chosen": True,
                     "move": {"price": 10**15},
@@ -522,3 +523,17 @@ def test_a_deal_the_restart_wrap_up_books_re_reads_the_album(tmp_path):
     t.on_tick(at(team, TICK))
     assert t.ledger.spent_since(0) == 18
     assert "deal in thread 99 from before the restart" in spy.deals
+
+
+def test_a_team_swap_thread_is_never_wrapped_up_after_a_restart(tmp_path):
+    """Only dealer threads are the wrap-up's: a swap thread with another team (N17 `team_offer` rows, never a
+    `dealer_closed`) that ended in a deal is neither read nor booked again (the team desk booked its cash)."""
+    log = DecisionLog(tmp_path)
+    _started(log, TICK - 2)
+    log.decide(_bid_row(77, TICK - 1, 0, kind="team_offer", inputs={"team": "t07", "thread": 77}, move={}))
+    team = FakeTeam()
+    dealer_took_our_bid(team, 77, 771, "LAV-08", 30, dealer="t07")
+    t, _, ledger = make_taker(tmp_path, team, FakePublic())
+    t.on_tick(at(team, TICK))
+    assert "thread 77" not in team.reads and ledger.spent_since(0) == 0
+    assert not [r for r in _rows(tmp_path) if r.get("kind") == THREAD_CLOSED and r.get("thread_id") == 77]
