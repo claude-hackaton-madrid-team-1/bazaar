@@ -317,7 +317,13 @@ class CardsHeartbeat:
             rows = body.get("events") if isinstance(body.get("events"), list) else []
             self.events = [ev for ev in map(_event, rows[-KEEP_EVENTS:]) if ev is not None]
             self._rewrite = not ok or len(self.events) != len(rows)
+            if self._rewrite:
+                dropped = len(rows) - len(self.events)
+                self.log(
+                    f"cards: {EVENTS_FILE}: {dropped} bad event row(s) dropped" + ("" if ok else ", baseline reset")
+                )
         except FileNotFoundError:
             self.baseline, self.events = {}, []
-        except Exception:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
+        except Exception as e:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
             self.baseline, self.events, self._rewrite = {}, [], True
+            self.log(f"cards: {EVENTS_FILE} unreadable ({type(e).__name__}); starting fresh")

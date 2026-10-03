@@ -207,6 +207,7 @@ def test_a_tampered_hint_file_drops_its_bad_rows_and_never_raises(tmp_path):
     bad = [
         {"kind": "new_card", "card": "RET-01", "set": "RET", "rarity": "common", "tick": "7", "minted": 1},
         {"kind": "new_card", "card": ["x"], "tick": 1, "minted": 1},
+        {"kind": "new_card", "card": "RET-06", "tick": None, "minted": 1},
         {"kind": "rm -rf", "card": "RET-02", "tick": 1, "minted": 1},
         {"kind": "new_card", "card": "RET-04", "tick": 10**400, "minted": 1},
         {"kind": "new_card", "card": "RET-05", "tick": 1, "minted": 10**400, "print_run": 10**400},
@@ -218,6 +219,8 @@ def test_a_tampered_hint_file_drops_its_bad_rows_and_never_raises(tmp_path):
     (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"events": bad, "baseline": baseline}))
     h, lines, _ = beat(tmp_path)
     assert [(e.card, e.sold_by, e.packs) for e in h.events] == [("RET-03", ("chato", "_red_x"), ())]
+    assert lines == [f"cards: {hb.EVENTS_FILE}: 6 bad event row(s) dropped"]
+    lines.clear()
     assert list(h.baseline) == ["LAV-02"] and h.baseline["LAV-02"]["minted"] == 3
     assert h.boost(5) == {"RET-03": hb.BOOST}
     h.observe(5, cat(lav(card("LAV-02", minted=4))), MENUS)
@@ -261,8 +264,8 @@ def test_a_baseline_that_lost_an_entry_is_a_first_look_not_a_wave_of_releases(tm
     baseline = {"LAV-01": {"set": "LAV", "minted": "x", "visible": True}, "LAV-02": {"set": "LAV", "visible": True}}
     (tmp_path / "agents").mkdir()
     (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"baseline": baseline, "events": []}))
-    h, _, _ = beat(tmp_path)
-    assert h.baseline == {}
+    h, lines, _ = beat(tmp_path)
+    assert h.baseline == {} and lines == [f"cards: {hb.EVENTS_FILE}: 0 bad event row(s) dropped, baseline reset"]
     assert h.observe(1, cat(lav(card("LAV-01"), card("LAV-02"))), MENUS) == []
 
 
@@ -300,3 +303,19 @@ def test_a_garbage_hint_file_is_rewritten_at_the_next_flush(tmp_path):
     h.observe(1, cat(lav(card("LAV-01"))), MENUS)
     h.flush(1)
     assert json.loads(path.read_text())["baseline"]["LAV-01"]["visible"] is True
+
+
+def test_a_heartbeat_whose_boost_raises_leaves_the_taker_tick_running(tmp_path):
+    class Broken(hb.CardsHeartbeat):
+        def boost(self, tick):
+            raise RuntimeError("boom")
+
+    lines: list[str] = []
+    cards = Broken(ON, lambda rows: None, lines.append, tmp_path / "agents")
+    t = Taker(
+        FakeTeam(), FakePublic(), live=False, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=0), cards=cards, **parts(tmp_path),
+    )  # fmt: skip
+    t.on_tick(clock(tick=1))
+    assert "tick 1 taker: card boost skipped (RuntimeError)" in lines
+    assert any(x.startswith("tick 1 taker: ") and "accept candidate(s)" in x for x in lines)

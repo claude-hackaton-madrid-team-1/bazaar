@@ -552,6 +552,16 @@ class Taker:
             self.cards.flush(tick)
         self.feed.archive_pending()
 
+    def _card_boost(self, tick: int) -> dict[str, float]:
+        """The cards heartbeat's rank multipliers; any failure is "no boost" (today's order), never a failed tick."""
+        if self.cards is None:
+            return {}
+        try:
+            return self.cards.boost(tick)
+        except Exception as e:  # noqa: BLE001 — a hint only
+            self.log(f"tick {tick} taker: card boost skipped ({type(e).__name__})")
+            return {}
+
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
         """Buffer a thread answer we already read (no request, no I/O): `threads` + `messages` after the sends."""
         if self.thread_store is not None:
@@ -596,7 +606,7 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
-        run.boost = self.cards.boost(clock.tick) if self.cards is not None else {}
+        run.boost = self._card_boost(clock.tick)
         book = build_playbook(
             snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=run.boost
         )
