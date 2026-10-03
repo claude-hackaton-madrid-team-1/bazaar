@@ -200,3 +200,14 @@ def test_free_offers_wait_for_the_rival_to_open_and_the_accept_margin_is_a_knob(
     assert duel_plan(conceding, 110, 100).move.kind == "accept"  # by D − 2 (default margin 1)
     late = duel_plan(conceding, 110, 100, V2Params(accept_margin=0)).move
     assert late.kind == "hold" and duel_plan(conceding, 111, 100, V2Params(accept_margin=0)).move.kind == "accept"
+
+
+def test_messages_without_ticks_never_look_stalled_and_a_bad_row_holds_only_itself():
+    tickless = duel(rival=[(100, 110)], ours=[(100, 160)])
+    for m in tickless["messages"]:
+        m.pop("tick")
+    for tick in range(103, 109):
+        assert duel_plan(tickless, tick, 100).move.kind == "hold", tick  # no stall-counter burning rounds
+    good = duel(2, rival=[(100, 120)], ours=[(100, 160)])
+    moves = plan_moves([{**duel(1), "messages": 5}, good], 110, {1: 100, 2: 100})
+    assert moves[1].kind == "hold" and "unreadable" in moves[1].reason and moves[2].kind == "accept"

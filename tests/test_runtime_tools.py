@@ -398,3 +398,14 @@ def test_a_v2_duel_move_holds_in_silence_and_plans_one_accept_across_every_live_
     second, _ = run(late, "duel_move", {"duel_id": 8})
     assert first["status"] == "hold" and "accept queued" in first["reason"]
     assert second["request"]["kind"] == "accept" and team.sent == [("duel_accept", 8)]
+
+
+def test_a_v2_duel_move_ages_a_duel_whose_payload_has_no_start(tmp_path):
+    silent = {k: v for k, v in DUEL.items() if k != "started_tick"} | {"rival_offer": None, "messages": []}
+    team, v2 = Team(duels=[silent]), Guardrails(duel_policy="v2")
+    b = backend(tmp_path, live=True, team=team, rules=v2, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    assert first["status"] == "hold"  # the rival may still open
+    b._public = Public(now=clock(tick=104))  # same runtime, four ticks later: the duel is 4 ticks old, not 0
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["kind"] == "offer" and "not priced" in later["request"]["reason"]

@@ -235,7 +235,9 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     ours, theirs = own_offers(duel), len(_priced(duel, ours=False))
     history = rival_values(duel, signed)
     moved = last_gain_tick(history)
-    stalled = elapsed >= params.stall_ticks and (moved is None or tick - moved >= params.stall_ticks)
+    timed = all(isinstance(m.get("tick"), int) for m in _priced(duel, True) + _priced(duel, False))
+    # Without every message's tick we cannot tell a stalled rival from a conceding one: never call it stalled.
+    stalled = timed and elapsed >= params.stall_ticks and (moved is None or tick - moved >= params.stall_ticks)
     decay = _number(duel.get("decay_per_round")) or 0.0
     target = our_target(limit, str(role), elapsed / total, params.anchor, params.floor)
     target_surplus = surplus(target, limit, str(role))
@@ -347,8 +349,12 @@ def plan_moves(
     plans: dict[int, V2Plan] = {}
     for d in duels:
         did = duel_id(d)
-        if did is not None:
+        if did is None:
+            continue
+        try:
             plans[did] = duel_plan(d, tick, first_seen.get(did, tick), params)
+        except Exception as e:  # one malformed row holds that duel only, never the others
+            plans[did] = V2Plan(DuelMove("hold", reason=f"unreadable duel ({type(e).__name__})"), None, 0.0, False, 0)
     queue = sorted((p.ticks_left, -p.value, did) for did, p in plans.items() if p.acceptable is not None)
     chosen: list[int] = []
     for position, (left, _, _) in enumerate(queue, start=1):

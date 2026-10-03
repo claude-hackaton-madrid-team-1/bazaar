@@ -167,9 +167,12 @@ def _plan_dealer(b: Backend, clock: Clock, read_at: float, args: DealerBuyArgs) 
     return Planned("dealer_buy", verdict, clock, read_at, action)
 
 
-def _started(duel: Mapping[str, Any], tick: int) -> int:
-    """The duel's first tick from the payload; unknown: now (open at the anchor)."""
-    return int(duel.get("started_tick") or duel.get("created_tick") or tick)
+def _started(b: Backend, duel: Mapping[str, Any], tick: int) -> int:
+    """The duel's first tick from the payload; else the first tick this runtime read it (the live payload has no
+    start), so v2 sees the duel age between tool calls; never seen before: now (open at the anchor)."""
+    did = duel.get("duel", duel.get("id"))
+    seen = b.duel_first_seen.setdefault(did, tick) if isinstance(did, int) and not isinstance(did, bool) else tick
+    return int(duel.get("started_tick") or duel.get("created_tick") or seen)
 
 
 def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> Planned:
@@ -184,9 +187,9 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
     if (args.duel_id, clock.tick) in b.duel_said:
         return Planned("duel_move", _denied(f"already moved in duel {args.duel_id} this tick"), clock, read_at)
     anchor, floor = steered_duel_params(b.rules, b.settings.data_dir / STEERING_FILE, clock.tick)
-    started = _started(duel, clock.tick)
+    started = _started(b, duel, clock.tick)
     if b.rules.duel_policy == "v2":  # across every live duel, so the team's one accept goes where it is due
-        first_seen = {did: _started(d, clock.tick) for d in duels if (did := duel_id(d)) is not None}
+        first_seen = {did: _started(b, d, clock.tick) for d in duels if (did := duel_id(d)) is not None}
         slots = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
         params = V2Params.from_rules(b.rules, anchor, floor)
         move = plan_moves(duels, clock.tick, first_seen, params, slots)[args.duel_id]
