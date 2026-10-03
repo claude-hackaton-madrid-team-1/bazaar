@@ -404,6 +404,40 @@ def swaps(
         )
 
 
+@app.command("team-checks")
+def team_checks(as_json: bool = typer.Option(False, "--json", help="Print the answers as JSON")) -> None:
+    """Read-only: the N17 spec's Q1-Q6 answered from the shared DB (the feed, our refused sends, thread offers)
+    and the go/no-go for team_threads_enabled. SELECTs in a read-only transaction; nothing is sent."""
+    from dataclasses import asdict
+
+    from rich.markup import escape
+
+    from bazaar_agent import db
+    from bazaar_agent import n17_checks as nc
+
+    events = _history(None, False)  # the shared DB first, as the agents read it
+    us = _our_team() or ""
+    refusals: list[dict[str, Any]] = []
+    offers: list[dict[str, Any]] = []
+    try:
+        with db.connect(app="bazaar-team-checks") as conn:
+            conn.read_only = True  # SELECTs only: any write raises
+            cur = conn.execute("select sdk_method, error_code, tick from executions where error_code is not null")
+            refusals = [{"sdk_method": m, "error_code": c, "tick": t} for m, c, t in cur.fetchall()]
+            cur = conn.execute("select id, thread_id, maker, status from offers where thread_id is not null")
+            offers = [{"id": i, "thread_id": t, "maker": m, "status": st} for i, t, m, st in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001 — never the URL: a connect error can echo it (.ai/memory.md)
+        err_console.print(f"[yellow]no database ({type(e).__name__}): the feed alone answers[/yellow]")
+    found = nc.answers(events, us, refusals, offers)
+    verdict, why = nc.go_no_go(found)
+    if as_json:
+        typer.echo(json.dumps({"answers": [asdict(a) for a in found], "go_no_go": verdict, "why": why}, indent=2))
+        return
+    for a in found:
+        console.print(f"{a.q} [{a.verdict}] {a.question} · {escape(a.evidence)}", highlight=False)
+    console.print(f"team_threads_enabled: {verdict} · {why}")
+
+
 def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
     """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
     from bazaar_agent.agents.market import venues_from
