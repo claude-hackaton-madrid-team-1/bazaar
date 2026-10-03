@@ -1296,6 +1296,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 - [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
 - [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
 - [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
@@ -1303,7 +1304,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
 - [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
 - [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
-- [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
 
 <!-- BAZAAR:STATUS:END -->
 

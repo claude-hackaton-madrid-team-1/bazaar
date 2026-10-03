@@ -859,3 +859,8 @@ of its id: team k was dealt ids 15k−14…15k, so a scan names who holds an unm
 scan, the holders of every rare with at most 5 copies are placed (unplaced 0–1): LAT-10 t03, t15 · MAL-09
 t11, t12 · MAL-10 t08, t09, t12 · LAV-09 t05, t07, t10, t14 · SAL-09 t13, t16, t17, t18 · SAL-10 t02, t13,
 t17, t18 · LAV-10 t04, t05, t07, t10, t14. Rescan with `--from-id 539` for new pulls (incremental).
+
+### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+`docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
+"0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
+`docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
