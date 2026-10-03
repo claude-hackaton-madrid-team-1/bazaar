@@ -65,6 +65,7 @@ from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, ch
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
+from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
@@ -302,6 +303,7 @@ class Taker:
         sleep: Callable[[float], None] = time.sleep,
         holdings: Holdings | None = None,
         learner: LiveLearner | None = None,
+        outcome_learner: OutcomeLearner | None = None,
         thread_store: ThreadStore | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
@@ -311,6 +313,7 @@ class Taker:
         self.sleep = sleep
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
+        self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
@@ -389,6 +392,8 @@ class Taker:
         self._converse(run, desk)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
+        if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
+            self.outcome_learner.maybe_run(clock.tick, snap.us)
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"

@@ -583,6 +583,58 @@ uv run bazaar learnings --kind cooloff --kind quota --tick 180
 uv run bazaar learnings --save             # also upsert them into the shared learnings table
 ```
 
+### Learner (auto-evolve): lessons from outcomes and the hybrid recall (N3)
+
+Every settled decision becomes a lesson the agents can recall. The taker runs the **outcome learner**
+every 5 ticks on its own worker thread, after the tick's sends, so it never holds a tick. The learner
+reads Postgres only and makes no game call:
+
+1. The evals score each outcome: a dealer thread's deal or walk, a duel's deal or no deal, a team trade.
+2. Every dealer's concession curve is read from all teams' public threads, per dealer and price class:
+   fills, opening ask, patience before the final offer, concession per bid, and bids it ignored
+   (`learn/curves.py`).
+3. Each outcome becomes a `lesson` row in `learnings` (`source = outcome`, deduped by key). It holds
+   the situation (dealer, item, price class, our ladder, her opening ask, the market's fills), the
+   action, the result, the delta (price paid vs the lowest fill, share of the range) and one sentence
+   on what to do next time.
+4. Each dealer move goes to `trader_behaviors` (open, concede, hold, final, deal), and each dealer and
+   price class gets a `behaviour` row.
+5. New or edited claims are embedded locally with fastembed `BAAI/bge-small-en-v1.5` (384-d, CPU).
+
+**`recall()`, the one the agents use** (`learn/recall.py`):
+1. Hard filters: kind, subject, our team or everyone, and still valid at the tick.
+2. Two rankings of what survives: BM25 over the text and key fields, and pgvector cosine over the
+   embeddings.
+3. Reciprocal rank fusion (k = 60) of the two rankings.
+4. A local cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`) reranks the top 12. Only lessons scoring
+   ≥ 0 are kept.
+
+On Friday's real data, the relevant lessons scored +0.5 to +7.3 and an unrelated query scored −4 to
+−10. Recall runs on a worker thread with its own connection under a deadline (0.8 s by default). It
+fails open: while the models load, and on a DB error or a timeout, it returns no lessons.
+
+By default recall returns only rows the outcome learner wrote (`source = outcome`). The feed reader's
+rows are opt-in (`Query.sources`). Every hard filter runs in SQL before the candidate limit, so rows
+about other subjects never push a relevant lesson out. Only known price classes are learned
+(`card:<rarity>`, `pack:sobre_*`, `sell`): a thread's topic is chosen by the team that opened it,
+so a made-up pack name never becomes a lesson. Each pass reads only the new dealer events. It
+inserts only new moves and rewrites only the lessons that changed.
+
+The two models add about 370 MB of RAM to the taker. Measured in Docker with 1 CPU and 1 GB:
+- cold download and load: 5.3 s;
+- a query embedding: 3 ms;
+- a rerank of 12: 57 ms;
+- a recall over 600 lessons: p50 222 ms, p95 252 ms.
+
+A failed model load (no network at boot) is retried every 20 passes. PR B passes the hits to Jev
+and the words model as quoted data (`Recalled.as_quoted()`), never as instructions.
+
+```sh
+uv run bazaar learnings --lessons                 # run one pass: lessons + dealer patterns (no write)
+uv run bazaar learnings --lessons --save          # ...and upsert + embed them, as the taker does
+uv run bazaar learnings --query "open a thread with chato to buy LAV-08; his ask 33" --json
+```
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -981,7 +1033,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [D1](D1-spec.md) · was #4 | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
-| N3 (new) | **P0 (Omar) · Learner / auto-evolve**: outcomes → lessons in `learnings`/`traders_behaviors`; hybrid RAG (BM25 + pgvector + local cross-encoder reranker, Postgres only — Jev: no graph DB); per-dealer concession parameters learned within GUARDRAILS; lessons into Jev and the LLM words | 1 | 🔵 v1 approved (#96, hybrid recall; merges in the 09:30 window); auto-evolve #112 in review |
+| N3 (new) | **P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder `recall()`, learned ladder parameters inside GUARDRAILS | 1 | 🔵 PR A (stacked on #89): lessons + `trader_behaviors` + embeddings + hybrid `recall()` in the taker, `bazaar learnings --lessons/--query`; PR B ⬜: auto-evolved ladder (start/step/walk) per dealer × class, lessons into Jev + words, MCP read tool, replay + sim proof |
 | N5 · was #1 | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
 | [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check (#30, #31); `untrusted_text` (#59); public `/state` leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60) |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
