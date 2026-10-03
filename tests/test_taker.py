@@ -2,6 +2,7 @@
 
 from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation
 from bazaar_agent.agents.desk import Conversation, DeskMove, meet_the_ask, openings, plan_conversation
+from bazaar_agent.agents.inspector import FlagBook
 from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
@@ -362,6 +363,7 @@ def test_the_desk_flags_a_trickster_only_when_guardrails_allow_flags(tmp_path):
         t, lines, _ = taker(
             root, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=allow
         )
+        t.flags = FlagBook(trusted=frozenset())  # the fake trickster plays Abuela, a trusted dealer by default
         t.on_tick(clock())
         team.thread_payloads[5000] = payload
         t.on_tick(at(team, TICK + 1))
@@ -371,3 +373,16 @@ def test_the_desk_flags_a_trickster_only_when_guardrails_allow_flags(tmp_path):
             assert [f[:2] for f in flags] == [("flag", 9001)] and "instead of exactly [LAV-08]" in flags[0][2]
         else:
             assert flags == [] and any("would flag message 9001" in line and "allow_flags" in line for line in lines)
+
+
+def test_a_trusted_dealer_is_never_flagged_even_with_flags_allowed(tmp_path):
+    trick = {"id": 802, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = FakeTeam()
+    t, lines, _ = taker(
+        tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=True
+    )
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))
+    assert [s for s in team.sent if s[0] in ("flag", "accept")] == []  # blocked, never flagged

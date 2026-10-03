@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 RARITY_RANK = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
@@ -89,10 +89,21 @@ class CardIndex:
         return list(found.values())
 
 
+CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
+ARTICLES = r"(?:the|a|an|this|that|el|la|un|una|este|esta|ese|esa)"
+
+
 def rarity_claimed(text: str) -> int | None:
-    """The highest rarity the words claim ("the legendary", "una rara"), or None."""
-    low = text.lower()
-    ranks = [rank for word, rank in RARITY_WORDS.items() if re.search(rf"(?<!\w){re.escape(word)}(?!\w)", low)]
+    """The highest rarity the words claim AS A CARD: "the legendary", "a rare card", "un cromo raro",
+    "una rara." An adjective is not a claim: "qué raro, hijo" (odd), "an epic deal". None otherwise."""
+    low, ranks = text.lower(), []
+    for word, rank in RARITY_WORDS.items():
+        w = re.escape(word)
+        as_noun = rf"(?<!\w){ARTICLES}\s+{w}(?=\s*(?:[.,;:!?)]|$))"  # "the legendary." / "una rara,"
+        before_noun = rf"(?<!\w){w}\s+{CARD_NOUNS}(?!\w)"  # "rare card", "épica carta"
+        after_noun = rf"(?<!\w){CARD_NOUNS}\s+{w}(?!\w)"  # "cromo raro", "carta legendaria"
+        if any(re.search(p, low) for p in (as_noun, before_noun, after_noun)):
+            ranks.append(rank)
     return max(ranks) if ranks else None
 
 
@@ -218,6 +229,8 @@ def _words_claim(text: str, asked: str, bound_worth: float, bound_rank: int, car
     """The words claim something better than the structure binds: the card we asked for, a dearer card,
     or a higher rarity. None when they do not (or say nothing about the item)."""
     named = cards.mentioned(text)
+    if any(i.worth <= bound_worth for i in named) and bound_worth > 0:
+        return None  # the words name what the structure binds: the substitution is disclosed, not a trick
     if any(i.ref == asked for i in named):
         return f"the words name {asked}, which the structure does not bind"
     dearer = [i for i in named if i.worth > bound_worth]
@@ -246,26 +259,34 @@ def message_for_offer(thread: Mapping[str, Any], offer_id: int | None) -> tuple[
     return None, None
 
 
+# Dealers whose structure matched their thread's topic in every Friday offer (1,017 of 1,017): their
+# odd offers are blocked, never flagged (a wrong flag costs; they never lied in structure).
+TRUSTED_DEALERS = frozenset({"abuela", "chato"})
+
+
 @dataclass
 class FlagBook:
-    """Flags we decided in this process: one per message, at most `limit` (a wrong flag costs points)."""
+    """Flag decisions in this process. Every certain trickster message is logged once (uncapped, so
+    the `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a
+    wrong flag costs points). Trusted dealers are never flagged."""
 
     limit: int = 2
-    sent: dict[int, str] | None = None
+    trusted: frozenset[str] = TRUSTED_DEALERS
+    seen: set[int] = field(default_factory=set)
+    sent: dict[int, str] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        self.sent = {} if self.sent is None else self.sent
-
-    def wants(self, inspection: Inspection) -> bool:
-        """True when this inspection is a certain trickster we have not flagged yet, inside the limit."""
-        assert self.sent is not None
+    def new(self, inspection: Inspection) -> bool:
+        """A certain trickster message from an untrusted dealer, not seen before."""
         mid = inspection.message_id
-        return inspection.verdict == "flag" and mid is not None and mid not in self.sent and len(self.sent) < self.limit
+        return (
+            inspection.verdict == "flag"
+            and mid is not None
+            and mid not in self.seen
+            and inspection.dealer not in self.trusted
+        )
 
-    def record(self, inspection: Inspection) -> None:
-        assert self.sent is not None
-        if inspection.message_id is not None:
-            self.sent[inspection.message_id] = inspection.reason
+    def room(self) -> bool:
+        return len(self.sent) < self.limit
 
 
 def inspect_thread(thread: Mapping[str, Any], dealer: str, cards: CardIndex) -> list[Inspection]:
@@ -322,18 +343,21 @@ def flag_step(
         return None
     mid, text = message_for_offer(thread, newest.get("id"))
     inspection = inspect_offer(newest, topic or thread.get("topic") or {}, text, cards, dealer=dealer, message_id=mid)
-    if not book.wants(inspection) or mid is None:
+    if not book.new(inspection) or mid is None:
         return inspection
-    book.record(inspection)
+    book.seen.add(mid)
     reason = inspection.reason[:FLAG_REASON_CHARS]
     denied = guard(inspection)
     if denied:
         log(f"would flag message {mid} from {dealer} ({denied}): {reason}")
     elif send is None:
         log(f"dry run: would flag message {mid} from {dealer}: {reason}")
+    elif not book.room():
+        log(f"would flag message {mid} from {dealer} (flag limit {book.limit} reached): {reason}")
     else:
         try:
             send(mid, reason)
+            book.sent[mid] = reason
             log(f"flagged message {mid} from {dealer}: {reason}")
         except Exception as e:  # a refused flag must never break the negotiation
             log(f"flag of message {mid} refused ({type(e).__name__}: {str(e)[:80]})")

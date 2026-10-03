@@ -451,8 +451,7 @@ def _flag_policy(client: Any, dealer: str, topic: dict[str, Any], rules: Any, le
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
-    cards = CardIndex.from_catalog(public_client(load_settings()).catalog())
-    book = FlagBook()
+    book, cards = FlagBook(), {}  # the catalog is read on the first offer, inside the guarded hook
 
     def guard(inspection: Any) -> str | None:
         c = Clock.model_validate(client.clock())
@@ -461,16 +460,12 @@ def _flag_policy(client: Any, dealer: str, topic: dict[str, Any], rules: Any, le
         return None if verdict.allowed else str(verdict)
 
     def on_thread(thread: dict[str, Any]) -> None:
-        flag_step(
-            thread,
-            dealer,
-            cards,
-            book,
-            guard=guard,
-            send=client.flag,
-            log=lambda m: console.print(escape(m)),
-            topic=topic,
-        )
+        if not thread.get("standing_offers") and not thread.get("messages"):
+            return
+        if "index" not in cards:  # a failed read raises here, and negotiate() logs it and carries on
+            cards["index"] = CardIndex.from_catalog(client.catalog())
+        log = lambda m: console.print(escape(m))  # noqa: E731
+        flag_step(thread, dealer, cards["index"], book, guard=guard, send=client.flag, log=log, topic=topic)
 
     return on_thread
 

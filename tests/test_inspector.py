@@ -49,7 +49,7 @@ def test_a_lesser_card_in_the_types_while_the_words_name_ours():
 
 def test_a_rarity_request_answered_with_a_common_while_the_words_say_rare():
     o = offer({"types": ["card:LAV-03"]}, {"cash": 60})
-    i = inspect_offer(o, {"buy": {"rarity": "rare", "set": "LAV"}}, "Una rara preciosa, solo 60.", CARDS, message_id=6)
+    i = inspect_offer(o, {"buy": {"rarity": "rare", "set": "LAV"}}, "Un cromo raro, solo 60.", CARDS, message_id=6)
     assert i.verdict == "flag" and "the words claim a" in i.reason
 
 
@@ -148,14 +148,31 @@ def test_the_message_that_carried_an_offer():
     assert only.verdict == "flag" and only.message_id == 901
 
 
-def test_the_flag_book_flags_a_message_once_and_stops_at_its_limit():
+def test_the_flag_book_logs_each_message_once_and_sends_up_to_its_limit():
     book = FlagBook(limit=1)
     (i,) = inspect_thread(THREAD, "trile", CARDS)
-    assert book.wants(i)
-    book.record(i)
-    assert not book.wants(i)  # once per message
-    other = inspect_thread({**THREAD, "messages": [{**THREAD["messages"][1], "message": 902}]}, "trile", CARDS)[0]
-    assert not book.wants(other)  # the limit
+    assert book.new(i) and book.room()
+    book.seen.add(901)
+    assert not book.new(i)  # once per message
+    book.sent[901] = i.reason
+    assert not book.room()  # the send limit
+    trusted = inspect_thread({**THREAD}, "trile", CARDS)[0]
+    assert not FlagBook(trusted=frozenset({"trile"})).new(trusted)  # a trusted dealer is never flagged
+
+
+@pytest.mark.parametrize(
+    ("topic", "text"),
+    [
+        ({"buy": {"card": "LAV-08"}}, "No me queda Teatro Valle-Inclán, cariño. Te doy Té Moruno, 25 P."),
+        ({"buy": {"rarity": "uncommon", "set": "LAV"}}, "Qué raro, hijo, ya no me quedan. 25 P."),
+        ({"buy": {"card": "LAV-08"}}, "Té Moruno, an epic deal, 25 P!"),
+    ],
+)
+def test_honest_near_misses_block_but_never_flag(topic, text):
+    """The r1 review's cases: a disclosed substitution (the words name the bound card), and rarity words
+    used as adjectives ("qué raro" = how odd, "an epic deal")."""
+    i = inspect_offer(offer({"types": ["card:LAV-03"]}, {"cash": 25}), topic, text, CARDS, message_id=3)
+    assert i.verdict == "block"
 
 
 # ---------------------------------------------------------------- flag_step: guard, dry run, send
