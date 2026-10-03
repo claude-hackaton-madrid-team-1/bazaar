@@ -963,6 +963,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#92](../../pull/92) | feat(market): venue go-live runbook + Saturday bench simulation (B2, stacked on #84) | `night/b2-venue-runbook` |
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | `ogarciarevett/feat-evals-in-agents` |
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | `ogarciarevett/feat-feed-reader-rag` |
 | [#87](../../pull/87) | feat(plan): page economics and the cash plan (W7, read-only) | `night/w7-page-economics` |
