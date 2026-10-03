@@ -116,6 +116,7 @@ negotiates well.
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N19 (new) | **P1 · Persona model**: each dealer's published traits, menu and unlock rules (`/api/dealers`) become negotiation params (`persona_model.py`); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in `traders`; flag `persona_model_enabled`; spec [`N19-spec.md`](./N19-spec.md) | 1 → 2 | 🔵 PR open |
+| N20 (new) | Team matrix in the sentinel: every team × card (holds, spare, missing for a near page) and per-team rank, trend, rival, wants, has-for-us; stored in `team_matrix` + `team_matrix_summary`; fed to the decider states of accepts, team swaps and our asks (`market_teams`) | 2 | 🔵 PR #225 |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
@@ -579,6 +580,20 @@ Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_des
 - Step 2 — the desk asks once per team per day in its first message, parses replies, writes inferred every 10 ticks
   off the tick. · **Acceptance:** desk tests (offer unchanged, once per day, told teams not asked).
 - Step 3 — `bazaar affinity --teams` read-only. · **Acceptance:** CLI tests; read-only role test.
+
+### N20 — Team matrix in the sentinel, fed to the negotiators
+Spec: Omar via the lead (2026-10-03 18:00): "the sentinel MUST know the entire matrix of teams and let the negotiators
+know". Inputs already in the taker (no request): the supply map (feed + scan + /me), the rank watch's leaderboard
+snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_store.py`, `news.py`,
+`agents/{taker,team_desk,maker}.py`, `cli.py`, `sql/schema.sql`, `tests/test_team_matrix{,_store}.py`.
+- Step 1 — `team_matrix.build_matrix`: per team × card holds / spare / missing on a page close to complete (≤ 2
+  missing, ≥ 70 % held), with a confidence; per team rank, trend, top set, venue, last trades, podium rival,
+  wants, has_for_us. · **Acceptance:** `tests/test_team_matrix.py`.
+- Step 2 — tables `team_matrix`, `team_matrix_summary` (per world), granted to every read-only role; the taker's
+  sentinel rebuilds and stores it once per 10-tick window. · **Acceptance:** `tests/test_team_matrix_store.py`.
+- Step 3 — negotiators: `market_teams` (counterparty row + top-5 teams per card holding it spare / missing it) in
+  the decider states of board and dealer accepts (taker), team swaps (team desk, plus the plan rows), and our asks
+  (maker, from the stored matrix). No price or guardrail change. · **Acceptance:** `tests/test_team_matrix.py`.
 
 ## Parallel-work notes
 

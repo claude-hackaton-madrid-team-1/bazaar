@@ -49,6 +49,7 @@ from bazaar_agent.swaps import (
     offer_terms,
     read_offer,
 )
+from bazaar_agent.team_matrix import TeamMatrix
 from bazaar_agent.trade_desk import PlanParams, Trade, build_plan, dealer_prices, wanted_cards
 
 TEAM_THREADS_ENV = "BAZAAR_TEAM_THREADS"  # "0" turns the desk off at the next tick
@@ -275,6 +276,7 @@ class TeamDesk:
         self._refused: set[int] = set()  # their offers we refused (logged once)
         self._tried: set[int] = set()  # threads whose read was tried this tick (refused ones included)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
+        self.matrix: TeamMatrix | None = None  # the taker's team matrix, set each tick (`team_matrix.py`)
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._synthetic = 0  # negative ids for the refund of a send the server refused
@@ -858,6 +860,19 @@ class TeamDesk:
             },
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
+            "market_teams": self._teams(trade),
+        }
+
+    def _teams(self, trade: Trade) -> dict[str, Any] | None:
+        """The team matrix (`team_matrix.py`): the counterparty's row and, for both cards, the teams that hold them
+        spare or miss them for a page (top 5 each). None until the taker's sentinel built one."""
+        m = self.matrix
+        if m is None:
+            return None
+        return {
+            "tick": m.tick,
+            "counterparty": m.row(trade.counterparty),
+            "card": {ref: m.card(ref) for ref in trade.refs[:2]},
         }
 
     def _page_bonus(self, need: PageNeed, ref: str, official: float | None) -> dict[str, Any]:
@@ -1111,15 +1126,19 @@ class TeamDesk:
     def _inputs(self, trade: Trade, thread: int | None) -> dict[str, Any]:
         """Public-safe: only the thread, venue and fee reach `/state` (the team, the cards and our values stay
         out: none of their keys is in the public allow-list)."""
-        return {
-            "thread": thread,
-            "team": trade.counterparty,
-            "give_card": trade.refs[0],
-            "want_card": trade.refs[1],
-        } | {
-            "venue": HOUSE_VENUE,
-            "fee": trade.fee,
-        }
+        return (
+            {
+                "thread": thread,
+                "team": trade.counterparty,
+                "give_card": trade.refs[0],
+                "want_card": trade.refs[1],
+            }
+            | {
+                "venue": HOUSE_VENUE,
+                "fee": trade.fee,
+            }
+            | ({"counterparty_matrix": self.matrix.text(trade.counterparty)} if self.matrix is not None else {})
+        )
 
     # ------------------------------------------------------------ the plan
 

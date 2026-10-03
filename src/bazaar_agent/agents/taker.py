@@ -21,7 +21,7 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
@@ -378,6 +378,7 @@ def offer_state(
     rules: Guardrails,
     slots_left: int,
     rival_moves: Sequence[str] = (),
+    teams: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """What Jev reads for `offer_is_worth_accepting`: the offer, the album around the card, cash, the tick, and
     the latest rivals' climbs (`rank_watch`, public data, quoted)."""
@@ -408,6 +409,7 @@ def offer_state(
         "accept_slots_left_this_tick": slots_left,
         "tick": snap.clock.tick,
         "rival_moves": list(rival_moves),
+        "market_teams": dict(teams) if teams else None,  # the team matrix: counterparty row, card holders/missers
     }
 
 
@@ -512,6 +514,7 @@ class Taker:
         self.news = news  # Radio Rastro + the schedule: logged and stored after the sends; no behaviour change
         self._event_skips: set[str] = set()  # scheduled events a dealer skip was recorded for (once each)
         self._news_view: tuple[int, list[Any], dict[str, Any], Clock, str] | None = None  # this tick's view
+        self._news_market: tuple[int, Any] | None = None  # (tick, strategy.Market) for the team matrix
         # The dealers' published traits and menus (the /api/dealers read of every tick), stored when they change.
         self.personas = personas or PersonaBook(None, log)
         self._tones: dict[str, str] = {}  # dealer -> the words' tone its traits ask for (persona model)
@@ -599,7 +602,8 @@ class Taker:
         if self.bluff is not None:
             self.bluff.flush()
         if self.news is not None and self._news_view is not None and self._news_view[0] == tick:
-            self.news.on_tick(*self._news_view)  # never raises; at most 4 keyless GETs every 10 ticks
+            market = self._news_market[1] if self._news_market and self._news_market[0] == tick else None
+            self.news.on_tick(*self._news_view, market=market)  # never raises; at most 4 keyless GETs every 10 ticks
         if self.cards is not None:
             self.cards.flush(tick)
         self.feed.archive_pending()
@@ -667,6 +671,7 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        self._news_market = (clock.tick, market)  # the sentinel's team matrix reads its supply map after the sends
         run.boost = self._card_boost(clock.tick)
         book = build_playbook(
             snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=run.boost
@@ -678,6 +683,7 @@ class Taker:
         proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
+        self.team_desk.matrix = self.news.matrix if self.news is not None else None
         view = run.team_view = self._team_view(run, threads)
         proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
         self._accept(run, proposals)
@@ -1163,6 +1169,15 @@ class Taker:
             )
         return kept
 
+    def _teams_view(self, run: _TickRun, p: AcceptProposal, board: bool = True) -> dict[str, Any] | None:
+        """The team matrix for one card decision: the counterparty's row (a board offer's maker, resolved from the
+        public `offer.listed` events; a dealer has none) and the teams that hold the card spare or miss it."""
+        matrix = self.news.matrix if self.news is not None else None
+        if matrix is None:
+            return None
+        maker = listed_makers(run.snap.events).get(p.offer_id) if board else None
+        return {"tick": matrix.tick, "counterparty": matrix.row(maker), "card": {p.ref: matrix.card(p.ref)}}
+
     def _rival_moves(self) -> list[str]:
         """The newest `rival_move` lines (public facts about rivals' climbs), for Jev's state."""
         return [lr.text for lr in self.news.ranks.latest] if self.news is not None else []
@@ -1551,7 +1566,15 @@ class Taker:
         p = AcceptProposal(
             conv.dealer, conv.item, conv.rarity, dm.offer_id, dm.ask, conv.value, dm.final, conv.reason, {}
         )
-        state = offer_state(p, run.snap, self._ctx(run, skip_thread=conv.thread_id), self.rules, 1, self._rival_moves())
+        state = offer_state(
+            p,
+            run.snap,
+            self._ctx(run, skip_thread=conv.thread_id),
+            self.rules,
+            1,
+            self._rival_moves(),
+            self._teams_view(run, p, board=False),
+        )
         advice = self._ask_jev(run, {**state, "dealer_memory": conv.memory} if conv.memory else state)
         if advice.verdict != "yes":
             return dm
@@ -1840,7 +1863,9 @@ class Taker:
             self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
             return False
         jev = (
-            self._ask_jev(run, offer_state(p, run.snap, ctx, self.rules, limit, self._rival_moves()))
+            self._ask_jev(
+                run, offer_state(p, run.snap, ctx, self.rules, limit, self._rival_moves(), self._teams_view(run, p))
+            )
             if p.source == "board"
             else None
         )

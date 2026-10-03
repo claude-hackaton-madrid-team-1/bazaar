@@ -2859,8 +2859,34 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
     return NewsSentinel(
-        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+        reader,
+        store.record,
+        kw["log"],
+        settings.data_dir / "agents",
+        history=_rank_history(kw, settings),
+        matrix_store=_matrix_store(kw, settings),
     )
+
+
+def _matrix_store(kw: dict[str, Any], settings: Any) -> Any:
+    """The team matrix's tables in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.team_matrix_store import TeamMatrixStore
+
+    return TeamMatrixStore(lambda: db.connect(app="bazaar-team-matrix", connect_timeout_s=3), kw["log"],
+                           scope_of(settings).world)  # fmt: skip
+
+
+def _latest_matrix(kw: dict[str, Any], settings: Any) -> Any:
+    """The maker reads the matrix the taker stores, at most every 10 ticks after its sends."""
+    from bazaar_agent.team_matrix_store import LatestMatrix
+
+    store = _matrix_store(kw, settings)
+    return LatestMatrix(store) if store is not None else None
 
 
 def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
@@ -3002,6 +3028,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
+            latest_matrix=_latest_matrix(kw, settings),
             **kw,
         )
 
