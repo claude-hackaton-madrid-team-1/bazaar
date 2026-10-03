@@ -30,7 +30,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 | Classifier on its own styles, silent | linear 200/200, convex 198/200, one_shot 200/200, no_show 200/200; holdout vs v1 147/200 |
 | Realism (median, zoo vs real) | final gap toward us: linear 0.38 vs 0.39, one-shot 0.18 vs 0.11, tit-for-tat 0.25 vs 0.22, holdout 0.34 vs 0.36 (fraction of our limit) |
 | Noise | sd of mean P/duel over 5 seeds: 0.07 (v1) to 0.14 (v2); sd of the v2/v1 lift 0.005 |
-| Gates | 862 tests pass; ruff, black, mypy clean |
+| Gates | 860 tests pass; ruff, black, mypy clean |
 
 ## What the zoo says
 
