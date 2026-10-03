@@ -891,3 +891,15 @@ Friday feed, 104 sell threads (`{"sell": {"assets": [id]}}`): Abuela bids `give.
 team moves down (commons 5→6, uncommons 12→16, 20→23), then a `final`. The simulator modelled a buyer that
 never moved; it now raises one prima per move of ours up to `buy_ceiling` (Abuela 0.65 of book). A sale is a
 ladder deal: `dealer sell` never closes at her opening bid. Private sim: LAT-04 sold at 6 (her opening 5).
+### [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
+Day-2 hint 1: `GET /api/me/value?card=` = our value of ONE more copy (book × affinity × copy marginal), the value the
+score counts trades at. Our model adds a page-bonus share and lands higher (MAL-06 official 27.5 vs ours 36, SAL-07
+32.5 vs 50.4). `guardrails.check()` now refuses a card buy above it (`official_value_margin`, read last, once per card
+per tick, a failed read refuses). First proof, the sim smoke: `dealer buy LAV-01` walked at "price 8 > official
+value 7" (LAV affinity 0.7). Tests run the cap only when marked `official_values` (tests/conftest.py).
+### [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
+An emoji cut in half by a JS/TS string slice reaches us as a lone surrogate (`"\ud83d"` in JSON). `json.dumps(...,
+ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Postgres jsonb rejects it raw or escaped.
+`duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
+move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
+owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.

@@ -150,8 +150,17 @@ class Swap:
                 volume=self.notional,
             ),
         ]
+        gives = self.your_value - self.want_cash  # the official value cap: the copy we give, net of their cash
         out.append(
-            Action("bid", self.want_ref, self.want_rarity, self.give_cash, counterparty=self.to, volume=self.notional)
+            Action(
+                "bid",
+                self.want_ref,
+                self.want_rarity,
+                self.give_cash,
+                counterparty=self.to,
+                volume=self.notional,
+                gives_value=gives,
+            )
         )
         return out
 

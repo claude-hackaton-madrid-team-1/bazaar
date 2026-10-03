@@ -22,6 +22,7 @@ from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -289,9 +290,16 @@ def read_snapshot(
     )
 
 
-def guard_context(snap: Snapshot, ledger: LedgerStore, rules: Guardrails, commitments: Commitments) -> Context:
-    """The live guardrail context: /me, the shared ledger, and what our open offers already promise."""
-    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules)
+def guard_context(
+    snap: Snapshot,
+    ledger: LedgerStore,
+    rules: Guardrails,
+    commitments: Commitments,
+    values: OfficialValues | None = None,
+) -> Context:
+    """The live guardrail context: /me, the shared ledger, what our open offers already promise, and the
+    official value reads that cap every card buy (`values`; None refuses every card buy)."""
+    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules, values)
     return committed_context(base, commitments)
 
 

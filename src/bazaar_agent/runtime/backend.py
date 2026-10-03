@@ -34,6 +34,7 @@ from bazaar_agent.guardrails import (
 )
 from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.llm.chooser import injection_flags
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.ticks import Clock, action_budget_s
 
 SOURCE = "runtime"  # the ledger `source` and the decisions `agent` prefix for every runtime tool call
@@ -91,6 +92,8 @@ class Backend:
         self.dealer_runs: dict[str, Any] = {}  # dealer -> the live `dealer buy` child this process started
         self.duel_said: set[tuple[int, int]] = set()  # (duel, tick): one message per duel per tick
         self.duel_first_seen: dict[int, int] = {}  # duel -> the first tick we read it (the payload has no start)
+        # GET /api/me/value, read through `team` when a card buy is checked: every buy capped at it (Day-2 hint 1)
+        self.values = OfficialValues(lambda card: self.team.value(card))
 
     @property
     def team(self) -> Any:

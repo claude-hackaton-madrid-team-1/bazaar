@@ -350,6 +350,9 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
   a flag flips only on a yes, in its own commit.
 - Step 5 — `/pr-review` (pr-reviewer + security-auditor) on both PRs; every P0/P1 fixed with a failing-first test;
   Marius's PRs closed with a pointer once ours are open. · **Acceptance:** APPROVE on both, merge asked, never done by us.
+- Step 6 (emergency, #173) — a rival's lone surrogate never freezes the duel loop: the per-tick duel log is ASCII-escaped
+  JSON and the duels table stores `db.jsonb_safe` payloads. · **Acceptance:** a `--play` tick with such a rival text
+  still sends the endgame accept (failed on main); the stored payload holds no lone surrogate.
 - Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
 
