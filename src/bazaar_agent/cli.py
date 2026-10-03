@@ -1528,6 +1528,10 @@ def _run_agent(
             outcome_store = LearningStore(connect, log)
             outcome_store.open()  # connect now, never inside a tick
             extra["outcome_learner"] = OutcomeLearner(connect, outcome_store, models, log, rules=rules)
+        from bazaar_agent.learn.threads import ThreadStore
+
+        extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
+        extra["thread_store"].open()  # connect now, never inside a tick
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)

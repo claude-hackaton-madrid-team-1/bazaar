@@ -108,7 +108,7 @@ negotiates well.
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool; PR 3 🔵: our dealer threads + `closed_reason` into `threads`/`messages` from the answers the taker already reads (0 extra requests) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
@@ -213,6 +213,21 @@ rebased on `main` after the previous one merges.
   `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
   raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
 
+### N14b — Packs, supply and new pages (spec: N14-spec.md, criteria 4–6)
+PR 1 (new pages, before the 09:30 window). Files: `GUARDRAILS.md`, `STRATEGY.md`, `guardrails.py`,
+`strategy.py`, `agents/{runtime,taker,maker}.py`, `tests/test_new_pages.py`.
+- Step 1 — `protect_page_sets` (GUARDRAILS.md, RET,CHA): `check()` refuses a sell or an accepted bid of our
+  only copy of a new page's card; `strategy.sell_moves` never proposes it, so the maker cancels an open
+  ask. · **Acceptance:** guardrail, strategy and maker tests; RED with the rule stubbed off.
+- Step 2 — `dealer_mints_unminted` (STRATEGY.md, false) from B26 #129, with its release tests. ·
+  **Acceptance:** a zero-minted RET card is a dealer buy only with the switch.
+- Step 3 — `PageWatch`: the running taker and maker log a new page once; one Taker instance ranks RET the
+  tick it appears. · **Acceptance:** two-tick taker test; sim smoke green.
+PR 2 (supply + packs, 09:30 window or next).
+- Step 4 — supply map: starting hands (ids 1–270, block k = team k) + feed settlements and `pack.opened`
+  → `supply_cards` in Postgres; `bazaar supply`. · **Acceptance:** pure tests on fixtures + DB test schema.
+- Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
+  packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
 ### N14a — Hard dealers: per-dealer plan from recall, dealer finals, L3-L5 readiness
 Files: `GUARDRAILS.md`, `src/bazaar_agent/guardrails.py`, `src/bazaar_agent/agents/{dealer,desk,dealer_plan,taker}.py`,
 `src/bazaar_agent/strategy.py` (`dealer_buy` only), `src/bazaar_agent/learn/replay.py`, tests.

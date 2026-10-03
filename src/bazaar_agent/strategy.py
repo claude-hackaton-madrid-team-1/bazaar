@@ -57,6 +57,7 @@ class StrategyParams(BaseModel):
     rare_fallback_price: int = Field(ge=1)
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
+    dealer_mints_unminted: bool = False  # optional line: a dealer sells (mints) a card nobody holds yet
 
 
 @dataclass(frozen=True)
@@ -249,9 +250,10 @@ def supply_of(m: Market, card: Card, params: StrategyParams) -> Supply:
     ours = m.held.get(card.ref, 0)
     mintable = card.minted < card.print_run
     where: Availability
-    if card.minted == 0:
+    dealer_sells = card.set_code in m.released and quote_for(m, card) is not None and mintable
+    if card.minted == 0 and not (params.dealer_mints_unminted and dealer_sells):
         where = "packs" if mintable and card.rarity in pack_rarities(m) else "none"
-    elif card.set_code in m.released and quote_for(m, card) is not None and mintable:
+    elif dealer_sells:
         where = "dealer"
     elif card.minted > ours:
         where = "teams"
@@ -598,7 +600,8 @@ def _priced(asset: dict[str, Any]) -> bool:
 
 def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
-    (our your_value plus any page bonus that selling our only copy gives up)."""
+    (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
+    of a new page (`protect_page_sets`) is never offered."""
     copies: dict[str, dict[str, Any]] = {}
     for a in filter(_priced, assets):
         ref = str(a.get("ref"))
@@ -609,7 +612,7 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or not buyers:
+        if card is None or not buyers or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
             continue
         stake = bonus_at_stake(m, card, params)
         ours = float(asset["your_value"]) + stake
