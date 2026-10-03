@@ -355,3 +355,16 @@ def test_a_held_page_leg_says_the_other_legs_are_what_does_not_fit():
     s = pages.cash_plan("p", 400, 4, [], legs, RULES)
     assert s.held == ("LAV-09", "LAV-10")
     assert s.steps[0].note == "cash 400 − 75 − the page's other team legs 75 < floor 270"
+
+
+def test_a_dealer_still_inside_our_best_three_scores_and_each_pick_uses_one_of_its_deals():
+    def rare(ref):
+        chato = pages.Source("chato", "ladder", 90, 85, "", 93, ("chato",))
+        team = pages.Source("teams", "trade", 95, 90, "", 93, ("t07",))
+        return pages.CardEconomics(ref, "LAV", "rare", 70, 1.6, 112, 0, 3, 30, (), (), (chato, team))
+
+    page = pages.PageEconomics("LAV", 1.6, 0, 3, 70.0, tuple(rare(r) for r in ("A", "B", "C")), "finish", "")
+    wants = pages.buy_list([page], 2, scoring={"chato": 2})
+    assert sorted(w.source.source for w in wants) == ["chato", "chato", "teams"]  # the third deal would not score
+    assert wants[-1].completes and wants[-1].source.source == "teams"  # the team leg completes the page
+    assert pages.scoring_dealers(EVENTS, "t10", DEALERS) == {"abuela": 3, "chato": 2}  # t10 dealt once with chato

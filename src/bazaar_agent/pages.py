@@ -14,7 +14,7 @@ feed, `/api/schedule`), reusing its market, page-bonus shares, supply and holder
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from statistics import median
@@ -314,14 +314,20 @@ class CardEconomics:
         """The cheapest source at all (it may need a guardrail change)."""
         return min(self.sources, key=lambda s: s.price) if self.sources else None
 
-    def pick(self, min_surplus: float) -> Source | None:
-        """The source to buy from. A dealer deal scores only while it is one of our best three per level
-        (RULES.md), a team buy scores its surplus at our private values: so a team, when its price leaves at
-        least `min_surplus` of the card's own value (no page bonus), else the cheapest fillable source."""
-        trade = [s for s in self.sources if s.blocked is None and s.channel == "trade"]
-        if trade and self.value - trade[0].price >= min_surplus:
-            return trade[0]
-        return self.best
+    def pick(self, min_surplus: float, scoring: Iterable[str] = ()) -> Source | None:
+        """The source to buy from: the cheapest one that scores, else the cheapest fillable. A team buy
+        scores its surplus at our private values (when its price leaves `min_surplus` of the card's own
+        value, no page bonus); a dealer deal scores only while it is one of our best three for that level
+        (RULES.md): `scoring` names the dealers where a deal still does."""
+        dealers = set(scoring)
+        ok = [s for s in self.sources if s.blocked is None]
+        scores = [
+            s
+            for s in ok
+            if (s.channel == "trade" and self.value - s.price >= min_surplus)
+            or (s.channel == "ladder" and s.source in dealers)
+        ]
+        return min(scores, key=lambda s: s.price) if scores else self.best
 
     @property
     def surplus(self) -> float | None:
@@ -584,30 +590,49 @@ class Want:
         return self.card.value + (self.page_bonus if self.completes else 0.0) - self.source.price
 
 
-def buy_list(pages: Sequence[PageEconomics], min_surplus: float, skip: Iterable[str] = ()) -> list[Want]:
+def buy_list(
+    pages: Sequence[PageEconomics],
+    min_surplus: float,
+    skip: Iterable[str] = (),
+    scoring: Mapping[str, int] | None = None,
+) -> list[Want]:
     """The order to buy in, each card from its `pick`. Pages worth finishing first (best surplus first); in
     each page the dealer legs before the team legs, so the card that completes the page is bought from a
     team, where the page bonus can count as trade surplus. Then single cards worth more than they cost.
-    `skip`: cards another plan already buys (W4's trade plan), never bought twice."""
+    `skip`: cards another plan already buys (W4's trade plan), never bought twice. `scoring`: dealer -> how
+    many more deals still count among our best three (each pick of that dealer uses one)."""
+    slots = dict(scoring or {})
     wants: list[Want] = []
+
+    def pick(c: CardEconomics) -> Source | None:
+        one = c.pick(min_surplus, [d for d, n in slots.items() if n > 0])
+        if one is not None and one.channel == "ladder" and slots.get(one.source, 0) > 0:
+            slots[one.source] -= 1
+        return one
+
     seen: set[str] = set(skip)
     for p in pages:
         if p.verdict != "finish":
             continue
-        legs = [(c, src) for c in p.missing if c.ref not in seen and (src := c.pick(min_surplus)) is not None]
+        legs = [(c, s) for c in p.missing if c.ref not in seen and (s := pick(c)) is not None]
         legs.sort(key=lambda cs: (cs[1].channel == "trade", -cs[0].value))
         for i, (c, src) in enumerate(legs):  # the trade plan's legs go first (its offers open at the start)
             wants.append(Want(c, src, p.set_code, completes=i == len(legs) - 1, page_bonus=p.bonus, finishing=True))
             seen.add(c.ref)
-    singles = [
-        (c, src)
-        for p in pages
-        for c in p.missing
-        if c.ref not in seen and (src := c.pick(min_surplus)) is not None and c.value - src.price >= min_surplus
-    ]
-    for c, src in sorted(singles, key=lambda cs: -(cs[0].value - cs[1].price) / max(cs[1].price, 1.0)):
-        # a dealer deal beyond our best three scores nothing: such a card rides a planned ladder deal or waits
-        wants.append(Want(c, src, c.set_code, slot_only=src.channel == "ladder"))
+    singles = []
+    for p in pages:
+        for c in p.missing:
+            if c.ref in seen:
+                continue
+            before = dict(slots)
+            one = pick(c)
+            if one is None or c.value - one.price < min_surplus:
+                slots.update(before)  # not bought: its scoring deal stays free
+                continue
+            # a dealer deal beyond our best three scores nothing: such a card rides a planned ladder deal or waits
+            singles.append((c, one, one.channel == "ladder" and before.get(one.source, 0) == slots.get(one.source, 0)))
+    for c, one, slot_only in sorted(singles, key=lambda x: -(x[0].value - x[1].price) / max(x[1].price, 1.0)):
+        wants.append(Want(c, one, c.set_code, slot_only=slot_only))
     return wants
 
 
@@ -802,6 +827,21 @@ def unopened_packs(me: dict[str, Any]) -> list[str]:
     return [str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "pack"]
 
 
+def scoring_dealers(
+    events: Iterable[intel.Event], us: str, dealers: Iterable[dict[str, Any]], ladder: Sequence[LadderSlot] = ()
+) -> dict[str, int]:
+    """dealer -> how many more deals still count among our best three: three minus our deals in the feed and
+    the ladder plan's. Counts every deal we made, so it assumes the ladder does not restart each round
+    (unverified, see W5): a restart only opens more slots."""
+    ours: Counter[str] = Counter()
+    for p in intel.tape(events):
+        if p.persona and us in (p.buyer, p.seller):
+            ours[p.persona] += 1
+    for slot in ladder:
+        ours[slot.dealer] += 1
+    return {str(d.get("id")): 3 - ours[str(d.get("id"))] for d in dealers if ours[str(d.get("id"))] < 3}
+
+
 def best_three(slots: Sequence[LadderSlot], keep: int = 3) -> list[LadderSlot]:
     """The first `keep` planned deals per dealer: only a level's best three deals score (RULES.md), so the
     rest of a ladder plan buys cards, not ladder points."""
@@ -836,7 +876,8 @@ def build_plan(
     dealers = list(dealers)
     pages = page_economics(me, catalog, events, dealers, params, rules, chasers)
     taken = {ref for t in trades for ref in t.refs_in}
-    wants = buy_list(pages, params.min_buy_surplus, skip=taken)
+    scoring = scoring_dealers(events, str(me.get("id") or ""), dealers, ladder)
+    wants = buy_list(pages, params.min_buy_surplus, skip=taken, scoring=scoring)
     grants = grants_from(schedule, now_hours)
     body = schedule.get("body", schedule)
     hour_now = now_hours if now_hours is not None else float(body.get("now_hours") or 0)
