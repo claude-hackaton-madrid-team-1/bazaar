@@ -55,10 +55,16 @@ NAMES = {
 SET_TOKEN = re.compile(CODES + "|" + "|".join(f"\\b(?P<{k}>{v})\\b" for k, v in NAMES.items()))
 # A sentence ends at ? ! ; a line break, an opening ¿ or ¡, or a full stop before a space (never inside "1.6").
 SENTENCE_END = re.compile(r"[?!;\n¿¡]|\.(?=\s|$)")
-# A pair in a sentence that talks about OUR sets ("vuestro ×1,6 es LAV, ¿verdad?") or denies one ("not LAT") is
-# no claim of theirs.
+# A pair in a sentence that talks about OUR sets ("vuestro ×1,6 es LAV, ¿verdad?"), denies one ("not LAT"), guesses
+# ("apuesto a que es LAV ×1,6") or names another team ("el ×1,6 de t07") is no claim of theirs.
 YOURS = re.compile(r"\b(?:vuestr[oa]s?|tus?|your|yours|ustedes)\b", re.IGNORECASE)
 NEGATION = re.compile(r"\b(?:no|not|ni|nor|nunca|never|jamas|tampoco|isnt|arent)\b|n't\b", re.IGNORECASE)
+GUESS = re.compile(
+    r"\b(?:creo|creemos|apuesto|supongo|imagino|quizas|igual|seguramente|think|bet|guess|maybe|probably|perhaps)\b",
+    re.IGNORECASE,
+)
+OTHER_TEAM = re.compile(r"\bt\d{1,2}\b|\b(?:team|equipo)\s*\d+\b", re.IGNORECASE)
+NOT_A_CLAIM = (YOURS, NEGATION, GUESS, OTHER_TEAM)
 # "×1.6", "x1,3", "*1.1", "1,6", "1.60": one digit 0-2, a dot or comma, one or two digits, inside no longer number.
 MULTIPLIER = re.compile(r"(?<![\d.,])(?:[x×*]\s?)?([0-2])[.,](\d{1,2})(?![\d])", re.IGNORECASE)
 WINDOW = 16  # the most characters between a set and its multiplier
@@ -127,14 +133,14 @@ def _pair(sets: list[tuple[int, int, str]], values: list[tuple[int, int, float]]
 
 
 def _statements(text: str) -> list[str]:
-    """The sentences that can carry a claim of theirs: no question, no "your", no negation."""
+    """The sentences of one line that can carry a claim of theirs: no question, and none of `NOT_A_CLAIM`."""
     out, start, opened_question = [], 0, False
     for m in SENTENCE_END.finditer(text):
         question = opened_question or m.group() == "?"
         out.append((text[start : m.start()], question))
         opened_question, start = m.group() == "¿", m.end()
     out.append((text[start:], opened_question))
-    return [s for s, question in out if not question and not YOURS.search(s) and not NEGATION.search(s)]
+    return [s for s, question in out if not question and not any(p.search(s) for p in NOT_A_CLAIM)]
 
 
 def parse(text: str | None, multiset: Sequence[float] = ()) -> list[Claim]:
@@ -145,7 +151,8 @@ def parse(text: str | None, multiset: Sequence[float] = ()) -> list[Claim]:
     if not text:
         return []
     by_set: dict[str, set[float]] = {}
-    for sentence in _statements(folded(text[:READ_MAX])):
+    lines = text[:READ_MAX].splitlines()  # before folding, which turns a line break into a space
+    for sentence in (s for line in lines for s in _statements(folded(line))):
         sets, values = _tokens(sentence)
         for code, i in _pair(sets, values):
             value = _plausible(values[i][2], multiset)
@@ -254,10 +261,14 @@ def save(conn: Any, rows: Iterable[Row]) -> int:
     return stored
 
 
+NUMERIC = ("multiplier", "confidence")  # numeric columns come back as Decimal: numbers for `--json`
+
+
 def read(conn: Any) -> list[dict[str, Any]]:
     rows = conn.execute(f"select {', '.join(COLUMNS)} from team_affinity order by team, set_code, source").fetchall()
     conn.commit()
-    return [dict(zip(COLUMNS, row, strict=True)) for row in rows]
+    out = [dict(zip(COLUMNS, row, strict=True)) for row in rows]
+    return [{k: (float(v) if k in NUMERIC and v is not None else v) for k, v in r.items()} for r in out]
 
 
 def said_teams(conn: Any) -> set[str]:

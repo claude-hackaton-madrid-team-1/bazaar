@@ -65,6 +65,10 @@ def test_set_codes_and_barrio_names_next_to_a_multiplier_are_read(text, expected
         "No, LAV 1,6 no",
         "Me retiro: 1,0 de margen",  # "me retiro" is "I walk away", not El Retiro
         "una cumbia latina 1,1",
+        "¿Y el vuestro? Apuesto a que es LAV ×1,6.",  # a guess in its own sentence (review #217 round 2)
+        "And yours? I think it's LAV ×1.6.",
+        "Creo que el ×1,6 de t07 es LAV.",  # another team's set
+        "El ×1,6 del equipo 7 es LAV",
         "",
         None,
     ],
@@ -92,6 +96,7 @@ def test_the_quote_is_scrubbed_cut_to_200_and_free_of_nul_and_lone_surrogates():
 
 def test_a_statement_after_a_question_is_still_read():
     assert pairs("¿Y el vuestro? El nuestro es LAV ×1.6") == [("LAV", 1.6)]
+    assert pairs("Nuestro ×1,6 es LAV\nNo tenemos SAL") == [("LAV", 1.6)]  # a line break ends a sentence
     assert pairs("LAV is 1.6. SAL is 1.3.") == [("LAV", 1.6), ("SAL", 1.3)]
     assert pairs("El Retiro 0,7; La Latina 0,5") == [("LAT", 0.5), ("RET", 0.7)]
 
@@ -428,6 +433,8 @@ def test_rows_upsert_by_team_set_source_never_backwards_and_the_board_pairs_them
         rows = {(r["team"], r["set_code"], r["source"]): r for r in ta.read(conn)}
         assert float(rows[("t05", "SAL", "said")]["multiplier"]) == 1.6 and rows[("t05", "SAL", "said")]["tick"] == 120
         assert float(rows[("t05", "SAL", "inferred")]["multiplier"]) == 1.1
+        said = rows[("t05", "SAL", "said")]
+        assert isinstance(said["multiplier"], float) and isinstance(said["confidence"], float)  # numbers in --json
         board = conn.execute(
             "select team, set_code, said, inferred, quote from team_affinity_board order by team, set_code"
         ).fetchall()
