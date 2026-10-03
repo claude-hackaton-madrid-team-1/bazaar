@@ -10,17 +10,16 @@ deploy. Pure reading: the payloads come from the news sentinel's own keyless rea
 from __future__ import annotations
 
 import math
-import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.rank_watch import SAFE_ID
 
 ALERT_TICKS = (20, 10, 3)  # a lead time crossing one of these is logged and stored again
 CONFIDENCE = 1.0  # the organisers' schedule happens
 FIELD_MAX = 200
-SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 # What each action asks of us, in a few words (quoted in the learning; never an instruction to a model).
 ADVICE = {
     "bench": "keep the maker and our venue's broker up, no deploy",
@@ -77,7 +76,7 @@ def events_from_levels(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
         if (
             not isinstance(lv, dict)
             or not isinstance(lv.get("id"), str)
-            or not SAFE_ID.match(lv["id"])
+            or not SAFE_ID.fullmatch(lv["id"])
             or lv.get("open_to_all") is True
         ):
             continue
@@ -93,11 +92,16 @@ def events_from_levels(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
     return out
 
 
+def ticks_until(at_hours: float, t_hours: float, tick_seconds: float) -> int:
+    """Whole ticks until `at_hours` (rounded first: 1.55 h - 1.5 h at 60 s is 3 ticks, not 3.0000000000000027)."""
+    return math.ceil(round((at_hours - t_hours) * 3600.0 / tick_seconds, 6))
+
+
 def lead_ticks(ev: ScheduledEvent, t_hours: float, tick_seconds: float) -> int | None:
     """Ticks until the event at today's pace (None: time not said, or no pace)."""
     if ev.at_hours is None or tick_seconds <= 0:
         return None
-    return max(0, math.ceil((ev.at_hours - t_hours) * 3600.0 / tick_seconds))
+    return max(0, ticks_until(ev.at_hours, t_hours, tick_seconds))
 
 
 def describe(ev: ScheduledEvent, lead: int | None) -> str:
@@ -188,3 +192,42 @@ class ScheduleWatch:
             rows.append({"event_id": ev.event_id, "action": ev.action, "note": ev.note, "at_hours": ev.at_hours,
                          "lead_ticks": lead, "subject": ev.subject})  # fmt: skip
         return sorted(rows, key=lambda r: (r["at_hours"] is None, r["at_hours"] or 0.0))
+
+
+GUARD_ACTIONS = ("bench", "duels")
+
+
+def _at_or_last(row: Mapping[str, Any]) -> float:
+    at = row.get("at_hours")
+    return (
+        float(at) if isinstance(at, int | float) else math.inf
+    )  # a dealer ladder should not still be running when these start
+
+
+def ladder_ticks(ladder: tuple[int, int, int] | None, max_ticks: int) -> int:
+    """Ticks a dealer ladder may run: one bid per tick, every distinct bid (the last one clamped to the top, so a
+    step that does not divide the range still ends on it), at most the thread's tick limit, plus the tick on which
+    she answers our last bid or we accept."""
+    if ladder is None:
+        return max_ticks + 1
+    start, top, step = ladder
+    bids = math.ceil(max(0, top - start) / max(1, step)) + 1
+    return min(max_ticks, bids) + 1
+
+
+def crossing(
+    upcoming: Sequence[Mapping[str, Any]],
+    t_hours: float,
+    tick_seconds: float,
+    ticks: int,
+    actions: tuple[str, ...] = GUARD_ACTIONS,
+) -> dict[str, Any] | None:
+    """The first upcoming `actions` event that starts within the next `ticks` ticks (None: the way is clear)."""
+    for u in sorted(upcoming, key=_at_or_last):
+        at = u.get("at_hours")
+        if u.get("action") not in actions or not isinstance(at, int | float) or tick_seconds <= 0:
+            continue
+        lead = ticks_until(float(at), t_hours, tick_seconds)
+        if 0 < lead <= ticks:
+            return {**u, "lead_ticks": lead}
+    return None

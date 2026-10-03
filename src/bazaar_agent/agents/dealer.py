@@ -34,6 +34,13 @@ KIND_WORDS = (
     "Mi abuela también vendía en el Rastro. ¿{p} le parece justo?",
     "Le prometo cuidarlo mucho. ¿Cerramos en {p}?",
 )
+# For a strict or shrewd dealer (the persona model's `terse` tone): the price and nothing else to haggle over.
+TERSE_WORDS = (
+    "Buenas, {n}. Ofrezco {p} primas.",
+    "{p} primas.",
+    "Subo a {p}.",
+    "{p}. ¿Trato?",
+)
 
 
 @dataclass(frozen=True)
@@ -230,15 +237,18 @@ def bid_schedule(plan: BidPlan) -> list[int]:
 DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato"}
 
 
-def words(step: int, price: int, dealer: str = "") -> str:
-    """Kind, varied words for a bid. The structured price is what binds; the text never changes it."""
+def words(step: int, price: int, dealer: str = "", tone: str = "") -> str:
+    """Kind, varied words for a bid (terse ones for a `terse` dealer). The structured price is what binds; the
+    text never changes it."""
     name = DEALER_NAMES.get(dealer, "amigo")
-    return KIND_WORDS[step % len(KIND_WORDS)].format(p=price, n=name)
+    pool = TERSE_WORDS if tone == "terse" else KIND_WORDS
+    return pool[step % len(pool)].format(p=price, n=name)
 
 
 def template_words(request: WordsRequest) -> str:
-    """The default `WordsFn`: our kind Spanish templates, addressed to this dealer, with the structured price."""
-    return words(request.step, request.price, request.counterparty)
+    """The default `WordsFn`: our Spanish templates in the dealer's tone, addressed to it, with the structured
+    price."""
+    return words(request.step, request.price, request.counterparty, request.tone)
 
 
 def bid_words(words_fn: WordsFn, base: WordsRequest, thread: dict[str, Any], clock: Any, send_by: float) -> str:

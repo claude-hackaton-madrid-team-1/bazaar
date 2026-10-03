@@ -420,3 +420,10 @@ def test_the_swap_count_and_cash_trips_lapse_by_themselves():
     trades = wd.trades_of([swap(70 + i, 100 + i, "t05", (10 + i, "LAV-03"), (20 + i, "SAL-01")) for i in range(5)], US)
     found = [f for f in wd.swap_rules(trades, [], {1: (104, 50)}, RULES) if "last copy" not in f.reason]
     assert found and all(f.until_tick == 104 + RULES.watchdog_repeat_trip_ticks for f in found)
+
+
+def test_a_late_swap_trip_lasts_from_the_run_never_lands_lapsed():
+    """#203 round 3 (P2): evidence found late (a skipped tick, a restart) still trips for the full time."""
+    trades = wd.trades_of([swap(80 + i, 100 + i, "t05", (30 + i, "LAV-03"), (40 + i, "SAL-01")) for i in range(5)], US)
+    found = [f for f in wd.swap_rules(trades, [], {}, RULES, now=130) if "last copy" not in f.reason]
+    assert found and all(f.until_tick == 130 + RULES.watchdog_repeat_trip_ticks for f in found)

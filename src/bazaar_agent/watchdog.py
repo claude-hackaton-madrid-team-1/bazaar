@@ -277,6 +277,7 @@ def swap_rules(
     cash: Mapping[int, tuple[int, int]],
     rules: Guardrails,
     since: Mapping[str, int] | None = None,
+    now: int = 0,
 ) -> list[Finding]:
     """(b) A swap that left us without a copy of the card we gave, more than `watchdog_max_swaps_per_team` swaps
     with one team, or more than `watchdog_swap_cash_per_hour` cash added to swaps: trip `team_swap`."""
@@ -301,12 +302,12 @@ def swap_rules(
         if n > rules.watchdog_max_swaps_per_team:
             last = max(t.tick for t in swaps if t.other == team)
             reason = f"{n} swaps with {team} in the window (max {rules.watchdog_max_swaps_per_team})"
-            out.append(Finding("team_swap", reason, last, until_tick=last + rules.watchdog_repeat_trip_ticks))
+            out.append(Finding("team_swap", reason, last, until_tick=max(now, last) + rules.watchdog_repeat_trip_ticks))
     total = sum(c for _, c in cash.values())
     if total > rules.watchdog_swap_cash_per_hour:
         last = max(t for t, _ in cash.values())
         reason = f"{total} cash added to team swaps in the window (max {rules.watchdog_swap_cash_per_hour})"
-        out.append(Finding("team_swap", reason, last, until_tick=last + rules.watchdog_repeat_trip_ticks))
+        out.append(Finding("team_swap", reason, last, until_tick=max(now, last) + rules.watchdog_repeat_trip_ticks))
     return out
 
 
@@ -578,7 +579,7 @@ def evaluate(w: Window, tick: int, rules: Guardrails) -> tuple[list[Finding], li
     findings = [
         *bad_trades(trades, w.snapshots, w.decisions, rules.official_value_margin),
         *decision_findings(w.decisions),
-        *swap_rules(trades, w.snapshots, swap_cash(w.decisions, w.executions, w.ledger, trades), rules, w.since),
+        *swap_rules(trades, w.snapshots, swap_cash(w.decisions, w.executions, w.ledger, trades), rules, w.since, tick),
         *repeat_price_rule(sends_of(w.decisions, w.executions), tick, rules, w.since),
         *duel_findings(w.duels, duel_moves, tick),
     ]

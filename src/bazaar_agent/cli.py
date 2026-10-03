@@ -18,7 +18,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import breaker_cli, deploy_guard, flags_cli, intel, render, supply_cli, traces
+from bazaar_agent import breaker_cli, deploy_guard, flags_cli, intel, persona_cli, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -2699,7 +2699,35 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     learner = kw.get("learner")
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
-    return NewsSentinel(reader, store.record, kw["log"], settings.data_dir / "agents")
+    return NewsSentinel(
+        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+    )
+
+
+def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
+    """Leaderboard snapshots in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.leaderboard_store import LeaderboardStore
+
+    return LeaderboardStore(lambda: db.connect(app="bazaar-leaderboard", connect_timeout_s=3), kw["log"],
+                            scope_of(settings).world)  # fmt: skip
+
+
+def _persona_book(kw: dict[str, Any], shared: bool) -> Any:
+    """The taker's persona book: the /api/dealers personas it reads every tick, stored in the shared Postgres
+    `traders` table when they change (off the tick; nothing stored without the shared database)."""
+    from bazaar_agent import db
+    from bazaar_agent.agents.persona_book import PersonaBook
+
+    def write(snaps: list[Any], tick: int) -> None:
+        with db.connect(app="bazaar-taker-personas", connect_timeout_s=3) as conn:
+            db.upsert_traders(conn, snaps, tick)
+
+    return PersonaBook(write if shared else None, kw["log"])
 
 
 @agent_app.command("taker")
@@ -2750,6 +2778,7 @@ def agent_taker(
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
+            personas=_persona_book(kw, shared),
             **kw,
         )
 
@@ -3040,6 +3069,7 @@ evals_cli.register(app)
 supply_cli.register(app)
 learn_cli.register(app)
 dealer_finals.register(dealer_app)
+persona_cli.register(dealer_app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.
