@@ -262,6 +262,26 @@ class KeyVault:
             return False
         return row is not None
 
+    def claim_once(self, name: str, tick: int) -> bool:
+        """Take the named one-time claim for this target, once for the whole game across processes and restarts:
+        True only for the process whose insert created the row. Any error (Postgres unreachable, a skipped call)
+        is False: a caller that must never send twice sends nothing. The row's key column stays empty, so `load`
+        never reads it as a broker key, and nothing gives the claim back."""
+        try:
+            row = (
+                self._db()
+                .execute(
+                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
+                    "on conflict (target, venue) do nothing returning venue",
+                    (self.target, f"_once:{name}", tick),
+                )
+                .fetchone()
+            )
+        except Exception as e:
+            self._failed(e)
+            return False
+        return row is not None
+
     def mark(self, venue: str, tick: int) -> bool:
         """Remember a venue we run without its key (an opening whose answer was lost): it counts as opened, so
         the maker never opens another after it closes. The key column stays empty; `load` skips it. False when
