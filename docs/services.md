@@ -192,6 +192,12 @@ by hand can always be closed. The kill switch (`trading_enabled = false`, `touch
    `.local/agents/broker_ticks.jsonl` and `broker_sessions.jsonl`), then `uv run bazaar broker run --live`.
    It reads `/api/broker/book` once per tick, never matches our own offers or two offers of one maker, and
    sends the exact maximum-surplus matching (bench first) at the midpoint price.
+   Market Test options (defaults = the behaviour above; evidence in `docs/night/w1b-broker-edge.md`):
+   `--bench-policy edge` matches the bench on *estimated* true surplus (`agents/bench_edge.py`),
+   `--bench-preset hard` for the 12-trader test, `--bench-reads 2|3` re-reads the book within the tick
+   while a bench run is in it, and `--bench-cross limit` also probes non-crossing bench pairs (only worth it
+   if the server checks hidden limits; it stops by itself once refusals show it does not). The first read of
+   each bench run logs its offer keys to `.local/agents/broker_bench_shapes.jsonl`.
 5. **Fees** change with `uv run bazaar venue fee <bps> [--fee-per-card N] --live` (effective after the
    public notice); `uv run bazaar venue announce "..." --live` posts a notice with the broker key.
 6. **Watch** `uv run bazaar venue status` (switch, venue row, what the broker would match) and the
