@@ -1309,7 +1309,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 - [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates
 - [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
-- [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 
 <!-- BAZAAR:STATUS:END -->
 
