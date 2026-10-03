@@ -18,12 +18,13 @@ from bazaar_agent.agents.monitoring import MonitorLoop, Options
 from bazaar_agent.agents.runtime import MarketFeed
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.feed import FeedStore
+from bazaar_agent.guardrails import Ledger
 from bazaar_agent.monitor import Watcher
 from bazaar_agent.ticks import run_per_tick
 from tests.agent_fakes import CHEAP, RASTRO, TICK, FakePublic, FakeTeam, ask, bid, clock, our_ask, parts
 from tests.test_dealer import FakeDealerClient
 from tests.test_duel_jev import LIVE
-from tests.test_jev_journal import DuelClient
+from tests.test_jev_journal import DuelClient, use_policy
 from tests.test_strategy import EVENTS
 
 # ---------------------------------------------------------------- the budget table and its verdicts
@@ -155,16 +156,26 @@ def duel_client(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "team_client", lambda settings: tally.wrap(client, "team"))
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
+    # Stands in for the shared ledger a live run needs (as tests/test_jev_journal.py's duel_cli does).
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     return cli, client, tally
 
 
-def test_the_duel_player_moves_three_duels_inside_its_budget(duel_client):
+def test_the_duel_player_moves_three_duels_inside_its_budget(duel_client, monkeypatch):
     cli, client, tally = duel_client
+    use_policy(monkeypatch, cli, "v1")  # v1 moves every live duel each tick: the ceiling
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0 and "failed" not in result.output, result.output
     assert len(client.sent) == 3  # one move per live duel
     assert tally.total("team") == rb.duels(3).team == 6  # clock, /api/duels, ?done=true, three moves
     assert tally.calls[("team", "clock")] == 1 and tally.calls[("team", "duels")] == 2
+
+
+def test_the_live_duel_policy_stays_inside_the_same_budget(duel_client):
+    cli, client, tally = duel_client  # GUARDRAILS.md as committed (duel_policy v2 holds a conceding rival)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0 and "failed" not in result.output, result.output
+    assert len(client.sent) <= 3 and tally.total("team") <= rb.duels(3).team
 
 
 def test_the_monitor_reads_the_key_once_per_tick(tmp_path, monkeypatch):
