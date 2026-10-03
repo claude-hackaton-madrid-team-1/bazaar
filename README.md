@@ -1237,14 +1237,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+- [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 - [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
 - [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
 - [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
 - [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
 - [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
 - [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
-- [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
-- [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
 
 <!-- BAZAAR:STATUS:END -->
 

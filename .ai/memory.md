@@ -687,3 +687,14 @@ A run that restarts the simulator resumes the old world (tick 149, our cash at t
 someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time, as `scripts/sim_smoke.py` does.
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
+
+### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
+Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
+ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
+tick is unknown; the simulator charges the old one (`settle_due` runs before `venue_tick`) and rounds fees
+half-to-even while the tape rounds up. The taker prices the higher fee from `effective_tick ≤ tick + 2` (B19).
+
+### [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+Twice on Sat morning (load from ~10 parallel review agents), `uv run pytest` ended with no summary and a
+"Extension modules: psycopg_binary.pq, …" dump instead; the same commit passed on an immediate rerun (1127 and
+1172 passed). Rerun before blaming the change; a crash that repeats on an idle machine is real.
