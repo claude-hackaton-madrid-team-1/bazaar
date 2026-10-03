@@ -18,22 +18,22 @@ Gates: 1,268 passed and 35 skipped (the W1a adapter test skips until bazaar_sim 
 
 Points are against two stall-level rivals (W1a's reading of RULES.md): 0.5 at the stall, 1.0 above it, below the stall 0.5 × eff/stall. Won/lost is per session against the stall.
 
-| preset | world | stall | **edge** | edge_limit | oracle | edge pts (won/lost) | edge_limit pts (won/lost) |
+| preset | world | stall | **edge** | edge_limit | oracle (mean) | edge pts (won/lost) | edge_limit pts (won/lost) |
 |---|---|---|---|---|---|---|---|
-| normal | quote, default | 0.827 | 0.827 | 0.827 | 0.864¹ | 0.527 (6 %/5 %) | 0.527, 10 refused in total |
-| hard | quote, default | 0.821 | 0.823 | 0.823 | 0.867¹ | 0.543 (9 %/6 %) | 0.543, 24 refused |
-| normal | limit, default | 0.827 | 0.827 | 0.828 | 0.878¹ | 0.527 | 0.611 (24 %/14 %) |
-| hard | limit, default | 0.821 | 0.823 | 0.827 | 0.882¹ | 0.543 | 0.646 (31 %/17 %) |
-| normal | limit, 2× shade | 0.753 | 0.758 | 0.831 | 0.878¹ | 0.532 | 0.755 (53 %/16 %) |
-| hard | limit, 2× shade | 0.717 | 0.721 | 0.821 | 0.882¹ | 0.551 | 0.819 (66 %/14 %) |
-| normal | limit, 2× shade, all firm | 0.619 | 0.625 | 0.813 | 0.878¹ | 0.524 | 0.875 (76 %/9 %) |
-| normal | quote, tick 0 | 0.991 | **1.000** | 1.000 | 0.999¹ | 0.690 (38 %/9 %) | same |
-| hard | quote, tick 0 | 0.977 | **1.000** | 1.000 | 0.999¹ | 0.765 (53 %/10 %) | same |
-| normal | quote, tick 0, 2× shade, firm | 0.728 | **0.862** | 0.862 | 0.856¹ | 0.781 (56 %/0 %) | same |
-| hard | quote, tick 0, 2× shade, firm | 0.726 | **0.867** | 0.867 | 0.874¹ | 0.838 (68 %/0 %) | same |
-| hard | limit, tick 0, 2× shade, firm | 0.726 | 0.867 | **0.976** | 1.000¹ | 0.838 | 0.966 (93 %/0 %) |
+| normal | quote, default | 0.827 | 0.827 | 0.827 | 0.864 | 0.527 (6 %/5 %) | 0.527, 10 refused in total |
+| hard | quote, default | 0.821 | 0.823 | 0.823 | 0.867 | 0.543 (9 %/6 %) | 0.543, 24 refused |
+| normal | limit, default | 0.827 | 0.827 | 0.828 | 0.878 | 0.527 | 0.611 (24 %/14 %) |
+| hard | limit, default | 0.821 | 0.823 | 0.827 | 0.882 | 0.543 | 0.646 (31 %/17 %) |
+| normal | limit, 2× shade | 0.753 | 0.758 | 0.831 | 0.878 | 0.532 | 0.755 (53 %/16 %) |
+| hard | limit, 2× shade | 0.717 | 0.721 | 0.821 | 0.882 | 0.551 | 0.819 (66 %/14 %) |
+| normal | limit, 2× shade, all firm | 0.619 | 0.625 | 0.813 | 0.878 | 0.524 | 0.875 (76 %/9 %) |
+| normal | quote, tick 0 | 0.991 | **1.000** | 1.000 | 0.999 | 0.690 (38 %/9 %) | same |
+| hard | quote, tick 0 | 0.977 | **1.000** | 1.000 | 0.999 | 0.765 (53 %/10 %) | same |
+| normal | quote, tick 0, 2× shade, firm | 0.728 | **0.862** | 0.862 | 0.856 | 0.781 (56 %/0 %) | same |
+| hard | quote, tick 0, 2× shade, firm | 0.726 | **0.867** | 0.867 | 0.874 | 0.838 (68 %/0 %) | same |
+| hard | limit, tick 0, 2× shade, firm | 0.726 | 0.867 | **0.976** | 1.000 | 0.838 | 0.966 (93 %/0 %) |
 
-¹ Oracle column = mean (W1a reports the oracle's mean). In every cell the edge's mean efficiency is ≥ the stall's, and its points are ≥ 0.52. The edge never sends a match the quote rule refuses: 0 refused in all quote cells. At most 15 requests per tick (3 reads + 12 matches), which is 0.5 req/s on a 30 s tick.
+In every cell the edge's mean efficiency is ≥ the stall's, and its points are ≥ 0.52. The edge never sends a match the quote rule refuses: 0 refused in all quote cells. At most 15 requests per tick (3 reads + 12 matches), which is 0.5 req/s on a 30 s tick.
 
 ## Evidence: own bench (#55 generator, relax 75 %), 1,000 books, p50
 
@@ -42,9 +42,9 @@ Points are against two stall-level rivals (W1a's reading of RULES.md): 0.5 at th
 | normal / hard | base (spread arrivals, quote) | 0.802 / 0.803 | 0.801 / 0.803 | same | 0.819 / 0.832 | 0.890 / 0.889 | 0.902 |
 | normal / hard | offers carry `expires_tick` | 0.802 / 0.803 | **0.816 / 0.825** | same | 0.819 / 0.832 | | |
 | normal / hard | stall crosses 1 pair/tick, tick 0 | 0.875 / 0.785 | **1.000 / 1.000** | same | | | |
-| normal / hard | wide shade, limit rule | 0.732 / 0.716 | 0.733 / 0.718 | **0.804 / 0.795**² | 0.827 / 0.840 | | |
+| normal / hard | wide shade, limit rule | 0.732 / 0.716 | 0.733 / 0.718 | **0.804 / 0.803** | 0.827 / 0.840 | 0.814 / 0.803 | 0.902 |
 
-² p50 for normal; hard is the same order (mean 0.780 vs stall 0.698).
+Greedy (the starter broker) and exact (#71) equal the stall in every cell of both tables (identical p50 and mean, ±0.001), so they are left out. The full rows are in `--json`.
 
 ## What it means
 
