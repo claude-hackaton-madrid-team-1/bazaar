@@ -158,8 +158,9 @@ password or URL. Add it to Claude Code: README, "The tools as a remote MCP serve
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
-Market Test and keeps three views current. A dashboard reads them with plain SQL, or runs
-`uv run bazaar evals report --json`. Scores are 0..1; labels `good` (≥ 0.6) · `ok` (≥ 0.3) · `bad`.
+Market Test and keep three views current. They run inside the agents, every 6 ticks: the duel player
+scores duels, the taker the ladder and trades, the maker the Market Test. A dashboard reads them with
+plain SQL, or runs `uv run bazaar evals report --json`. Scores are 0..1; labels `good` (≥ 0.6) · `ok` (≥ 0.3) · `bad`.
 
 `outcomes` (key `(target, subject)`): `target` duel | dealer | trade | market_test · `subject`
 (`duel:85`, `thread:101`, `settlement:67`, `market_test:sat`) · `score` (null = settled, not scorable

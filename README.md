@@ -661,11 +661,14 @@ dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:
 `eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
 the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
 
-**Where they run.** Not as a Railway service (Omar, 2026-10-03): the taker, the maker and the duel
-player are to score their own settled decisions inside their tick loop, from Postgres only. Until that
-lands, run a pass from a laptop: `uv run bazaar evals run` once, or `uv run bazaar evals run --every-ticks 6`
-to keep scoring on the game clock (keyless `/api/clock`, never the team key). After a restart,
-`bazaar duel run` reads `?done=true` once, so a duel that finished while it was down is stored.
+**Where they run: inside the agents** (Omar, 2026-10-03; no Railway service). The duel player scores
+duels, the taker the dealer ladder and every team trade (its accepts and the maker's fills), the maker
+the Market Test. Each starts one pass every 6 ticks (`--evals-every N` on `duel run`, `agent taker`,
+`agent maker`; `0` = off; the first comes 6 ticks after start), after the tick has sent everything, on
+a background thread: Postgres and Phoenix only, zero game calls, a pass still running is never doubled,
+and an error is logged and dropped. From a laptop, `uv run bazaar evals run` scores everything once (or
+`--every-ticks 6` on the game clock, keyless `/api/clock`). After a restart, `bazaar duel run` reads
+`?done=true` once, so a duel that finished while it was down is stored.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
