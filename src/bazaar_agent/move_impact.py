@@ -36,6 +36,7 @@ MIN_JUMP = 5.0  # neg_points: a smaller change hides in the board's own drift
 LAG_TICKS = 12  # the board's `negotiating` follows neg_points at its next update (every 10 ticks)
 RECENT_EVENTS = 3  # the slope is the median of this many most recent measured changes
 MAX_SLOPE = 1.0  # a measured slope above this is noise (another component moved too), never used
+SALES_UNREAD = "(our sales unreadable)"  # ends a buy refused because our sales could not be read: hold, never walk
 TAPE_LAG_TICKS = 3  # a tape whose newest event is older than this (in ticks) may miss our latest settlements
 
 
@@ -87,6 +88,20 @@ def origins(settlements: Iterable[Mapping[str, Any]], team: str) -> dict[int, Or
                 )
             elif frm == team:
                 out.pop(asset, None)
+    return out
+
+
+def sales(settlements: Iterable[Mapping[str, Any]], team: str) -> dict[str, int]:
+    """Card ref -> the last tick we gave a copy of it away in a settlement (a sale, or the copy a swap gives). An El
+    Taller conversion is no settlement, so it is never a sale."""
+    out: dict[str, int] = {}
+    for p in settlements:
+        tick = p.get("tick")
+        for item in p.get("items") or []:
+            if not isinstance(item, Mapping) or item.get("frm") != team or item.get("kind", "card") != "card":
+                continue
+            if isinstance(tick, int) and isinstance(item.get("ref"), str):
+                out[item["ref"]] = max(tick, out.get(item["ref"], tick))
     return out
 
 
@@ -240,6 +255,7 @@ class Facts:
     points: tuple[ScorePoint, ...] = ()
     tick: int | None = None  # the tick these were read for
     tape_tick: int | None = None  # the newest event the tape holds
+    sold: Mapping[str, int] = field(default_factory=dict)  # card ref -> the last tick we sold it (`sales`)
 
     def slope(self, fallback: float) -> Slope:
         return slope(self.points, fallback)

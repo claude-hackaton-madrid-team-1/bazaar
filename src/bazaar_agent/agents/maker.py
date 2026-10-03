@@ -80,9 +80,11 @@ from bazaar_agent.agents.seller import (
     unsettled_accepts,
 )
 from bazaar_agent.agents.strategy_gate import AskFn, StrategyGate
+from bazaar_agent.agents.taller import TALLER_ITEM
 from bazaar_agent.agents.team_desk import disabled, maker_may_list
 from bazaar_agent.decisions import RELIST_REST, DecisionLog, Status
 from bazaar_agent.guardrails import (
+    TALLER_RARITIES,
     Action,
     Context,
     Guardrails,
@@ -102,7 +104,6 @@ from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
-from bazaar_agent.taller import TALLER_ITEM, TALLER_RARITIES
 from bazaar_agent.team_matrix_store import LatestMatrix
 from bazaar_agent.ticks import Clock
 

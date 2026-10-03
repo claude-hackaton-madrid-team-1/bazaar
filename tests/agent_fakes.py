@@ -159,11 +159,11 @@ class FakeTeam:
         self.reads.append("schedule")
         return deepcopy(getattr(self, "schedule_payload", {"now_hours": 1.5, "upcoming": []}))
 
-    def taller(self, assets):
-        """A fake POST /api/taller: the real answer is unpublished, so this one is a guess the code must not rely on."""
-        self.sent.append(("taller", list(assets)))
-        pulled = {"id": next(self._ids), "kind": "card", "ref": "RET-06", "rarity": "uncommon"}
-        return {"ok": True, "card": pulled, "luck": "shown"}
+    def call(self, method, path, body=None):
+        """The kit's generic route (`Bazaar.call`), e.g. POST /api/taller: its real answer is unpublished, so this
+        one is a guess the code must not rely on."""
+        self.sent.append(("call", method, path, body))
+        return {"card": {"id": next(self._ids), "kind": "card", "ref": "RET-06", "rarity": "uncommon"}}
 
 
 class FakePublic:

@@ -14,31 +14,38 @@ into El Taller."
 `GET /api/levels`, id `taller`, kind `taller`, active since game hour 7.2: "POST /api/taller {"assets": [a, b, c]}:
 three spare copies of one rarity (you keep at least one of each card) become one card of the next rarity. The pull
 is luck, shown and never scored." Not in `docs/api/openapi.json`, the kit or the live OpenAPI: the answer shape,
-cost and cooldown are UNKNOWN. The answer is parsed tolerantly (`TallerResult`, extra=allow) and kept raw.
+cost and cooldown are UNKNOWN. The request goes through the kit's generic `call` (README §6: a level's route is
+one `b.call("POST", "/api/...", {...})` away), the answer is recorded as received (`executions`) and read by
+`agents.taller.pulled`, which takes any shape and never raises.
 
 ## Scoring context (docs/briefing.md)
 Holdings never score by themselves; the pull does not score. Its worth: an uncommon that fills a missing page slot,
 or stock for ladder sales to Pilar (L3) and Chato (L2), always above `your_value`.
 
+## Design (merged with SA1, which landed on main first)
+SA1 (`agents/taller.py`, the taker's `_taller`, `bazaar taller`, kind `taller` in `guardrails.check`) is the base:
+level gating through the news sentinel's `/api/levels` read, the triple ranking (a pull that may fill a missing
+slot, the highest dealer level that buys the result, the cheapest to give up) and the score impact of each given
+copy at 0. TL1 hardens it after the #236 reviews.
+
 ## Acceptance criteria
-1. `taller.plan_taller(me, open_offers, rules, catalog)` is pure and deterministic (no Jev, no LLM): only FREE
-   spares (held − copies in our open offers − 1 per card; an offer that does not name its card counts against every
-   card); commons first, then uncommons, never a rare or above; cards held more than `max_copies_kept` first, then
-   the lowest set multiplier (/me `affinity`), then the lowest `your_value`; the three may be different cards.
-2. `guardrails.check()` kind `taller`: refuses with `taller_enabled` false, with the hourly count unread or at
-   `max_taller_per_game_hour` (shared ledger rows `taller`), anything but three copies of one common/uncommon
-   rarity, any input that is the last free copy of its card (every set; our open offers and the accepts still
-   settling count as given, an accept that cannot name its copy holds every conversion), and inputs whose loss
-   priced at 0 passes `max_score_loss_per_move`. The kill switch and a tripped `taller` breaker hold it.
-3. `TeamBazaar.taller(assets)`: one POST, never re-sent after a 429, a 5xx or a network error.
-4. Taker: at most one conversion per tick, after its other sends; album first (fresh /me and offers before, /me after);
-   skipped on a short tick, at the hourly cap, and while `deploy_guard.verdict` (live duel deadlines within
-   `deploy_guard_duel_ticks`, Market Test benches, scheduled events) is unsafe; never the team's accept slot.
-5. Maker: while `taller_enabled`, no NEW ask for a spare common; an ask already open is never cancelled for it.
-6. `bazaar taller [a b c] [--live]`: dry run by default, the plan with no ids, the same `taller.convert` path.
-7. Tests with no network for each of the above.
+1. Only FREE copies go in: our open offers (board and thread, read again right before the craft) and the accepts
+   still settling (`settling`: `sell:<asset>`, a plain ref takes one copy, an unnamed `team:<thread>` holds every
+   craft that tick) are never free; one copy of every card always stays, on any set; commons and uncommons only.
+2. One hourly cap for every process: shared ledger rows (kind `spend`, price 0, item `taller:<refs>`; the table
+   takes no other kind), booked before the send; `max_taller_per_game_hour` = 1 until a first real answer is seen.
+3. The taker: at most one craft per tick, after its other sends, never the accept slot; never on a short tick, at
+   the cap (no request), near a duel deadline or a Market Test (`deploy_guard.verdict`); a craft not sent waits 10
+   ticks; a cash drop stops crafting in that process.
+4. `bazaar taller`: no ids lists the ranked triples; three ids go through the same `craft_one` path (dry run unless
+   `--live`), with the same holds.
+5. The maker posts no new ask for a spare common, nor for an uncommon in the two ticks after a craft; open asks are
+   never cancelled for it.
+6. `max_copies_kept`: copies of cards held more often go first.
+7. Tests with no network for each of the above, including the shared ledger's kind check on the Postgres path.
 
 ## Out of scope / follow-ups
-- The MCP tool (`taller` in `runtime/tools.py`) is not wired in this PR.
-- First live use is by the coordinator, by hand: `uv run bazaar taller --live`, recording the real answer.
-- `bazaar_sim` has a minimal `POST /api/taller` (our model, not the real answer); the smoke may or may not hit it.
+- The MCP tool is not wired.
+- First live use: the coordinator, by hand: `uv run bazaar taller` (ranked triples), then `uv run bazaar taller a b c
+  --live`; the raw answer lands in `executions`.
+- `bazaar_sim` has a minimal `POST /api/taller` (our model, not the real answer).
