@@ -4,10 +4,10 @@ the team's one accept per tick through the ledger, against zoo and exploiter riv
 
     uv run python scripts/duel_e2e.py --tick-seconds 15 --ticks 80 --out .local/e2e-15s.json
 
-It starts `bazaar-sim serve` on 127.0.0.1:8765 with 3 seller/buyer pairs per team per session (6 duels on one
-deadline), runs both agents with BAZAAR_SIM=local and a `sim-` key only, waits, then reads the finished duels and
-the ledger. The duel settings are whatever GUARDRAILS.md says in this checkout: run it from a scratch worktree
-whose (uncommitted) GUARDRAILS.md holds the settings under test.
+It starts `bazaar-sim serve` on 127.0.0.1 (`--port`, default 8765 = config.LOCAL_SIM_URL) with 3 seller/buyer
+pairs per team per session (6 duels on one deadline), runs both agents with BAZAAR_SIM=local and a `sim-` key
+only, waits, then reads the finished duels and the ledger. The duel settings are whatever GUARDRAILS.md says in
+this checkout: run it from a scratch worktree whose (uncommitted) GUARDRAILS.md holds the settings under test.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-SIM_URL = "http://127.0.0.1:8765"
+PORT = 8765  # config.LOCAL_SIM_URL
 STYLES = "linear,convex,one_shot,tit_for_tat,no_show,holdout,squeezer,oracle_squeezer"
 FORBIDDEN_ENV = ("BAZAAR_KEY", "BAZAAR_LIVE", "DATABASE_URL", "BAZAAR_SIM_DATABASE_URL")
 DEAD_DB = "postgresql://nobody@127.0.0.1:1/none"  # nothing listens on port 1: every process falls back to JSONL
@@ -39,7 +39,11 @@ def agent_env() -> dict[str, str]:
     return env
 
 
-def preflight(env: dict[str, str]) -> None:
+def sim_url(port: int) -> str:
+    return f"http://127.0.0.1:{port}"
+
+
+def preflight(env: dict[str, str], port: int) -> None:
     """Refuse to run unless the agent's resolved target is the local simulator (settings.simulator, 127.0.0.1)."""
     code = (
         "from bazaar_agent.config import load_settings; s = load_settings(); "
@@ -47,17 +51,17 @@ def preflight(env: dict[str, str]) -> None:
     )
     out = subprocess.run(["uv", "run", "python", "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
     url, simulator, key = (out.stdout.strip().split() + ["", "", ""])[:3]
-    if url != SIM_URL or simulator != "True" or key != "sim-":
+    if url != sim_url(port) or simulator != "True" or key != "sim-":
         raise SystemExit(f"preflight refused: target {url!r} simulator {simulator!r} key {key!r} ({out.stderr[-300:]})")
     if (ROOT / ".env").exists():
         raise SystemExit("preflight refused: a .env in this checkout could carry real keys or DATABASE_URL")
 
 
-def wait_for_sim(timeout: float = 60.0) -> None:
+def wait_for_sim(port: int, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(SIM_URL + "/api/clock", timeout=2):
+            with urllib.request.urlopen(sim_url(port) + "/api/clock", timeout=2):
                 return
         except OSError:
             time.sleep(0.5)
@@ -115,10 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--decay", type=float, default=0.08)
     ap.add_argument("--styles", default=STYLES)
     ap.add_argument("--taker", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--port", type=int, default=PORT, help="must match the checkout's config.LOCAL_SIM_URL")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
     env = agent_env()
-    preflight(env)
+    preflight(env, args.port)
     work = args.out.with_suffix("")
     work.mkdir(parents=True, exist_ok=True)
     sim_env = {k: v for k, v in os.environ.items() if not k.startswith("BAZAAR")} | {
@@ -132,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         "SIM_DATABASE_URL": "memory",
     }
     sim = subprocess.Popen(
-        ["uv", "run", "bazaar-sim", "serve", "--port", "8765"],
+        ["uv", "run", "bazaar-sim", "serve", "--port", str(args.port)],
         cwd=ROOT,
         env=sim_env,
         stdout=(work / "sim.log").open("w"),
@@ -140,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     procs: list[subprocess.Popen[bytes]] = []
     try:
-        wait_for_sim()
+        wait_for_sim(args.port)
         ticks = str(args.ticks)
         duel_cmd = ["uv", "run", "bazaar", "duel", "run", "--play", "--no-jev", "--max-ticks", ticks]
         procs.append(subprocess.Popen(duel_cmd, cwd=ROOT, env=env, stdout=(work / "duels.log").open("w"),
