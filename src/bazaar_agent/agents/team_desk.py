@@ -20,6 +20,7 @@ our surplus would fall below `floor`; their structure is never adopted as our co
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 from collections import Counter
@@ -108,7 +109,14 @@ class Value:
 
 
 def value_of(
-    t: Terms, m: Market, me: Mapping[str, Any], params: StrategyParams, venue: Venue | None, *, we_accept: bool
+    t: Terms,
+    m: Market,
+    me: Mapping[str, Any],
+    params: StrategyParams,
+    venue: Venue | None,
+    *,
+    we_accept: bool,
+    listed: frozenset[int] = frozenset(),
 ) -> Value:
     """What these terms are worth to us, from the structure alone: each card we get at its worth to us (a
     missing page card with its page bonus share, else the next copy's marginal), each copy we give at what
@@ -122,11 +130,21 @@ def value_of(
         if a is None or a.get("kind") != "card" or not isinstance(a.get("your_value"), int | float):
             problems.append(f"asset {asset_id} is not a card we hold with a your_value")
             continue
+        if asset_id in listed:
+            problems.append(f"asset {asset_id} is already in another open offer of ours")
+            continue
         card = m.cards.get(str(a.get("ref")))
         given += float(a["your_value"]) + (bonus_at_stake(m, card, params) if card else 0.0)
         held[str(a.get("ref"))] -= 1
     for ref in t.give_refs:  # any copy: the one we lose least by
-        copies = [a for a in assets.values() if a.get("ref") == ref and isinstance(a.get("your_value"), int | float)]
+        copies = [
+            a
+            for a in assets.values()
+            if a.get("ref") == ref
+            and a.get("kind") == "card"
+            and isinstance(a.get("your_value"), int | float)
+            and int(a["id"]) not in listed
+        ]
         if not copies:
             problems.append(f"they want {ref}, which we do not hold")
             continue
@@ -212,7 +230,8 @@ class TeamPlan:
     opening: Terms
     floor: float = 2.0  # our least surplus on a deal (min_buy_surplus); never accept or offer below it
     step: int = 2  # P our cash leg moves per counter
-    max_rounds: int = 8  # our messages before we walk
+    max_rounds: int = 8  # our offers at most: then our last one stands until `patience` runs out
+    patience: int = 6  # ticks we wait for an answer to our newest offer before we walk
     expires_in_ticks: int = 10  # life of each structured offer we make in the thread
 
 
@@ -222,6 +241,8 @@ class TeamNegotiation:
     thread_id: int | None = None
     ours: list[Terms] = field(default_factory=list)  # our offers, newest last
     seen: set[int] = field(default_factory=set)  # their offer ids already judged
+    answered: int | None = None  # their offer id our newest counter answered (None: none yet)
+    idle: int = 0  # ticks since our newest offer without a new offer from them
     accepted: int | None = None  # the tick count at which we accepted their offer (it settles next tick)
     agreed: Terms | None = None  # the terms we accepted (theirs), for booking the deal
     ticks: int = 0
@@ -258,10 +279,16 @@ def decide(
     the callables value terms (structure only) and say why the guardrails would refuse a deal."""
     plan = neg.plan
     if neg.thread_id is None:
+        opening = surplus_if_offered(plan.opening)
+        if opening.surplus < plan.floor:
+            return TeamMove("walk", reason=f"our proposal gives us {opening.surplus:+.1f} (< floor {plan.floor:g})")
+        if (refused := guard(plan.opening, None)) is not None:
+            return TeamMove("walk", reason=f"guardrails refuse our proposal ({refused})")
         return TeamMove("open", plan.opening, reason="open the thread with our proposal")
     nxt = concede(neg.current, plan.step) if neg.ours else neg.current
     nxt_ok = surplus_if_offered(nxt).surplus >= plan.floor and guard(nxt, None) is None
     last_round = len(neg.ours) >= plan.max_rounds or not nxt_ok
+    fresh = their is not None and their.get("id") != neg.answered  # an answer to our newest offer
     if their is not None and isinstance(their.get("id"), int) and inspection is not None:
         terms = their_terms(their)
         value = surplus_if_accepted(terms)
@@ -281,12 +308,12 @@ def decide(
             return TeamMove("accept", terms, int(their["id"]), f"their offer gives us {value.surplus:+.1f}")
     else:
         why = "no standing offer from them"
-    if len(neg.ours) >= plan.max_rounds:
-        return TeamMove("walk", reason=f"{plan.max_rounds} offers without a deal; {why}")
-    if not nxt_ok:
-        return TeamMove("wait", reason=f"at our limit, our last offer stands; {why}")
-    if neg.ours and nxt == neg.current:
-        return TeamMove("wait", reason=f"our offer stands; {why}")
+    if not fresh:  # never negotiate against ourselves: concede only on an answer
+        if neg.idle >= plan.patience:
+            return TeamMove("walk", reason=f"no answer for {neg.idle} ticks; {why}")
+        return TeamMove("wait", reason=f"waiting for their answer; {why}")
+    if last_round:
+        return TeamMove("wait", reason=f"our last offer stands; {why}")
     return TeamMove("counter", nxt, reason=why)
 
 
@@ -335,13 +362,14 @@ def words_for(kind: MoveKind, t: Terms, cards: CardIndex) -> str:
 
 
 def deal_actions(t: Terms, m: Market, team: str, notional: int, worth_received: float) -> list[Action]:
-    """The guardrail actions a deal implies: each copy we give is a sale at what we receive for the whole
-    deal (never below its your_value × sell_min_value_ratio, checked per copy at its share), each card we get
+    """The guardrail actions a deal implies: each copy we give is a sale at its share of what we receive
+    (`worth_received`: the cards we get at our worth plus their cash; never below its your_value ×
+    sell_min_value_ratio), each card we get
     a buy of the cash we pay (its price cap, never a card we hold: `block_buying_held_cards`), the cash we
     give the cash floor and the spend cap; all count the deal's notional toward the team's share."""
     out: list[Action] = []
     copies = len(t.give_assets) + len(t.give_refs)
-    per_copy = math.floor((worth_received + t.get_cash) / copies) if copies else 0
+    per_copy = math.floor(worth_received / copies) if copies else 0  # worth_received already holds their cash
     for _ in range(copies):
         out.append(Action("sell", "", None, per_copy, counterparty=team, volume=notional))
     for i, ref in enumerate(t.get_refs):
@@ -420,7 +448,7 @@ def plan_from_trade(trade: Mapping[str, Any], venue: str = "rastro", floor: floa
 def assets_for_accept(t: Terms, me: Mapping[str, Any], listed: Sequence[int] = ()) -> list[int]:
     """The copies we hand over when we accept their offer: the ids it names, then for each 'any copy of'
     the copy we lose least by (never one already in another open offer of ours)."""
-    out = list(t.give_assets)
+    out = [i for i in t.give_assets if i not in listed]  # a copy in another offer of ours is not free
     for ref in t.give_refs:
         copies = sorted(
             (
@@ -429,6 +457,7 @@ def assets_for_accept(t: Terms, me: Mapping[str, Any], listed: Sequence[int] = (
                 if a.get("ref") == ref
                 and a.get("kind") == "card"
                 and isinstance(a.get("id"), int)
+                and isinstance(a.get("your_value"), int | float)
                 and int(a["id"]) not in out
                 and int(a["id"]) not in listed
             ),
@@ -465,6 +494,7 @@ class TeamDesk:
         plans: Sequence[TeamPlan],
         now: Callable[[], float] | None = None,
         hub: Any = None,
+        leave_threads: int = 3,
     ) -> None:
         import time
 
@@ -475,6 +505,7 @@ class TeamDesk:
         self.now = now or time.monotonic
         self.rec = Recorder("team-desk", decisions, live, log, hub)
         self.negs = [TeamNegotiation(p) for p in plans]
+        self.leave_threads = leave_threads  # open threads left for the taker's dealer desk
         self.done: list[tuple[TeamPlan, str]] = []
 
     def on_tick(self, clock: Any) -> None:
@@ -508,9 +539,12 @@ class TeamDesk:
         cards = CardIndex.from_catalog(snap.catalog)
         params = self.params(clock.tick)
         venues = {v.id: v for v in snap.venues}
+        threads: list[dict[str, Any]] = []
+        if self.live:  # the threads already open: adopt ours after a restart, count them against the cap
+            threads = [t for t in (self.team.my_threads("open") or {}).get("threads") or [] if isinstance(t, dict)]
         for neg in list(self.negs):
             neg.ticks += 1
-            self._step(neg, snap, window, m, cards, params, venues.get(neg.plan.venue))
+            self._step(neg, snap, window, m, cards, params, venues.get(neg.plan.venue), threads)
 
     def _ctx(self, snap: Any, skip_thread: int | None) -> Context:
         """The live guardrail context: /me, the ledger, our open offers (but this thread's own, which the
@@ -535,20 +569,46 @@ class TeamDesk:
         cards: CardIndex,
         params: StrategyParams,
         venue: Venue | None,
+        threads: Sequence[Mapping[str, Any]] = (),
     ) -> None:
+        from bazaar_agent.agents.seller import offers_in, open_commitments
         from bazaar_agent.intel import book_values
+        from bazaar_agent.sdk import BazaarError
 
         tick, plan = snap.clock.tick, neg.plan
+        limits = snap.clock.limits
+        if neg.thread_id is None:
+            mine = next((t for t in threads if t.get("with") == plan.team and isinstance(t.get("id"), int)), None)
+            if mine is not None:  # a restart: our thread with this team is still open, carry on in it
+                neg.thread_id = int(mine["id"])
+                self.log(f"tick {tick} team-desk: adopting open thread {neg.thread_id} with {plan.team}")
+            elif len(threads) >= limits.max_open_threads_per_team - self.leave_threads:
+                self.log(f"tick {tick} team-desk: {len(threads)} open thread(s): {plan.team} waits")
+                return
+            elif sum(1 for o in offers_in(snap.offers) if o.get("status") in (None, "open")) >= (
+                limits.max_open_offers_per_team
+            ):
+                self.log(f"tick {tick} team-desk: open offer cap reached: {plan.team} waits")
+                return
         thread: dict[str, Any] = {}
-        if neg.thread_id is not None and self.live:
-            thread = self.team.thread(neg.thread_id) or {}
+        if neg.thread_id is not None and neg.thread_id > 0 and self.live:
+            try:
+                thread = self.team.thread(neg.thread_id) or {}
+            except BazaarError as e:  # one thread's refusal never stops the others
+                if e.status in (403, 404):
+                    self.log(f"tick {tick} team-desk: thread {neg.thread_id} with {plan.team} gone ({e.code})")
+                    self.negs.remove(neg)
+                    self.done.append((plan, f"thread gone ({e.code})"))
+                else:
+                    self.log(f"tick {tick} team-desk: thread {neg.thread_id} read refused {e.code}; next tick")
+                return
             status = str(thread.get("status") or "open")
             if status != "open":
                 return self._finished(neg, snap, status, thread)
         if neg.accepted is not None:
             if neg.ticks - neg.accepted < ACCEPT_SETTLE_TICKS:
                 return
-            neg.accepted = None  # it never settled: negotiate on
+            neg.accepted, neg.agreed = None, None  # it never settled: negotiate on
         their = newest_offer_from(thread, plan.team) if thread else None
         inspection = None
         if their is not None:
@@ -562,28 +622,38 @@ class TeamDesk:
         ctx = self._ctx(snap, neg.thread_id)
         book = book_values(snap.catalog)
 
+        # Copies already promised elsewhere are not free; our own offers in this thread are replaced.
+        elsewhere = frozenset(
+            i
+            for o in offers_in(snap.offers)
+            if o.get("thread") != neg.thread_id
+            for i in open_commitments([o], snap.us).listed
+        )
+
         def accepted_value(t: Terms) -> Value:
-            return value_of(t, m, snap.me, params, venue, we_accept=True)
+            return value_of(t, m, snap.me, params, venue, we_accept=True, listed=elsewhere)
 
         def offered_value(t: Terms) -> Value:
-            return value_of(t, m, snap.me, params, venue, we_accept=False)
+            return value_of(t, m, snap.me, params, venue, we_accept=False, listed=elsewhere)
 
         def guard(t: Terms, theirs: Mapping[str, Any] | None) -> str | None:
-            v = value_of(t, m, snap.me, params, venue, we_accept=theirs is not None)
+            v = value_of(t, m, snap.me, params, venue, we_accept=theirs is not None, listed=elsewhere)
             if v.problems:
                 return "; ".join(v.problems)
             return guard_deal(t, m, snap.me, plan.team, ctx, self.rules, notional_of(t, book, snap.me), v.received)
 
         move = decide(neg, their, inspection, accepted_value, offered_value, guard)
         if move.kind == "wait":
+            neg.idle += 1
             return
         if move.kind == "walk":
-            self._walk(neg, tick, move, window)
+            self._walk(neg, tick, move, window, thread)
         elif move.kind == "accept" and move.terms is not None and move.offer_id is not None:
-            self._accept(neg, snap, move, window, guard(move.terms, their))
+            self._accept(neg, snap, move, window, guard(move.terms, their), thread, sorted(elsewhere))
         elif move.terms is not None:
             refused = guard(move.terms, None)
-            self._offer(neg, snap, move, window, cards, refused, offered_value(move.terms))
+            answered = int(their["id"]) if their is not None and isinstance(their.get("id"), int) else None
+            self._offer(neg, snap, move, window, cards, refused, offered_value(move.terms), thread, answered)
 
     # ------------------------------------------------------------ the writes
 
@@ -596,6 +666,8 @@ class TeamDesk:
         cards: CardIndex,
         refused: str | None,
         value: Value,
+        thread: Mapping[str, Any],
+        answered: int | None,
     ) -> None:
         tick, plan, terms = snap.clock.tick, neg.plan, move.terms
         assert terms is not None
@@ -638,6 +710,8 @@ class TeamDesk:
                 neg.thread_id = -1  # a dry run pretends the thread opened
         text = words_for(move.kind, terms, cards)
         if self.live and neg.thread_id is not None and neg.thread_id > 0:
+            if not self._withdraw_ours(neg, snap, thread, did):  # one standing offer of ours per thread
+                return
             tid = neg.thread_id
             sent = self.rec.send(
                 did, tick, "say", {"thread": tid, "offer": offer}, lambda: self.team.say(tid, text, offer=offer)
@@ -645,14 +719,36 @@ class TeamDesk:
             if sent is None and not self.rec.maybe_landed:
                 return
         neg.ours.append(terms)
+        neg.answered, neg.idle = answered, 0
 
-    def _accept(self, neg: TeamNegotiation, snap: Any, move: TeamMove, window: Any, refused: str | None) -> None:
+    def _withdraw_ours(self, neg: TeamNegotiation, snap: Any, thread: Mapping[str, Any], did: int) -> bool:
+        """Cancel our own open standing offers in this thread before a new one or an accept: never two
+        offers of ours that could both be accepted. False when a cancel failed (nothing more is sent)."""
+        tick = snap.clock.tick
+        for o in thread.get("standing_offers") or []:
+            if isinstance(o, dict) and o.get("maker") == snap.us and o.get("status") in (None, "open"):
+                oid = o.get("id")
+                if not isinstance(oid, int):
+                    continue
+                cancel = functools.partial(self.team.cancel, oid)
+                if self.rec.send(did, tick, "cancel", {"offer": oid}, cancel) is None:
+                    return False
+        return True
+
+    def _accept(
+        self,
+        neg: TeamNegotiation,
+        snap: Any,
+        move: TeamMove,
+        window: Any,
+        refused: str | None,
+        thread: Mapping[str, Any],
+        listed: Sequence[int],
+    ) -> None:
         from bazaar_agent.agents.runtime import accept_limit
-        from bazaar_agent.agents.seller import offers_in, open_commitments
 
         clock, plan, terms = snap.clock, neg.plan, move.terms
         assert terms is not None and move.offer_id is not None
-        listed = sorted(open_commitments(offers_in(snap.offers), snap.us).listed)
         assets = assets_for_accept(terms, snap.me, listed)
         limit = accept_limit(clock, self.rules)
         why = refused
@@ -685,6 +781,8 @@ class TeamDesk:
         if why is not None:
             return
         if self.live:
+            if not self._withdraw_ours(neg, snap, thread, did):  # ours must not fill too
+                return
             oid = move.offer_id
             body = self.rec.send(
                 did,
@@ -697,8 +795,13 @@ class TeamDesk:
                 return
         neg.accepted, neg.agreed = neg.ticks, terms
 
-    def _walk(self, neg: TeamNegotiation, tick: int, move: TeamMove, window: Any) -> None:
+    def _walk(self, neg: TeamNegotiation, tick: int, move: TeamMove, window: Any, thread: Mapping[str, Any]) -> None:
         plan = neg.plan
+        if neg.thread_id is None:  # never opened: our proposal itself does not pass
+            self.log(f"tick {tick} team-desk: not opening with {plan.team}: {move.reason}")
+            self.negs.remove(neg)
+            self.done.append((plan, f"not opened: {move.reason}"))
+            return
         did = self.rec.decide(
             tick,
             "team_walk",
