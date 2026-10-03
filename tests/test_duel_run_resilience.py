@@ -50,7 +50,8 @@ def test_a_latch_that_raises_still_lets_the_endgame_accept_go_out(duel_cli, monk
     calls: list[str] = []
     monkeypatch.setattr(dd.DaysSwitch, "observe", broken_observe(calls))
     _, output = run_one_tick(cli)
-    assert client.sent == [("accept", 95)] and calls == ["unknown"]
+    # every call this tick (the live read, and main's finished-duels read) saw the rolled-back verdict
+    assert client.sent == [("accept", 95)] and calls and set(calls) == {"unknown"}
     assert f"{LATCH_FAILED} (OSError: No space left on device)" in output
     (row,) = decision_rows(tmp_path)
     assert (row["kind"], row["status"]) == ("duel_accept", "done")
