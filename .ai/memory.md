@@ -310,3 +310,10 @@ reviewing new heads. Omar disabled it. Every PR now runs `/pr-review <n>` (`.ai/
 a fresh-context sub-agent that merges the PR onto current main, runs the gate and posts a P0-P3 verdict.
 Tonight's manual reviews in that shape caught a test that only failed after merging with main (#62) and
 leaks of our limits on the public `/state` (#69).
+
+### [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
+It serves `bazaar-sim` on 127.0.0.1:8765 (memory world, 2 s ticks) and runs our CLI with BAZAAR_SIM=local:
+status, a negotiated dealer buy, two live ticks of taker and maker, duel moves, the monitor's SSE, the key
+guard and the BAZAAR_URL fail-fast. Every non-local host goes through a dead proxy. ~20 s locally.
+Deployed sim verified 02:10: tick 12→13 in 11 s, store `bazaar_sim`; live buy LAV-03 at 8 (thread 7, 4 ticks).
+
