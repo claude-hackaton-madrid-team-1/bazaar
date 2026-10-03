@@ -314,6 +314,10 @@ class TeamDesk:
             and t.get("status", "open") == "open"
         ]
 
+    def payloads(self) -> list[dict[str, Any]]:
+        """The team thread payloads read this tick (no request): the injection log reads their words."""
+        return list(self._payloads.values())
+
     def _payload(self, t: dict[str, Any]) -> dict[str, Any]:
         """The thread with its messages and standing offers: the list entry when it has them, else one read."""
         if "standing_offers" in t and "messages" in t:

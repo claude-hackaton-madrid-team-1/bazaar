@@ -1220,6 +1220,61 @@ move would read "no tick budget for jev" (20 team opens already did at 30 s tick
 BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
 offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
 
+### [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+Claim-only storage made `opened_before()` true (regression: `2 failed, 22 deselected`) → it excluded `_claim`
+but counted `_once:bench_match_probe` → exclude the literal `_once:` prefix from both venue count and load.
+Keep real keyless venue markers; an in-memory SQL regression covers both states and target isolation.
+Validation also hit local Postgres contention: the full suite stalled inside psycopg, then a retry failed
+the `rival_board` lock-timing test; the parallel coverage run hit a schema lock timeout in approvals setup.
+Both affected tests passed alone (`2 passed in 2.89s`); the final full gate without competing coverage passed:
+`5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.
+
+### [2026-10-04] build-error: PR #263 merge verification separator
+The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
+The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.
+
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it. Existing sell guards remain binding. Two replay tests pin their historical cap to 26.
+PR #265 is limited to these three guardrail changes; duel sending and request budgets match origin/main.
+
+### [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
+The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
+showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
+
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
+
+### [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+`CREATE INDEX IF NOT EXISTS` still takes a ShareLock, so startup can wait behind a writer and a backfill can
+block live inserts until its transaction ends. Check `to_regclass` first, bound setup lock/statement waits
+to 1.5 s, and commit schema setup before backfill reads; `store()` now does no DDL. Local Postgres regression
+tests cover the held-write transaction, missing-index timeout and released setup locks.
+
+### [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+Ruff F811 on a local connection named `conn` → the module imports that name as a fixture → renamed the local
+connection to `fresh`; the fixture and its callers are unchanged.
+
+### [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+`Taker._keep()` sees every listed thread but labeled each `dealer_thread`; the later team-desk pass then
+recorded the same message under `team_thread`. Derive the source from thread kind and test both passes
+against one buffer. Keep extraction inside the recorder's never-raises guards; malformed metadata must not
+cost a taker move or stop the duel runner's post-send processing.
+
+### [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+`run_per_tick` catches tick exceptions, so a sent move plus CLI exit 0 can hide a failed recorder. The wiring
+regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
+The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
+
 ### [2026-10-04] build-error — #244 conflicts with the Workshop hardening on main
 The merge conflicted in GUARDRAILS.md, taker, CLI and guardrails because TL1 replaced process-local craft counts
 with shared ledger rows and strengthened busy checks. Keep main's shared accounting, enabled Workshop, fresh

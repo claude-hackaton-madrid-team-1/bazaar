@@ -241,8 +241,8 @@ def test_dealer_final_lift_off_keeps_every_cap_as_today():
     rules = REAL.rules
     assert rules.dealer_final_lift == 0
     assert rules.final_cap_for("uncommon") == rules.max_price_uncommon
-    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 27, final=True), ctx(), rules)
-    assert str(final) == "denied: price 27 > max_price_uncommon 26"
+    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 31, final=True), ctx(), rules)
+    assert str(final) == "denied: price 31 > max_price_uncommon 30"
 
 
 def test_dealer_final_lift_lets_only_a_final_pass_the_card_cap():
