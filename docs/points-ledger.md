@@ -24,6 +24,15 @@ row per change, ticks 159 to 1445), `leaderboard_snapshots` (all 18 teams, every
   `human_approval_above` at `250`. `dealer_sell_enabled false` means hand commands only after `bazaar impact`.
   Dealer sales can lose `neg_points`, so they require the same prospective impact check as other sales.
 
+Sunday schedule correction, 4 Oct: the [live schedule](https://bazaar.causaprima.ai/api/schedule) says
+"Round 3 starts" at h16.65, 09:00 CEST, coinciding with opening and Chamberí release. The ladder restarts then;
+these Saturday results do not establish Sunday saturation. One game hour is one real hour on Sunday.
+The 150 P grant is h16.7, about 09:03; Market Tests are h17/h19/h21, about 09:21/11:21/13:21; Duels III is
+h18.65, about 11:00, with two issues, 12-tick duels and decay 0.10. Finale warning is h21.45, about 13:48;
+all dealer stalls close and Grand Final duels start at h21.65, about 14:00. "Scores freeze" is h22.65, 15:00.
+Whether the pre-opening h14.65 hard Market Test and h15 Market Test fire at opening or are skipped is
+**UNVERIFIED**, as is their round attribution if fired. Full entries: `docs/briefing.md`, "Windows this weekend".
+
 ## 1. Where our 25.65 (rank 9) comes from, at tick 1445
 
 `/me` score JSON (final row): `score 25.65 = negotiating 18.15 + market 7.5`; `duel_points 42.37`, `ladder_points 0.336`,

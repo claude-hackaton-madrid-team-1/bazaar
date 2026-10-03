@@ -1285,3 +1285,14 @@ WebM capture could not encode without ffmpeg and the system Python lacked Pillow
 The full Ruff gate rejected `docs/pitch/motion/check.py` for a missing explicit `zip` strictness and long lines;
 its format check also failed. Added `strict=True` for the two script languages, wrapped the embedded JavaScript,
 and formatted the checker. Its offline self-check passed: 7 slides, 165 seconds, embedded images and source comments.
+### [2026-10-04] finding
+Sunday schedule correction: one keyless GET https://bazaar.causaprima.ai/api/schedule returned
+`now_hours: 13.367`, "Sunday opens" at h16.65 with wall `2026-10-04T09:00:00+02:00` and 15 s ticks,
+and "The Bazaar closes" at h22.65 with wall `2026-10-04T15:00:00+02:00`. One game hour is one real hour.
+"Round 3 starts" and "Chamberí released" are h16.65, 09:00 CEST, with the ladder restart;
+150 P grant h16.7 ~09:03; Market Tests h17/h19/h21 ~09:21/11:21/13:21; Duels III h18.65 ~11:00
+(two issues, 12-tick duels, decay 0.10); finale warning h21.45 ~13:48; all five dealer stalls close
+and Grand Final duels start h21.65 ~14:00; "Scores freeze" h22.65, 15:00. Intermediate wall times
+assume no further pause or schedule change. The hard Market Test h14.65 and Market Test h15 precede
+the opening anchor: whether they fire at opening or are skipped, and their round attribution if fired,
+are UNVERIFIED. The previous Sunday wall-time estimates are superseded; full entries: `docs/briefing.md`.

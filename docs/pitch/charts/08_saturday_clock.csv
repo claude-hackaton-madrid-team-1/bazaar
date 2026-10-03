@@ -11,20 +11,20 @@ game_hour,action,name,duration_ticks,duel_decay,jump_status,jump_date,jump_start
 11.0,bench,The Market Test,16,,scheduled,2026-10-03,16:00,16:08,sat,scheduled,2026-10-03,17:21,17:29,sat
 13.0,bench,The Market Test,16,,scheduled,2026-10-03,18:00,18:08,sat,scheduled,2026-10-03,19:21,19:29,sat
 13.0,duels,Duels II,192,0.08,scheduled,2026-10-03,18:00,19:36,sat,scheduled,2026-10-03,19:21,20:57,sat
-15.0,bench,The Market Test,16,,scheduled,2026-10-03,20:00,20:08,sat,scheduled,2026-10-03,21:21,21:29,sat
-16.0,bench,The hard Market Test,16,,scheduled,2026-10-03,21:00,21:08,sat,scheduled,2026-10-03,22:21,22:29,sat
-17.0,bench,The Market Test,16,,scheduled,2026-10-03,22:00,22:08,sat,scheduled,2026-10-04,09:21,09:25,sun
-18.0,round,Sunday · Chamberí,0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,10:21,10:21,sun
-18.0,set_release,Chamberí released,0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,10:21,10:21,sun
-18.0,day_closes,Closed until Sunday 09:00,0,,scheduled,2026-10-03,23:00,23:00,sat,scheduled,2026-10-03,23:00,23:00,sat
-18.0,day_opens,Sunday opens,0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,09:00,09:00,sun
-18.05,grant_all,The Sunday allowance,0,,scheduled,2026-10-04,09:03,09:03,sun,scheduled,2026-10-04,10:24,10:24,sun
-19.0,bench,The Market Test,16,,scheduled,2026-10-04,10:00,10:04,sun,scheduled,2026-10-04,11:21,11:25,sun
-20.0,duels,Duels III,204,0.1,scheduled,2026-10-04,11:00,11:51,sun,scheduled,2026-10-04,12:21,13:12,sun
-21.0,bench,The Market Test,16,,scheduled,2026-10-04,12:00,12:04,sun,scheduled,2026-10-04,13:21,13:25,sun
-22.8,announce,finale warning,0,,scheduled,2026-10-04,13:48,13:48,sun,never,,,,
-23.0,persona,Finale,0,,scheduled,2026-10-04,14:00,14:00,sun,never,,,,
-23.0,duels,Final duels,108,0.1,scheduled,2026-10-04,14:00,14:27,sun,never,,,,
-23.9,announce,freeze warning,0,,scheduled,2026-10-04,14:54,14:54,sun,never,,,,
-24.0,end_round,Scores freeze,0,,scheduled,2026-10-04,15:00,15:00,,never,,,,
-24.0,day_closes,The Bazaar closes,0,,scheduled,2026-10-04,15:00,15:00,sun,scheduled,2026-10-04,15:00,15:00,sun
+15.0,bench,The Market Test [superseded forecast; see charts.md section 8],16,,scheduled,2026-10-03,20:00,20:08,sat,scheduled,2026-10-03,21:21,21:29,sat
+16.0,bench,The hard Market Test [superseded forecast; see charts.md section 8],16,,scheduled,2026-10-03,21:00,21:08,sat,scheduled,2026-10-03,22:21,22:29,sat
+17.0,bench,The Market Test [superseded forecast; see charts.md section 8],16,,scheduled,2026-10-03,22:00,22:08,sat,scheduled,2026-10-04,09:21,09:25,sun
+18.0,round,Sunday · Chamberí [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,10:21,10:21,sun
+18.0,set_release,Chamberí released [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,10:21,10:21,sun
+18.0,day_closes,Closed until Sunday 09:00 [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-03,23:00,23:00,sat,scheduled,2026-10-03,23:00,23:00,sat
+18.0,day_opens,Sunday opens [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,09:00,09:00,sun,scheduled,2026-10-04,09:00,09:00,sun
+18.05,grant_all,The Sunday allowance [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,09:03,09:03,sun,scheduled,2026-10-04,10:24,10:24,sun
+19.0,bench,The Market Test [superseded forecast; see charts.md section 8],16,,scheduled,2026-10-04,10:00,10:04,sun,scheduled,2026-10-04,11:21,11:25,sun
+20.0,duels,Duels III [superseded forecast; see charts.md section 8],204,0.1,scheduled,2026-10-04,11:00,11:51,sun,scheduled,2026-10-04,12:21,13:12,sun
+21.0,bench,The Market Test [superseded forecast; see charts.md section 8],16,,scheduled,2026-10-04,12:00,12:04,sun,scheduled,2026-10-04,13:21,13:25,sun
+22.8,announce,finale warning [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,13:48,13:48,sun,never,,,,
+23.0,persona,Finale [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,14:00,14:00,sun,never,,,,
+23.0,duels,Final duels [superseded forecast; see charts.md section 8],108,0.1,scheduled,2026-10-04,14:00,14:27,sun,never,,,,
+23.9,announce,freeze warning [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,14:54,14:54,sun,never,,,,
+24.0,end_round,Scores freeze [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,15:00,15:00,,never,,,,
+24.0,day_closes,The Bazaar closes [superseded forecast; see charts.md section 8],0,,scheduled,2026-10-04,15:00,15:00,sun,scheduled,2026-10-04,15:00,15:00,sun

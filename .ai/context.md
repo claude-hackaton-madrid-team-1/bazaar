@@ -77,8 +77,9 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
   round). Per round, market-making is about 22.5 × Market Test `bench_points` + 7.5 × organic, and
   negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. A
   round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at
-  game hour 16.65, about Sun 11:34), not when the doors open *[audit; RULES.md says each day is a
-  round and wins on any clash]*. Source: `docs/briefing.md`.
+  game hour 16.65, Sun 09:00 CEST, coinciding with Sunday opening). The live schedule on 4 Oct
+  quotes "Sunday opens" and "Round 3 starts" at h16.65. One game hour is one real hour on Sunday;
+  "Scores freeze" is h22.65, 15:00 CEST. Source: `docs/briefing.md`.
 - **Page cards still cost points when sold:** `your_value` is the collection value lost by removing
   that copy, and on a complete page our only copy of a page card carries the whole page bonus. On
   Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never
@@ -104,7 +105,7 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
 - **Judging:** negotiation quality, market making, ideas and approach, and the code itself;
   a Sunday presentation (strategy, how we built it, key learnings) is about 40%. Never counts:
   number of trades, fees, or luck opening packs.
-- **Venue:** open 09:00–23:00, no all-nighter.
+- **Venue:** Saturday 09:00–23:00; Sunday 09:00–15:00 CEST, no all-nighter.
 
 ## Stack (LOCKED — do not relitigate)
 Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan B, checked against
