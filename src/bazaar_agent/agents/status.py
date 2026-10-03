@@ -1,6 +1,7 @@
 """Read-only status of one agent (taker or maker) over HTTP and WebSocket, beside its tick loop.
 
-    GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, tick, last_tick_at}
+    GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, ledger, tick, last_tick_at}
+                 ledger: shared | down (a live agent sends nothing until it answers) | local file
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
@@ -62,22 +63,63 @@ MOVE_FIELDS = frozenset(
     {"kind", "price", "accept", "open_thread", "topic", "cancel", "hold", "reprice", "give", "want", "venue"}
 )
 REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
+# Our venue's broker sees a private book (pseudonyms, the Market Test's bench): its rows show only that a match
+# or an opening happened and how it ended, never an offer id, a quote, a maker or a price.
+PRIVATE_KINDS = frozenset({"broker_match", "venue_open"})
+PRIVATE_METHODS = frozenset({"broker_match", "open_venue"})
 VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain values (card refs)
     "threads": frozenset({"dealer", "thread", "item", "ticks", "opened_tick", "accepted_price"}),
     "open_offers": frozenset({"id", "side", "ref", "price", "venue", "expires_tick", "created_tick"}),
     "posted_this_tick": None,
 }
 SCALAR = (str, int, float, bool, type(None))
+# Nested values (a topic, a give/want side) keep only keys that name a card, a pack or our cash: a probe once
+# published topic {"max": 26, "value": 56.1}. Anything else, at any depth, is dropped.
+NESTED_KEYS = frozenset(
+    {"cash", "card", "cards", "ref", "pack", "buy", "sell", "item", "kind", "assets", "types", "id", "rarity"}
+)
+NESTED_DEPTH = 3
+
+
+def _clean(value: object, depth: int = NESTED_DEPTH) -> tuple[bool, Any]:
+    """(keep, value): a scalar, a list of scalars, or a dict cut down to NESTED_KEYS; else dropped."""
+    if isinstance(value, SCALAR):
+        return True, value
+    if isinstance(value, list | tuple) and depth > 0:
+        return True, [v for ok, v in (_clean(x, depth - 1) for x in value) if ok]
+    if isinstance(value, dict) and depth > 0:
+        kept = {k: v for k, (ok, v) in ((k, _clean(x, depth - 1)) for k, x in value.items()) if ok and k in NESTED_KEYS}
+        return True, kept
+    return False, None
 
 
 def _pick(source: object, fields: frozenset[str]) -> dict[str, Any]:
-    return {k: v for k, v in source.items() if k in fields} if isinstance(source, dict) else {}
+    if not isinstance(source, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in source.items():
+        keep, clean = _clean(value) if key in fields else (False, None)
+        if keep:
+            out[key] = clean
+    return out
 
 
-def _guardrail(verdict: object) -> str:
-    """`allowed`, `denied` or `-`: the rule text names our cash and limits."""
-    text = str(verdict or "")
-    return "allowed" if text == "allowed" else "denied" if text.startswith("denied") else "-"
+def _is_sent(row: dict[str, Any]) -> bool:
+    """Only a chosen, approved row of a live agent went to the game. A maker reprice row is approved but not
+    chosen (its price is the strategy's target, not a posted price), and a missing flag counts as unsent."""
+    return row.get("status") == "approved" and row.get("chosen") is True and row.get("dry_run") is False
+
+
+def publishable(row: dict[str, Any]) -> bool:
+    """Only a sent row is published. The existence, kind and status of an unsent one (a skipped accept, a
+    rejected bid, an expired post) say which limit or quota bound us, so those never leave the process.
+    A `hold_*` row sends nothing, so it is not published either."""
+    return _is_sent(row) and not str(row.get("kind") or "").startswith("hold")
+
+
+def _guardrail(verdict: object, sent: bool) -> str:
+    """`allowed` on a sent row, else `-`: a denial (or its absence) tells a rival which limit we hit."""
+    return "allowed" if sent and str(verdict or "") == "allowed" else "-"
 
 
 def public_decision(row: dict[str, Any]) -> dict[str, Any]:
@@ -85,17 +127,24 @@ def public_decision(row: dict[str, Any]) -> dict[str, Any]:
     A row that was not sent (rejected, skipped, expired, or any dry-run row) shows only the card, where and
     its status: a rival who lists a card and sees our `skip ... accept quota` or `would accept` row for its
     offer and price would learn that its ask sat below our value. A missing `dry_run` counts as a dry run."""
-    sent = row.get("status") == "approved" and row.get("dry_run") is False
+    sent = _is_sent(row)
+    if row.get("kind") in PRIVATE_KINDS:  # our broker's book view: that it happened, never what it saw
+        return {
+            **_pick(row, DECISION_FIELDS if sent else UNSENT_FIELDS),
+            "guardrail": _guardrail(row.get("guardrail"), sent),
+            "jev": None,
+            "inputs": {},
+            "move": {},
+        }
     fields = INPUT_FIELDS | {SENT_PRICE} if sent else UNSENT_INPUT_FIELDS
     raw = row.get("inputs")
     inputs: dict[str, Any] = {}
     for group in (raw, *(raw.get(g) for g in INPUT_GROUPS)) if isinstance(raw, dict) else ():
         inputs.update({k: v for k, v in _pick(group, fields).items() if isinstance(v, SCALAR)})
-    jev = row.get("jev")
     return {
         **_pick(row, DECISION_FIELDS if sent else UNSENT_FIELDS),
-        "guardrail": _guardrail(row.get("guardrail")),
-        "jev": {"verdict": jev.get("verdict")} if isinstance(jev, dict) and sent else None,
+        "guardrail": _guardrail(row.get("guardrail"), sent),
+        "jev": None,  # its label beside a listed price marks our walk-away price; the key stays for readers
         "inputs": inputs,
         "move": _pick(row.get("move"), MOVE_FIELDS) if sent else {},
     }
@@ -105,14 +154,15 @@ def public_execution(row: dict[str, Any]) -> dict[str, Any]:
     """One request we sent: the request (public once sent) and how it ended, not the game's answer body."""
     response = row.get("response")
     created = response.get("id") if isinstance(response, dict) else None
+    private = row.get("method") in PRIVATE_METHODS
     return {
         "decision_id": row.get("decision_id"),
         "tick": row.get("tick"),
         "method": row.get("method"),
-        "request": _pick(row.get("request"), REQUEST_FIELDS),
+        "request": {} if private else _pick(row.get("request"), REQUEST_FIELDS),
         "ok": row.get("error_code") is None,
-        "error_code": row.get("error_code"),
-        "created_id": created if isinstance(created, int) else None,
+        "error_code": None if row.get("error_code") is None else "refused",  # the game's code names our cash/quota
+        "created_id": created if isinstance(created, int) and not private else None,
     }
 
 
@@ -131,10 +181,16 @@ class StatusHub:
     """What the server shows. Written by the tick loop (any thread), read by the server thread."""
 
     def __init__(
-        self, agent: str, live: bool, wall: Callable[[], float] = time.time, target: dict[str, str] | None = None
+        self,
+        agent: str,
+        live: bool,
+        wall: Callable[[], float] = time.time,
+        target: dict[str, str] | None = None,
+        ledger: Callable[[], str] | None = None,
     ) -> None:
         self.agent, self.mode, self._wall = agent, "live" if live else "dry", wall
         self.target = dict(target or {})  # {"mode": "real" | "simulator", "url": ...}: where its requests go
+        self._ledger = ledger  # ledger_pg.ledger_health: shared | down | local file (flags only, no network)
         self._lock = threading.Lock()
         self._events: deque[str] = deque(maxlen=REPLAY)
         self._decisions: deque[dict[str, Any]] = deque(maxlen=LAST_DECISIONS)
@@ -169,11 +225,15 @@ class StatusHub:
             self._view.update(clean if isinstance(clean, dict) else {})
 
     def decision(self, row: dict[str, Any]) -> None:
+        if not publishable(row):
+            return
         payload = self._publish("agent.decision", public_decision(row))
         with self._lock:
             self._decisions.append(payload)
 
     def execution(self, row: dict[str, Any]) -> None:
+        if row.get("method") in PRIVATE_METHODS and row.get("error_code") is not None:
+            return  # a refused opening or match would tell rivals we tried and failed
         self._publish("agent.execution", public_execution(row))
 
     def _publish(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -203,12 +263,14 @@ class StatusHub:
     # ------------------------------------------------------------ read by the server
 
     def health(self) -> dict[str, Any]:
+        ledger = {"ledger": self._ledger()} if self._ledger is not None else {}
         with self._lock:
             return {
                 "ok": True,
                 "agent": self.agent,
                 "mode": self.mode,
                 "target": self.target,
+                **ledger,
                 "tick": self._tick,
                 "last_tick_at": self._last_tick_at,
                 **self._doors,

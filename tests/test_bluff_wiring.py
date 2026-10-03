@@ -19,6 +19,7 @@ from bazaar_agent.agents.duelist import DUEL_WORDS, DuelMove, duel_choice
 from bazaar_agent.agents.status import StatusHub, public_decision
 from bazaar_agent.agents.tactics import ABUELA_ALLOWED, BY_ID, TACTICS, numbers_in
 from bazaar_agent.agents.taker import Taker, TakerConfig
+from bazaar_agent.guardrails import Ledger
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, parts, rows
 from tests.test_dealer import FakeDealerClient
 from tests.test_duel_jev import LIVE
@@ -89,9 +90,11 @@ def test_the_taker_sends_the_same_moves_with_and_without_tactics(tmp_path):
 
 
 def test_an_accept_beats_a_bluff_in_the_taker(tmp_path):
-    asks = [19, 19, 19]  # her ask meets our next bid at once: the desk accepts, no words at all
+    # Her opening 30, then 19 meets our next bid: the desk accepts, no words on the accept. (An opening ask she
+    # holds from the first offer is walked and reopened lower, so the accept needs her to move once.)
+    asks = [30, 19, 19]
     team = run_taker(tmp_path, on(), asks, ticks=3)
-    assert ("accept", 801) in team.sent
+    assert ("accept", 802) in team.sent
     accept = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept" and r.get("status") in ("approved", "done")]
     assert accept and all("tactic" not in r["inputs"] for r in accept)
 
@@ -222,6 +225,8 @@ def duel_cli(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     monkeypatch.setattr(cli, "_feed_reader", lambda settings: Feed().feed_window)
+    # Stands in for the shared ledger a live run needs (#162), as tests/test_jev_journal.py does.
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
     client.feed = Feed
@@ -252,6 +257,21 @@ def test_duel_run_bluffs_in_the_text_only_and_the_kill_switch_restores_todays_wo
     ((*structured, text),) = client.sent
     assert tuple(structured) == bluffed  # the same price and days, today's words
     assert text == DUEL_WORDS
+
+
+def test_duel_run_under_v2_keeps_its_template_words_and_no_tactic(duel_cli, monkeypatch):
+    from dataclasses import replace
+
+    cli, client, tmp_path = duel_cli
+    monkeypatch.setenv(ENV, "1")
+    loaded = cli._rules()
+    v2 = replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    monkeypatch.setattr(cli, "_rules", lambda: v2)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "bluff tactics OFF (duel_policy v2 sends template words only)" in " ".join(result.output.split())
+    assert all(text == DUEL_WORDS for kind, *_, text in client.sent if kind == "say")
+    assert all("tactic" not in r["inputs"] for r in duel_rows(tmp_path))
 
 
 def test_duel_run_accepts_a_good_rival_offer_without_any_tactic(duel_cli, monkeypatch):

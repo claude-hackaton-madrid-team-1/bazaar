@@ -33,6 +33,7 @@ Kind = Literal[
 Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
 # What the outcome learner writes: everything else in the table is the feed reader's (N12).
 OUTCOME_KINDS: frozenset[str] = frozenset({"lesson", "policy"})
+KEY_STABLE_SOURCES: frozenset[str] = frozenset({"rules", "outcome"})  # no source suffix in their dedupe key
 BLOCKING_KINDS: frozenset[str] = frozenset({"blocker", "cooloff", "quota", "sold_out"})
 SUBJECT_PATTERN = r"^[A-Za-z0-9_.:\-]{1,64}$"
 TEXT_MAX = 300
@@ -102,4 +103,8 @@ class Learning(BaseModel):
         notice = self.kind in ("announcement", "rule_change") and "aggregate" not in self.detail
         if notice or (not about and self.until_tick is None):
             raw.append(list(self.evidence[:1]))  # a notice is its own event
+        # An LLM reading of a notice never shares the notice's own row. Rules and outcome rows (the N3 learner's
+        # lessons) keep the key they had before, so rows already stored are never duplicated.
+        if self.source not in KEY_STABLE_SOURCES:
+            raw.append(self.source)
         return hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()[:32]

@@ -17,20 +17,23 @@ import json
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import psycopg
 
 from bazaar_agent.evals.model import Outcome
 from bazaar_agent.feed import Event
+from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.intel import DealerThread
 from bazaar_agent.learn.behaviours import INSERT as BEHAVIOUR_INSERT
 from bazaar_agent.learn.behaviours import BehaviourRow, behaviour_rows
 from bazaar_agent.learn.curves import CurveStats, curve_stats
 from bazaar_agent.learn.embed import Models
+from bazaar_agent.learn.evolve import Key, LadderPolicy, cap_for, evolve, policies_from
 from bazaar_agent.learn.lessons import lessons_from
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.learn.replay import compare, today_ladder
 from bazaar_agent.learn.store import STATEMENT_TIMEOUT_MS, LearningStore
 
 LEARN_EVERY_TICKS = 5
@@ -47,8 +50,10 @@ class PassResult:
     outcomes: int = 0
     lessons: int = 0
     behaviours: int = 0  # trader_behaviors rows offered (inserted only when new)
+    written: int = 0  # learnings new or changed this pass (sent to the store)
     embedded: int = 0
     curves: dict[tuple[str, str], CurveStats] = field(default_factory=dict)
+    policies: dict[Key, LadderPolicy] = field(default_factory=dict)
     learned: tuple[Learning, ...] = ()
     elapsed_s: float = 0.0
     error: str | None = None
@@ -142,10 +147,12 @@ def learn_once(
     *,
     save_moves: bool = True,
     state: PassState | None = None,
+    rules: Guardrails | None = None,
 ) -> PassResult:
     """One pass (synchronous: the CLI calls it; agents go through `OutcomeLearner`, which keeps `state`).
     Lessons go where `store` writes (memory only for a store without a connection); `save_moves=False`
-    (a CLI dry run) also keeps the dealer moves out of `trader_behaviors`."""
+    (a CLI dry run) also keeps the dealer moves out of `trader_behaviors`. With `rules`, the pass also
+    evolves the dealer ladders (`evolve.py`) from the previous policies in `store` and records the new ones."""
     from bazaar_agent.intel import dealer_threads
 
     state = state if state is not None else PassState()
@@ -167,6 +174,12 @@ def learn_once(
         if save_moves:  # only once committed: a failed commit inserts them again next pass
             state.moves.update(r.dedupe_key for r in fresh)
     store.begin_tick(tick)
+    policies: dict[Key, LadderPolicy] = {}
+    if rules is not None:
+        stored = store.recall(None, {"policy"}, None, subject_kind="dealer", team=us, limit=200)
+        previous = policies_from(stored, us)
+        policies = evolve_ladders(curves, previous, rules, tick, threads)
+        learned = learned + [p.to_learning(us) for p in policies.values()]
     pending = state.changed(learned)
     store.record(pending)
     if store.where != "memory only":
@@ -182,12 +195,34 @@ def learn_once(
         tick,
         outcomes=len(outcomes),
         lessons=sum(1 for lr in learned if lr.kind == "lesson"),
+        written=len(pending),
         behaviours=len(rows),
         embedded=embedded,
         curves=curves,
+        policies=policies,
         learned=tuple(learned),
         elapsed_s=round(time.monotonic() - started, 2),
     )
+
+
+def evolve_ladders(
+    curves: dict[Key, CurveStats],
+    previous: dict[Key, LadderPolicy],
+    rules: Guardrails,
+    tick: int,
+    threads: list[DealerThread],
+) -> dict[Key, LadderPolicy]:
+    """This pass's ladders, each with its replay against today's ladder on the same real threads (evidence)."""
+    policies = evolve(curves, previous, rules, tick, threads=threads)
+    out: dict[Key, LadderPolicy] = {}
+    for key, policy in policies.items():
+        stats = curves[key]
+        old = today_ladder(stats.fills, cap_for(key[1], rules), rules.dealer_max_ticks_per_thread)
+        found = None
+        if old is not None and stats.floor is not None:
+            found = compare(threads, key[0], key[1], old, policy.ladder, stats.floor, policy.patience)
+        out[key] = replace(policy, replay=found.as_dict()) if found is not None else policy
+    return out
 
 
 class OutcomeLearner:
@@ -201,9 +236,11 @@ class OutcomeLearner:
         log: Callable[[str], None] = lambda message: None,
         every: int = LEARN_EVERY_TICKS,
         on_pass: Callable[[PassResult], Any] | None = None,
+        rules: Guardrails | None = None,
     ) -> None:
         self.connect, self.store, self.models, self.log = connect, store, models, log
-        self.every, self.on_pass = max(1, every), on_pass
+        self.every, self.on_pass, self.rules = max(1, every), on_pass, rules
+        self.policies: dict[Key, LadderPolicy] = {}  # replaced whole after each pass: the taker reads it
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bazaar-learner")
         self._running: Future[PassResult] | None = None
         self._last_tick: int | None = None
@@ -232,19 +269,31 @@ class OutcomeLearner:
 
     def _run(self, tick: int, us: str) -> PassResult:
         try:
-            result = learn_once(self.connect, self.store, self.models, us, tick, self.log, state=self.state)
+            result = learn_once(
+                self.connect, self.store, self.models, us, tick, self.log, state=self.state, rules=self.rules
+            )
+            if self.rules is not None:
+                self._log_changes(result.policies)
+                self.policies = result.policies
             if self.on_pass is not None:
                 self.on_pass(result)
         except Exception as e:
             self._fail("pass", e)
             result = PassResult(tick, error=type(e).__name__)  # never str(e): a connect error may echo the URL
         self.last = result
-        if result.error is None and (result.lessons or result.embedded):
+        if result.error is None and (result.written or result.embedded):  # quiet when nothing changed
             self.log(
-                f"learner: tick {tick}: {result.outcomes} outcomes → {result.lessons} lessons, "
-                f"{len(result.curves)} dealer curves, {result.embedded} embedded ({result.elapsed_s:g} s)"
+                f"learner: tick {tick}: {result.outcomes} outcomes → {result.lessons} lessons "
+                f"({result.written} written), {len(result.curves)} dealer curves, {result.embedded} embedded "
+                f"({result.elapsed_s:g} s)"
             )
         return result
+
+    def _log_changes(self, policies: dict[Key, LadderPolicy]) -> None:
+        for key, policy in sorted(policies.items()):
+            old = self.policies.get(key)
+            if old is None or old.ladder != policy.ladder:
+                self.log(f"learner: policy {key[0]} {key[1]}: {policy.text()}")
 
     def _fail(self, what: str, error: Exception) -> None:
         """Logged the first time and then every FAIL_LOG_EVERY-th time: a learner that keeps failing says so."""

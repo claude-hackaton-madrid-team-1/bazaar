@@ -33,6 +33,7 @@ OFFICIAL_HOST = "bazaar.causaprima.ai"
 SIM_KEY_PREFIX = "sim-"
 REAL_DATABASE = "railway"  # the team's shared Railway database: real-game memory only
 SIM_DATA_DIR = REPO_ROOT / ".local" / "sim-client"  # default data dir against a simulator
+BROKER_ENV_FILE = "broker.env"  # <data_dir>/broker.env (0600): the broker key a live `venue open` saved
 
 
 class ConfigError(RuntimeError):
@@ -63,8 +64,11 @@ class Settings(BaseModel):
     claude_code_oauth_token: SecretStr | None = None  # `claude setup-token`: Claude models on the subscription
     llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
+    sim_database: bool = False  # BAZAAR_SIM_DATABASE_URL is the database: one of the simulator's own
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
+    broker_key: SecretStr | None = None  # BAZAAR_BROKER_KEY: our venue's X-Broker-Key (returned once on open)
+    venue_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")  # BAZAAR_VENUE: our venue id
 
     @property
     def feed_dir(self) -> Path:
@@ -113,6 +117,14 @@ class Settings(BaseModel):
             )
         return url
 
+    def require_broker_key(self) -> str:
+        if self.broker_key is None or not self.broker_key.get_secret_value():
+            raise ConfigError(
+                "BAZAAR_BROKER_KEY is not set: a live `bazaar venue open` saves it to "
+                f"{BROKER_ENV_FILE} in the data dir; on Railway set the variable by hand."
+            )
+        return self.broker_key.get_secret_value()
+
 
 def is_official(url: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == OFFICIAL_HOST
@@ -134,6 +146,19 @@ def check_key_for_url(url: str, key: str) -> None:
             f"the target ({host}) is not the official Bazaar: only a simulator key ({SIM_KEY_PREFIX}...) is sent "
             "there, never the real team key. BAZAAR_SIM_KEY must be sim-team1 ... sim-team8."
         )
+
+
+def same_database(a: str, b: str) -> bool:
+    """Do two URLs name the same database (host, port, name)? Unparsable counts as the same: fail safe."""
+    try:
+        pa, pb = urlsplit(a), urlsplit(b)
+        return ((pa.hostname or "").lower(), pa.port or 5432, database_name(a)) == (
+            (pb.hostname or "").lower(),
+            pb.port or 5432,
+            database_name(b),
+        )
+    except ValueError:
+        return True
 
 
 def database_name(url: str) -> str:
@@ -189,15 +214,24 @@ def load_settings(env_file: Path | None = None) -> Settings:
         "llm_runtime": pick("BAZAAR_LLM_RUNTIME"),
         "database_url": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "database_url_sim": pick("BAZAAR_SIM_DATABASE_URL"),
+        "database_url_real": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "team_id": pick("BAZAAR_TEAM_ID"),
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):
         data["data_dir"] = data_dir
     elif simulated:
         data["data_dir"] = str(SIM_DATA_DIR)  # the real feed capture and ledger never see simulated play
-    sim_db = data.pop("database_url_sim")
+    sim_db, real_db = data.pop("database_url_sim"), data.pop("database_url_real")
     if sim_db and simulated:
         data["database_url"] = sim_db
+        data["sim_database"] = not same_database(str(sim_db), str(real_db))  # not the real one, respelled
+    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved. Against
+    # the simulator BAZAAR_BROKER_KEY / BAZAAR_VENUE are not read (only the data dir's file), and the host
+    # guard (`venue.check_broker_key_for_url`) refuses to send a real key there anyway.
+    saved = read_env_file(Path(str(data.get("data_dir") or REPO_ROOT / ".local")) / BROKER_ENV_FILE)
+    env_key, env_venue = (None, None) if simulated else (pick("BAZAAR_BROKER_KEY"), pick("BAZAAR_VENUE"))
+    data["broker_key"] = env_key or saved.get("BAZAAR_BROKER_KEY") or None
+    data["venue_id"] = env_venue or saved.get("BAZAAR_VENUE") or None
     return Settings.model_validate(data)
 
 

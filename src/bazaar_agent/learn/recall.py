@@ -31,6 +31,7 @@ RRF_K = 60
 CANDIDATES = 600  # hard-filtered learnings the lexical leg ranks
 LEG_TOP = 40  # each leg's ranking depth
 RERANK_TOP = 12  # fused learnings the cross-encoder reads
+BM25_FLOOR = 5.0  # BM25-only fallback: Friday's 34 lessons scored 7.5-23.5 for relevant queries, <= 4.5 otherwise
 MIN_SCORE = 0.0  # cross-encoder relevance floor (ms-marco logit; calibrated on real lessons, see README)
 DEFAULT_BUDGET_S = 0.8  # far inside a 15 s tick; a slower answer is dropped
 QUOTE_MAX = 5
@@ -68,7 +69,7 @@ class Hit:
 @dataclass(frozen=True)
 class Recalled:
     hits: tuple[Hit, ...] = ()
-    status: str = "ok"  # ok | no_candidates | models_loading | timeout | error:<Type>
+    status: str = "ok"  # ok | bm25_only (no reranker yet) | no_candidates | timeout | error:<Type>
     elapsed_ms: float = 0.0
     candidates: int = 0
     legs: dict[str, int] = field(default_factory=dict)  # how many each leg ranked
@@ -116,6 +117,14 @@ class HybridRecall:
         self.store, self.models, self.log = store, models, log
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bazaar-recall")
         self._warned: set[str] = set()
+        self._bm25: tuple[tuple[str, ...], BM25] | None = None  # the last index, reused while the pool holds
+
+    def _index(self, keys: list[str], by_key: dict[str, Learning]) -> BM25:
+        """BM25 over the candidates; rebuilt only when the candidate set changed (most ticks it does not)."""
+        ident = tuple(f"{k}:{hash(by_key[k].text)}" for k in keys)
+        if self._bm25 is None or self._bm25[0] != ident:
+            self._bm25 = (ident, BM25.build([doc_text(by_key[k]) for k in keys]))
+        return self._bm25[1]
 
     def recall(self, query: Query) -> Recalled:
         """`search()` under the query's deadline. Never raises; any failure is no lessons."""
@@ -129,7 +138,10 @@ class HybridRecall:
             found = Recalled(status=f"error:{type(e).__name__}")
         if found.status not in ("ok", "no_candidates") and found.status not in self._warned:
             self._warned.add(found.status)
-            self.log(f"learnings: recall {found.status}; deciding without lessons")
+            if found.status == "bm25_only":
+                self.log("learnings: the reranker is not ready; recall is BM25-only (lexical floor) until it is")
+            else:
+                self.log(f"learnings: recall {found.status}; deciding without lessons")
         return replace(found, elapsed_ms=round((time.monotonic() - started) * 1000, 1))
 
     def search(self, query: Query) -> Recalled:
@@ -150,7 +162,8 @@ class HybridRecall:
             return Recalled(status="no_candidates", candidates=len(pool))
         by_key = {lr.key(): lr for lr in pool}
         keys = list(by_key)
-        lexical = [keys[i] for i in BM25.build([doc_text(by_key[k]) for k in keys]).ranked(query.text, LEG_TOP)]
+        index = self._index(keys, by_key)
+        lexical = [keys[i] for i in index.ranked(query.text, LEG_TOP)]
         vector = self.models.embed_query(query.text)
         cosines: dict[str, float] = {}
         if vector is not None:
@@ -172,8 +185,10 @@ class HybridRecall:
         top = sorted(fused, key=lambda k: (-fused[k], -by_key[k].tick, k))[:RERANK_TOP]
         legs = {"bm25": len(lexical), "vector": len(semantic), "fused": len(top)}
         scores = self.models.rerank(query.text, [doc_text(by_key[k]) for k in top])
-        if scores is None:
-            return Recalled(status="models_loading", candidates=len(pool), legs=legs)
+        if scores is None:  # no reranker (loading, or the download failed): BM25 alone, above a lexical floor
+            raw = dict(zip(keys, index.scores(query.text), strict=True))
+            lex = [Hit(by_key[k], raw[k], 0.0, i, None) for i, k in enumerate(lexical, start=1) if raw[k] >= BM25_FLOOR]
+            return Recalled(tuple(lex[: query.k]), "bm25_only", 0.0, len(pool), legs)
         lex_rank = {k: i for i, k in enumerate(lexical, start=1)}
         vec_rank = {k: i for i, k in enumerate(semantic, start=1)}
         hits = [
@@ -188,3 +203,44 @@ class HybridRecall:
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
         self.store.close()
+
+
+LESSONS_K = 3
+LESSONS_BUDGET_S = 0.5  # inside the agent's tick: Jev itself gets up to `jev_timeout_s` after this
+LESSONS_CACHE_TICKS = 5  # lessons change every few ticks (the outcome learner's pace): reuse within that
+
+
+class Lessons:
+    """What an agent calls before Jev or the words model: the top lessons for a situation, as quoted data.
+
+    Cached per (situation, filters) for `LESSONS_CACHE_TICKS` ticks; answers `[]` while the models load and
+    on any failure (the recall already fails open). Never raises."""
+
+    def __init__(self, recall: HybridRecall, k: int = LESSONS_K, budget_s: float = LESSONS_BUDGET_S) -> None:
+        self.recall, self.k, self.budget_s = recall, k, budget_s
+        self._cache: dict[tuple[object, ...], list[dict[str, Any]]] = {}
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        subjects: tuple[str, ...] | None = None,
+        subject_kind: str | None = None,
+        tick: int | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            key = None if tick is None else (text, subjects, subject_kind, tick // LESSONS_CACHE_TICKS)
+            if key is not None and key in self._cache:  # no tick (a duel state): never cached, always fresh
+                return self._cache[key]
+            query = Query(
+                text, subjects=subjects, subject_kind=subject_kind, tick=tick, k=self.k, budget_s=self.budget_s
+            )
+            found = self.recall.recall(query)
+            quoted = found.as_quoted(self.k) if found.status in ("ok", "bm25_only") else []
+            if key is not None and found.status in ("ok", "no_candidates", "bm25_only"):  # timeouts, errors: retried
+                if len(self._cache) > 256:
+                    self._cache.clear()
+                self._cache[key] = quoted
+            return quoted
+        except Exception:
+            return []

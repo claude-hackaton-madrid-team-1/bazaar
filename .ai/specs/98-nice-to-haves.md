@@ -85,3 +85,5 @@ dealers ignore our first bids.
 
 ### Security hardening
 - (none yet)
+
+- Local score simulator + observability dashboard (was GitHub #15, closed 2026-10-03 as not needed to win; see docs/issues-archive.md). The evals (#58, #91) and Phoenix cover the useful part.

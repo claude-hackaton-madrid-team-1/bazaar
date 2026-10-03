@@ -35,9 +35,9 @@ def init_schema(conn: psycopg.Connection) -> bool:
     return pgvector_version(conn) is not None
 
 
-def connect_ready(app: str) -> psycopg.Connection:
+def connect_ready(app: str, connect_timeout_s: int | None = None) -> psycopg.Connection:
     """A connection to DATABASE_URL with the schema applied: what a long-running writer opens."""
-    conn = connect(app=app)
+    conn = connect(app=app, connect_timeout_s=connect_timeout_s)
     try:
         init_schema(conn)
     except BaseException:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -25,6 +26,7 @@ CONNECT_DEFAULTS = {
     "keepalives_idle": "30",
     "keepalives_interval": "10",
     "keepalives_count": "3",
+    "tcp_user_timeout": "10000",  # an open socket that stops answering (dead proxy, Wi-Fi drop) errors in 10 s
 }
 DEFAULT_APP = "bazaar-cli"
 MASK = "***"
@@ -92,45 +94,69 @@ def connection_params(url: str, app: str = DEFAULT_APP) -> dict[str, str]:
 
 
 def connect(
-    database_url: str | None = None, *, app: str = DEFAULT_APP, timeout_s: int | None = None
+    database_url: str | None = None, *, app: str = DEFAULT_APP, connect_timeout_s: int | None = None
 ) -> psycopg.Connection:
     """Open Postgres at `database_url`, or DATABASE_URL (env, then `.env`, then the local default).
-    `timeout_s` overrides the connect timeout (a background writer that must not stall a loop)."""
+    `connect_timeout_s` replaces our default wait (never one the URL sets)."""
     url = load_settings().require_database_url(database_url)
     params = connection_params(url, app)
-    if timeout_s is not None:
-        params = {**params, "connect_timeout": str(timeout_s)}
+    if connect_timeout_s is not None and "connect_timeout" not in _parse(url):
+        params["connect_timeout"] = str(connect_timeout_s)
     return psycopg.connect(make_conninfo(**params))
 
 
-class Reconnector:
-    """One connection for a long-running process (the monitor), opened lazily and reopened after a drop.
+RETRY_EVERY_S = 15.0  # >= connect_timeout: a black-holed host stalls at most one connect per window
 
-    `get()` returns None while Postgres is unreachable, so the caller keeps its JSONL capture going
-    and tries again next tick. Call `drop()` after any failed write: the next `get()` starts fresh.
+
+class Reconnector:
+    """One connection for a long-running process (the monitor, the ledger), opened lazily and reopened after a drop.
+
+    `get()` returns None while Postgres is unreachable, so the caller keeps its fallback going and tries
+    again later: after a failed open, the next attempt waits `retry_every_s` (a connect to a dead host can
+    take `connect_timeout`, 10 s), so an outage never stalls every call. Call `drop()` after any failed
+    write: the next `get()` starts fresh at once.
     """
 
-    def __init__(self, open_conn: Callable[[], psycopg.Connection], notify: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        open_conn: Callable[[], psycopg.Connection],
+        notify: Callable[[str], None],
+        *,
+        name: str = "Postgres",
+        fallback: str = "JSONL only until it is back",
+        retry_every_s: float = RETRY_EVERY_S,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._open = open_conn
         self._notify = notify
+        self._name, self._fallback = name, fallback
+        self._retry_every_s, self._now = retry_every_s, now
         self._conn: psycopg.Connection | None = None
         self._down = False
+        self._failed_at: float | None = None
 
     def get(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
             return self._conn
         self._conn = None
+        if self._failed_at is not None and self._now() - self._failed_at < self._retry_every_s:
+            return None
         try:
             self._conn = self._open()
         except Exception as e:  # any failure: Postgres down, bad URL, schema lock timeout
             if not self._down:
-                self._notify(f"Postgres unavailable ({type(e).__name__}); JSONL only until it is back")
-            self._down = True
+                self._notify(f"{self._name} unavailable ({type(e).__name__}); {self._fallback}")
+            self._down, self._failed_at = True, self._now()
             return None
         if self._down:
-            self._notify("Postgres reconnected")
-        self._down = False
+            self._notify(f"{self._name} reconnected")
+        self._down, self._failed_at = False, None
         return self._conn
+
+    @property
+    def down(self) -> bool:
+        """True after a failed open, until an open succeeds."""
+        return self._down
 
     def drop(self) -> None:
         conn, self._conn = self._conn, None

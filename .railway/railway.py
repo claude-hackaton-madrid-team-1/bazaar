@@ -106,8 +106,16 @@ def agent(name: str, command: str, data: object) -> object:
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        # BAZAAR_LEARN=0 (set by hand) turns the taker's feed reader off; preserve() keeps it across applies.
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve(), "BAZAAR_LEARN": preserve()},
+        # BAZAAR_LEARN=0 / BAZAAR_LLM_READ=0 (set by hand) turn the feed reader / its LLM pass off;
+        # preserve() keeps a hand-set value across applies.
+        env={
+            **runtime_env(),
+            **llm_env(),
+            "PORT": AGENT_PORT,
+            "BAZAAR_LIVE": preserve(),
+            "BAZAAR_LEARN": preserve(),
+            "BAZAAR_LLM_READ": preserve(),
+        },
     )
 
 
@@ -177,8 +185,9 @@ def live_show() -> object:
     plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
     The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
 
-    The voice keys are set once by hand with `railway variable set ... --stdin` and declared preserve()
-    so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
+    The voice keys and the show's read-only database URL are set once by hand with
+    `railway variable set ... --stdin` and declared preserve() so an apply keeps them (an undeclared
+    hand-set variable is deleted by an apply); with neither key
     the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
     the bazaar-live README) must be declared here before it is set. Its public domain is generated once
     with `railway domain --service bazaar-live --port 8080`: Railway IaC does not declare generated domains."""
@@ -195,6 +204,14 @@ def live_show() -> object:
             "PORT": LIVE_PORT,
             "ELEVENLABS_API_KEY": preserve(),
             "GEMINI_API_KEY": preserve(),
+            # LIVE-T1 (bazaar-live #5): the read-only role bazaar_live_reader on the private
+            # postgres.railway.internal host (two views in schema show, no table grants), set by hand
+            # with --stdin; SHOW_DUELS stays unset (off) until the last duel session is over.
+            "SHOW_DATABASE_URL": preserve(),
+            "SHOW_DUELS": preserve(),
+            "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
+            "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
+            "TTS_DAILY_CHARS": preserve(),  # daily ElevenLabs budget (chars ~ credits): guards the 10k weekend credits
         },
     )
 

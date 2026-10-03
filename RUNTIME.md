@@ -19,6 +19,8 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 
 ## Words (negotiation messages)
 - `llm_words` = false — true lets the chosen model write dealer and duel messages; off until ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is in `.env` and a dry run looks right.
+- `llm_read_feed` = false — true lets the taker read the feed's free text (dealer words, organiser and venue notices) with the chosen model, on a background thread, into `learnings` (`source: llm`, never a blocker); it uses the same subscription or key as everything else, so it stays off until someone watches its cost.
+- `read_feed_every_ticks` = 10 — at most one `read_feed` call per this many ticks (doubled after each failure, up to 8×); the model is capped at Haiku or Sonnet unless pinned.
 - `words_timeout_s` = 2.5 — hard limit for one message; a slower reply is dropped and the template is sent.
 - `subscription_words_timeout_s` = 6 — the same limit when Claude runs on the subscription (CLAUDE_CODE_OAUTH_TOKEN): each call starts a Claude Code CLI process, measured 1.6–2.0 s on Haiku, 2.4–4 s on Sonnet and 3.1–3.8 s on Opus; still cut to the time left in the tick.
 - `words_max_chars` = 300 — longest message we send; a longer reply is cut at a sentence end or replaced by the template.
@@ -28,7 +30,8 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 - `steer_timeout_s` = 30 — limit for `bazaar steer` to map an instruction to parameter deltas.
 
 ## The desk (agent runtime on the Claude Agent SDK, outside the tick loop)
-- `desk_model` = sonnet-5-5 — the model for `bazaar agent chat` and `bazaar ask` through the desk and its subagents; a pinned Claude model (`--llm-runtime`, BAZAAR_LLM_RUNTIME) wins.
+- `desk_model` = auto — `auto` lets Jev pick, before every desk request (`bazaar agent chat`, `bazaar ask`), the model of the orchestrator and of each subagent: one `model_for_desk_role` call for every role the cache does not hold (`model_choice_cache_ticks`), Claude candidates from `runtime_models` only. A Claude alias or id here pins all of them; `agent chat --model`, then a pinned Claude model (`--llm-runtime`, BAZAAR_LLM_RUNTIME, `llm_runtime`), win over this line.
+- `desk_role_defaults` = desk:sonnet-5-5, strategist:sonnet-5-5, buyer:sonnet-5-5, seller:sonnet-5-5, duelist:sonnet-5-5 — each role's model when Jev is undecided, slow (over GUARDRAILS.md `jev_timeout_s`) or keyless: Sonnet is what every role ran before Jev chose, measured inside `desk_timeout_s` on the subscription; Claude models only.
 - `desk_max_turns` = 16 — turns one desk request may take, subagent hand-offs and tool calls included.
 - `desk_timeout_s` = 180 — limit for one desk request; on a timeout, `bazaar ask` falls back to its intent parser.
 - `mcp_calls_per_minute` = 30 — tool calls per minute per bearer token on the remote MCP server (`bazaar mcp serve`), so no client can hammer the game API through us (5 req/s per team key).

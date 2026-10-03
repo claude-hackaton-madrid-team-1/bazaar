@@ -137,7 +137,7 @@ def test_hard_filters_drop_other_teams_expired_and_unwanted_kinds_and_subjects()
 
 def test_no_lessons_while_the_models_load_and_on_any_failure():
     loading = recall_over(CHATO, models=FakeModels(ready=False))
-    assert loading.search(Query("chato LAV-08", team=US)).status == "models_loading"
+    assert loading.search(Query("chato LAV-08", team=US)).status == "bm25_only"
     assert loading.recall(Query("chato LAV-08", team=US)).hits == ()
     broken = recall_over(CHATO, models=FakeModels(fail=True))
     out = broken.recall(Query("chato LAV-08", team=US))
@@ -173,6 +173,7 @@ def test_only_the_fused_top_reaches_the_reranker():
 
 
 def test_local_models_fail_open_when_fastembed_cannot_load(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     import builtins
 
     real_import = builtins.__import__
@@ -193,6 +194,7 @@ def test_local_models_fail_open_when_fastembed_cannot_load(monkeypatch, tmp_path
 
 
 def test_local_models_warm_in_the_background_without_blocking(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     gate = threading.Event()
     models = LocalModels(tmp_path)
 
@@ -274,6 +276,7 @@ class _FakeCrossEncoder:
 
 
 def test_local_models_load_embed_cache_and_rerank_with_fastembed_faked(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     import fastembed
     import fastembed.rerank.cross_encoder as xenc
 
@@ -331,6 +334,7 @@ def test_many_rows_about_other_subjects_never_push_the_relevant_lesson_out():
 
 
 def test_a_failed_model_load_is_retried_after_some_warms(monkeypatch, tmp_path):
+    monkeypatch.delenv("BAZAAR_MODELS", raising=False)  # this test loads (fastembed faked)
     from bazaar_agent.learn import embed
 
     models = LocalModels(tmp_path)
@@ -409,3 +413,33 @@ def test_a_claim_edited_while_it_was_embedded_is_embedded_again(database_url, sc
     assert row == (True, True)  # the stale vector was not written
     assert store.embed_missing(FakeModels().embed) == 1
     store.close()
+
+
+def test_without_the_reranker_recall_is_bm25_only_above_a_lexical_floor():
+    filler = [lesson("abuela", f"abuela common filler lesson number {i} for SAL-0{i % 5}", tick=i) for i in range(40)]
+    logged: list[str] = []
+    r = recall_over(CHATO, *filler, models=FakeModels(ready=False))
+    r.log = logged.append
+    found = r.recall(Query("buy LAV-08 uncommon from chato, his ask 33", team=US, tick=120))
+    assert found.status == "bm25_only" and found.hits[0].learning == CHATO and found.hits[0].score >= 5.0
+    assert r.recall(Query("weather in Paris tomorrow", team=US, tick=120)).hits == ()
+    r.recall(Query("chato LAV-08", team=US, tick=120))
+    assert logged == ["learnings: the reranker is not ready; recall is BM25-only (lexical floor) until it is"]
+    from bazaar_agent.learn.recall import Lessons
+
+    lessons = Lessons(r)
+    assert lessons("buy LAV-08 uncommon from chato", tick=120)[0]["about"] == "chato"
+    assert len(lessons._cache) == 1  # cached for its tick bucket only: the reranker may be ready a few ticks on
+
+
+def test_bazaar_models_off_never_loads_nor_warms(monkeypatch, tmp_path):
+    import fastembed
+
+    def boom(*args, **kwargs):
+        raise AssertionError("fastembed must not be touched")
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", boom)
+    models = LocalModels(tmp_path)
+    assert models.load() is False and models.status.startswith("off")
+    models.warm()
+    assert models._loading is None and not models.ready

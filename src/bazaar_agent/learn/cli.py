@@ -22,6 +22,7 @@ from bazaar_agent.learn.model import Learning
 from bazaar_agent.learn.reader import FeedReader, GameHour
 from bazaar_agent.learn.store import LearningStore, matches
 
+LLM_MAX_TEXTS = 80  # `--llm N`: at most ten calls in the foreground
 KIND_HELP = "Only these kinds (repeat): cooloff, quota, sold_out, blocker, fee_change, announcement, ..."
 console = Console()
 err_console = Console(stderr=True)
@@ -54,6 +55,47 @@ def hour_from(events: list[Event]) -> GameHour | None:
     return GameHour(int(newest["tick"]), float(newest["t"]), tick_seconds)
 
 
+def _llm_pass(events: list[Event], newest: int, settings: Any) -> list[Learning]:
+    """The LLM pass over the newest free texts, once, in the foreground (the taker runs it in the background).
+    Refused while the kill switch (`.local/PAUSE`) is on."""
+    from bazaar_agent.config import REPO_ROOT
+    from bazaar_agent.guardrails import load_guardrails
+
+    if (REPO_ROOT / load_guardrails().rules.pause_file).exists():
+        err_console.print("[yellow]kill switch on (.local/PAUSE): no LLM pass[/yellow]")
+        return []
+    from bazaar_agent.learn.interpret import BATCH_MAX, CHANNELS, interpret, snippet
+    from bazaar_agent.llm import cli as llm_cli
+
+    dealers = {
+        str(e["payload"].get("with"))
+        for e in events
+        if e.get("type") == "thread.opened"
+        and isinstance(e.get("payload"), dict)
+        and e["payload"].get("kind") == "persona"
+    }
+    found = [s for e in events if (s := snippet(e, dealers)) is not None][-newest:]
+    runtime = llm_cli.runtime_for(settings, load_guardrails().rules, "learnings --llm")
+    if runtime is None or not found:
+        return []
+    known: dict[str, Any] = {d: "dealer" for d in dealers}
+    known.update({s.speaker: s.speaker_kind for s in found})
+    out: list[Learning] = []
+    batches = [
+        chunk[i : i + BATCH_MAX]
+        for channel in CHANNELS
+        if (chunk := [s for s in found if s.channel == channel])
+        for i in range(0, len(chunk), BATCH_MAX)
+    ]  # one kind of text per call, as the taker reads them
+    for batch in batches:
+        try:
+            out += interpret(batch, runtime, known, None, 60.0)
+        except Exception as e:  # one failed batch: report it, keep the rest
+            err_console.print(f"[yellow]LLM batch failed ({type(e).__name__}: {escape(str(e)[:80])})[/yellow]")
+    err_console.print(f"[dim]LLM pass: {len(found)} texts read, {len(out)} learnings kept[/dim]")
+    return out
+
+
 def _connect() -> Any:
     from bazaar_agent import db
 
@@ -66,6 +108,12 @@ def _connect() -> Any:
     return conn
 
 
+def _rules() -> Any:
+    from bazaar_agent.guardrails import load_guardrails
+
+    return load_guardrails().rules
+
+
 def _newest_tick(conn: Any) -> int:
     if conn is None:
         return 0
@@ -75,7 +123,7 @@ def _newest_tick(conn: Any) -> int:
 
 def _table(rows: list[Learning], tick: int | None) -> Table:
     table = Table(title=f"learnings in force at tick {tick}" if tick is not None else "every learning")
-    for col in ("tick", "subject", "kind", "until", "team", "conf", "text", "evidence"):
+    for col in ("tick", "subject", "kind", "until", "team", "conf", "src", "text", "evidence"):
         table.add_column(col, overflow="fold")
     for lr in rows:
         table.add_row(
@@ -85,6 +133,7 @@ def _table(rows: list[Learning], tick: int | None) -> Table:
             "-" if lr.until_tick is None else f"T{lr.until_tick}",
             lr.team or "all",
             f"{lr.confidence:.2f}",
+            lr.source if lr.source == "rules" else f"{lr.source} ({lr.detail.get('from', '?')})",
             escape(lr.text),
             ",".join(map(str, lr.evidence[-3:])),
         )
@@ -98,9 +147,16 @@ def learnings(
     every: bool = typer.Option(False, "--all", help="Every learning, expired ones included"),
     save: bool = typer.Option(False, help="Also write them to the shared learnings table (Postgres)"),
     limit: int = typer.Option(40, help="Rows to print"),
+    llm: int = typer.Option(
+        0,
+        min=0,
+        max=LLM_MAX_TEXTS,
+        help="Also read the newest N free texts (dealer words, notices) with the runtime LLM",
+    ),
     as_json: bool = typer.Option(False, "--json", help="JSON instead of tables"),
     lessons: bool = typer.Option(False, "--lessons", help="Run the outcome learner: lessons + dealer patterns (N3)"),
     query: str | None = typer.Option(None, "--query", help="What the hybrid recall returns for this situation"),
+    policy: bool = typer.Option(False, "--policy", help="The learned dealer ladders vs today's, with the replay"),
     min_score: float = typer.Option(0.0, help="--query: the cross-encoder floor (agents use 0)"),
 ) -> None:
     """What the live-feed reader learned from the captured feed, and the dealer blockers for us.
@@ -112,7 +168,7 @@ def learnings(
     settings = load_settings()
     us = resolve_team_id(settings.team_id, settings.data_dir, None)
     conn = _connect()
-    if lessons or query:
+    if lessons or query or policy:
         from bazaar_agent.learn import lessons_cli
 
         now_tick = tick if tick is not None else _newest_tick(conn)
@@ -122,6 +178,8 @@ def learnings(
             now_tick,
             lessons=lessons,
             query=query,
+            policy=policy,
+            rules=_rules() if policy else None,
             save=save,
             subject=subject,
             limit=min(limit, 10),  # hits per query (lessons tables print every row)
@@ -133,6 +191,8 @@ def learnings(
     events = _feed(conn)
     hour = hour_from(events)
     learned = FeedReader(us).read(events, hour)
+    if llm > 0:
+        learned += _llm_pass(events, llm, settings)
     now = tick if tick is not None else max((int(e.get("tick") or 0) for e in events), default=0)
     if save:
         store = LearningStore((lambda: conn) if conn is not None else None, err_console.print, db.init_schema)

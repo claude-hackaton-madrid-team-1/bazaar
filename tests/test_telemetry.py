@@ -114,7 +114,7 @@ def events(span, name):
 
 
 def test_a_negotiation_is_one_root_with_a_child_span_per_tick(spans):
-    out = traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda move: None)
+    out = traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda move, _tid: None)
 
     finished = spans.get_finished_spans()
     roots = [s for s in finished if s.parent is None]
@@ -128,7 +128,8 @@ def test_a_negotiation_is_one_root_with_a_child_span_per_tick(spans):
     assert ticks[0].attributes["openinference.span.kind"] == "CHAIN"
     assert (root.attributes["bazaar.thread.id"], root.attributes["bazaar.outcome"]) == (115, "deal")
     assert (root.attributes["bazaar.price"], tuple(root.attributes["bazaar.bids"])) == (9, (6, 7, 8))
-    assert root.attributes["bazaar.plan.max"] == 10 and root.status.status_code is StatusCode.OK
+    assert "bazaar.plan.max" not in root.attributes and "10" not in root.attributes["input.value"]  # our ceiling
+    assert root.status.status_code is StatusCode.OK
 
 
 def test_every_message_of_both_sides_is_an_event_once(spans):
@@ -145,18 +146,15 @@ def test_every_message_of_both_sides_is_an_event_once(spans):
 
 
 def test_tick_events_carry_the_offer_jev_guardrail_and_our_move(spans):
-    traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda m: "cash_floor" if m.price == 8 else None)
+    traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda m, _tid: "cash_floor" if m.price == 8 else None)
 
     ticks = [s for s in spans.get_finished_spans() if s.name.startswith("tick ")]
     names = [e.name for t in ticks for e in t.events]
-    assert {"message", "dealer_offer", "jev_verdict", "guardrail", "our_move"} <= set(names)
-    jev = next(e for t in ticks for e in events(t, "jev_verdict"))
-    assert (jev.attributes["verdict"], jev.attributes["latency_ms"], jev.attributes["model"]) == (
-        "counter",
-        281,
-        "jev-1.13.0",
-    )
-    assert '"counter": 0.7' in jev.attributes["probabilities"]
+    assert {"message", "dealer_offer", "guardrail", "our_move"} <= set(names)
+    jev, *_ = [s for s in spans.get_finished_spans() if s.name == "jev negotiation_move"]  # a span now, not an event
+    assert (jev.attributes["bazaar.jev.verdict"], jev.attributes["bazaar.jev.latency_ms"]) == ("counter", 281)
+    assert jev.attributes["bazaar.jev.model"] == "jev-1.13.0"
+    assert '"counter": 0.7' in jev.attributes["bazaar.jev.probabilities"]
     denied = [e for t in ticks for e in events(t, "guardrail") if not e.attributes["allowed"]]
     assert [tuple(e.attributes["violations"]) for e in denied] == [("cash_floor",)]
     moves = [e.attributes for t in ticks for e in events(t, "our_move")]
@@ -231,7 +229,7 @@ def test_a_telemetry_bug_never_changes_or_stops_the_trade(spans, monkeypatch, ca
     monkeypatch.setattr(traces.Thread, "model_validate", broken)
     monkeypatch.setattr(tm, "attributes", broken)
     with caplog.at_level(logging.WARNING, logger="bazaar_agent.telemetry"):
-        out = traced_run(ChattyAbuela([12, 10, 9]), guard=lambda m: None)
+        out = traced_run(ChattyAbuela([12, 10, 9]), guard=lambda m, _tid: None)
     assert (out.status, out.price) == ("deal", 9)
     assert any("trading continues" in r.message for r in caplog.records)
 
@@ -314,7 +312,7 @@ def test_one_trace_per_duel_across_ticks(spans):
     (root,) = [s for s in finished if s.name == "duel"]
     children = [s for s in finished if s.name.startswith("duel tick ")]
     assert len(children) == 3 and {c.context.trace_id for c in children} == {root.context.trace_id}
-    assert (root.attributes["bazaar.duel.role"], root.attributes["bazaar.duel.limit"]) == ("seller", 40)
+    assert root.attributes["bazaar.duel.role"] == "seller" and "bazaar.duel.limit" not in root.attributes
     assert root.attributes["bazaar.outcome"] == "done" and children[-1].status.status_code is StatusCode.ERROR
     assert [e.name for e in children[0].events] == ["rival_offer", "our_move", "guardrail", "move_sent"]
 
@@ -347,7 +345,10 @@ def test_guardrail_refusal_before_opening_is_its_own_trace(spans):
     tm.guardrail_refusal("dealer.open", "LAV-03", ["cash_floor 270", "block_buying_held_cards"])
     (only,) = spans.get_finished_spans()
     assert only.attributes["openinference.span.kind"] == "GUARDRAIL"
-    assert tuple(events(only, "guardrail")[0].attributes["violations"]) == ("cash_floor 270", "block_buying_held_cards")
+    assert tuple(events(only, "guardrail")[0].attributes["violations"]) == (
+        "cash_floor [redacted]",
+        "block_buying_held_cards",
+    )
 
 
 def test_a_database_password_never_reaches_a_span(spans):

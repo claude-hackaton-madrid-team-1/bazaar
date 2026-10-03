@@ -16,6 +16,7 @@ Target = Literal["duel", "dealer", "trade", "market_test"]
 Label = Literal["good", "ok", "bad"]
 
 TARGETS: tuple[Target, ...] = ("duel", "dealer", "trade", "market_test")
+EVERY_TICKS = 6  # an agent's eval pass: every 6 ticks (3 min at Saturday's 30 s ticks, 90 s at Sunday's 15 s)
 GOOD = 0.6  # a score at or above this is "good"
 OK = 0.3  # at or above this (and below GOOD) is "ok"; below is "bad"
 # One Phoenix annotation name per target, so a trace view can filter on it.

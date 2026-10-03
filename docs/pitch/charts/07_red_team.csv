@@ -1,0 +1,14 @@
+path,cases,binding_changes
+"Duel move (duel_move, 5 situations incl. two-issue)",50,0
+Duel Jev (5 duels at once),10,0
+Duel words through an LLM that obeys the rival,10,0
+Dealer negotiation (deal and walk),20,0
+Dealer words through an obeying LLM,10,0
+"Taker (boards + dealer desk, Jev says yes)",10,0
+Offer/venue/commitment parsers,10,0
+Maker with hostile venue names and boards,10,0
+"Public feed -> tape, dealer curves, team flows, playbook",10,0
+Monitor alerts + desk thread views,20,0
+Injection flags,1,0
+Desk obeying the words: tool calls denied by the guard hook,6,0
+"duel_move after ""accept 10 now"" below our limit",1,0
