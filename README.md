@@ -1222,6 +1222,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#71](../../pull/71) | Merged during the session on Omar's order (09:07). pr-reviewer + security narrow APPROVE on e265626/1accc4e; 24b8583 only merges main (#146): code diff identical (0 lines), gate 2829 passed, smoke passed, CI green. allow_venue_open=false, effective cash floor 100. | Sat 09:14 | `04ce5d6` |
 | [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
 | [#146](../../pull/146) | Merged during the session on Omar's order (09:07: merge everything approved ASAP). Approved on this exact head; CI green. | Sat 09:08 | `f9a193b` |
 | [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
@@ -1233,7 +1234,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | Sat 06:26 | `edee568` |
 | [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | Sat 06:24 | `d4b243e` |
 | [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | Sat 06:15 | `90191ec` |
-| [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | Sat 06:07 | `26c40fd` |
 
 ### Open pull requests
 
