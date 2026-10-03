@@ -1,6 +1,6 @@
 # MORNING — Sat 3 Oct, read by 08:30
 
-Finished at 06:30 by the w5w6 session, updated 06:40 (repo copy; `_night/MORNING.md` also has our cash figures). It builds on w8's 05:55–06:06 draft (kept as `_night/MORNING.w8-0606.md`) and
+Finished at 06:30 by the w5w6 session, last refreshed 07:45 (repo copy; `_night/MORNING.md` also has our cash figures). It builds on w8's 05:55–06:06 draft (kept as `_night/MORNING.w8-0606.md`) and
 r1's verdicts at 06:40 (`night/r1-reviewer:docs/night/r1-reviewer.md`); PR states checked live on GitHub at 06:28.
 Times are Madrid time; GitHub shows UTC (Madrid = Z + 2 h).
 
@@ -10,7 +10,7 @@ hold); #61 is merged through it, #68 closed. #62 closed, taken over by **#162** 
 to **HOLD** (r1, 06:19). #105 now ships `holdings_from_db = false` (r1, 06:06). **#91** (evals inside the tick loop)
 and **#145** (new sets, two defaults ON) were merged without the default decisions r1 asked for. #71 has a new head
 (stall finding fixed, process blocker remains). Then #96/#112 (learner, 06:43–06:46), #148 (06:37) and **#150 (duel
-stack, 06:50, defaults v1, 6b56719 ungated)** were merged too.
+stack, 06:50, defaults v1, 6b56719 ungated)** were merged too, then **#162 (shared ledger, 06:57)** and #111 (07:05).
 
 ## TL;DR
 0. **Live on `main` now, merged overnight with defaults ON:** **#150, the duel stack (06:50; defaults unchanged: `duel_policy = v1`)**, the learner stack **#89 + #96 + #112**
@@ -21,6 +21,9 @@ stack, 06:50, defaults v1, 6b56719 ungated)** were merged too.
    `BAZAAR_LEARN=0` on `bazaar-taker` stops **only the taker's learning**; the lessons wrapping of Jev is
    unconditional on `main` (`cli.py` `_duel_jev`, `_maker_jev`, `agent_taker`: `with_lessons(...)`, no flag). Jev
    still picks only among the legal moves code builds, but the lessons can steer which one.
+   **#162 (shared ledger) is merged too: every live writer now refuses to start without a shared `DATABASE_URL`**, so
+   the 08:30 Railway check is mandatory. #111 (LLM feed reader) ships off (`llm_read_feed = false` in RUNTIME.md);
+   its maker part changes venue scoring from the server's own `venue.*` events only (no counterparty text).
 1. **One merge authority.** ogarciarevett's coordinator triaged the night: it closed most night PRs and opened takeovers
    (#137–#162), and merged some over r1's findings. Agree with Omar at 08:30 who merges today. Every merge to `main`
    redeploys the live agents, so **freeze at 08:50**.
@@ -81,7 +84,7 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 | #110 (B19 pending fee) | [#144](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/144) | GO | merge in the batch |
 | #79 #98 (W4 trade desk, B4 rivals) | [#137](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/137) → [#138](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/138) → #123 | mergeable, **squash** (private numbers in history) | after the batch; #137 needs the `hands_off_ids` patch; keep #123 off |
 | #93 (inspector) | [#146](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/146) → [#152](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/152) | mergeable, flags stay off | after the batch |
-| #62 (shared ledger) | [#162](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/162) | review in progress | check `DATABASE_URL` on every live Railway service before it merges |
+| #62 (shared ledger) | [#162](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/162) | **merged 06:57** | `DATABASE_URL` (shared) on every live Railway service, or they refuse to start; #140–#143/#137 need r1's Protocol patch |
 | #129 (new sets) | #145 (merged) / #155 | merged with 2 defaults ON | decide `protect_page_sets = RET,CHA` and `supply_scarcity` (on now) |
 | – (ogarciarevett's learner) | #89, #96, #112 (merged 06:26–06:46) / #131 (open) | live with learning on; #131 DO NOT MERGE | `BAZAAR_LEARN=0` on `bazaar-taker` (taker only); for the Jev lessons wrapping you need a revert or a gating patch |
 | #81 #87 #92 #94 #100 #101 #109 #119 #120 #122 #125 #127 #132 #134 | reports in [#154](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/154) (docs) | – | read §1; #120's rehearsal branch `night/b5-rehearsal` has the 12-PR integration (0 crashes in 580 live sim ticks) |
@@ -94,8 +97,10 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
    sweep: 0 flags of 20 on #143 vs 19 of 20 on main. If the port isn't in by 08:45, merge #144 only and run **one
    taker** (the double booking needs two). **The duel settings commit (§3.4) goes in this batch**: `duel_policy` is read
    at start, so it needs the redeploy the batch causes anyway; later it is a mid-play redeploy (right after a duel wave,
-   never during one, and before Duels I). **#162** only once r1's review says GO and `DATABASE_URL` is set on every
-   live service (the live writers refuse to start without a shared ledger).
+   never during one, and before Duels I). **#162 is already merged (06:57)**: `main` now has `tcp_user_timeout` 10 s, so
+   a frozen Postgres costs a tick at most ~10 s (not > 60 s), but **#140–#143 and #137 must carry r1's ledger Protocol
+   patch before they merge** (`release_accept` / `hands_off_ids` on the new ledger; without it a refused accept or the
+   maker raises AttributeError; REVIEWS.md "## PR #62" / "## PR #162").
 2. **Don't merge #71** unless you make the venue go-live call on purpose; then split the flags into a one-line PR.
    Until h6.5 its 270 P reserve refuses every maker bid.
 3. **Venue:** **no venue this morning** (our cash is short of the 540 P needed under floor 270 + reserve). See whether the free starter
