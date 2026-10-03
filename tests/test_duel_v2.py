@@ -225,3 +225,43 @@ def test_when_accepts_must_queue_the_slowest_rival_is_taken_first():
     slow = duel(2, rival=[(100, 112), (107, 113)], ours=[(100, 160)])
     moves = plan_moves([fast, slow], 109, {1: 100, 2: 100})  # 3 ticks left, 2 accepts to make: one is due now
     assert moves[2].kind == "accept" and moves[1].kind == "hold"
+
+
+# ---------------------------------------------------------------- B11: endgame squeeze
+
+
+def test_a_squeeze_is_refused_before_the_last_ticks_and_our_last_offer_stays_fair():
+    squeeze = duel(rival=[(100, 60), (109, 101)], ours=[(100, 160)])  # 1 P inside our cost 100, 3 ticks left
+    assert duel_plan(squeeze, 110, 100).move.kind == "accept"  # today: anything inside the limit at D − 2
+    guarded = V2Params(min_share=0.3, endgame_ticks=1)  # threshold 0.3 × max(1, 0.4 × 100) = 12 P
+    move = duel_plan(squeeze, 110, 100, guarded).move
+    assert (move.kind, move.price) == ("offer", 112)  # refuse; the rival can still take 112 at its last move
+    assert duel_plan(squeeze, 111, 100, guarded).move.kind == "accept"  # the true last tick: anything > 0
+    fair = duel(rival=[(100, 60), (109, 130)], ours=[(100, 160)])
+    assert duel_plan(fair, 110, 100, guarded).move.kind == "accept"  # 30 P is no squeeze
+
+
+def test_jitter_is_seeded_per_duel_and_never_leaves_our_limit():
+    from bazaar_agent.agents.duel_v2 import jittered
+
+    p = V2Params(jitter=0.25, jitter_seed=3)
+    a, b = jittered(p, duel(1)), jittered(p, duel(2))
+    assert a == jittered(p, duel(1)) and a.anchor != b.anchor and 0.45 <= a.anchor <= 0.75
+    assert jittered(V2Params(), duel(1)) == V2Params()
+    rules = gr.Guardrails(duel_policy="v2")
+    rng = random.Random(9)
+    for i in range(500):
+        d = duel(
+            i, role=rng.choice(("seller", "buyer")), limit=rng.randint(30, 150), rival=[(100, rng.randint(1, 300))]
+        )
+        move = plan_moves([d], rng.randint(100, 111), {i: 100}, V2Params(jitter=0.5, min_share=0.4))[i]
+        if move.kind != "hold":
+            assert gr.check(duel_action(d, move), gr.Context(cash=0, held={}, tick=0, t_hours=0), rules).allowed
+
+
+def test_the_squeeze_mitigation_raises_our_share_against_exploiters():
+    exploiters = {"today": arena.v2_policy(), "guarded": arena.v2_policy(V2Params(min_share=0.3, endgame_ticks=1))}
+    res = arena.tournament(exploiters, styles=arena.EXPLOITERS, scenarios=20, decays=(0.08,))
+    today, guarded = arena.summarize(res["today"]), arena.summarize(res["guarded"])
+    assert guarded.mean_share > today.mean_share + 0.03 and guarded.outside == today.outside == 0
+    assert arena.leakage(res["today"])["priced"] > 0
