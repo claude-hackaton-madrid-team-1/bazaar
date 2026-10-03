@@ -116,6 +116,16 @@ def main() -> None:
     first = arena.tournament(pols, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16), team_first=True)
     out.append(compare(first, [*styles, ("all", {})]))
 
+    practice_order = arena.tick_order(arena.load_practice(FIXTURE))
+    share = practice_order["we_first_share"]
+    out.append(f"\n## Within-tick order as in the practice payloads: each rival moves after us with p = {share:.2f}\n")
+    out.append(
+        f"In the practice duels we priced first in {practice_order['we_first']} of "
+        f"{practice_order['we_first'] + practice_order['rival_first']} shared ticks (B7).\n"
+    )
+    mixed = arena.tournament(pols, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16), team_first_share=share)
+    out.append(compare(mixed, [*styles, ("all", {})]))
+
     out.append("\n## Accept-slot congestion: 2 duels per session instead of 6 (decays 0.08 and 0.10)\n")
     pairs = arena.tournament(pols, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16), per_session=2)
     out.append(compare(pairs, [*styles, ("all", {})]))

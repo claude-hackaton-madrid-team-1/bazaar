@@ -243,10 +243,12 @@ def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cl
     order: list[str] = []
     reserve, pick = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick
     monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
-    monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
+    sent_at_jev = lambda self, *a, **kw: order.append(f"jev after {client.sent}") or pick(self, *a, **kw)  # noqa: E731
+    monkeypatch.setattr(duel_jev.DuelJev, "pick", sent_at_jev)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert order == ["reserve", "jev"] and client.sent == [("accept", 95)]  # booked once, before Jev, then sent
+    assert order == ["reserve", "jev after [('accept', 95)]"]  # booked AND sent before Jev (B15 / B7): nothing strands
+    assert client.sent == [("accept", 95)]  # once
 
 
 def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monkeypatch):
