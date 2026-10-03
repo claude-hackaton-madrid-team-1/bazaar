@@ -2097,7 +2097,8 @@ class Taker:
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
         if target_bid is not None and (why := self._withdrawn_first(run, target_bid)) is not None:
-            self.rec.decisions.settle(did, "failed" if "withdrawn" in why else "expired")  # never reads as sent
+            late = why.startswith("the tick ended")
+            self.rec.decisions.settle(did, "expired" if late else "failed")  # never reads as sent
             try:
                 self.ledger.release_accept(clock.tick, p.ref)
             except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on

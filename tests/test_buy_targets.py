@@ -456,3 +456,5 @@ def test_no_accept_goes_out_late_after_our_bid_was_withdrawn(tmp_path, targets):
     tk.on_tick(at(t, TICK))
     assert ("cancel", 4300) in t.sent and ("accept", 1) not in t.sent
     assert any("the tick ended after our bid was withdrawn" in line for line in lines)
+    accept = next(r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r["inputs"]["ref"] == EPIC)
+    assert {"id": accept["id"], "status": "expired", "update": True} in rows(tmp_path)
