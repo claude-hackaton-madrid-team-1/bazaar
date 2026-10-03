@@ -99,3 +99,49 @@ def test_ctrl_c_still_stops_the_loop():
 
     with pytest.raises(KeyboardInterrupt):
         run_per_tick(read, lambda c: None, sleep=lambda _: None)
+
+
+def test_the_opt_in_stagger_wakes_later_but_never_past_forty_percent_of_the_tick():
+    assert seconds_until_next_tick(clock(next_tick_in=12.0), 4.0) == 12.0 + AFTER_TICK_S + 4.0
+    assert seconds_until_next_tick(clock(tick_seconds=15.0, next_tick_in=12.0), 9.0) == 12.0 + AFTER_TICK_S + 6.0
+    assert seconds_until_next_tick(clock(paused=True), 4.0) == PAUSED_POLL_S
+
+
+def test_the_stagger_is_off_unless_the_service_sets_it():
+    import pytest
+
+    from bazaar_agent.ticks import TICK_OFFSET_ENV, tick_offset_from_env
+
+    assert tick_offset_from_env({}) == 0.0 and tick_offset_from_env({TICK_OFFSET_ENV: " "}) == 0.0
+    assert tick_offset_from_env({TICK_OFFSET_ENV: "2.5"}) == 2.5
+    for bad in ("-1", "nan", "inf", "soon"):
+        with pytest.raises(ValueError, match=TICK_OFFSET_ENV):
+            tick_offset_from_env({TICK_OFFSET_ENV: bad})
+
+
+def test_run_per_tick_sleeps_the_offset_on_top_of_the_tick(monkeypatch):
+    import pytest
+
+    from bazaar_agent.ticks import TICK_OFFSET_ENV
+
+    clocks = iter([{"tick": 1, "next_tick_in": 5}, {"tick": 2, "next_tick_in": 5}])
+    today, staggered = [], []
+    run_per_tick(lambda: next(clocks), lambda c: None, max_ticks=2, sleep=today.append)
+    monkeypatch.setenv(TICK_OFFSET_ENV, "4")
+    clocks = iter([{"tick": 1, "next_tick_in": 5}, {"tick": 2, "next_tick_in": 5}])
+    run_per_tick(lambda: next(clocks), lambda c: None, max_ticks=2, sleep=staggered.append)
+    assert len(today) == len(staggered) == 1
+    assert staggered[0] - today[0] == pytest.approx(4.0, abs=0.05)  # minus the (tiny) work time
+    assert run_per_tick(lambda: {"tick": 3, "next_tick_in": 5}, lambda c: None, max_ticks=1, start_offset_s=0.0) == 1
+
+
+def test_the_stagger_is_read_from_dot_env_too(monkeypatch, tmp_path):
+    from bazaar_agent import config
+    from bazaar_agent.ticks import TICK_OFFSET_ENV, tick_offset_from_env
+
+    (tmp_path / ".env").write_text(f"{TICK_OFFSET_ENV}=1.5\n")
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv(TICK_OFFSET_ENV, raising=False)
+    assert tick_offset_from_env() == 1.5
+    monkeypatch.setenv(TICK_OFFSET_ENV, "3")
+    assert tick_offset_from_env() == 3.0  # the environment wins, as for every setting

@@ -1108,6 +1108,48 @@ def alerts(limit: int = typer.Option(20, help="How many of the latest alerts")) 
         console.print(f"tick {a['tick']} [bold]{a['kind']}[/bold] {a['subject']}: {a['detail']}")
 
 
+@app.command()
+def budget(
+    tick_seconds: float = typer.Option(30.0, help="Tick length: 30 Saturday, 15 Sunday"),
+    ceiling: bool = typer.Option(False, help="Every loop at its ceiling instead of a steady busy tick"),
+    dealer_children: int = typer.Option(0, help="`bazaar dealer buy` processes running besides the taker"),
+    laptops: int = typer.Option(1, help="Copies of taker and maker (each laptop running them)"),
+    stagger: bool = typer.Option(False, help="Model the proposed stagger (opt-in per service: BAZAAR_TICK_OFFSET_S)"),
+    operator_rps: float = typer.Option(
+        0.0, min=0.0, help="MCP tools, desk, `bazaar ask`/`status`: average req/s (0 = not counted)"
+    ),
+    flatten: bool = typer.Option(False, help="Add one `bazaar flatten` (32 calls) at the tick edge"),
+) -> None:
+    """Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made."""
+    from rich.table import Table
+
+    from bazaar_agent import rate_budget as rb
+
+    plan = rb.saturday_plan(dealer_children=dealer_children) if ceiling else rb.steady_plan()
+    if not ceiling and dealer_children:
+        plan.append(rb.dealer_child().times(dealer_children))
+    plan = rb.with_copies(plan, {"taker": laptops, "maker": laptops})
+    if operator_rps:
+        plan.append(rb.operator(operator_rps, tick_seconds))
+    if flatten:
+        plan.append(rb.flatten())
+    offsets = rb.PROPOSED_STAGGER if stagger else None
+    t = Table(title=f"Calls per tick · {tick_seconds:g} s ticks · {'ceiling' if ceiling else 'steady'}")
+    for col in ("loop", "copies", "team", "team/s", "broker", "broker/s", "keyless", "keyless/s"):
+        t.add_column(col)
+    for row in rb.describe(rb.budget_table(tick_seconds, plan)):
+        t.add_row(*row)
+    console.print(t)
+    edge = rb.burst(plan, offsets=offsets, retries=rb.SDK_RETRIES)
+    console.print(
+        f"tick boundary: {edge.calls} team-key calls → {edge.sent} requests with the SDK's retries, "
+        f"{edge.refused} refused 429, {edge.failed} lost (over {edge.seconds:.1f} s)"
+    )
+    verdict = rb.check(plan, tick_seconds, offsets=offsets)
+    problems = "\n".join(f"[red]{p}[/red]" for p in verdict.problems)
+    console.print("[green]fits the key[/green]" if verdict.ok else problems)
+
+
 # ---------------------------------------------------------------- feed capture
 
 

@@ -36,3 +36,9 @@ def trading_enabled_in_guardrails(monkeypatch, tmp_path_factory):
         text = gr.GUARDRAILS_FILE.read_text(encoding="utf-8")
         copy.write_text(text.replace("- `trading_enabled` = false", "- `trading_enabled` = true"), encoding="utf-8")
     monkeypatch.setattr(gr, "GUARDRAILS_FILE", copy)
+
+
+@pytest.fixture(autouse=True)
+def no_tick_stagger(monkeypatch):
+    """A BAZAAR_TICK_OFFSET_S in a teammate's .env must not shift every tick loop the suite runs."""
+    monkeypatch.setenv("BAZAAR_TICK_OFFSET_S", "")
