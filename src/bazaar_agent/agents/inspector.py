@@ -120,10 +120,28 @@ NEGATION_RIGHT_AFTER = r"^\s*[?!.:,;-]?\s*(?:gone|sold out|agotad[oa]s?|vendid[o
 NEGATION_RIGHT_BEFORE = r"(?:\bno|\bni(?:\s+una?)?|\bning[uú]n[oa]?|\bnot\s+an?|\bnone\s+of\s+the)\s+$"
 
 
+# Any negation in the mention's own sentence: that sentence makes no claim. A wrong flag costs points and
+# a missed one only a bonus, so precision wins: "No lo dudes: X" is not flagged either (S1 #152 audit, r2).
+SENTENCE_NEGATION = re.compile(
+    r"(?:\b(?:no|not|never|nothing|none|cannot|nunca|ni|sin|ningun[oa]?|ningún|nada|tampoco)\b|n't\b)"
+)
+SENTENCE_END = re.compile(r"[.!?\n]")
+
+
+def _sentence(low: str, start: int, end: int) -> str:
+    """The sentence around [start, end): from the previous '.', '!', '?' or newline to the next one."""
+    head = max((m.end() for m in SENTENCE_END.finditer(low, 0, start)), default=0)
+    tail = SENTENCE_END.search(low, end)
+    return low[head : tail.start() if tail else len(low)]
+
+
 def _negated_at(low: str, start: int, end: int) -> bool:
-    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X', 'no X left'.
-    The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole text (S1 audit)."""
+    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X', 'no X left', or any
+    negation in its sentence. The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole
+    text (S1 audit)."""
     before, after = low[max(0, start - 30) : start], low[end : end + 25]
+    if SENTENCE_NEGATION.search(_sentence(low, start, end)):
+        return True
     negators = (NEGATION_BEFORE, NEGATION_RIGHT_BEFORE)
     return any(re.search(p, before) for p in negators) or any(
         re.search(p, after) for p in (NEGATION_AFTER, NEGATION_RIGHT_AFTER)
@@ -368,6 +386,7 @@ class FlagBook:
                 book.landed += 1 if row.get("landed", True) is not False else 0
             else:
                 book.skipped += 1
+        book.landed += book.skipped  # fail closed: an unreadable line may have been a flag that landed
         return book
 
     def remember(self, message_id: int, reason: str, *, landed: bool = True) -> str | None:
@@ -379,8 +398,8 @@ class FlagBook:
         row = {"message_id": message_id, "landed": landed, "reason": reason[:FLAG_REASON_CHARS]}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(row) + "\n")
+            with self.path.open("a", encoding="utf-8") as handle:  # the leading newline ends a torn line
+                handle.write("\n" + json.dumps(row) + "\n")
         except OSError as e:  # the in-memory book still holds it: this process never re-sends it
             return f"flags file not written ({type(e).__name__})"
         return None

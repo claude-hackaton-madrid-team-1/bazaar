@@ -108,8 +108,10 @@ def _is_sent(row: dict[str, Any]) -> bool:
 def publishable(row: dict[str, Any]) -> bool:
     """Only a sent row is published. The existence, kind and status of an unsent one (a skipped accept, a
     rejected bid, an expired post) say which limit or quota bound us, so those never leave the process.
-    A `hold_*` row sends nothing, so it is not published either."""
-    return _is_sent(row) and not str(row.get("kind") or "").startswith("hold")
+    A `hold_*` row sends nothing, so it is not published either, and neither is a bad-faith `flag` row (it
+    is decided before its send, and a refused or retried flag must never read as sent)."""
+    kind = str(row.get("kind") or "")
+    return _is_sent(row) and not kind.startswith("hold") and kind != "flag"
 
 
 def _guardrail(verdict: object, sent: bool) -> str:

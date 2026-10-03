@@ -115,3 +115,26 @@ def test_only_opted_in_dealers_count_toward_a_flag_jev_can_say_yes_to():
     assert e.as_state()["would_flag_untrusted_dealers"] == 1 and e.as_state()["would_flag_on_flag_dealers"] == 0
     opted = precision(dealer_offers(EVENTS), CARDS, TRUSTED, frozenset({"trile"}))
     assert opted.as_state()["would_flag_on_flag_dealers"] == 1 and opted.as_state()["flag_dealers"] == ["trile"]
+
+
+def test_the_terminal_shows_each_would_flags_words_for_the_human_check_and_jev_never_sees_them(monkeypatch, tmp_path):
+    from bazaar_agent import cli, flags_cli
+    from bazaar_agent.config import Settings
+
+    feed = tmp_path / "feed"
+    feed.mkdir()
+    (feed / "feed.jsonl").write_text("".join(json.dumps(e) + "\n" for e in EVENTS))
+
+    class Public:
+        def catalog(self):
+            return CATALOG
+
+        def feed_window(self, n):
+            return []
+
+    monkeypatch.setattr(flags_cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(flags_cli, "public_client", lambda settings: Public())
+    shown = " ".join(CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)]).output.split())
+    assert "thread 11, tick 2, its words: La Dama de Serrano, the legendary. Only 120." in shown
+    state = CliRunner().invoke(cli.app, ["flags", "precision", "--json", "--feed-dir", str(feed)]).output
+    assert "Dama" not in state

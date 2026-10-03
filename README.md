@@ -1002,14 +1002,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks and homoglyphs
+- [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
 - [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
 - [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
 - [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 - [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
 - [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 - [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
-- [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
-- [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
 
 <!-- BAZAAR:STATUS:END -->
 

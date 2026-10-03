@@ -450,3 +450,32 @@ def test_a_malformed_dealer_offer_is_refused_and_never_costs_the_desk_its_tick(t
     assert any(
         f"tick {TICK + 1} taker:" in line and "accept candidate" in line for line in lines
     )  # tick ran to the end
+
+
+def test_a_rate_limited_flag_keeps_one_decision_row_and_is_tried_again_on_the_next_read(tmp_path):
+    """#152 r2: a 429 was not processed, so the next read tries again, on the SAME decision row."""
+    from bazaar_agent.sdk import BazaarError
+
+    class Limited(FakeTeam):
+        def flag(self, message_id, reason=""):
+            if not [s for s in self.sent if s[0] == "flag_429"]:
+                self.sent.append(("flag_429", message_id))
+                raise BazaarError("rate_limited", "slow down", 429)
+            return super().flag(message_id, reason)
+
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = Limited()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=True)
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))  # 429
+    t.on_tick(at(team, TICK + 2))  # tried again: sent
+    assert [s[:2] for s in team.sent if s[0].startswith("flag")] == [("flag_429", 9001), ("flag", 9001)]
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "flag"]  # one row for the message, not one per try
+    flags = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+    assert [e["error_code"] for e in flags] == ["rate_limited", None] and {e["decision_id"] for e in flags} == {
+        row["id"]
+    }

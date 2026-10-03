@@ -261,10 +261,12 @@ def test_a_name_inside_a_longer_name_is_one_card_and_a_negated_mention_is_no_cla
         assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=5).verdict == "block"
 
 
-def test_a_bare_no_is_not_a_denial_so_a_covering_trickster_still_flags():
+def test_any_negation_in_the_sentence_means_no_claim_even_a_covering_trickster():
+    """Precision over recall (#152 audit r2): a wrong flag costs points, a missed one only a bonus. This
+    trickster is still refused (block); it is just not flagged."""
     o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
     text = "No lo dudes: Teatro Valle-Inclán, recién llegado, 25 P."
-    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=11).verdict == "flag"
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=11).verdict == "block"
 
 
 def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
@@ -329,8 +331,9 @@ def test_a_corrupt_flags_file_never_stops_a_start_and_keeps_every_readable_flag(
     path = tmp_path / "flags.jsonl"
     path.write_text('{"message_id": 77, "landed": true, "reason": "x"}\n{"message_id": 79, "rea\n[1, 2]\n')
     book = FlagBook.from_rules(Guardrails(flag_dealers="trile"), path)
-    assert book.sent == {77: "x"} and book.landed == 1 and book.skipped == 2
-    assert book.remember(80, "y", landed=False) is None and book.landed == 1  # a refusal never counts
+    assert book.sent == {77: "x"} and book.skipped == 2
+    assert book.landed == 3  # fail closed: each unreadable line may have been a flag that landed
+    assert book.remember(80, "y", landed=False) is None and book.landed == 3  # a refusal never counts
     assert FlagBook.from_rules(Guardrails(), path).sent.keys() == {77, 80}
 
 
@@ -346,3 +349,54 @@ def test_an_untrusted_dealer_not_opted_in_is_logged_never_sent():
         log=lines.append,
     )
     assert sent == [] and lines and "trile is not in flag_dealers" in lines[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I do not currently have LAV-06, so here is a common for 12.",
+        "LAV-06 is not something I can give you today; this one instead, 12 P.",
+        "Nothing like La Tabacalera left. Este, 12.",
+        "Lo siento, La Tabacalera nunca la tuve. Te doy este por 12.",
+        "I can't find LAV-06 anywhere. Take this.",
+    ],
+)
+def test_honest_disclosures_with_a_negation_in_the_sentence_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=15).verdict == "block"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera para ti, 12 P. Una joya.",
+        "Here it is: LAV-06, the one you asked for. 12 P.",
+        "Un cromo raro, solo 12.",
+    ],
+)
+def test_the_signature_without_any_negation_still_flags(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    topic = {"buy": {"rarity": "rare", "set": "LAV"}} if "raro" in text else {"buy": {"card": "LAV-06"}}
+    assert inspect_offer(o, topic, text, CARDS, message_id=16).verdict == "flag"
+
+
+def test_the_rules_never_let_a_trusted_dealer_be_opted_in():
+    from bazaar_agent import guardrails as gr
+
+    for line in ("- `flag_dealers` = abuela — x", "- `flag_dealers` = trile,chato — x"):
+        with pytest.raises(gr.GuardrailsError, match="never flagged"):
+            gr.parse_guardrails(line)
+    text = "- `flag_trusted_dealers` = none — x\n- `flag_dealers` = abuela — x"
+    with pytest.raises(gr.GuardrailsError, match="never flagged"):
+        gr.parse_guardrails(text)  # emptying the trusted list does not free abuela either
+
+
+def test_a_torn_last_line_is_ended_before_the_next_flag_is_appended(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+
+    path = tmp_path / "flags.jsonl"
+    path.write_text('{"message_id": 77, "landed": true, "reason": "x"}\n{"message_id": 79, "rea')
+    book = FlagBook.from_rules(Guardrails(), path)
+    book.remember(80, "y")
+    again = FlagBook.from_rules(Guardrails(), path)
+    assert set(again.sent) == {77, 80} and again.skipped == 1 and again.landed == 3

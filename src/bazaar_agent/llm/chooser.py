@@ -55,9 +55,11 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
 WORD = re.compile(r"\w+")
 
 
-CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC"})  # Latin look-alikes
+CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC", "LISU"})  # Latin look-alikes
 EMOJI_JOINERS = frozenset({"\u200d", "\ufe0f"})  # zero-width joiner and emoji variation selector: emoji, not tricks
-HIDING_MARKS = frozenset({"\u034f"})  # combining grapheme joiner: invisible, splits a word
+# Invisible "letters" and blanks that split a word: the combining grapheme joiner, the Hangul fillers, the
+# braille blank.
+HIDING_MARKS = frozenset({"\u034f", "\u115f", "\u1160", "\u3164", "\uffa0", "\u2800"})
 
 
 def odd_unicode(text: str) -> bool:
@@ -78,7 +80,9 @@ def folded(text: str) -> str:
     digits, accents split off), then without format characters and combining marks, so nothing invisible
     splits a word. The patterns accept unaccented Spanish ("actua", "envia")."""
     decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(ch for ch in decomposed if unicodedata.category(ch) not in ("Cf", "Mn", "Me"))
+    return "".join(
+        ch for ch in decomposed if unicodedata.category(ch) not in ("Cf", "Mn", "Me") and ch not in HIDING_MARKS
+    )
 
 
 def injection_flags(text: str | None) -> tuple[str, ...]:

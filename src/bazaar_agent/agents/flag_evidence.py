@@ -68,6 +68,7 @@ class Evidence:
     trusted: frozenset[str]
     flag_dealers: frozenset[str] = frozenset()  # GUARDRAILS.md opt-in: the only dealers a flag may go to
     unreadable: int = 0  # offers whose shape the inspector could not read (skipped)
+    sources: tuple[FeedOffer, ...] = ()  # the feed offer behind each would-flag, same order: for a human to read
 
     @property
     def flags_from_untrusted(self) -> int:
@@ -110,6 +111,7 @@ def precision(
     counts = {"clean": 0, "block": 0, "flag": 0}
     by_dealer: dict[str, dict[str, int]] = {}
     flagged: list[Inspection] = []
+    sources: list[FeedOffer] = []
     total = known = unreadable = 0
     for o in offers:
         total += 1
@@ -117,7 +119,7 @@ def precision(
             continue
         try:
             i = inspect_offer(o.offer, o.topic, o.text, cards, dealer=o.dealer, message_id=o.message_id)
-        except (AttributeError, TypeError, ValueError, KeyError):  # a list where an object should be
+        except (AttributeError, TypeError, ValueError, KeyError, ArithmeticError):  # a list for an object, 1e999
             unreadable += 1
             continue
         known += 1
@@ -126,4 +128,5 @@ def precision(
         row[i.verdict] += 1
         if i.verdict == "flag":
             flagged.append(i)
-    return Evidence(total, known, counts, by_dealer, tuple(flagged), trusted, flag_dealers, unreadable)
+            sources.append(o)
+    return Evidence(total, known, counts, by_dealer, tuple(flagged), trusted, flag_dealers, unreadable, tuple(sources))

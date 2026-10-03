@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 from bazaar_agent.config import REPO_ROOT
 
@@ -74,6 +74,13 @@ class Guardrails(BaseModel):
             raise ValueError(f"{info.field_name} {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
         return value
 
+    @model_validator(mode="after")
+    def _never_flag_the_honest_dealers(self) -> Guardrails:
+        honest = self.flag_dealer_ids & (self.trusted_dealers | {"abuela", "chato"})
+        if honest:
+            raise ValueError(f"flag_dealers {sorted(honest)}: a trusted dealer (or abuela, chato) is never flagged")
+        return self
+
     @property
     def trusted_dealers(self) -> frozenset[str]:
         return _dealer_ids(self.flag_trusted_dealers)
@@ -118,7 +125,7 @@ ENFORCED_BY: dict[str, str] = {
     "allow_flags": "guardrails.check",
     "max_flags_sent": "agents.inspector.FlagBook (flag_step: the desk; agents/flags.jsonl per data dir)",
     "flag_dealers": "agents.inspector.FlagBook (flag_step: the desk)",
-    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
 }
 

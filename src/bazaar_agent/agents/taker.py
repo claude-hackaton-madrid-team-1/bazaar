@@ -302,6 +302,9 @@ class Taker:
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
         self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
+        self._flag_rows: dict[int, int] = {}  # message id -> its flag decision row (a 429 retry reuses it)
+        if self.flags.skipped:
+            log(f"taker: {self.flags.skipped} unreadable line(s) in {FLAGS_FILE}, counted as sent flags")
         self.injections = InjectionTags(decisions.dir / INJECTIONS_FILE)  # S1: tagged, never obeyed
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -462,10 +465,10 @@ class Taker:
 
     def _inspect(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
         """The offer inspector on the dealer's newest offer. A certain trickster becomes a `flag` decision
-        row with its structural evidence; it is SENT only by a live taker with GUARDRAILS.md allow_flags on
-        (default off: the row says `would flag`), at most max_flags_per_process, never to a trusted dealer."""
+        row with its structural evidence (one row per message). It is SENT only by a live taker with GUARDRAILS.md
+        allow_flags on (default off: the row says `would flag`), to an opted-in `flag_dealers` dealer only, at most
+        `max_flags_sent` ever per data dir, never to a trusted dealer, never twice."""
         tick = run.snap.clock.tick
-        rows: dict[int, int] = {}
 
         def guard(i: Inspection) -> str | None:
             verdict = check(Action("flag", str(i.message_id)), self._ctx(run), self.rules)
@@ -475,11 +478,11 @@ class Taker:
             self.log(f"tick {tick} taker: {line}")
 
         def record(i: Inspection, why: str | None) -> None:
-            if i.message_id is not None:
-                rows[i.message_id] = self._flag_row(run, conv, thread, i, why)
+            if i.message_id is not None and i.message_id not in self._flag_rows:  # one row per message, not per try
+                self._flag_rows[i.message_id] = self._flag_row(run, conv, thread, i, why)
 
         def send(message_id: int, reason: str) -> Any:
-            return self._send_flag(tick, rows.get(message_id), message_id, reason)
+            return self._send_flag(tick, self._flag_rows.get(message_id), message_id, reason)
 
         try:
             cards = self._card_index(run)
