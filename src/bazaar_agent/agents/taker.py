@@ -424,6 +424,7 @@ class _TickRun:
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
     team_view: DeskView | None = None  # what the team desk saw this tick (N17)
     plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
+    unread: set[str] = field(default_factory=set)  # cards of dealer threads we could not read this tick
 
 
 class Taker:
@@ -724,6 +725,9 @@ class Taker:
         self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
     ) -> list[AskCandidate]:
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
+        # a card whose dealer thread we could not read this tick is not bought here: our bid there may still
+        # stand (and she may take it), and that thread cannot be walked until we read it again
+        offers = [o for o in offers if o.ref not in run.unread]
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
 
     def _bids(
@@ -1203,14 +1207,16 @@ class Taker:
         return Gate("board", p.offer_id, "block", ("an accept with no offer to inspect",))
 
     def _thread_of(self, run: _TickRun, conv: Conversation) -> dict[str, Any] | None:
-        """One dealer thread; a refusal skips that conversation for this tick only (no tick counted, no move)."""
+        """One dealer thread; a refusal skips that conversation for this tick only (no tick counted, no move) and
+        keeps its card off the boards this tick (`run.unread`)."""
         try:
             thread: dict[str, Any] = self.team.thread(conv.thread_id)
             return thread
         except BazaarError as e:
+            run.unread.add(conv.item)
             self.log(
                 f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} refused {e.code}; "
-                "it waits a tick"
+                f"it waits a tick, and {conv.item} is not bought elsewhere this tick"
             )
             return None
 

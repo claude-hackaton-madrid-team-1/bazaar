@@ -297,6 +297,36 @@ def test_a_refused_dealer_thread_skips_only_that_conversation(tmp_path):
         assert any("thread 51 with chato refused not_found; it waits a tick" in line for line in lines)
 
 
+def test_the_card_of_an_unreadable_dealer_thread_is_not_bought_on_a_board_that_tick(tmp_path):
+    """Our bid may still stand in a thread we could not read (and she may take it): its card waits a tick."""
+    from bazaar_agent.agents.dealer import BidPlan, Negotiation
+    from bazaar_agent.agents.desk import Conversation
+
+    class Refused(FakeTeam):
+        def thread(self, tid):
+            raise BazaarError("not_found", "no such thread", 404)
+
+    for name, speed in (("off", SPEED_OFF), ("on", SPEED_ON)):
+        team = Refused()
+        boards = {"rastro": [ask(1, "LAV-02", 10), ask(2, "LAV-08", 20, asset=901)]}
+        t = Taker(
+            team,
+            FakePublic(boards=boards),
+            live=True,
+            log=lambda line: None,
+            now=lambda: 1000.0,
+            sleep=lambda s: None,
+            config=TakerConfig(max_dealer_threads=0),
+            **parts(tmp_path / name, **speed),
+        )
+        t.convs["abuela"] = Conversation(
+            "abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK
+        )
+        team.now = clock(tick=TICK + 1)  # the taker re-reads the clock before an accept
+        t.on_tick(team.now)
+        assert team.sent == [("accept", 1)]  # LAV-02 only: LAV-08 (the best score) waits for its thread
+
+
 def test_a_cached_answer_is_served_on_a_tick_with_no_time_to_ask_jev(tmp_path):
     """The one declared behaviour change: the same state Jev answered a tick ago gets that answer even when this
     tick has too little time left to ask (without the cache: `undecided`, no budget). On a dealer thread a cached
