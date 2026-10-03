@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -370,6 +371,10 @@ class Observer:
     def finished(self, outcome: Outcome) -> None:
         """The negotiation ended."""
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        """Wraps one request to the game (`say`, `accept`, `close_thread`)."""
+        return nullcontext()
+
 
 class _SafeObserver(Observer):
     """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
@@ -408,6 +413,12 @@ class _SafeObserver(Observer):
 
     def finished(self, outcome: Outcome) -> None:
         self._call("finished", outcome)
+
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        try:
+            return self._inner.tool(name)
+        except Exception:
+            return nullcontext()
 
 
 def negotiate(
@@ -514,7 +525,8 @@ def negotiate(
         simulator answers 200 {"status": "deal"}), may hide a "Deal!" that landed since our last read: read
         the thread again and book it. A rate limit sends nothing more now: the thread stays open."""
         try:
-            answer = client.close_thread(tid)
+            with obs.tool("close_thread"):
+                answer = client.close_thread(tid)
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
@@ -640,10 +652,12 @@ def negotiate(
         obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:
-                client.accept(move.offer_id)
+                with obs.tool("accept"):
+                    client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None and text is not None:
-                client.say(tid, text, price=move.price)
+                with obs.tool("say"):
+                    client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 state["status"] = close("walked", clock)
