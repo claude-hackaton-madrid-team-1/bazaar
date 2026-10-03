@@ -276,3 +276,53 @@ def test_a_rival_team_thread_never_marks_a_card_busy(tmp_path):
     t, _, _ = taker(tmp_path, team, lift=0.15)
     t.on_tick(clock())
     assert ("open_thread", "chato", {"buy": {"card": "LAV-08"}}) in team.sent  # as if the rival thread were not there
+
+
+def test_a_dealer_held_by_another_process_is_said_once_per_thread_never_silently(tmp_path):
+    # Live, Sat tick 507-526: the maker's dealer sell held the only dealer we could afford; the game allows one
+    # open conversation per dealer per team, so the taker passed its buys over with no row at all.
+    sell = {"id": 757, "with": "chato", "status": "open", "topic": {"sell": {"assets": [2]}}}
+    team = FakeTeam(me=CHATO_ME, threads=[sell])
+    t, lines, _ = taker(tmp_path, team, lift=0.15)
+    t.on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "open_thread"]
+    (skip,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    assert skip["inputs"]["blocked_dealer"] == "chato" and skip["inputs"]["busy_thread"] == 757
+    assert "thread 757 with chato (sell)" in skip["reason"] and skip["status"] == "rejected"
+    assert any("skip chato for" in line and "757" in line for line in lines)
+    team.now = clock(tick=TICK + 1)
+    t.on_tick(team.now)  # the same thread next tick: no second row
+    assert len([r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]) == 1
+    team.threads = [{**sell, "id": 758}]  # the maker reopened: one new row
+    team.now = clock(tick=TICK + 2)
+    t.on_tick(team.now)
+    assert [r["inputs"]["busy_thread"] for r in rows(tmp_path) if r.get("kind") == "dealer_skip"] == [757, 758]
+    assert not [s for s in team.sent if s[0] in ("open_thread", "close_thread")]  # never touches that thread
+    team.threads = []  # the dealer is free again: the buy opens
+    team.now = clock(tick=TICK + 3)
+    t.on_tick(team.now)
+    assert ("open_thread", "chato", {"buy": {"card": "LAV-08"}}) in team.sent
+
+
+def test_a_denied_buy_with_a_held_dealer_writes_no_busy_row(tmp_path):
+    sell = {"id": 757, "with": "chato", "status": "open", "topic": {"sell": {"assets": [2]}}}
+    team = FakeTeam(me={**CHATO_ME, "cash": 60}, threads=[sell])  # 10 above the floor: every buy is denied
+    t, _, _ = taker(tmp_path, team, lift=0.15)
+    t.on_tick(clock())
+    assert not [r for r in rows(tmp_path) if "busy_thread" in (r.get("inputs") or {})]
+
+
+def test_every_dealer_buy_denied_is_said_once_per_game_hour(tmp_path):
+    # Live, Sat tick 507-526: nothing affordable left the taker with no row at all ("19 ticks without a decision")
+    team = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"], "cash": 275})  # 5 above the floor: all denied
+    t = two_dealer_taker(tmp_path, team, threads=3)
+    t.on_tick(clock())
+    team.now = clock(tick=TICK + 1)  # the same game hour: no second row
+    t.on_tick(team.now)
+    assert not [s for s in team.sent if s[0] == "open_thread"]
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    assert row["guardrail"].startswith("denied") and "cash_floor" in row["guardrail"]
+    assert "2 dealer buy(s) ranked, none affordable now" in row["reason"] and row["status"] == "rejected"
+    team.now = clock(tick=TICK + 2).model_copy(update={"t_hours": 2.5})  # the next game hour: said again
+    t.on_tick(team.now)
+    assert len([r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]) == 2

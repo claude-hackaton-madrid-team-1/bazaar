@@ -240,6 +240,42 @@ class DecisionLog:
             )
         return trails
 
+    def ask_rows(self, agent: str, since_tick: int) -> list[tuple[int, str, int, int | None]]:
+        """`agent`'s live asks that went out (`post_ask`, status done) and its relist rests (RELIST_REST) since
+        `since_tick`, oldest first, as (tick, kind, asset id, price or rest end): the per-copy relist history
+        (`agents.relist`). Postgres and this machine's JSONL are both read; an unreadable store gives nothing."""
+        found: list[tuple[int, int, str, Any, Any]] = []
+        conn = self._db()
+        if conn is not None:
+            try:
+                found += conn.execute(
+                    "select id, tick, kind, candidates->>'asset_id', coalesce(candidates->>'until_tick', "
+                    "candidates->>'price') from decisions where agent = %s and dry_run is not true and tick >= %s "
+                    "and ((kind = 'post_ask' and status = 'done') or kind = %s) order by id",
+                    (agent, since_tick, RELIST_REST),
+                ).fetchall()
+            except psycopg.Error as e:
+                self._failed("ask read", e)
+        path = self.dir / "decisions.jsonl"
+        try:  # read every maker tick: a torn write or a bad byte must not stop the maker
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+        except OSError:
+            lines = []
+        failed = _failed_ids(lines)
+        for row in _live_rows(lines, agent):
+            kind, tick, inputs = row.get("kind"), _int(row.get("tick")), _inputs(row)
+            sent = kind == "post_ask" and row.get("chosen") and row.get("status") == "approved"
+            if tick is None or tick < since_tick or row.get("id") in failed or not (sent or kind == RELIST_REST):
+                continue
+            value = inputs.get("until_tick") if kind == RELIST_REST else inputs.get("price")
+            found.append((0, tick, str(kind), inputs.get("asset_id"), value))
+        out = []
+        for _, tick, kind, asset, value in sorted(found, key=lambda r: (r[1], r[0])):
+            asset_id = _int(asset)
+            if asset_id is not None:
+                out.append((int(tick), str(kind), asset_id, _int(value)))
+        return out
+
     def first_tick(self, agent: str, kind: str, owner: str) -> int | None:
         """The earliest tick of a live `kind` row by `agent` that `owner` wrote (`writer()`), in Postgres or this
         machine's JSONL (None: no row or an unreadable store)."""
@@ -272,6 +308,7 @@ class DecisionLog:
 THREAD_CLOSED = "dealer_closed"  # the decision kind that wraps a thread up: its deal (if any) is booked
 DEALER_KINDS = "dealer_"  # the prefix of every dealer-thread decision kind: the only threads a restart wraps up
 PROCESS_STARTED = "process_started"  # a process that writes THREAD_CLOSED started: its threads' deals are known
+RELIST_REST = "hold_relist"  # the maker stops listing one copy for a while (agents.relist); sends nothing
 
 
 @dataclass(frozen=True)
@@ -332,6 +369,24 @@ def _int(value: object) -> int | None:
 def _inputs(row: dict[str, Any]) -> dict[str, Any]:
     inputs = row.get("inputs")
     return inputs if isinstance(inputs, dict) else {}
+
+
+def _failed_ids(lines: list[str]) -> set[int]:
+    """Decision ids whose JSONL update row settled them as anything but done (a refused or lost send)."""
+    out = set()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(row, dict)
+            and row.get("update")
+            and row.get("status") != "done"
+            and isinstance(row.get("id"), int)
+        ):
+            out.add(row["id"])
+    return out
 
 
 def _live_rows(lines: list[str], agent: str) -> list[dict[str, Any]]:
