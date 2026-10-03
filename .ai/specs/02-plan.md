@@ -129,9 +129,10 @@ Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, ev
 ## Per-task steps (Phase 0 in detail; later tasks get theirs at `/plan` time)
 
 ### N17 — Team-to-team swap threads (spec: [`N17-spec.md`](./N17-spec.md); coordinator task `task_a3927baba1ba`)
-Phase 1 (done in this PR): triage of Marius's #79 / #98 / #101 with `/pr-review` + `security-auditor`, the
-spec, these steps. Phase 2 starts on the coordinator's "go" after #72 merges; one thin slice per step,
-each green before the next. Re-read `vendor/bazaar-kit/RULES.md` and `README.md` before each step.
+Phase 1 ✅ triage of Marius's #79 / #98 / #101 (`/pr-review` + `security-auditor`), the spec, these steps;
+#79 → takeover #137, #98 → takeover #138, #101 closed (salvage later). Phase 2 🔵 built on #123 (N17-0 … N17-8
+✅ with tests, N17-9 `/pr-review` running, N17-10 after merge); see the spec's "As built". Re-read
+`vendor/bazaar-kit/RULES.md` and `README.md` before each step.
 - N17-0 — Base: rebase on `main` with #72 and the coordinator's #124 (it owns the N17 index row; update only its status cell); take the coordinator's verdict on #79 (keep → reuse `Swap`,
   `TradeBook`, `counterparty_refusal`, the affinity map and `hands-off:` rows; close → step N17-3 ports the
   minimal pieces). · **Acceptance:** gate green on the rebased branch.

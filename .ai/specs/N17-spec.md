@@ -2,8 +2,8 @@
 
 - Task id: N17 (new, local, **P1**; its index row in [`02-plan.md`](./02-plan.md) comes with the
   coordinator's #124, its steps are under "Per-task steps")
-- Status: **DRAFT — Phase 1 (spec + plan only, no code)**. Phase 2 (code) starts when the coordinator
-  replies "go", after PR #72 merges.
+- Status: **Phase 2 built** on PR #123 (stacked on the #79/#98 takeovers #137 → #138 → #72), under
+  `/pr-review`. `team_threads_enabled` stays **false** at merge (coordinator, 2026-10-03). See "As built".
 - Backlog source: local (`.ai/specs`); the coordinator's brief (Orca task `task_a3927baba1ba`) is the
   source text. Omar: "negotiation with other markets from other teams can also help a lot". Jev
   `team_threads` → `triage_marius_then_threads` (0.92): land the good parts of Marius's night PRs
@@ -207,6 +207,22 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
   map / `hands-off:` rows; #72 `open_commitments` (one offer per thread) and `committed_context`;
   #71 bond reserve; #96 `recall()` for per-team lessons; N16 tactic bank. If #79 is closed, N17 ports
   the minimal `Swap` + counterparty cap itself (step N17-3).
+
+## As built (Phase 2, 2026-10-03): where the code differs from the text above
+- **Planner:** the swaps come from #79's `trade_desk.build_plan(...).threads` (no second planner). The desk plans
+  with `max_share = 1.0`: the trade desk's 25 % plan share cannot hold for a swaps-only plan of fewer than four
+  teams (it planned nothing on the fixtures). Fairness is per deal (`swaps.judge`) plus the cumulative guardrail.
+- **Ladder:** `swaps.Ladder` in code (anchor 0.65 of the expected pie, 3 steps to the even split), not STRATEGY.md.
+- **Duplicates only:** enforced by `team_desk.spare` (two free copies) at opening, adoption and accept, after the
+  simulator showed the trade desk's plan giving away our only LAV-09.
+- **Venue:** the house venue only; `team_threads_venue = cheapest` is not built (98-nice-to-haves).
+- **Reservation:** the standing thread offer lists our copy (`open_commitments` counts thread offers and, since
+  #138, accepted ones), so the maker and the taker never offer it twice; an accept claims `team:<thread>` in the
+  shared ledger. No separate `team:<asset>` ledger row.
+- **Public view:** team-thread decisions publish neither the counterparty nor the terms (a private thread).
+- **Not wired yet:** an eval row and a #96 lesson per settled swap (N11's evals already score team trades from
+  the feed); N16's tactic bank (the hook is `TeamDesk.words`); the shape filter for a thread offer whose `to` is
+  missing on the real server (Q2/Q6 first).
 
 ## Questions the real server must answer (read-only at the first live tick of Phase 2)
 | # | Question | Simulator says | Why it matters |
