@@ -355,7 +355,7 @@ def ladder_panel(reads: Reads) -> Panel:
         lines.append(
             Line(
                 f"L{levels.get(dealer) or '?'} {dealer}",
-                f"{len(got)} deal(s) in our open thread list"
+                f"{len(got)} deal(s) in /api/me/threads"
                 + (f": {', '.join(map(str, got))} P" if got else "")
                 + " (best three count per level)",
                 status,
