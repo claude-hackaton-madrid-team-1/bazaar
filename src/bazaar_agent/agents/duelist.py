@@ -44,13 +44,14 @@ def _rival_price(duel: dict[str, Any]) -> int | None:
 
 
 def _two_issue(duel: Mapping[str, Any]) -> bool:
-    """Days are negotiated when `issues` says so, and also whenever our day weight is a number or the rival's offer
-    carries non-zero days: a payload that drops `issues` must not let days slip by unvalued (r2 bite B2a)."""
+    """Days are negotiated when `issues` says so or the rival's offer carries non-zero days; without an `issues` list,
+    also whenever our day weight is a number: a payload that drops `issues` must not let days slip by unvalued (r2
+    bite B2a), and an explicit price-only list is trusted (r1)."""
     issues = duel.get("issues")
-    if isinstance(issues, list | tuple) and "days" in issues:
-        return True
     offer = duel.get("rival_offer")
     rival_days = offer.get("days") if isinstance(offer, dict) else None
+    if isinstance(issues, list | tuple):  # explicit: trust it, unless the rival's offer carries days anyway
+        return "days" in issues or rival_days not in (None, 0)
     return _number(duel.get("your_days_weight")) is not None or rival_days not in (None, 0)
 
 

@@ -316,3 +316,11 @@ def test_missed_ticks_accept_earlier_but_never_drop_to_the_floor_earlier():
     inside = duel(rival=[(100, 60), (105, 120)], ours=[(100, 160)])
     assert duel_plan(inside, 108, 100, with_(V2Params(), missed=2)).move.kind == "accept"  # 4 left ≤ 1 + 2 + 1
     assert duel_plan(inside, 108, 100).move.kind != "accept"
+
+
+def test_an_explicit_price_only_duel_stays_price_only_even_with_a_weight():
+    from bazaar_agent.agents.duelist import _two_issue
+
+    assert not _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 0}})
+    assert _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 4}})
+    assert _two_issue({"your_days_weight": 2.0, "rival_offer": {"price": 90}})  # no issues list: the weight decides
