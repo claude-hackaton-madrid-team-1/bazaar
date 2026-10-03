@@ -875,7 +875,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored (CLI `bazaar evals`); next: inside the agents, no Railway service; Market Test stub until we run a venue |
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 worker (first version before Duels I) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 worker (before Sat 08:30) |
-| N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 in review ([bazaar-live #1](https://github.com/claude-hackaton-madrid-team-1/bazaar-live/pull/1)); service `bazaar-live` declared in `.railway/railway.py` |
+| N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
@@ -946,6 +946,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#85](../../pull/85) | feat: declare bazaar-live (the show + TTS proxy) in .railway/railway.py | Sat 03:14 | `02f82ce` |
 | [#73](../../pull/73) | fix: no OFF services on Railway (monitor + evals removed); BAZAAR_LIVE kept; docs say taker/maker are LIVE | Sat 03:07 | `b267bb4` |
 | [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | Sat 03:03 | `8c58e76` |
 | [#90](../../pull/90) | docs: learner / auto-evolve (P0) and real-time holdings in the plan and roadmap | Sat 03:02 | `a79f601` |
@@ -957,7 +958,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | Sat 02:08 | `d5e769e` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | Sat 02:06 | `9c8cbda` |
 | [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | Sat 01:48 | `3e5a4a6` |
-| [#64](../../pull/64) | docs: architecture status after #57 and #59, bazaar-mcp live URL | Sat 01:45 | `c73ee77` |
 
 ### Open pull requests
 
@@ -967,7 +967,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | `ogarciarevett/feat-feed-reader-rag` |
 | [#87](../../pull/87) | feat(plan): page economics and the cash plan (W7, read-only) | `night/w7-page-economics` |
 | [#86](../../pull/86) | Night W2b: duel policy v2 behind duel_policy = v1 (silence is free, one accept per tick) | `night/w2b-duel-v2` |
-| [#85](../../pull/85) | feat: declare bazaar-live (the show + TTS proxy) in .railway/railway.py | `ogarciarevett/railway-bazaar-live` |
 | [#84](../../pull/84) | feat(market): bench broker edge for the Market Test (W1b, stacked on #71) | `night/w1b-broker-edge` |
 | [#81](../../pull/81) | feat(ladder): ladder maximiser: floor table, bid plans, backtest, 09:00 schedule (W3, stacked on #61) | `night/w3-ladder` |
 | [#80](../../pull/80) | Night W2a: duel rival zoo + replay harness on the real practice payloads | `night/w2a-duel-zoo` |
