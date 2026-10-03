@@ -35,7 +35,7 @@ Our holdings, values and per-card surplus are private: the per-offer list is in 
 | With surplus for us | 13 |
 | Allowed by the guardrails | 7: one sale into a standing rare bid (t18) and six buys of commons from t06, t15, t18 and t17; two of them are snipes |
 | Refused by the price caps | 6: five uncommons above `max_price_uncommon` 26 (asks of 25–40 plus fee) and one common above `max_price_common` 12 |
-| Against W4's plan | 3 buys would take a card W4 plans to bid or swap for, at a lower price than the plan: take the standing ask instead |
+| Against W4's plan | 5 of the allowed buys are for two cards W4 plans to swap or bid for (MAL-02, MAL-04), at standing asks below what the plan would pay: take the ask (it fills now) and drop the plan's trade |
 
 ## Friday replay: what the boards offered us
 
@@ -107,3 +107,4 @@ What to do with these profiles:
   - With a key, the scanner counts our open offers and this hour's spend.
   - This report no longer carries our private numbers (they are in `_night/b4-private-numbers.md`).
 - **Accept slot:** buys and sells share the one accept per tick, ranked by surplus. A dealer's final offer still goes first.
+- **Merging:** this branch's early commits carried our private numbers in this report. Squash-merge it after #79.
