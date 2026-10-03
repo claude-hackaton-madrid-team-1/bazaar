@@ -283,7 +283,7 @@ def trade_book(
     addressed: dict[str, int] = {}
     public = 0
     for o in offers:
-        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
+        if o.get("status") not in PROMISED or (o.get("to") == us and o.get("maker") != us):
             continue
         give, want = o.get("give") or {}, o.get("want") or {}
         refs = [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]

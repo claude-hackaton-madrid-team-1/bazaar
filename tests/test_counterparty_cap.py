@@ -133,6 +133,23 @@ def test_trade_book_reads_our_open_offers():
     assert (book.settled, book.addressed, book.public) == ({"t06": 70}, {"t05": 30}, 60)
 
 
+def test_an_accepted_offer_and_a_team_thread_swap_count_toward_their_team():
+    # security-auditor #138 r2 P3: an accepted offer (it settles next tick) counted in no team's volume;
+    # N17: a swap we propose in a team thread (`to` the team) counts toward that team's share.
+    swap = {
+        "id": 6,
+        "maker": "t01",
+        "to": "t05",
+        "thread": 77,
+        "status": "open",
+        "give": {"assets": [{"id": 3, "ref": "LAT-03"}], "cash": 4},
+        "want": {"cards": ["LAV-02"]},
+    }
+    accepted = {**bid(7, "LAV-08", 30), "to": "t06", "status": "accepted"}
+    book = trade_book([swap, accepted], "t01", {}, {"LAT-03": 10.0, "LAV-02": 10.0})
+    assert book.addressed == {"t05": 20, "t06": 30}
+
+
 def test_a_listing_names_its_counterparty():
     assert bid_listing("LAV-09", "rare", 60).action().counterparty == ANY_TEAM
     listing = bid_listing("LAV-09", "rare", 60, to="t05")
