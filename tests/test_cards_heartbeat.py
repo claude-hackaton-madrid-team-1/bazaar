@@ -290,3 +290,13 @@ def test_a_refused_boosted_opening_gives_the_slot_back_on_the_next_tick(tmp_path
     t.on_tick(clock(tick=2))
     assert [s[0] for s in team.sent][:1] == ["open_thread"]
     assert any("open thread with abuela for LAV-08" in x and "allowed" in x for x in lines)
+
+
+def test_a_garbage_hint_file_is_rewritten_at_the_next_flush(tmp_path):
+    (tmp_path / "agents").mkdir()
+    path = tmp_path / "agents" / hb.EVENTS_FILE
+    path.write_text("not json")
+    h, _, _ = beat(tmp_path)
+    h.observe(1, cat(lav(card("LAV-01"))), MENUS)
+    h.flush(1)
+    assert json.loads(path.read_text())["baseline"]["LAV-01"]["visible"] is True

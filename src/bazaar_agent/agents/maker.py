@@ -277,7 +277,9 @@ class Maker:
         self.rec.decisions.begin_tick(clock.tick)
         snap: Snapshot | None = None
         try:
-            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
+            snap = read_snapshot(
+                self.team, self.public, self.feed, clock, self.holdings, parallel=self.rules.parallel_reads
+            )
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         try:

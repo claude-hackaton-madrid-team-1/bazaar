@@ -245,6 +245,7 @@ class CardsHeartbeat:
         self.events: list[CardEvent] = []
         self._pending: list[CardEvent] = []
         self._dropped: set[str] = set()  # cards whose boosted opening guardrails refused
+        self._rewrite = False  # the file did not load clean: write a good one at the next flush
         self._load()
 
     def observe(self, tick: int, catalog: Mapping[str, Any], dealers: Iterable[Mapping[str, Any]]) -> list[CardEvent]:
@@ -284,8 +285,9 @@ class CardsHeartbeat:
         except Exception as e:  # noqa: BLE001 — memory keeps the events; the file and the log still say them
             self.log(f"tick {tick} cards: learnings not stored ({type(e).__name__})")
         try:
-            if fresh or not self.path.exists():
+            if fresh or self._rewrite or not self.path.exists():
                 self._write(tick)
+                self._rewrite = False
         except Exception as e:  # noqa: BLE001 — the file is a hint: never break the after-sends work
             self.log(f"tick {tick} cards: {EVENTS_FILE} not written ({type(e).__name__})")
 
@@ -314,5 +316,8 @@ class CardsHeartbeat:
             self.baseline = {k: v for k, v in entries.items() if v is not None} if ok else {}
             rows = body.get("events") if isinstance(body.get("events"), list) else []
             self.events = [ev for ev in map(_event, rows[-KEEP_EVENTS:]) if ev is not None]
-        except Exception:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
+            self._rewrite = not ok or len(self.events) != len(rows)
+        except FileNotFoundError:
             self.baseline, self.events = {}, []
+        except Exception:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
+            self.baseline, self.events, self._rewrite = {}, [], True
