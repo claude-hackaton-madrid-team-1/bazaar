@@ -522,7 +522,11 @@ def duel_run(
                 first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
+        try:  # another process may have taken it already
+            slots: int | None = max(0, limit - ledger.accepts_in_tick(c.tick))
+        except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, v2 holds every duel
+            console.print(f"  ledger unreadable ({type(e).__name__}): v2 holds every duel this tick")
+            slots = None
         params = V2Params.from_rules(rules, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
@@ -530,9 +534,11 @@ def duel_run(
             # capped (r1): ten failed reads must not turn every duel into "accept the first offer inside"
             params = replace(params, missed=min(gap - 1, MISSED_TICKS_CAP))
         planned: dict[int, DuelMove] = {}
-        if params is not None:
+        if params is not None and slots is None:
+            planned = {did: DuelMove("hold", reason="ledger unreadable: no accept this tick") for did in live_ids}
+        elif params is not None:
             try:
-                planned = plan_moves(duels, c.tick, first_seen, params, slots)
+                planned = plan_moves(duels, c.tick, first_seen, params, slots or 0)
             except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
                 console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
                 planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
@@ -541,21 +547,27 @@ def duel_run(
         # send fails (Jev's only legal move for that duel is the accept).
         booked: set[int] = set()
         for planned_id, m in planned.items() if play else ():
-            d = next(x for x in duels if duel_id(x) == planned_id)
-            ctx = gr.Context(
-                cash=0,
-                held={},
-                tick=c.tick,
-                t_hours=c.t_hours,
-                accepts_this_tick=ledger.accepts_in_tick(c.tick),
-                paused=(REPO_ROOT / rules.pause_file).exists(),
-            )
-            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules).allowed:
+            if m.kind != "accept":
                 continue
-            if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
-                booked.add(planned_id)
-            else:
-                planned[planned_id] = DuelMove("hold", reason="another process took the team's accept this tick")
+            d = next(x for x in duels if duel_id(x) == planned_id)
+            try:
+                ctx = gr.Context(
+                    cash=0,
+                    held={},
+                    tick=c.tick,
+                    t_hours=c.t_hours,
+                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                    paused=(REPO_ROOT / rules.pause_file).exists(),
+                )
+                if not gr.check(duel_action(d, m), ctx, rules).allowed:
+                    continue
+                if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
+                    booked.add(planned_id)
+                else:
+                    planned[planned_id] = DuelMove("hold", reason="another process took the team's accept this tick")
+            except Exception as e:  # a ledger outage mid-booking: fail closed for this duel (#62)
+                console.print(f"  duel {planned_id}: ledger unreadable ({type(e).__name__}): hold")
+                planned[planned_id] = DuelMove("hold", reason="ledger unreadable: no accept this tick")
         if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
             endgame = rules.duel_endgame_ticks
             left = lambda: send_by - time.monotonic()  # noqa: E731
