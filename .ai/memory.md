@@ -993,6 +993,13 @@ uncommon 0.467 = 0.467, rare 0.476 vs 0.467). Step 1 beat step 2 on Abuela (0.40
 role-only revoke does nothing (the RO role could take our ledger's advisory lock and stall accepts; documented).
 `alter default privileges ... grant select on tables` also covers a later secret table or a view over one: the
 script creates `venue_broker_keys` first, then revokes it. `pg_stats` hides columns the role cannot read.
+### [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
+Up to tick 548 (Sat, Duels I): 17 duel accepts on 17 ticks and 11 taker accepts on other ticks (`decisions` and
+`ledger`), so no tick ever held both, and no 429 in the bazaar-duels logs. Our shared ledger always gives the
+slot to one process, so passive data can never answer this; only a live probe (a duel accept, then a trade accept
+in the same tick: `wait_for_tick` = shared) can. The simulator's shared slot is our assumption. We keep counting duel
+accepts (GUARDRAILS.md `max_accepts_per_tick`). The same day, none of the taker's 528 rejections was a lost slot:
+all were `cash_floor`, `max_spend_per_game_hour` or `max_price_*` (PR #201).
 
 ### [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 `bazaar deploy-guard` at tick 556 (session live): DO NOT MERGE, duel 2481 one tick from its deadline, safe only

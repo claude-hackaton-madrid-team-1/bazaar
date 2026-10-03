@@ -118,6 +118,16 @@ def book_values(catalog: dict[str, Any] | None) -> dict[str, float]:
     }
 
 
+def card_rarities(catalog: dict[str, Any] | None) -> dict[str, str]:
+    """card ref -> rarity, from `/api/catalog`."""
+    return {
+        str(c["id"]): str(c.get("rarity"))
+        for s in (catalog or {}).get("sets") or []
+        for c in s.get("cards") or []
+        if c.get("id") and c.get("rarity")
+    }
+
+
 def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | None = None) -> dict[str, int]:
     """Primas we settled with each other team: the notional of every team-to-team settlement we are a party
     to, the larger of its cash and the book of the cards that moved (a swap has no cash). Dealers are not

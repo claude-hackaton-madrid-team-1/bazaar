@@ -25,6 +25,10 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `official_value_margin` = 0 — every card buy (board accepts, dealer bids and finals, maker bids, swaps, the desk, `dealer buy`) pays at most the official value of one more copy (`GET /api/me/value?card=`, what the scorer counts: Day-2 hint 1) minus this, fee included, plus the copy a swap gives; read once per card per tick, only for a buy every other rule allows; a failed read refuses the buy. Our model still ranks; this only caps.
 - `max_packs_per_game_hour` = 3 — packs we may buy in one game hour, across all processes (Abuela sells `sobre_barrio` 3 per team per hour; each dealer's quota is in `/api/dealers`).
 - `sell_min_value_ratio` = 1.0 — never sell a card below this × its `your_value` (what we lose by selling it).
+- `relist_step_share` = 0.05 — when the maker lists a copy again after its ask lapsed unsold, the ask steps down by this share of the last one (at least 1 P), or down to the venue's median fill of the card (else its rarity) over the last 120 ticks when that lies above the floor; never the same price twice in a row (Day-2 hint: "the same price twice is not a move"). Sat 3 Oct: 110 listings, 3 sold, SAL-01 #11 posted 16 times at 10.
+- `relist_min_price_share` = 0.6 — a relisted ask never goes below this × the copy's first ask, nor below what selling it costs us (`sell_min_value_ratio` × `your_value`, page bonus included).
+- `relist_max_lapses` = 4 — after this many unsold lapses of one copy, or once its ask cannot step down any more, the maker stops listing that copy for `relist_cooldown_ticks`.
+- `relist_cooldown_ticks` = 40 — how long a copy rests before it is listed again (once more, at the floor at most).
 
 ## Album (check /api/me first)
 - `block_buying_held_cards` = true — never buy a page card we already hold; duplicates are worth 0.25× or less to us.
@@ -38,7 +42,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `protect_page_sets` = RET,CHA — never sell (list, or accept a bid with) our only copy of a page card of these sets: the new pages (El Retiro Saturday, Chamberí Sunday) need every card we pull, and nobody can price them yet; a duplicate may still be sold; `none` turns it off.
 
 ## Ticks and limits
-- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker accepts only on a dealer sell thread, `dealer_sell_enabled`).
+- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker accepts only on a dealer sell thread, `dealer_sell_enabled`). A duel accept counts here because the game has not shown it does not (RULES.md: "Per tick your team may accept one offer"; never observed either way); a duel takes the slot only on the tick it sends an accept, never while it holds or counters, and a refusal that cost nothing gives it back. A duel moves no cash and no card: it books no spend and no `cash_floor`, spend or holdings rule applies to it.
 - `dealer_max_ticks_per_thread` = 14 — close a dealer conversation after this many ticks without a deal.
 
 ## Jev

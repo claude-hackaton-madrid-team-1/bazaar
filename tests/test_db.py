@@ -226,3 +226,24 @@ def test_their_events_keeps_everything_but_our_own_activity(conn):
     ids = [r[0] for r in conn.execute("select id from their_events order by id")]
     assert ids == [1, 2, 3, 4, 5, 6]  # thread 11/12, its messages, the sale and the listing are t06's
     assert conn.execute("select count(*) from feed_events").fetchone() == (len(EVENTS),)
+
+
+def test_ask_rows_read_sent_asks_and_rests_from_postgres(database_url, schema, tmp_path):
+    from bazaar_agent import db
+    from bazaar_agent.decisions import RELIST_REST, Decision, DecisionLog
+
+    log = DecisionLog(tmp_path, connect=lambda: open_in(database_url, schema))
+    conn = open_in(database_url, schema)
+    db.init_schema(conn)
+    conn.close()
+
+    def row(kind, tick, inputs, dry=False):
+        return log.decide(Decision("maker", tick, kind, inputs, "r", "allowed", True, "approved", dry))
+
+    log.settle(row("post_ask", 10, {"asset_id": 11, "price": 10}), "done")
+    log.settle(row("post_ask", 11, {"asset_id": 11, "price": 10}), "failed")
+    log.settle(row("post_ask", 12, {"asset_id": 11, "price": 9}, dry=True), "done")
+    row("post_ask", 13, {"asset_id": 11, "price": 9})  # approved, never sent
+    row(RELIST_REST, 15, {"asset_id": 11, "until_tick": 55})
+    assert log.ask_rows("maker", 5) == [(10, "post_ask", 11, 10), (15, RELIST_REST, 11, 55)]
+    assert not list((tmp_path / "agents").glob("*.jsonl"))  # every row went to Postgres

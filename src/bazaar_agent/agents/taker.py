@@ -424,6 +424,12 @@ def conversation_view(c: Conversation) -> dict[str, Any]:
 # ---------------------------------------------------------------- the loop
 
 
+def _topic_kind(thread: dict[str, Any]) -> str:
+    """'sell' or 'buy' for a dealer thread's topic, else 'other' (never the topic's numbers)."""
+    topic = thread.get("topic")
+    return next((k for k in ("sell", "buy") if isinstance(topic, dict) and k in topic), "other")
+
+
 def _conversation(conv: Conversation) -> str:
     """The bluff book's key for a dealer thread."""
     return f"thread:{conv.thread_id}"
@@ -506,6 +512,8 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._skips: dict[str, str] = {}  # dealer -> the blocker last recorded as a `dealer_skip` (once each)
+        self._held_skips: dict[str, str] = {}  # dealer -> the thread of ours not driven here last recorded so
+        self._denied_hour: int | None = None  # the game hour "every dealer buy denied" was last recorded
         # She held her opening ask and we walked: (dealer, item) -> the lower first bid of the next thread
         # (once); after the lower one held too, (dealer, item) -> the game hour until which we leave it.
         self.reopen_at: dict[tuple[str, str], int] = {}
@@ -954,8 +962,68 @@ class Taker:
             for t in threads
             if str(t.get("with")) in dealer_ids and (item := requested_item(t.get("topic") or {})) is not None
         }
-        for op in openings(moves, busy, busy_items, room):
+        self._held_elsewhere(run, moves, threads)
+        chosen = openings(moves, busy, busy_items, room)
+        if not chosen:
+            self._all_denied(run, moves)
+        for op in chosen:
             self._open_one(run, op, ctx)
+
+    def _all_denied(self, run: _TickRun, moves: list[StrategyMove]) -> None:
+        """No dealer thread opens and every dealer buy the strategy ranked is denied by the guardrails (cash above
+        the floor, the hour's spend): said once per game hour as a `dealer_skip` row (logged too), so a taker
+        that cannot afford anything is not mistaken for a stuck one. The floors and caps are never touched."""
+        ranked = [mv for mv in moves if mv.ladder is not None and mv.command]
+        if not ranked or not all(mv.guardrail.startswith("denied") for mv in ranked):
+            return
+        clock = run.snap.clock
+        hour = int(clock.t_hours)
+        if self._denied_hour == hour:
+            return
+        self._denied_hour = hour
+        why = f"{len(ranked)} dealer buy(s) ranked, none affordable now: {ranked[0].guardrail}"
+        self.rec.decide(
+            clock.tick,
+            "dealer_skip",
+            f"skip every dealer buy: {why}",
+            inputs={"wanted": [mv.ref for mv in ranked], "why": why},
+            reason=why,
+            guardrail=ranked[0].guardrail,
+            chosen=False,
+            status="rejected",
+        )
+
+    def _held_elsewhere(self, run: _TickRun, moves: list[StrategyMove], threads: list[dict[str, Any]]) -> None:
+        """A buy the guardrails allow whose dealer is held by a thread of ours this process does not drive (the
+        maker's dealer sell, a CLI `dealer buy`): the game allows one open conversation per dealer per team
+        (RULES.md), so `openings` passes it over. Said once per blocking thread (a `dealer_skip` row, which the
+        log shows too), not per tick: without it the taker drops its only affordable buys with no trace."""
+        mine = {c.thread_id for c in self.convs.values()}
+        held = {
+            str(t.get("with")): t
+            for t in threads
+            if isinstance(t.get("id"), int) and t["id"] not in mine and str(t.get("with")) not in self.convs
+        }
+        wanted: dict[str, StrategyMove] = {}
+        for mv in moves:  # best first: the dealer's best allowed buy names the skip
+            if mv.source in held and mv.ladder is not None and mv.command and not mv.guardrail.startswith("denied"):
+                wanted.setdefault(mv.source, mv)
+        for dealer, mv in wanted.items():
+            thread = held[dealer]
+            why = f"busy: our thread {thread['id']} with {dealer} ({_topic_kind(thread)}) is driven by another process"
+            if self._held_skips.get(dealer) == why:
+                continue
+            self._held_skips[dealer] = why
+            self.rec.decide(
+                run.snap.clock.tick,
+                "dealer_skip",
+                f"skip {dealer} for {mv.ref}: {why}",
+                inputs={"blocked_dealer": dealer, "wanted": mv.ref, "busy_thread": thread["id"], "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
 
     def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
         """Drop the dealer buys a learned blocker stops (cooloff, quota, sold out, locked), so the thread goes
