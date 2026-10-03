@@ -644,6 +644,9 @@ def _tick_evals(agent: str, every: int, log: Callable[[str], None]) -> Any:
             log(message)
 
     def annotator() -> Any:
+        if load_settings().simulator:  # simulated duel ids collide with real ones: never annotate real traces
+            once(f"evals ({agent}): simulator, scores stay in Postgres only")
+            return None
         cfg = tm.tracing_config()
         return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, once)
 

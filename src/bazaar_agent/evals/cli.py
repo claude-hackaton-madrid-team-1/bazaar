@@ -58,6 +58,9 @@ def _annotator(phoenix: bool) -> Any:
 
     if not phoenix:
         return None
+    if load_settings().simulator:  # simulated duel ids collide with real ones: never annotate the real traces
+        _warn("phoenix: simulator, scores stay in Postgres only")
+        return None
     cfg = tm.tracing_config()
     return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, _warn)
 

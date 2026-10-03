@@ -156,3 +156,17 @@ def test_the_cli_builds_each_agents_evals(monkeypatch: pytest.MonkeyPatch) -> No
         6,
         frozenset({"market_test"}),
     )
+
+
+def test_against_the_simulator_no_score_reaches_the_real_phoenix(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bazaar_agent import cli
+    from bazaar_agent.config import Settings
+    from bazaar_agent.evals import cli as evals_cli
+
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(simulated=True))
+    monkeypatch.setattr(evals_cli, "load_settings", lambda: Settings(simulated=True))
+    logs: list[str] = []
+    evals = cli._tick_evals("duels", 6, logs.append)
+    assert evals._annotator() is None and evals._annotator() is None
+    assert logs == ["evals (duels): simulator, scores stay in Postgres only"]  # said once
+    assert evals_cli._annotator(True) is None
