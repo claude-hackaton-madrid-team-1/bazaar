@@ -247,7 +247,8 @@ before its own offers, `agents/venue_keeper.py`:
    show that no venue was ever opened on this target (a venue closed or suspended since is never reopened
    automatically: a human opens it by hand), and must grant this process the one opening claim (a deploy
    overlap or a laptop maker cannot open a second). Otherwise it waits `RETRY_TICKS` = 10 ticks. A refused
-   opening costs nothing, gives the claim back and is retried 10 ticks later; `venue_exists` stops it.
+   opening costs nothing, gives the claim back (even inside the Postgres backoff) and is retried 10 ticks
+   later; `venue_exists` stops it.
    `/api/me` naming a venue next to `starter_broker_key` is the free stall, not ours (the kit's `me()`).
 3. **Brokers its book every tick**: `GET /api/broker/book`, then the exact maximum-surplus matching (bench
    first, ties in book order like the stall, never two offers of one maker, never ours, never an order

@@ -249,9 +249,10 @@ class KeyVault:
             return False
         return row is not None
 
-    def mark(self, venue: str, tick: int) -> None:
+    def mark(self, venue: str, tick: int) -> bool:
         """Remember a venue we run without its key (an opening whose answer was lost): it counts as opened, so
-        the maker never opens another after it closes. The key column stays empty; `load` skips it."""
+        the maker never opens another after it closes. The key column stays empty; `load` skips it. False when
+        Postgres did not take it (the caller tries again next tick)."""
         try:
             self._db().execute(
                 "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
@@ -260,9 +261,13 @@ class KeyVault:
             )
         except Exception as e:
             self._failed(e)
+            return False
+        return True
 
     def release(self) -> None:
-        """Give the claim back (the opening was refused: nothing was opened)."""
+        """Give the claim back (the opening was refused: nothing was opened). It tries even inside the backoff:
+        a claim left behind would hold our own next tries off for CLAIM_STALE_TICKS."""
+        self._skip_until = 0.0
         try:
             self._db().execute("delete from venue_broker_keys where target = %s and venue = %s", (self.target, CLAIM))
         except Exception as e:

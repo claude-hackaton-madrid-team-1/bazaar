@@ -344,3 +344,13 @@ def test_one_postgres_blip_never_locks_the_vault_out_for_good(tmp_path):
     clock[0] = vn.DB_RETRY_S + 1
     assert v.ready(durable=True) is None and len(attempts) == 2  # back after the backoff
     assert v.claim(400) and v.opened_before() is False
+
+
+def test_a_release_inside_the_backoff_still_gives_the_claim_back(tmp_path):
+    """Round-4 review P2: the second check failing starts the backoff; the release right after must not be
+    skipped, or our own claim holds our next tries off for 20 ticks."""
+    store = {("", "_claim"): ("", 400)}
+    v = vault(tmp_path, lambda: FakeConn(store))
+    v._skip_until = v.now() + vn.DB_RETRY_S  # just failed
+    v.release()
+    assert store == {}

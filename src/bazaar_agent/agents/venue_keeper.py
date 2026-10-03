@@ -271,8 +271,9 @@ class VenueKeeper:
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
             if key is None:
-                if venue not in self._marked and self._may_mark(venue, clock, snap):  # counts as opened from now
-                    self.vault.mark(venue, clock.tick)
+                # it counts as opened from now on; a mark Postgres did not take is tried again next tick
+                fresh = venue not in self._marked and self._may_mark(venue, clock, snap)
+                if fresh and self.vault.mark(venue, clock.tick):
                     self._marked.add(venue)
                 if clock.tick - self.reminded >= REMIND_TICKS:
                     self.reminded = clock.tick
