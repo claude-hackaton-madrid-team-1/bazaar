@@ -10,7 +10,9 @@ SP1_LATENCY_MS=120 adds that much to every simulator request (a real request's c
 in ~1 ms), and SP1_JEV_LATENCY_MS to every Jev call (a slow Jev API). SP1_GUARDRAILS=<file> reads that rule
 book instead of GUARDRAILS.md (a scenario, e.g. Sunday with the venue open and no bond reserve).
 
-Run the agents with BAZAAR_SIM=local and BAZAAR_SIM_DATABASE_URL on a local database (it refuses a remote one).
+Run the agents with BAZAAR_SIM=local, against a simulator `sim` started (it refuses any other), with
+BAZAAR_SIM_DATABASE_URL set to a database of its own on this machine (it refuses a remote one or the laptop's
+real `bazaar`); tracing is forced off.
 `run` patches the process before the CLI starts, so the agent runs unchanged: it only ever talks to
 `http://127.0.0.1:<port>` (BAZAAR_SIM=local, with the local address moved to `--port`), and it refuses to
 start against anything else. One JSONL row per tick (`<agent>.ticks.jsonl`): wall time against the tick's
@@ -234,13 +236,42 @@ def _patch_ticks(rec: _Recorder) -> None:
 
 
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+NOT_FOR_PROFILING = frozenset({"bazaar", "railway"})  # the laptop's real-game database, the team's shared one
 
 
 def _local_database(settings: Any) -> bool:
-    """True when the agents' Postgres is on this machine (its URL is never printed)."""
-    from urllib.parse import urlsplit
+    """True when the agents' Postgres is a database of its own on this machine: BAZAAR_SIM_DATABASE_URL set in
+    the environment (never the DATABASE_URL fallback), every host and hostaddr (query overrides included)
+    loopback or a local socket, and not the laptop's real `bazaar` database. Its URL is never printed."""
+    import psycopg
 
-    return (urlsplit(settings.database_url.get_secret_value()).hostname or "") in LOOPBACK
+    explicit = os.environ.get("BAZAAR_SIM_DATABASE_URL", "").strip()
+    url = settings.database_url.get_secret_value()
+    if not explicit or url != explicit:
+        return False
+    try:
+        info = psycopg.conninfo.conninfo_to_dict(url)
+    except psycopg.ProgrammingError:
+        return False
+    hosts = [h.strip() for key in ("host", "hostaddr") for h in str(info.get(key) or "").split(",") if h.strip()]
+    local = bool(hosts) and all(h in LOOPBACK or h.startswith("/") for h in hosts)
+    return local and str(info.get("dbname") or "") not in NOT_FOR_PROFILING
+
+
+def _sim_pid_file(port: int) -> Path:
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / f"bazaar-tick-profile-sim-{port}.pid"
+
+
+def _our_sim(port: int) -> bool:
+    """True when `tick_profile.py sim` started the simulator on `port` and it still runs."""
+    try:
+        pid = int(_sim_pid_file(port).read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def serve_sim(port: int, tick_seconds: float) -> None:
@@ -255,7 +286,13 @@ def serve_sim(port: int, tick_seconds: float) -> None:
     env = {**os.environ, "SIM_DATABASE_URL": "memory", "SIM_TICK_SECONDS": str(tick_seconds), "PORT": str(port)}
     env.setdefault("SIM_DUEL_FIRST_TICK", "3")
     env.setdefault("SIM_DUEL_TICKS", "40")
-    subprocess.run([sys.executable, "-m", "bazaar_sim", "serve", "--port", str(port)], env=env, check=False)
+    server = subprocess.Popen([sys.executable, "-m", "bazaar_sim", "serve", "--port", str(port)], env=env)
+    pid_file = _sim_pid_file(port)
+    pid_file.write_text(str(server.pid), encoding="utf-8")  # `run` profiles only against this simulator
+    try:
+        server.wait()
+    finally:
+        pid_file.unlink(missing_ok=True)
 
 
 def run(agent: str, port: int, out: Path, args: list[str], latency_ms: float = 0.0) -> None:
@@ -263,6 +300,9 @@ def run(agent: str, port: int, out: Path, args: list[str], latency_ms: float = 0
         raise SystemExit(f"agent must be one of {sorted(AGENTS)}")
     if os.environ.get("BAZAAR_SIM") != "local":
         raise SystemExit("tick_profile runs only against a local simulator: set BAZAAR_SIM=local")
+    if not _our_sim(port):
+        raise SystemExit(f"no simulator of ours on {port}: start one with `tick_profile.py sim --port {port}`")
+    os.environ["BAZAAR_TRACING"] = "0"  # profiled ticks never reach the shared Phoenix, whatever .env says
     base = f"http://127.0.0.1:{port}"
     from bazaar_agent import config
 
@@ -272,8 +312,8 @@ def run(agent: str, port: int, out: Path, args: list[str], latency_ms: float = 0
         raise SystemExit("refusing to profile: the target is not the local simulator")
     if not _local_database(settings):
         raise SystemExit(
-            "refusing to profile: the agents write ledger and decision rows; point BAZAAR_SIM_DATABASE_URL at a "
-            "database on this machine (a shared one would mix this run into teammates' simulator runs)"
+            "refusing to profile: the agents write ledger and decision rows; set BAZAAR_SIM_DATABASE_URL in the "
+            "environment to a database of its own on this machine (not `bazaar`, never a shared one)"
         )
     rules_file = os.environ.get("SP1_GUARDRAILS")
     if rules_file:  # a scenario's own rule book (e.g. Sunday: the venue is open, no bond reserve)

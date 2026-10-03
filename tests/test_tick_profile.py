@@ -78,6 +78,7 @@ def test_a_run_refuses_when_the_settings_target_is_not_the_local_simulator(monke
     from bazaar_agent import config
 
     monkeypatch.setenv("BAZAAR_SIM", "local")
+    monkeypatch.setattr(tp, "_our_sim", lambda port: True)
     monkeypatch.setattr(config, "LOCAL_SIM_URL", config.LOCAL_SIM_URL)  # restored after the test
     monkeypatch.setattr(config, "load_settings", lambda: SimpleNamespace(bazaar_url=config.DEFAULT_URL))
     with pytest.raises(SystemExit, match="the target is not the local simulator"):
@@ -85,17 +86,44 @@ def test_a_run_refuses_when_the_settings_target_is_not_the_local_simulator(monke
     assert not list(tmp_path.iterdir())  # refused before anything was patched or written
 
 
-def test_a_run_refuses_a_database_that_is_not_on_this_machine():
+def test_a_run_refuses_a_simulator_it_did_not_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("BAZAAR_SIM", "local")
+    monkeypatch.setattr(tp, "_sim_pid_file", lambda port: tmp_path / "none.pid")
+    with pytest.raises(SystemExit, match="no simulator of ours on 8915"):
+        tp.run("taker", 8915, tmp_path, [])
+    (tmp_path / "none.pid").write_text("999999999")  # a pid that is not running
+    with pytest.raises(SystemExit, match="no simulator of ours"):
+        tp.run("taker", 8915, tmp_path, [])
+    import os
+
+    (tmp_path / "none.pid").write_text(str(os.getpid()))  # a live one passes this check
+    assert tp._our_sim(8915)
+
+
+@pytest.mark.parametrize(
+    "url, explicit, local",
+    [
+        ("postgresql://bazaar:bazaar@localhost:5433/bazaar_sp1", True, True),
+        ("postgresql://u:p@127.0.0.1:5432/x", True, True),
+        ("postgresql://u:p@/x?host=/tmp", True, True),  # a local socket
+        ("postgresql://u:p@localhost:5433/bazaar_sp1", False, False),  # only the DATABASE_URL fallback
+        ("postgresql://bazaar:bazaar@localhost:5433/bazaar", True, False),  # the laptop's real-game database
+        ("postgresql://u:p@postgres.railway.internal:5432/bazaar_sim", True, False),
+        ("postgresql://u:p@localhost/x?host=db.example.com", True, False),  # a query override wins
+        ("postgresql://u:p@localhost/x?hostaddr=10.0.0.5", True, False),
+    ],
+    ids=["loopback", "ip", "socket", "fallback", "real-db", "remote", "host-override", "hostaddr-override"],
+)
+def test_a_run_profiles_only_a_database_of_its_own_on_this_machine(monkeypatch, url, explicit, local):
     from types import SimpleNamespace
 
     from pydantic import SecretStr
 
-    def settings(url):
-        return SimpleNamespace(database_url=SecretStr(url))
-
-    assert tp._local_database(settings("postgresql://bazaar:bazaar@localhost:5433/bazaar_sp1"))
-    assert tp._local_database(settings("postgresql://u:p@127.0.0.1:5432/x"))
-    assert not tp._local_database(settings("postgresql://u:p@postgres.railway.internal:5432/bazaar_sim"))
+    if explicit:
+        monkeypatch.setenv("BAZAAR_SIM_DATABASE_URL", url)
+    else:
+        monkeypatch.delenv("BAZAAR_SIM_DATABASE_URL", raising=False)
+    assert tp._local_database(SimpleNamespace(database_url=SecretStr(url))) is local
 
 
 def test_the_simulator_command_refuses_a_busy_port():
