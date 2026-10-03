@@ -110,8 +110,10 @@ def tracing_config(env: Mapping[str, str] | None = None) -> TracingConfig:
     base = pick("PHOENIX_COLLECTOR_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT") or DEFAULT_PHOENIX_URL
     secrets = {v.strip() for k, v in values.items() if _SECRET_NAME.search(k) and len(v.strip()) >= MIN_SECRET_LENGTH}
     project = pick("PHOENIX_PROJECT", "PHOENIX_PROJECT_NAME") or DEFAULT_PROJECT
+    file_values = read_env_file(env_file_path()) if env is None else {}
+    raw_sim = values.get("BAZAAR_SIM") or file_values.get("BAZAAR_SIM")  # load_settings: empty env = unset
     try:
-        simulated = sim_flag(pick("BAZAAR_SIM")) != "real"
+        simulated = sim_flag(raw_sim) != "real"
     except ConfigError:
         simulated = True  # an unreadable flag is refused by the settings; never mix its traces with the game's
     if simulated and not project.endswith(SIM_PROJECT_SUFFIX):

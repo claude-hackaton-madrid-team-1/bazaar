@@ -49,7 +49,19 @@ console = Console()
 err_console = Console(stderr=True)
 
 LIVE_HELP = "Merge the live feed window into the captured history"
-EVALS_EVERY_HELP = "Score this agent's settled decisions every N ticks, in the background (0 = off)"
+
+
+def evals_default(asked: int | None, trading: bool) -> int:
+    """`--evals-every`, else every EVERY_TICKS ticks for a process that trades (live, or duel --play) and off
+    for a dry run: a laptop dry run must not write the team's scores."""
+    if asked is not None:
+        return asked
+    return EVERY_TICKS if trading else 0
+
+
+EVALS_EVERY_HELP = (
+    "Score this agent's settled decisions every N ticks in the background (default: 6 if it trades, else off)"
+)
 
 
 @app.callback()
@@ -424,7 +436,7 @@ def duel_run(
     play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev duel_move picks among the legal moves (undecided: today's move)"),
-    evals_every: int = typer.Option(EVERY_TICKS, "--evals-every", min=0, help=EVALS_EVERY_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
@@ -614,9 +626,10 @@ def duel_run(
             save_finished(c.tick)
         evals.after_tick(c.tick)  # last: a background pass every N ticks, never on the tick's path
 
-    evals = _tick_evals("duels", evals_every, lambda m: console.print(f"[dim]{escape(m)}[/dim]"))
+    every = evals_default(evals_every, play)
+    evals = _tick_evals("duels", every, lambda m: console.print(f"[dim]{escape(m)}[/dim]"))
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
-    console.print(f"duels → {log_path} + Postgres duels ({mode}) · evals every {evals_every or '-'} ticks")
+    console.print(f"duels → {log_path} + Postgres duels ({mode}) · evals every {every or '-'} ticks")
     try:
         run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
     finally:
@@ -1319,7 +1332,7 @@ def _run_agent(
     build: Callable[..., Any],
     port: int | None = None,
     host: str | None = None,
-    evals_every: int = 0,
+    evals_every: int | None = None,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
     read-only status server, the loop."""
@@ -1370,8 +1383,9 @@ def _run_agent(
         settings=settings,
         hub=hub,
     )
-    evals = _tick_evals(name, evals_every, log)
-    log(f"{name}: ledger {ledger.where} · decisions {decisions.where} · evals every {evals_every or '-'} ticks")
+    every = evals_default(evals_every, is_live)
+    evals = _tick_evals(name, every, log)
+    log(f"{name}: ledger {ledger.where} · decisions {decisions.where} · evals every {every or '-'} ticks")
 
     def on_tick(clock: Clock) -> None:
         agent.on_tick(clock)
@@ -1392,7 +1406,7 @@ def agent_taker(
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
-    evals_every: int = typer.Option(EVERY_TICKS, "--evals-every", min=0, help=EVALS_EVERY_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
@@ -1421,7 +1435,7 @@ def agent_maker(
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
-    evals_every: int = typer.Option(EVERY_TICKS, "--evals-every", min=0, help=EVALS_EVERY_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker

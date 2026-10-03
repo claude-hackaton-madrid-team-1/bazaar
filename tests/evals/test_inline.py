@@ -162,7 +162,7 @@ def test_the_duel_player_calls_its_evals_after_each_tick(duel_cli: Any, monkeypa
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     output = " ".join(result.output.split())
-    assert len(recorder.ticks) == 1 and "evals every 6 ticks" in output
+    assert len(recorder.ticks) == 1 and "evals every - ticks" in output  # log only: a dry run does not score
     # its first tick reads finished duels; that bookkeeping failing never cuts the tick short
     assert "/api/duels?done=true failed (RuntimeError)" in output
 
@@ -225,8 +225,9 @@ def test_another_process_of_the_kind_holding_the_lock_skips_the_pass(passes: lis
     evals, logs = make(every=1, connect=lambda: conn)
     for tick in (1, 2, 3):
         evals.after_tick(tick)
-    assert passes == [] and logs == ["evals (taker): another taker process is scoring; this one skips"]
+    assert passes == [] and logs == ["evals (taker): another taker process is scoring; skipped 1x"]
     assert conn.autocommit is True and "set statement_timeout = 30000" in conn.sql
+    assert "set idle_session_timeout = '2min'" in conn.sql  # a frozen holder loses its lock
     assert any("pg_try_advisory_lock" in q for q in conn.sql)
 
 
@@ -237,3 +238,32 @@ def test_simulated_traces_go_to_their_own_phoenix_project() -> None:
     assert tm.tracing_config({"BAZAAR_SIM": "1", "PHOENIX_PROJECT": "team1"}).project == "team1-sim"
     assert tm.tracing_config({"BAZAAR_SIM": "0"}).project == "bazaar"
     assert tm.tracing_config({}).project == "bazaar"
+
+
+def test_a_stuck_lock_stays_visible_every_tenth_skip(passes: list[frozenset[str]]) -> None:
+    evals, logs = make(every=1, connect=lambda: Conn(free=False))
+    for tick in range(1, 23):
+        evals.after_tick(tick)
+    assert logs == [f"evals (taker): another taker process is scoring; skipped {n}x" for n in (1, 11, 21)]
+
+
+@pytest.mark.parametrize(
+    ("asked", "trading", "every"), [(None, True, 6), (None, False, 0), (2, False, 2), (0, True, 0)]
+)
+def test_only_a_process_that_trades_scores_by_default(asked: int | None, trading: bool, every: int) -> None:
+    from bazaar_agent.cli import evals_default
+
+    assert evals_default(asked, trading) == every
+
+
+def test_an_empty_bazaar_sim_in_the_environment_does_not_hide_the_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from bazaar_agent import telemetry as tm
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("BAZAAR_SIM=1\n", encoding="utf-8")
+    monkeypatch.setenv("BAZAAR_ENV_FILE", str(env_file))
+    monkeypatch.setenv("BAZAAR_SIM", "")  # load_settings reads it as unset: the simulator
+    monkeypatch.delenv("PHOENIX_PROJECT", raising=False)
+    assert tm.tracing_config().project == "bazaar-sim"

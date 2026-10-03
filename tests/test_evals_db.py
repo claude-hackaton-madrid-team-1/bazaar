@@ -418,8 +418,18 @@ def test_a_second_process_of_the_same_kind_skips_while_the_first_scores(
     )
     evals.after_tick(1)
     evals.after_tick(2)
-    assert logs == ["evals (taker): another taker process is scoring; this one skips"]
+    assert logs == ["evals (taker): another taker process is scoring; skipped 1x"]
     holder.close()  # the lock goes with its session
     evals.after_tick(3)
     assert any("new/changed" in m for m in logs[1:]), logs
     setup.close()
+
+
+def test_the_cli_pass_scores_only_the_kinds_no_agent_is_scoring(cli_db: None, database_url: str, schema: Any) -> None:
+    holder = open_in(database_url, schema)
+    holder.execute("select pg_advisory_lock(hashtext('bazaar-evals:duels'))")
+    ran = CliRunner().invoke(evals_cli.evals_app, ["run", "--no-phoenix"])
+    holder.close()
+    assert ran.exit_code == 0, ran.output
+    assert "the duels agent is scoring duel right now" in ran.output
+    assert "scored dealer 6, trade 1" in ran.output and "duel" not in ran.output.split("scored")[1].split("·")[0]

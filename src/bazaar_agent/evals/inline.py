@@ -25,6 +25,15 @@ from bazaar_agent.evals.phoenix import PhoenixAnnotator
 from bazaar_agent.evals.run import run_once
 
 STATEMENT_TIMEOUT_MS = 30_000
+IDLE_SESSION_TIMEOUT = "2min"  # a frozen holder (a laptop lid closed mid-pass) loses its session, and its lock
+SKIP_LOG_EVERY = 10  # a skip is logged on the first and every 10th time: a stuck lock stays visible
+
+
+def lock_key(agent: str) -> str:
+    """The advisory lock one process of an agent kind holds while it scores that kind's targets."""
+    return f"bazaar-evals:{agent}"
+
+
 TARGETS_BY_AGENT: dict[str, frozenset[str]] = {
     "duels": frozenset({"duel"}),
     "taker": frozenset({"dealer", "trade"}),
@@ -54,6 +63,7 @@ class TickEvals:
         self._last: int | None = None
         self._running = threading.Event()
         self._said: set[str] = set()  # a pass's notes, each logged once (e.g. "our team id is unknown")
+        self._skips = 0
 
     def after_tick(self, tick: int) -> bool:
         """Call at the end of a tick. True when a pass started (it runs in the background)."""
@@ -91,10 +101,14 @@ class TickEvals:
         with self._connect() as conn:
             conn.autocommit = True  # reads hold no transaction open while the pass computes
             conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")  # a pass stuck on a lock ends
-            row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (f"bazaar-evals:{self.agent}",)).fetchone()
-            if not (row and row[0]):  # another process of this kind (a laptop dry run) holds this agent's targets
-                self._say(f"evals ({self.agent}): another {self.agent} process is scoring; this one skips")
+            conn.execute(f"set idle_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+            row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (lock_key(self.agent),)).fetchone()
+            if not (row and row[0]):  # another process of this kind holds this agent's targets
+                self._skips += 1
+                if self._skips % SKIP_LOG_EVERY == 1:
+                    self._log(f"evals ({self.agent}): another {self.agent} process is scoring; skipped {self._skips}x")
                 return
+            self._skips = 0
             annotator = self._annotator()
             try:
                 summary = run_once(conn, self._team(conn), annotator=annotator, warn=self._log, targets=targets)

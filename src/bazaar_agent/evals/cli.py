@@ -92,15 +92,37 @@ def _pending(conn: psycopg.Connection) -> int:
     return int(row[0]) if row else 0
 
 
+def _held_targets(conn: psycopg.Connection) -> set[str]:
+    """The targets of every agent kind whose evals lock this session could take (the others are being
+    scored by that agent right now: two writers would double-count Phoenix misses)."""
+    from bazaar_agent.evals.inline import TARGETS_BY_AGENT, lock_key
+
+    held: set[str] = set()
+    for agent, targets in TARGETS_BY_AGENT.items():
+        row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (lock_key(agent),)).fetchone()
+        if row and row[0]:
+            held |= targets
+        else:
+            _warn(f"evals: the {agent} agent is scoring {', '.join(sorted(targets))} right now; skipped here")
+    conn.commit()
+    return held
+
+
 def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_json: bool) -> None:
     from bazaar_agent.evals.run import run_once
 
+    targets = _held_targets(conn)
+    if not targets:
+        _warn("evals: every agent kind is scoring right now (their locks are held); nothing to do")
+        return
     annotator = _annotator(phoenix)
     try:
-        summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn)
+        summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn, targets=targets)
     finally:
         if annotator is not None:
             annotator.close()
+        conn.execute("select pg_advisory_unlock_all()")
+        conn.commit()
     if as_json:
         console.print_json(json.dumps(summary.__dict__, default=list))
         return

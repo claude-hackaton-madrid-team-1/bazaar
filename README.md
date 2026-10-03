@@ -663,13 +663,15 @@ the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladd
 
 **Where they run: inside the agents** (Omar, 2026-10-03; no Railway service). The duel player scores
 duels, the taker the dealer ladder and every team trade (its accepts and the maker's fills), the maker
-the Market Test. Each starts one pass every 6 ticks (`--evals-every N` on `duel run`, `agent taker`,
-`agent maker`; `0` = off; the first comes 6 ticks after start), after the tick has sent everything, on
+the Market Test. Each one that trades (live, or `duel run --play`) starts one pass every 6 ticks
+(`--evals-every N` on `duel run`, `agent taker`, `agent maker`; `0` = off, and off by default for a dry
+run, so a laptop never rewrites the team's scores; the first pass comes 6 ticks after start), after the tick has sent everything, on
 a background thread: Postgres and Phoenix only, zero game calls, a pass still running is never doubled,
 and an error is logged and dropped. From a laptop, `uv run bazaar evals run` scores everything once (or
 `--every-ticks 6` on the game clock, keyless `/api/clock`). After a restart, `bazaar duel run` reads
 `?done=true` once, so a duel that finished while it was down is stored. One process per agent kind
-scores (an advisory lock: a laptop dry-run taker skips while the Railway one scores). Against the
+scores (an advisory lock, which `bazaar evals run` also takes per kind; a frozen holder's session ends
+after 2 idle minutes). Against the
 simulator (`BAZAAR_SIM`), scores stay in its Postgres and traces go to the `bazaar-sim` Phoenix
 project: simulated duel and thread ids collide with the game's.
 
