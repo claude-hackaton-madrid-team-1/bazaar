@@ -181,14 +181,14 @@ class PgLedger:
     def release_accept(self, tick: int, item: str) -> None:
         """Give back a reserved accept the game refused (a refused request costs nothing, RULES.md): the
         newest reservation of `item` in `tick` is deleted, so its slot can be taken again."""
-        try:
-            self._conn.execute(
+        self._run(
+            "accept release",
+            lambda conn: conn.execute(
                 "delete from ledger where id = (select id from ledger where kind = 'accept' and tick = %s "
                 "and item = %s order by id desc limit 1)",
                 (tick, item),
-            )
-        except psycopg.Error as e:
-            raise LedgerUnavailable(f"accept release failed ({type(e).__name__})") from None
+            ),
+        )
 
     def close(self) -> None:
         self._pg.drop()
@@ -238,6 +238,9 @@ class FallbackLedger:
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
+
+    def release_accept(self, tick: int, item: str) -> None:
+        self._use(lambda ledger: ledger.release_accept(tick, item))
 
 
 LOCAL_HOSTS = ("localhost", "host.docker.internal", "gateway.docker.internal")  # this machine, seen from docker
