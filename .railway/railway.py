@@ -196,6 +196,8 @@ def live_show() -> object:
             # with --stdin; SHOW_DUELS stays unset (off) until the last duel session is over.
             "SHOW_DATABASE_URL": preserve(),
             "SHOW_DUELS": preserve(),
+            "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
+            "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
         },
     )
 
