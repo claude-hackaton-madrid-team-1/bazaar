@@ -229,6 +229,23 @@ PR 2 (supply + packs, 09:30 window or next).
   → `supply_cards` in Postgres; `bazaar supply`. · **Acceptance:** pure tests on fixtures + DB test schema.
 - Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
   packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
+### N14a — Hard dealers: per-dealer plan from recall, dealer finals, L3-L5 readiness
+Files: `GUARDRAILS.md`, `src/bazaar_agent/guardrails.py`, `src/bazaar_agent/agents/{dealer,desk,dealer_plan,taker}.py`,
+`src/bazaar_agent/strategy.py` (`dealer_buy` only), `src/bazaar_agent/learn/replay.py`, tests.
+- Step 1: add `dealer_final_lift` = 0 to GUARDRAILS, `Guardrails.final_cap_for()`, and `Action.final` in `check()`.
+  · **Acceptance:** with lift 0, every verdict is unchanged. With 0.15, a dealer final of 29 on an uncommon
+  is allowed, a plain accept or a bid at 27 is denied, and a pack is never lifted.
+- Step 2: `BidPlan.final_max`, plus `decide()` and `meet_the_ask()` taking a final up to `final_max`.
+  · **Acceptance:** unit tests show identical moves when `final_max` is unset.
+- Step 3: `agents/dealer_plan.py` turns the policy, the curve, the lift and the lessons into a plan with
+  `changed_by` notes, and adds the patience play. · **Acceptance:** pure tests on Chato's real numbers.
+- Step 4: wire the plan into the taker (`_evolved`, `_open_one`, `_desk_send`, `_accept_one`), and make
+  `strategy.dealer_buy` keep a dealer buy that only a final can close. · **Acceptance:** taker tests with
+  fakes find `changed_by` and `recalled` on the rows, and lift 0 gives today's rows.
+- Step 5: the evidence for Omar's lift decision, from a final-aware replay on the real feed: which Chato
+  finals lift 0.15 and lift 0.25 would take, and their cash. · **Acceptance:** numbers pasted in the PR.
+- Step 6: L3-L5 readiness (an unknown dealer, trickster bait on the desk). · **Acceptance:** tests.
+- Step 7: simulator proof per dealer on port 8815, plus `scripts/sim_smoke.py`. · **Acceptance:** run logs pasted.
 
 ### D1 — Duels II readiness: takeover of Marius's duel night PRs (2026-10-03, coordinator task_0d831308422a)
 Spec: [`D1-spec.md`](D1-spec.md) (criteria 1-2 now; 3, post-duel calibration, after #91) and the PR texts and night

@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bazaar_agent import intel
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import (
+    LIFTED_RARITIES,
     Action,
     Context,
     Guardrails,
@@ -449,6 +450,17 @@ def opening_ratio(m: Market) -> float | None:
     return min(ratios) if ratios else None
 
 
+def final_reach(rarity: str, value: float, top: int, rules: Guardrails, min_surplus: float) -> int | None:
+    """The most a dealer's FINAL offer may be taken at, when that is above our top bid (N14a): the rarity cap
+    lifted by `dealer_final_lift`, never above our value minus the minimum surplus. Cards only; None with
+    the lift off (today), for a pack, or when it adds nothing above `top`."""
+    cap = rules.final_cap_for(rarity)
+    if rules.dealer_final_lift <= 0 or rarity not in LIFTED_RARITIES or cap is None:
+        return None
+    reach = min(cap, math.floor(value - min_surplus))
+    return reach if reach > top else None
+
+
 def ladder_step(start: int, top: int, max_ticks: int) -> int:
     """The smallest raise that still reaches `top` before the thread times out (one bid per tick)."""
     return max(1, math.ceil((top - start) / max(1, max_ticks - 1)))
@@ -513,7 +525,8 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
-    if plan[1] < est.price:
+    reach = final_reach(card.rarity, case.value, plan[1], rules, params.min_buy_surplus) or plan[1]
+    if reach < est.price:  # nothing we bid nor a final we may take (dealer_final_lift) reaches the fills
         return f"{card.ref}: {quote.dealer} fills ~{est.price:g}, our max is {plan[1]} — cap below market"
     level = "level_unlock" if quote.dealer == m.newest_dealer else None
     scarce = "scarcity_first" if case.supply.scarce else None
@@ -581,6 +594,23 @@ def buy_move(m: Market, card: Card, params: StrategyParams, rules: Guardrails) -
     return dealer_buy(m, case, quote, params, rules) if quote else team_buy(m, case, params, rules)
 
 
+def ladder_alternates(m: Market, card: Card, primary: Move, params: StrategyParams, rules: Guardrails) -> list[Move]:
+    """level_ladder (N14a): with `dealer_final_lift` on, the other dealers that sell this card too, pricier ones
+    included. The ladder scores each dealer level's best three deals and a missing one is zero, so a pricier,
+    higher-level dealer is worth a thread on another card. Their own fills and the lifted cap decide whether
+    each one is a buy. With the lift off: none, as today."""
+    if rules.dealer_final_lift <= 0 or primary.source not in {q.dealer for q in m.quotes}:
+        return []
+    case = buy_case(m, card, params)
+    fits = [q for q in m.quotes if q.item == card.rarity and (q.sets is None or card.set_code in q.sets)]
+    out = []
+    for q in sorted(fits, key=lambda q: (q.list_price, q.dealer)):
+        alt = dealer_buy(m, case, q, params, rules) if q.dealer != primary.source else None
+        if isinstance(alt, Move):
+            out.append(replace(alt, strategy=_strategies(alt.strategy, "level_ladder")))
+    return out
+
+
 def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[list[Move], list[str]]:
     moves: list[Move] = []
     skipped: list[str] = []
@@ -590,6 +620,7 @@ def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[lis
         result = buy_move(m, card, params, rules)
         if isinstance(result, Move):
             moves.append(result)
+            moves.extend(ladder_alternates(m, card, result, params, rules))
         else:
             skipped.append(result)
     return moves, skipped
