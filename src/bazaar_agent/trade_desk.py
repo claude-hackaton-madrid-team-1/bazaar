@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from statistics import median
 from typing import Any, Literal
@@ -840,6 +840,7 @@ def build_plan(
     offers: Sequence[dict[str, Any]] = (),
     spent: int = 0,
     scan: Sequence[dict[str, Any]] = (),
+    focus: Collection[str] = (),
 ) -> TradePlan:
     """The plan, checked as GUARDRAILS.md is (`rules`), on top of our open `offers` and the `spent` the
     ledger booked this game hour. A trade the guardrails would refuse is replaced by the next best plan
@@ -857,7 +858,9 @@ def build_plan(
     ours, wanted = our_copies(m, me, params, rules), wanted_cards(m, params, rules, dealer_prices(events))
     asks = ask_trades(m, ours, amap, copies, pp, venue)
     bids = bid_trades(m, wanted, amap, copies, pp, venue)
-    swaps = swap_trades(m, ours, wanted, amap, copies, pp, venue)
+    focused = [w for w in wanted if intel.set_of(w.ref) in focus]  # `focus`: swaps only for these pages' cards,
+    swaps = swap_trades(m, ours, focused, amap, copies, pp, venue) if focused else []  # while any can be planned
+    swaps = swaps or swap_trades(m, ours, wanted, amap, copies, pp, venue)
     refused: list[str] = []
     dropped: list[str] = []
     banned: set[tuple[str, str, tuple[str, ...]]] = set()

@@ -361,3 +361,14 @@ def test_the_card_scan_places_holders_the_feed_never_shows():
     ]
     copies = scanned_copies(scan, [], {"id": "t01", "assets": []}, "t01")
     assert copies["t05"]["LAV-09"] == 1 and copies["t07"]["LAV-09"] == 1 and "t01" not in copies
+
+
+def test_the_closest_pages_are_the_ones_with_the_fewest_cards_missing():
+    from bazaar_agent.agents.team_desk import PageNeed, closest_pages
+
+    pages = {
+        "LAV": PageNeed("LAV", 8, 10, 1.6, 106.0),
+        "MAL": PageNeed("MAL", 8, 10, 1.1, 72.9),
+        "LAT": PageNeed("LAT", 2, 10, 0.5, 33.1),
+    }
+    assert closest_pages(pages) == {"LAV", "MAL"} and closest_pages({}) == frozenset()

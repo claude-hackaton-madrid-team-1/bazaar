@@ -225,6 +225,13 @@ class PageNeed:
         return (self.missing, -self.affinity)
 
 
+def closest_pages(pages: Mapping[str, PageNeed]) -> frozenset[str]:
+    """The pages with the fewest cards missing: the plan picks swaps for their cards first (`build_plan(focus=)`),
+    and for any other page only when none of theirs can be planned."""
+    fewest = min((p.missing for p in pages.values()), default=None)
+    return frozenset(code for code, p in pages.items() if p.missing == fewest)
+
+
 def page_needs(m: Market) -> dict[str, PageNeed]:
     """Every released page with a card still missing, from the market built on /api/me."""
     out: dict[str, PageNeed] = {}
@@ -1026,25 +1033,32 @@ class TeamDesk:
             # is on, the cumulative `max_counterparty_share` in every guardrail check.
             pp = PlanParams(listings=0, threads=max(1, self.rules.team_threads_max_open * 2), max_share=1.0)
             spent = v.ctx(None).spent_last_hour
-            plan = build_plan(
-                v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent, v.scan
-            )
             m = build_market(v.me, v.catalog, v.events, [])
-            worth = {w.ref: w.worth for w in wanted_cards(m, v.params, self.rules, dealer_prices(v.events))}
             pages = page_needs(m)
+            args = (v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent, v.scan)
+            focus = closest_pages(pages)
+            # The closest pages' swaps are planned on their own (build_plan's objective would trade them away
+            # for bigger gains elsewhere), then the rest of the plan follows them, so a page whose holders will
+            # not deal never stops every other swap.
+            first = build_plan(*args, focus=focus).threads if focus else ()
+            rest = build_plan(*args).threads
+            planned = {(f.counterparty, f.refs) for f in first}
+            threads = [*first, *(t for t in rest if (t.counterparty, t.refs) not in planned)]
+            worth = {w.ref: w.worth for w in wanted_cards(m, v.params, self.rules, dealer_prices(v.events))}
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage is the taker's to report (it holds the tick)
         except Exception as e:  # noqa: BLE001 — a plan that cannot be built means no swaps, never a dead tick
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()
-        trades = tuple(sorted(plan.threads, key=lambda t: self._priority(t, pages)))
+        trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
         self._plan = _Plan(v.tick, trades, worth, pages)
         return trades
 
     @staticmethod
     def _priority(t: Trade, pages: Mapping[str, PageNeed]) -> tuple[Any, ...]:
-        """The missing cards of the page closest to complete come first (then our affinity for it), and only
-        then the best expected gain: completing a page is what scores (Omar, Sat 3 Oct)."""
+        """Among the planned swaps (`build_plan` already kept only the closest pages' cards while it could), the
+        page closest to complete first, then our affinity for it, then the expected gain: completing a page is
+        what scores (Omar, Sat 3 Oct)."""
         page = pages.get(set_of(t.refs[1]) or "")
         return (*(page.rank() if page is not None else (99, 0.0)), -t.expected, t.counterparty, t.refs)
