@@ -468,3 +468,8 @@ AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last
 (`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
 `200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
 as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
+`run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
+a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
+on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.

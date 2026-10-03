@@ -452,6 +452,8 @@ def negotiate(
         "accepted": False,
         "reopen": None,
         "clock": None,
+        "limited_at": None,  # the tick a close was refused with a rate limit (its retry waits for the next)
+        "walk_reopen": False,  # our walk (refused) was one after she held her opening: reopen lower once closed
     }
 
     def holding(when: str) -> bool:
@@ -501,6 +503,7 @@ def negotiate(
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
+                state["limited_at"] = clock.tick
                 return "open"
         else:
             status = answer.get("status") if isinstance(answer, dict) else None
@@ -611,6 +614,7 @@ def negotiate(
                 client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
+                state["walk_reopen"] = move.reopen
                 state["status"] = close("walked", clock)
                 if state["status"] in ("walked", "closed"):
                     state["reopen"] = reopen_start(neg) if move.reopen else None
@@ -629,6 +633,8 @@ def negotiate(
         # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
         run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
+            reread(state["clock"] or Clock(tick=0))  # both settle-wait reads may have failed: one more read
+        if state["status"] == "open":
             state["status"] = "accepted_pending"
     last: Clock | None = state["clock"]  # on_deal's tick and game hour: the last tick we handled
     if last is None:
@@ -640,9 +646,12 @@ def negotiate(
         reread(last)  # a "Deal!" may have landed while we held: book it; the thread stays open otherwise
         state["status"] = "held" if state["status"] == "open" else state["status"]
     elif state["status"] == "open":
-        state["status"] = close("timeout", last)
+        if state["limited_at"] != last.tick:  # our walk's close was not refused this very tick: close now
+            state["status"] = close("timeout", last)
         if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the NEXT tick
             retry_close_next_tick()
+        if state["status"] in ("timeout", "closed") and state["walk_reopen"]:
+            state["reopen"] = reopen_start(neg)  # the held-opening walk closed late: still reopen lower
         if state["status"] == "open":
             standing = neg.bids[-1] if neg.bids else "-"
             log(f"thread {tid} is still open with our bid {standing} standing: close it by hand")
