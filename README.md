@@ -1274,6 +1274,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#170](../../pull/170) | flags(duels): duel_policy v2 (Omar, live session) | `ogarciarevett/flag-duel-policy-v2` |
 | [#169](../../pull/169) | fix(guardrails): keep 270 in cash so our own market can always be opened | `ogarciarevett/guard-cash-floor-270` |
 | [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
@@ -1293,6 +1294,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
-| [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 
 <!-- BAZAAR:ACTIVITY:END -->
