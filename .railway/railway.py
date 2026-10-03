@@ -103,8 +103,9 @@ def agent(name: str, command: str, data: object) -> object:
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        # BAZAAR_LEARN=0 / BAZAAR_LLM_READ=0 (set by hand) turn the feed reader / its LLM pass off;
-        # preserve() keeps a hand-set value across applies.
+        # BAZAAR_LEARN=0 / BAZAAR_LLM_READ=0 (set by hand) turn the feed reader / its LLM pass off, and
+        # BAZAAR_TEAM_THREADS=0 the team desk (N17): all set by hand like BAZAAR_LIVE, declared preserve() so an
+        # apply keeps them (an undeclared hand-set variable is deleted by `railway config apply`).
         env={
             **runtime_env(),
             **llm_env(),
@@ -112,6 +113,7 @@ def agent(name: str, command: str, data: object) -> object:
             "BAZAAR_LIVE": preserve(),
             "BAZAAR_LEARN": preserve(),
             "BAZAAR_LLM_READ": preserve(),
+            "BAZAAR_TEAM_THREADS": preserve(),
         },
     )
 

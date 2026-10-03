@@ -87,6 +87,28 @@ def test_only_plain_one_card_shapes_are_read():
     assert parse_offer({"id": "x"}) is None
 
 
+def test_a_bid_that_also_wants_an_asset_or_hides_an_unknown_key_is_never_plain():
+    # security-auditor #98 P1: the bid branch never looked at want.assets, so a rival bid for "card:LAT-09"
+    # that also wants the id of our rare read as a plain LAT-09 bid. Words persuade, structure binds: any
+    # extra structure means it is not the shape we price, so it is skipped, never guessed at.
+    plain = bid(2, "LAT-09", 62)
+    trap = {**plain, "want": {**plain["want"], "assets": [77]}}
+    hidden_want = {**plain, "want": {**plain["want"], "packs": ["sobre_barrio"]}}
+    hidden_give = {**plain, "give": {**plain["give"], "debt": 5}}
+    ask_extra = {**ask(1, "LAV-02", 10), "want": {"cash": 10, "assets": [], "types": [], "cards": ["LAV-09"]}}
+    ask_hidden = {**ask(1, "LAV-02", 10), "want": {"cash": 10, "assets": [], "types": [], "bonus": [1]}}
+    assert parse_offer(plain) is not None and parse_offer(plain).side == "bid"
+    assert [parse_offer(o) for o in (trap, hidden_want, hidden_give, ask_extra, ask_hidden)] == [None] * 5
+    real = {  # an offer.listed payload from Friday's feed: zero cash and empty lists are plain
+        "id": 23,
+        "maker": "t07",
+        "venue": "rastro",
+        "give": {"cash": 0, "assets": [{"id": 100, "kind": "card", "ref": "LAT-03", "rarity": "common"}], "types": []},
+        "want": {"cash": 10, "assets": [], "types": []},
+    }
+    assert parse_offer(real) is not None and (parse_offer(real).side, parse_offer(real).price) == ("ask", 10)
+
+
 def test_board_offers_keep_only_open_offers_for_anyone_or_for_us():
     offers = [
         ask(1, "LAV-02", 10),

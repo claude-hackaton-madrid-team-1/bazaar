@@ -1196,6 +1196,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar tape` | Every settlement (trade print): who bought what from whom, at what price. |
 | `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads; ours are tagged. |
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart. |
+| `uv run bazaar affinity` | Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone. |
+| `uv run bazaar trade-plan` | Dry-run trade plan for the next opening, fair by construction; sends nothing. |
+| `uv run bazaar swaps` | Read-only: the swaps the taker's team desk would propose in team threads (N17), sends nothing. |
+| `uv run bazaar rivals` | Rival behaviour profiles: pricing against the tape and own value, fills, takes, reprices. |
+| `uv run bazaar opportunities` | Read-only scanner: standing offers ranked by what accepting them gains us, guardrails checked. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me, or its current snapshot). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
@@ -1222,6 +1227,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
+| `uv run bazaar sell swap` | Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
 | `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
@@ -1239,12 +1245,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
 - [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
-- [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
-- [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
-- [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
-- [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
-- [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
-- [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
+- [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
+- [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
+- [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
+- [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
+- [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
+- [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
 
 <!-- BAZAAR:STATUS:END -->
 
