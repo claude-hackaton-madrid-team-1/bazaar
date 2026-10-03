@@ -44,7 +44,10 @@ def _bracket(t: DealerThread) -> tuple[int, int] | None:
     return low, high
 
 
-def replay_thread(t: DealerThread, ladder: Ladder, floor: int, patience: float) -> Replayed | None:
+def replay_thread(
+    t: DealerThread, ladder: Ladder, floor: int, patience: float, final_max: int | None = None
+) -> Replayed | None:
+    """`final_max` (N14a): the most we take for the dealer's final; None = the walk point, as before."""
     bracket = _bracket(t)
     opening = t.opening_ask
     if bracket is None or opening is None or opening <= floor:
@@ -57,7 +60,7 @@ def replay_thread(t: DealerThread, ladder: Ladder, floor: int, patience: float) 
         if bid >= high:
             return Replayed(t.thread, bid, n, _share(opening, bid, floor))
     final = t.final_price if t.final_price is not None else high
-    if final <= ladder.walk:
+    if final <= (ladder.walk if final_max is None else max(ladder.walk, final_max)):
         return Replayed(t.thread, final, rounds, _share(opening, final, floor))
     return Replayed(t.thread, None, rounds, 0.0)
 
