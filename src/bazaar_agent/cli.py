@@ -412,6 +412,14 @@ def dealer_sell(
     if min_price < floor:
         _fail(f"--min {min_price} is below sell_min_value_ratio {rules.sell_min_value_ratio} × your_value = {floor}")
     ledger = _ledger("dealer-sell")
+    clock_now = Clock.model_validate(client.clock())
+    pre = gr.check(
+        gr.Action("sell", ref, rarity, start, worth, dealer=dealer),
+        gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
+        rules,
+    )
+    if not pre.allowed:  # the kill switch and the floor stop the thread before it opens
+        _fail(f"guardrails refuse to open this sale: {pre}")
 
     def guard(move: Move) -> str | None:
         c = Clock.model_validate(client.clock())
@@ -424,6 +432,9 @@ def dealer_sell(
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
         return bool(ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), ref, limit))
 
+    def on_deal(price: int, tick: int, t_hours: float) -> None:
+        ledger.record("spend", tick, t_hours, -price, ref)  # a sale is income, as the maker records it
+
     topic = {"sell": {"assets": [int(asset["id"])]}}
     out = negotiate_sell(
         client,
@@ -435,6 +446,7 @@ def dealer_sell(
         max_ticks=rules.dealer_max_ticks_per_thread,
         reserve=reserve,
         on_thread=_flag_policy(client, dealer, topic, rules, ledger),
+        on_deal=on_deal,
     )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -451,7 +463,7 @@ def _flag_policy(client: Any, dealer: str, topic: dict[str, Any], rules: Any, le
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
-    book, cards = FlagBook(), {}  # the catalog is read on the first offer, inside the guarded hook
+    book, cards = FlagBook.from_rules(rules), {}  # the catalog is read on the first offer, in the guarded hook
 
     def guard(inspection: Any) -> str | None:
         c = Clock.model_validate(client.clock())

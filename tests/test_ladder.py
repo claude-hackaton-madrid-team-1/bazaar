@@ -242,3 +242,14 @@ def test_levels_from_the_feed_and_the_deals_that_count_toward_the_next_one():
     at_opening = Conversation(1, "t01", "abuela", "buy", "LAV-03", 0, turns=[Turn(0, True, 7)], fill=7)
     haggled = Conversation(2, "t01", "abuela", "buy", "LAV-04", 0, turns=[Turn(0, True, 12)], fill=9)
     assert negotiated_deals([at_opening, haggled], "t01") == {"abuela": 1}
+
+
+def test_level_events_with_both_level_and_persona_join_on_the_dealer():
+    from bazaar_agent.ladder import levels
+
+    events = [
+        {"type": "level.activated", "tick": 98, "payload": {"level": "L2", "persona": "chato", "name": "El Chato"}},
+        {"type": "level.unlocked", "tick": 99, "payload": {"level": 2, "persona": "chato", "team": "t01", "why": "x"}},
+    ]
+    (lv,) = levels(events)
+    assert lv.dealer == "chato" and lv.unlocked == (("t01", 99, "x"),)

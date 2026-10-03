@@ -78,15 +78,36 @@ class CardIndex:
         return cls(refs, books)
 
     def mentioned(self, text: str) -> list[CardInfo]:
-        """Cards the words name, by exact name (longest first, so 'La Dama de Serrano' wins) or by ref."""
-        low, found = text.lower(), {}
+        """Cards the words name, by exact name or by ref. Longest names first, and a shorter name inside
+        a longer one already found is not a second mention ('La Dama de Serrano' is one card)."""
+        low, found, taken = text.lower(), {}, [False] * len(text)
         for info in sorted(self.by_ref.values(), key=lambda i: -len(i.name)):
-            if len(info.name) >= 4 and info.name.lower() in low:
-                found[info.ref] = info
+            name = info.name.lower()
+            if len(name) < 4:
+                continue
+            for m in re.finditer(re.escape(name), low):
+                if not any(taken[m.start() : m.end()]):
+                    found[info.ref] = info
+                    taken[m.start() : m.end()] = [True] * (m.end() - m.start())
         for ref in REF.findall(text):
             if ref in self.by_ref:
                 found[ref] = self.by_ref[ref]
         return list(found.values())
+
+    def negated(self, text: str, ref: str) -> bool:
+        """The words mention this card only to say they do not have it ('No me queda X', 'X is sold out')."""
+        info, low = self.by_ref.get(ref), text.lower()
+        names = [ref.lower()] + ([info.name.lower()] if info is not None else [])
+        for name in names:
+            for m in re.finditer(re.escape(name), low):
+                before, after = low[max(0, m.start() - 30) : m.start()], low[m.end() : m.end() + 25]
+                if re.search(NEGATION_BEFORE, before) or re.search(NEGATION_AFTER, after):
+                    return True
+        return False
+
+
+NEGATION_BEFORE = r"(?:\bno\b|\bnot\b|\bsin\b|\bni\b|\bnunca\b|don't|no longer|out of|ya no)[^.!?]*$"
+NEGATION_AFTER = r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|se acab)"
 
 
 CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
@@ -207,7 +228,7 @@ def inspect_offer(
     lesser = bool(other) and None not in infos and worth is not None and bound_worth < worth
     if lesser:
         findings.append(f"what it binds is worth {bound_worth:g} against {worth:g} asked")
-    claim = _words_claim(text or "", asked, bound_worth, bound_rank, cards)
+    claim = _words_claim(text or "", asked, bound, bound_worth, bound_rank, cards)
     if claim:
         findings.append(claim)
     certain = lesser and claim is not None and rank is not None
@@ -225,12 +246,15 @@ def _other_item(bound: list[str], spec: Mapping[str, Any], cards: CardIndex) -> 
     return f"it binds {bound or 'nothing'}, not one {rarity} card" + (f" of {code}" if code else "")
 
 
-def _words_claim(text: str, asked: str, bound_worth: float, bound_rank: int, cards: CardIndex) -> str | None:
+def _words_claim(
+    text: str, asked: str, bound: list[str], bound_worth: float, bound_rank: int, cards: CardIndex
+) -> str | None:
     """The words claim something better than the structure binds: the card we asked for, a dearer card,
     or a higher rarity. None when they do not (or say nothing about the item)."""
     named = cards.mentioned(text)
-    if any(i.worth <= bound_worth for i in named) and bound_worth > 0:
+    if any(i.ref in bound for i in named):
         return None  # the words name what the structure binds: the substitution is disclosed, not a trick
+    named = [i for i in named if not cards.negated(text, i.ref)]  # "No me queda X" is not a claim of X
     if any(i.ref == asked for i in named):
         return f"the words name {asked}, which the structure does not bind"
     dearer = [i for i in named if i.worth > bound_worth]
@@ -266,22 +290,27 @@ TRUSTED_DEALERS = frozenset({"abuela", "chato"})
 
 @dataclass
 class FlagBook:
-    """Flag decisions in this process. Every certain trickster message is logged once (uncapped, so
-    the `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a
-    wrong flag costs points). Trusted dealers are never flagged."""
+    """Flag decisions in this process. Each certain trickster message is logged once (uncapped, so the
+    `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a wrong
+    flag costs points); a denied or failed one is tried again on the next read (flags may be allowed
+    mid-run). Trusted dealers are never flagged. GUARDRAILS.md sets `limit` and `trusted`."""
 
     limit: int = 2
     trusted: frozenset[str] = TRUSTED_DEALERS
     seen: set[int] = field(default_factory=set)
     sent: dict[int, str] = field(default_factory=dict)
 
-    def new(self, inspection: Inspection) -> bool:
-        """A certain trickster message from an untrusted dealer, not seen before."""
+    @classmethod
+    def from_rules(cls, rules: Any) -> FlagBook:
+        return cls(int(rules.max_flags_per_process), frozenset(rules.trusted_dealers))
+
+    def candidate(self, inspection: Inspection) -> bool:
+        """A certain trickster message from an untrusted dealer that we have not flagged yet."""
         mid = inspection.message_id
         return (
             inspection.verdict == "flag"
             and mid is not None
-            and mid not in self.seen
+            and mid not in self.sent
             and inspection.dealer not in self.trusted
         )
 
@@ -343,8 +372,24 @@ def flag_step(
         return None
     mid, text = message_for_offer(thread, newest.get("id"))
     inspection = inspect_offer(newest, topic or thread.get("topic") or {}, text, cards, dealer=dealer, message_id=mid)
-    if not book.new(inspection) or mid is None:
+    if not book.candidate(inspection) or mid is None:
         return inspection
+    first = mid not in book.seen
+    book.seen.add(mid)
+    reason = inspection.reason[:FLAG_REASON_CHARS]
+    denied = guard(inspection)
+    if denied or send is None or not book.room():
+        if first:  # logged once; re-checked on every read, so allowing flags later still sends it
+            why = denied or ("dry run" if send is None else f"flag limit {book.limit} reached")
+            log(f"would flag message {mid} from {dealer} ({why}): {reason}")
+        return inspection
+    try:
+        send(mid, reason)
+        book.sent[mid] = reason
+        log(f"flagged message {mid} from {dealer}: {reason}")
+    except Exception as e:  # a refused flag never breaks the negotiation; the next read tries again
+        log(f"flag of message {mid} refused ({type(e).__name__}: {str(e)[:80]}); retrying next read")
+    return inspection
     book.seen.add(mid)
     reason = inspection.reason[:FLAG_REASON_CHARS]
     denied = guard(inspection)

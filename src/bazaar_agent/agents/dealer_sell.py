@@ -98,7 +98,7 @@ def ask_plan_for(row: FloorRow, floor_price: int, *, q: float = 0.5, width: int 
     top = row.floor(0.75) or limit
     if floor_price > top:
         return PlanChoice(row, None, limit, floor_price, f"our floor {floor_price} is above 3 in 4 of its limits")
-    bottom = max(floor_price, limit - width)
+    bottom = max(floor_price, limit - width, row.opening + 1)  # never down to its opening bid: no share
     start = max(bottom, limit + width)
     if start <= row.opening:
         return PlanChoice(row, None, limit, floor_price, f"limit {limit} is its opening bid {row.opening}: no range")
@@ -107,8 +107,8 @@ def ask_plan_for(row: FloorRow, floor_price: int, *, q: float = 0.5, width: int 
 
 
 def mirrored_conversation(c: Conversation) -> Conversation:
-    """A sale as the buy it mirrors (side 'buy', every price MIRROR − p): the ladder's floor table, its
-    fitted dealer and its replay then work on sales unchanged."""
+    """A sale as the buy it mirrors (side 'buy', every price MIRROR − p), for `ladder_replay.fit`,
+    `episode_from` and `play`. The floor table itself reads sales directly (its 'sell' rows)."""
     out = Conversation(c.thread, c.team, c.dealer, "buy", c.item, c.opened_tick, fill=mirror(c.fill))
     out.fill_tick = c.fill_tick
     out.turns = [Turn(t.tick, t.dealer, mirror(t.price), t.final) for t in c.turns]

@@ -290,7 +290,7 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
-        self.flags = FlagBook()  # the offer inspector's flags (GUARDRAILS.md allow_flags decides if any is sent)
+        self.flags = FlagBook.from_rules(rules)  # the offer inspector's flags (GUARDRAILS.md allow_flags & co.)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 

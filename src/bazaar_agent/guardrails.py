@@ -54,6 +54,8 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
     dealer_price_caps: str = "none"  # "chato:uncommon=31,chato:rare=93": replaces max_price_<rarity> for that dealer
 
     @field_validator("dealer_price_caps")
@@ -61,6 +63,10 @@ class Guardrails(BaseModel):
     def _dealer_caps_parse(cls, value: str) -> str:
         parse_dealer_caps(value)
         return value
+
+    @property
+    def trusted_dealers(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
 
     @property
     def dealer_caps(self) -> dict[tuple[str, str], int]:
@@ -127,6 +133,8 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy/sell, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy/sell, the desk)",
     "dealer_price_caps": "guardrails.check (Action.dealer: cli dealer buy, rules check --dealer, the desk's opens, "
     "bids and accepts, strategy, runtime dealer_buy, ask intents)",
 }

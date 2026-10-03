@@ -396,7 +396,7 @@ def levels(events: Iterable[Event]) -> list[Level]:
     for e in events:
         kind, p = e.get("type"), e.get("payload") or {}
         if kind in ("level.announced", "level.activated"):
-            dealer = str(p.get("level") or p.get("persona") or "?")
+            dealer = str(p.get("persona") or p.get("level") or "?")  # one key for every level event
             d = info.setdefault(dealer, {"name": p.get("name") or dealer, "teaser": p.get("teaser") or ""})
             d["announced" if kind == "level.announced" else "activated"] = int(e.get("tick", 0))
             if kind == "level.activated":

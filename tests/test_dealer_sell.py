@@ -71,7 +71,7 @@ def real():
 def test_an_ask_plan_from_abuelas_uncommon_sales(real):
     row = next(r for r in floor_table(real) if (r.dealer, r.price_class, r.opening) == ("abuela", "sell", 12))
     plan = ask_plan_for(row, 1).plan
-    assert plan is not None and (MIRROR - plan.start, MIRROR - plan.max_price) == (16, 12)
+    assert plan is not None and (MIRROR - plan.start, MIRROR - plan.max_price) == (16, 13)  # never its opening 12
     floored = ask_plan_for(row, 14).plan
     assert floored is not None and MIRROR - floored.max_price == 14  # never below our own floor
     assert ask_plan_for(row, 99).plan is None  # our floor above what it ever paid

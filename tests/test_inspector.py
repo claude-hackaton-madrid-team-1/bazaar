@@ -148,16 +148,39 @@ def test_the_message_that_carried_an_offer():
     assert only.verdict == "flag" and only.message_id == 901
 
 
-def test_the_flag_book_logs_each_message_once_and_sends_up_to_its_limit():
-    book = FlagBook(limit=1)
+def test_the_flag_book_sends_up_to_its_limit_and_never_flags_a_trusted_dealer():
+    from bazaar_agent.guardrails import Guardrails
+
+    book = FlagBook.from_rules(Guardrails(max_flags_per_process=1, flag_trusted_dealers="abuela"))
     (i,) = inspect_thread(THREAD, "trile", CARDS)
-    assert book.new(i) and book.room()
-    book.seen.add(901)
-    assert not book.new(i)  # once per message
+    assert book.candidate(i) and book.room() and book.trusted == frozenset({"abuela"})
     book.sent[901] = i.reason
-    assert not book.room()  # the send limit
-    trusted = inspect_thread({**THREAD}, "trile", CARDS)[0]
-    assert not FlagBook(trusted=frozenset({"trile"})).new(trusted)  # a trusted dealer is never flagged
+    assert not book.candidate(i) and not book.room()  # sent once; the send limit is reached
+    assert not FlagBook(trusted=frozenset({"trile"})).candidate(i)  # a trusted dealer is never flagged
+
+
+def test_a_denied_flag_is_logged_once_and_sent_once_flags_are_allowed():
+    book, sent, lines = FlagBook(), [], []
+    allowed = {"now": False}
+
+    def run():
+        flag_step(
+            THREAD,
+            "trile",
+            CARDS,
+            book,
+            guard=lambda _: None if allowed["now"] else "denied: allow_flags = false",
+            send=lambda mid, reason: sent.append(mid),
+            log=lines.append,
+        )
+
+    run()
+    run()
+    assert sent == [] and len(lines) == 1  # logged once while flags are off
+    allowed["now"] = True
+    run()
+    run()
+    assert sent == [901]  # sent once flags are allowed, never twice
 
 
 @pytest.mark.parametrize(
@@ -202,7 +225,7 @@ def test_an_allowed_flag_is_sent_once_with_a_structural_reason():
     i, sent, lines = step()
     assert sent == [(901, i.reason)] and lines[0].startswith("flagged message 901")
     _, dry, dry_lines = step(send=False)
-    assert dry == [] and dry_lines[0].startswith("dry run: would flag message 901")
+    assert dry == [] and dry_lines[0].startswith("would flag message 901 from trile (dry run)")
 
 
 def test_a_clean_or_blocked_offer_is_never_flagged():
@@ -213,3 +236,20 @@ def test_a_clean_or_blocked_offer_is_never_flagged():
     sent: list = []
     i = flag_step(honest, "trile", CARDS, FlagBook(), guard=lambda _: None, send=lambda *a: sent.append(a), log=print)
     assert i is not None and i.verdict == "clean" and sent == []
+
+
+def test_naming_some_cheap_card_is_not_disclosing_the_bound_one():
+    """Only the bound card's own name is a disclosure (review: 'far better than that LAV-01' must still flag)."""
+    o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
+    i = inspect_offer(
+        o, {"buy": {"card": "LAV-08"}}, "Here is LAV-08, far better than that LAV-01.", CARDS, message_id=4
+    )
+    assert i.verdict == "flag"
+
+
+def test_a_name_inside_a_longer_name_is_one_card_and_a_negated_mention_is_no_claim():
+    dama = CARDS.by_ref["SAL-12"].name  # "La Dama de Serrano"
+    assert [i.ref for i in CARDS.mentioned(f"{dama}, only 120")] == ["SAL-12"]
+    o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
+    for text in ("No me queda LAV-08, le doy otro.", "LAV-08 is sold out, take this one."):
+        assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=5).verdict == "block"
