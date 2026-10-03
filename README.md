@@ -1121,6 +1121,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
 | [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | Sat 06:37 | `b0caeb6` |
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | Sat 06:26 | `edee568` |
 | [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | Sat 06:24 | `d4b243e` |
@@ -1132,7 +1133,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
 | [#147](../../pull/147) | style: wrap a long IaC docstring line (ruff E501 on main) | Sat 05:25 | `aaeb0fe` |
 | [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | Sat 04:57 | `a8da058` |
-| [#124](../../pull/124) | docs: backlog in repo specs (issues migrated), Saturday deadlines, status 05:00 | Sat 04:54 | `c6f7ad9` |
 
 ### Open pull requests
 
