@@ -77,16 +77,46 @@ def test_market_median_pulls_a_relist_down_to_it_but_never_below_the_floor():
 
 
 def test_market_median_reads_the_venue_card_then_rarity_in_the_window():
-    def p(tick, ref, price, venue="rastro", items=1):
-        return Print(tick, tick, "t02", "t03", None, venue, ref, "card", items, price, 0)
+    def p(tick, ref, price, venue="rastro", items=1, seller="t03", buyer="t02"):
+        return Print(tick, tick, buyer, seller, None, venue, ref, "card", items, price, 0)
 
     rarities = {"MAL-08": "uncommon", "LAT-08": "uncommon", "SAL-01": "common"}
-    prints = [p(400, "LAT-08", 20), p(450, "LAT-08", 25), p(460, "SAL-01", 9), p(470, "LAT-08", 99, venue="v03")]
-    assert market_median(prints, "rastro", "MAL-08", "uncommon", rarities, 500) == 22.5  # by rarity
-    assert market_median(prints, "rastro", "LAT-08", "uncommon", rarities, 500) == 22.5  # by card
-    assert market_median(prints, "rastro", "LAT-08", "uncommon", rarities, 560) == 25  # 400 left the window
-    assert market_median(prints, "rastro", "SAL-03", "rare", rarities, 500) is None
-    assert market_median([p(450, "SAL-01", 9, items=2)], "rastro", "SAL-01", "common", rarities, 500) is None
+    prints = [
+        p(400, "LAT-08", 20),
+        p(450, "LAT-08", 25, seller="t05"),
+        p(455, "MAL-08", 23, seller="t07"),
+        p(460, "SAL-01", 9),
+        p(470, "LAT-08", 99, venue="v03"),
+    ]
+    assert market_median(prints, "rastro", "MAL-08", "uncommon", rarities, 500, "t01") == 23  # 3 fills by rarity
+    assert market_median(prints, "rastro", "LAT-08", "uncommon", rarities, 500, "t01") == 23  # 2 of LAT-08: too few
+    assert market_median(prints, "rastro", "LAT-08", "uncommon", rarities, 560, "t01") is None  # 400 left
+    assert market_median(prints, "rastro", "SAL-03", "rare", rarities, 500, "t01") is None
+
+
+def test_one_staged_fill_or_our_own_fills_never_set_the_median():
+    def p(ref, price, seller, buyer="t02", items=1):
+        return Print(1, 450, buyer, seller, None, "rastro", ref, "card", items, price, 0)
+
+    rarities = {"SAL-01": "common", "SAL-02": "common"}
+    one_seller = [p("SAL-02", 5, "t09"), p("SAL-02", 5, "t09"), p("SAL-02", 5, "t09")]
+    assert market_median(one_seller, "rastro", "SAL-01", "common", rarities, 500, "t01") is None
+    ours = [p("SAL-01", 6, "t01"), p("SAL-01", 6, "t04", buyer="t01"), p("SAL-01", 6, "t05"), p("SAL-01", 6, "t06")]
+    assert market_median(ours, "rastro", "SAL-01", "common", rarities, 500, "t01") is None  # 2 left: too few
+    bundles = [p("SAL-01", 6, s, items=2) for s in ("t04", "t05", "t06")]
+    assert market_median(bundles, "rastro", "SAL-01", "common", rarities, 500, "t01") is None
+
+
+def test_a_target_above_every_past_ask_lists_afresh():
+    # PR #205 review P1: MAL-02 #671 open at 9; a chaser appears and the strategy now prices it at 25.
+    assert price(25, AskTrail(671, (10, 9), 2), open_price=9).price == 25
+    assert price(25, AskTrail(671, (10, 9), 0, 600), tick=550).price == 25  # even while resting
+    assert price(10, AskTrail(671, (10, 9), 2), open_price=9).price == 9  # the same need: the step stands
+
+
+def test_a_floor_that_rose_above_the_last_ask_lists_at_the_floor_instead_of_resting():
+    r = price(25, AskTrail(1, (25, 21), 2), cost_floor=22)
+    assert (r.price, r.rest_until, r.floor) == (22, None, 22)
 
 
 def test_ask_rows_read_live_sent_asks_and_rests_only(tmp_path):

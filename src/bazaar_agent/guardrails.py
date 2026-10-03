@@ -75,7 +75,7 @@ class Guardrails(BaseModel):
     relist_step_share: float = Field(default=0.05, ge=0, le=0.5)
     relist_min_price_share: float = Field(default=0.6, ge=0, le=1)
     relist_max_lapses: int = Field(default=4, ge=1, le=100)
-    relist_cooldown_ticks: int = Field(default=40, ge=0, le=2000)
+    relist_cooldown_ticks: int = Field(default=40, ge=1, le=2000)
     block_buying_held_cards: bool = True
     holdings_from_db: bool = True
     holdings_max_age_s: float = Field(default=5.0, ge=0, le=60)

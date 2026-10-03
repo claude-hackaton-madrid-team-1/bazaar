@@ -7,9 +7,10 @@ Oct (tick 160+): the maker listed 110 asks and sold 3, the same copy at the same
 Per copy (`AskTrail`, read back from our live decision rows, so a restart keeps it):
   - first listing: the strategy's price;
   - an open ask stands at its price (it moves only down, when the strategy's target falls below it);
+  - a strategy target above every ask the copy ever had (a chaser appeared): listed afresh at the target;
   - a relist after a lapse: previous − max(1, round(`relist_step_share` × previous)), and down to the median
-    of the venue's recent fills of that card (else its rarity) when that median lies between the floor and the
-    stepped price; never above the strategy's target, never below the floor;
+    of the venue's recent fills of that card (else its rarity; 3+ fills, 2+ sellers, none ours) when that
+    median lies between the floor and the stepped price; never above the strategy's target, never below the floor;
   - the floor: the highest of what selling the copy costs us (`ask_floor` of the target's value, which
     includes a page bonus), its `your_value` in /me × `sell_min_value_ratio`, and `relist_min_price_share` × the
     copy's first ask. /api/me/value is the value of one MORE copy (a buy cap): there is no official sell value;
@@ -29,6 +30,7 @@ from bazaar_agent.intel import Print
 
 ROUNDING = 1e-9
 MARKET_TICKS = 120  # the fills the market anchor reads: the last 120 ticks (1 h at Saturday's 30 s ticks)
+MIN_PRINTS, MIN_SELLERS = 3, 2  # the market anchor needs this many fills, from this many sellers
 MEMORY_TICKS = 720  # how far back a copy's posts are read (a restart keeps this much history)
 
 
@@ -55,6 +57,7 @@ class Relist:
     price: int | None  # the ask to stand or post now; None: the copy rests (no post)
     why: str
     rest_until: int | None = None  # a NEW rest starts now and ends at this tick
+    floor: int = 0  # a relist's floor: no later pick (Jev's quick sale) may go under it
 
 
 def step_down(previous: int, share: float) -> int:
@@ -82,11 +85,13 @@ def relist_price(
     cooldown_ticks: int,
 ) -> Relist:
     """Where one copy's ask should stand this tick (see the module docstring)."""
+    if not trail.prices:
+        return Relist(target, "first listing")
+    if target > max(trail.prices):  # a new need (a chaser appeared): the strategy's price, like a first listing
+        return Relist(target, f"target {target} above every past ask: listed afresh")
     if open_price is not None:
         return Relist(min(target, open_price), "open ask stands")
-    previous = trail.last
-    if previous is None:
-        return Relist(target, "first listing")
+    previous = trail.prices[-1]
     if trail.rest_until is not None and tick < trail.rest_until:
         return Relist(None, f"resting until tick {trail.rest_until}")
     floor = relist_floor(trail, cost_floor, min_share)
@@ -98,11 +103,10 @@ def relist_price(
     if anchor is not None and floor <= anchor < stepped:
         stepped, why = anchor, f"lapsed unsold at {previous}: market median {median:g}"
     price = max(floor, min(target, stepped))
-    if price >= previous and trail.since_rest > 0:
+    if price == previous and trail.since_rest > 0:
         return _rest(tick, cooldown_ticks, f"at its floor {floor}: {previous} would repeat")
-    return Relist(
-        price, why if price == stepped else f"{why}, held at {'floor' if price == floor else 'target'} {price}"
-    )
+    held = "" if price == stepped else f", held at {'floor' if price == floor else 'target'} {price}"
+    return Relist(price, why + held, floor=floor)
 
 
 def _rest(tick: int, cooldown_ticks: int, why: str) -> Relist:
@@ -111,13 +115,21 @@ def _rest(tick: int, cooldown_ticks: int, why: str) -> Relist:
 
 
 def market_median(
-    prints: Iterable[Print], venue: str, ref: str, rarity: str, rarities: dict[str, str], tick: int
+    prints: Iterable[Print], venue: str, ref: str, rarity: str, rarities: dict[str, str], tick: int, us: str
 ) -> float | None:
-    """The median price of the venue's card fills in the last MARKET_TICKS ticks: of `ref`, else of its rarity."""
+    """The median price of the venue's single-card fills in the last MARKET_TICKS ticks, of `ref`, else of its
+    rarity: only with MIN_PRINTS fills from MIN_SELLERS sellers, and never our own, so one staged fill (a rival
+    selling to a friend at our break-even) cannot set it."""
     recent = [
-        p for p in prints if p.venue == venue and p.kind == "card" and p.items == 1 and p.tick > tick - MARKET_TICKS
+        p
+        for p in prints
+        if p.venue == venue
+        and p.kind == "card"
+        and p.items == 1
+        and p.tick > tick - MARKET_TICKS
+        and us not in (p.buyer, p.seller)
     ]
-    same = [p.price for p in recent if p.ref == ref]
-    if not same:
-        same = [p.price for p in recent if rarities.get(p.ref) == rarity]
-    return float(statistics.median(same)) if same else None
+    for same in ([p for p in recent if p.ref == ref], [p for p in recent if rarities.get(p.ref) == rarity]):
+        if len(same) >= MIN_PRINTS and len({p.seller for p in same}) >= MIN_SELLERS:
+            return float(statistics.median(p.price for p in same))
+    return None

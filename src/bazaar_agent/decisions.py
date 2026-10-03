@@ -257,7 +257,10 @@ class DecisionLog:
             except psycopg.Error as e:
                 self._failed("ask read", e)
         path = self.dir / "decisions.jsonl"
-        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        try:  # read every maker tick: a torn write or a bad byte must not stop the maker
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+        except OSError:
+            lines = []
         failed = _failed_ids(lines)
         for row in _live_rows(lines, agent):
             kind, tick, inputs = row.get("kind"), _int(row.get("tick")), _inputs(row)

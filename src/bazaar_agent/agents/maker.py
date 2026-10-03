@@ -120,6 +120,7 @@ class Target:
     reason: str
     counterparties: tuple[str, ...] = ()  # asks: the teams that chase the set; bids: the likely holders
     to: str | None = None  # addressed to this team (`max_counterparty_share`); None: anyone on the venue
+    min_price: int = 0  # asks: a relist's floor (`agents.relist`); no Jev pick may go under it
 
 
 def targets_from(book: Playbook) -> list[Target]:
@@ -439,7 +440,7 @@ class Maker:
                 sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
             )
             venue = best_venue(snap.venues, snap.us, t.price)
-            median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick) if venue else None
+            median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None
             r = relist_price(
                 t.price,
                 trail,
@@ -456,7 +457,9 @@ class Maker:
                 self._rest(clock.tick, t, r)
             if r.price is None:
                 continue
-            out.append(t if r.price == t.price else replace(t, price=r.price, reason=f"{t.reason}; relist: {r.why}"))
+            if r.price != t.price or r.floor:
+                t = replace(t, price=r.price, min_price=r.floor, reason=f"{t.reason}; relist: {r.why}")
+            out.append(t)
         return out
 
     def _ask_trails(self, tick: int) -> dict[int, AskTrail]:
@@ -807,7 +810,11 @@ class Maker:
             return t, None, None
         try:
             candidates = price_candidates(t, run.params, self.rules)
-            legal = {label: p for label, p in candidates.items() if self._allowed(run, replace(t, price=p), venue)}
+            legal = {
+                label: p
+                for label, p in candidates.items()
+                if p >= t.min_price and self._allowed(run, replace(t, price=p), venue)
+            }
             state = listing_state(t, candidates, legal, {**self._jev_context(run), "venue": venue})
             label, advice, why = self.jev.choose_price(t, candidates, legal, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: today's price
