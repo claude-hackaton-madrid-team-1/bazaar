@@ -1153,6 +1153,21 @@ our limit. Compressing the curve to end earlier (#215 first cut) also lowered D 
 silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
 `duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.
 
+### [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+Every copy of a card in /me carries the same `your_value`, so the team desk's `desk_copy` (cheapest, then lowest id)
+and the Workshop's kept copy (most valued, then lowest id) are the same asset: a swap posted in the tick gives #1 while
+the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
+every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
+crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.
+
+### [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+`tools.TOOLS` feeds the desk's in-process server, every subagent allow-list and the remote MCP server at once, so a
+spec added there is callable by our own LLMs. The human tools (HA2) live in `runtime/human_tools.py` and only
+`mcp_server.build_app(..., approver=...)` serves them, behind `X-Approver-Token`. Testing them over the TestClient: the
+per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the fake clock between calls.
+`tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
+GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
+
 ### [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
 `executions` (sdk_method `broker_announce`, ticks 439-1166): 26 accepted, 12 refused `wait`, each 2-8 ticks after an
 accepted notice; accepted gaps went as low as 10 ticks (616 → 626), so the server's gap is about 10 ticks, not 20

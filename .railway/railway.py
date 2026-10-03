@@ -150,7 +150,9 @@ def mcp_server(name: str, data: object) -> object:
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), "PORT": AGENT_PORT, "BAZAAR_MCP_TOKEN": preserve()},
+        # BAZAAR_APPROVER_TOKEN (HA2): the second secret that alone opens the human approval tools (approvals,
+        # approve, revoke); set by hand with --stdin, never here. Unset, those tools do not exist.
+        env={**runtime_env(), "PORT": AGENT_PORT, "BAZAAR_MCP_TOKEN": preserve(), "BAZAAR_APPROVER_TOKEN": preserve()},
     )
 
 
@@ -233,6 +235,12 @@ def live_show() -> object:
             # Both are set by hand with --stdin; undeclared, an apply would delete them and open the page.
             "BAZAAR_KEY": preserve(),
             "GAME_VIEW_TOKEN": preserve(),
+            # Approvals screen (HA2, bazaar-live #53): its own login, and bazaar-mcp's human tools called
+            # server-side with the bearer and the approver token. All four set by hand with --stdin.
+            "APPROVER_PASSWORD": preserve(),
+            "BAZAAR_MCP_URL": preserve(),
+            "BAZAAR_MCP_TOKEN": preserve(),
+            "BAZAAR_APPROVER_TOKEN": preserve(),
         },
     )
 
