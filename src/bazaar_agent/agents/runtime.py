@@ -348,7 +348,6 @@ class Recorder:
                 "chosen": chosen,
                 "guardrail": guardrail,
                 "dry_run": not self.live,
-                "line": line,
                 "jev": jev.verdict if jev is not None else None,
             },
         )
@@ -416,7 +415,8 @@ class Recorder:
         self.last_error = None
         self.maybe_landed, self.last_code, self.last_status = False, None, None
         try:
-            response = call()
+            with tm.tool_span(method, {"bazaar.agent": self.agent, "bazaar.decision.id": decision_id}):
+                response = call()
         except BazaarError as e:
             self.maybe_landed, self.last_code, self.last_status = e.code in MAYBE_LANDED, e.code, e.status
             # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
