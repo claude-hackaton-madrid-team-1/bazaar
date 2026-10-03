@@ -376,6 +376,7 @@ class Context:
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
+    sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -433,7 +434,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         if action.price < floor:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
     selling = action.kind in ("sell", "accept_sell")
-    if selling and rules.protects(action.item, action.rarity, ctx.held.get(action.item, 0)):
+    copies = (ctx.held if ctx.sellable is None else ctx.sellable).get(action.item, 0)
+    if selling and rules.protects(action.item, action.rarity, copies):
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")

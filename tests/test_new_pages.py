@@ -16,9 +16,10 @@ from bazaar_agent import guardrails as gr
 from bazaar_agent import strategy
 from bazaar_agent.agents.maker import Maker
 from bazaar_agent.agents.runtime import MarketFeed, PageWatch
+from bazaar_agent.agents.seller import open_commitments, post, sell_listing
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.album import album_view
-from tests.agent_fakes import FakePublic, FakeTeam, clock, our_ask, parts, rows
+from tests.agent_fakes import FakePublic, FakeTeam, bid, clock, our_ask, parts, rows
 from tests.test_intel import settle
 from tests.test_strategy import CATALOG, DEALERS, EVENTS, ME, PARAMS, RULES
 
@@ -80,6 +81,30 @@ def test_only_the_last_copy_of_a_new_page_card_is_refused():
     assert gr.check(gr.Action("sell", "LAT-09", "rare", 68, 35.0), ctx({"LAT-09": 1}), PROTECT).allowed
     assert gr.check(gr.Action("bid", "RET-02", "common", 9), one, PROTECT).allowed  # buying is untouched
     assert gr.check(gr.Action("sell", "RET-01", "common", 40, 7.0), one, RULES).allowed  # `none`: today
+
+
+def sell_verdict(me: dict, target: str, offers: list[dict]) -> gr.Verdict:
+    """`bazaar sell list` / the desk's `sell_list`: one listing checked with our open offers."""
+    held: dict[str, int] = {}
+    for a in me["assets"]:
+        if a["kind"] == "card":
+            held[a["ref"]] = held.get(a["ref"], 0) + 1
+    listing = sell_listing(me, target, 40)
+    return post(None, listing, ctx(held), PROTECT, live=False, commitments=open_commitments(offers, "t01")).verdict
+
+
+def test_an_open_bid_for_the_card_does_not_make_our_only_copy_sellable():
+    # #145 review P2: the committed context counted the copy we bid for as held, so 1 looked like 2.
+    verdict = sell_verdict(released_ret(ME, copies=1), "300", [bid(71, "RET-01", 9)])
+    assert not verdict.allowed and "protect_page_sets" in str(verdict)
+
+
+def test_a_copy_already_in_an_open_ask_counts_as_sold():
+    # #145 review P2: two copies, #301 already listed: listing #300 too could take the page's last card.
+    two = released_ret(ME, copies=2)
+    assert sell_verdict(two, "300", []).allowed
+    verdict = sell_verdict(two, "300", [our_ask(72, 301, "RET-01", 30)])
+    assert not verdict.allowed and "protect_page_sets" in str(verdict)
 
 
 def test_a_copy_of_unknown_rarity_is_treated_as_a_page_card():
