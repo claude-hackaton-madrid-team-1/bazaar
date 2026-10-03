@@ -34,16 +34,18 @@ Session `night-r1-reviewer`, 03:14 to about 07:30 on Saturday 3 October. Two thi
 | #142 / #143 (B14 / B16 takeovers) | Mergeable | B14 fixes phantom spend only for bids this process posted. Two makers refund one lapse twice. B16 isn't wired into `dealer buy` or the desk. |
 | #146 → #152 inspector / flags | Mergeable; flags stay off | #152: a truncated `flags.jsonl` stops the taker from starting, and the flag cap is now a lifetime cap. |
 | #157 faster ticks, #158 hard dealers | Fix first | #157 turns both new rules on in GUARDRAILS.md. #158 has a high: at lift 0 the taker opens threads by its cash room instead of its free slots (proof in `_night/`). |
-| #96 / #112 learner stack, #131 bluff tactics | **Do not merge** | All of them ride `BAZAAR_LEARN`, which is on by default: learned ladders replace live bids, and lessons wrap every Jev move. #131 bluffs at dealers by default. |
+| #131 bluff tactics | **Do not merge** | All of them ride `BAZAAR_LEARN`, which is on by default: learned ladders replace live bids, and lessons wrap every Jev move. #131 bluffs at dealers by default. |
 | #155 new sets (supply, packs) | After Omar decides | `supply_scarcity` is on. |
 | #139 lean tracing | Merge after Duels I | Card values can still be recovered from "for X … surplus Y" on every accept. |
 | #154 / #160 docs | Docs only | #160's Q&A still overclaims, including "r1 re-ran every claim"; r1 re-ran each PR's headline numbers, not every claim. Our cash appears in a spoken answer. Keep the repo private until after the Final. |
-| #162 shared ledger (takes over #62), #161 (#72 follow-up) | Review in progress at the time of writing | See REVIEWS.md. |
+| #162 shared ledger (takes over #62) | P0, mergeable with 2 conditions | (1) Before the 09:00 deploy: a frozen Postgres blocks every live writer's in-tick ping for more than 60 s, because there is no client-side deadline. (2) Port r1's ledger Protocol patch. Otherwise #141/#142 `release_accept` and #137 `hands_off_ids` raise AttributeError after merge. |
+| #161 (#72 follow-up) | **Hold** | HIGH: a dealer accept that /me already shows as paid stops counting toward the hourly spend cap (21 + 12 were sent under a cap of 30). One-line fix. |
 
-Already merged during the night: #72 (with #61's content), #105, #106, #108, #91, **#89 and #145 (04:24-04:26Z)**.
+Already merged during the night: #72 (with #61's content), #105, #106, #108, #91, **#89, #145, #96, #112 (04:24-04:45Z)**, #148.
 
 **Live now, check before 09:00:**
 - **#89:** the taker learns dealer blockers and skips those dealers by default. That includes r1's two over-blocking mediums: a refusal on one card blocks that dealer's packs for the hour, and an unseen sold-out blocks the whole dealer for the hour. They apply unless `BAZAAR_LEARN=0` is set by hand on bazaar-taker.
+- **#96/#112:** with the same default, the taker replaces dealer ladders with learned ones and can skip whole price classes. Lessons wrap Jev's binding moves in duels, maker and taker, and the models load in every agent.
 - **#145:** `protect_page_sets = RET,CHA` never sells our only copy of a new-set page card. #105 strips `starter_broker_key` from the agents' `/me`. #71's latest head handles that.
 
 ## Proofs
