@@ -58,6 +58,16 @@ class Guardrails(BaseModel):
     flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
     dealer_price_caps: str = "none"  # "chato:uncommon=31,chato:rare=93": replaces max_price_<rarity> for that dealer
 
+    @field_validator("flag_trusted_dealers")
+    @classmethod
+    def _trusted_parse(cls, value: str) -> str:
+        if value.strip().lower() == "none":
+            return value
+        ids = [d.strip() for d in value.split(",")]
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
+            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+        return value
+
     @field_validator("dealer_price_caps")
     @classmethod
     def _dealer_caps_parse(cls, value: str) -> str:

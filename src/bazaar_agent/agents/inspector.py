@@ -98,16 +98,22 @@ class CardIndex:
         """The words mention this card only to say they do not have it ('No me queda X', 'X is sold out')."""
         info, low = self.by_ref.get(ref), text.lower()
         names = [ref.lower()] + ([info.name.lower()] if info is not None else [])
-        for name in names:
-            for m in re.finditer(re.escape(name), low):
-                before, after = low[max(0, m.start() - 30) : m.start()], low[m.end() : m.end() + 25]
-                if re.search(NEGATION_BEFORE, before) or re.search(NEGATION_AFTER, after):
-                    return True
-        return False
+        return any(_negated_at(low, m.start(), m.end()) for name in names for m in re.finditer(re.escape(name), low))
 
 
-NEGATION_BEFORE = r"(?:\bno\b|\bnot\b|\bsin\b|\bni\b|\bnunca\b|don't|no longer|out of|ya no)[^.!?]*$"
-NEGATION_AFTER = r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|se acab)"
+NEGATION_BEFORE = (
+    r"(?:no (?:me )?(?:queda|quedan|tengo|hay)|not available|no longer|don't have|do not have|ya no|\bsin\b|\bnunca\b"
+    r"|out of|acab[óo]|vend[ií]|vendid|agotad|instead of|rather than|en vez de|en lugar de|se fue|gone|sold)[^.!?]*$"
+)
+NEGATION_AFTER = (
+    r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid)"
+)
+
+
+def _negated_at(low: str, start: int, end: int) -> bool:
+    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X'."""
+    before, after = low[max(0, start - 30) : start], low[end : end + 25]
+    return bool(re.search(NEGATION_BEFORE, before) or re.search(NEGATION_AFTER, after))
 
 
 CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
@@ -123,7 +129,8 @@ def rarity_claimed(text: str) -> int | None:
         as_noun = rf"(?<!\w){ARTICLES}\s+{w}(?=\s*(?:[.,;:!?)]|$))"  # "the legendary." / "una rara,"
         before_noun = rf"(?<!\w){w}\s+{CARD_NOUNS}(?!\w)"  # "rare card", "épica carta"
         after_noun = rf"(?<!\w){CARD_NOUNS}\s+{w}(?!\w)"  # "cromo raro", "carta legendaria"
-        if any(re.search(p, low) for p in (as_noun, before_noun, after_noun)):
+        hits = [m for p in (as_noun, before_noun, after_noun) for m in re.finditer(p, low)]
+        if any(not _negated_at(low, m.start(), m.end()) for m in hits):  # "the rare one is gone" claims nothing
             ranks.append(rank)
     return max(ranks) if ranks else None
 
@@ -292,8 +299,9 @@ TRUSTED_DEALERS = frozenset({"abuela", "chato"})
 class FlagBook:
     """Flag decisions in this process. Each certain trickster message is logged once (uncapped, so the
     `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a wrong
-    flag costs points); a denied or failed one is tried again on the next read (flags may be allowed
-    mid-run). Trusted dealers are never flagged. GUARDRAILS.md sets `limit` and `trusted`."""
+    flag costs points); a server error (5xx) is retried on the next read, a refusal (4xx) or a lost answer
+    never is. Trusted dealers are never flagged. GUARDRAILS.md sets `limit` and `trusted` (read once per
+    process: switching allow_flags on needs a restart)."""
 
     limit: int = 2
     trusted: frozenset[str] = TRUSTED_DEALERS
@@ -379,7 +387,7 @@ def flag_step(
     reason = inspection.reason[:FLAG_REASON_CHARS]
     denied = guard(inspection)
     if denied or send is None or not book.room():
-        if first:  # logged once; re-checked on every read, so allowing flags later still sends it
+        if first:  # logged once per message
             why = denied or ("dry run" if send is None else f"flag limit {book.limit} reached")
             log(f"would flag message {mid} from {dealer} ({why}): {reason}")
         return inspection
@@ -387,23 +395,11 @@ def flag_step(
         send(mid, reason)
         book.sent[mid] = reason
         log(f"flagged message {mid} from {dealer}: {reason}")
-    except Exception as e:  # a refused flag never breaks the negotiation; the next read tries again
-        log(f"flag of message {mid} refused ({type(e).__name__}: {str(e)[:80]}); retrying next read")
-    return inspection
-    book.seen.add(mid)
-    reason = inspection.reason[:FLAG_REASON_CHARS]
-    denied = guard(inspection)
-    if denied:
-        log(f"would flag message {mid} from {dealer} ({denied}): {reason}")
-    elif send is None:
-        log(f"dry run: would flag message {mid} from {dealer}: {reason}")
-    elif not book.room():
-        log(f"would flag message {mid} from {dealer} (flag limit {book.limit} reached): {reason}")
-    else:
-        try:
-            send(mid, reason)
-            book.sent[mid] = reason
-            log(f"flagged message {mid} from {dealer}: {reason}")
-        except Exception as e:  # a refused flag must never break the negotiation
-            log(f"flag of message {mid} refused ({type(e).__name__}: {str(e)[:80]})")
+    except Exception as e:  # a refused flag never breaks the negotiation
+        status = int(getattr(e, "status", 0) or 0)
+        if status >= 500:  # the server failed: try again on the next read
+            log(f"flag of message {mid} failed ({status}); retrying next read")
+        else:  # refused (4xx: never re-POST) or ambiguous (no response: it may have landed): count it as sent
+            book.sent[mid] = f"not retried after {type(e).__name__} {status or 'no response'}: {reason}"
+            log(f"flag of message {mid} not retried ({type(e).__name__}: {str(e)[:80]})")
     return inspection

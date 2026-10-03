@@ -207,6 +207,11 @@ def negotiate_sell(
             log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
             bid, offer_id, final = None, None, False
         move = decide_sell(sale, bid, offer_id, final)
+        if move.kind == "accept" and move.price is not None and move.price == mirror(sale.neg.opening_ask):
+            log(
+                f"tick {clock.tick}: selling at its opening bid {move.price}: the sale captures none of its range "
+                "and does not count toward unlocking a level"
+            )
         log(
             f"tick {clock.tick}: its bid {bid}{' FINAL' if final else ''} → "
             f"{move.kind} {move.price or ''} ({move.reason})"

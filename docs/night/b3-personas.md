@@ -31,6 +31,8 @@ How a level arrives (Friday's El Chato):
   - words that do **not** name the bound item (naming it discloses the substitution, e.g. "No me queda X, te doy Y").
 - **Trusted dealers:** Abuela and Chato are blocked but never flagged.
 - **Rarity adjectives are not claims:** "qué raro, hijo" (how odd) and "an epic deal" never count.
+- **Denials are not claims:** "no me queda X", "se me acabó el X", "X is sold out", "instead of X", "en vez de X", and "the rare one is gone". A bare "no" is not a denial ("No lo dudes: X" still flags).
+- **A known miss, on purpose:** a trickster that also names the bound card ("X, mucho mejor que un Y") is blocked but not flagged, because naming the bound card is how an honest dealer discloses a swap.
 - **Precision on Friday:** honest dealers' structure matched the topic in **1,017 of 1,017** offers, and the rule flags **0** of 1,022 offers. The only 5 blocks are threads whose topic our capture missed.
 - **That precision is not yet proven against a real lie.** Friday had no structural mismatch with a known topic, so the words rule never ran on real data. The r1 review found three honest near-misses that flagged under the first version; they are fixed and kept as tests. This is why flags stay off until a real L4 thread is seen.
 - **Crafted tricksters:** all flag. Cases:
@@ -43,7 +45,7 @@ How a level arrives (Friday's El Chato):
 - **Wiring:** every thread read in `bazaar dealer buy` (new `negotiate(on_thread=…)` hook), the desk and `bazaar dealer sell` runs `flag_step()`.
   - Each certain message is logged once, uncapped (`would flag message N (…allow_flags = false): <structural reason>`).
   - At most `max_flags_per_process` (GUARDRAILS.md, 2) flags are actually sent, and only if `guardrails.check(Action("flag"))` passes.
-  - A denied or failed flag is re-checked on the next read, so allowing flags mid-run still sends it.
+  - A flag refused by the server (4xx), or one whose answer never came, is never re-sent; a 5xx is retried on the next read. GUARDRAILS.md is read once per process, so switching `allow_flags` on needs a restart (the new process logs each trickster again and sends its flags).
   - `flag_trusted_dealers` (abuela, chato) are never flagged.
   - The catalog is read lazily inside the guarded hook, so an inspection failure never changes or breaks a negotiation.
   - End to end in the simulator over real HTTP (`scripts/sim_e2e/test_b3_trickster.py`), with its Abuela patched into a trickster:
@@ -61,7 +63,7 @@ Dealers that buy (Abuela, Chato, and most likely the Collector) could not be sol
 - take it when no whole price is left between us;
 - a final is take-it-or-walk.
 
-`bazaar dealer sell <id|ref> --start --min [--dealer] [--live]` is a dry run by default. It refuses a `--min` below `sell_min_value_ratio × your_value`, and runs a guardrail check before it opens a thread (so the kill switch stops it). A settled sale is recorded on the ledger as negative spend, as the maker does. In the simulator over real HTTP, it made 2 of 2 sales to Abuela (`scripts/sim_e2e/test_b3_sell.py`). Every ask and accept passes `guardrails.check` (`sell` / `accept_sell` with the copy's value), and the accept slot is reserved on the shared ledger.
+`bazaar dealer sell <id|ref> --start --min [--dealer] [--live]` is a dry run by default. When a sale would close at the dealer's opening bid (when no whole price is left between us, per #61's rule), it logs a warning: such a sale captures none of the range and does not count toward unlocking. `ask_plan_for` keeps a planned floor above the opening bid; a hand-picked `--min` can go lower. It refuses a `--min` below `sell_min_value_ratio × your_value`, and runs a guardrail check before it opens a thread (so the kill switch stops it). A settled sale is recorded on the ledger as negative spend, as the maker does. In the simulator over real HTTP, it made 2 of 2 sales to Abuela (`scripts/sim_e2e/test_b3_sell.py`). Every ask and accept passes `guardrails.check` (`sell` / `accept_sell` with the copy's value), and the accept slot is reserved on the shared ledger.
 
 Sale ladders from Friday's sale threads, replayed through the W3 machinery (share = (price − its opening bid) / (its limit − its opening bid)):
 

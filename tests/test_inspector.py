@@ -189,6 +189,9 @@ def test_a_denied_flag_is_logged_once_and_sent_once_flags_are_allowed():
         ({"buy": {"card": "LAV-08"}}, "No me queda Teatro Valle-Inclán, cariño. Te doy Té Moruno, 25 P."),
         ({"buy": {"rarity": "uncommon", "set": "LAV"}}, "Qué raro, hijo, ya no me quedan. 25 P."),
         ({"buy": {"card": "LAV-08"}}, "Té Moruno, an epic deal, 25 P!"),
+        ({"buy": {"card": "LAV-08"}}, "Se me acabó el Teatro Valle-Inclán, cariño. Te doy otro bonito por 25."),
+        ({"buy": {"card": "LAV-08"}}, "Instead of the Teatro Valle-Inclán, here is a common card for 25 P."),
+        ({"buy": {"rarity": "rare", "set": "LAV"}}, "The rare one is gone, sorry. Here's a common for 25."),
     ],
 )
 def test_honest_near_misses_block_but_never_flag(topic, text):
@@ -253,3 +256,25 @@ def test_a_name_inside_a_longer_name_is_one_card_and_a_negated_mention_is_no_cla
     o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
     for text in ("No me queda LAV-08, le doy otro.", "LAV-08 is sold out, take this one."):
         assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=5).verdict == "block"
+
+
+def test_a_bare_no_is_not_a_denial_so_a_covering_trickster_still_flags():
+    o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
+    text = "No lo dudes: Teatro Valle-Inclán, recién llegado, 25 P."
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=11).verdict == "flag"
+
+
+def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
+    from bazaar_agent.sdk import BazaarError
+
+    for status, tries in ((400, 1), (0, 1), (503, 2)):
+        calls: list[int] = []
+        book = FlagBook()
+
+        def send(mid, reason, status=status, calls=calls):
+            calls.append(mid)
+            raise BazaarError("refused", "no", status)
+
+        for _ in range(2):
+            flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=send, log=lambda _: None)
+        assert len(calls) == tries  # 4xx: refused for good; no response: it may have landed; 5xx: try again
