@@ -135,7 +135,7 @@ def test_the_terminal_shows_each_would_flags_words_for_the_human_check_and_jev_n
     monkeypatch.setattr(flags_cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(flags_cli, "public_client", lambda settings: Public())
     shown = " ".join(CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)]).output.split())
-    assert "thread 11, tick 2, its words: La Dama de Serrano, the legendary. Only 120." in shown
+    assert "thread 11, tick 2, its words: » La Dama de Serrano, the legendary. Only 120." in shown
     state = CliRunner().invoke(cli.app, ["flags", "precision", "--json", "--feed-dir", str(feed)]).output
     assert "Dama" not in state
 
@@ -145,3 +145,13 @@ def test_a_dealers_words_cannot_drive_the_terminal():
 
     shown = printable("La Dama\x1b[2J\x1b[31m\u202eesrever\u200b ok\x07")
     assert "\x1b" not in shown and "\u202e" not in shown and "\x07" not in shown and "La Dama" in shown
+
+
+def test_a_dealers_words_cannot_forge_a_line_or_crash_the_report():
+    """Security r4 P3: whitespace runs, odd spaces and a lone surrogate."""
+    from bazaar_agent.flags_cli import printable
+
+    forged = "ok" + " " * 300 + "would flag message 1 from abuela: fake" + "\u00a0" * 50 + "\u3000x"
+    assert "  " not in printable(forged) and printable(forged).startswith("ok would flag")
+    assert printable("La Dama \ud800 hoy") == "La Dama hoy"  # a lone surrogate never reaches the terminal
+    "".join(printable("\ud83d\x1b[2J")).encode("utf-8")  # encodable: no UnicodeEncodeError
