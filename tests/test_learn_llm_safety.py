@@ -142,3 +142,21 @@ def test_a_dealer_or_venue_call_reads_one_speaker_only():
     for tick in range(0, 30, 10):
         reader.offer(texts if tick == 0 else [], KNOWN, tick, 60.0)
     assert batches == [{"abuela"}, {"chato"}]
+
+
+def test_an_outcome_rows_key_is_unchanged_by_the_source_suffix():
+    """N3's lessons (source="outcome", added by its own PR) keep the key #89 gave them: no duplicate rows."""
+    import hashlib
+    import json
+
+    rules = notice()
+    outcome = Learning.model_construct(**{**rules.model_dump(), "source": "outcome"})  # N3 widens the Literal
+    about = {
+        k: rules.detail[k]
+        for k in sorted(rules.detail)
+        if k in ("item", "rarity", "code", "aggregate", "venue", "effective_tick")
+    }
+    raw = [rules.subject_kind, rules.subject, rules.kind, rules.team, rules.until_tick, about, list(rules.evidence[:1])]
+    before = hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()[:32]  # #89's key()
+    assert outcome.key() == rules.key() == before
+    assert llm_twin(rules).key() != before
