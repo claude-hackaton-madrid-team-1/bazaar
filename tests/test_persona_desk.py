@@ -136,3 +136,8 @@ def test_a_persona_without_published_traits_gets_no_prior() -> None:
     p.pop("traits")
     mv = move("trick", (60, 80, 3))
     assert run([mv], [p]).moves == [mv]
+
+
+def test_a_malformed_settlement_payload_is_skipped() -> None:
+    bad = {"type": "settlement", "payload": ["t01", "abuela"]}
+    assert deal_ticks([bad, settlement(5, US, "abuela")], US) == {"abuela": [5]}

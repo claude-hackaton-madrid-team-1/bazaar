@@ -56,7 +56,9 @@ def deal_ticks(events: Iterable[Mapping[str, Any]], us: str) -> dict[str, list[i
     for e in events:
         if e.get("type") != "settlement":
             continue
-        p = e.get("payload") or {}
+        p = e.get("payload")
+        if not isinstance(p, Mapping):
+            continue
         parties = [x for x in p.get("parties") or [] if isinstance(x, str)]
         if us not in parties:
             continue
