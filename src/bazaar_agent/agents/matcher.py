@@ -15,9 +15,11 @@ What a match must satisfy (RULES.md "Your own market", `POST /api/broker/matches
 Which pairs: a maximum-weight bipartite matching per item, weight = the quoted surplus `bid − ask`, solved
 exactly (Hungarian algorithm, O(n²m), books are small). Ties go to more pairs: every quote shades away from
 a hidden limit (bench sellers ask above their cost, buyers bid below their value), so a pair's true surplus
-is at least its quoted one and a zero-quote-surplus pair still likely creates value. The weight is the
-integer `surplus × (k + 1) + 1` with k = the most pairs the item allows, so surplus always wins and the
-count only breaks ties.
+is at least its quoted one and a zero-quote-surplus pair still likely creates value. Among sets equal on
+both, the earlier offers in the book win, as the free stall breaks ties (`starter_broker.bench_plan`: a
+stable sort). The weight is the integer `surplus × BIG + MID + order`, scaled so surplus always wins, then
+the count, then the book order: at 0 bps this picks exactly the stall's traders, so on the Market Test's
+hidden limits we never realise less than the stall on the same book (tests/test_matcher.py).
 
 Why not the starter broker's greedy (best bid against best ask, stop at the first pair that does not
 cross)? With no fee and no maker conflicts it is optimal for one item, because the total surplus is
@@ -247,14 +249,19 @@ def best_matches(sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, k: int
     The cap is exact, not a truncation: n − k dummy columns worth more than any real matching are added,
     so the best assignment seats exactly n − k sells on dummies and the other k on their best k-matching.
     """
-    sells = sorted(sells, key=lambda q: (q.price, str(q.id)))[:MAX_SIDE]
-    buys = sorted(buys, key=lambda q: (-q.price, str(q.id)))[:MAX_SIDE]
+    sells = sorted(sells, key=lambda q: q.price)[:MAX_SIDE]  # stable: equal quotes keep the book's order
+    buys = sorted(buys, key=lambda q: -q.price)[:MAX_SIDE]
     n, m = len(sells), len(buys)
-    scale = min(n, m) + 1
-    weights = [[(b.price - s.price) * scale + 1 if feasible(s, b, fee) else 0 for b in buys] for s in sells]
-    if k is not None and k < min(n, m):
-        big = sum(max(row, default=0) for row in weights) + 1
-        weights = [row + [big] * (n - k) for row in weights]
+    pairs_max = min(n, m)
+    mid = pairs_max * (n + m) + 1  # one more pair outweighs any book-order preference
+    big = (pairs_max + 1) * mid  # one more P of surplus outweighs any count and order
+    weights = [
+        [(b.price - s.price) * big + mid + (n - r) + (m - c) if feasible(s, b, fee) else 0 for c, b in enumerate(buys)]
+        for r, s in enumerate(sells)
+    ]
+    if k is not None and k < pairs_max:
+        dummy = sum(max(row, default=0) for row in weights) + 1
+        weights = [row + [dummy] * (n - k) for row in weights]
     out = []
     for r, c in max_weight_assignment(weights):
         if c >= m:  # a dummy: this sell sits out

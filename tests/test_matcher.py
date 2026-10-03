@@ -251,3 +251,97 @@ def test_wash_and_fee_infeasible_pairs_are_never_feasible():
     assert not feasible(sell(1, 10, "a"), buy(2, 50, "b", "card:OTHER"), Fee())
     assert not feasible(sell(1, 48, "a"), buy(2, 50, "b"), Fee(per_card=3))
     assert feasible(sell(1, 47, "a"), buy(2, 50, "b"), Fee(per_card=3))
+
+
+# ---------------------------------------------------------------- properties on random books (the takeover's bar)
+
+
+def auto_mechanism(quotes, fee):
+    """A venue's own `auto` crossing (the simulator's `_auto_cross`, the free stall): per item, each ask from the
+    lowest takes the highest open bid of another maker that covers ask + fee(ask), at the ask."""
+    pairs = []
+    for item in {q.item for q in quotes}:
+        sells = sorted((q for q in quotes if q.item == item and q.side == "sell"), key=lambda q: (q.price, str(q.id)))
+        buys = sorted((q for q in quotes if q.item == item and q.side == "buy"), key=lambda q: (-q.price, str(q.id)))
+        for s in sells:
+            b = next((b for b in buys if b.maker != s.maker and s.price + fee.of(s.price) <= b.price), None)
+            if b is not None:
+                buys.remove(b)
+                pairs.append((s, b))
+    return pairs
+
+
+def random_book(rng):
+    makers = [f"m{i}" for i in range(rng.randint(1, 6))]
+    quotes, oid = [], 0
+    for item in [f"card:LAV-0{i}" for i in range(rng.randint(1, 4))]:
+        for _ in range(rng.randint(0, 7)):
+            oid += 1
+            side = rng.choice(["sell", "buy"])
+            quotes.append(Quote(oid, side, item, rng.randint(1, 60), rng.choice(makers)))
+    for run in range(rng.randint(0, 2)):  # bench traders are their own makers
+        for k in range(rng.randint(0, 10)):
+            side = "sell" if k % 2 == 0 else "buy"
+            quotes.append(Quote(f"b{run}-{k}", side, f"bench:b{run}", rng.randint(20, 95), f"b{run}-{k}"))
+    return quotes
+
+
+@pytest.mark.parametrize("seed", range(400))
+def test_on_any_book_no_bid_below_its_ask_no_order_twice_and_at_least_the_auto_mechanism(seed):
+    rng = random.Random(10_000 + seed)
+    quotes = random_book(rng)
+    fee = Fee(bps=rng.choice([0, 0, 50, 300, 1000]), per_card=rng.choice([0, 0, 1, 5]))
+    plan = plan_matches(quotes, fee)
+    ids = [m.sell.id for m in plan] + [m.buy.id for m in plan]
+    assert len(ids) == len(set(ids))  # never one order in two matches
+    for m in plan:
+        assert m.sell.side == "sell" and m.buy.side == "buy" and m.sell.item == m.buy.item
+        assert m.sell.price <= m.price and m.price + fee.of(m.price) <= m.buy.price  # never bid < ask (+ fee)
+        assert m.fee == fee.of(m.price) and m.sell.maker != m.buy.maker
+    auto = auto_mechanism(quotes, fee)
+    assert sum(m.surplus for m in plan) >= sum(b.price - s.price for s, b in auto)
+    capped = plan_matches(quotes, fee, limit=3)
+    assert len(capped) <= 3 and sum(m.surplus for m in capped) <= sum(m.surplus for m in plan)
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_on_the_simulators_bench_we_realise_at_least_what_its_auto_venue_realises(seed):
+    """The simulator's own `_auto_bench` (the free stall) on the same synthetic book, scored at the hidden
+    limits as the Market Test scores it: the exact matcher never does worse at a 0 bps venue."""
+    from bazaar_sim.broker import _auto_bench
+    from bazaar_sim.models import BenchRun, BenchTrader, Venue
+
+    rng = random.Random(20_000 + seed)
+    traders = []
+    for k in range(rng.choice([6, 10, 12])):
+        if k % 2 == 0:
+            cost = rng.randint(20, 60)
+            traders.append(
+                BenchTrader(id=f"b1-{k}", side="sell", limit=cost, quote=round(cost * rng.uniform(1.05, 1.3)))
+            )
+        else:
+            value = rng.randint(40, 95)
+            traders.append(
+                BenchTrader(id=f"b1-{k}", side="buy", limit=value, quote=round(value * rng.uniform(0.75, 0.95)))
+            )
+    per_card = 0  # our venue's fee: with a fee the exact matcher may pick other traders (more quoted surplus)
+    run = BenchRun(run=1, start_tick=0, end_tick=15, traders=traders)
+    venue = Venue(venue="v09", name="ours", owner="t01", owner_name="Team 1", fee_bps=0, fee_per_card=per_card)
+    _auto_bench(venue, run)
+    limits = {t.id: t.limit for t in traders}
+    stall = sum(limits[b] - limits[s] for s, b in run.matched.get("v09", []))
+    book = BrokerBook(
+        bench_offers=[
+            (
+                {"id": t.id, "give": {"assets": [{"kind": "card", "ref": "BENCH"}]}, "want": {"cash": t.quote}}
+                if t.side == "sell"
+                else {"id": t.id, "give": {"cash": t.quote}, "want": {"types": ["card:BENCH"]}}
+            )
+            for t in traders
+        ],
+        fee_per_card=per_card,
+    )
+    plan = plan_matches(quotes_from(book).quotes, Fee(0, per_card))
+    ours = sum(limits[str(m.buy.id)] - limits[str(m.sell.id)] for m in plan)
+    assert ours >= stall
+    assert all(limits[str(m.buy.id)] >= limits[str(m.sell.id)] for m in plan)  # quotes shade: never a loss
