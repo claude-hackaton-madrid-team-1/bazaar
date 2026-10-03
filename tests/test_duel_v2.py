@@ -183,3 +183,13 @@ def test_jev_cannot_hold_back_the_accepts_the_planner_times_across_duels():
                          left=lambda: 30.0, v2=V2Params())  # fmt: skip
         accepted += [did for did, p in picks.items() if p.move.kind == "accept"]
     assert sorted(accepted) == [1, 2, 3, 4, 5, 6]
+
+
+def test_free_offers_wait_for_the_rival_to_open_and_the_accept_margin_is_a_knob():
+    silent = duel(rival=[], ours=[])
+    assert duel_plan(silent, 101, 100).move.kind == "hold"  # it may still open: an offer now could cost a round
+    assert duel_plan(silent, 103, 100).move.kind == "offer"  # 3 ticks of silence (duel_stall_ticks)
+    conceding = duel(rival=[(100, 105), (109, 109), (110, 110)], ours=[(100, 160)])
+    assert duel_plan(conceding, 110, 100).move.kind == "accept"  # by D − 2 (default margin 1)
+    late = duel_plan(conceding, 110, 100, V2Params(accept_margin=0)).move
+    assert late.kind == "hold" and duel_plan(conceding, 111, 100, V2Params(accept_margin=0)).move.kind == "accept"

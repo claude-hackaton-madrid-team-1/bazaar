@@ -189,6 +189,19 @@ def main() -> None:
         sens_rows.append((cap, f"{s.mean_result:.2f}", ratio(s.mean_result, base), f"{s.deal_rate:.3f}"))
     out.append(table(("duel_max_own_offers", "v2 P/duel", "v2/v1", "deals"), sens_rows))
 
+    out.append("\n## Sensitivity: `duel_accept_margin_ticks` (decays 0.08 and 0.10, six styles)\n")
+    out.append("1 = accept by D − 2 (the default). 0 = by D − 1, which assumes an accept made on D − 1 settles.\n")
+    margin_rows = []
+    for margin in (1, 0):
+        p = replace(params, accept_margin=margin)
+        r = arena.tournament({"v2": arena.v2_policy(p)}, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16))
+        s = arena.summarize(r["v2"])
+        rep = sum(row["result"] for row in arena.replay(arena.load_practice(FIXTURE), arena.v2_policy(p)))
+        margin_rows.append(
+            (margin, f"{s.mean_result:.2f}", ratio(s.mean_result, base), f"{s.deal_rate:.3f}", f"{rep:.1f}")
+        )
+    out.append(table(("duel_accept_margin_ticks", "v2 P/duel", "v2/v1", "deals", "replay P"), margin_rows))
+
     out.append("\n## Replay: the 12 practice duels we never answered (2026-10-02)\n")
     out.append("The rival sends exactly its recorded offers; it takes ours only if ours is at least as good for it.")
     out.append("Every duel on one clock, one accept per tick. `best offer` = accepting the rival's best, no rounds.\n")

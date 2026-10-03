@@ -51,6 +51,7 @@ class V2Params:
     open_wait_ticks: int = 0  # duel_open_wait_ticks
     free_offers: int = 16  # duel_free_offers
     answer_share: float = 0.2  # duel_answer_share
+    accept_margin: int = 1  # duel_accept_margin_ticks
     days_signed: bool = False  # duel_days_signed
 
     @classmethod
@@ -65,6 +66,7 @@ class V2Params:
             open_wait_ticks=rules.duel_open_wait_ticks,
             free_offers=rules.duel_free_offers,
             answer_share=rules.duel_answer_share,
+            accept_margin=rules.duel_accept_margin_ticks,
             days_signed=rules.duel_days_signed,
         )
 
@@ -235,8 +237,10 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     if acceptable is not None:
         plan = lambda move: V2Plan(move, acceptable, on_table, stalled, left)  # noqa: E731
         step = mean_step(history)
-        if endgame:
+        if left <= params.accept_margin + 1 or (endgame and stalled):
             return plan(replace(acceptable, reason="endgame, inside limit"))
+        if endgame and ours <= theirs:  # still conceding, and the last safe accept tick is still ahead
+            return plan(DuelMove("hold", reason=f"endgame, rival still conceding ({on_table:g}): accept later"))
         if not stalled and ours <= theirs:
             return plan(DuelMove("hold", reason=f"rival still conceding ({on_table:g} on the table): silence is free"))
         if not stalled:  # each rival message now adds a round: wait only while its steps beat the decay
@@ -261,7 +265,8 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
     wait = V2Plan(DuelMove("hold", reason="nothing inside our limit yet: wait"), None, 0.0, stalled, left)
     if theirs == 0:  # the rival never priced: our offers cost no round until it does
-        if ours >= params.free_offers or (ours == 0 and elapsed < params.open_wait_ticks):
+        first = max(params.open_wait_ticks, params.stall_ticks)  # give it time to open first
+        if ours >= params.free_offers or (ours == 0 and elapsed < first):
             return wait
         return send(target, "the rival has not priced: our offers cost no round yet")
     spare = params.max_own_offers - talking_offers(duel)
@@ -333,7 +338,7 @@ def plan_moves(
     queue = sorted((p.ticks_left, -p.value, did) for did, p in plans.items() if p.acceptable is not None)
     chosen: list[int] = []
     for position, (left, _, _) in enumerate(queue, start=1):
-        room = max(1, left - params.endgame_ticks + 1) * slots  # accept ticks left before this duel's endgame
+        room = max(1, left - params.accept_margin) * slots  # accept ticks left, keeping the margin
         if position >= room:  # the duels up to here need every remaining slot: accept the most urgent now
             urgent = [did for _, _, did in queue[:position] if did not in chosen]
             chosen.extend(_by_urgency(urgent, plans)[: slots - len(chosen)])
