@@ -87,17 +87,12 @@ def test_the_rivals_days_show_which_end_it_prefers():
     assert dd.rival_days(duel()).offers == 0
 
 
-def test_price_and_days_moving_together_give_a_rough_rival_weight():
-    moved = dd.rival_days(duel(messages=rival((1, 150, 10), (2, 144, 7), (3, 141, 7))))
-    assert moved.weight == pytest.approx(2.0)  # 6 P for 3 days
-
-
 def test_our_days_are_0_in_the_worst_case_and_the_joint_best_end_when_signed():
-    none = dd.RivalDays(None, None, 0.0, 0)
-    likes_ten = dd.RivalDays(10, 3.0, 1.0, 3)
+    none = dd.RivalDays(None, 0.0, 0)
+    likes_ten = dd.RivalDays(10, 1.0, 3)  # its weight is unknown: the prior, 2 P a day
     assert dd.choose_days(duel(), signed=False, rival=likes_ten) == 0
     assert dd.choose_days(duel(your_days_weight=2.0), signed=True, rival=none) == 10
-    assert dd.choose_days(duel(your_days_weight=-1.0), signed=True, rival=likes_ten) == 10  # it gains 3, we lose 1
+    assert dd.choose_days(duel(your_days_weight=-1.0), signed=True, rival=likes_ten) == 10  # it gains ~2, we lose 1
     assert dd.choose_days(duel(your_days_weight=-4.0), signed=True, rival=likes_ten) == 0
     assert dd.choose_days(duel(issues=["price"]), signed=True, rival=none) is None
 
