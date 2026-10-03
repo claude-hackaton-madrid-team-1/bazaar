@@ -268,6 +268,33 @@ def test_the_taker_never_sells_below_its_bar_or_a_copy_already_offered(tmp_path)
     assert not [s for s in listed.sent if s[0] == "accept"]  # #5 is already in our ask: never sold twice
 
 
+def test_a_pause_during_the_duel_grace_wait_stops_the_sell(tmp_path):
+    # pr-reviewer #98 P1: the sell path never re-read the kill switch after the duel grace wait (up to 2 s),
+    # so a pause that went on during the wait still sent ('accept', 77, [5]). The buy path re-reads it (#72).
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, parts
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock as fake_clock
+
+    pause = tmp_path / "PAUSE"
+    early = fake_clock(next_tick_in=59.5)  # half a second into the tick: the taker waits out the duel grace
+    team = SellTeam.make(now=early)
+    lines: list[str] = []
+    t = Taker(
+        team,
+        FakePublic(boards={"rastro": [board_bid(77, "LAT-09", 70, maker="m9")]}),
+        live=True,
+        log=lines.append,
+        now=lambda: 1000.0,
+        sleep=lambda s: pause.touch(),  # someone pauses while the duel grace runs
+        config=TakerConfig(max_dealer_threads=0, accept_bids=True),
+        **parts(tmp_path, pause_file=str(pause)),
+    )
+    t.on_tick(early)
+    assert pause.exists() and not [s for s in team.sent if s[0] == "accept"]
+    assert t.ledger.accept_items(early.tick) == []  # the team's accept slot was never taken either
+
+
 def test_the_counterparty_cap_holds_on_the_sell_side(tmp_path):
     from tests.agent_fakes import bid as board_bid
     from tests.agent_fakes import clock

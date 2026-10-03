@@ -1008,6 +1008,9 @@ class Taker:
             run.window = TickWindow(clock.tick, 0.0, self.now)
             self._skip(run, p, "the tick ended before the send", "expired")
             return False
+        if stops := kill_switch(self.rules):  # the duel grace took seconds: it may have gone on since
+            self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected")
+            return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, f"sell:{p.asset_id}", limit):
             self._skip(run, p, "another process took the team's accept this tick", "rejected")
             return False
