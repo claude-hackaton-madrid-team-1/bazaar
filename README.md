@@ -967,6 +967,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
 | [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
@@ -986,6 +987,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#125](../../pull/125) | B23: live opportunity alerts in the monitor (arbitrage, duplicates, B4), read-only, with a lifetime log (stacked on #101) | `night/b23-opportunity-alerts` |
 | [#123](../../pull/123) | feat(N17): team-to-team swap threads in the taker (off by default) + simulator rivals that swap | `ogarciarevett/feat-team-threads` |
 | [#122](../../pull/122) | night(B22): bazaar cockpit, read-only Saturday operator screen (stacked on #102) | `night/b22-cockpit` |
-| [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
 
 <!-- BAZAAR:ACTIVITY:END -->
