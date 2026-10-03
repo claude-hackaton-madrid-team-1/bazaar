@@ -55,11 +55,15 @@ Railway sim. That is out of scope for a small fix, so it is reverted and X8b sta
 item if bench numbers need to match the tape to the P.
 
 ## Risks / for Marius
+- **The `tick + 1` window assumes our accept lands in the tick we read** (r1, low). An accept that slips into the
+  next tick would settle at T+2. Using `effective_tick ≤ tick + 2` is one more tick of caution. I'm leaving it
+  out: the taker drops a decision once the tick's action budget is spent (`action_budget_s`).
 - **Cost of being conservative:** while a hike is pending (1–2 ticks per announcement), we price that venue's
   asks at the higher fee and may skip a fill that would have settled at the old fee. On Friday this would have
   cost ≤ 1 P per trade.
 - **Maker:** `best_venue` sees a pending hike only once it is effective by T+1, even though our offers live up
-  to 40 ticks. No money is at risk (the accepting side pays the fee), only a tick or two of venue scoring.
+  to 40 ticks. No money is at risk (the accepting side pays the fee), only a tick or two of venue scoring. #111 covers the
+  maker's longer horizon.
 - **Cross-PR:** #101 builds `Venue(...)` positionally (8 args), which is safe because the new field has a default
   and comes last. The read-only CLIs in #79, #98 and #101 call `venues_from` without a tick, so they show prices
   with any pending hike included. No overlap with #72; #71 only logs `pending_fee`.
