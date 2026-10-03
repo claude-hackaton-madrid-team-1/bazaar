@@ -1378,14 +1378,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
+- [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
 - [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
 - [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
 - [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
 - [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
 - [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
-- [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
-- [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -39,6 +39,13 @@ class Public(FakePublic):
         return super().catalog()
 
 
+def with_spare(team, ref="LAT-03", asset=41):
+    """One more copy of REF in /me: the fixture's ask 77 already holds asset 3, so asset 4 is a page's last
+    free copy, which protect_page_sets never lets a listing or a swap give away."""
+    team._me["assets"].append({"id": asset, "kind": "card", "ref": ref, "rarity": "common", "your_value": 1.2})
+    return team
+
+
 class Team(FakeTeam):
     def __init__(self, duels=(), **kw):
         super().__init__(**kw)
