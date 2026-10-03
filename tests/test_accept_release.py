@@ -220,6 +220,23 @@ def test_a_refused_duel_accept_gives_the_slot_back(duel_cli, code, status, kept)
     assert _duel_ledger(tmp_path).accepts_in_tick(134) == kept
 
 
+@pytest.mark.parametrize("jev", [True, False])
+def test_a_duel_takes_the_teams_accept_only_on_the_tick_it_accepts_and_never_books_spend(duel_cli, jev):  # noqa: F811
+    """A duel moves no cash and no card: an offer tick leaves the ledger empty (the taker keeps the slot); an accept
+    tick takes the slot and nothing else (no spend row, so no cash or spend cap ever counts it)."""
+    cli, client, _, tmp_path = duel_cli
+    args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    ledger = _duel_ledger(tmp_path)
+    if jev:  # Jev picks the accept
+        assert client.sent == [("accept", 95)] and ledger.accept_items(134) == ["duel:95"]
+    else:  # today's move counters
+        assert client.sent[0][:2] == ("say", 95) and ledger.accept_items(134) == []
+    assert ledger.spent_since(0) == 0
+    assert [e["kind"] for e in ledger.entries()] == (["accept"] if jev else [])
+
+
 # ---------------------------------------------------------------- the team client
 
 
