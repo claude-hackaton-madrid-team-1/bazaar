@@ -50,6 +50,7 @@ from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
+from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -284,6 +285,7 @@ class Taker:
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         learner: LiveLearner | None = None,
+        outcome_learner: OutcomeLearner | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -291,6 +293,7 @@ class Taker:
         self.config = config or TakerConfig()
         self.sleep = sleep
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
+        self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -341,6 +344,8 @@ class Taker:
         self._converse(run, desk)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
+        if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
+            self.outcome_learner.maybe_run(clock.tick, snap.us)
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"

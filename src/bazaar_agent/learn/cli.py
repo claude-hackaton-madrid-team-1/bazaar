@@ -66,6 +66,13 @@ def _connect() -> Any:
     return conn
 
 
+def _newest_tick(conn: Any) -> int:
+    if conn is None:
+        return 0
+    row = conn.execute("select coalesce(max(tick), 0) from feed_events").fetchone()
+    return int(row[0]) if row else 0
+
+
 def _table(rows: list[Learning], tick: int | None) -> Table:
     table = Table(title=f"learnings in force at tick {tick}" if tick is not None else "every learning")
     for col in ("tick", "subject", "kind", "until", "team", "conf", "text", "evidence"):
@@ -92,14 +99,37 @@ def learnings(
     save: bool = typer.Option(False, help="Also write them to the shared learnings table (Postgres)"),
     limit: int = typer.Option(40, help="Rows to print"),
     as_json: bool = typer.Option(False, "--json", help="JSON instead of tables"),
+    lessons: bool = typer.Option(False, "--lessons", help="Run the outcome learner: lessons + dealer patterns (N3)"),
+    query: str | None = typer.Option(None, "--query", help="What the hybrid recall returns for this situation"),
+    min_score: float = typer.Option(0.0, help="--query: the cross-encoder floor (agents use 0)"),
 ) -> None:
-    """What the live-feed reader learned from the captured feed, and the dealer blockers for us."""
+    """What the live-feed reader learned from the captured feed, and the dealer blockers for us.
+
+    `--lessons` / `--query`: the outcome learner and the hybrid recall the agents use (N3)."""
     from bazaar_agent import db
     from bazaar_agent.identity import resolve_team_id
 
     settings = load_settings()
     us = resolve_team_id(settings.team_id, settings.data_dir, None)
     conn = _connect()
+    if lessons or query:
+        from bazaar_agent.learn import lessons_cli
+
+        now_tick = tick if tick is not None else _newest_tick(conn)
+        lessons_cli.show(
+            (lambda: db.connect(app="bazaar-learnings")) if conn is not None else None,
+            us,
+            now_tick,
+            lessons=lessons,
+            query=query,
+            save=save,
+            subject=subject,
+            limit=limit if limit != 40 else 5,
+            min_score=min_score,
+            as_json=as_json,
+            init_schema=db.init_schema,
+        )
+        return
     events = _feed(conn)
     hour = hour_from(events)
     learned = FeedReader(us).read(events, hour)

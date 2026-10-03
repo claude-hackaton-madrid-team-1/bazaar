@@ -1,0 +1,184 @@
+"""The single `recall()` the agents use: hybrid retrieval over the shared `learnings` table.
+
+1. Hard filters first (Postgres + this process's memory, via `LearningStore.recall`): kind, subject,
+   whom it binds (our team or everyone) and validity at the tick (`until_tick` exclusive).
+2. Two rankings of what survived: BM25 over the text and key fields (`bm25.py`), and pgvector cosine
+   between the query embedding and each learning's embedding (same filters, in SQL).
+3. Reciprocal rank fusion (k = 60) of the two rankings.
+4. A local cross-encoder reranks the fused top N; only learnings at or above `min_score` are kept.
+
+It answers inside a deadline (the tick budget: Saturday ticks are 30 s, Sunday 15 s) on a worker
+thread with its own connection, and it fails open: models still loading, a database error, a timeout
+or anything unexpected returns NO lessons, never a stale or irrelevant one. Callers treat the hits as
+quoted data (`as_quoted`), never as instructions.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable, Collection, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+from bazaar_agent.learn.bm25 import BM25
+from bazaar_agent.learn.embed import Models
+from bazaar_agent.learn.model import Learning
+from bazaar_agent.learn.store import LearningStore
+
+RRF_K = 60
+CANDIDATES = 600  # hard-filtered learnings the lexical leg ranks
+LEG_TOP = 40  # each leg's ranking depth
+RERANK_TOP = 12  # fused learnings the cross-encoder reads
+MIN_SCORE = 0.0  # cross-encoder relevance floor (ms-marco logit; calibrated on real lessons, see README)
+DEFAULT_BUDGET_S = 0.8  # far inside a 15 s tick; a slower answer is dropped
+QUOTE_MAX = 5
+
+
+@dataclass(frozen=True)
+class Query:
+    """What an agent is about to do, in words, plus the hard filters."""
+
+    text: str
+    subjects: tuple[str, ...] | None = None  # dealer ids, team ids, rival slugs; None = any
+    kinds: tuple[str, ...] | None = ("lesson", "behaviour", "policy")
+    subject_kind: str | None = None
+    team: str | None = None  # learnings that bind this team or everyone
+    tick: int | None = None  # only learnings still valid at this tick
+    k: int = 3
+    min_score: float = MIN_SCORE
+    budget_s: float = DEFAULT_BUDGET_S
+
+
+@dataclass(frozen=True)
+class Hit:
+    learning: Learning
+    score: float  # cross-encoder relevance
+    fused: float  # reciprocal rank fusion score
+    bm25_rank: int | None  # 1-based; None = not in that leg's top
+    vector_rank: int | None
+    cosine: float | None = None
+
+
+@dataclass(frozen=True)
+class Recalled:
+    hits: tuple[Hit, ...] = ()
+    status: str = "ok"  # ok | no_candidates | models_loading | timeout | error:<Type>
+    elapsed_ms: float = 0.0
+    candidates: int = 0
+    legs: dict[str, int] = field(default_factory=dict)  # how many each leg ranked
+
+    @property
+    def learnings(self) -> list[Learning]:
+        return [h.learning for h in self.hits]
+
+    def as_quoted(self, limit: int = QUOTE_MAX) -> list[dict[str, Any]]:
+        """What Jev's state and the words context get: quoted data, never instructions."""
+        return [
+            {
+                "quoted_lesson": h.learning.text,
+                "about": h.learning.subject,
+                "kind": h.learning.kind,
+                "tick": h.learning.tick,
+                "relevance": round(h.score, 2),
+                "confidence": h.learning.confidence,
+            }
+            for h in self.hits[:limit]
+        ]
+
+
+def doc_text(lr: Learning) -> str:
+    """The searchable text: the sentence plus the fields a query names (subject, kind, item, class)."""
+    keys = " ".join(str(lr.detail[k]) for k in ("item", "price_class", "role", "target") if lr.detail.get(k))
+    return f"{lr.subject} {lr.kind} {keys}: {lr.text}"
+
+
+def fuse(rankings: Sequence[Sequence[str]], k: int = RRF_K) -> dict[str, float]:
+    """Reciprocal rank fusion: each list adds 1 / (k + rank) for every key it ranks (rank from 1)."""
+    out: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, key in enumerate(ranking, start=1):
+            out[key] = out.get(key, 0.0) + 1.0 / (k + rank)
+    return out
+
+
+def _wanted(lr: Learning, subjects: Collection[str] | None) -> bool:
+    return subjects is None or lr.subject in subjects
+
+
+class HybridRecall:
+    """Owns a worker thread and its own `LearningStore` (own connection): a slow recall never blocks
+    the tick loop's connection, and a timed-out one just finishes in the background."""
+
+    def __init__(self, store: LearningStore, models: Models, log: Callable[[str], None] = lambda message: None):
+        self.store, self.models, self.log = store, models, log
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bazaar-recall")
+        self._warned: set[str] = set()
+
+    def recall(self, query: Query) -> Recalled:
+        """`search()` under the query's deadline. Never raises; any failure is no lessons."""
+        started = time.monotonic()
+        try:
+            future = self._pool.submit(self.search, query)
+            found = future.result(timeout=max(0.01, query.budget_s))
+        except FutureTimeout:
+            found = Recalled(status="timeout")
+        except Exception as e:
+            found = Recalled(status=f"error:{type(e).__name__}")
+        if found.status not in ("ok", "no_candidates") and found.status not in self._warned:
+            self._warned.add(found.status)
+            self.log(f"learnings: recall {found.status}; deciding without lessons")
+        return replace(found, elapsed_ms=round((time.monotonic() - started) * 1000, 1))
+
+    def search(self, query: Query) -> Recalled:
+        """The pipeline itself (synchronous; tests and the CLI call it directly)."""
+        started = time.monotonic()
+        self.store.begin_tick(query.tick if query.tick is not None else -1)
+        pool = [
+            lr
+            for lr in self.store.recall(
+                None, query.kinds, query.tick, subject_kind=query.subject_kind, team=query.team, limit=CANDIDATES
+            )
+            if _wanted(lr, query.subjects)
+        ]
+        if not pool or not query.text.strip():
+            return Recalled(status="no_candidates", candidates=len(pool))
+        by_key = {lr.key(): lr for lr in pool}
+        keys = list(by_key)
+        lexical = [keys[i] for i in BM25.build([doc_text(by_key[k]) for k in keys]).ranked(query.text, LEG_TOP)]
+        vector = self.models.embed_query(query.text)
+        cosines: dict[str, float] = {}
+        if vector is not None:
+            for key, cos in self.store.vector_rank(
+                vector,
+                kinds=query.kinds,
+                tick=query.tick,
+                subject_kind=query.subject_kind,
+                team=query.team,
+                subjects=query.subjects,
+                limit=LEG_TOP,
+            ):
+                if key in by_key:
+                    cosines[key] = cos
+        semantic = sorted(cosines, key=lambda k: -cosines[k])
+        fused = fuse([lexical, semantic])
+        top = sorted(fused, key=lambda k: (-fused[k], -by_key[k].tick, k))[:RERANK_TOP]
+        legs = {"bm25": len(lexical), "vector": len(semantic), "fused": len(top)}
+        scores = self.models.rerank(query.text, [doc_text(by_key[k]) for k in top])
+        if scores is None:
+            return Recalled(status="models_loading", candidates=len(pool), legs=legs)
+        lex_rank = {k: i for i, k in enumerate(lexical, start=1)}
+        vec_rank = {k: i for i, k in enumerate(semantic, start=1)}
+        hits = [
+            Hit(by_key[k], s, round(fused[k], 5), lex_rank.get(k), vec_rank.get(k), cosines.get(k))
+            for k, s in zip(top, scores, strict=True)
+            if s >= query.min_score
+        ]
+        hits.sort(key=lambda h: (-h.score, -h.learning.confidence, -h.learning.tick))
+        elapsed = round((time.monotonic() - started) * 1000, 1)
+        return Recalled(tuple(hits[: query.k]), "ok", elapsed, len(pool), legs)
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self.store.close()
