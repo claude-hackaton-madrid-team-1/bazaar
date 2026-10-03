@@ -476,8 +476,8 @@ class Taker:
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
         bluff: TacticBook | None = None,
-        cards: CardsHeartbeat | None = None,
         swap_jev: JevFn = no_jev,
+        cards: CardsHeartbeat | None = None,
         news: NewsSentinel | None = None,
         personas: PersonaBook | None = None,
     ) -> None:
@@ -987,41 +987,6 @@ class Taker:
             )
         return kept
 
-    def _persona_shaped(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
-        """The persona model (`agents/persona_desk.py`, GUARDRAILS `persona_model_enabled`): drop a dealer whose
-        hourly deal budget we used, give a dealer with no price history its trait prior (only ever lowering the
-        ladder), and put the dealers whose deals unlock the next one early first. One `dealer_skip` row per
-        dealer and reason, with keys the public status view does not list."""
-        if not self.rules.persona_model_enabled or not self.personas.personas:
-            return moves
-        learner = self.outcome_learner
-        last = getattr(learner, "last", None)
-        curves = last.curves if last is not None else curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
-        learned = learner.policies.keys() if learner is not None else ()
-        clock = run.snap.clock
-        unlocked = [str(d) for d in run.snap.me.get("unlocked") or [] if isinstance(d, str)]
-        shaped = persona_shape(
-            moves, self.personas.personas, curves, learned, run.snap.events, run.snap.us, unlocked, clock.tick,
-            clock.tick_seconds,
-        )  # fmt: skip
-        for (dealer, _), params in shaped.params.items():
-            self._tones[dealer] = params.tone
-        for mv, why in shaped.skipped:
-            if mv.source in busy or self._learned_skips.get((mv.source, "persona")) == why:
-                continue
-            self._learned_skips[(mv.source, "persona")] = why
-            self.rec.decide(
-                clock.tick,
-                "dealer_skip",
-                f"skip {mv.source} for {mv.ref}: {why}",
-                inputs={"blocked_dealer": mv.source, "wanted": mv.ref, "why": why},
-                reason=why,
-                guardrail="-",
-                chosen=False,
-                status="rejected",
-            )
-        return shaped.moves
-
     def _before_events(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
         """Drop the dealer ladders a Market Test or a duel session would start in the middle of (`schedule_guard`).
         One `dealer_skip` row per scheduled event, with keys the public status view does not list."""
@@ -1056,6 +1021,41 @@ class Taker:
     def _rival_moves(self) -> list[str]:
         """The newest `rival_move` lines (public facts about rivals' climbs), for Jev's state."""
         return [lr.text for lr in self.news.ranks.latest] if self.news is not None else []
+
+    def _persona_shaped(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """The persona model (`agents/persona_desk.py`, GUARDRAILS `persona_model_enabled`): drop a dealer whose
+        hourly deal budget we used, give a dealer with no price history its trait prior (only ever lowering the
+        ladder), and put the dealers whose deals unlock the next one early first. One `dealer_skip` row per
+        dealer and reason, with keys the public status view does not list."""
+        if not self.rules.persona_model_enabled or not self.personas.personas:
+            return moves
+        learner = self.outcome_learner
+        last = getattr(learner, "last", None)
+        curves = last.curves if last is not None else curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
+        learned = learner.policies.keys() if learner is not None else ()
+        clock = run.snap.clock
+        unlocked = [str(d) for d in run.snap.me.get("unlocked") or [] if isinstance(d, str)]
+        shaped = persona_shape(
+            moves, self.personas.personas, curves, learned, run.snap.events, run.snap.us, unlocked, clock.tick,
+            clock.tick_seconds,
+        )  # fmt: skip
+        for (dealer, _), params in shaped.params.items():
+            self._tones[dealer] = params.tone
+        for mv, why in shaped.skipped:
+            if mv.source in busy or self._learned_skips.get((mv.source, "persona")) == why:
+                continue
+            self._learned_skips[(mv.source, "persona")] = why
+            self.rec.decide(
+                clock.tick,
+                "dealer_skip",
+                f"skip {mv.source} for {mv.ref}: {why}",
+                inputs={"blocked_dealer": mv.source, "wanted": mv.ref, "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return shaped.moves
 
     def _evolved(
         self, run: _TickRun, moves: list[StrategyMove], busy: set[str], room: int | None = None

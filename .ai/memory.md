@@ -965,6 +965,11 @@ on the next tick, read the clock until `tick` is strictly later (bounded), as `n
 service (judge answers `undecided`), a Jev timeout or a tick with < `jev_min_budget_s` left all mean no swap
 (fail closed, a `rejected` decision row with the verdict). The cash we add to swaps is booked as `team:<card>`
 spend rows (`team_swap_max_cash_per_hour` sums them), still counted in `max_spend_per_game_hour`.
+### [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
+An integration test that failed before `conn.close()` left a psycopg session `idle in transaction` (its last select
+holds a lock), and the `schema` fixture's `drop schema … cascade` waited on it with no timeout: pytest hung for
+minutes. Use `conn.autocommit = True` and `try/finally: conn.close()` in such tests. Also: macOS has no `timeout`
+command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; run it in the background instead.
 
 ### [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
 Keyless `GET /api/catalog`: LAV/MAL/LAT/SAL `+0h`, RET `sat+0h`, CHA `sun+0h` with `released: false`, 12 cards
@@ -983,6 +988,11 @@ uncommon 30 (29-30), rare 89 (89.5-90.5). Opening ≈ list × (1.12 + 0.17 × sh
 moves the bids before a final (4-6 for both). Replayed on Friday's threads (tests/test_persona_replay.py), the trait
 prior's ladder scores the same share as the learned one (Abuela uncommon 0.402 = 0.402, packs 0.471 vs 0.465, Chato
 uncommon 0.467 = 0.467, rare 0.476 vs 0.467). Step 1 beat step 2 on Abuela (0.40 vs 0.33).
+### [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
+`bazaar_team_ro` (#184): CONNECT to every database, TEMP and EXECUTE on `pg_advisory_lock` come from PUBLIC, so a
+role-only revoke does nothing (the RO role could take our ledger's advisory lock and stall accepts; documented).
+`alter default privileges ... grant select on tables` also covers a later secret table or a view over one: the
+script creates `venue_broker_keys` first, then revokes it. `pg_stats` hides columns the role cannot read.
 
 ### [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 `bazaar deploy-guard` at tick 556 (session live): DO NOT MERGE, duel 2481 one tick from its deadline, safe only

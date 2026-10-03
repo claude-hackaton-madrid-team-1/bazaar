@@ -158,6 +158,8 @@ class Guardrails(BaseModel):
     dealer_sell_max_per_game_hour: int = Field(default=4, ge=0, le=8)
     dealer_sell_open_above_top: float = Field(default=1.6, ge=1.0, le=5.0)
     dealer_sell_rounds: int = Field(default=5, ge=1, le=20)
+    buyer_rank_enabled: bool = False
+    buyer_rank_fallback_ticks: int = Field(default=6, ge=1, le=40)
     # Live guard: off-by-default values here, so code built without GUARDRAILS.md behaves as before.
     deploy_guard_duel_ticks: int = Field(default=4, ge=0, le=100)
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
@@ -273,6 +275,8 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_max_per_game_hour": "agents.dealer_sell_desk.SellDesk (openings per game hour, this process)",
     "dealer_sell_open_above_top": "agents.dealer_sell_desk.plan_for (our opening ask over the dealer's top fill)",
     "dealer_sell_rounds": "agents.dealer_sell_desk.plan_for (steps from the opening ask to the typical fill)",
+    "buyer_rank_enabled": "agents.maker._address (the addressee of an ask the maker already decided to post)",
+    "buyer_rank_fallback_ticks": "agents.maker._with_fallbacks (an addressed ask unfilled this long goes public)",
     "deploy_guard_duel_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
