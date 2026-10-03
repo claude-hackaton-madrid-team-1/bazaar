@@ -138,3 +138,15 @@ def test_a_saturday_round_point_is_worth_two_fifths_of_a_final_point() -> None:
         "bench": 7.5,
         "venue": 0.0,
     }
+
+
+def test_the_live_check_puts_the_model_next_to_each_official_snapshot() -> None:
+    snaps = [
+        (t, {"negotiating": s, "ladder_points": DATA.ladder_points, "duel_points": 0.0}) for t, s in DATA.ours.items()
+    ]
+    rows = ss.live_check(DATA.deals, snaps[-3:], DATA.team, MODEL)
+    assert [r.tick for r in rows] == [157, 158, 159]
+    assert rows[-1].model_ladder_points == pytest.approx(DATA.ladder_points, abs=0.001)
+    assert rows[-1].unexplained == pytest.approx(0.08, abs=0.01)  # no duels or trades on Friday: model error only
+    fresh_round = ss.live_check(DATA.deals, snaps[-1:], DATA.team, MODEL, round_start=160)
+    assert fresh_round[0].model_ladder_points == 0.0 and fresh_round[0].model_ladder == 0.0

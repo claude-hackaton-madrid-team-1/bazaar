@@ -166,13 +166,14 @@ def ladder_raw(
     model: ScoreModel,
     ranges: Mapping[tuple[str, str], PriceRange] | None = None,
     teams: Iterable[str] = (),
+    since: int = 0,
 ) -> dict[str, float]:
-    """Each team's ladder raw at a tick: Σ level weight × (best three shares) / 3."""
+    """Each team's ladder raw at a tick: Σ level weight × (best three shares) / 3, deals from `since` on."""
     ranges = learned_ranges(deals) if ranges is None else ranges
     shares: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
     for d in deals:
         level = LEVEL_OF.get(d.dealer)
-        if d.tick <= upto and level is not None:
+        if since <= d.tick <= upto and level is not None:
             shares[d.team][level].append(deal_share(d, ranges))
     out = {t: 0.0 for t in teams}
     for team, levels in shares.items():
@@ -377,3 +378,58 @@ def load_data(path: Path = FRIDAY_DATA, feed: Path | None = None) -> FridayData:
         ours={int(k): float(v) for k, v in raw["ours"].items()},
         ladder_points=float(raw["ours_ladder_points"]),
     )
+
+
+# ---------------------------------------------------------------- the live check (Saturday morning)
+
+
+@dataclass(frozen=True)
+class LiveRow:
+    """One /me snapshot next to the model: what the official numbers say the formula is doing."""
+
+    tick: int
+    negotiating: float | None  # official
+    ladder_points: float | None  # official raw ladder (Friday: model raw / ladder weight)
+    duel_points: float | None
+    model_ladder_points: float  # model raw / ladder weight: compare with ladder_points
+    model_ladder: float  # model ladder component (normalised)
+
+    @property
+    def unexplained(self) -> float | None:
+        """Official negotiating minus the model's ladder: duels + trades + model error."""
+        return None if self.negotiating is None else round(self.negotiating - self.model_ladder, 2)
+
+
+def _num(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def live_check(
+    deals: Sequence[DealerDeal],
+    snapshots: Sequence[tuple[int, Mapping[str, Any]]],
+    team: str,
+    model: ScoreModel,
+    round_start: int = 0,
+) -> list[LiveRow]:
+    """Our /me snapshots against the model, counting dealer deals from `round_start` on.
+
+    If the ladder restarts each round, `ladder_points` falls to 0 when a round opens and only the
+    run with `round_start` set to that tick keeps matching it.
+    """
+    ranges = learned_ranges(deals)
+    rows = []
+    for tick, score in snapshots:
+        raw = ladder_raw(deals, snapshot_tick(tick, model), model, ranges, teams=[team], since=round_start)
+        rows.append(
+            LiveRow(
+                tick=tick,
+                negotiating=_num(score.get("negotiating")),
+                ladder_points=_num(score.get("ladder_points")),
+                duel_points=_num(score.get("duel_points")),
+                model_ladder_points=round(raw[team] / model.ladder_weight, 4),
+                model_ladder=round(
+                    component_points(raw[team], top_mean(raw.values()), model.ladder_weight, model.cap), 2
+                ),
+            )
+        )
+    return rows

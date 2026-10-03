@@ -273,3 +273,56 @@ def evals_score_sim(
     console.print(
         "[dim]Weights: ladder 12.5 fitted; duels 12.5, trades 5, bench 15, venue 15 assumed (unverified).[/dim]"
     )
+
+
+@evals_app.command("score-check")
+def evals_score_check(
+    round_start: int = typer.Option(0, help="Count dealer deals from this tick (a round's first tick)"),
+    last: int = typer.Option(12, min=1, help="How many of the newest /me snapshots to show"),
+    as_json: bool = typer.Option(False, "--json", help="The rows as JSON"),
+) -> None:
+    """The score model next to our newest official /me numbers, from Postgres. Read-only, no game API call."""
+    from dataclasses import asdict
+
+    from rich.table import Table
+
+    from bazaar_agent.db import connect
+    from bazaar_agent.evals import inputs
+    from bazaar_agent.evals import score_sim as ss
+
+    with connect(app="bazaar-score-check") as conn:
+        conn.read_only = True
+        team = inputs.team_from_snapshots(conn)
+        events = inputs.dealer_events(conn)
+        snaps = conn.execute(
+            "select tick, score from snapshots where score is not null order by tick desc limit %s", (last,)
+        ).fetchall()
+    if team is None:
+        _warn("no /me snapshot in Postgres yet: nothing to compare")
+        return
+    rows = ss.live_check(ss.deals_from_feed(events), sorted(snaps), team, ss.ScoreModel(), round_start)
+    if as_json:
+        print(json.dumps([asdict(r) | {"unexplained": r.unexplained} for r in rows], indent=2))
+        return
+    t = Table(title=f"{team}: official /me vs the score model (deals from tick {round_start})")
+    for col in ("tick", "negotiating", "ladder_points", "model", "model ladder", "duel_points", "rest"):
+        t.add_column(col, justify="right")
+
+    def cell(value: float | None) -> str:
+        return "–" if value is None else f"{value:g}"
+
+    for r in rows:
+        t.add_row(
+            str(r.tick),
+            cell(r.negotiating),
+            cell(r.ladder_points),
+            cell(r.model_ladder_points),
+            cell(r.model_ladder),
+            cell(r.duel_points),
+            cell(r.unexplained),
+        )
+    console.print(t)
+    console.print(
+        "[dim]ladder_points vs model: the share model. rest = negotiating − model ladder: duels + trades + error. "
+        "If ladder_points drops to 0 when a round opens, rerun with --round-start at that tick.[/dim]"
+    )
