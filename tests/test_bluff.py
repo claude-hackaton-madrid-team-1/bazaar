@@ -20,6 +20,7 @@ from bazaar_agent.agents.tactics import BY_ID, eligible, numbers_in
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.learn.store import LearningStore
+from tests.test_db import database_url, schema  # noqa: F401  (fixtures for the Postgres test)
 
 US = "t01"
 CHATO = Counterparty.dealer("chato")
@@ -359,3 +360,29 @@ def test_the_seen_events_set_stays_bounded():
     for start in range(0, SEEN_EVENTS_MAX + 2000, 500):
         b.events([{"id": i, "type": "offer.listed", "payload": {}} for i in range(start, start + 500)], US, 1)
     assert len(b._seen_events) <= SEEN_EVENTS_MAX + 500
+
+
+# ---------------------------------------------------------------- Postgres (throwaway schema)
+
+
+@pytest.mark.integration
+def test_tactic_lessons_round_trip_through_postgres_between_two_processes(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from tests.test_db import open_in
+
+    writer_store = LearningStore(lambda: open_in(database_url, schema), init_schema=db.init_schema)
+    writer = book(store=writer_store)
+    writer.begin_tick(100, 2)
+    c = writer.choose(CHATO, "buy", "thread:1", 0, 30)
+    writer.sent(c, their_price=33, their_offer=1, tick=100)
+    writer.ended("thread:1", status="closed", closed_reason="cooloff", tick=101)
+    writer.ended("thread:1", status="closed", closed_reason="cooloff", tick=101)  # the same close read twice
+    assert writer.flush() == 1
+    with open_in(database_url, schema) as conn:
+        rows = conn.execute("select kind, scope, subject, source, team, stats->>'tactic' from learnings").fetchall()
+    assert rows == [("tactic", "trader", "chato", "outcome", US, c.tactic)]
+    reader = book(store=LearningStore(lambda: open_in(database_url, schema)))  # another process: empty memory
+    reader.begin_tick(102, 2)
+    assert reader.load() == 1 and reader.arms(CHATO)[c.tactic].penalties_today == 1
+    assert all(reader.choose(CHATO, "buy", f"thread:{n}", 0, 30).tactic != c.tactic for n in range(2, 12))
+    writer_store.close()
