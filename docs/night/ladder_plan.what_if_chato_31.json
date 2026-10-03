@@ -293,21 +293,22 @@
    "plan": [
     8,
     1,
-    12
+    11
    ],
    "reason": "floor p50 10 ± 2",
    "backtest": {
     "runs": 2000,
     "mean_share": 0.976,
-    "deal_rate": 1.0,
-    "fill_within": 1.0,
-    "mean_price": 9.078,
-    "mean_ticks": 3.078,
+    "deal_rate": 0.996,
+    "fill_within": 0.996,
+    "mean_price": 9.066,
+    "mean_ticks": 3.066,
     "repeated": 0,
-    "at_opening": 8,
+    "at_opening": 0,
     "hows": {
-     "her_ask": 396,
-     "our_bid": 1604
+     "her_ask": 388,
+     "our_bid": 1604,
+     "walk": 8
     }
    }
   },
@@ -415,15 +416,15 @@
    "plan": {
     "start": 8,
     "step": 1,
-    "max": 12
+    "max": 11
    },
    "expected": {
     "share": 0.976,
     "price": 9.1,
     "ticks": 3.1
    },
-   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
-   "why": "floor p50 10 ± 2; reserve 12 P"
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 11 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 11 P"
   },
   {
    "tick": 0,
@@ -465,15 +466,15 @@
    "plan": {
     "start": 8,
     "step": 1,
-    "max": 12
+    "max": 11
    },
    "expected": {
     "share": 0.976,
     "price": 9.1,
     "ticks": 3.1
    },
-   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
-   "why": "floor p50 10 ± 2; reserve 12 P"
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 11 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 11 P"
   },
   {
    "tick": 6,
@@ -515,15 +516,15 @@
    "plan": {
     "start": 8,
     "step": 1,
-    "max": 12
+    "max": 11
    },
    "expected": {
     "share": 0.976,
     "price": 9.1,
     "ticks": 3.1
    },
-   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
-   "why": "floor p50 10 ± 2; reserve 12 P"
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 11 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 11 P"
   },
   {
    "tick": 12,
@@ -615,15 +616,15 @@
    "plan": {
     "start": 8,
     "step": 1,
-    "max": 12
+    "max": 11
    },
    "expected": {
     "share": 0.976,
     "price": 9.1,
     "ticks": 3.1
    },
-   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
-   "why": "floor p50 10 ± 2; reserve 12 P"
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 11 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 11 P"
   },
   {
    "tick": 126,
@@ -654,12 +655,12 @@
  "per_game_hour": {
   "4": {
    "slots": 6,
-   "reserved": 129,
+   "reserved": 126,
    "expected_spend": 111.6
   },
   "5": {
    "slots": 4,
-   "reserved": 99,
+   "reserved": 98,
    "expected_spend": 87.5
   }
  },
