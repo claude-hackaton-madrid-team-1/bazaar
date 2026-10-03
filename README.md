@@ -254,6 +254,53 @@ Our team id comes from `BAZAAR_TEAM_ID` (env or `.env`), else `.local/team_id`, 
 | alerts | never for our own actions (our level-up, our venue, our listing, a dealer answering us) |
 | `feed_events`, `tape` | keep everything; the SQL view `their_events` is the feed minus our activity |
 
+## Holdings: what we hold, in real time (album first, shared)
+
+Every agent decides on what we hold right now, and every process shares one key's 5 req/s. So `/api/me`
+lives in Postgres too (`src/bazaar_agent/holdings.py`): the first of our processes that needs it in a
+tick (taker, maker, MCP server, CLI) reads it and upserts `me_snapshots` (one row per team and game tick:
+cash, level, cards with asset ids, duplicates, sealed packs, album pages, affinity, score, the whole
+payload). The others answer from that row **only while it is provably current**:
+
+| Rule | The stored snapshot is used only when | Else |
+|---|---|---|
+| tick | it was read in the reader's current game tick (the server's `tick` in `/me`, exactly) | live read |
+| epoch | no send of ours, from any process, started or finished since it was read: every request that can move cards or cash bumps `holdings_state.epoch` before it goes and after it returns (`sdk.TrackedBazaar`, in every `team_client()`; duel moves and flags move nothing) | live read |
+| calm | no thread message of ours went out this tick (conservative: Friday's feed shows dealer answers and their settlements at the tick boundary, 27 of 27) | live read |
+| age | it is younger than `holdings_max_age_s` (GUARDRAILS.md, 5 s): the backstop for what we cannot see coming | live read |
+
+The row must also match itself (its payload names our team, its tick and its digest), and it belongs to
+one **world**: `real`, or `sim:<host:port>` for a simulator (whose `sim-team1` is `t01` too), so a
+simulator never answers for the game even in a shared database; a simulator writes the world-less tables
+(`cards`, the evals' `snapshots`) only in a database of its own (`BAZAAR_SIM_DATABASE_URL`).
+
+Any doubt is a live read (and every live read is stored): Postgres not connected yet, no clock, a clock
+less than 1 s from its tick's end, team id not known yet, a row that does not match, a send of this
+process whose bump was lost, a lock wait over 3 s. One reader at a time reads `/me` for the team
+(`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two. After a deal
+(our accept, or a dealer thread that ended in a deal) the acting agent books it, bumps the epoch and
+re-reads `/me`. **Nothing here holds up a send or a tick**: every Postgres call runs on one worker thread
+per connection; a send waits at most 0.2 s for its bump and a read at most 5 s for the database, then reads
+`/me` live (a hung network costs a deadline, never a tick); a read that has already asked the game waits for
+that answer as a direct `/me` would, and gets it before the store, which finishes on its own. A lost bump is caught up by the next one, when the
+connection reopens, or when the process exits.
+`holdings_from_db = false` in GUARDRAILS.md turns the shared answers off (snapshots are still written).
+
+```sh
+uv run bazaar status            # "read: /me from db (tick 812, 0.4 s old, epoch 57, read by taker)" or "/me live (why)"
+uv run bazaar status --no-db    # always a live /api/me
+```
+
+Measured on the simulator (`BAZAAR_SIM=local`, taker + maker, dry run, 10 ticks): `GET /api/me` went from
+2 per tick to 1 (11 calls instead of 20; the extra one is tick 0, before the team id is known). The MCP
+tools `status`, `holdings` and `strategy` and every runtime write answer through the same rule, with the
+snapshot's tick, age and source in their answer.
+
+**Card catalog.** `cards` holds every card of every set (`set_code`, `rarity`, `book`, `print_run`,
+`minted`, `released`, `page`), written from the `/api/catalog` the agents already read: the first time,
+when a set is released (El Retiro on Saturday, Chamberí on Sunday) and every 10 ticks for `minted`. A row
+never moves back to an older tick. The MCP tool `cards` reads it (the live catalog when the table is empty).
+
 ## Ticks: the rule every loop follows
 
 The game ticks every 60 s (Fri), 30 s (Sat) or 15 s (Sun), and the organisers may change it,
@@ -447,8 +494,8 @@ uv run bazaar agent maker            # dry run; --no-jev keeps the strategy's pr
 uv run bazaar agent taker --port 8080   # also serve the read-only status (GET /health, /state, WS /events)
 ```
 
-Every tick, both read `/api/me` once (album first), our open offers, the catalog, the dealers, the venues
-and the feed (the shared `feed_events` table when Postgres answers, else `.local/feed`, plus the live
+Every tick, both read our holdings once (album first, see "Holdings: what we hold, in real time" below),
+our open offers, the catalog, the dealers, the venues and the feed (the shared `feed_events` table when Postgres answers, else `.local/feed`, plus the live
 window), then rank with the strategy engine. A tick's deadline is `ticks.action_budget_s`; every send
 checks it right before it goes, and a move that would be late is logged `DROPPED` and not sent.
 
@@ -897,7 +944,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads; ours are tagged. |
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
-| `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
+| `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me, or its current snapshot). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
 | `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask. |
@@ -938,7 +985,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
 - [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
 - [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
-- [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
+- [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -951,6 +998,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
+| [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
+| [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
 | [#147](../../pull/147) | style: wrap a long IaC docstring line (ruff E501 on main) | Sat 05:25 | `aaeb0fe` |
 | [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | Sat 04:57 | `a8da058` |
 | [#124](../../pull/124) | docs: backlog in repo specs (issues migrated), Saturday deadlines, status 05:00 | Sat 04:54 | `c6f7ad9` |
@@ -960,14 +1010,17 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#95](../../pull/95) | docs: RAG-driven strategies per mechanic (N14) on the plan and roadmap | Sat 03:22 | `86170e8` |
 | [#85](../../pull/85) | feat: declare bazaar-live (the show + TTS proxy) in .railway/railway.py | Sat 03:14 | `02f82ce` |
 | [#73](../../pull/73) | fix: no OFF services on Railway (monitor + evals removed); BAZAAR_LIVE kept; docs say taker/maker are LIVE | Sat 03:07 | `b267bb4` |
-| [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | Sat 03:03 | `8c58e76` |
-| [#90](../../pull/90) | docs: learner / auto-evolve (P0) and real-time holdings in the plan and roadmap | Sat 03:02 | `a79f601` |
-| [#88](../../pull/88) | feat: Linear-style roadmap timeline (Fri 2 → Sun 4, freeze Sun 06:00, deadline Sun 14:00) | Sat 02:57 | `90b15c2` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#155](../../pull/155) | feat(supply): supply map, pack EV with our album need, open or keep a sealed pack (N14b, part 2) | `ogarciarevett/feat-n14b-supply-packs` |
+| [#154](../../pull/154) | docs(night): salvage the reports of Marius's closed night PRs, with an index of findings and decisions | `docs/night-salvage` |
+| [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
+| [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
+| [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | `ogarciarevett/takeover-duelsv2` |
+| [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | `ogarciarevett/feat-dealer-threads-store` |
 | [#146](../../pull/146) | feat(safety): offer inspector before every accept — dealer, board, duel (S1 part A, takes over #93) | `ogarciarevett/s1-inspector` |
 | [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | `ogarciarevett/feat-n14b-new-pages` |
 | [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
@@ -979,14 +1032,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 | [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday (PARTIAL: story, Q&A, demo; decisions log + charts pending) | `night/b29-pitch-kit` |
-| [#134](../../pull/134) | B28: taker go-live counterfactual (Friday replayed through the current taker), stacked on #125 | `night/b28-taker-counterfactual` |
-| [#133](../../pull/133) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (B16, bite X18) | `night/b16-unsettled-accepts` |
-| [#132](../../pull/132) | B25: morning assumption verifier (bazaar verify) and the timed 09:00–11:30 checklist | `night/b25-verify` |
 | [#131](../../pull/131) | feat: strategic bluffing in the words, learned per counterparty (N16) | `ogarciarevett/feat-bluff-tactics` |
-| [#130](../../pull/130) | Night B7: duel v2 within-tick order (55 % we first on real payloads) + Jev path, reconciled with B15 | `night/b7-order-jev` |
-| [#129](../../pull/129) | night(B26): new sets mid-game robustness (dealer_mints_unminted) + Sunday playbook and decisions | `night/b26-sunday` |
 | [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
-| [#127](../../pull/127) | feat(team-desk): negotiate direct deals in team threads, structured offers only (B24) | `night/b24-team-negotiator` |
-| [#126](../../pull/126) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (B14, bite X15) | `night/b14-expired-bids` |
+| [#123](../../pull/123) | feat(N17): team-to-team swap threads in the taker (off by default) + simulator rivals that swap | `ogarciarevett/feat-team-threads` |
 
 <!-- BAZAAR:ACTIVITY:END -->
