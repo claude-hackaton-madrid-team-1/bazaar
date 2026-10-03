@@ -1999,11 +1999,11 @@ def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, An
     return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
-def _pack_judge(settings: Any, timeout_s: float) -> Any:
+def _pack_judge(settings: Any, timeout_s: float, cache_ticks: int = 0) -> Any:
     """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
     from bazaar_agent.pack_gate import jev_pack_judge
 
-    return jev_pack_judge(settings, timeout_s)
+    return jev_pack_judge(settings, timeout_s, cache_ticks)
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
@@ -2587,7 +2587,7 @@ def agent_taker(
             bluff=bluff,
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
-            pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
+            pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             **kw,

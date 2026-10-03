@@ -76,19 +76,32 @@ def gate_packs(
     return replace(book, packs=tuple(map(gated, book.packs)), pack_slots=slots)
 
 
-def jev_pack_judge(settings: Any, timeout_s: float) -> PackJudge:
+PACK_QUESTION = "spend_pack_slot_now"  # questions/packs.json
+
+
+def jev_pack_judge(settings: Any, timeout_s: float, cache_ticks: int = 0) -> PackJudge:
     """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state.
 
     Shared by `bazaar strategy` and the runtime's `strategy` tool. Without TYPESAFE_API_KEY Jev answers
-    undecided, and an undecided verdict keeps the slot."""
+    undecided, and an undecided verdict keeps the slot. `cache_ticks` (the taker: GUARDRAILS.md
+    `jev_cache_ticks`) reuses an answer for the same pack state, tick and game hour aside, for that many
+    ticks (`agents.jev_cache`); a failed call is never reused."""
+    from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key, state_tick
     from bazaar_agent.config import REPO_ROOT
     from bazaar_agent.jev import judge, load_questions
 
     questions = load_questions(REPO_ROOT / "questions" / "packs.json")
     key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+    cache: VerdictCache[tuple[str, float]] = VerdictCache(cache_ticks)
 
     def ask(state: dict[str, Any]) -> tuple[str, float]:
-        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts["spend_pack_slot_now"]
+        tick, cache_key = state_tick(state), state_key(PACK_QUESTION, state)
+        cached = cache.get(cache_key, tick)
+        if cached is not None:
+            return cached
+        verdict = judge(state, questions, api_key=key, timeout_s=timeout_s).verdicts[PACK_QUESTION]
+        if verdict.reason in CACHED_REASONS:
+            cache.put(cache_key, tick, (verdict.verdict, verdict.value))
         return verdict.verdict, verdict.value
 
     return ask

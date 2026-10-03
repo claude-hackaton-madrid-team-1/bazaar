@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any
 
 from bazaar_agent.affinity import AffinityMap
@@ -54,6 +55,7 @@ from bazaar_agent.agents.desk import (
 )
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
+from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
 from bazaar_agent.agents.market import (
     BoardOffer,
     OpenOffer,
@@ -77,6 +79,7 @@ from bazaar_agent.agents.runtime import (
     new_page_line,
     no_jev,
     read_snapshot,
+    read_together,
     window_for,
 )
 from bazaar_agent.agents.seller import (
@@ -128,6 +131,8 @@ from bazaar_agent.strategy import (
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
+
+OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
 
 
 @dataclass(frozen=True)
@@ -490,6 +495,8 @@ class Taker:
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
         self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
+        # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
+        self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -497,8 +504,16 @@ class Taker:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
-            threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
+            snap = read_snapshot(
+                self.team,
+                self.public,
+                self.feed,
+                clock,
+                self.holdings,
+                parallel=self.rules.parallel_reads,
+                extra={"threads": lambda: self.team.my_threads("open")},
+            )
+            threads = [t for t in snap.extra["threads"].get("threads") or [] if isinstance(t, dict)]
             ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
             self._tick(snap, threads, window)
         except BazaarError as e:
@@ -677,22 +692,29 @@ class Taker:
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
+        """`offer_is_worth_accepting` for this state. The same state (tick aside) asked within `jev_cache_ticks`
+        gets the same answer without a call or a slot; a reused answer carries no digest (one call, one outcome)."""
+        tick, key = run.snap.clock.tick, state_key(OFFER_QUESTION, state)
+        cached = self.jev_cache.get(key, tick)
+        if cached is not None:
+            return replace(cached, digest=None, reason=cached.reason or "cached")
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         run.jev_calls += 1
-        return self.jev(state)
+        advice = self.jev(state)
+        if advice.reason in CACHED_REASONS:
+            self.jev_cache.put(key, tick, advice)
+        return advice
 
     # ------------------------------------------------------------ (a) boards
 
     def _board_offers(self, run: _TickRun) -> tuple[list[BoardOffer], dict[str, Venue]]:
         """Every plain standing offer on the venues we may trade on, makers named when the cap needs them."""
         venues = {v.id: v for v in tradable_venues(run.snap.venues, run.snap.us)}
-        offers: list[BoardOffer] = []
-        for venue in venues.values():
-            try:
-                offers += board_offers(self.public.board(venue.id), venue.id, run.snap.us)
-            except BazaarError as e:
-                self.log(f"tick {run.snap.clock.tick} taker: board {venue.id} refused {e.code}; skipped")
+        boards = read_together(
+            {venue_id: partial(self._board_of, run, venue_id) for venue_id in venues}, self.rules.parallel_reads
+        )
+        offers: list[BoardOffer] = [o for venue_id in venues for o in boards[venue_id]]
         if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
             makers = listed_makers(run.snap.events)
             offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
@@ -754,6 +776,14 @@ class Taker:
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
         return out
+
+    def _board_of(self, run: _TickRun, venue_id: str) -> list[BoardOffer]:
+        """One venue's board; a refusal skips that venue only."""
+        try:
+            return board_offers(self.public.board(venue_id), venue_id, run.snap.us)
+        except BazaarError as e:
+            self.log(f"tick {run.snap.clock.tick} taker: board {venue_id} refused {e.code}; skipped")
+            return []
 
     # ------------------------------------------------------------ (c) sealed packs we hold
 
@@ -1009,8 +1039,10 @@ class Taker:
         """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped
         up; an open one is left as it is, and the tick does not count toward its tick limit."""
         out = []
+        reads = {dealer: partial(self.team.thread, conv.thread_id) for dealer, conv in self.convs.items()}
+        threads = read_together(reads, self.rules.parallel_reads)  # every conversation at once, then in order
         for dealer, conv in list(self.convs.items()):
-            thread = self.team.thread(conv.thread_id)
+            thread = threads[dealer]
             self._keep(thread, run.snap, conv)
             if held and str(thread.get("status") or "open") == "open":
                 continue

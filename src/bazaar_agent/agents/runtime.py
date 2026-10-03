@@ -7,10 +7,12 @@ A move that would land after the deadline is dropped (logged as `expired`), neve
 
 from __future__ import annotations
 
+import contextvars
 import os
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import psycopg
@@ -43,6 +45,7 @@ def cost_nothing(code: str | None, status: int | None) -> bool:
     return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
 
 
+MAX_PARALLEL_READS = 8  # threads for one batch of reads (a snapshot is 6-7 requests, boards one per venue)
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -237,6 +240,19 @@ def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str
     )
 
 
+def read_together(reads: Mapping[str, Callable[[], Any]], parallel: bool) -> dict[str, Any]:
+    """Run independent reads and return their answers by name. `parallel` (GUARDRAILS.md `parallel_reads`)
+    sends them at once, so a tick pays the slowest read instead of their sum; otherwise one after the other,
+    in order. Either way every answer is in before anything is decided, and a failure raises the error of
+    the first failing read in the given order (in parallel, after the others have finished)."""
+    if not parallel or len(reads) < 2:
+        return {name: read() for name, read in reads.items()}
+    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_READS, len(reads)), thread_name_prefix="bazaar-read") as pool:
+        # each read runs in a copy of this context, so its trace events land on the tick's span
+        futures = {name: pool.submit(contextvars.copy_context().run, read) for name, read in reads.items()}
+    return {name: future.result() for name, future in futures.items()}
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """One tick's view, read album first: `/api/me` before anything is decided."""
@@ -250,6 +266,7 @@ class Snapshot:
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
     scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
+    extra: Mapping[str, Any] = field(default_factory=dict)  # the caller's own reads, made with the snapshot's
 
     @property
     def us(self) -> str:
@@ -267,26 +284,43 @@ def read_snapshot(
     clock: Clock,
     holdings: Holdings | None = None,
     clock_read_at: float | None = None,
+    *,
+    parallel: bool = False,
+    extra: Mapping[str, Callable[[], Any]] | None = None,
 ) -> Snapshot:
     """Team reads (`me`, our offers) with the key; everything public without it. With `holdings`, /me
-    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live."""
-    read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
-    me = read.me if read is not None else team.me()
-    offers = team.my_offers()
-    personas = public.dealers()
-    catalog = public.catalog()
+    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live.
+    `extra` reads (the taker's open threads) go out with them and come back in `Snapshot.extra`;
+    `parallel`: see `read_together` (the holdings read is one of the batch)."""
+
+    def me_read() -> tuple[MeRead | None, dict[str, Any]]:
+        read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
+        return read, (read.me if read is not None else team.me())
+
+    reads: dict[str, Callable[[], Any]] = {
+        "me": me_read,
+        "offers": team.my_offers,
+        "personas": public.dealers,
+        "catalog": public.catalog,
+        "venues": public.venues,
+        "events": feed.events,
+    }
+    got = read_together({**reads, **{f"extra:{name}": read for name, read in (extra or {}).items()}}, parallel)
+    read, me = got["me"]
+    personas, catalog = got["personas"], got["catalog"]
     if holdings is not None:
         holdings.observe_catalog(clock.tick, catalog)
     return Snapshot(
         clock=clock,
         me=me,
-        offers=offers,
+        offers=got["offers"],
         catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
-        venues=venues_from(public.venues(), clock.tick),
-        events=feed.events(),
+        venues=venues_from(got["venues"], clock.tick),
+        events=got["events"],
         holdings=read,
         scan=feed.scan(clock.tick),
+        extra={name: got[f"extra:{name}"] for name in extra or {}},
     )
 
 

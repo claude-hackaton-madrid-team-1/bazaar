@@ -40,6 +40,10 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 ## Jev
 - `jev_can_accept_early` = true — a decided Jev "accept" may close a deal sooner, never above the limit.
 - `jev_timeout_s` = 3.0 — a Jev call that takes longer is `undecided` (Sunday ticks are 15 s).
+- `jev_cache_ticks` = 4 — the taker reuses a Jev answer (offer accept, pack slot) for the same state, tick and game hour aside, for this many ticks; a failed call is asked again next tick; 0 asks every time (SP1).
+
+## Speed (Sunday's 15 s ticks)
+- `parallel_reads` = true — each tick's reads (/me, our offers and threads, dealers, catalog, venues, the feed, each venue's board) go out together instead of one after the other; the decision still waits for all of them; false reads them in order (SP1).
 
 ## Duels
 - `duel_anchor` = 0.6 — open this far beyond our limit (fraction of the limit).
