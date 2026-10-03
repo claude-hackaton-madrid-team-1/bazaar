@@ -108,7 +108,7 @@ def test_the_first_tick_at_6_5_opens_a_zero_fee_board_venue_once_and_saves_the_k
     first = snap()
     k.on_tick(first.clock, first, window())
     assert team.opened == [("Team 1 market", 0, 0, {"mechanism": "board"})]
-    assert store == {"v09": (KEY, 400)} and (tmp_path / "broker.env").exists()
+    assert store == {("", "v09"): (KEY, 400)} and (tmp_path / "broker.env").exists()
     assert broker.sent == [("b7-0", "b7-1", 35)]  # the broker ran in the same tick
     # next tick the public list shows our venue: never a second opening, the broker goes on
     later = snap(tick=401, t_hours=6.51, cash=250, venue={"venue": "v09", "status": "open"}, venues=(RASTRO, ours()))
@@ -124,7 +124,11 @@ def test_the_first_tick_at_6_5_opens_a_zero_fee_board_venue_once_and_saves_the_k
 
 
 def test_a_venue_we_already_run_is_never_opened_again_and_its_key_comes_from_the_vault(tmp_path):
-    team, store, broker = Team(), {"v09": (KEY, 300)}, FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    team, store, broker = (
+        Team(),
+        {("", "v09"): (KEY, 300)},
+        FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)]),
+    )
     k = keeper(tmp_path, team, store=store, broker=broker)
     s = snap(venues=(RASTRO, ours()), venue={"venue": "v09", "status": "open"})
     k.on_tick(s.clock, s, window())
@@ -235,7 +239,7 @@ def test_a_venue_without_its_key_says_so_and_matches_nothing(tmp_path):
 
 def test_the_broker_still_matches_the_bench_when_the_maker_could_not_read_our_offers(tmp_path):
     broker = FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
-    k = keeper(tmp_path, Team(), store={"v09": (KEY, 300)}, broker=broker)
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
     k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
     k.on_tick(snap().clock, None, window())
     assert broker.sent == [("b7-0", "b7-1", 35)]
@@ -299,3 +303,71 @@ def test_a_venue_closed_by_hand_stops_the_broker_and_is_never_reopened_by_this_p
     gone = snap(tick=410, cash=600)  # closed by hand: not in the lists for longer than the lag
     k.on_tick(gone.clock, gone, window())
     assert k._venue(gone.clock, gone) is None and len(team.opened) == 1
+
+
+# ---------------------------------------------------------------- once across processes and restarts
+
+
+def test_a_restarted_maker_never_reopens_after_a_venue_was_opened_on_this_target(tmp_path):
+    store = {("", "v09"): (KEY, 300)}  # we opened v09 earlier; it was closed (or suspended) since
+    for status in ("closed", "suspended"):
+        team, lines = Team(), []
+        k = keeper(tmp_path / status, team, store=store, lines=lines)
+        for tick in (400, 401, 450):
+            s = snap(tick=tick, venue={"venue": "v09", "status": status})
+            k.on_tick(s.clock, s, window())
+        assert team.opened == [] and k.final == "opened_before"
+        assert sum("opened on this target before" in line for line in lines) == 1
+
+
+def test_two_makers_in_the_same_tick_open_one_venue_between_them(tmp_path):
+    store, first, second = {}, Team(), Team()
+    a = keeper(tmp_path / "a", first, store=store)
+    b = keeper(tmp_path / "b", second, store=store)
+    store[("", "_claim")] = ("", 400)  # a's claim is in flight when b reads (a deploy overlap)
+    s = snap()
+    b.on_tick(s.clock, s, window())
+    assert second.opened == [] and "another process holds the opening claim" in rows(tmp_path / "b")[0]["guardrail"]
+    del store[("", "_claim")]
+    a.on_tick(s.clock, s, window())
+    later = snap(tick=410)
+    b.on_tick(later.clock, later, window())  # retries after RETRY_TICKS: a venue was opened since
+    assert len(first.opened) == 1 and second.opened == [] and b.final == "opened_before"
+
+
+def test_a_stale_claim_is_taken_over_and_a_refusal_gives_the_claim_back(tmp_path):
+    store = {("", "_claim"): ("", 300)}  # a process that died mid-opening 100 ticks ago
+    team = Team(refuse=BazaarError("locked", "level 2 needed", 403))
+    k = keeper(tmp_path, team, store=store)
+    k.on_tick(snap().clock, snap(), window())
+    assert len(team.opened) == 1 and store == {}  # took the stale claim, was refused, gave it back
+
+
+def test_the_bond_is_judged_on_cash_our_open_bids_do_not_already_promise(tmp_path):
+    from tests.agent_fakes import bid
+
+    team = Team()
+    k = keeper(tmp_path, team)
+    s = snap(cash=380, offers=[bid(50, "LAV-09", 200, venue="rastro", maker="t01")])
+    k.on_tick(s.clock, s, window())
+    assert team.opened == []
+    assert "cash 180 - venue bond and fee 270 < cash_floor 100" in rows(tmp_path)[0]["guardrail"]
+
+
+def test_the_broker_key_is_cut_out_of_spans_and_rows_by_value_whatever_its_shape(tmp_path):
+    from bazaar_agent import telemetry as tm
+
+    odd = "Zq" + "9" * 20  # no known prefix: only the value can catch it
+    vault = vn.KeyVault(tmp_path, lambda: FakeConn({}))
+    vault.save("v09", odd, 400)
+    try:
+        assert odd not in tm.scrub(f"book read with {odd}")
+    finally:
+        tm._RT.secrets = tuple(s for s in tm._RT.secrets if s != odd)
+
+
+def test_an_unsent_opening_stays_off_the_public_status(tmp_path):
+    hub = StatusHub("maker", True)
+    k = keeper(tmp_path, Team(), hub=hub)
+    k.on_tick(snap(cash=300).clock, snap(cash=300), window())  # refused by the floor: nothing sent
+    assert hub.state()["decisions"] == [] and rows(tmp_path)[0]["status"] == "rejected"

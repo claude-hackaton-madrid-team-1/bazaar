@@ -175,3 +175,17 @@ def test_the_kill_switch_and_the_pause_file_stop_every_venue_write():
     for kind in VENUE_KINDS:
         assert "trading_enabled = false" in str(gr.check(gr.Action(kind), ctx(cash=600), off))
         assert "pause file" in str(gr.check(gr.Action(kind), ctx(cash=600, paused=True), on))
+
+
+@pytest.mark.parametrize("venue", ["s05", {"venue": "s05", "status": "open"}])
+def test_a_venue_named_next_to_a_starter_broker_key_is_the_free_stall(venue):
+    """The kit: /me carries `starter_broker_key` while we have the free stall. Neither shape of the stall may
+    drop the bond reserve for buyers or block our own opening."""
+    me = {"cash": 400, "venue": venue, "starter_broker_key": "bk_" + "S7a11Only"}
+    assert gr.runs_venue(me) is False
+    ledger = gr.Ledger(Path("/nonexistent/ledger.jsonl"))
+    planned = gr.Guardrails(allow_venue_open=True, cash_floor=100, venue_bond_reserve=270)
+    c = gr.context_from(me, 400, 6.5, ledger, planned)
+    assert gr.effective_cash_floor(planned, c) == 370
+    assert gr.check(gr.Action("venue_open"), c, planned).allowed
+    assert not gr.check(gr.Action("buy", "LAV-09", "rare", 40), c, planned).allowed  # 360 < 370
