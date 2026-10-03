@@ -109,6 +109,8 @@ B. **Chato** (W3's `dealer_price_caps`). Uncommons at a cap of 31 give the level
 
 C. **Venue timing.** Decide after the first Saturday Market Test result.
 
+D. **`page_bonus_weight` = 0 in STRATEGY.md** until a page is reachable (r2, X25). The live taker and maker value a missing page card at book × affinity plus its page-bonus share. Friday's real `your_value` holds no share on an incomplete page (19 of 19 held cards are exactly book × affinity × copy marginal). No page completes under today's caps, so a buy priced between the two values scores a negative trade gain. `bazaar plan pages` keeps the share only when it judges a whole page; it never counts it in a single card's trade surplus. Not changed tonight.
+
 ## Risks and what is unverified
 - How the server credits the page bonus to trades.
 - Whether the free stall scores for us, and whether the ladder restarts each round (W5).
