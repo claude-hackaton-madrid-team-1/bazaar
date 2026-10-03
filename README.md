@@ -863,6 +863,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#74](../../pull/74) | docs: status page after #55 and #69 | Sat 02:10 | `7c10b7b` |
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | Sat 02:08 | `d5e769e` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | Sat 02:06 | `9c8cbda` |
 | [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | Sat 01:48 | `3e5a4a6` |
@@ -874,13 +875,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#63](../../pull/63) | chore: add black as the formatter, checked in CI | Sat 01:19 | `65dc0b5` |
 | [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | Sat 01:10 | `e75f4b9` |
 | [#57](../../pull/57) | feat: Jev decides duel moves and maker prices among legal candidates | Sat 00:54 | `488a7fb` |
-| [#56](../../pull/56) | feat: generate the architecture status page in the README hook and CI | Sat 00:49 | `2d2f0bf` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#74](../../pull/74) | docs: status page after #55 and #69 | `docs/status-sim-live` |
 | [#73](../../pull/73) | fix: BAZAAR_LIVE survives applies; the OFF monitor can't be revived; docs say taker/maker are LIVE | `ogarciarevett/fix-railway-live-monitor` |
 | [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
 | [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
