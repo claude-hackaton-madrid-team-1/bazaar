@@ -20,6 +20,9 @@
   - a bid for a card we hold: price − fee − our loss;
   - each carries the maker's side, a `snipe` or `overbid` tag, `guardrails.check` exactly as the taker would send it (counterparty cap included), and the W4 plan trade it competes with.
 - **Commands:** `bazaar rivals` and `bazaar opportunities [--live] [--replay]`. Without `--live`, the board is rebuilt from the feed.
+- **Taker `accept_bids`** (`bazaar agent taker --accept-bids`, default off): the taker also sells into standing bids for cards we hold that beat what the copy costs us by `sell_min_surplus`.
+  - It hands over the least valuable copy (`accept(offer, assets=[id])`) and never sells a copy that is in one of our open offers.
+  - Same gates as a buy: `guardrails.check` (sell floor, counterparty share), the duel grace and the shared accept quota.
 - **Scope split with W8:** W8's `arb scan` imports `score_offer`. W8 owns crossings and duplicate buys, so the scanner skips asks for cards we already hold.
 
 ## The 09:00 board (the close of Friday)
@@ -88,7 +91,7 @@ What to do with these profiles:
 |---|---|
 | Profiles + lifecycle | **GO** (43/44 fills matched) |
 | Read-only scanner | **GO**. It is consistent with the W4 plan (flags conflicts) and with W8 (shared `score_offer`, no overlap) |
-| Live sell-side accepts | **Not built tonight** (see decisions) |
+| Taker sell side (`accept_bids`) | **GO as code, default off.** It would sell LAT-09 into t18's 62 bid at 09:00 (+11.5 P) |
 
 ## Risks
 
@@ -99,6 +102,6 @@ What to do with these profiles:
 ## Decisions for Marius
 
 1. **Run the taker live from 09:00, scanning every tick.** On Friday it would have caught the two snipes worth +82 P and +40 P that rivals took within 3–5 ticks.
-2. **Sell-side accepts:** the taker never accepts a bid. Today that leaves LAT-09 into t18's 62 bid (+11.5 P). Accepting bids would need a taker switch, default off.
+2. **Turn on `bazaar agent taker --accept-bids`** (4f01eac, default off). The taker then also sells into standing bids that beat our loss by `sell_min_surplus`, through the same guardrails, duel grace and accept quota.
 3. **Price caps:** 6 of the 13 morning opportunities are blocked by them (all uncommons above 26 and one common above 12). Each is +2 to +13 P at our values. Values unchanged tonight.
 4. **At 09:00:** run `uv run bazaar opportunities --live` (reads only) next to `uv run bazaar trade-plan --live`.
