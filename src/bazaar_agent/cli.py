@@ -1072,6 +1072,7 @@ def duel_run(
         except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
             if days_switch.verdict not in ("cost", "reversed", "conflict"):  # a safer verdict found stays
                 days_switch = kept  # never a half-merged `signed` for the policy and the guard
+            days_switch.session = None  # this tick's session is unknown: no sign from an older one (#165 r1 P2)
             if days_failed[-1:] != [tick]:
                 days_failed[:] = [tick]
                 why = f"{type(e).__name__}: {str(e)[:80]}"

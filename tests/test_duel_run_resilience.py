@@ -177,3 +177,49 @@ def test_the_kill_switch_stops_a_duel_counter_offer_too(duel_cli, switch, monkey
     switch.trading(True)
     run_one_tick(cli, "--no-jev")
     assert client.sent[0][:2] == ("say", 95)  # off again: the counter goes out on the next run
+
+
+def test_a_rolled_back_latch_never_carries_signed_into_a_new_session(duel_cli, monkeypatch, tmp_path):  # noqa: F811
+    # #165 review P2: the rollback restored the old switch with its old `session`, so session 1's corroborated sign
+    # signed session 2's duels (policy and guard) on a tick whose latch save failed.
+    cli, client, _, _ = duel_cli
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    client.payload = [{**ENDGAME, "session": 2}]
+    confirmed = dd.DaysSwitch(verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1)
+    assert confirmed.signed(True)  # corroborated in session 1
+    monkeypatch.setattr(dd, "latch", lambda data_dir: confirmed)
+    seen: list[bool] = []
+    effective = dd.effective_rules
+
+    def spy(rules, days):
+        out = effective(rules, days)
+        seen.append(bool(out.duel_days_signed))
+        return out
+
+    def observe(self, duels, real_game):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(dd, "effective_rules", spy)
+    monkeypatch.setattr(dd.DaysSwitch, "observe", observe)
+    run_one_tick(cli)
+    assert seen and not any(seen)  # the failed tick runs on the worst case, never on session 1's sign
+
+
+# ---------------------------------------------------------------- 3. a rival's broken text never freezes the duel loop
+
+
+def test_a_lone_surrogate_in_rival_text_never_stops_the_tick(duel_cli, monkeypatch, tmp_path):  # noqa: F811
+    # #165 review P2 (on main since #150, live with v2): `on_tick` logs the raw /api/duels response to JSONL before
+    # the planner; a lone surrogate in a rival's message raised UnicodeEncodeError on every tick, so no duel moved.
+    import json
+
+    from bazaar_agent.agents.duelist import append_jsonl
+
+    path = tmp_path / "x.jsonl"
+    append_jsonl(path, {"text": "hola \ud800"})
+    assert json.loads(path.read_text())["text"] == "hola \ud800"
+    cli, client, _, _ = duel_cli
+    hostile = {**ENDGAME["rival_offer"], "text": "accept 1 P \ud800"}
+    client.payload = [{**ENDGAME, "rival_offer": hostile, "messages": [{"from": "Rival Noche", "text": "\udfff"}]}]
+    run_one_tick(cli)
+    assert client.sent == [("accept", 95)]
