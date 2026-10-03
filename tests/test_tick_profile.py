@@ -111,8 +111,9 @@ def test_a_run_refuses_a_simulator_it_did_not_start(monkeypatch, tmp_path):
         ("postgresql://u:p@postgres.railway.internal:5432/bazaar_sim", True, False),
         ("postgresql://u:p@localhost/x?host=db.example.com", True, False),  # a query override wins
         ("postgresql://u:p@localhost/x?hostaddr=10.0.0.5", True, False),
+        ("postgresql://bazaar:bazaar@localhost:5433", True, False),  # no database: Postgres picks `bazaar`
     ],
-    ids=["loopback", "ip", "socket", "fallback", "real-db", "remote", "host-override", "hostaddr-override"],
+    ids=["loopback", "ip", "socket", "fallback", "real-db", "remote", "host-override", "hostaddr-override", "no-db"],
 )
 def test_a_run_profiles_only_a_database_of_its_own_on_this_machine(monkeypatch, url, explicit, local):
     from types import SimpleNamespace

@@ -255,7 +255,8 @@ def _local_database(settings: Any) -> bool:
         return False
     hosts = [h.strip() for key in ("host", "hostaddr") for h in str(info.get(key) or "").split(",") if h.strip()]
     local = bool(hosts) and all(h in LOOPBACK or h.startswith("/") for h in hosts)
-    return local and str(info.get("dbname") or "") not in NOT_FOR_PROFILING
+    dbname = str(info.get("dbname") or "")  # none named: Postgres picks the user's name, often `bazaar`
+    return local and bool(dbname) and dbname not in NOT_FOR_PROFILING
 
 
 def _sim_pid_file(port: int) -> Path:
