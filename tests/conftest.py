@@ -93,6 +93,21 @@ def no_shared_breakers():
 
 
 @pytest.fixture(autouse=True)
+def no_shared_buy_targets():
+    """The maker and the taker read the buy targets (`buy_targets.py`) of this process's database once per tick: the
+    suite reads an empty board instead (no Postgres connect per test; GUARDRAILS.md turns the targets on). Tests of
+    the targets install their own board."""
+    from bazaar_agent import buy_targets
+
+    old = buy_targets.install(buy_targets.TargetBoard(None))
+    yield
+    if old is None:
+        buy_targets._BOARD.pop("board", None)
+    else:
+        buy_targets.install(old)
+
+
+@pytest.fixture(autouse=True)
 def human_approval_off(request, monkeypatch):
     """`human_approval_above` (GUARDRAILS.md) refuses every big card trade without an approval in Postgres, and a
     missing database fails closed: the tests that predate it trade at their own prices. A test marked

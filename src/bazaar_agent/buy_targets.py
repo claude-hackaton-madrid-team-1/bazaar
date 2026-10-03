@@ -35,10 +35,14 @@ from bazaar_agent.breakers import CONNECT_TIMEOUT_S, TickBoard
 from bazaar_agent.guardrails import OFF_PAGE_RARITIES, Guardrails
 from bazaar_agent.intel import card_rarities
 
+GRANT_LOOKBACK_TICKS = 2000  # a grant older than this is not looked up: the ladder starts when the agent first saw it
+# The grant's tick: its `approval_granted` row, found through the (status, tick) index (`decisions_queue`) inside a
+# bounded tick range, and tied to this approval by its `until_tick` (a re-approve writes a new one).
 READ = (
     "select a.card, a.max_price, a.until_tick, coalesce(a.by, ''), (select max(d.tick) from decisions d "
-    "where d.agent = 'guard' and d.kind = 'approval_granted' and d.candidates->>'card' = a.card "
-    "and d.candidates->>'side' = 'buy' and d.tick <= %s) "
+    "where d.status = 'done' and d.tick <= %s and d.tick >= a.until_tick - %s "
+    "and d.agent = 'guard' and d.kind = 'approval_granted' and d.candidates->>'card' = a.card "
+    "and d.candidates->>'side' = 'buy' and d.candidates->>'until_tick' = a.until_tick::text) "
     "from human_approvals a where a.side = 'buy' and a.max_price is not null and a.until_tick > %s"
 )
 
@@ -79,7 +83,7 @@ class TargetBoard(TickBoard["tuple[TargetRow, ...] | None"]):
         return ()  # nobody ever approved anything on this database
 
     def query(self, conn: psycopg.Connection, tick: int) -> tuple[TargetRow, ...] | None:
-        rows = conn.execute(READ, (tick, tick)).fetchall()
+        rows = conn.execute(READ, (tick, GRANT_LOOKBACK_TICKS, tick)).fetchall()
         return tuple(
             TargetRow(str(r[0]), int(r[1]), int(r[2]), str(r[3]), None if r[4] is None else int(r[4])) for r in rows
         )

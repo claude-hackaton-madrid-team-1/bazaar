@@ -17,6 +17,7 @@ from bazaar_agent.approvals import Approval, ApprovalBook
 from bazaar_agent.buy_targets import BuyTarget, TargetBoard, TargetRow
 from bazaar_agent.guardrails import Action, Context, Guardrails, check
 from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.sdk import BazaarError
 from bazaar_sim import market, scoring
 from tests.agent_fakes import FakePublic, ask, bid, clock, rows
 from tests.simkit import manual_world
@@ -140,10 +141,11 @@ def test_an_epic_buy_at_or_above_our_value_minus_the_surplus_is_refused(kind):
         assert not verdict.allowed and any("off_page_min_surplus 10" in v for v in verdict.violations), verdict
 
 
+@pytest.mark.human_approval  # the real `_approval_violations` (tests/conftest.py)
 def test_an_approval_never_lifts_the_value_rule():
     rules = Guardrails(**ON, human_approval_above=1)
     book = ApprovalBook({(EPIC, "buy"): Approval(EPIC, "buy", 1000, None, 10_000)})
-    assert check(Action("bid", EPIC, "epic", CEILING), ctx(approvals=book), rules).allowed
+    assert check(Action("bid", EPIC, "epic", CEILING), ctx(approvals=book), rules).allowed  # the approval is read
     for price in (CEILING + 1, 200, 239):
         verdict = check(Action("bid", EPIC, "epic", price), ctx(approvals=book), rules)
         assert not verdict.allowed and "off_page_min_surplus" in str(verdict)
@@ -198,7 +200,8 @@ def test_the_board_reads_the_buy_approvals_and_their_grant_tick():
     found = TargetBoard(None).query(conn, TICK)  # type: ignore[arg-type]
     assert found == (TargetRow("LAV-11", 230, 340, "human:mcp", 100), TargetRow("SAL-11", 150, 300, "", None))
     sql, args = conn.args
-    assert args == (TICK, TICK) and "side = 'buy'" in sql and "approval_granted" in sql
+    assert args == (TICK, buy_targets.GRANT_LOOKBACK_TICKS, TICK) and "side = 'buy'" in sql
+    assert "d.status = 'done'" in sql and "approval_granted" in sql  # bounded on the (status, tick) index
     assert TargetBoard(None).read(TICK) is None and TargetBoard(None).no_table() == ()
 
 
@@ -213,7 +216,7 @@ def test_the_maker_bids_for_a_target_and_steps_it_up_to_the_ceiling(tmp_path, ta
     assert epic_posts(t) == [("list_offer", {"cash": FIRST}, {"cards": [EPIC]}, "rastro")]
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "post_bid" and r["inputs"]["ref"] == EPIC]
     assert row["status"] == "approved" and "buy target LAV-11 (epic) approved by human:mcp" in row["reason"]
-    assert "ladder step 0/5" in row["reason"] and "public" not in str(row["move"].get("to"))
+    assert "ladder step 0/5" in row["reason"] and "to" not in row["move"]  # public: any holder may take it
     price = FIRST
     for k, tick in enumerate(range(TICK + 6, TICK + 31, 6), start=1):
         t.sent.clear()
@@ -308,6 +311,42 @@ def test_the_taker_never_takes_a_target_ask_above_the_ceiling(tmp_path, targets,
     t = team()
     taker(tmp_path, t, board(ask(1, EPIC, price, maker="t07")), live=True, **ON)[0].on_tick(at(t, TICK))
     assert ("accept", 1) not in t.sent
+
+
+def test_the_human_max_binds_the_taker_below_our_value(tmp_path, targets):
+    targets.found = (order(max_price=150),)  # 160 + fee 9 = 169: the guardrails allow it, the order does not
+    t = team()
+    taker(tmp_path, t, board(ask(1, EPIC, 160, maker="t07")), live=True, **ON)[0].on_tick(at(t, TICK))
+    assert ("accept", 1) not in t.sent
+    t2 = team()
+    taker(tmp_path / "ok", t2, board(ask(1, EPIC, 140, maker="t07")), live=True, **ON)[0].on_tick(at(t2, TICK))
+    assert ("accept", 1) in t2.sent  # 140 + fee 8 = 148 <= 150
+
+
+def test_the_maker_bid_spend_does_not_block_the_taker_from_the_ask_that_replaces_it(tmp_path, targets):
+    targets.found = (order(),)
+    t = team(offers=[bid(4300, EPIC, 161, created=TICK - 2)])
+    tk, _ = taker(tmp_path, t, board(ask(1, EPIC, 180, maker="t07")), live=True, **ON)
+    tk.ledger.record("spend", TICK - 2, 1.45, 161, EPIC)  # the maker booked its bid (one shared ledger)
+    tk.on_tick(at(t, TICK))  # 161 + 190 > 250 if the bid's spend were counted twice
+    assert ("accept", 1) in t.sent
+
+
+def test_our_bid_is_withdrawn_before_the_accept_and_no_withdrawal_means_no_accept(tmp_path, targets):
+    targets.found = (order(),)
+    t = team(offers=[bid(4300, EPIC, 161, created=TICK - 2)])
+    taker(tmp_path, t, board(ask(1, EPIC, 180, maker="t07")), live=True, **ON)[0].on_tick(at(t, TICK))
+    assert t.sent.index(("cancel", 4300)) < t.sent.index(("accept", 1))  # a holder cannot take it meanwhile
+
+    class Taken(ValuedTeam):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            raise BazaarError("offer_not_open", "already accepted", 409)
+
+    t2 = Taken(values={EPIC: VALUE}, offers=[bid(4300, EPIC, 161, created=TICK - 2)])
+    tk, lines = taker(tmp_path / "taken", t2, board(ask(1, EPIC, 180, maker="t07")), live=True, **ON)
+    tk.on_tick(at(t2, TICK))  # a holder took our bid: one copy is coming, never a second
+    assert ("accept", 1) not in t2.sent and any("could not be withdrawn" in line for line in lines)
 
 
 def test_without_a_target_the_taker_ignores_an_epic_ask_and_page_cards_are_unchanged(tmp_path, targets):

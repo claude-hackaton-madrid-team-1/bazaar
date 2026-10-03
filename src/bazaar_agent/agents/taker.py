@@ -730,10 +730,12 @@ class Taker:
         skip_thread: int | None = None,
         skip_offer: int | None = None,
         unsettled: bool = True,
+        refund: int = 0,
     ) -> Context:
         """Live guardrail context; our open offers count (this tick's accepts and bids too, `_commit`),
         except the thread or bid this move replaces; and, unless `unsettled` is False, recent accepts
-        `/api/me` does not show yet."""
+        `/api/me` does not show yet. `refund`: the spend of the bid this move replaces that is still in this game
+        hour's window (`_bid_refund`), given back as its withdrawal will."""
         kept = [
             o
             for o in run.offers
@@ -745,7 +747,14 @@ class Taker:
             ctx = committed_context(ctx, self._unsettled)
         book = book_values(run.snap.catalog)
         trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
-        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
+        return replace(ctx, spent_last_hour=max(0, ctx.spent_last_hour + run.spent - refund), trades=trades)
+
+    def _bid_refund(self, run: _TickRun, bid: OpenOffer) -> int:
+        """The spend our bid gives back inside this game hour's window when withdrawn (`refund_row`, as the
+        withdrawal books it): its price, unless it was spent before the window."""
+        clock = run.snap.clock
+        row = refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
+        return bid.price if row[2] > clock.t_hours - 1.0 else 0
 
     def _commit(
         self,
@@ -2020,7 +2029,11 @@ class Taker:
         clock = run.snap.clock
         skip_thread = p.desk.conv.thread_id if p.desk else None
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
-        ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
+        # A buy target's ask replaces the maker's bid for the card: its spend comes back (the bid is withdrawn
+        # BEFORE the accept, so a holder cannot take it in the same tick and sell us a second copy).
+        target_bid = p.candidate.replaces_bid if p.candidate and buy_targets.off_page(p.rarity) else None
+        refund = self._bid_refund(run, target_bid) if target_bid is not None else 0
+        ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer, refund=refund)
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
         final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
@@ -2083,6 +2096,15 @@ class Taker:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
+        if target_bid is not None and not self._withdraw(run, target_bid, "taking an ask for it within its ceiling"):
+            try:
+                self.ledger.release_accept(clock.tick, p.ref)
+            except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on
+                self._accepts_stop = (
+                    f"our bid for {p.ref} could not be withdrawn; its slot could not be given back ({e})"
+                )
+            self.log(f"tick {clock.tick} taker: not accepting {p.ref}: our bid {target_bid.id} could not be withdrawn")
+            return False
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
         if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
             # Refused with a 4xx, so it cost nothing (RULES.md): the team's accept is free again, for the next
@@ -2107,7 +2129,12 @@ class Taker:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
         else:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
-            if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
+            if (
+                body is not None
+                and p.candidate is not None
+                and p.candidate.replaces_bid is not None
+                and target_bid is None
+            ):
                 self._withdraw(run, p.candidate.replaces_bid)
         self._commit(run, p.price, p.ref, skip_thread, maker, ask)
         # If /me already shows the accept paid, its cash counts twice for the rest of the tick: kept on purpose. It
@@ -2308,14 +2335,15 @@ class Taker:
             return False
         return fresh.tick == clock.tick and action_budget_s(fresh) > 0
 
-    def _withdraw(self, run: _TickRun, bid: OpenOffer) -> None:
-        """A cheaper ask filled the card our bid was waiting for: withdraw the bid, refund its spend."""
+    def _withdraw(self, run: _TickRun, bid: OpenOffer, why: str = "bought it cheaper") -> bool:
+        """A cheaper ask filled the card our bid was waiting for: withdraw the bid, refund its spend. True when
+        the cancel went through."""
         clock = run.snap.clock
         verdict = check(Action("cancel", str(bid.id)), self._ctx(run), self.rules)
         did = self.rec.decide(
             clock.tick,
             "cancel_bid",
-            f"cancel our bid {bid.id} for {bid.ref}: bought it cheaper · guardrails {verdict}",
+            f"cancel our bid {bid.id} for {bid.ref}: {why} · guardrails {verdict}",
             inputs={"offer_id": bid.id, "ref": bid.ref, "price": bid.price},
             reason="replaced",
             guardrail=str(verdict),
@@ -2323,12 +2351,14 @@ class Taker:
             status="approved" if verdict.allowed else "rejected",
         )
         if not verdict.allowed:  # the kill switch holds: the bid stays open and its spend stays counted
-            return
-        if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
-            self.ledger.record(
-                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
-            )
-            run.offers = [o for o in run.offers if o.get("id") != bid.id]
+            return False
+        if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is None:
+            return False
+        self.ledger.record(
+            *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
+        )
+        run.offers = [o for o in run.offers if o.get("id") != bid.id]
+        return True
 
     # ------------------------------------------------------------ threads from before a restart (bite X3)
 
