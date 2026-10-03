@@ -355,8 +355,13 @@ class LedgerStore(Protocol):
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
     def accept_items(self, tick: int) -> list[str]: ...
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
+    def release_accept(self, tick: int, item: str) -> None: ...
     def hands_off_ids(self) -> set[int]: ...
+
+
+RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
 
 
 class Ledger:
@@ -391,14 +396,30 @@ class Ledger:
         )
 
     def accepts_in_tick(self, tick: int) -> int:
-        return self.count_in_tick("accept", tick)
+        return len(self.accept_items(tick))
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
 
     def accept_items(self, tick: int) -> list[str]:
-        """What took this tick's accepts: a card ref, a pack id, or `duel:<id>`."""
-        return [str(e.get("item") or "") for e in self.entries() if e.get("kind") == "accept" and e.get("tick") == tick]
+        """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
+        return [item for item, _ in self.accept_rows(tick)]
+
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        """(item, price) of this tick's accepts, released ones left out."""
+        rows: list[tuple[str, int]] = []
+        for e in self.entries():
+            item = str(e.get("item") or "")
+            if e.get("tick") != tick:
+                continue
+            if e.get("kind") == "accept":
+                price = e.get("price")
+                rows.append((item, price if isinstance(price, int) and not isinstance(price, bool) else 0))
+            elif e.get("kind") == RELEASE:
+                gone = next((n for n, (it, _) in enumerate(rows) if it == item), None)
+                if gone is not None:
+                    del rows[gone]
+        return rows
 
     def hands_off_ids(self) -> set[int]:
         """Offer ids a person posted by hand (`HANDS_OFF` listing rows)."""
@@ -415,6 +436,18 @@ class Ledger:
                     return False
                 self.record("accept", tick, t_hours, price, item)
                 return True
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def release_accept(self, tick: int, item: str) -> None:
+        """Give back a reserved accept the game refused: a refused request costs nothing and moves nothing
+        (RULES.md), so the team's accept of this tick is still free. Append-only: a RELEASE row."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if item in self.accept_items(tick):
+                    self.record(RELEASE, tick, 0.0, 0, item)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 

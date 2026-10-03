@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
@@ -63,11 +64,13 @@ from bazaar_agent.agents.seller import (
     Listing,
     OfferError,
     bid_listing,
+    committed_context,
     offers_in,
     open_commitments,
     post,
     sell_listing,
     trade_book,
+    unsettled_accepts,
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
@@ -190,6 +193,16 @@ def plan_offers(
     return cancels + reprices + posts
 
 
+@dataclass(frozen=True)
+class _Bid:
+    """One of our board bids as last seen: what a lapse would refund, and how many copies of its card we held
+    then (more copies later means it filled)."""
+
+    offer: OpenOffer
+    held: int
+    seen_tick: int
+
+
 @dataclass
 class _MakerRun:
     snap: Snapshot
@@ -235,6 +248,12 @@ class Maker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.market = market  # agents.venue_keeper.VenueKeeper: our venue and its broker; None = no venue
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
+        # Lapsed bids (bite X15): a bid's cash is booked as spend when posted, so one that expires unfilled
+        # must give it back, or every repost books it again. Live only; memory only (a restart forgets: no
+        # refund, over-counts).
+        self._bids: dict[int, _Bid] = {}  # our board bids seen open (or posted) last tick
+        self._lapsing: dict[int, _Bid] = {}  # gone at or after expiry without the card: refunded next tick
+        self._spent_at: dict[int, tuple[int, float]] = {}  # bid id -> (tick, t_hours) of the spend we booked
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
@@ -261,6 +280,7 @@ class Maker:
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
         mine, total = our_open_offers(snap.offers, snap.us)
+        self._lapsed_bids(snap, mine)
         stops = kill_switch(self.rules)
         if stops:
             if self.hub is not None:
@@ -283,7 +303,10 @@ class Maker:
         run = _MakerRun(
             snap,
             window,
-            context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+            committed_context(  # an accept of the last ticks /api/me does not show yet counts (bite X18)
+                context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+                unsettled_accepts(snap.me, self.ledger, clock.tick),
+            ),
             offers_in(snap.offers),
             total,
             max(0, clock.limits.offers_per_team_per_tick - listed),
@@ -365,7 +388,14 @@ class Maker:
         )
 
     def _refund(self, run: _MakerRun, offer: OpenOffer) -> LedgerRow:
-        clock = run.snap.clock
+        return self._refund_at(offer, run.snap.clock)
+
+    def _refund_at(self, offer: OpenOffer, clock: Clock) -> LedgerRow:
+        """A bid's refund, dated exactly at its spend when this process booked it (it then leaves the hour's
+        window with it), else at `refund_row`'s conservative date (from its created tick)."""
+        if offer.id in self._spent_at:
+            tick, t_hours = self._spent_at[offer.id]
+            return ("spend", tick, t_hours, -offer.price, offer.ref)
         return refund_row(offer.price, offer.ref, offer.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
 
     def _refunded(self, run: _MakerRun, offer: OpenOffer) -> int:
@@ -408,6 +438,7 @@ class Maker:
             if offer.side == "bid":  # a bid's cash was counted as spend when posted: give it back
                 self.ledger.record(*self._refund(run, offer))
         run.spent -= self._refunded(run, offer)  # `base` was read before the refund: later checks see it here
+        self._forget(offer.id)  # after `_refunded`, which dates the refund as the ledger row above
         run.offers = [o for o in run.offers if o.get("id") != offer.id]
         run.open_total -= 1
         return True
@@ -517,6 +548,8 @@ class Maker:
             if t.side == "bid":
                 self.ledger.record("spend", tick, run.snap.clock.t_hours, t.price, t.ref)
             offer_id = body.get("id") if body is not None and isinstance(body.get("id"), int) else None
+            if t.side == "bid" and offer_id is not None:
+                self._remember(run, offer_id, t)
             applied = advice is not None and (candidates or {}).get(advice.verdict) == t.price
             if self.jev is not None and offer_id is not None and applied:  # judged only on the price it set
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
@@ -651,3 +684,95 @@ class Maker:
         if hold:
             self.jev.watch.watch(offer.id, advice, REPRICE_QUESTION, offer.expires_tick)
         return hold, advice
+
+    # ------------------------------------------------------------ bids that lapse unfilled (bite X15)
+
+    def _remember(self, run: _MakerRun, offer_id: int, t: Target) -> None:
+        clock = run.snap.clock
+        expires = clock.tick + self.config.offer_ttl_ticks
+        offer = OpenOffer(offer_id, "bid", t.ref, t.price, "", None, expires, clock.tick)
+        self._bids[offer_id] = _Bid(offer, _held(run.snap.me)[t.ref], clock.tick)
+        self._spent_at[offer_id] = (clock.tick, clock.t_hours)
+
+    def _forget(self, offer_id: int) -> None:
+        self._bids.pop(offer_id, None)
+        self._lapsing.pop(offer_id, None)
+        self._spent_at.pop(offer_id, None)
+
+    def _lapsed_bids(self, snap: Snapshot, mine: list[OpenOffer]) -> None:
+        """Give back the spend of our board bids that lapsed unfilled. A bid gone from `/api/me/offers` before
+        its `expires_tick` filled or was cancelled (whoever cancelled booked the refund): nothing to do. One
+        gone at or after it, while the card did not come (`/api/me`) and no settlement of it shows in the
+        feed, is checked once more on the next tick (an accept settles on the next tick) and then refunded,
+        dated at its spend. A missed refund over-counts (today's behaviour); a wrong one could under-count,
+        so every doubt keeps the spend."""
+        if not self.live:
+            return
+        clock, held = snap.clock, _held(snap.me)
+        paused = bool(kill_switch(self.rules))  # PAUSE + `bazaar flatten` cancels (and refunds) our bids
+        # A cancel by another process shows only in the feed: without this tick's live window, no refund.
+        feed_ok = bool(getattr(self.feed, "window_ok", True))
+        present = {
+            o.get("id") for o in offers_in(snap.offers) if o.get("status") in (None, "open", "queued", "accepted")
+        }
+        for oid, bid in list(self._lapsing.items()):
+            if bid.seen_tick >= clock.tick:
+                continue
+            ref = bid.offer.ref
+            del self._lapsing[oid]
+            if oid in present:  # listed again (a read that missed it): alive, nothing to give back
+                self._bids[oid] = bid
+                continue
+            if (
+                held[ref] <= bid.held
+                and not _settled_to_us(snap.events, ref, bid.offer.created_tick, snap.us)
+                and not _cancelled(snap.events, oid)
+                and not paused
+                and feed_ok
+            ):
+                self.ledger.record(*self._refund_at(bid.offer, clock))
+                self.log(f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded")
+            self._spent_at.pop(oid, None)
+        for oid, bid in self._bids.items():
+            if oid in present or oid in self._lapsing:
+                continue
+            expires = bid.offer.expires_tick
+            if isinstance(expires, int) and clock.tick >= expires and held[bid.offer.ref] <= bid.held:
+                self._lapsing[oid] = replace(bid, seen_tick=clock.tick)
+            else:
+                self._spent_at.pop(oid, None)
+        known = self._bids
+        self._bids = {  # the server's view of each open bid; the copies held when it was first seen
+            o.id: _Bid(o, known[o.id].held if o.id in known else held[o.ref], clock.tick)
+            for o in mine
+            if o.side == "bid"
+        }
+
+
+def _held(me: dict[str, Any]) -> Counter[str]:
+    return Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "card")
+
+
+def _settled_to_us(events: Iterable[dict[str, Any]], ref: str, since_tick: int | None, us: str) -> bool:
+    """A settlement in the feed that gave us a copy of `ref` since `since_tick`: the bid may have filled."""
+    for e in events:
+        p = e.get("payload")
+        if e.get("type") != "settlement" or not isinstance(p, dict) or not isinstance(p.get("items"), list):
+            continue
+        tick = e.get("tick")
+        if since_tick is not None and isinstance(tick, int) and tick < since_tick:
+            continue
+        if any(i.get("to") == us and i.get("ref") == ref for i in p["items"] if isinstance(i, dict)):
+            return True
+    return False
+
+
+def _cancelled(events: Iterable[dict[str, Any]], offer_id: int) -> bool:
+    """A cancel of the offer in the feed: whoever cancelled it (`bazaar flatten`, the desk, the taker) booked its
+    refund. The live server emits no `offer.cancelled` for an expiry (the simulator does, with reason
+    "expired"), so a bid that lapsed has none."""
+    for e in events:
+        p = e.get("payload")
+        if e.get("type") == "offer.cancelled" and isinstance(p, dict) and p.get("offer") == offer_id:
+            return p.get("reason") != "expired"
+    return False

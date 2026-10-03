@@ -30,6 +30,18 @@ ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer 
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def cost_nothing(code: str | None, status: int | None) -> bool:
+    """A refusal that gave the team's accept back: a 4xx (RULES.md: a refused request "costs nothing and moves
+    nothing") other than KEEPS_THE_ACCEPT. A 5xx is not one: the game may have applied it before failing."""
+    return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
+
+
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -116,6 +128,7 @@ class MarketFeed:
         self._loaded_store = False
         self._db_down = False
         self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+        self.window_ok = False  # the last `events()` read the live window: its newest events are in
 
     def _from_db(self) -> bool:
         if self._connect is None:
@@ -154,7 +167,9 @@ class MarketFeed:
             window = self._read_window(DEFAULT_WINDOW)
             for event in window:
                 self._events[event["id"]] = event
+            self.window_ok = True
         except Exception as e:
+            self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         if self._archive and from_db:
             self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
