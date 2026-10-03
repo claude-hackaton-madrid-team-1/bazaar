@@ -247,3 +247,22 @@ def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cl
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert order == ["reserve", "jev"] and client.sent == [("accept", 95)]  # booked once, before Jev, then sent
+
+
+def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monkeypatch):
+    """r2 bite B2b: a duel row that makes the policy raise skips that duel only."""
+    from bazaar_agent.agents import duelist
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "duel": 94}, {**LIVE, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    real = duelist.duel_move
+
+    def flaky(d, *a, **kw):
+        if d.get("duel") == 94:
+            raise ValueError("malformed row")
+        return real(d, *a, **kw)
+
+    monkeypatch.setattr(duelist, "duel_move", flaky)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "duel 94: skipped this tick (ValueError)" in result.output and client.sent[0][:2] == ("say", 95)

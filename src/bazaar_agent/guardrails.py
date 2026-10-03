@@ -362,17 +362,20 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
-        v.extend(_duel_limit_violations(action, rules.duel_policy == "v2" and rules.duel_days_signed))
+        v2 = rules.duel_policy == "v2"
+        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     return Verdict(not v, tuple(v))
 
 
-def _duel_limit_violations(action: Action, signed: bool = False) -> list[str]:
+def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:
     """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
     after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here.
-    `signed` (`duel_days_signed`, v2 only): the weight is primas gained (+) or lost (−) per day instead."""
+    `signed` (`duel_days_signed`, v2 only): the weight is primas gained (+) or lost (−) per day instead.
+    `zero_days_free` (v2 only): 0 days cost nothing under either sign, so a missing weight does not block them."""
     if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
         return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
-    if action.days is not None and action.days_weight is None:
+    missing = action.days is not None and action.days_weight is None
+    if missing and (action.days or not zero_days_free):  # v2: 0 days cost nothing whatever the weight (B2c)
         return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
     if action.days is not None and not duel_days_ok(action.days):
         return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
