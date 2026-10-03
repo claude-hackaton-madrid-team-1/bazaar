@@ -115,7 +115,7 @@ def test_the_sal07_incident_replayed_through_the_cli_is_refused(run):
     assert out["k"] == 0.053 and out["copy_origin"] == "team" and out["copy_from"] == "t02"
     assert out["breaks_complete_page"] is True and out["team_trade"] is False and out["facts_read"] is True
     assert out["verdict"] == "refuse"
-    assert out["approve"] == "uv run bazaar approve SAL-07 --sell --min 29"
+    assert out["approve"] == "uv run bazaar approve SAL-07 --sell --min 29 --ttl-ticks 10"
     assert (out["card"], out["asset"], out["value"], out["counterparty"]) == ("SAL-07", 438, 118.6, "pilar")
     assert reads.sent == ["GET /api/me"] and reads.facts_ticks == [947]  # one game read, the tick from /me
 
@@ -129,7 +129,8 @@ def test_the_incident_in_words_names_the_origin_the_page_and_the_approval(run):
     assert "asset 438 · your_value 118.6 · bought from t02 for 23 at tick 320" in text
     assert "BREAKS A COMPLETE PAGE" in text
     assert "the guard would refuse this (score impact -4.70 < -0.2 = -max_score_loss_per_move)" in text
-    assert "approve it first with `uv run bazaar approve SAL-07 --sell --min 29`" in text
+    assert "approve it first with `uv run bazaar approve SAL-07 --sell --min 29 --ttl-ticks 10`" in text
+    assert "protect_page_sets and the others still apply" in text
     assert result.stderr == ""  # the facts were read: nothing to note
 
 
@@ -138,7 +139,9 @@ def test_a_swap_prices_the_copy_we_give_at_what_we_receive(run):
     assert out["side"] == "swap" and out["counterparty"] == "t05" and out["team_trade"] is True
     assert out["neg_points_delta"] == pytest.approx(40 - 118.6)
     assert out["score_delta"] == pytest.approx(-78.6 * 0.053, abs=1e-3)  # as_state() rounds to 3 decimals
-    assert out["verdict"] == "refuse" and out["approve"] == "uv run bazaar approve SAL-07 --sell --min 40"
+    assert (
+        out["verdict"] == "refuse" and out["approve"] == "uv run bazaar approve SAL-07 --sell --min 40 --ttl-ticks 10"
+    )
 
 
 # ---------------------------------------------------------------- what the guard lets through

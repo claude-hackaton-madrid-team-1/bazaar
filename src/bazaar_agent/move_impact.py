@@ -19,6 +19,7 @@ Pure: no network, no database. `impact_board.py` reads the tape and the snapshot
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from statistics import median
@@ -35,6 +36,7 @@ MIN_JUMP = 5.0  # neg_points: a smaller change hides in the board's own drift
 LAG_TICKS = 12  # the board's `negotiating` follows neg_points at its next update (every 10 ticks)
 RECENT_EVENTS = 3  # the slope is the median of this many most recent measured changes
 MAX_SLOPE = 1.0  # a measured slope above this is noise (another component moved too), never used
+TAPE_LAG_TICKS = 3  # a tape whose newest event is older than this (in ticks) may miss our latest settlements
 
 
 @dataclass(frozen=True)
@@ -88,14 +90,16 @@ def origins(settlements: Iterable[Mapping[str, Any]], team: str) -> dict[int, Or
     return out
 
 
-def origin_of(asset: int | None, known: Mapping[int, Origin] | None, team: str | None) -> Origin:
+def origin_of(asset: int | None, known: Mapping[int, Origin] | None, team: str | None, current: bool = True) -> Origin:
     """`known` None: the tape was not read (unknown). A copy no settlement brought us is our starting stock or
-    came from a pack, a gift or a craft: not a team trade."""
+    came from a pack, a gift or a craft: not a team trade; unknown when the tape is not `current` (it may miss it)."""
     if asset is None or known is None:
         return UNKNOWN
     if asset in known:
         return known[asset]
-    return Origin("start") if team and starting_copy(team, asset) else Origin("pack")
+    if team and starting_copy(team, asset):
+        return Origin("start")
+    return Origin("pack") if current else UNKNOWN
 
 
 # ---------------------------------------------------------------- k: score per neg_point
@@ -111,7 +115,8 @@ class ScorePoint:
 @dataclass(frozen=True)
 class Slope:
     """Board `negotiating` per neg_point, measured apart for losses and gains: the board is relative to the
-    other teams, so a gain while we lead in neg_points moved it by ~0 (ticks 376-386) and a loss by 0.048."""
+    other teams, so a gain while we lead in neg_points moved it by ~0 (ticks 376-386) and a loss by 0.048. The loss
+    slope is never below the fallback: a read board is never weaker than the unread worst case."""
 
     loss: float
     gain: float
@@ -123,7 +128,8 @@ class Slope:
 
     def describe(self, delta: float) -> str:
         n = self.loss_events if delta < 0 else self.gain_events
-        return f"k {self.k(delta):.3f} ({f'{n} measured change(s)' if n else 'fallback'})"
+        floor = ", never below the fallback" if n and delta < 0 else ""
+        return f"k {self.k(delta):.3f} ({f'{n} measured change(s){floor}' if n else 'fallback'})"
 
 
 def fallback_slope(fallback: float) -> Slope:
@@ -133,8 +139,10 @@ def fallback_slope(fallback: float) -> Slope:
 def slope(points: Sequence[ScorePoint], fallback: float) -> Slope:
     """k from our /me snapshots: each neg_points change of at least `MIN_JUMP`, against the board's
     `negotiating` change at its next update (within `LAG_TICKS`; changes inside one update are merged), the
-    median of the `RECENT_EVENTS` latest per sign. No measured change of a sign: `fallback`."""
-    pts = sorted({p.tick: p for p in points}.values(), key=lambda p: p.tick)
+    median of the `RECENT_EVENTS` latest per sign. No measured change of a sign: `fallback`; a loss slope is never
+    below it (noise on the board must not switch the guard off)."""
+    finite = (p for p in points if math.isfinite(p.neg_points) and math.isfinite(p.negotiating))
+    pts = sorted({p.tick: p for p in finite}.values(), key=lambda p: p.tick)
     measured: list[tuple[float, float]] = []  # (delta neg_points, delta negotiating)
     i = 1
     while i < len(pts):
@@ -158,7 +166,7 @@ def slope(points: Sequence[ScorePoint], fallback: float) -> Slope:
         return (round(median(recent), 4), len(recent)) if recent else (fallback, 0)
 
     (loss, n_loss), (gain, n_gain) = k_of(-1), k_of(1)
-    return Slope(loss, gain, n_loss, n_gain)
+    return Slope(max(loss, fallback), gain, n_loss, n_gain)
 
 
 # ---------------------------------------------------------------- our cards (from /me)
@@ -197,13 +205,17 @@ def our_cards(me: Mapping[str, Any]) -> OurCards:
             a.get("rarity") if isinstance(a.get("rarity"), str) else None,
             float(a["your_value"]) if _number(a.get("your_value")) else None,
         )
-        for a in me.get("assets") or []
+        for a in _list(me.get("assets"))
         if isinstance(a, Mapping) and a.get("kind", "card") == "card" and isinstance(a.get("id"), int)
     )
     album = me.get("album")
-    pages = (album.get("pages") or []) if isinstance(album, Mapping) else []
+    pages = _list(album.get("pages")) if isinstance(album, Mapping) else []
     complete = frozenset(str(p.get("set")) for p in pages if isinstance(p, Mapping) and p.get("complete") is True)
     return OurCards(team if isinstance(team, str) and TEAM_ID.match(team) else None, copies, complete)
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _number(value: Any) -> bool:
@@ -226,9 +238,19 @@ class Facts:
     team: str
     origins: Mapping[int, Origin]
     points: tuple[ScorePoint, ...] = ()
+    tick: int | None = None  # the tick these were read for
+    tape_tick: int | None = None  # the newest event the tape holds
 
     def slope(self, fallback: float) -> Slope:
         return slope(self.points, fallback)
+
+    @property
+    def tape_current(self) -> bool:
+        """The tape reaches this tick (within `TAPE_LAG_TICKS`): a copy it does not explain is not a team buy.
+        Facts built without both ticks (tests, the CLI's fakes) count as current."""
+        if self.tick is None:
+            return True
+        return self.tape_tick is not None and self.tick - self.tape_tick <= TAPE_LAG_TICKS
 
 
 @dataclass(frozen=True)
@@ -317,7 +339,8 @@ def _reason(
     ladder: float,
     breaks: bool,
 ) -> str:
-    to = f"{'to' if side == 'sell' else 'from'} {'team ' if team_trade else 'dealer '}{who or '?'}"
+    party = (f"team {who}" if team_trade else f"dealer {who}") if who else "a dealer"
+    to = f"{'to' if side == 'sell' else 'from'} {party}"
     if side == "buy":
         why = "a team trade at private values" if team_trade else "a dealer deal: no neg_points"
         what = f"buy {ref} at {price:g} {to}: {why}; neg_points {dn:+.1f} (value {value:g} - price)"
@@ -359,11 +382,12 @@ def sell_impact(
         facts = None
     slope_ = facts.slope(fallback) if facts is not None else fallback_slope(fallback)
     known = facts.origins if facts is not None else None
+    current = facts.tape_current if facts is not None else False
     held = cards.of(ref) if cards is not None else []
     candidates = [c for c in held if c.asset == asset] if asset is not None else held
     breaks = breaks_page(ref, rarity, len(held), cards.complete) if cards is not None else False
     if not candidates:  # /me does not show the copy: the caller's value, its asset's origin if any
-        origin = origin_of(asset, known, team or (facts.team if facts else None))
+        origin = origin_of(asset, known, team or (facts.team if facts else None), current)
         return estimate("sell", ref, price, value, counterparty, slope_, ladder, origin, asset, breaks)
     impacts = [
         estimate(
@@ -374,7 +398,7 @@ def sell_impact(
             counterparty,
             slope_,
             ladder,
-            origin_of(c.asset, known, team),
+            origin_of(c.asset, known, team, current),
             c.asset,
             breaks,
         )

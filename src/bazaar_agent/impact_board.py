@@ -1,7 +1,8 @@
 """The score impact guard's inputs (`move_impact.Facts`), read from Postgres once per tick per process.
 
 How we got each copy we hold comes from our settlements in `feed_events` (the tape every agent stores), and k from
-our `me_snapshots` score history (`neg_points`, `negotiating`). "Us" is the team of the newest snapshot. One
+our `me_snapshots` score history (`neg_points`, `negotiating`). "Us" is the team of the newest snapshot (one
+database per world: a simulator never writes the shared one, `config.require_database_url`). One
 `TickBoard` read on a worker thread with a deadline (`breaker_read_timeout_s`): a failed or slow read answers None,
 and the guard then prices every sale at the worst case (fail closed): each copy as bought from a team, k at its
 fallback. `sell_state` is the same estimate for a decider's state (judge input).
@@ -26,6 +27,7 @@ POINTS = (
     "where world = %s and team = %s and tick > %s and score ? 'neg_points' and score ? 'negotiating' order by tick"
 )
 SETTLEMENTS = "select payload from feed_events where type = 'settlement' and payload->'parties' ? %s order by id"
+TAPE_TICK = "select max(tick) from feed_events"
 
 
 def read_facts(conn: psycopg.Connection, tick: int) -> mi.Facts | None:
@@ -37,7 +39,9 @@ def read_facts(conn: psycopg.Connection, tick: int) -> mi.Facts | None:
     rows = conn.execute(POINTS, (world, team, tick - WINDOW_TICKS)).fetchall()
     points = tuple(mi.ScorePoint(int(r[0]), float(r[1]), float(r[2])) for r in rows if None not in r)
     settlements = [r[0] for r in conn.execute(SETTLEMENTS, (team,)).fetchall() if isinstance(r[0], dict)]
-    return mi.Facts(team, mi.origins(settlements, team), points)
+    newest = conn.execute(TAPE_TICK).fetchone()
+    tape_tick = newest[0] if newest is not None and isinstance(newest[0], int) else None
+    return mi.Facts(team, mi.origins(settlements, team), points, tick, tape_tick)
 
 
 class ImpactBoard(TickBoard["mi.Facts | None"]):

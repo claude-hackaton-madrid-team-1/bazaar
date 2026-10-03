@@ -84,8 +84,17 @@ def test_the_slope_before_the_incident_is_the_fallback_and_after_it_the_measured
     assert (before.loss, before.loss_events) == (0.053, 0)
     assert before.gain == pytest.approx(0.67 / 44.3, abs=1e-4)  # 376: +44.3 neg_points, board +0.67 at 380
     after = mi.slope(points(960), 0.053)
-    assert after.loss == pytest.approx(4.27 / 89.6, abs=1e-4)  # 948: -89.6, board -4.27 at 950
-    assert after.loss_events == 1
+    assert after.loss_events == 1  # 948: -89.6, board -4.27 at 950: 0.048 measured
+    assert after.loss == 0.053  # never below the fallback: a read board is never weaker than an unread one
+
+
+def test_a_steeper_measured_loss_slope_is_used_and_board_noise_cannot_switch_the_guard_off():
+    steep = [mi.ScorePoint(1, 100, 20), mi.ScorePoint(2, 90, 20), mi.ScorePoint(10, 90, 19)]
+    assert mi.slope(steep, 0.053).loss == pytest.approx(0.1)
+    noise = [mi.ScorePoint(1, 100, 20), mi.ScorePoint(2, 90, 20), mi.ScorePoint(10, 90, 19.99)]
+    assert mi.slope(noise, 0.053).loss == 0.053  # 0.001 measured: floored
+    nan = [mi.ScorePoint(1, 100, 20), mi.ScorePoint(2, float("nan"), 20), mi.ScorePoint(10, 90, 19)]
+    assert mi.slope(nan, 0.053).loss == pytest.approx(0.1)  # the NaN point is dropped, not a 0 slope
 
 
 def test_incident_replay_selling_sal07_to_pilar_at_29_costs_about_4_7():
@@ -119,6 +128,16 @@ def test_unread_facts_price_the_copy_as_bought_from_a_team():
     assert impact.score == pytest.approx((90 - 177.1) * 0.053 + 0.05)
     above = mi.sell_impact(mi.our_cards(me_at_947()), "SAL-10", "rare", 180, None, None, 0.053, 0.05)
     assert above.score is not None and above.score > 0
+
+
+def test_a_lagging_tape_cannot_say_a_copy_came_from_a_pack():
+    me = {"id": "t01", "assets": [{"id": 777, "kind": "card", "ref": "LAV-02", "rarity": "common", "your_value": 40}]}
+    current = mi.Facts("t01", {}, (), tick=960, tape_tick=959)
+    assert mi.sell_impact(mi.our_cards(me), "LAV-02", "common", 10, None, current, 0.053, 0.05).origin.kind == "pack"
+    lagging = mi.Facts("t01", {}, (), tick=960, tape_tick=950)
+    impact = mi.sell_impact(mi.our_cards(me), "LAV-02", "common", 10, None, lagging, 0.053, 0.05)
+    assert impact.assumed and impact.score == pytest.approx((10 - 40) * 0.053 + 0.05)
+    assert not mi.Facts("t01", {}, (), tick=960).tape_current  # no tape at all
 
 
 def test_facts_of_another_team_are_not_ours():
@@ -157,6 +176,8 @@ def test_our_cards_tolerates_a_hostile_me():
     cards = mi.our_cards({"id": "t01\n", "assets": [{"id": "x"}, None, {"id": 3, "your_value": True}], "album": []})
     assert cards.team is None and cards.copies == (mi.Copy(3, "None", None, None),)
     assert cards.complete == frozenset()
+    odd = mi.our_cards({"id": "t01", "assets": 5, "album": {"pages": {"set": "SAL", "complete": True}}})
+    assert odd.copies == () and odd.complete == frozenset()
 
 
 def test_as_state_is_what_a_decider_reads():

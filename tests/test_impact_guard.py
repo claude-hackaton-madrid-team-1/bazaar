@@ -41,6 +41,7 @@ def test_the_incident_sale_is_refused_and_a_human_is_asked(asked):
     assert not verdict.allowed
     (why,) = verdict.violations
     assert why.startswith("score impact -4.70 < -0.2")
+    assert "to a dealer" in why and "?" not in why
     assert "bought from t02 for 23" in why and why.endswith("needs human approval: SAL-07 sell 29")
     assert asked[0]["card"] == "SAL-07" and asked[0]["side"] == "sell" and asked[0]["score_impact"] == -4.7
 
@@ -118,7 +119,7 @@ class FakeConn:
         return self
 
     def fetchone(self):
-        return self.us
+        return (958,) if "max(tick)" in self.sql[-1][0] else self.us
 
     def fetchall(self):
         sql = self.sql[-1][0]
@@ -131,6 +132,7 @@ def test_read_facts_reads_our_snapshots_and_settlements():
     conn = FakeConn()
     facts = impact_board.read_facts(conn, 960)  # type: ignore[arg-type]
     assert facts is not None and facts.team == "t01" and facts.origins[438].frm == "t02"
-    assert facts.slope(0.053).loss == pytest.approx(4.27 / 89.6, abs=1e-4)
+    assert facts.slope(0.053).loss_events == 1 and facts.slope(0.053).loss == 0.053  # 0.048 measured, floored
+    assert (facts.tick, facts.tape_tick, facts.tape_current) == (960, 958, True)
     assert conn.sql[1][1] == ("real", "t01", 960 - impact_board.WINDOW_TICKS)
     assert impact_board.read_facts(FakeConn(us=None), 960) is None  # type: ignore[arg-type]

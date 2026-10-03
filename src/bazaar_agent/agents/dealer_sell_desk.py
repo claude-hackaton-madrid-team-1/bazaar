@@ -667,6 +667,7 @@ def standard_hooks(
     from bazaar_agent.agents.inspector import CardIndex
     from bazaar_agent.guardrails import Action, action_kind, check, kill_switch
     from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.official_values import unread_only
 
     cards = CardIndex.from_catalog(catalog)
     topic = sell_topic(cand.asset_id)
@@ -686,6 +687,8 @@ def standard_hooks(
             asset=cand.asset_id,  # the score impact rule prices this copy, not the worst copy of the card
         )
         verdict = check(action, ctx, rules)
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
+            raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(price: int, clock: Any) -> bool | None:

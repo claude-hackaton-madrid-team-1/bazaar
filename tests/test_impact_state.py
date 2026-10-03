@@ -151,3 +151,19 @@ def test_the_dealer_sell_guard_prices_the_exact_copy_it_sells(tmp_path, monkeypa
     t.hooks.guard("dealer_sell", 20)
     t.hooks.guard("accept_sell", 14)
     assert [(a.kind, a.item, a.asset) for a in seen] == [("dealer_sell", "LAV-08", 8), ("accept_sell", "LAV-08", 8)]
+
+
+def test_the_dealer_sell_guard_holds_when_only_the_approvals_were_unreadable(tmp_path, monkeypatch):
+    import pytest
+
+    from bazaar_agent import approvals
+    from bazaar_agent.agents.dealer import Hold
+
+    unread = gr.Verdict(False, (f"needs human approval: LAV-08 sell 20 {approvals.UNREAD}",))
+    monkeypatch.setattr(gr, "check", lambda action, ctx, rules: unread)
+    t, _ = talk(tmp_path, FakeTeam(), floor=14)
+    with pytest.raises(Hold):  # nothing sent, the thread stays open: never a walk on a database blip
+        t.hooks.guard("dealer_sell", 20)
+    monkeypatch.setattr(gr, "check", lambda action, ctx, rules: gr.Verdict(False, ("sell price 20 < 1.0 × 30",)))
+    other, _ = talk(tmp_path, FakeTeam(), floor=14)  # the guard binds `check` when it is built
+    assert other.hooks.guard("dealer_sell", 20) == "sell price 20 < 1.0 × 30"  # any other refusal still walks

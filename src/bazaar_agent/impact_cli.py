@@ -247,8 +247,14 @@ def _verdict(side: str, estimate: mi.Impact, rules: Guardrails) -> str:
     return "refuse"
 
 
+APPROVE_TTL_TICKS = 10  # an approval covers every sale of the card at or above its min until it lapses: keep it short
+
+
 def _approve(estimate: mi.Impact) -> str:
-    return f"uv run bazaar approve {estimate.ref} --sell --min {math.floor(estimate.price)}"
+    return (
+        f"uv run bazaar approve {estimate.ref} --sell --min {math.floor(estimate.price)} "
+        f"--ttl-ticks {APPROVE_TTL_TICKS}"
+    )
 
 
 def _payload(
@@ -315,7 +321,10 @@ def _verdict_line(verdict: str, estimate: mi.Impact, rules: Guardrails) -> str:
     if verdict == "refuse":
         cost = "cannot be estimated" if estimate.score is None else f"{score} < -{bar:g} = -max_score_loss_per_move"
         refuse = "[bold red]the guard would refuse this[/bold red]"
-        return f"{refuse} (score impact {cost}): approve it first with `{_approve(estimate)}`"
+        return (
+            f"{refuse} (score impact {cost}): approve it first with `{_approve(estimate)}` "
+            "(this rule only: sell_min_value_ratio, protect_page_sets and the others still apply)"
+        )
     return {
         "within": f"[green]within max_score_loss_per_move[/green] ({score} >= -{bar:g})",
         "off": "max_score_loss_per_move is 0 (off): the guard does not check the score impact",
