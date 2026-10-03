@@ -327,3 +327,21 @@ config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` wa
 then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
+Its bundle (`LiveFeed`, `EventLine`, `useEvents`) seeds from `GET /api/feed?limit=150` and follows
+`/api/events/stream?scope=public` (limit 200), one line per event type. So our capture already sees it all.
+Types that matter for blockers, not yet seen live: `persona.cooloff {persona, team, until_tick}` ("sent Team X
+away until T…"), `persona.strike {persona, team, kinds, strikes}`, `day.closed {reopens}`. Organiser news
+reaches teams as `announcement` (the `/api/admin/news` routes are admin-only). `bazaar learnings` reads them.
+
+### [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
+`BAZAAR_SIM=local` with `DATABASE_URL` unset still connects to `localhost:5433` (`bazaar-db`), which holds an
+old copy of the REAL feed: the agents merge real `feed_events` with the simulator's window, and the ids
+collide. For an end-to-end sim run, set `BAZAAR_SIM_DATABASE_URL` to a sim database or stop `bazaar-db`.
+
+### [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
+Rude words drove sim Abuela to `cooloff` in 3 messages (tick 5 → `until_tick` 25). The thread shows
+`closed_reason: cooloff`, `persona.cooloff` carries `until_tick: 25`, and a re-open is refused `cooloff` with
+`extra.until_tick`. The live taker then logged `skip abuela for LAT-08: abuela cooloff with us until T25`
+for ticks 6–8 instead of sending a refused `open_thread`.

@@ -138,8 +138,9 @@ footer { color: var(--muted); font-size: 13px }
       <text x="1608" y="176" class="s">bazaar-taker, -maker: LIVE ✓</text>
       <text x="1608" y="204" class="s">phoenix (auth) · Postgres ✓</text>
       <text x="1608" y="232" class="s">monitor: CLI only (service removed)</text>
-      <text x="1608" y="260" class="s">bazaar-mcp ✓ · bazaar-sim ✓ (#55) ✓</text>
-      <text x="1608" y="288" class="s">bazaar-live: deployed (voiced show) ✓</text>
+      <text x="1608" y="260" class="s">taker archives the feed window ✓</text>
+      <text x="1608" y="288" class="s">bazaar-mcp ✓ · bazaar-sim ✓ (#55) ✓</text>
+      <text x="1608" y="316" class="s">bazaar-live: deployed (voiced show) ✓</text>
       <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ✓</text>
       <text x="1608" y="454" class="s">Claude Agent SDK runtime (#59) ✓</text>
@@ -165,9 +166,12 @@ footer { color: var(--muted); font-size: 13px }
       <text x="450" y="952" class="t">DB · traders_behaviors ○</text>
       <text x="450" y="988" class="n">empty; dealer_curves, traders and</text>
       <text x="450" y="1014" class="n">competitor_profiles are filled ✓</text>
-      <rect x="430" y="1070" width="390" height="120" rx="10" fill="var(--wip)" stroke="var(--ink)" stroke-width="2"/>
-      <text x="450" y="1112" class="t">DB · learnings ◑</text>
-      <text x="450" y="1148" class="n">learner N3 in progress (P0)</text>
+      <rect x="430" y="1070" width="390" height="120" rx="10" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="450" y="1112" class="t">DB · learnings ◐</text>
+      <text x="450" y="1148" class="s">feed reader: blockers, fees, notices ✓</text>
+      <text x="450" y="1176" class="s">taker skips blocked dealers ✓</text>
+      <text x="450" y="1206" class="n">LLM pass + embeddings: PR 2</text>
+      <text x="450" y="1232" class="n">learner N3 in progress (P0)</text>
       <rect x="74" y="930" width="320" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="94" y="972" class="t">Also stored ✓</text>
       <text x="94" y="1008" class="s">feed · tape · dealer_curves</text>
@@ -260,7 +264,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><span class="mono">N8 (new)</span><b>Runtime LLM: Jev-chosen model, <code>--llm-runtime</code>, ask, words, steer</b><p>🔵 worker</p></div>
       <div class="item"><span class="mono">N9 (new)</span><b>Guardrails rule book (GUARDRAILS.md)</b><p>✅ (#30)</p></div>
       <div class="item"><span class="mono">N11 (new)</span><b>Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, <code>questions/evals.json</code>)</b><p>🔵 duels, dealer ladder, team trades scored (CLI <code>bazaar evals</code>); next: inside the agents, no Railway service; Market Test stub until we run a venue</p></div>
-      <div class="item"><span class="mono">N12 (new)</span><b>**P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (<code>learnings</code>, <code>traders_behaviors</code>, embeddings) for the live taker and maker</b><p>🔵 worker (first version before Duels I)</p></div>
+      <div class="item"><span class="mono">N12 (new)</span><b>**P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (<code>learnings</code>, <code>traders_behaviors</code>, embeddings) for the live taker and maker</b><p>🔵 PR 1: deterministic reader (<code>bazaar_agent.learn</code>), <code>learnings</code> columns + <code>recall()</code>, the taker skips dealers under a blocker, the taker archives the feed window, <code>bazaar learnings</code>; PR 2 ⬜: LLM pass over free text, embeddings, <code>trader_behaviors</code>, Jev/words context, maker fee notices, MCP tool</p></div>
       <div class="item"><span class="mono">N13 (new)</span><b>**P0 · Real-time holdings + card catalog in Postgres**: per-tick <code>/api/me</code> snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB</b><p>🔵 worker (before Sat 08:30)</p></div>
       <div class="item"><span class="mono">N14 (new)</span><b>**P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back</b><p>⬜ after N3 v1 (Sat 12:00)</p></div>
       <div class="item"><span class="mono">N10 (new)</span><b>NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo <code>bazaar-live</code></b><p>⬜ planned (98-nice-to-haves.md)</p></div>
