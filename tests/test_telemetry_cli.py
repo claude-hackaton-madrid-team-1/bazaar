@@ -169,7 +169,7 @@ def test_thread_prints_the_conversation_and_traces_it(spans, runner):
     (view,) = named(spans, "thread.view")
     assert [e.attributes["sender"] for e in view.events if e.name == "message"] == ["t01", "abuela"]
     (command,) = named(spans, "cli thread")
-    assert any("Thread 115" in line for line in lines_of(command))
+    assert not any("Thread 115" in line for line in lines_of(command))  # a table is not mirrored (N18)
 
 
 def test_thread_and_threads_json_for_the_ui(spans, runner):

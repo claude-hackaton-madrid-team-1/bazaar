@@ -1202,14 +1202,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
+- [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
 - [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
 - [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
 - [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
 - [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
 - [2026-10-03] build-error — a sim venue test opened nothing: `locked` at tick 0
 - [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
-- [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
-- [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
 
 <!-- BAZAAR:STATUS:END -->
 

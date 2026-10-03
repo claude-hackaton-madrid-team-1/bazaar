@@ -312,6 +312,18 @@ Spec: [`N15-spec.md`](./N15-spec.md). Files: `llm/{config,chooser,cli}.py`, `run
 - Step 4 — `bazaar llm` desk section, README, RUNTIME.md, architecture boxes. · **Acceptance:** CLI test +
   regenerated html; dry desk run on `BAZAAR_SIM=local` shows the chosen models.
 
+### N18 — Lean agent-behaviour tracing in Phoenix
+Spec: [`N18-spec.md`](./N18-spec.md) over ADR 0001 (`docs/adr/0001-agent-behavior-tracing.md`, PR #46). The backlog
+table row for N18 is on PR #124. Files: `telemetry.py`, `traces.py`, `llm/traced.py`, `agents/{dealer,runtime,duel_jev}.py`,
+`cli.py`, `docs/observability.md`, `tests/test_tracing_n18.py`.
+- Step 1 — `session.id` (contextvar + explicit) on dealer, duel and loop spans. · **Acceptance:** session tests.
+- Step 2 — Jev calls as EVALUATOR spans (`record_jev`), no state. · **Acceptance:** evaluator test.
+- Step 3 — AGENT span per agent tick, TOOL span per request sent. · **Acceptance:** tool and recorder tests.
+- Step 4 — LLM spans (`TracedProvider`), text only for `words`. · **Acceptance:** llm span tests.
+- Step 5 — evals (#91) as annotations: not done (list in `docs/observability.md`).
+- Step 6 — `docs/observability.md` pitch replay. · **Invariants:** on/off parity (fake client + `sim_smoke`), dead
+  exporter, no private number in any span (8 seeds).
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)
