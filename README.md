@@ -950,6 +950,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#124](../../pull/124) | docs: backlog in repo specs (issues migrated), Saturday deadlines, status 05:00 | Sat 04:54 | `c6f7ad9` |
 | [#121](../../pull/121) | fix: public /state and /events must not reveal our limits (#69 follow-up) | Sat 04:30 | `6547531` |
 | [#104](../../pull/104) | docs: Bazaar Live deployed, URL on the status page and services guide | Sat 03:41 | `e7434a6` |
 | [#99](../../pull/99) | chore: pr-reviewer enforces the pipeline artifacts (spec, plan, honest report) | Sat 03:24 | `67df458` |
@@ -961,7 +962,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#88](../../pull/88) | feat: Linear-style roadmap timeline (Fri 2 → Sun 4, freeze Sun 06:00, deadline Sun 14:00) | Sat 02:57 | `90b15c2` |
 | [#82](../../pull/82) | feat: timed roadmap on the architecture page | Sat 02:37 | `16552b7` |
 | [#83](../../pull/83) | chore: make the agent harness Claude-only and remove unused files | Sat 02:34 | `e91a8de` |
-| [#76](../../pull/76) | chore: pr-reviewer sub-agent + /pr-review merge gate (replaces Greptile) | Sat 02:16 | `6d729ce` |
 
 ### Open pull requests
 
@@ -982,10 +982,10 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#127](../../pull/127) | feat(team-desk): negotiate direct deals in team threads, structured offers only (B24) | `night/b24-team-negotiator` |
 | [#126](../../pull/126) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (B14, bite X15) | `night/b14-expired-bids` |
 | [#125](../../pull/125) | B23: live opportunity alerts in the monitor (arbitrage, duplicates, B4), read-only, with a lifetime log (stacked on #101) | `night/b23-opportunity-alerts` |
-| [#124](../../pull/124) | docs: Saturday 04:30 status (pre-06:00 merges, 09:30 queue, N15-N17, Bazaar Live v2) | `docs/status-sat-0430` |
 | [#123](../../pull/123) | docs: N17 team-to-team swap threads, spec and plan (Phase 1, draft) | `ogarciarevett/feat-team-threads` |
 | [#122](../../pull/122) | night(B22): bazaar cockpit, read-only Saturday operator screen (stacked on #102) | `night/b22-cockpit` |
 | [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
 | [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
+| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
