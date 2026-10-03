@@ -1443,6 +1443,7 @@ def agent_maker(
 
 def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
     """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
+    from bazaar_agent import db
     from bazaar_agent import venue as vn
     from bazaar_agent.agents.venue_keeper import VenueKeeper
 
@@ -1450,7 +1451,8 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         team,
         settings=settings,
         rules=kw["rules"],
-        vault=vn.KeyVault.from_settings(settings, _db_connect("bazaar-maker-venue")),
+        # 3 s, not 10: the vault runs before the maker's own offers, inside its tick window
+        vault=vn.KeyVault.from_settings(settings, lambda: db.connect(app="bazaar-maker-venue", connect_timeout_s=3)),
         decisions=kw["decisions"],
         live=kw["live"],
         log=kw["log"],
