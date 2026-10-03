@@ -8,9 +8,21 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 ## The economics (from `GET /api/catalog`, verified 2026-10-02)
 - Value of a card to us is book × our set affinity × the copy marginal (1, 0.25, 0.1 for the 1st, 2nd and 3rd copy).
 - A complete page (5 commons, 3 uncommons, 2 rares) adds a 25 % page bonus; the epic and legendary add 10 % more.
+- The server's `your_value` of a held card is the collection value lost by removing that copy (rules audit, Sat 3 Oct: 41 of 41 assets reproduce). On a complete page the `your_value` of our only copy of a page card already includes the whole page bonus; duplicates never carry it. Adding the bonus on top when selling counts it twice (fix on branch fix/audit-page-bonus-double-count).
 - Supply is finite: print runs are 300 / 90 / 30 / 9 / 3 per card (common → legendary), and a copy only exists once a pack or a dealer mints it.
 - Rares are the bottleneck: 1–4 copies of each exist on Friday. Packs give the next rarity down when one runs out.
 - Teams trade rares at 53–80 P (tape, Friday); our ×1.6 set (LAV) is chased by at least one other team.
+
+## What scores (rules audit, Sat 3 Oct; fitted on `/me` snapshots, private values left out)
+- Holding cards, the album and `collection_value` never score in themselves. A card scores only when it moves:
+  - sold to or bought from another team, at price minus our `your_value` (`neg_points`);
+  - or as a dealer deal on the ladder: the share of that dealer's own range, buying or selling. A deal at the opening price scores 0 and a deal at its final scores the whole range. Best 3 per level, restarted every round.
+- Market-making per round ≈ 22.5 × Market Test bench points + 7.5 × value other teams create on our venue. The free stall's level is 0.5 bench.
+- Negotiating per round ≈ ladder 7.5 + duels 7.5 + team trades 15 (estimate). Each part is capped at the top-3 mean, so past the cap more of it adds nothing that round.
+- Round 3 starts Sunday ~11:34 (game hour 16.65) and lasts ~3.4 h. Sunday's cash (with the 150 P grant) is best kept for team trades with surplus and three negotiated deals per dealer level, not for packs: pack luck never scores.
+- Jev (questions/rules_audit.json):
+  - Workshop (`workshop_build_noul`): no, duplicates are worth more as team trades than as Workshop inputs.
+  - Overnight build order (`overnight_first_build_choice`): undecided, leaning toward the Market Test edge broker (0.58) over the round-3 ladder tracker (0.36).
 
 ## Strategies the runtime implements
 - complete_pages: buy missing page cards of our highest-affinity sets first; each missing card also carries its share of the page bonus.
