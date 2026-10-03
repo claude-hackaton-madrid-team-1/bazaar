@@ -6,8 +6,22 @@ description: "Playbook for earning official score in the Bazaar: how each scorin
 # Bazaar points playbook
 
 Evidence for every number: `docs/points-ledger.md` (read it for the tables). Rules: `vendor/bazaar-kit/RULES.md`.
-Hard rules still apply first: read `uv run bazaar status` before acting, never sell or swap a page's last copy, never
-trade below `your_value`, one team key and 5 req/s shared by all our processes, tick-driven only, no secrets in logs.
+Hard rules apply before every action; historical results below do not authorize a trade:
+
+- Never sell or swap a page's last copy. Sell only true duplicates of page cards. The configured
+  `protect_page_exceptions` for LAT-10/LAT-09 conflict with this instruction; do not use them.
+- Never sell below our server `your_value`, and human approval does NOT waive that floor.
+  `sell_min_value_ratio` = 1.0. Refuse a 30 P sale of a copy worth 35 P.
+- `max_score_loss_per_move` = 0.001. Require nonnegative prospective `bazaar impact` for every sale or swap;
+  do not use approval to bypass a negative estimate or disable this limit.
+- No buy-back. `no_buyback_ticks` = 480 blocks buying any card sold or swapped away in the last 480 ticks.
+- `human_approval_above` = 250. A card buy or sell at or above 250 P requires human approval;
+  approval never waives the sale floor, last-copy protection or other hard rules.
+- `dealer_sell_enabled` = false means hand commands only after `bazaar impact`.
+  Run `uv run bazaar impact sell CARD P --to pilar` for the concrete proposed price before a hand sale to Pilar,
+  substituting the actual counterparty for other sales. A dealer final still must pass every rule above.
+- Read `uv run bazaar status` before acting and again after each deal. One team key and 5 req/s shared by all
+  our processes, tick-driven only, no secrets in logs.
 
 ## 1. How the score works (RULES.md "Scoring", briefing, fitted)
 
@@ -25,7 +39,8 @@ mean a component adds nothing, below it every point counts**.
 
 Measured: **k = 0.048 board points per neg_point lost (-89.6 gave -4.27), 0.035 per neg_point gained (+55.6 gave +1.97)**;
 a ladder point was worth 24 board points at tick 720 and 13 at tick 1100 (the top-3 mean grows as others catch up).
-Never counts: number of trades, fees, pack luck, gifts. Dealer deals never touch `neg_points`.
+Never counts: number of trades, fees, pack luck, gifts. Dealer sales can reduce `neg_points`: the team-sourced
+SAL-07 sale to Pilar changed 134.2 to 44.6 at tick 948. Check prospective impact for hand dealer sales too.
 
 ## 2. What earned points (Saturday, ranked; ledger sections 2 to 6)
 
@@ -61,7 +76,7 @@ order of what mattered (`docs/night/w2b-duel-v2.md`, `d1-sim-proof.md`):
   deadline - 1 settles on the deadline.
 - Do not redeploy during a duel: `uv run bazaar deploy-guard`, merge with `scripts/merge_safe.sh`.
 
-## 4. WHEN NO DUEL IS LIVE: the per-tick loop (70 % of Saturday's ticks had no duel; we moved once per 36)
+## 4. WHEN NO DUEL IS LIVE: the per-tick loop (70 % of Saturday's ticks had no duel)
 
 Every tick, in this order, stop at the first row that applies (one accept per tick, one message per thread, 6 threads,
 12 listings). Read `uv run bazaar status` first. Where a row says "hand", it is a human or desk command; the taker and
@@ -69,11 +84,11 @@ maker already run rows 2 and 5 on their own.
 
 | # | Action | Command / agent | Gate (GUARDRAILS.md) | Evidence |
 |---|---|---|---|---|
-| 1 | **Sell a spare card to Pilar, ask until she finalises** (uncommons 14 to 30, rares 50 to 87, epics 140 to 199; start high, step down 1 to 2 P per distinct bid, take her `final: true`) | `uv run bazaar dealer sell CARD --dealer pilar --live` (hand; `dealer_sell_enabled` is false for the maker) | `protect_page_sets` (never the last copy), `sell_min_value_ratio` 1.0, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 | 3 finals = +3.3 board; SAL-07 at 29 = -4.27 |
+| 1 | **Sell a spare card to Pilar, ask until she finalises** (uncommons 14 to 30, rares 50 to 87, epics 140 to 199; start high, step down 1 to 2 P per distinct bid, take her `final: true` only if the sale floor and nonnegative impact hold) | `uv run bazaar dealer sell CARD --dealer pilar --live` (hand only after `bazaar impact`; `dealer_sell_enabled` is false) | `protect_page_sets` (never the last copy), `sell_min_value_ratio` 1.0, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 | 3 finals = +3.3 board; SAL-07 at 29 = -4.27 |
 | 2 | **Dealer ladder buys, step 1 from low**: open at the lowest fill seen, never at her opening ask, climb by distinct bids until her final | taker (`agent taker --live`) or `dealer buy CARD --start P --max P --dealer D` | `max_price_*`, `official_value_margin` 0, `max_spend_per_game_hour` 250, `trickster_*` | Abuela commons 6 to 9 = 60 %; Pícaros rare 55 to 58 = 60 % |
 | 3 | **Complete a page by buying the rare or epic from a team or dealer below our value** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 250 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
 | 4 | **Sell a duplicate to the team that needs it** (the page-completing buyer pays 2 to 3x our value) | `bazaar buyers`, `bazaar swaps`, `sell list CARD`, `sell swap` | `max_counterparty_share`, `team_swap_*`, `watchdog_max_swaps_per_team` 3, human approval for rares | +33 to +55 raw per rare; `buyer_rank_enabled` is false |
-| 5 | **Ladder by level, three per round**: Abuela, Chato, Pilar, Pícaros, **Banco** (we never opened a Banco thread) | `dealer buy`, `agent taker` | level caps and quotas per dealer (`bazaar dealers`) | 16 of 74 threads settled; 3 deals per level = the component |
+| 5 | **Ladder by level, three per round**: Abuela, Chato, Pilar, Pícaros; Banco feasibility is UNVERIFIED, see below | `dealer buy`, `agent taker` | level caps and quotas per dealer (`bazaar dealers`) | 16 of 74 threads settled; 3 deals per level = the component |
 | 6 | **Workshop only for a missing rare** | `bazaar taller` | `taller_enabled`, `max_taller_per_game_hour` 2 | luck; never scores by itself |
 | 7 | **Market**: keep the board venue's broker running; probe the edge only in a closed window | `agent maker`, `venue status`, `broker`, `BAZAAR_BENCH_POLICY` | `allow_venue_open`, `max_venues` 2, `deploy_guard_bench_ticks` 10 | stall = 0.5; t10 12.5 |
 
@@ -83,13 +98,16 @@ maker already run rows 2 and 5 on their own.
   kindness; a repeated price earns nothing. A deal at her opening price scores 0 and does not unlock the next level.
 - **El Chato**: rares 75 to 95 (0.30), uncommons 26 to 61; finals after about 5 bids. Step 1 from low is the best ladder.
 - **Doña Pilar** (L3, collector): buys uncommon, rare, epic; sells only gold packs. **Her finals are the best ladder deals
-  we had.** Salamanca fever 939 to 1179 (+25 % over book): check `/api/schedule` before selling SAL. Never sell a copy we
-  bought from a team unless `bazaar impact sell CARD P` is >= 0 (it counts as neg_points).
+  we had.** Salamanca fever 939 to 1179 (+25 % over book): check `/api/schedule` before selling SAL. Before any hand sale, require
+  `bazaar impact sell CARD P --to pilar` >= 0 and price >= the fresh server `your_value`; team-sourced copies can lose `neg_points`.
 - **Los Pícaros** (L4, trickster): rares 48 to 67 (0.42), epics 128 to 167 (0.45). **A "final" at its list price is fake**
   (LAV-10 at 63 = 40 %); `agents/trickster.py` accepts only near the lowest fill. Do not flag unless `flag_dealers` allows.
-- **Don Ernesto / Banco** (L5): epics at 116 to 120 (3 fills), under every other source; hourly limits. UNVERIFIED: whether it
-  carries the highest ladder weight and whether a bought epic re-sells to Pilar at 140+ with no score loss. **Probe with one
-  small approved deal (`bazaar approve CARD --buy --max P`, `uv run bazaar impact`) before scaling.**
+- **Don Ernesto / Banco** (L5): observed epics at 116 to 120 in 3 fills. UNVERIFIED: the highest ladder weight and a
+  legal resale to Pilar. Her observed 140 to 199 P bids do not prove an exit above our copy's `your_value`.
+  This is a research lead, not an instruction to spend. Before a purchase could be recommended for resale, establish
+  a concrete candidate sale price, fresh server value for the resulting copy, price >= that value and nonnegative
+  prospective `bazaar impact` for the exit. If that cannot be established before buying, skip the purchase.
+  Human approval alone does not establish feasibility; recheck value and impact before any eventual sale.
 - **Ladder restart per round**: each round needs 3 new deals per level; a deal added after the best three only helps if its
   share is higher. Ladder deals beyond that earn nothing, so stop at three good ones and spend the slots elsewhere.
 - **Slots**: 6 conversations, one per dealer. A thread that is not moving closes after `dealer_max_ticks_per_thread` 14.
@@ -109,9 +127,10 @@ maker already run rows 2 and 5 on their own.
 
 ### Duplicate sales
 
-Only a copy we hold twice and that does not break a page: `protect_page_sets` covers every set; the only exceptions are
-`protect_page_exceptions` (LAT-10, LAT-09 at a floor). A sale below `your_value` or with an estimated loss needs
-`bazaar approve CARD --sell --min P --ttl-ticks 10` from a human. No buy-back of anything sold in 480 ticks.
+Apply every hard rule above. For a page card, retain one uncommitted copy after the sale or swap; check open offers
+as well as holdings. Refuse sales below the fresh server `your_value` even with human approval, and require a
+nonnegative prospective impact at the proposed price. The LAT-10/LAT-09 configuration is not permission to sell
+or swap a page's last copy.
 
 ### Market and Market Test
 
@@ -122,23 +141,28 @@ or an `auto` venue beside it (`max_venues` 2, opened by hand). **Never merge or 
 ## 5. Rules that cost us points when broken
 
 - Selling a page's last copy (SAL-07: -4.27). Do not sell a card to a team or dealer when `bazaar impact` is negative.
-- Opening-price deals and fake finals count as 0 ladder.
+- Genuine opening-price deals score 0 ladder. A fake final does not necessarily score 0: LAV-10 at 63 added
+  +0.047, with ladder 0.254 to 0.301 at ticks 863 to 864. The older memory entry's approximately-zero estimate
+  was superseded by these snapshots; `final: true` alone still does not prove a good price.
 - 74 threads, 16 deals: do not open a thread you will not finish; the slot costs the next buy.
-- Idling: nothing moved in 332 consecutive ticks (386 to 718). The stall alarm is `activity_stall_seconds` 30.
+- Ticks 386 to 718 were not 332 inactive ticks: Chato raised ladder 0.019 to 0.020 at tick 443, and Duels I added
+  15.02 raw points. Use the ledger's separate idle-drift metric: 27 board-refresh windows with no event of ours
+  between ticks 652 and 1238, totaling -2.73 board points. It is not a continuous inactivity interval.
+  The operational stall alarm is `activity_stall_seconds` 30, not this score metric.
 - A redeploy re-arms duel latches (`duel_days_auto`): freeze main while a session runs.
 
 ## 6. Sunday checklist (15 s ticks, Jev timeout 3 s, doors 09:00 to 15:00)
 
 - [ ] 09:00 `uv run bazaar status`, `rules`, `deploy-guard`; `git pull --ff-only` on any laptop that runs hand commands.
-- [ ] Ladder restarts at round 3: **plan 3 deals per level** (Abuela, Chato, Pilar, Pícaros, Banco) once it starts.
+- [ ] Ladder restarts at round 3: **plan up to 3 legal deals per level** once it starts; Banco remains UNVERIFIED pending the checks above.
 - [ ] **Hard Market Test about 09:34**: board venue broker up before 09:20, no deploys from 09:24. Edge policy only if it was proven.
 - [ ] Before round 3 (about 11:34): spare duplicates sorted, Pilar sells queued, `bazaar buyers` fresh; Chamberí (CHA) released
   at the round start with +150 P: scan `cards_heartbeat` for the 12 new cards and buy page cards below `your_value`.
 - [ ] Round 3 first 40 minutes (160 ticks) is the ramp: ladder deals count by the share of the day played; do the best three early.
 - [ ] **Duels III about 13:34** (12 ticks, decay 0.10, at most 4 at once): freeze main from 13:15; `duel run --play`;
   duel points are saturated, so do not trade the ladder slot for them: keep dealer threads on non-accept ticks.
-- [ ] Throughout: one move per tick that changes a raw leg (ledger section 6): a Pilar sale at her final, a Pícaros or Banco
-  buy, a page-completing buy, a duplicate sold to the team that needs it.
+- [ ] Throughout: one move per tick that changes a raw leg (ledger section 6): a legal Pilar sale at her final, a Pícaros
+  buy, a page-completing buy, a duplicate sold to the team that needs it. Skip if no candidate passes every hard rule.
 - [ ] The briefing says the dealer stalls close at game hour 21.65 (the finale): read `/api/clock` and `/api/schedule` for the
   real time and finish dealer sales before it. Doors close 15:00: pause first, then `bazaar flatten --live --threads`.
 - [ ] Append every error and finding to `.ai/memory.md`; end every task with the Honest Implementation Report.

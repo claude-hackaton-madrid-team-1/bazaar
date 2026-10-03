@@ -18,6 +18,11 @@ row per change, ticks 159 to 1445), `leaderboard_snapshots` (all 18 teams, every
   comes from `tape` (exact); their points come from `negotiating` and `market` only.
 - **Weights are fitted, not published**: negotiating 30 = ladder 7.5 + duels 7.5 + team trades 15, market 30 = bench 22.5
   + organic 7.5 (briefing, audit). Anything "headroom" below depends on that split and is marked ESTIMATE.
+- Historical settlements below are evidence, not permission to repeat them. Never sell or swap a page's last copy;
+  never sell below our server `your_value`, and human approval does NOT waive that floor. These rules override any
+  configured last-copy exception. Keep `max_score_loss_per_move` at `0.001`, no buy-back, and
+  `human_approval_above` at `250`. `dealer_sell_enabled false` means hand commands only after `bazaar impact`.
+  Dealer sales can lose `neg_points`, so they require the same prospective impact check as other sales.
 
 ## 1. Where our 25.65 (rank 9) comes from, at tick 1445
 
@@ -79,9 +84,12 @@ Other costs: **idle drift** (no event of ours in the window): the 27 refresh win
   from about 0.31 to about 0.57 (7.5 / k). At 0.336 we hold about 59 % of the ladder component: **ESTIMATE +3 left**.
 - **Best three per level count, a missing one is zero, the ladder restarts each round** (0.058 to 0.0 at tick 160). A
   fourth deal helps only if its share beats one of the three.
+- The LAV-10 fake final still earned **+0.047**: snapshots show `ladder_points` **0.254 to 0.301 at ticks 863 to 864**.
+  This observed delta supersedes the older approximately-zero estimate in `.ai/memory.md` and `GUARDRAILS.md`.
+  A fake final does not prove either zero score or the dealer's true limit.
 - **Dealer threads: 74 opened on Saturday, 16 settled (22 %).** The 72 `bad` dealer outcomes in `outcomes` (avg score
   0.017) are almost all "no deal ... captured nothing"; each held one of the six conversation slots.
-- **We never opened a thread with Banco (level 5, Don Ernesto), the highest-weight level.** 33 threads were opened by
+- **We never opened a thread with Banco (level 5, Don Ernesto); its relative scoring weight is UNVERIFIED.** 33 threads were opened by
   11 other teams; 3 settled (LAV-11 120, SAL-11 116, SAL-11 120).
 
 ## 4. Team trades (neg_points): every move, raw +100.2
@@ -124,10 +132,12 @@ ESTIMATE: with k 0.035 to 0.048 and a 15-point weight, the top-3 mean of neg_poi
 
 ## 6. Idle time
 
-Saturday ticks 160 to 1445 = 1,286. Duel windows 386. **Idle 900.** Our point-moving settlements and events in those 900
-ticks (anything in section 3 or 4 that changed a raw leg, plus the bench booking at 217): **25**, one per 36 ticks.
-Longest stretches with no point-moving move: **ticks 386 to 718 (332 ticks, 2.8 h)**, 1099 to 1304 (205), 182 to 311 (129),
-958 to 1081 (123). Board over the long idle stretch (tick 650 to 1230): **t01 -1.51**; the top gainers:
+Saturday ticks 160 to 1445 = 1,286. Duel windows 386. **900 ticks had no live duel**; this measures duel availability,
+not inactivity. The former claim of 332 inactive ticks from 386 to 718 was false: ladder points rose **0.019 to 0.020
+at tick 443**, and Duels I added **15.02 raw points during ticks 459 to 651**. No-duel ticks can still contain dealer,
+team-trade or Market Test activity. A true inactivity interval would contain no change in any raw scoring leg;
+no longest such interval is established here. Over the comparison window from tick 650 to 1230, which also contains
+our settlements, **t01 lost 1.51 board points**; the top gainers:
 
 | Team | negotiating 650 to 1230 | Settlements in 652 to 1238 | Move mix |
 |---|---|---|---|
@@ -173,7 +183,11 @@ rares and epics (RET-09 59, RET-10 53, SAL-11 155) and a few rastro buys that co
 - Board windows can hold two events (tick 771 shared with a -0.23 drift; 311 to 321 grouped); the 10-tick refresh bounds
   precision to one window.
 - Whether a Banco deal counts more on the ladder (higher level weight) and whether a bought epic can be re-sold to Pilar
-  without a score loss are both UNVERIFIED; the prices (Banco 116 to 120, Pilar bids 140 to 199) say it is worth one probe.
+  without a score loss are both **UNVERIFIED**. Historical prices of Banco 116 to 120 and Pilar bids 140 to 199 do not
+  establish a legal exit or justify spending. Before any purchase recommendation based on resale, require a concrete
+  candidate sale price at least equal to that copy's fresh server `your_value`, nonnegative prospective impact from
+  `bazaar impact`, and compliance with every hard rule above. Missing evidence means no purchase recommendation;
+  human approval alone cannot establish feasibility or waive the floor.
 - The board before tick 610 (Duels I start, Market Test sessions 1 to 3) is only in our own `/me` score series.
 - Phoenix traces were not queried (no key needed for this: the tables above hold the same events).
 
