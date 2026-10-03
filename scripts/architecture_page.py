@@ -119,7 +119,14 @@ TRACK_PX, LABEL_PAD_PX, LABEL_CHAR_PX, LABEL_GAP_PX = 1490.0, 38.0, 6.6, 8.0
 
 
 def _at(stamp: str) -> datetime:
-    return datetime.fromisoformat(stamp).replace(tzinfo=MADRID)
+    """A naive Madrid wall-clock stamp (YYYY-MM-DDTHH:MM); an explicit offset or a bad stamp is an input error."""
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        raise SystemExit(f"architecture.status.json: bad timeline time {stamp!r} (use YYYY-MM-DDTHH:MM)") from None
+    if parsed.tzinfo is not None:
+        raise SystemExit(f"architecture.status.json: timeline time {stamp!r} must be Madrid wall time, no offset")
+    return parsed.replace(tzinfo=MADRID)
 
 
 class _Axis:
@@ -186,11 +193,17 @@ def _bar(axis: _Axis, row: int, outside: bool, bar: dict[str, Any]) -> str:
 
 def _overlays(axis: _Axis, tl: dict[str, Any], labels: bool) -> str:
     """Closed-door bands, hour ticks, deadline markers and the now line, repeated in every track."""
-    out = [
-        f'<div class="tl-closed" style="left:{axis.pct(a)}%;width:{round(axis.pct(b) - axis.pct(a), 3)}%"></div>'
-        for a, b in tl.get("closed", [])
-    ]
-    t, step = axis.start, timedelta(hours=int(tl.get("tick_hours", 3)))
+    out = []
+    for a, b in tl.get("closed", []):
+        if axis.pct(b) <= axis.pct(a):
+            raise SystemExit(f"architecture.status.json: closed band {a!r}..{b!r} ends before it starts")
+        out.append(
+            f'<div class="tl-closed" style="left:{axis.pct(a)}%;width:{round(axis.pct(b) - axis.pct(a), 3)}%"></div>'
+        )
+    hours = tl.get("tick_hours", 3)
+    if not isinstance(hours, (int, float)) or isinstance(hours, bool) or hours < 1:
+        raise SystemExit(f"architecture.status.json: tick_hours must be a number >= 1, got {hours!r}")
+    t, step = axis.start, timedelta(hours=hours)
     while t <= axis.end:
         x = round((t - axis.start).total_seconds() / axis.total * 100, 3)
         text = f"<span>{t.strftime('%a %H:%M')}</span>" if labels else ""
@@ -210,6 +223,7 @@ def _overlays(axis: _Axis, tl: dict[str, Any], labels: bool) -> str:
 def _event(axis: _Axis, i: int, e: dict[str, Any]) -> str:
     tip = html.escape(f"{_at(e['at']).strftime('%a %H:%M')} · {e['title']}")
     low = " low" if i % 2 else ""  # alternate heights so neighbouring labels do not collide
+    low += " last" if axis.pct(e["at"]) > 97 else ""  # keep the last labels inside the track
     return (
         f'<div class="tl-event{low}" style="left:{axis.pct(e["at"])}%" title="{tip}">'
         f"<span>{html.escape(e['label'])}</span></div>"

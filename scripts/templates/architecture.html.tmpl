@@ -17,7 +17,7 @@
   --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
   --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
-.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px }
 header { display: grid; gap: 6px }
 .eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
 h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
@@ -58,9 +58,10 @@ footer { color: var(--muted); font-size: 13px }
 .tl-now { position: absolute; top: 0; bottom: 0; border-left: 2px solid #e11d48; z-index: 3 }
 .tl-event { position: absolute; top: 6px; transform: translateX(-50%); text-align: center; z-index: 1 }
 .tl-event.low { top: 28px }
+.tl-event.last { transform: translateX(-100%) }
 .tl-event::before { content: ""; display: block; width: 9px; height: 9px; margin: 0 auto 1px; transform: rotate(45deg); background: var(--ink) }
 .tl-event span { font: 500 10px var(--mono); white-space: nowrap; color: var(--ink); background: var(--paper); padding: 0 2px }
-.tl-bar { position: absolute; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 1.5px solid var(--ink); border-radius: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; z-index: 1; box-sizing: border-box }
+.tl-bar { position: absolute; min-width: 30px; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 1.5px solid var(--ink); border-radius: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; z-index: 1; box-sizing: border-box }
 .tl-bar span { overflow: hidden; text-overflow: ellipsis }
 .tl-bar.out { overflow: visible }
 .tl-bar.out span { position: absolute; left: calc(100% + 6px); overflow: visible; color: var(--ink); font-weight: 500 }

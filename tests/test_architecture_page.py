@@ -215,6 +215,47 @@ def test_a_narrow_bar_label_pushes_the_next_bar_down() -> None:
     assert 'class="tl-bar todo out"' in out and "top:34px" in out  # the label of the first occupies row 1
 
 
+def test_hostile_text_never_breaks_out_of_the_timeline() -> None:
+    evil = "\"'><script>alert(1)</script><img src=x onerror=alert(2)>"
+    tl = {
+        "start": "2026-10-03T09:00",
+        "end": "2026-10-03T21:00",
+        "markers": [{"at": "2026-10-03T18:00", "kind": "deadline", "label": evil}],
+        "events": [{"at": "2026-10-03T10:00", "label": evil, "title": evil}],
+        "lanes": [
+            {
+                "name": evil,
+                "bars": [
+                    {
+                        "title": evil,
+                        "start": "2026-10-03T09:00",
+                        "end": "2026-10-03T12:00",
+                        "status": "todo",
+                        "priority": "P1",
+                        "owner": evil,
+                    }
+                ],
+            }
+        ],
+    }
+    out = ap.render_timeline(tl)
+    assert "<script" not in out and "<img" not in out and "onerror=alert(2)>" not in out
+
+
+def test_timeline_rejects_offsets_bad_stamps_bad_bands_and_bad_ticks() -> None:
+    base = {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": []}
+    for bad in (
+        {**base, "start": "2026-10-03T09:00+05:00"},
+        {**base, "end": "not a time"},
+        {**base, "closed": [["2026-10-03T12:00", "2026-10-03T10:00"]]},
+        {**base, "tick_hours": 0},
+        {**base, "tick_hours": 0.5},
+        {**base, "tick_hours": "3"},
+    ):
+        with pytest.raises(SystemExit):
+            ap.render_timeline(bad)
+
+
 def test_timeline_is_optional() -> None:
     without = {k: v for k, v in DATA.items() if k != "timeline"}
     assert "No timeline yet" in ap.render_page(without, PLAN, TEMPLATE)
