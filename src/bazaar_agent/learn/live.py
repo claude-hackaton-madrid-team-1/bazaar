@@ -99,8 +99,8 @@ class LiveLearner:
         return learned
 
     def flush(self) -> int:
-        """After the tick's sends: write what this tick learned, and pull what other processes learned
-        about dealers for us (a laptop's `dealer buy` refusal, say) into memory for the next tick."""
+        """After the tick's sends: write what this tick learned, and pull what is stored about dealers for us
+        (another taker process, or `bazaar learnings --save` on a laptop) into memory for the next tick."""
         batch, self.pending = self.pending, []
         try:
             written = self.store.record(batch)

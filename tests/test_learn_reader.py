@@ -241,3 +241,10 @@ def test_a_venue_keeps_one_notice_row_however_many_it_posts():
     ]
     learned = FeedReader(US).read(posts, HOUR)
     assert len(learned) == 3 and len({lr.key() for lr in learned}) == 1
+
+
+def test_a_stored_blocker_is_capped_when_read_too():
+    """A row written before the caps (or by another process) with a far `until_tick` still expires on time."""
+    old = from_refusal("abuela", "persona_quota", "", {}, US, HOUR, "LAV-03").model_copy(update={"until_tick": 1713})
+    assert blocks_for([old], US, HOUR.tick + HOURLY_CAP_TICKS - 1).stops("abuela")
+    assert not blocks_for([old], US, HOUR.tick + HOURLY_CAP_TICKS)
