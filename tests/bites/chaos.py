@@ -110,9 +110,8 @@ def run_chaos(
                 "live": True,
                 "log": log,
             }
-            return Taker(team, public, config=TakerConfig(max_dealer_threads=threads), **common), Maker(
-                team, public, **common
-            )
+            taker = Taker(team, public, config=TakerConfig(max_dealer_threads=threads), sleep=lambda s: None, **common)
+            return taker, Maker(team, public, **common)
 
         taker, maker = build()
         seen = 0
