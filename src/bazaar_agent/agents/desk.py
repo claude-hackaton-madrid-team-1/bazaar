@@ -45,6 +45,8 @@ class Conversation:
     accepted_tick: int | None = None
     accepted_price: int | None = None
     reopened: bool = False  # this thread already is the lower reopen after she held her opening ask
+    notes: tuple[str, ...] = ()  # which learnings changed this plan (N14a `changed_by`), logged on every move
+    recalled: tuple[str, ...] = ()  # the lessons recalled for this dealer when the thread opened (quoted data)
 
     @property
     def topic(self) -> dict[str, dict[str, str]]:
@@ -96,8 +98,9 @@ def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: 
 
 def meet_the_ask(dm: DeskMove) -> DeskMove:
     """Our accept slot went elsewhere this tick: offer exactly her ask instead (`dealer.meet_ask`: a new,
-    higher price inside our max, never her opening price), so the dealer can accept OUR offer; else wait."""
-    move = meet_ask(dm.conv.neg, dm.ask)
+    higher price inside our max, or her final inside `final_max` (N14a), never her opening price), so the
+    dealer can accept OUR offer; else wait."""
+    move = meet_ask(dm.conv.neg, dm.ask, dm.final)
     return DeskMove(dm.conv, move, dm.ask, dm.final, offer_id=None if move.kind == "bid" else dm.offer_id)
 
 
@@ -127,15 +130,16 @@ class Opening:
 def openings(moves: Iterable[StrategyMove], busy_dealers: set[str], busy_items: set[str], room: int) -> list[Opening]:
     """The best dealer buys whose dealer is free (one thread per dealer) and item is not in a thread yet."""
     out: list[Opening] = []
-    taken = set(busy_dealers)
+    taken, items = set(busy_dealers), set(busy_items)
     for mv in moves:
         if len(out) >= room:
             break
-        if mv.ladder is None or not mv.command or mv.source in taken or mv.ref in busy_items:
+        if mv.ladder is None or not mv.command or mv.source in taken or mv.ref in items:
             continue
         if mv.guardrail.startswith("denied"):
             continue
         start, top, step = mv.ladder
         out.append(Opening(mv.source, mv.ref, mv.rarity, mv.value, BidPlan(start, step, top), mv.reason, mv))
         taken.add(mv.source)
+        items.add(mv.ref)  # two dealers may sell one card (level_ladder): one thread per card
     return out

@@ -91,7 +91,9 @@ raises on any non-loopback connection before a packet leaves (a dead proxy backs
    ```
 
    (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
-   answers there, a `bazaar-sim serve` or the MCP server: stop it first.)
+   answers there, a `bazaar-sim serve` or the MCP server: stop it first. When several simulators share
+   one laptop, `BAZAAR_SIM_PORT=8817` moves both the smoke and `BAZAAR_SIM=local` to another loopback
+   port.)
 4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
    token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
    never lands in your shell history:
@@ -727,6 +729,39 @@ uv run bazaar learnings --lessons --save          # ...and upsert + embed them, 
 uv run bazaar learnings --query "open a thread with chato to buy LAV-08; his ask 33" --json
 ```
 
+### Hard dealers: the per-dealer plan and dealer finals (N14a)
+
+Each dealer buy is planned from what the learner recalled. The inputs are the ladder policy (a
+`learnings` row), the dealer's curve (its patience, its opening ask, a bid it ignored) and the
+blockers. The `dealer_open`, `dealer_bid` and `dealer_accept` rows say which learning changed the bid
+(`changed_by`) and which lessons were recalled for that dealer (`recalled`). Neither key is on the
+public `/state`.
+
+A dealer's final offer is its limit: refuse it and the dealer walks. `dealer_final_lift` in
+GUARDRAILS.md (0 = today) lets the desk take a final on a card, or bid exactly at it, up to the rarity
+cap × (1 + lift). The price is never above our value minus `min_buy_surplus`, never above what the cash
+floor and the hourly spend still allow, and never on packs. Our own bids still never pass the cap.
+Such a final is taken only after 4 of our bids, and only from a dealer whose price history for that
+class we have seen (an unknown dealer, an L4 trickster, gets no lifted final). A final at the dealer's
+opening price is never taken (`may_take`).
+
+With the lift on, two more things change:
+- **The patience play, only where the dealer fills above our top (Chato).** The ladder starts low
+  enough that the final arrives before our bids run out: step 1, the dealer's median patience + 3
+  distinct bids, at least 9. Where the dealer fills inside our top (Abuela), today's ladder stays.
+- **The pricier dealer gets a thread too.** The strategy also offers the pricier dealer for a card
+  (`level_ladder`), because the ladder scores each level's best three deals. El Chato is level 2,
+  and his uncommon fills (28-32) sit above our cap of 26.
+
+```sh
+uv run bazaar dealer finals                         # replay the captured feed under lifts 0 / 0.15 / 0.25
+uv run bazaar dealer finals --lift 0.15 --dealer chato --threads   # which conversations each lift closes
+BAZAAR_SIM_PORT=8818 uv run python scripts/sim_dealers.py --dealer chato --lift 0 --lift 0.15 --lift 0.25
+```
+
+`scripts/sim_dealers.py` is the proof per dealer: a fresh in-memory simulator for each lift, and our
+live taker against it.
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -1205,11 +1240,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
 - [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
 - [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
+- [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
+- [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
 - [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
 - [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
 - [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
-- [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
-- [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1222,6 +1257,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#158](../../pull/158) | Merged during the session on Omar's order. pr-reviewer round 5 APPROVE on e71c337 (issuecomment-5966784280), security round 2 APPROVE; CI green. dealer_final_lift stays 0 (Jev decides the lift separately). | Sat 09:31 | `be431cd` |
 | [#139](../../pull/139) | Merged during the session on Omar's order. pr-reviewer narrow APPROVE on 002ac37 (issuecomment-5966722003) after the approved 3af3641; CI test + sim-smoke green; tracing on/off identical moves. | Sat 09:22 | `fdeb199` |
 | [#71](../../pull/71) | Merged during the session on Omar's order (09:07). pr-reviewer + security narrow APPROVE on e265626/1accc4e; 24b8583 only merges main (#146): code diff identical (0 lines), gate 2829 passed, smoke passed, CI green. allow_venue_open=false, effective cash floor 100. | Sat 09:14 | `04ce5d6` |
 | [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
@@ -1233,7 +1269,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
 | [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | Sat 06:37 | `b0caeb6` |
 | [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | Sat 06:26 | `edee568` |
-| [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | Sat 06:24 | `d4b243e` |
 
 ### Open pull requests
 
@@ -1247,7 +1282,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
 | [#160](../../pull/160) | docs(pitch): Sunday presentation pack, first draft (P1) | `ogarciarevett/docs-pitch` |
 | [#159](../../pull/159) | DO NOT MERGE: B27 duel stack integration (merge order #60→#86→#103→#113→#115→#130) + settings card | `night/b27-duel-stack` |
-| [#158](../../pull/158) | feat: hard dealers: per-dealer plan from recall, dealer finals behind dealer_final_lift (0), L3-L5 readiness, sim proof (N14a, stacked on #112) | `ogarciarevett/work-n14a` |
 | [#157](../../pull/157) | perf(agents): every agent inside Sunday's 15 s tick: Jev answer cache, concurrent reads, tick profiler (SP1) | `ogarciarevett/work-speed-sp1` |
 | [#155](../../pull/155) | feat(supply): supply map, pack EV with our album need, open or keep a sealed pack (N14b, part 2) | `ogarciarevett/feat-n14b-supply-packs` |
 | [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
@@ -1259,5 +1293,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 | [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
+| [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
 
 <!-- BAZAAR:ACTIVITY:END -->
