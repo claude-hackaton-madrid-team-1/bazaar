@@ -6,6 +6,8 @@ description: "Review one pull request with the pr-reviewer sub-agent (Greptile r
 
 Greptile is disabled. Every PR gets this review before its author asks for a merge.
 
+0. Follow `.ai/pipeline.md` first (identify → /spec → /plan → /build → /test → /review) and end the PR body
+   with the Honest Implementation Report; the reviewer checks both.
 1. Push your branch and open the PR first (the reviewer reads it from GitHub). Rebase on `origin/main`
    and resolve your own conflicts before you start.
 2. Launch the **`pr-reviewer`** sub-agent in a FRESH context (never review your own diff in the context
