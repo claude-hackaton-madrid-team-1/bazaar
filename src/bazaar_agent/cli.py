@@ -1293,16 +1293,17 @@ def duel_run(
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
 
-    def save_finished(tick: int) -> None:
-        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
+    def save_finished(tick: int) -> bool:
+        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result.
+        True when the read went through (the days latch then needs no read of its own this tick)."""
         try:
             data = client.duels(done=True)
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
-            return
+            return False
         except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
-            return
+            return False
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         finished = [d for d in duel_list(data) if d.get("status") != "live"]
         for d in finished:
@@ -1310,6 +1311,7 @@ def duel_run(
                 observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
         store.save(tick, finished)
         observe_days(tick, duel_list(data))  # free scored evidence for the days sign: this read happens anyway
+        return True
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -1499,7 +1501,6 @@ def duel_run(
             if duel_id(d) not in done:
                 play_safely(d)
         duel_traces.end_tick(duel_id(d) for d in duels)
-        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):
@@ -1508,8 +1509,9 @@ def duel_run(
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
-        if store.read_finished(duels):
-            save_finished(c.tick)
+        read = store.read_finished(duels) and save_finished(c.tick)
+        if not read:  # one ?done=true read per tick at most (r1, #159): the days latch reuses the store's
+            read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
             book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
         book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
