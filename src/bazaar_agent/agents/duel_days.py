@@ -91,9 +91,14 @@ def _union_scored(a: Iterable[list[int]], b: Iterable[list[int]]) -> list[list[i
 
 
 def _number(value: object) -> float | None:
-    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+    """A finite number from the payload, else None (bools, NaN, infinities and ints too large for a float)."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # a 400-digit int: math.isfinite raised on it and stopped the caller (#165 P3-3)
+        return None
+    return number if math.isfinite(number) else None
 
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
@@ -137,7 +142,10 @@ def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     what the days added. `signed` when that is +weight × days with weight > 0; `cost` when it is -|weight| × days
     with weight > 0 (the worst case is the truth); `reversed` when it is -weight × days with weight < 0; anything
     else, a negative weight that cannot tell signed from cost included, is `unknown`. So is a payload whose `rounds`
-    is negative or not whole, or whose `decay_per_round` is outside [0, 1): it used to raise or mis-score (#150 r3)."""
+    is negative or not whole, or whose `decay_per_round` is outside [0, 1): it used to raise or mis-score (#150 r3).
+    So is a deal whose score cannot tell the models apart (#165 P3-4): a scorer counting days back from 10 adds
+    w·(10 - d), within the tolerance of signed when |w|·|10 - 2d| <= 2·SCORE_TOLERANCE (any w at day 5), and days
+    not scored add 0, within it when |w|·d <= 2·SCORE_TOLERANCE."""
     if not real_game or not two_issue(duel) or duel.get("status") != "deal":
         return "unknown"
     price, days, result = _number(duel.get("price")), _number(duel.get("days")), _number(duel.get("result"))
@@ -145,8 +153,10 @@ def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     rounds, decay = _number(duel.get("rounds")), _number(duel.get("decay_per_round"))
     if price is None or days is None or result is None or weight is None or limit is None:
         return "unknown"
-    if rounds is None or decay is None or not days or not weight:
+    if rounds is None or decay is None:
         return "unknown"
+    if abs(weight) * min(days, abs(DAYS_MAX - 2 * days)) <= 2 * SCORE_TOLERANCE:
+        return "unknown"  # too close to tell the models apart (day 0 and weight 0 included)
     if rounds < 0 or not rounds.is_integer() or not 0 <= decay < 1:
         return "unknown"
     kept = (1 - decay) ** rounds
@@ -370,6 +380,7 @@ def rival_days(duel: Mapping[str, Any]) -> RivalDays:
         and _number(m.get("price")) is not None
         and isinstance(d := m.get("days"), int)
         and not isinstance(d, bool)
+        and _number(d) is not None  # a 400-digit day overflowed `fmean` (#165 P3-3)
     ]
     if not days:
         return RivalDays(None, 0.0, 0)
