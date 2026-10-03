@@ -48,11 +48,12 @@ class PlanParams:
     page_set: str = "LAV"  # the set whose page buy list is drawn up
     min_swap_surplus: float = 2.0  # our least gain on a swap, after its cash leg (as `min_buy_surplus`)
     what_if_bases: tuple[int, ...] = (200, 400)  # cap bases the posting is also tried with when the cap is off
-    per_item: int = 4  # candidates kept per copy or wanted card (the best by expected surplus)
+    per_item: int = 6  # candidates kept per copy or wanted card (the best of each kind per counterparty)
     max_pool: int = 120  # candidates the search sees (it recurses once per candidate)
     swaps_per_team: int = 5  # swap candidates kept per team (the best by expected surplus)
     # Friday's base rates (B4's offer lifecycles): the share of copies listed for anyone, and to one team,
     # that sold. A floor for a plan whose P(fill) only asks whether the counterparty values the price.
+    dealer_card_expires: int = 10  # life of an offer for a card a dealer sells (it blocks the dealer route)
     friday_public_fill: float = 0.19
     friday_addressed_fill: float = 0.06
     cash_budget: int | None = None  # the most our bids and cash legs may promise (None: all the cash above the floor)
@@ -141,6 +142,7 @@ class Trade:
     volume: int  # notional: the larger of the cash and the book of the cards that move (`intel.settled_volume`)
     reason: str
     rarity: str = ""  # of the card we buy (bids, swaps) or give (asks)
+    expires: int = 40  # expires_in_ticks of the offer (shorter for a card a dealer sells)
     to: str | None = None  # posted addressed to the counterparty; None: on the board for anyone (`post_as`)
 
     @property
@@ -168,7 +170,8 @@ class Wanted:
 
     ref: str
     worth: float
-    top: int  # min(worth − min_buy_surplus, the guardrail cap, the median dealer fill when a dealer sells it)
+    top: int  # min(worth − min_buy_surplus, the guardrail cap, the dealer's lowest fill − 1)
+    dealer: bool = False  # a dealer has sold it: the dealer route is the benchmark
 
 
 def dealer_prices(events: Iterable[Event]) -> dict[str, list[int]]:
@@ -203,8 +206,10 @@ def our_copies(m: Market, me: dict[str, Any], params: StrategyParams, rules: Gua
 def wanted_cards(
     m: Market, params: StrategyParams, rules: Guardrails, dealers: dict[str, list[int]] | None = None
 ) -> list[Wanted]:
-    """Missing page cards of released sets. A team bid never beats a dealer: when a dealer sells the card,
-    the most we bid a team is its median fill."""
+    """Missing page cards of released sets. For a card a dealer has sold, the dealer is the benchmark: it is
+    worth no more than the dealer's lowest fill to us (we could buy it there) and a team bid stays below
+    that fill; such offers carry a short life (`dealer_card_expires`), because while open they count the
+    card as wanted and the taker's cheaper dealer route waits (`block_buying_held_cards`)."""
     out = []
     for card in m.cards.values():
         if card.set_code not in m.released or not card.page or m.held.get(card.ref, 0) > 0:
@@ -215,8 +220,9 @@ def wanted_cards(
         top = min(top, cap) if cap is not None else top
         fills = (dealers or {}).get(card.ref)
         if fills:
-            top = min(top, math.floor(median(fills)))
-        out.append(Wanted(card.ref, round(worth, 2), top))
+            worth = min(worth, float(min(fills)))
+            top = min(top, min(fills) - 1, math.floor(worth - params.min_buy_surplus))
+        out.append(Wanted(card.ref, round(worth, 2), top, bool(fills)))
     return out
 
 
@@ -309,8 +315,9 @@ def bid_trades(
                     round(p_at_most(dist, price - fee), 3),
                     max(price, round(card.book)),
                     f"{w.ref}: worth {w.worth:.1f} to us; {team} holds {n} and loses {mean(dist):.1f}; "
-                    f"fee {fee} (theirs); our top {w.top}",
+                    f"fee {fee} (theirs); our top {w.top}" + ("; a dealer sells it: short-lived" if w.dealer else ""),
                     card.rarity,
+                    pp.dealer_card_expires if w.dealer else 40,
                 )
                 if (
                     trade.p_fill >= pp.min_fill
@@ -377,6 +384,7 @@ def swap_trades(
                     f"{o.ref} for {w.ref}: +{ours_raw:.1f} to us, +{theirs_raw:.1f} to {team} before the cash leg "
                     f"{cash:+d}; fee {fee} (theirs)",
                     want_card.rarity,
+                    pp.dealer_card_expires if w.dealer else 40,
                 )
                 if trade.p_fill < pp.min_fill or trade.ours < pp.min_swap_surplus or trade.theirs <= 0:
                     continue
@@ -507,15 +515,19 @@ def _search(
 
 
 def _pool(trades: Sequence[Trade], pp: PlanParams) -> list[Trade]:
-    """The candidates the search sees, best expected first: `per_item` per copy or wanted card, then at most
-    `max_pool` (the search recurses once per candidate, and every node scans what is left)."""
-    kept: Counter[str] = Counter()
+    """The candidates the search sees, best expected first: per copy or wanted card, the best trade of each
+    kind with each counterparty, up to `per_item` of them (diverse counterparties are what lets a plan meet
+    the share rule), then at most `max_pool` (the search recurses once per candidate)."""
+    per_item: Counter[str] = Counter()
+    seen: set[tuple[str, str, str]] = set()
     pool = []
     for t in sorted(trades, key=lambda t: (-t.expected, t.counterparty, t.refs)):
         items = sorted(_items(t))
-        if t.expected <= 0 or any(kept[i] >= pp.per_item for i in items):
+        keys = {(i, t.counterparty, t.kind) for i in items}
+        if t.expected <= 0 or keys & seen or any(per_item[i] >= pp.per_item for i in items):
             continue
-        kept.update(items)
+        seen |= keys
+        per_item.update(items)
         pool.append(t)
     return pool[: pp.max_pool]
 
@@ -904,9 +916,9 @@ def thread_proposal(t: Trade, venue: str = "rastro") -> dict[str, Any]:
     }
 
 
-def listing_request(t: Trade, venue: str = "rastro", expires_in_ticks: int = 40) -> dict[str, Any]:
+def listing_request(t: Trade, venue: str = "rastro") -> dict[str, Any]:
     """`POST /api/offers` for one listing (with `to` when it is addressed)."""
-    body: dict[str, Any] = {"venue": venue, "give": t.give, "want": t.want, "expires_in_ticks": expires_in_ticks}
+    body: dict[str, Any] = {"venue": venue, "give": t.give, "want": t.want, "expires_in_ticks": t.expires}
     if t.to:
         body["to"] = t.to
     return body
@@ -917,7 +929,7 @@ def command(t: Trade, venue: str = "rastro") -> str:
     `--live`). A swap is proposed as an addressed board offer (`sell swap`), the path other teams used on
     Friday; `thread_proposal` is the team-thread alternative."""
     to = f" --to {t.to}" if t.to else ""
-    where = "" if venue == "rastro" else f" --venue {venue}"
+    where = ("" if venue == "rastro" else f" --venue {venue}") + ("" if t.expires == 40 else f" --expires {t.expires}")
     if t.kind == "bid":
         return f"uv run bazaar sell bid {t.refs[0]} --price {t.price}{to}{where}"
     if t.kind == "ask":

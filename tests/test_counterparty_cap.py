@@ -323,7 +323,7 @@ def test_a_swap_is_checked_as_a_sale_at_what_we_receive_and_a_bid_for_the_cash_w
     cheap = post_swap(None, swap(your_value=60.0), ctx, Guardrails(), live=False)  # the copy is worth more than we get
     assert "sell price 50 < 1.0 × your_value 60.0" in str(cheap.verdict)
     held = post_swap(None, swap(), Context(cash=300, held={"LAV-08": 1}, tick=1, t_hours=0.1), Guardrails(), live=False)
-    assert "we already hold LAV-08" not in str(held.verdict)  # the sale leg never blocks on the wanted card
+    assert "we already hold LAV-08 (block_buying_held_cards)" in str(held.verdict)  # r1: a duplicate, refused
     twice = post_swap(None, swap(), ctx, Guardrails(), live=False, commitments=Commitments(listed=frozenset({4})))
     assert "already in one of our open offers" in str(twice.verdict)
     capped = post_swap(

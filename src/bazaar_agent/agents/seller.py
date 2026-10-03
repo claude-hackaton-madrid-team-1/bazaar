@@ -134,9 +134,9 @@ class Swap:
 
     def actions(self) -> list[Action]:
         """What the guardrails check: the copy leaves at the value we receive (the wanted card's worth to us
-        plus their cash: never below `your_value × sell_min_value_ratio`), and the cash we add is a bid
-        for the wanted card (its price cap, the cash floor, the spend cap). Both count the swap's notional
-        toward `to`'s share."""
+        plus their cash: never below `your_value × sell_min_value_ratio`), and the wanted card is a bid of
+        the cash we add, zero or more (`block_buying_held_cards`: never a card we hold or already want; its
+        price cap, the cash floor, the spend cap). Both count the swap's notional toward `to`'s share."""
         received = round(self.worth) + self.want_cash - self.give_cash
         out = [
             Action(
@@ -149,12 +149,9 @@ class Swap:
                 volume=self.notional,
             ),
         ]
-        if self.give_cash:
-            out.append(
-                Action(
-                    "bid", self.want_ref, self.want_rarity, self.give_cash, counterparty=self.to, volume=self.notional
-                )
-            )
+        out.append(
+            Action("bid", self.want_ref, self.want_rarity, self.give_cash, counterparty=self.to, volume=self.notional)
+        )
         return out
 
     def describe(self) -> str:
