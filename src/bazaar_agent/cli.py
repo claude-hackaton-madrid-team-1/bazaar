@@ -514,7 +514,8 @@ def duel_run(
         for live_id in live_ids:
             first_seen.setdefault(live_id, c.tick)
         picks: dict[int, DuelPick] = {}
-        slots = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
         params = V2Params.from_rules(rules, anchor, floor) if v2 else None
         planned: dict[int, DuelMove] = {}
         if params is not None:

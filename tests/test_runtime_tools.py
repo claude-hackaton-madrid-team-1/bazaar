@@ -409,3 +409,15 @@ def test_a_v2_duel_move_ages_a_duel_whose_payload_has_no_start(tmp_path):
     b._public = Public(now=clock(tick=104))  # same runtime, four ticks later: the duel is 4 ticks old, not 0
     later, _ = run(b, "duel_move", {"duel_id": 7})
     assert later["request"]["kind"] == "offer" and "not priced" in later["request"]["reason"]
+
+
+def test_v1_default_runtime_duel_move_price_unchanged_when_payload_has_no_start(tmp_path):
+    """r1 review of #86: under v1 (the default) the runtime keeps #60's behaviour; only v2 ages duels."""
+    silent = {k: v for k, v in DUEL.items() if k not in ("started_tick", "created_tick")} | {"rival_offer": None}
+    team, rules = Team(duels=[silent]), Guardrails()
+    assert rules.duel_policy == "v1"
+    b = backend(tmp_path, live=True, team=team, rules=rules, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    b._public = Public(now=clock(tick=106))
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["price"] == first["request"]["price"]
