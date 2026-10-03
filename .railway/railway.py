@@ -199,6 +199,7 @@ def live_show() -> object:
             "SHOW_DUELS": preserve(),
             "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
             "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
+            "TTS_DAILY_CHARS": preserve(),  # daily ElevenLabs budget (chars ~ credits): guards the 10k weekend credits
         },
     )
 
