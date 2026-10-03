@@ -53,7 +53,7 @@ EOF
 )
 
 # emit_md MODE OUTFILE
-#   MODE   = inline | agentref   
+#   MODE   = inline | agentref
 # inline   → banner + the full contract (context + pipeline) + the memory section.
 # agentref → banner + a single `@AGENTS.md` import. AGENTS.md is the committed canonical inline
 #            and already ends with the `@.ai/memory.md` reference, so the whole contract + memory

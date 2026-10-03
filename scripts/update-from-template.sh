@@ -133,7 +133,6 @@ main() {
 		[ -f "$_t" ] && copy_file ".ai/specs/$(basename "$_t")"
 	done
 	copy_file scripts/sync-ai-docs.sh
-	mirror_dir scripts/lib
 	copy_file scripts/install.sh
 	copy_file .githooks/pre-commit
 	copy_file .githooks/post-commit

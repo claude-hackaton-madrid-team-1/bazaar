@@ -144,7 +144,7 @@ where its spec lives. The rule, by backlog source:
   number = task within it). `.ai/specs/02-plan.md` is the local backlog/index of every task id.
 - **Detection (vendor-neutral — works for every CLI):** GitHub Projects → `gh project list`
   (or `gh project list --owner <org>`) returns ≥ 1 project, or issues are filed under a project.
-  Linear → a Linear MCP server is configured (`.mcp.json` / the tool's MCP config), `LINEAR_API_KEY`
+  Linear → a Linear MCP server is configured (in Claude Code's MCP settings), `LINEAR_API_KEY`
   is set, or branches/commits use the `eng-123` key style. Neither present → use the local
   `A1/A2/…` scheme. `/spec` states which source it detected before writing anything.
 
