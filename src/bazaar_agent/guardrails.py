@@ -180,7 +180,7 @@ def _file_stop(path: Path) -> str | None:
         else:
             stop = None if loaded.rules.trading_enabled else "trading_enabled = false"
     except (GuardrailsError, OSError, ValueError) as e:  # UnicodeDecodeError is a ValueError
-        stop = f"{path.name} is invalid ({type(e).__name__}): holding"
+        stop = f"{path.name} is invalid ({type(e).__name__}: {str(e)[:160]}): holding; see `uv run bazaar rules`"
     _SWITCH_CACHE[path] = (key, stop)
     return stop
 

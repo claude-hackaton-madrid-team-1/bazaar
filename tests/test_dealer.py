@@ -514,3 +514,29 @@ def test_a_dealer_price_must_be_whole_primas(cash):
     offer = {"id": 3, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-03"]}, "want": {"cash": cash}}
     assert latest_dealer_offer({"standing_offers": [offer]}, "abuela") == (None, None, False)
     assert settled_price({"messages": [{"offer": {**offer, "status": "settled"}}]}) is None
+
+
+def test_a_second_bid_waits_for_her_first_ask():
+    # In the feed her first ask lands a tick after the thread opens: a second bid before it is blind.
+    assert decide(neg(bids=[6]), None, None, False) == Move("wait", reason="waiting for her first ask")
+
+
+def test_a_counter_never_reaches_her_opening_even_if_she_raises_her_ask():
+    n = neg(start=20, step=3, max_price=40, bids=[23], opened=(24, 1))
+    move = decide(n, 26, 5, False)  # she raised to 26: before the fix we countered at 24, her opening
+    assert move == Move("walk", reason="she held her opening ask 26: no counter left below it", reopen=True)
+
+
+def test_at_the_cap_we_wait_for_her_answer_before_walking():
+    from bazaar_agent.agents.dealer import see_history
+
+    n = Negotiation(BidPlan(6, 1, 10), [6])
+    ours = {"sender": "t01", "offer": {"maker": "t01", "status": "open", "give": {"cash": 6}}}
+    hers = {
+        "sender": "abuela",
+        "offer": {"maker": "abuela", "status": "open", "give": {"types": ["card:LAV-03"]}, "want": {"cash": 7}},
+    }
+    see_history(n, {"messages": [ours, hers, ours]}, "abuela", "LAV-03")  # our last bid is not answered yet
+    assert decide(n, 7, 9, False) == Move("wait", reason="her answer to our last bid is not in yet")
+    see_history(n, {"messages": [ours, hers, ours, hers]}, "abuela", "LAV-03")  # she answered: held at 7
+    assert decide(n, 7, 9, False).reopen

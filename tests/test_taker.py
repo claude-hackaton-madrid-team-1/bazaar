@@ -196,6 +196,7 @@ def test_the_desk_opens_then_bids_one_move_per_tick_without_blocking(tmp_path):
     (opened,) = [s for s in team.sent if s[0] == "open_thread"]
     assert opened == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]  # the ladder's opening bid
+    her(team, 5000, dealer_ask(800, 24))  # her opening ask, above our max: a second bid is not blind
     t.on_tick(at(team, TICK + 1))
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18), ("say", 5000, 19)]  # one per tick
     assert set(t.convs) == {"abuela"}
@@ -444,3 +445,27 @@ def test_the_desk_learns_her_opening_ask_from_the_messages_even_after_it_lapsed(
     assert neg.opening_ask == 7 and dm.move == Move(
         "walk", reason="she held her opening ask 7: no bid left below it", reopen=True
     )
+
+
+def test_a_refused_walk_rereads_the_thread_and_books_a_deal_that_landed_first(tmp_path):
+    # Security audit #72 round 2 (P2): she said "Deal!" to our 18 between our thread read and our close.
+    # The close is refused; dropping the conversation would leave 18 P of spend unbooked.
+    from bazaar_agent.sdk import BazaarError
+
+    class DealFirst(FakeTeam):
+        def close_thread(self, tid):
+            her(
+                self,
+                tid,
+                dealer_ask(800, 19, status="cancelled"),
+                {"maker": "t01", "status": "settled", "give": {"cash": 18}},
+                status="deal",
+            )
+            raise BazaarError("thread_closed", "thread 5000 is deal", 400)
+
+    team = DealFirst()
+    t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens thread 5000 for LAV-08 and bids 18
+    her(team, 5000, dealer_ask(800, 19))  # her opening 19, one above our 18: we walk
+    t.on_tick(at(team, TICK + 1))
+    assert t.convs == {} and t.reopen_at == {} and ledger.spent_since(0) == 18

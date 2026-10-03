@@ -13,7 +13,7 @@ from bazaar_agent.agents.taker import TakerConfig
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, bid, clock, our_ask
 from tests.test_dealer import FakeDealerClient
 from tests.test_maker import NoAccept, maker
-from tests.test_taker import at, taker
+from tests.test_taker import at, dealer_ask, her, taker
 
 
 class Switch:
@@ -151,6 +151,7 @@ def _desk(tmp_path, switch, **rules):
     )
     t.on_tick(clock())  # opens thread 5000 with abuela and bids 18
     assert writes(team, "say") == [("say", 5000, 18)]
+    her(team, 5000, dealer_ask(800, 24))  # her opening ask (above our max): the next bid is not blind
     return team, t, lines
 
 
@@ -328,7 +329,7 @@ def test_a_guardrails_file_without_trading_enabled_holds(switch, text):
 def test_a_guardrails_file_with_a_stray_byte_holds_instead_of_raising(switch):
     switch.file.write_bytes(switch.file.read_bytes() + b"\xff\xfe")
     (stop,) = gr.kill_switch(gr.Guardrails(pause_file=str(switch.pause)))
-    assert stop == "GUARDRAILS.md is invalid (UnicodeDecodeError): holding"
+    assert stop.startswith("GUARDRAILS.md is invalid (UnicodeDecodeError: ") and stop.endswith("`uv run bazaar rules`")
 
 
 def test_negotiate_opens_no_thread_while_the_switch_is_on():

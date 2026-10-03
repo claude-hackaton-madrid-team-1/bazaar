@@ -585,9 +585,12 @@ class Taker:
                 self._commit(run, int(move.price or 0), conv.item, conv.thread_id)
             return
         if move.kind == "walk":
-            self.rec.send(
+            closed = self.rec.send(
                 did, tick, "close_thread", {"thread": conv.thread_id}, lambda: self.team.close_thread(conv.thread_id)
             )
+            if closed is None:  # refused: her "Deal!" may have landed first; a deal is never dropped unbooked
+                self._after_refused_walk(run, conv)
+                return
             self.convs.pop(conv.dealer, None)
             if move.reopen:
                 self._held_opening(run, conv)
@@ -622,6 +625,20 @@ class Taker:
         elif not self.rec.maybe_landed:
             return
         self._commit(run, price, conv.item, conv.thread_id)
+
+    def _after_refused_walk(self, run: _TickRun, conv: Conversation) -> None:
+        """Our close was refused: read the thread again. Ended (a deal that landed first): wrap it up, its
+        spend booked. Still open (or unreadable): keep the conversation; the next tick decides again."""
+        try:
+            after = self.team.thread(conv.thread_id)
+        except BazaarError as e:
+            self.log(
+                f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} unreadable after a refused walk ({e.code})"
+            )
+            return
+        if str(after.get("status") or "open") != "open":
+            self._finished(run, conv, after)
+            self.convs.pop(conv.dealer, None)
 
     def _held_opening(self, run: _TickRun, conv: Conversation) -> None:
         """She held her opening ask and we walked (a deal there scores nothing): reopen once with a lower

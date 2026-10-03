@@ -62,6 +62,7 @@ class Negotiation:
     opening_ask: int | None = None  # the dealer's first structured ask we saw
     lowest_ask: int | None = None
     bids_at_opening: int = 0  # bids we had sent when her opening ask appeared; later ones are counters
+    awaiting_reply: bool = False  # the thread's last message is ours: her answer to our last bid is not in yet
 
     def next_bid(self) -> int | None:
         """A strictly higher price than our last bid, capped at the limit; None when spent."""
@@ -98,14 +99,25 @@ class Negotiation:
 
 def counter_below(neg: Negotiation, ask: int) -> Move:
     """Her ask is inside what we would pay, but she has not come down from her opening yet: bid strictly
-    below it (a bid at her ask would close at her opening price). The dealer matches our step, so we never
-    step past it. When no whole price is left between our last bid and her ask, she has held her opening:
-    walk, and let the caller reopen lower (taking it would score nothing)."""
+    below it (a bid at her ask would close at her opening price), and never above `bid_cap` (she may have
+    raised her ask). The dealer matches our step, so we never step past it. When no whole price is left
+    between our last bid and her ask, she has held her opening: walk, and let the caller reopen lower
+    (taking it would score nothing)."""
     last = neg.bids[-1] if neg.bids else 0
+    cap = neg.bid_cap()
     price = max(1, last + 1, ask - neg.plan.step)
-    if price >= ask:
-        return Move("walk", reason=f"she held her opening ask {ask}: no counter left below it", reopen=True)
+    price = price if cap is None else min(price, cap)
+    if price >= ask or price <= last:
+        return held_walk(neg, f"she held her opening ask {ask}: no counter left below it")
     return Move("bid", price, reason=f"counter below her unconceded ask {ask}")
+
+
+def held_walk(neg: Negotiation, reason: str) -> Move:
+    """She held her opening ask: walk and reopen lower. Unless her answer to our last bid is not in yet (it
+    may be a "Deal!" at that bid): then wait one tick for it."""
+    if neg.awaiting_reply:
+        return Move("wait", reason="her answer to our last bid is not in yet")
+    return Move("walk", reason=reason, reopen=True)
 
 
 def reopen_start(neg: Negotiation) -> int | None:
@@ -132,6 +144,8 @@ def meet_ask(neg: Negotiation, ask: int | None) -> Move:
 def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool) -> Move:
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
     neg.see_ask(ask)
+    if ask is None and neg.bids and neg.opening_ask is None:  # a second bid before her first ask is blind
+        return Move("wait", reason="waiting for her first ask")
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
         if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
@@ -150,16 +164,17 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             return Move("bid", cap, reason=f"capped below her opening ask {neg.opening_ask}")
         if neg.came_down:  # cap is her lowest ask, and our bid already meets it
             return Move("wait", reason=f"our bid stands at her lowest ask {neg.lowest_ask}")
-        return Move("walk", reason=f"she held her opening ask {neg.opening_ask}: no bid left below it", reopen=True)
+        return held_walk(neg, f"she held her opening ask {neg.opening_ask}: no bid left below it")
     return Move("bid", nxt, reason="small distinct step up")
 
 
 def bid_schedule(plan: BidPlan) -> list[int]:
-    """Every bid `decide()` would send if the dealer never answered: the dry run of one negotiation."""
+    """Every bid of the ladder, from `start` to the hard max: the dry run of one negotiation (live, a bid
+    after the first waits for her answer and stays below her opening ask)."""
     neg, schedule = Negotiation(plan), []
-    while (move := decide(neg, None, None, False)).kind == "bid" and move.price is not None:
-        neg.bids.append(move.price)
-        schedule.append(move.price)
+    while (price := neg.next_bid()) is not None:
+        neg.bids.append(price)
+        schedule.append(price)
     return schedule
 
 
@@ -219,10 +234,13 @@ def see_history(neg: Negotiation, thread: dict[str, Any], dealer: str, item: str
     """Note every ask she made in this thread, from its messages, whatever their status now. Her opening
     ask answers our first bid and lapses 2 ticks later: a hold (or two failed reads) can hide it from the
     standing offers, and `bid_cap` must still know it. An offer that is not our plain buy is skipped."""
-    for m in thread.get("messages") or []:
-        o = m.get("offer") if isinstance(m, dict) else None
+    messages = [m for m in thread.get("messages") or [] if isinstance(m, dict)]
+    for m in messages:
+        o = m.get("offer")
         if isinstance(o, dict) and o.get("maker") == dealer and offer_terms_problem(o, item) is None:
             neg.see_ask(offer_cash(o))
+    senders = [m.get("sender") for m in messages if m.get("sender")]
+    neg.awaiting_reply = bool(senders) and senders[-1] != dealer
 
 
 def latest_dealer_offer(thread: dict[str, Any], dealer: str) -> tuple[int | None, int | None, bool]:
