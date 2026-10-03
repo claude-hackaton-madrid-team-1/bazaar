@@ -1243,6 +1243,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 | [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 | BR1 (new) | Buyer rank: `bazaar buyers [--card] [--json] [--save]` ranks the other teams per card (what they paid for the set and rarity, set interest, whether they miss the card, a rival penalty for the top 5 and the 3 ranks above us, no page completion for a top-5 team below 1.5 × our value); `team_buyer_rank` table; the maker addresses asks to the best non-rival buyer behind `buyer_rank_enabled` (ships false) with a public fallback after `buyer_rank_fallback_ticks` | 2 | 🔵 PR (feat/buyer-rank) |
+| CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1304,6 +1305,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
 - [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
 - [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
@@ -1311,7 +1313,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
 - [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
 - [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
-- [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 
 <!-- BAZAAR:STATUS:END -->
 

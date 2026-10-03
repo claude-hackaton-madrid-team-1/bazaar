@@ -137,6 +137,8 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     open_sealed_packs: bool = False
+    card_release_boost_enabled: bool = False
+    card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
@@ -239,6 +241,8 @@ ENFORCED_BY: dict[str, str] = {
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
+    "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
+    "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",

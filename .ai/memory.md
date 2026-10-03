@@ -970,3 +970,7 @@ An integration test that failed before `conn.close()` left a psycopg session `id
 holds a lock), and the `schema` fixture's `drop schema … cascade` waited on it with no timeout: pytest hung for
 minutes. Use `conn.autocommit = True` and `try/finally: conn.close()` in such tests. Also: macOS has no `timeout`
 command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; run it in the background instead.
+### [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
+Keyless `GET /api/catalog`: LAV/MAL/LAT/SAL `+0h`, RET `sat+0h`, CHA `sun+0h` with `released: false`, 12 cards
+each, none `hidden`, CHA minted 0. The taker's cards heartbeat (`cards_heartbeat.py`) diffs the catalog it already
+reads each tick (no request): Sunday's flip reports 12 `set_released` events with the dealers that sell/buy each.

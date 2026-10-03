@@ -2723,6 +2723,17 @@ def _run_agent(
         decisions.close()
 
 
+def _cards_heartbeat(kw: dict[str, Any], settings: Any) -> Any:
+    """New cards in the catalog the taker already reads: stored in the feed reader's learnings store (Postgres +
+    memory) when it runs, else in memory only; ranked up per GUARDRAILS `card_release_boost_enabled`."""
+    from bazaar_agent.cards_heartbeat import CardsHeartbeat
+    from bazaar_agent.learn.store import LearningStore
+
+    learner = kw.get("learner")
+    store = learner.store if learner is not None else LearningStore(None, kw["log"])
+    return CardsHeartbeat(kw["rules"], store.record, kw["log"], settings.data_dir / "agents")
+
+
 def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     """Radio Rastro and the schedule, read by the taker after its sends on its own keyless client (2 s, never
     retried: a hung or rate-limited read costs one attempt, never the next tick): stored in the feed reader's
@@ -2798,6 +2809,7 @@ def agent_taker(
             swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             **kw,
         )

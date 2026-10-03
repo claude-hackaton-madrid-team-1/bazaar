@@ -29,6 +29,7 @@ Kind = Literal[
     "lesson",  # what one settled decision taught us (`learn.lessons`, from the evals' outcomes)
     "policy",  # a learned parameter set, e.g. a dealer ladder (`learn.evolve`), with its evidence
     "tactic",  # what one bluff tactic earned with one counterparty (`agents.bluff`, N16); never in the default recall
+    "card_release",  # a new card, a released set or a minted jump in the catalog (`cards_heartbeat`)
     "news",  # a Radio Rastro item or an official schedule lever (`news.NewsSentinel`): quoted, maybe a rumour
     "schedule",  # an official scheduled event (`/api/schedule`, `/api/levels`) with its lead time (`schedule_watch`)
     "rival_move",  # a team that climbed ranks fast, and why, from public data (`rank_watch`)
