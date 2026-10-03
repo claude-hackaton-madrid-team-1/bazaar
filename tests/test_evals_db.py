@@ -6,6 +6,7 @@ Skipped when Postgres is unreachable. No game API and no real Phoenix: annotatio
 from __future__ import annotations
 
 import json
+import secrets
 from collections.abc import Iterator
 from typing import Any
 
@@ -25,6 +26,24 @@ from tests.evals.test_phoenix import FakePhoenix, client, span
 from tests.test_db import open_in
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def private_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Advisory locks are database-wide: a per-test namespace keeps other sessions' evals out of these tests."""
+    from bazaar_agent.evals import inline
+
+    namespace = secrets.token_hex(4)
+    monkeypatch.setattr(inline, "lock_key", lambda agent: f"pytest-{namespace}:bazaar-evals:{agent}")
+
+
+def lock(conn: psycopg.Connection, agent: str) -> bool:
+    from bazaar_agent.evals.inline import lock_key
+
+    row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (lock_key(agent),)).fetchone()
+    return bool(row and row[0])
+
+
 # The throwaway-schema fixtures of test_db.py: every test gets its own schema, dropped afterwards.
 database_url, schema, conn = test_db.database_url, test_db.schema, test_db.conn
 
@@ -317,14 +336,15 @@ def test_jev_calls_are_counted_per_question_each_agent_asks(seeded: psycopg.Conn
         "(153, 'duels', 'duel_offer', 'done', '{\"verdict\": \"undecided\", \"reason\": \"no tick budget for jev\"}'), "
         "(154, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\", \"digest\": \"m1\"}'), "
         "(155, 'maker', 'post_ask', 'approved', '{\"verdict\": \"aggressive\", \"reason\": \"cached\"}'), "
-        "(156, 'maker', 'hold_ask', 'approved', '{\"verdict\": \"yes\", \"digest\": \"m2\"}')"
+        "(156, 'maker', 'hold_ask', 'approved', '{\"verdict\": \"yes\", \"digest\": \"m2\"}'), "
+        "(157, 'taker', 'accept_ask', 'approved', '{\"verdict\": \"no\", \"reason\": \"cached (below_threshold)\"}')"
     )
     seeded.commit()
     assert jev_calls(seeded) == {
         "duel_move": (2, 1),  # d1 recorded on two ticks is one call; no budget is no call
         "list_price_choice": (1, 1),  # the cached reuse is not a call
         "reprice_or_hold": (1, 1),
-        "offer_is_worth_accepting": (1, 1),  # the taker's verdict carries no digest
+        "offer_is_worth_accepting": (1, 1),  # no digest on the taker's verdicts; its cached reuse is no call
     }
 
 
@@ -356,3 +376,133 @@ def test_an_unreadable_settlement_is_skipped(seeded: psycopg.Connection) -> None
         )
     seeded.commit()
     assert [s.settlement for s in our_settlements(seeded, OURS, None)] == [500]
+
+
+def test_an_agent_scores_and_annotates_only_its_own_targets(seeded: psycopg.Connection) -> None:
+    from bazaar_agent.evals import store
+
+    duels_only = run_once(seeded, OURS, targets={"duel"})
+    assert duels_only.scored == {"duel": 20} and duels_only.notes == ()
+    taker = run_once(seeded, OURS, targets={"dealer", "trade"})
+    assert taker.scored == {"dealer": 6, "trade": 1}
+    assert {p.target for p in store.pending_annotations(seeded, {"dealer"})} == {"dealer"}
+    assert len(store.pending_annotations(seeded)) == 27
+
+
+def test_an_agents_pass_makes_no_network_call_but_postgres(
+    database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.request
+
+    from bazaar_agent.evals.inline import TickEvals
+
+    setup = open_in(database_url, schema)
+    db.init_schema(setup)
+    seed(setup)
+    setup.close()
+    calls: list[str] = []
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        calls.append("network")
+        raise AssertionError("a pass called the network")
+
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    logs: list[str] = []
+    for agent in ("duels", "taker", "maker"):
+        evals = TickEvals(
+            agent, 1, lambda: open_in(database_url, schema), lambda c: OURS, lambda: None, logs.append, lambda w: w()
+        )
+        evals.after_tick(1)
+        assert evals.after_tick(2) is True
+    assert calls == [] and not [m for m in logs if "failed" in m], logs
+    assert [m.split(":")[1].split("·")[0].strip() for m in logs if "new/changed" in m] == [
+        "duel 20",
+        "dealer 6, trade 1",
+        "nothing settled yet",
+    ]
+
+
+def test_a_second_process_of_the_same_kind_skips_while_the_first_scores(
+    database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bazaar_agent.evals.inline import TickEvals
+
+    setup = open_in(database_url, schema)
+    db.init_schema(setup)
+    holder = open_in(database_url, schema)
+    assert lock(holder, "taker")
+    logs: list[str] = []
+    evals = TickEvals(
+        "taker", 1, lambda: open_in(database_url, schema), lambda c: OURS, lambda: None, logs.append, lambda w: w()
+    )
+    evals.after_tick(1)
+    evals.after_tick(2)
+    assert logs == ["evals (taker): another taker process is scoring; skipped 1x"]
+    holder.close()  # the lock goes with its session
+    evals.after_tick(3)
+    assert any("new/changed" in m for m in logs[1:]), logs
+    setup.close()
+
+
+def test_the_cli_pass_scores_only_the_kinds_no_agent_is_scoring(cli_db: None, database_url: str, schema: Any) -> None:
+    holder = open_in(database_url, schema)
+    assert lock(holder, "duels")
+    ran = CliRunner().invoke(evals_cli.evals_app, ["run", "--no-phoenix"])
+    holder.close()
+    assert ran.exit_code == 0, ran.output
+    assert "the duels agent is scoring duel right now" in ran.output
+    assert "scored dealer 6, trade 1" in ran.output and "duel" not in ran.output.split("scored")[1].split("·")[0]
+
+
+def test_the_cli_pass_releases_its_locks_and_timeouts_even_when_the_annotator_fails(
+    cli_db: None, database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = open_in(database_url, schema)
+
+    def broken(phoenix: bool) -> Any:
+        raise RuntimeError("config error mid-run")
+
+    monkeypatch.setattr(evals_cli, "_annotator", broken)
+    with pytest.raises(RuntimeError):
+        evals_cli._pass(conn, None, True, False)
+    other = open_in(database_url, schema)
+    got = [
+        other.execute("select pg_try_advisory_lock(hashtext(%s))", (f"bazaar-evals:{a}",)).fetchone()[0]
+        for a in ("duels", "taker", "maker")
+    ]
+    assert got == [True, True, True]  # nothing left held for the agents
+    assert conn.execute("show idle_session_timeout").fetchone()[0] in ("0", "0ms")
+    other.close()
+    conn.close()
+
+
+def test_evals_run_json_stays_pure_json_when_a_kind_is_busy(cli_db: None, database_url: str, schema: Any) -> None:
+    holder = open_in(database_url, schema)
+    assert lock(holder, "duels")
+    ran = CliRunner().invoke(evals_cli.evals_app, ["run", "--no-phoenix", "--json"])
+    holder.close()
+    assert ran.exit_code == 0
+    assert json.loads(ran.stdout)["scored"] == {"dealer": 6, "trade": 1}
+
+
+def test_a_failing_annotator_close_still_unlocks_and_the_loop_drops_its_session(
+    cli_db: None, database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Closing:
+        def find(self, query: Any) -> list[Any]:
+            return []
+
+        def close(self) -> None:
+            raise UnicodeEncodeError("ascii", "", 0, 1, "a non-ASCII key")
+
+    monkeypatch.setattr(evals_cli, "_annotator", lambda phoenix: Closing())
+    gate = evals_cli.TickGate(1, lambda conn: evals_cli._pass(conn, None, True, False), phoenix=True)
+    from bazaar_agent.ticks import Clock
+
+    with pytest.raises(UnicodeEncodeError):
+        gate(Clock.model_validate({"tick": 1, "next_tick_in": 20, "tick_seconds": 30}))
+    assert gate.conn is None  # the loop dropped its session
+    other = open_in(database_url, schema)
+    assert [lock(other, a) for a in ("duels", "taker", "maker")] == [True, True, True]
+    other.close()

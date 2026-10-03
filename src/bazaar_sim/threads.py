@@ -38,7 +38,7 @@ def open_thread(w: World, team_id: str, body: dict[str, Any]) -> Thread:
 
 def _open_dealer_thread(w: World, team_id: str, dealer_id: str, topic: Any, open_now: list[Thread]) -> Thread:
     team = w.team(team_id)
-    if dealer_id not in team.unlocked and not (dealer_id == "chato" and w.tick >= w.state.chato_open_tick):
+    if dealer_id not in team.unlocked and not w.open_to_all(dealer_id):
         raise SimError("locked", f"{dealer_id} is not unlocked for you yet (see GET /api/dealers)", 403)
     until = team.cooloff.get(dealer_id, 0)
     if until > w.tick:
@@ -167,14 +167,16 @@ def _sell_topic(
     if not ids:
         raise invalid("a sell topic lists the asset ids you sell")
     book = 0
+    bid = 0.0
     for aid in ids:
         asset = w.asset(aid)
         if asset.owner != team_id:
             raise SimError("not_owner", f"asset {aid} is not yours", 403)
         card = catalog.card(asset.ref)
-        if card is None or not card.page or not catalog.dealer_buys(data, card.rarity):
+        if card is None or not card.page or not catalog.dealer_buys(data, card.rarity, card.set_code):
             raise invalid(f"{dealer_id} does not buy {asset.ref}")
         book += card.book
+        bid += card.book * dealers.buy_share(style, card.set_code, card.rarity)
     first = catalog.cards()[w.asset(ids[0]).ref]
     return dealers.start(
         style,
@@ -186,6 +188,7 @@ def _sell_topic(
         opening=None,
         assets=ids,
         rng=rng,
+        bid=round(bid),
     )
 
 
@@ -287,6 +290,7 @@ def post_message(
     message = Message(id=w.next_id("message"), tick=w.tick, sender=sender, text=text, offer=offer_id)
     th.messages.append(message)
     th.last_activity_tick = w.tick
+    capped = th.kind == "team" and th.status == "open" and len(th.messages) >= w.limit("messages_per_team_thread")
     offer = w.state.offers.get(offer_id) if offer_id is not None else None
     w.emit(
         "thread.message",
@@ -302,6 +306,8 @@ def post_message(
         },
         actor=sender,
     )
+    if capped:  # RULES.md: a conversation between two teams ends in a deal or after 200 messages
+        end(w, th, "closed", "message_cap")
     return message
 
 
@@ -428,43 +434,61 @@ def housekeeping(w: World) -> None:
             end(w, th, "closed", "idle")
 
 
+GATED = ("chato", "pilar")  # dealers that open early to teams that earned them, and to everyone at a set tick
+
+
 def levels_tick(w: World) -> None:
-    chato = catalog.raw_dealers()["chato"]
+    for dealer_id in GATED:
+        _level_tick(w, dealer_id)
+
+
+def _level_tick(w: World, dealer_id: str) -> None:
+    data = catalog.raw_dealers()[dealer_id]
+    open_tick = w.open_to_all_tick(dealer_id)
+    assert open_tick is not None
     if w.tick == 1:
         w.emit(
             "level.activated",
             {
-                "level": "chato",
+                "level": dealer_id,
                 "kind": "persona",
-                "name": chato["name"],
-                "teaser": chato["teaser"],
-                "how": chato["how"],
-                "opens_to_all_in_hours": round(w.state.chato_open_tick * w.config.tick_seconds / 3600.0, 3),
+                "name": data["name"],
+                "teaser": data["teaser"],
+                "how": data["how"],
+                "opens_to_all_in_hours": round(open_tick * w.config.tick_seconds / 3600.0, 3),
             },
             actor="admin",
         )
-    if w.tick == w.state.chato_open_tick:
-        w.emit("persona.open_to_all", {"persona": "chato", "name": chato["name"], "level": 2})
+    if w.tick == open_tick:
+        w.emit("persona.open_to_all", {"persona": dealer_id, "name": data["name"], "level": int(data["level"])})
         for team in w.state.teams.values():
-            if "chato" not in team.unlocked:
-                team.unlocked.append("chato")
+            if dealer_id not in team.unlocked:
+                team.unlocked.append(dealer_id)
 
 
 def maybe_unlock(w: World, team_id: str) -> None:
-    """A few negotiated deals with Abuela unlock El Chato early (a deal at her opening price does not count)."""
+    """A few negotiated deals with the dealer before unlock the next one early (a deal at its opening price does
+    not count): Abuela -> El Chato, El Chato -> Doña Pilar."""
+    for dealer_id in GATED:
+        _maybe_unlock_one(w, team_id, dealer_id)
+
+
+def _maybe_unlock_one(w: World, team_id: str, dealer_id: str) -> None:
     team = w.team(team_id)
-    rule = catalog.raw_dealers()["chato"]["unlock"]
-    negotiated = [d for d in team.deals if d.dealer == rule["early_deals_with"] and d.negotiated]
-    if "chato" not in team.unlocked and len(negotiated) >= int(rule["early_min_deals"]):
-        team.unlocked.append("chato")
+    data = catalog.raw_dealers()[dealer_id]
+    rule = data["unlock"]
+    before = rule["early_deals_with"]
+    negotiated = [d for d in team.deals if d.dealer == before and d.negotiated]
+    if dealer_id not in team.unlocked and len(negotiated) >= int(rule["early_min_deals"]):
+        team.unlocked.append(dealer_id)
         w.emit(
             "level.unlocked",
             {
                 "team": team_id,
                 "name": team.name,
-                "persona": "chato",
-                "persona_name": "El Chato",
+                "persona": dealer_id,
+                "persona_name": data["name"],
                 "level": len(team.unlocked),
-                "why": f"{len(negotiated)} deals with abuela",
+                "why": f"{len(negotiated)} deals with {before}",
             },
         )

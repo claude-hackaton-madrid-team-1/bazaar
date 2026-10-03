@@ -155,5 +155,14 @@ def dealer_menu_sells(dealer: dict[str, Any], *, pack: str | None = None, rarity
     return None
 
 
-def dealer_buys(dealer: dict[str, Any], rarity: str) -> bool:
-    return any(item.get("rarity") == rarity for item in dealer["menu"]["buys"])
+def dealer_buys(dealer: dict[str, Any], rarity: str, set_code: str | None = None) -> bool:
+    """The dealer's menu buys this rarity (and, when `set_code` is given, from that set: a list or "released")."""
+    return any(item.get("rarity") == rarity and _in_sets(item.get("sets"), set_code) for item in dealer["menu"]["buys"])
+
+
+def _in_sets(sets: Any, set_code: str | None) -> bool:
+    if set_code is None or sets is None:
+        return True
+    if sets == "released":
+        return set_code in released_sets()
+    return isinstance(sets, list) and set_code in sets

@@ -8,13 +8,28 @@ Album first (`/api/me`), then:
     offer already promises counted, so open bids can never take cash below `cash_floor`;
   - each on the venue with the best expected fill (`market.best_venue`: El Rastro or a busier, cheaper
     team venue), never our own venue (`self_venue`);
-  - stale offers repriced (the target moved by `reprice_min_change`: tape and supply move it) or
-    cancelled (no longer a target: we hold the card, the copy is needed, the sell surplus is gone);
+  - with `max_counterparty_share` on (GUARDRAILS.md, #14), an offer anyone may take is posted only while no
+    team could pass its share by taking it; otherwise it is addressed (`to`) to the strategy's counterparty
+    (the set's chaser for an ask, a holder for a bid) with the most room, or not posted;
+  - stale offers repriced (the target moved by `reprice_min_change`: tape and supply move it, or an ask
+    fell below its floor) or cancelled (no longer a target: we hold the card, the copy is needed, the sell
+    surplus is gone). A reprice cancels only once its replacement would pass the guardrails; an offer
+    that can no longer stand (an ask below its floor, a bid above its new target) is cancelled even
+    when it cannot be replaced (no listing left, the post denied), any other one is kept;
+  - with `buyer_rank_enabled` (GUARDRAILS.md, off by default), an ask it already decided to post is addressed
+    to the best non-rival buyer (`buyers.rank_buyers`), and posted for anyone at the same price once it stood
+    `buyer_rank_fallback_ticks` unfilled; one copy never goes to one team twice at one price;
   - with Jev (`maker_jev.MakerJev`), each price picked among three legal candidates by
     `list_price_choice` and each reprice weighed by `reprice_or_hold`; `undecided` keeps today's move.
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
-ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
-that is not a strategy target is cancelled, so stop the maker before trading by hand.
+ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers, except those a person
+posted with `bazaar sell ... --live` (booked in the shared ledger as `guardrails.HANDS_OFF` listings): it
+never cancels or reprices those, and posts nothing for the copy or card they already cover. Any other
+offer of ours that is not a strategy target is cancelled.
+While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
+posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
+Our own venue rides on the same tick (`agents/venue_keeper.py`, before the offers above): opened once
+after `venue_open_after_game_hours`, then its broker matches the book every tick.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -22,10 +37,14 @@ from __future__ import annotations
 
 import math
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
+from bazaar_agent import buyers as buyer_rank
+from bazaar_agent.agents.dealer_sell_data import SellMarket
+from bazaar_agent.agents.dealer_sell_desk import Candidate, SellDesk, SellHooks, standard_hooks
 from bazaar_agent.agents.maker_jev import (
     PRICE_QUESTION,
     REPRICE_QUESTION,
@@ -36,12 +55,15 @@ from bazaar_agent.agents.maker_jev import (
     reprice_state,
 )
 from bazaar_agent.agents.market import OpenOffer, Side, best_venue, our_open_offers
+from bazaar_agent.agents.relist import MEMORY_TICKS, AskTrail, Relist, market_median, relist_price
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
+    new_page_line,
     read_snapshot,
     window_for,
 )
@@ -49,17 +71,39 @@ from bazaar_agent.agents.seller import (
     Listing,
     OfferError,
     bid_listing,
+    committed_context,
     offers_in,
     open_commitments,
     post,
     sell_listing,
+    trade_book,
+    unsettled_accepts,
 )
-from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.agents.team_desk import disabled, maker_may_list
+from bazaar_agent.decisions import RELIST_REST, DecisionLog, Status
+from bazaar_agent.guardrails import (
+    Action,
+    Context,
+    Guardrails,
+    LedgerRow,
+    LedgerStore,
+    TradeBook,
+    check,
+    context_from,
+    effective_cash_floor,
+    kill_switch,
+    refund_row,
+)
+from bazaar_agent.holdings import Holdings
+from bazaar_agent.intel import book_values, card_rarities, settled_volume, tape
+from bazaar_agent.learn.venues import VenueNotices
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
+
+LEADERBOARD_EVERY = 10  # ticks between leaderboard reads for the buyer rank (it refreshes every few minutes)
 
 
 @dataclass(frozen=True)
@@ -80,20 +124,70 @@ class Target:
     value: float  # asks: what we lose by selling; bids: worth to us
     score: float
     reason: str
+    counterparties: tuple[str, ...] = ()  # asks: the teams that chase the set; bids: the likely holders
+    to: str | None = None  # addressed to this team (`max_counterparty_share`); None: anyone on the venue
+    final: bool = False  # a buyer-rank fallback: posted for anyone at this exact price (no addressee, no Jev price)
+    min_price: int = 0  # asks: a relist's floor (`agents.relist`); no Jev pick may go under it
 
 
 def targets_from(book: Playbook) -> list[Target]:
     asks = [
-        Target("ask", mv.ref, mv.rarity, int(mv.limit), mv.asset_id, mv.value, mv.score, mv.reason)
+        Target("ask", mv.ref, mv.rarity, int(mv.limit), mv.asset_id, mv.value, mv.score, mv.reason, mv.counterparties)
         for mv in book.sells
         if mv.asset_id is not None and mv.limit > 0
     ]
     bids = [
-        Target("bid", mv.ref, mv.rarity, int(mv.limit), None, mv.value, mv.score, mv.reason)
+        Target("bid", mv.ref, mv.rarity, int(mv.limit), None, mv.value, mv.score, mv.reason, mv.counterparties)
         for mv in book.buys
         if mv.action == "bid" and mv.limit > 0
     ]
     return sorted(asks + bids, key=lambda t: -t.score)
+
+
+def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guardrails) -> list[Target]:
+    """Asks that leave the team desk its swap copy (`team_desk.maker_may_list`): an ask on the desk's copy moves
+    to the cheapest other copy when it costs us no more, else it is dropped, and at most `held - 2` copies of a
+    card are asked, so the desk keeps the two free copies `spare_copy` needs; bids are untouched."""
+    targets = list(targets)
+    asked = {t.asset_id for t in targets if t.side == "ask"}
+    held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
+    room = {ref: n - 2 for ref, n in held.items() if n >= 2} if disabled(rules) is None else {}
+    kept: list[Target] = []
+    for t in targets:
+        if t.side == "ask" and not maker_may_list(me, t.ref, t.asset_id, rules):
+            moved = _other_copy(t, me, rules, asked)
+            if moved is None:
+                continue
+            t = moved
+        if t.side == "ask" and t.ref in room:
+            if room[t.ref] <= 0:
+                continue
+            room[t.ref] -= 1
+        kept.append(t)
+    return kept
+
+
+def _other_copy(t: Target, me: dict[str, Any], rules: Guardrails, asked: set[int | None]) -> Target | None:
+    """The ask moved to our cheapest other listable copy of its card, if that copy costs us no more."""
+    others = [
+        a
+        for a in me.get("assets") or []
+        if a.get("ref") == t.ref
+        and isinstance(a.get("id"), int)
+        and a["id"] not in asked
+        and a.get("your_value") is not None
+        and maker_may_list(me, t.ref, a["id"], rules)
+    ]
+    best = min(others, key=lambda a: (float(a["your_value"]), int(a["id"])), default=None)
+    if best is None or float(best["your_value"]) > t.value:
+        return None
+    asked.add(int(best["id"]))
+    return replace(t, asset_id=int(best["id"]))
+
+
+def _covered_by(t: Target, offers: Iterable[OpenOffer]) -> bool:
+    """An offer a person posted by hand already stands for this target's copy (asks) or card (bids)."""
+    return any(o.side == t.side and (o.asset_id == t.asset_id if t.side == "ask" else o.ref == t.ref) for o in offers)
 
 
 def sell_floor(your_value: float, rules: Guardrails) -> int:
@@ -113,8 +207,26 @@ def moved(current: int, target: int, min_change: float) -> bool:
     return abs(current - target) >= max(1, round(target * min_change))
 
 
-def plan_offers(targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int, cfg: MakerConfig) -> list[MakerAction]:
-    """Cancels first (they free open-offer slots), then reprices, then new posts by score."""
+def cannot_stand(o: OpenOffer, t: Target, rules: Guardrails) -> str | None:
+    """Why an open offer may not stay at its price: an ask below the floor of what selling its copy costs us
+    now (e.g. a page completed since it was posted), a bid above its new target. None: it may stand."""
+    if o.side == "ask":
+        floor = ask_floor(t.value, rules)
+        return f"ask {o.price} is below its floor {floor}" if o.price < floor else None
+    return f"bid {o.price} is above its target {t.price}" if o.price > t.price else None
+
+
+def plan_offers(
+    targets: Iterable[Target],
+    mine: Iterable[OpenOffer],
+    tick: int,
+    cfg: MakerConfig,
+    rules: Guardrails,
+    above_value: Callable[[OpenOffer], str | None] = lambda o: None,
+) -> list[MakerAction]:
+    """Cancels first (they free open-offer slots), then reprices, then new posts by score. An ask below its
+    floor is repriced however little its target moved; a bid above the official value (`above_value`) is
+    cancelled, and its card is not bid again this tick."""
     targets = list(targets)
     asks = {t.asset_id: t for t in targets if t.side == "ask"}
     bids = {t.ref: t for t in targets if t.side == "bid"}
@@ -129,8 +241,12 @@ def plan_offers(targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int,
             cancels.append(MakerAction("cancel", why, offer=o))
             continue
         covered.add(key)
+        if o.side == "bid" and (over := above_value(o)) is not None:
+            cancels.append(MakerAction("cancel", over, offer=o))
+            continue
         lapsing = o.expires_tick is not None and o.expires_tick <= tick
-        if not lapsing and moved(o.price, t.price, cfg.reprice_min_change):
+        below_floor = o.side == "ask" and cannot_stand(o, t, rules)
+        if not lapsing and (moved(o.price, t.price, cfg.reprice_min_change) or below_floor):
             reprices.append(MakerAction("reprice", f"target moved {o.price} → {t.price}", t, o))
     posts = [
         MakerAction("post", "new target", t)
@@ -138,6 +254,16 @@ def plan_offers(targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int,
         if ("ask", t.asset_id) not in covered and ("bid", t.ref) not in covered
     ]
     return cancels + reprices + posts
+
+
+@dataclass(frozen=True)
+class _Bid:
+    """One of our board bids as last seen: what a lapse would refund, and how many copies of its card we held
+    then (more copies later means it filled)."""
+
+    offer: OpenOffer
+    held: int
+    seen_tick: int
 
 
 @dataclass
@@ -151,6 +277,9 @@ class _MakerRun:
     spent: int = 0  # bid cash committed this tick (posted or would-be), counted against the spend cap
     posted: list[str] = field(default_factory=list)
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
+    settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
+    buyer_inputs: tuple[dict[str, dict[str, int]], dict[str, dict[str, float]]] | None = None  # (holders, interest)
+    buyer_failed: bool = False  # the buyer rank failed this tick: every ask stays public
 
 
 class Maker:
@@ -170,50 +299,127 @@ class Maker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         jev: MakerJev | None = None,
+        holdings: Holdings | None = None,
+        market: Any = None,
+        notices: VenueNotices | None = None,
+        sell_market: Callable[[Any], SellMarket | None] | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
+        self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
+        self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.market = market  # agents.venue_keeper.VenueKeeper: our venue and its broker; None = no venue
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
+        # Lapsed bids (bite X15): a bid's cash is booked as spend when posted, so one that expires unfilled
+        # must give it back, or every repost books it again. Live only; memory only (a restart forgets: no
+        # refund, over-counts).
+        self._bids: dict[int, _Bid] = {}  # our board bids seen open (or posted) last tick
+        self._lapsing: dict[int, _Bid] = {}  # gone at or after expiry without the card: refunded next tick
+        self._spent_at: dict[int, tuple[int, float]] = {}  # bid id -> (tick, t_hours) of the spend we booked
+        self.values = OfficialValues.of(team)  # GET /api/me/value: every bid capped at it (Day-2 hint 1)
+        # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
+        self._run: _MakerRun | None = None
+        # Buyer rank (`buyer_rank_enabled`): the leaderboard's ranks (read every LEADERBOARD_EVERY ticks), the
+        # (team, price) each copy was addressed to, and our open asks the rank addressed. Memory only.
+        self._ranks: dict[str, int] = {}
+        self._ranks_tick: int | None = None
+        self._tried: dict[int, set[tuple[str, int]]] = {}
+        self._ranked: dict[int, str] = {}
+        self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
+        snap: Snapshot | None = None
         try:
-            self._tick(read_snapshot(self.team, self.public, self.feed, clock), window)
+            snap = read_snapshot(
+                self.team, self.public, self.feed, clock, self.holdings, parallel=self.rules.parallel_reads
+            )
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
+        try:
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down, our venue's included
+            if self.market is not None:  # the bench first: a broker without our reads still matches the bench
+                self.market.on_tick(clock, snap, window)
+            if snap is None:
+                return
+            self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} maker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} maker: {e}; no further write this tick (fail closed)")
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
-        params = self.params(clock.tick)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
         mine, total = our_open_offers(snap.offers, snap.us)
+        self._lapsed_bids(snap, mine)
+        stops = kill_switch(self.rules)
+        if stops:
+            if self.hub is not None:
+                self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=[])
+            self.log(
+                f"tick {clock.tick} maker: kill switch on: holding (no posts, no cancels; {total} open offer(s) "
+                f"stay open): {'; '.join(stops)}"
+            )
+            return
+        if fresh := self.pages.new(snap.me):  # after the hold: a page seen while holding is said when we act
+            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
+        hands_off = self.ledger.hands_off_ids()
+        by_hand = [o for o in mine if o.id in hands_off]
+        mine = [o for o in mine if o.id not in hands_off]
+        params = self.params(clock.tick)
+        if self.notices is not None:
+            self.notices.update(snap.events, snap.us)
+        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules, snap.scan)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
             snap,
             window,
-            context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+            committed_context(  # an accept of the last ticks /api/me does not show yet counts (bite X18)
+                context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules, self.values),
+                unsettled_accepts(snap.me, self.ledger, clock.tick),
+            ),
             offers_in(snap.offers),
             total,
             max(0, clock.limits.offers_per_team_per_tick - listed),
             params=params,
+            settled=(
+                settled_volume(snap.events, snap.us, book_values(snap.catalog))
+                if self.rules.max_counterparty_share < 1
+                else None
+            ),
         )
-        targets = targets_from(book)
+        targets = [t for t in targets_from(book) if not _covered_by(t, by_hand)]
+        targets = _leave_desk_copy(targets, snap.me, self.rules)  # the team desk keeps its swap copy (N17)
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
-        actions = plan_offers(targets, mine, clock.tick, self.config)
+        targets = self._relisted(snap, targets, mine)
+        held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
+        margin = self.rules.official_value_margin
+
+        def above_value(o: OpenOffer) -> str | None:  # our bids, re-capped every tick (review #177 P2)
+            return over_cap(o.price, o.ref, self.values, clock.tick, held.get(o.ref, 0), margin)
+
+        actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
+        if self.rules.buyer_rank_enabled:
+            self._refresh_ranks(clock.tick)
+            actions = self._with_fallbacks(actions, targets, mine, clock.tick)
         for action in actions:
             self._do(run, action)
+        # Dealer sales last: never a copy an open offer of ours lists (it is locked) or one the maker wants listed.
+        locked = {o.asset_id for o in [*mine, *by_hand] if o.asset_id is not None}
+        locked |= {t.asset_id for t in targets if t.side == "ask" and t.asset_id is not None}
+        self._run = run
+        self.sell_desk.on_tick(snap, params, locked)
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"
@@ -221,33 +427,169 @@ class Maker:
             f"tick {clock.tick} maker: {len(actions)} action(s), {len(run.posted)} {verb}, {run.open_total} open "
             f"offer(s), {run.listings_left} listing(s) left, {window.left():.1f} s left · "
             f"{'LIVE' if self.live else 'dry run'}"
+            + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")
+        )
+
+    # ------------------------------------------------------------ asks relisted after a lapse (agents.relist)
+
+    def _relisted(self, snap: Snapshot, targets: list[Target], mine: list[OpenOffer]) -> list[Target]:
+        """Each ask target at its relist price: a copy whose last ask lapsed unsold steps down, never the same
+        price twice in a row, and rests (no target, so nothing is posted) once it lapsed too often. Live only:
+        the history is our live decision rows (Postgres, else JSONL), so a restart keeps it."""
+        asks = [t for t in targets if t.side == "ask" and t.asset_id is not None]
+        if not self.live or not asks:
+            return targets
+        clock = snap.clock
+        trails = self._ask_trails(clock.tick)
+        open_prices = {o.asset_id: o.price for o in mine if o.side == "ask" and o.asset_id is not None}
+        values = {
+            int(a["id"]): a.get("your_value") for a in snap.me.get("assets") or [] if isinstance(a.get("id"), int)
+        }
+        prints, rarities = tape(snap.events), card_rarities(snap.catalog)
+        out = []
+        for t in targets:
+            if t.side != "ask" or t.asset_id is None:
+                out.append(t)
+                continue
+            trail = trails.get(t.asset_id, AskTrail(t.asset_id))
+            your_value = values.get(t.asset_id)
+            cost = max(
+                ask_floor(t.value, self.rules),
+                sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
+            )
+            venue = best_venue(snap.venues, snap.us, t.price)
+            median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None
+            r = relist_price(
+                t.price,
+                trail,
+                open_price=open_prices.get(t.asset_id),
+                cost_floor=cost,
+                median=median,
+                tick=clock.tick,
+                step_share=self.rules.relist_step_share,
+                min_share=self.rules.relist_min_price_share,
+                max_lapses=self.rules.relist_max_lapses,
+                cooldown_ticks=self.rules.relist_cooldown_ticks,
+            )
+            if r.rest_until is not None:
+                self._rest(clock.tick, t, r)
+            if r.price is None:
+                continue
+            if r.price != t.price or r.floor:
+                t = replace(t, price=r.price, min_price=r.floor, reason=f"{t.reason}; relist: {r.why}")
+            out.append(t)
+        return out
+
+    def _ask_trails(self, tick: int) -> dict[int, AskTrail]:
+        prices: dict[int, list[int]] = {}
+        since: dict[int, int] = {}
+        rests: dict[int, int] = {}
+        for _, kind, asset_id, value in self.rec.decisions.ask_rows("maker", tick - MEMORY_TICKS):
+            if kind == RELIST_REST:
+                rests[asset_id], since[asset_id] = value if value is not None else tick, 0
+            elif value is not None:
+                prices.setdefault(asset_id, []).append(value)
+                since[asset_id] = since.get(asset_id, 0) + 1
+        return {
+            a: AskTrail(a, tuple(prices.get(a, ())), since.get(a, 0), rests.get(a)) for a in set(prices) | set(rests)
+        }
+
+    def _rest(self, tick: int, t: Target, r: Relist) -> None:
+        self.rec.decide(
+            tick,
+            RELIST_REST,
+            f"rest ask {t.ref} #{t.asset_id}: {r.why}",
+            inputs={"asset_id": t.asset_id, "ref": t.ref, "until_tick": r.rest_until, "target": t.price},
+            reason=r.why,
+            guardrail="allowed",
+            chosen=True,
+            status="approved",
+            move={"rest": t.asset_id, "until_tick": r.rest_until},
+        )
+
+    def _sell_hooks(self, cand: Candidate) -> SellHooks:
+        def context() -> Context:
+            assert self._run is not None
+            return self._ctx(self._run)
+
+        catalog = self._run.snap.catalog if self._run is not None else {}
+        return standard_hooks(
+            cand, rules=self.rules, rec=self.rec, ledger=self.ledger, context=context, catalog=catalog, log=self.log
         )
 
     def _ctx(self, run: _MakerRun) -> Context:
-        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be)."""
-        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent)
+        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
+        kill switch as it is now (it may go on mid-tick)."""
+        trades = None if run.settled is None else self._trades(run)
+        return replace(
+            run.base,
+            spent_last_hour=run.base.spent_last_hour + run.spent,
+            stops=kill_switch(self.rules),
+            trades=trades,
+        )
 
     def _do(self, run: _MakerRun, action: MakerAction) -> None:
         if action.kind == "cancel" and action.offer is not None:
             self._cancel(run, action.offer, action.why)
         elif action.kind == "reprice" and action.target is not None and action.offer is not None:
-            if run.listings_left <= 0:
-                offer = action.offer
-                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: no listing left")
-                return
-            hold, advice = self._jev_hold(run, action.offer, action.target)
-            if hold:
-                return
-            if self._cancel(run, action.offer, action.why):
-                offer_id = self._post(run, action.target, f"reprice: {action.why}")
-                if self.jev is not None and offer_id is not None:
-                    self.jev.watch.watch(offer_id, advice, REPRICE_QUESTION, self._expires(run))
+            self._reprice(run, action.offer, action.target, action.why)
         elif action.target is not None:
             self._post(run, action.target, action.why)
 
+    def _reprice(self, run: _MakerRun, offer: OpenOffer, t: Target, why: str) -> None:
+        """Cancel, then post at the target, but only when the post would pass: a denied repost would leave
+        the card without an offer for a tick. Not repostable: an offer that cannot stand is cancelled anyway
+        (a cancel needs no listing slot), any other keeps its price."""
+        advice: JevAdvice | None = None
+        if run.listings_left <= 0:
+            refused: str | None = "no listing left"
+        else:
+            hold, advice = (False, None) if t.final else self._jev_hold(run, offer, t)
+            if hold:
+                return
+            refused = self._refusal(self._without(run, offer), t)
+        if refused is None:
+            if self._cancel(run, offer, why):
+                offer_id = self._post(run, t, f"reprice: {why}")
+                if self.jev is not None and offer_id is not None:
+                    self.jev.watch.watch(offer_id, advice, REPRICE_QUESTION, self._expires(run))
+            return
+        if (problem := cannot_stand(offer, t, self.rules)) is not None:
+            self._cancel(run, offer, f"{problem}; not repriced: {refused}")
+            return
+        self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: {refused}")
+
+    def _without(self, run: _MakerRun, offer: OpenOffer) -> _MakerRun:
+        """The tick as it would be once `offer` is cancelled: its cash, slot and (a bid's) spend given back."""
+        return replace(
+            run,
+            offers=[o for o in run.offers if o.get("id") != offer.id],
+            open_total=run.open_total - 1,
+            spent=run.spent - self._refunded(run, offer),
+        )
+
+    def _refund(self, run: _MakerRun, offer: OpenOffer) -> LedgerRow:
+        return self._refund_at(offer, run.snap.clock)
+
+    def _refund_at(self, offer: OpenOffer, clock: Clock) -> LedgerRow:
+        """A bid's refund, dated exactly at its spend when this process booked it (it then leaves the hour's
+        window with it), else at `refund_row`'s conservative date (from its created tick)."""
+        if offer.id in self._spent_at:
+            tick, t_hours = self._spent_at[offer.id]
+            return ("spend", tick, t_hours, -offer.price, offer.ref)
+        return refund_row(offer.price, offer.ref, offer.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
+
+    def _refunded(self, run: _MakerRun, offer: OpenOffer) -> int:
+        """The spend a cancel gives back inside this game hour's window: a bid's, unless it was spent
+        before the window (its refund is booked in the hour it was spent)."""
+        if offer.side != "bid":
+            return 0
+        return offer.price if self._refund(run, offer)[2] > run.base.t_hours - 1.0 else 0
+
     def _cancel(self, run: _MakerRun, offer: OpenOffer, why: str) -> bool:
         tick = run.snap.clock.tick
-        status: Status = "approved" if run.window.open() else "expired"
+        verdict = check(Action("cancel", str(offer.id)), self._ctx(run), self.rules)  # only the kill switch applies
+        status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
         inputs = {
             "offer_id": offer.id,
             "side": offer.side,
@@ -258,10 +600,11 @@ class Maker:
         did = self.rec.decide(
             tick,
             f"cancel_{offer.side}",
-            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why}",
+            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why} "
+            f"· guardrails {verdict}",
             inputs=inputs,
             reason=why,
-            guardrail="allowed",
+            guardrail=str(verdict),
             chosen=status == "approved",
             status=status,
             move={"cancel": offer.id},
@@ -274,25 +617,53 @@ class Maker:
             if self.jev is not None:
                 self.jev.watch.cancelled(offer.id)
             if offer.side == "bid":  # a bid's cash was counted as spend when posted: give it back
-                self.ledger.record("spend", tick, run.snap.clock.t_hours, -offer.price, offer.ref)
+                self.ledger.record(*self._refund(run, offer))
+        run.spent -= self._refunded(run, offer)  # `base` was read before the refund: later checks see it here
+        self._forget(offer.id)  # after `_refunded`, which dates the refund as the ledger row above
         run.offers = [o for o in run.offers if o.get("id") != offer.id]
         run.open_total -= 1
         return True
 
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
         if t.side == "ask" and t.asset_id is not None:
-            listing = sell_listing(run.snap.me, str(t.asset_id), t.price, venue)
+            listing = sell_listing(run.snap.me, str(t.asset_id), t.price, venue, to=t.to)
             if listing.your_value is not None and t.price < sell_floor(listing.your_value, self.rules):
                 raise OfferError(f"ask {t.price} is below the sell floor {sell_floor(listing.your_value, self.rules)}")
             return listing
-        return bid_listing(t.ref, t.rarity, t.price, venue)
+        return bid_listing(t.ref, t.rarity, t.price, venue, to=t.to)
+
+    def _trades(self, run: _MakerRun) -> TradeBook:
+        return trade_book(run.offers, run.snap.us, run.settled or {}, book_values(run.snap.catalog))
+
+    def _route(self, run: _MakerRun, t: Target, venue: str) -> Target:
+        """With `max_counterparty_share` on: the offer for anyone when no team could pass its share by taking
+        it, else addressed to the counterparty with the most room that passes. Unchanged when the cap is off
+        or nothing passes (the post is then refused with the public offer's reason)."""
+        if run.settled is None or t.to is not None:
+            return t
+        denied = self._denied(run, t, venue)
+        if denied is None or "counterparty" not in denied:
+            return t
+        trades = self._trades(run)
+        for team in sorted(t.counterparties, key=lambda c: (trades.exposure(c), c)):
+            if team != run.snap.us and self._denied(run, replace(t, to=team), venue) is None:
+                return replace(t, to=team, reason=f"{t.reason}; addressed to {team} (max_counterparty_share)")
+        return t
 
     def _post(self, run: _MakerRun, t: Target, why: str) -> int | None:
         """Post one offer; the new offer's id when it went out live, else None."""
         tick = run.snap.clock.tick
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venues = run.snap.venues
+        if self.notices is not None:  # a fee announced for later in the listing's life counts now
+            venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
+        venue = best_venue(venues, run.snap.us, t.price)
         blocked = self._blocked(run)
-        t, advice, candidates = self._jev_price(run, t, venue.id) if venue and not blocked else (t, None, None)
+        if venue is not None and not blocked:
+            t = self._route(run, t, venue.id)
+        jev = venue is not None and not blocked and not t.final
+        t, advice, candidates = self._jev_price(run, t, venue.id) if jev and venue else (t, None, None)
+        if venue is not None and not blocked:
+            t = self._address(run, t, venue.id)
         inputs = {
             "side": t.side,
             "ref": t.ref,
@@ -302,9 +673,11 @@ class Maker:
             "value": t.value,
             "score": t.score,
             "venue": venue.id if venue else None,
+            **({"to": t.to} if t.to else {}),
             **({"price_candidates": candidates} if candidates else {}),
         }
-        what = f"post {t.side} {t.ref}{f' #{t.asset_id}' if t.asset_id else ''} at {t.price}"
+        to = f" to {t.to}" if t.to else ""
+        what = f"post {t.side} {t.ref}{f' #{t.asset_id}' if t.asset_id else ''} at {t.price}{to}"
         if venue is None or blocked:
             why_not = blocked or "no venue we may trade on"
             self._reject(run, t, what, inputs, why_not, "rejected")
@@ -337,34 +710,115 @@ class Maker:
             return None
         offer_id = None
         if self.live:
-            request = {"give": listing.give, "want": listing.want, "venue": venue.id}
+            addressed = {"to": listing.to} if listing.to else {}
+            request = {"give": listing.give, "want": listing.want, "venue": venue.id, **addressed}
             body = self.rec.send(
                 did,
                 tick,
                 "list_offer",
                 request,
                 lambda: self.team.list_offer(
-                    listing.give, listing.want, venue=venue.id, expires_in_ticks=self.config.offer_ttl_ticks
+                    listing.give,
+                    listing.want,
+                    venue=venue.id,
+                    expires_in_ticks=self.config.offer_ttl_ticks,
+                    **addressed,
                 ),
             )
-            if body is None:
+            if body is None and not self.rec.maybe_landed:
                 return None
+            # Sent, or lost on the way back (a network error): a bid that may be open counts as spend.
             self.ledger.record("listing", tick, run.snap.clock.t_hours, t.price, t.ref)
             if t.side == "bid":
                 self.ledger.record("spend", tick, run.snap.clock.t_hours, t.price, t.ref)
-            offer_id = body.get("id") if isinstance(body.get("id"), int) else None
+            offer_id = body.get("id") if body is not None and isinstance(body.get("id"), int) else None
+            if t.side == "bid" and offer_id is not None:
+                self._remember(run, offer_id, t)
+            if t.side == "ask" and t.asset_id is not None and t.to is not None and "buyer rank" in t.reason:
+                self._tried.setdefault(t.asset_id, set()).add((t.to, t.price))
+                if offer_id is not None:
+                    self._ranked[offer_id] = t.to
             applied = advice is not None and (candidates or {}).get(advice.verdict) == t.price
             if self.jev is not None and offer_id is not None and applied:  # judged only on the price it set
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
         if t.side == "bid":
             run.spent += t.price
+        give = listing.give  # our open offers this tick; an ask names its card (protect_page_sets counts it)
+        if listing.asset_id is not None:
+            give = {**give, "assets": [{"id": listing.asset_id, "ref": listing.ref}]}
         run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "give": listing.give, "want": listing.want}
+            {"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want, "to": listing.to}
         )
         run.open_total += 1
         run.listings_left -= 1
         run.posted.append(t.ref)
         return offer_id
+
+    # ------------------------------------------------------------ who we sell to (`buyer_rank_enabled`)
+
+    def _refresh_ranks(self, tick: int) -> None:
+        """The leaderboard's ranks, read at most once per LEADERBOARD_EVERY ticks (it refreshes every few
+        minutes). A failed read keeps the last ranks; with none, every ask stays public."""
+        if self._ranks_tick is not None and tick - self._ranks_tick < LEADERBOARD_EVERY:
+            return
+        self._ranks_tick = tick
+        try:
+            self._ranks = buyer_rank.leaderboard_ranks(self.public.leaderboard())
+        except Exception as e:  # a read we can do without: the asks stay public
+            self.log(f"tick {tick} maker: leaderboard unreadable ({type(e).__name__}); asks stay public")
+
+    def _address(self, run: _MakerRun, t: Target, venue: str) -> Target:
+        """An ask the maker already decided to post, addressed to the best buyer when that passes every guardrail.
+        Public when the rank is off, the ask is already addressed, the leaderboard is unknown, this copy was
+        already addressed at this price (the fallback), or no non-rival buyer passes."""
+        if not self.rules.buyer_rank_enabled or t.side != "ask" or t.to is not None or t.asset_id is None or t.final:
+            return t
+        if run.buyer_failed or not self._ranks or any(p == t.price for _, p in self._tried.get(t.asset_id, ())):
+            return t
+        try:  # feed strings are hostile: a ranking that fails keeps the ask public, never costs the tick
+            if run.buyer_inputs is None:
+                snap = run.snap
+                run.buyer_inputs = buyer_rank.market_inputs(snap.me, snap.catalog, snap.events, snap.scan)
+            holders, interest = run.buyer_inputs
+            rows = buyer_rank.rank_buyers(
+                t.ref,
+                catalog=run.snap.catalog,
+                events=run.snap.events,
+                holders=holders,
+                interest=interest,
+                ranks=self._ranks,
+                us=run.snap.us,
+                our_value=t.value,
+                price=t.price,
+            )
+            team = buyer_rank.pick(rows, price=t.price)
+        except Exception as e:
+            run.buyer_failed = True
+            self.log(f"tick {run.snap.clock.tick} maker: buyer rank failed ({type(e).__name__}); ask stays public")
+            return t
+        if team is None or self._denied(run, replace(t, to=team), venue) is not None:
+            return t
+        best = next(r for r in rows if r.team == team)
+        return replace(t, to=team, reason=f"{t.reason}; buyer rank: {team} ({best.why})")
+
+    def _with_fallbacks(
+        self, actions: list[MakerAction], targets: list[Target], mine: list[OpenOffer], tick: int
+    ) -> list[MakerAction]:
+        """An ask the buyer rank addressed, unfilled for `buyer_rank_fallback_ticks`, is reposted for anyone at
+        the same price (a reprice: cancel, then post; `_address` keeps it public). Before the new posts."""
+        busy = {a.offer.id for a in actions if a.offer is not None}
+        asks = {t.asset_id: t for t in targets if t.side == "ask"}
+        open_ids = {o.id for o in mine}
+        self._ranked = {i: team for i, team in self._ranked.items() if i in open_ids}
+        fallbacks = []
+        for o in mine:
+            t = asks.get(o.asset_id)
+            old = o.created_tick is not None and tick - o.created_tick >= self.rules.buyer_rank_fallback_ticks
+            if o.id in self._ranked and o.id not in busy and t is not None and old:
+                why = f"addressed to {self._ranked[o.id]} for {tick - (o.created_tick or tick)} ticks unfilled: public"
+                fallbacks.append(MakerAction("reprice", why, replace(t, price=o.price, final=True), o))
+        posts = [a for a in actions if a.kind == "post"]
+        return [a for a in actions if a.kind != "post"] + fallbacks + posts
 
     def _blocked(self, run: _MakerRun) -> str | None:
         limits = run.snap.clock.limits
@@ -406,19 +860,32 @@ class Maker:
         An ask also stays at or above what selling costs us, page bonus included (`ask_floor` of its value)."""
         if t.side == "ask" and t.price < ask_floor(t.value, self.rules):
             return False
+        return self._denied(run, t, venue) is None
+
+    def _denied(self, run: _MakerRun, t: Target, venue: str) -> str | None:
+        """Why the listing for `t` on `venue` is refused (the sell floor, then every guardrail with our open
+        offers counted); None when it would pass. Nothing is sent or recorded."""
         try:
             listing = self._listing(run, t, venue)
-        except OfferError:
-            return False
+        except OfferError as e:
+            return f"denied: {e}"
         commitments = open_commitments(run.offers, run.snap.us)
-        return post(self.team, listing, self._ctx(run), self.rules, live=False, commitments=commitments).verdict.allowed
+        verdict = post(self.team, listing, self._ctx(run), self.rules, live=False, commitments=commitments).verdict
+        return None if verdict.allowed else str(verdict)
+
+    def _refusal(self, run: _MakerRun, t: Target) -> str | None:
+        """Why `_post` would refuse `t` in `run` at its target price (no venue, no slot, a guardrail)."""
+        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        if venue is None:
+            return "no venue we may trade on"
+        return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)
 
     def _jev_context(self, run: _MakerRun) -> dict[str, Any]:
         cash = int(run.snap.me.get("cash") or 0)
         return {
             "cash": cash,
-            "cash_floor": self.rules.cash_floor,
-            "cash_above_floor": max(0, cash - self.rules.cash_floor),
+            "cash_floor": effective_cash_floor(self.rules, run.base),
+            "cash_above_floor": max(0, cash - effective_cash_floor(self.rules, run.base)),
             "open_offers": run.open_total,
             "max_open_offers": run.snap.clock.limits.max_open_offers_per_team,
             "listings_left_this_tick": run.listings_left,
@@ -434,7 +901,11 @@ class Maker:
             return t, None, None
         try:
             candidates = price_candidates(t, run.params, self.rules)
-            legal = {label: p for label, p in candidates.items() if self._allowed(run, replace(t, price=p), venue)}
+            legal = {
+                label: p
+                for label, p in candidates.items()
+                if p >= t.min_price and self._allowed(run, replace(t, price=p), venue)
+            }
             state = listing_state(t, candidates, legal, {**self._jev_context(run), "venue": venue})
             label, advice, why = self.jev.choose_price(t, candidates, legal, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: today's price
@@ -471,3 +942,95 @@ class Maker:
         if hold:
             self.jev.watch.watch(offer.id, advice, REPRICE_QUESTION, offer.expires_tick)
         return hold, advice
+
+    # ------------------------------------------------------------ bids that lapse unfilled (bite X15)
+
+    def _remember(self, run: _MakerRun, offer_id: int, t: Target) -> None:
+        clock = run.snap.clock
+        expires = clock.tick + self.config.offer_ttl_ticks
+        offer = OpenOffer(offer_id, "bid", t.ref, t.price, "", None, expires, clock.tick)
+        self._bids[offer_id] = _Bid(offer, _held(run.snap.me)[t.ref], clock.tick)
+        self._spent_at[offer_id] = (clock.tick, clock.t_hours)
+
+    def _forget(self, offer_id: int) -> None:
+        self._bids.pop(offer_id, None)
+        self._lapsing.pop(offer_id, None)
+        self._spent_at.pop(offer_id, None)
+
+    def _lapsed_bids(self, snap: Snapshot, mine: list[OpenOffer]) -> None:
+        """Give back the spend of our board bids that lapsed unfilled. A bid gone from `/api/me/offers` before
+        its `expires_tick` filled or was cancelled (whoever cancelled booked the refund): nothing to do. One
+        gone at or after it, while the card did not come (`/api/me`) and no settlement of it shows in the
+        feed, is checked once more on the next tick (an accept settles on the next tick) and then refunded,
+        dated at its spend. A missed refund over-counts (today's behaviour); a wrong one could under-count,
+        so every doubt keeps the spend."""
+        if not self.live:
+            return
+        clock, held = snap.clock, _held(snap.me)
+        paused = bool(kill_switch(self.rules))  # PAUSE + `bazaar flatten` cancels (and refunds) our bids
+        # A cancel by another process shows only in the feed: without this tick's live window, no refund.
+        feed_ok = bool(getattr(self.feed, "window_ok", True))
+        present = {
+            o.get("id") for o in offers_in(snap.offers) if o.get("status") in (None, "open", "queued", "accepted")
+        }
+        for oid, bid in list(self._lapsing.items()):
+            if bid.seen_tick >= clock.tick:
+                continue
+            ref = bid.offer.ref
+            del self._lapsing[oid]
+            if oid in present:  # listed again (a read that missed it): alive, nothing to give back
+                self._bids[oid] = bid
+                continue
+            if (
+                held[ref] <= bid.held
+                and not _settled_to_us(snap.events, ref, bid.offer.created_tick, snap.us)
+                and not _cancelled(snap.events, oid)
+                and not paused
+                and feed_ok
+            ):
+                self.ledger.record(*self._refund_at(bid.offer, clock))
+                self.log(f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded")
+            self._spent_at.pop(oid, None)
+        for oid, bid in self._bids.items():
+            if oid in present or oid in self._lapsing:
+                continue
+            expires = bid.offer.expires_tick
+            if isinstance(expires, int) and clock.tick >= expires and held[bid.offer.ref] <= bid.held:
+                self._lapsing[oid] = replace(bid, seen_tick=clock.tick)
+            else:
+                self._spent_at.pop(oid, None)
+        known = self._bids
+        self._bids = {  # the server's view of each open bid; the copies held when it was first seen
+            o.id: _Bid(o, known[o.id].held if o.id in known else held[o.ref], clock.tick)
+            for o in mine
+            if o.side == "bid"
+        }
+
+
+def _held(me: dict[str, Any]) -> Counter[str]:
+    return Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "card")
+
+
+def _settled_to_us(events: Iterable[dict[str, Any]], ref: str, since_tick: int | None, us: str) -> bool:
+    """A settlement in the feed that gave us a copy of `ref` since `since_tick`: the bid may have filled."""
+    for e in events:
+        p = e.get("payload")
+        if e.get("type") != "settlement" or not isinstance(p, dict) or not isinstance(p.get("items"), list):
+            continue
+        tick = e.get("tick")
+        if since_tick is not None and isinstance(tick, int) and tick < since_tick:
+            continue
+        if any(i.get("to") == us and i.get("ref") == ref for i in p["items"] if isinstance(i, dict)):
+            return True
+    return False
+
+
+def _cancelled(events: Iterable[dict[str, Any]], offer_id: int) -> bool:
+    """A cancel of the offer in the feed: whoever cancelled it (`bazaar flatten`, the desk, the taker) booked its
+    refund. The live server emits no `offer.cancelled` for an expiry (the simulator does, with reason
+    "expired"), so a bid that lapsed has none."""
+    for e in events:
+        p = e.get("payload")
+        if e.get("type") == "offer.cancelled" and isinstance(p, dict) and p.get("offer") == offer_id:
+            return p.get("reason") != "expired"
+    return False

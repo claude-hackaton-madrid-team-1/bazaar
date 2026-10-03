@@ -26,7 +26,15 @@ REAL_URL = "https://bazaar.causaprima.ai"
 SIM_URL = "https://bazaar-sim-production-1d48.up.railway.app"
 REAL_DB = "postgresql://postgres:pw@iriguchi.proxy.rlwy.net:28880/railway?sslmode=require"
 SIM_DB = "postgresql://postgres:pw@iriguchi.proxy.rlwy.net:28880/bazaar_sim?sslmode=require"
-NAMES = ("BAZAAR_URL", "BAZAAR_SIM", "BAZAAR_SIM_KEY", "BAZAAR_KEY", "DATABASE_URL", "BAZAAR_SIM_DATABASE_URL")
+NAMES = (
+    "BAZAAR_URL",
+    "BAZAAR_SIM",
+    "BAZAAR_SIM_KEY",
+    "BAZAAR_KEY",
+    "DATABASE_URL",
+    "BAZAAR_SIM_DATABASE_URL",
+    "BAZAAR_SIM_PORT",
+)
 
 
 def settings_for(tmp_path, monkeypatch, **env):
@@ -160,3 +168,37 @@ def test_the_flag_can_come_from_dotenv_and_the_environment_wins(tmp_path, monkey
 def test_bazaar_sim_local_is_the_hardcoded_laptop_simulator(tmp_path, monkeypatch):
     s = settings_for(tmp_path, monkeypatch, BAZAAR_SIM="local", BAZAAR_KEY="tk-real-0042")
     assert s.simulator and s.bazaar_url == "http://127.0.0.1:8765" and s.require_team_key() == "sim-team1"
+
+
+def test_bazaar_sim_port_moves_only_the_laptop_simulator_and_stays_on_loopback(tmp_path, monkeypatch):
+    s = settings_for(tmp_path, monkeypatch, BAZAAR_SIM="local", BAZAAR_SIM_PORT="8817")
+    assert s.bazaar_url == "http://127.0.0.1:8817" and s.require_team_key() == "sim-team1"
+    real = settings_for(tmp_path, monkeypatch, BAZAAR_SIM_PORT="8817", BAZAAR_KEY="tk-real-0042")
+    assert real.bazaar_url == "https://bazaar.causaprima.ai"  # the real game ignores it
+    stray = settings_for(tmp_path, monkeypatch, BAZAAR_SIM_PORT="not-a-port", BAZAAR_KEY="tk-real-0042")
+    assert stray.bazaar_url == "https://bazaar.causaprima.ai"  # never even parsed: it cannot stop the real game
+    for bad in ("80", "70000", "8817/evil", "host:1", "²"):
+        with pytest.raises(ConfigError, match="BAZAAR_SIM_PORT"):
+            settings_for(tmp_path, monkeypatch, BAZAAR_SIM="local", BAZAAR_SIM_PORT=bad)
+
+
+def test_bazaar_env_file_replaces_the_repo_dotenv(tmp_path, monkeypatch):
+    for name in (*NAMES, "TYPESAFE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    real = tmp_path / "real.env"
+    real.write_text("TYPESAFE_API_KEY=ts-secret\nANTHROPIC_API_KEY=sk-secret\n")
+    monkeypatch.setattr("bazaar_agent.config.REPO_ROOT", tmp_path)
+    (tmp_path / ".env").write_text(real.read_text())
+    assert load_settings().typesafe_api_key is not None
+    empty = tmp_path / "empty.env"
+    empty.write_text("")
+    monkeypatch.setenv("BAZAAR_ENV_FILE", str(empty))
+    s = load_settings()
+    assert s.typesafe_api_key is None and s.anthropic_api_key is None
+
+
+def test_a_missing_or_relative_env_file_fails_fast_instead_of_dropping_dotenv(tmp_path, monkeypatch):
+    for bad in (str(tmp_path / "typo.env"), "relative.env"):
+        monkeypatch.setenv("BAZAAR_ENV_FILE", bad)
+        with pytest.raises(ConfigError, match="BAZAAR_ENV_FILE"):
+            load_settings()

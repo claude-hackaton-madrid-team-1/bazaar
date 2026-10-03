@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.table import Table
 from rich.text import Text
 
@@ -111,6 +113,104 @@ def threads_table(threads: list, limit: int) -> Table:
     return t
 
 
+def affinity_table(amap: Any, title: str = "Rival affinity map · P(set holds the team's top multiplier)") -> Table:
+    t = Table(title=title)
+    sets = next(iter(amap.teams.values())).sets if amap.teams else ()
+    for col in ("team", "signals", "top set", "P", "runner-up", *sets):
+        t.add_column(col, justify="left" if col in ("team", "top set", "runner-up") else "right")
+    for a in amap.teams.values():
+        ranked = [s for s in sorted(a.p_top, key=lambda s: -a.p_top[s]) if s != a.top_set]
+        second = ranked[0] if ranked else "-"
+        t.add_row(
+            a.team,
+            str(a.signals),
+            a.top_set if a.signals else "- (no signal)",
+            f"{a.confidence:.2f}",
+            f"{second} {a.p_top.get(second, 0):.2f}" if second != "-" else "-",
+            *(f"{a.p_top[s]:.2f}" for s in sets),
+        )
+    return t
+
+
+def rivals_table(profiles: list[Any], title: str = "Rival behaviour · board offers from the feed") -> Table:
+    t = Table(title=title)
+    cols = (
+        "team",
+        "top set",
+        "asks",
+        "fill",
+        "ask/tape",
+        "ask/own",
+        "sold<own",
+        "bids",
+        "bid/tape",
+        "takes",
+        "take ticks",
+        "reprices",
+        "step",
+        "tags",
+    )
+    for col in cols:
+        t.add_column(col, justify="left" if col in ("team", "top set", "tags") else "right")
+
+    def n(x: Any, fmt: str = "{:.2f}") -> str:
+        return "-" if x is None else fmt.format(x)
+
+    for p in profiles:
+        t.add_row(
+            p.team,
+            f"{p.top_set} {p.p_top:.2f}" if p.top_set else "-",
+            str(p.asks),
+            n(p.ask_fill_rate),
+            n(p.median_ask_vs_tape),
+            n(p.median_ask_vs_own),
+            str(p.sold_below_own),
+            str(p.bids),
+            n(p.median_bid_vs_tape),
+            str(p.takes),
+            n(p.median_take_latency, "{:g}"),
+            str(p.reprices),
+            n(p.median_reprice_step, "{:+.0%}"),
+            ", ".join(p.tags) or "-",
+        )
+    return t
+
+
+def opportunities_table(rows: list[Any], title: str) -> Table:
+    t = Table(title=title)
+    for col in (
+        "offer",
+        "we",
+        "card",
+        "price",
+        "fee",
+        "maker",
+        "ours",
+        "theirs",
+        "tag",
+        "guardrails",
+        "plan",
+        "expires",
+    ):
+        t.add_column(col, justify="right" if col in ("offer", "price", "fee", "ours", "theirs", "expires") else "left")
+    for o in rows:
+        t.add_row(
+            str(o.offer_id),
+            o.kind,
+            o.ref,
+            str(o.price),
+            str(o.fee),
+            o.maker,
+            f"{o.ours:+.1f}",
+            "-" if o.theirs is None else f"{o.theirs:+.1f}",
+            o.tag or "-",
+            "[green]allowed[/green]" if o.allowed else f"[red]{o.verdict}[/red]",
+            o.plan or "-",
+            str(o.expires_tick or "-"),
+        )
+    return t
+
+
 def teams_table(
     flows: list, title: str = "Competition · team flow from the public feed", us: str | None = None
 ) -> Table:
@@ -189,14 +289,17 @@ def dealers_table(personas: list) -> Table:
     return t
 
 
-def status_table(me: dict, target: str | None = None) -> Table:
-    t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False, caption=target)
+def status_table(me: dict, target: str | None = None, snapshot: str | None = None) -> Table:
+    """`snapshot`: where /me came from (the shared Postgres snapshot with its tick and age, or a live read)."""
+    t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False)
     t.add_column("field", style="bold")
     t.add_column("value")
     score = me.get("score") or {}
     assets = me.get("assets") or []
     cards = [a for a in assets if a.get("kind") == "card"]
     packs = [a for a in assets if a.get("kind") == "pack"]
+    if target:
+        t.add_row("target", target.removeprefix("target: "))
     for k, v in [
         ("cash", me.get("cash")),
         ("level", me.get("level")),
@@ -204,6 +307,8 @@ def status_table(me: dict, target: str | None = None) -> Table:
         ("collection value", me.get("collection_value")),
         ("score", score.get("score")),
         ("rank", score.get("rank")),
+        ("tick", me.get("tick")),
+        ("read", snapshot),
     ]:
         t.add_row(k, "-" if v is None else str(v))
     return t

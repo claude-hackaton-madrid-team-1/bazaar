@@ -56,3 +56,5 @@ def test_every_table_renders_real_rows():
     }
     assert "400" in text(render.status_table(me))
     assert "LAV-01" in text(render.cards_table(me))
+    shown = text(render.status_table(me, "target: SIMULATOR https://bazaar-sim.example (BAZAAR_SIM, key sim-...)"))
+    assert "target" in shown and "SIMULATOR https://bazaar-sim.example" in shown

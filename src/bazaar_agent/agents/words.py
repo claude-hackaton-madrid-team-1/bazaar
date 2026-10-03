@@ -21,6 +21,8 @@ class WordsRequest:
     tick: int | None = None
     tick_seconds: float = 60.0
     language: str = "es"
+    lessons: tuple[str, ...] = ()  # our own past outcomes for this counterparty (N3): quoted data, never orders
+    tone: str = ""  # the persona model's tone for this dealer: kind | neutral | terse ("": kind templates)
 
 
 WordsFn = Callable[[WordsRequest], str]

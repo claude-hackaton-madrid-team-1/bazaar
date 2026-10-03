@@ -7,11 +7,23 @@ structure binds: the listing IS the structured offer (`give` / `want`) a counter
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check
+from bazaar_agent.guardrails import (
+    ANY_TEAM,
+    Action,
+    Context,
+    Guardrails,
+    LedgerStore,
+    TradeBook,
+    Verdict,
+    check,
+    is_pack,
+)
+from bazaar_agent.intel import TEAM_ID
 
 MAX_PRICE = 10_000_000  # RULES.md: whole primas from 1 to 10,000,000
 
@@ -31,15 +43,19 @@ class Listing:
     want: dict[str, Any]
     asset_id: int | None = None
     your_value: float | None = None
+    to: str | None = None  # addressed to one team (only it may accept); None: anyone on the venue
 
     def action(self) -> Action:
-        return Action(self.kind, self.ref, self.rarity, self.price, self.your_value)
+        return Action(
+            self.kind, self.ref, self.rarity, self.price, your_value=self.your_value, counterparty=self.to or ANY_TEAM
+        )
 
     def describe(self) -> str:
         what = f"asset {self.asset_id} ({self.ref})" if self.asset_id is not None else f"any {self.ref}"
+        where = f"{self.venue}{f' to {self.to}' if self.to else ''}"
         if self.kind == "sell":
-            return f"sell {what} for {self.price} P on {self.venue} (your_value {self.your_value:g})"
-        return f"bid {self.price} P for {what} on {self.venue}"
+            return f"sell {what} for {self.price} P on {where} (your_value {self.your_value:g})"
+        return f"bid {self.price} P for {what} on {where}"
 
 
 def _check_price(price: int) -> None:
@@ -66,7 +82,7 @@ def _has_value(asset: dict[str, Any]) -> bool:
     return isinstance(asset.get("your_value"), int | float)
 
 
-def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rastro") -> Listing:
+def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rastro", to: str | None = None) -> Listing:
     """Fails closed: a copy without `your_value` in /api/me has no floor, so it is never listed."""
     _check_price(price)
     asset = find_copy(me, target)
@@ -82,21 +98,130 @@ def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rast
         want={"cash": price},
         asset_id=int(asset["id"]),
         your_value=float(asset.get("your_value") or 0),
+        to=to,
     )
 
 
-def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro") -> Listing:
+def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro", to: str | None = None) -> Listing:
     _check_price(price)
-    return Listing("bid", ref, rarity, price, venue, give={"cash": price}, want={"cards": [ref]})
+    return Listing("bid", ref, rarity, price, venue, give={"cash": price}, want={"cards": [ref]}, to=to)
+
+
+@dataclass(frozen=True)
+class Swap:
+    """Our copy (plus cash, when we add some) for any copy of a card (plus cash, when they add some),
+    addressed to one team: the structured offer of a direct swap proposal, posted on a venue's board."""
+
+    asset_id: int
+    give_ref: str
+    give_rarity: str | None
+    your_value: float
+    want_ref: str
+    want_rarity: str | None
+    worth: float  # what the wanted card is worth to us (`strategy.buy_case`)
+    venue: str
+    to: str
+    give_cash: int = 0
+    want_cash: int = 0
+    notional: int = 0  # the larger of the cash and the book of both cards (`intel.settled_volume`)
+
+    @property
+    def give(self) -> dict[str, Any]:
+        return {"assets": [self.asset_id], **({"cash": self.give_cash} if self.give_cash else {})}
+
+    @property
+    def want(self) -> dict[str, Any]:
+        return {"cards": [self.want_ref], **({"cash": self.want_cash} if self.want_cash else {})}
+
+    def actions(self) -> list[Action]:
+        """What the guardrails check: the copy leaves at the value we receive (the wanted card's worth to us
+        plus their cash: never below `your_value × sell_min_value_ratio`), and the wanted card is a bid of
+        the cash we add, zero or more (`block_buying_held_cards`: never a card we hold or already want; its
+        price cap, the cash floor, the spend cap). Both count the swap's notional toward `to`'s share."""
+        received = round(self.worth) + self.want_cash - self.give_cash
+        out = [
+            Action(
+                "sell",
+                self.give_ref,
+                self.give_rarity,
+                received,
+                your_value=self.your_value,
+                counterparty=self.to,
+                volume=self.notional,
+                scope="team_swap",
+            ),
+        ]
+        gives = self.your_value - self.want_cash  # the official value cap: the copy we give, net of their cash
+        out.append(
+            Action(
+                "bid",
+                self.want_ref,
+                self.want_rarity,
+                self.give_cash,
+                counterparty=self.to,
+                volume=self.notional,
+                gives_value=gives,
+                scope="team_swap",
+            )
+        )
+        return out
+
+    def describe(self) -> str:
+        give = f"asset {self.asset_id} ({self.give_ref})" + (f" + {self.give_cash} P" if self.give_cash else "")
+        want = f"any {self.want_ref}" + (f" + {self.want_cash} P" if self.want_cash else "")
+        return f"swap {give} for {want} on {self.venue} to {self.to}"
+
+
+def post_swap(
+    client: Any,
+    swap: Swap,
+    ctx: Context,
+    rules: Guardrails,
+    *,
+    live: bool,
+    expires_in_ticks: int = 40,
+    ledger: LedgerStore | None = None,
+    commitments: Commitments | None = None,
+) -> Posted:
+    """Check every action of the swap against the guardrails (with our open offers), then post it only when
+    `live`, addressed to its team. Cash we add is recorded as spend at once, as for a bid."""
+    commitments = commitments or Commitments()
+    if swap.asset_id in commitments.listed:
+        verdict = Verdict(False, (f"asset {swap.asset_id} is already in one of our open offers",))
+    else:
+        ctx = committed_context(ctx, commitments)
+        problems = [v for a in swap.actions() for v in check(a, ctx, rules).violations]
+        halted = bool(ctx.stops) if ctx.stops is not None else not rules.trading_enabled
+        verdict = Verdict(not problems, tuple(dict.fromkeys(problems)), halted)
+    if not verdict.allowed:
+        return Posted(False, verdict, None, f"guardrails refuse to {swap.describe()}: {verdict}")
+    if not live:
+        return Posted(
+            False,
+            verdict,
+            None,
+            f"dry run: would {swap.describe()} · give {swap.give} want {swap.want} · "
+            f"guardrails {verdict}. Add --live to post.",
+        )
+    offer = client.list_offer(swap.give, swap.want, venue=swap.venue, expires_in_ticks=expires_in_ticks, to=swap.to)
+    if swap.give_cash and ledger is not None:
+        ledger.record("spend", ctx.tick, ctx.t_hours, swap.give_cash, swap.want_ref)
+    return Posted(True, verdict, offer, f"posted offer {offer.get('id')}: {swap.describe()}")
 
 
 @dataclass(frozen=True)
 class Commitments:
-    """What our open offers already promise: cash out, cards we bid for, assets we listed."""
+    """What our open offers already promise: cash out, cards we bid for, assets we listed. `thread_cash` and
+    `thread_packs` are the part of it in dealer threads: a thread bid is booked as spend only when its deal
+    settles, so the spend and pack caps count it here (a board bid is booked in the ledger when posted)."""
 
     cash: int = 0
     wanted: tuple[str, ...] = ()
     listed: frozenset[int] = frozenset()
+    thread_cash: int = 0
+    thread_packs: int = 0
+    listed_refs: tuple[str, ...] = ()  # the card of each asset our asks give (open, or accepted and settling)
+    unnamed_listed: int = 0  # such assets whose offer row does not name the card
 
 
 def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -104,30 +229,138 @@ def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
     return [o for rows in response.values() if isinstance(rows, list) for o in rows if isinstance(o, dict)]
 
 
+PROMISED = (None, "open", "queued", "accepted")  # offer statuses whose cash and cards are still ours to deliver
+
+
 def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
-    """Our open or queued offers. An offer counts as ours unless another team addressed it to us, so an
-    unknown maker fails closed: its cash and cards are counted as committed."""
-    cash, wanted, listed = 0, [], set()
+    """Our open, queued or accepted-but-not-settled offers (an accepted offer settles at the next tick: its copy
+    and its cash are still promised). An offer counts as ours unless another team addressed it to us, so an
+    unknown maker fails closed: its cash and cards are counted as committed. A thread settles at most one
+    deal, so it counts once, at its biggest open bid (`one_per_thread`); every asset it lists stays listed.
+    An ask of ours a team accepted is among them: it settles at the next tick while /api/me still shows its
+    copy, so that copy is neither free to sell nor counted twice."""
+    offers = list(offers)
+    ours = [o for o in offers if o.get("status") in PROMISED and not (o.get("to") == us and o.get("maker") != us)]
+    cash, wanted, thread_cash, thread_packs = 0, [], 0, 0
+    for o in one_per_thread(ours):
+        give, want = o.get("give") or {}, o.get("want") or {}
+        refs = [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
+        cash += int(give.get("cash") or 0)
+        wanted += refs
+        # A dealer-thread bid is booked when its deal settles, so it counts as this hour's spend while it stands;
+        # a team-thread swap's cash is booked when it is posted (N17 team desk), so it is not counted twice.
+        if o.get("thread") is not None and give.get("cash") and not TEAM_ID.match(str(o.get("to") or "")):
+            thread_cash += int(give["cash"])
+            thread_packs += sum(1 for ref in refs if is_pack(ref))
+    listed = {
+        asset_id
+        for o in ours
+        for a in (o.get("give") or {}).get("assets") or []
+        if isinstance(asset_id := a.get("id") if isinstance(a, dict) else a, int)
+    }
+    given = [a for o in ours for a in (o.get("give") or {}).get("assets") or []]  # accepted asks included once
+    named = tuple(str(a["ref"]) for a in given if isinstance(a, dict) and a.get("ref"))
+    return Commitments(
+        cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs, named, len(given) - len(named)
+    )
+
+
+def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every offer outside a thread, and one per thread: the one giving the most cash (the newest on a tie).
+    Each bid in a dealer thread is a new offer; if the old ones still read `open`, counting them all would
+    deny real moves (a bid of 8 after one of 7 is 8 at risk, not 15)."""
+
+    def rank(o: dict[str, Any]) -> tuple[int, int]:
+        oid = o.get("id")
+        return int((o.get("give") or {}).get("cash") or 0), oid if isinstance(oid, int) else -1
+
+    out: list[dict[str, Any]] = []
+    best: dict[Any, dict[str, Any]] = {}
     for o in offers:
-        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
+        tid = o.get("thread")
+        if tid is None:
+            out.append(o)
+        elif tid not in best or rank(o) > rank(best[tid]):
+            best[tid] = o
+    return out + list(best.values())
+
+
+UNSETTLED_TICKS = 2  # an accept settles on the next tick; one still missing from /api/me after two never landed
+
+
+def unsettled_accepts(me: dict[str, Any], ledger: LedgerStore, tick: int) -> Commitments:
+    """The team's accepts of this tick and the last UNSETTLED_TICKS (any process, from the shared ledger) that
+    `/api/me` does not show yet: an accept settles on the next tick, and a read can land before that (bite
+    X18). Counted like an open offer (`committed_context`): the card as held, its cash as gone. A card copy
+    `/api/me` shows is settled (it already holds the card and paid the cash). A pack is always counted: an
+    older unopened pack would hide a new one (its cash then counts twice for a tick or two, fail safe). A
+    duel's accept moves no card; a price below 0 counts 0 (only a refund is negative, never an accept)."""
+    have = Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "card")
+    cash, wanted = 0, []
+    for t in range(tick - UNSETTLED_TICKS, tick + 1):
+        for item, price in ledger.accept_rows(t):
+            if not item or ":" in item:
+                continue
+            if not is_pack(item) and have[item] > 0:
+                have[item] -= 1
+                continue
+            cash += max(0, price)
+            if not is_pack(item):
+                wanted.append(item)
+    return Commitments(cash, tuple(wanted))
+
+
+def trade_book(
+    offers: Iterable[dict[str, Any]], us: str, settled: dict[str, int], book: dict[str, float] | None = None
+) -> TradeBook:
+    """Our team-to-team volume for `max_counterparty_share`: `settled` (`intel.settled_volume`) plus the
+    notional of our open offers another team could take (the larger of the cash and the book of the cards
+    in it, as `settled_volume` counts a settlement), addressed to it or public (on a board, to anyone).
+    Offers to a dealer are not team trades; an offer counts as ours unless another team addressed it to us
+    (the rule of `open_commitments`: an unknown maker fails closed)."""
+    addressed: dict[str, int] = {}
+    public = 0
+    for o in offers:
+        if o.get("status") not in PROMISED or (o.get("to") == us and o.get("maker") != us):
             continue
         give, want = o.get("give") or {}, o.get("want") or {}
-        cash += int(give.get("cash") or 0)
-        wanted += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
-        for a in give.get("assets") or []:
-            asset_id = a.get("id") if isinstance(a, dict) else a
-            if isinstance(asset_id, int):
-                listed.add(asset_id)
-    return Commitments(cash, tuple(wanted), frozenset(listed))
+        refs = [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
+        refs += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
+        cash = int(give.get("cash") or 0) + int(want.get("cash") or 0)
+        notional = o.get("notional")  # this tick's accept: the price without the fee
+        cash = (
+            int(notional)
+            if isinstance(notional, int)
+            else max(cash, round(sum((book or {}).get(r, 0.0) for r in refs)))
+        )
+        to = o.get("to")
+        if isinstance(to, str) and TEAM_ID.match(to):
+            addressed[to] = addressed.get(to, 0) + cash
+        elif to is None and o.get("thread") is None:
+            public += cash
+    return TradeBook(dict(settled), addressed, public)
 
 
 def committed_context(ctx: Context, commitments: Commitments) -> Context:
-    """The guardrail context as if every open offer fills: less cash, and the cards we bid for held.
-    Two open bids cannot both pass the cash floor, and a second bid for the same card is refused."""
+    """The guardrail context as if every open offer fills: less cash, the cards we bid for held, and our
+    dealer-thread bids spent this game hour. Two open bids cannot both pass the cash floor or the spend
+    cap, and a second bid for the same card is refused.
+    For a sell, the copies we could still sell: what we hold now (a bid may never fill) minus the copies
+    already in our asks, so two asks cannot take a new page's last card (`protect_page_sets`). An ask that
+    does not name its card counts against every card (fail closed)."""
     held = dict(ctx.held)
     for ref in commitments.wanted:
         held[ref] = held.get(ref, 0) + 1
-    return replace(ctx, cash=ctx.cash - commitments.cash, held=held)
+    listed = Counter(commitments.listed_refs)
+    sellable = {ref: n - listed[ref] - commitments.unnamed_listed for ref, n in ctx.held.items()}
+    return replace(
+        ctx,
+        cash=ctx.cash - commitments.cash,
+        held=held,
+        spent_last_hour=ctx.spent_last_hour + commitments.thread_cash,
+        packs_last_hour=ctx.packs_last_hour + commitments.thread_packs,
+        sellable=sellable,
+    )
 
 
 @dataclass(frozen=True)
@@ -170,7 +403,8 @@ def post(
             f"dry run: would {listing.describe()} · give {listing.give} want {listing.want} · guardrails "
             f"{verdict}. Add --live to post.",
         )
-    offer = client.list_offer(listing.give, listing.want, venue=listing.venue, expires_in_ticks=expires_in_ticks)
+    to = {"to": listing.to} if listing.to else {}
+    offer = client.list_offer(listing.give, listing.want, venue=listing.venue, expires_in_ticks=expires_in_ticks, **to)
     if listing.kind == "bid" and ledger is not None:
         ledger.record("spend", ctx.tick, ctx.t_hours, listing.price, listing.ref)
     return Posted(True, verdict, offer, f"posted offer {offer.get('id')}: {listing.describe()}")

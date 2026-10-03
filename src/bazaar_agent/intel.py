@@ -8,6 +8,7 @@ Observed shapes (2026-10-02): `settlement` carries parties, items (frm/to) and p
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from statistics import median
 from typing import Any
 
 Event = dict[str, Any]
+TEAM_ID = re.compile(r"^t\d+\Z")  # \Z, not $: "t05\n" is not a team id
 
 
 # ---------------------------------------------------------------- us vs the competition
@@ -106,6 +108,44 @@ def tape(events: Iterable[Event]) -> list[Print]:
     return prints
 
 
+def book_values(catalog: dict[str, Any] | None) -> dict[str, float]:
+    """card ref -> book value, from `/api/catalog`."""
+    return {
+        str(c["id"]): float(c.get("book") or 0)
+        for s in (catalog or {}).get("sets") or []
+        for c in s.get("cards") or []
+        if c.get("id")
+    }
+
+
+def card_rarities(catalog: dict[str, Any] | None) -> dict[str, str]:
+    """card ref -> rarity, from `/api/catalog`."""
+    return {
+        str(c["id"]): str(c.get("rarity"))
+        for s in (catalog or {}).get("sets") or []
+        for c in s.get("cards") or []
+        if c.get("id") and c.get("rarity")
+    }
+
+
+def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | None = None) -> dict[str, int]:
+    """Primas we settled with each other team: the notional of every team-to-team settlement we are a party
+    to, the larger of its cash and the book of the cards that moved (a swap has no cash). Dealers are not
+    counterparties."""
+    out: Counter[str] = Counter()
+    for e in events:
+        p = e.get("payload") or {}
+        if e.get("type") != "settlement" or p.get("persona") or us not in (p.get("parties") or []):
+            continue
+        others = {str(x) for x in p.get("parties") or [] if x != us and TEAM_ID.match(str(x))}
+        if len(others) != 1:
+            continue
+        items = p.get("items") or []
+        books = round(sum((book or {}).get(str(i.get("ref")), 0.0) for i in items))
+        out[others.pop()] += max(int(p.get("price") or 0), books)
+    return dict(out)
+
+
 # ---------------------------------------------------------------- dealer threads (quotes)
 
 
@@ -125,6 +165,7 @@ class DealerThread:
     fill_price: int | None = None
     fill_tick: int | None = None
     ours: bool = False  # our own thread (see `dealer_threads(..., ours=)`)
+    sequence: list[tuple[str, int]] = field(default_factory=list)  # ("team"|"dealer", price) in feed order
 
     @property
     def opening_ask(self) -> int | None:
@@ -135,7 +176,11 @@ class DealerThread:
         return len(self.team_prices)
 
 
-def _topic_item(topic: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
+def _topic_item(topic: Any) -> tuple[str, str, tuple[int, ...]]:
+    """The item a dealer thread is about. The topic is chosen by the team that opened the thread, so any
+    shape may arrive (a string, a list, `assets` that is not a list): an unknown shape reads as "?"."""
+    if not isinstance(topic, dict):
+        return "?", "?", ()
     for side in ("buy", "sell"):
         spec = topic.get(side)
         if isinstance(spec, dict):
@@ -144,7 +189,8 @@ def _topic_item(topic: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
             if "card" in spec:
                 return side, str(spec["card"]), ()
             if "assets" in spec:
-                ids = tuple(int(a) for a in spec["assets"] if isinstance(a, int))
+                assets = spec["assets"] if isinstance(spec["assets"], list) else []
+                ids = tuple(int(a) for a in assets if isinstance(a, int))
                 return side, f"assets:{','.join(map(str, ids))}", ids
             if "rarity" in spec:
                 return side, f"{spec.get('rarity')}:{spec.get('set', '*')}", ()
@@ -190,10 +236,12 @@ def dealer_threads(events: Iterable[Event], ours: str | None = None) -> list[Dea
             t.last_tick = int(e.get("tick", t.last_tick))
             if p.get("sender") == t.dealer:
                 t.dealer_prices.append(price)
+                t.sequence.append(("dealer", price))
                 if offer.get("final"):
                     t.final_price = price
             else:
                 t.team_prices.append(price)
+                t.sequence.append(("team", price))
         elif kind == "settlement":
             for pr in tape([e]):
                 settlements.append((pr, (e.get("payload") or {}).get("items") or []))
@@ -288,43 +336,46 @@ def team_flows(events: Iterable[Event]) -> list[TeamFlow]:
         return flows.setdefault(team, TeamFlow(team))
 
     for e in events:
-        kind, p = e.get("type"), e.get("payload") or {}
-        if kind == "thread.opened" and p.get("team"):
-            f = flow(str(p["team"]))
-            f.dealer_threads += 1 if p.get("kind") == "persona" else 0
-            card = ((p.get("topic") or {}).get("buy") or {}).get("card")
-            if s := set_of(card):
-                f.set_interest[s] += 1
-        elif kind == "thread.message" and p.get("sender") == p.get("team") and p.get("team"):
-            flow(str(p["team"])).bids += 1
-        elif kind == "offer.listed" and e.get("actor"):
-            f = flow(str(e["actor"]))
-            f.listings += 1
-            offer = p.get("offer") or {}
-            for a in (offer.get("give") or {}).get("assets") or []:
-                if s := a.get("set") or set_of(a.get("ref")):
-                    f.set_interest[s] -= 1  # selling a set's card: likely not their ×1.6 set
-            for ref in (offer.get("want") or {}).get("types") or []:
-                if s := set_of(str(ref).split(":")[-1]):
+        try:
+            kind, p = e.get("type"), e.get("payload") or {}
+            if kind == "thread.opened" and p.get("team"):
+                f = flow(str(p["team"]))
+                f.dealer_threads += 1 if p.get("kind") == "persona" else 0
+                card = ((p.get("topic") or {}).get("buy") or {}).get("card")
+                if s := set_of(card):
                     f.set_interest[s] += 1
-        elif kind == "settlement":
-            for pr in tape([e]):
-                for team, is_buyer in ((pr.buyer, True), (pr.seller, False)):
-                    if not team.startswith("t"):
-                        continue
-                    f = flow(team)
-                    if is_buyer:
-                        f.buys += 1
-                        f.spent += pr.price
-                        if pr.kind == "pack":
-                            f.pack_prices.append(pr.price)
-                        if s := set_of(pr.ref):
-                            f.set_interest[s] += 1
-                    else:
-                        f.sells += 1
-                        f.earned += pr.price
-                        if s := set_of(pr.ref):
-                            f.set_interest[s] -= 1
+            elif kind == "thread.message" and p.get("sender") == p.get("team") and p.get("team"):
+                flow(str(p["team"])).bids += 1
+            elif kind == "offer.listed" and e.get("actor"):
+                f = flow(str(e["actor"]))
+                f.listings += 1
+                offer = p.get("offer") or {}
+                for a in (offer.get("give") or {}).get("assets") or []:
+                    if s := a.get("set") or set_of(a.get("ref")):
+                        f.set_interest[s] -= 1  # selling a set's card: likely not their ×1.6 set
+                for ref in (offer.get("want") or {}).get("types") or []:
+                    if s := set_of(str(ref).split(":")[-1]):
+                        f.set_interest[s] += 1
+            elif kind == "settlement":
+                for pr in tape([e]):
+                    for team, is_buyer in ((pr.buyer, True), (pr.seller, False)):
+                        if not team.startswith("t"):
+                            continue
+                        f = flow(team)
+                        if is_buyer:
+                            f.buys += 1
+                            f.spent += pr.price
+                            if pr.kind == "pack":
+                                f.pack_prices.append(pr.price)
+                            if s := set_of(pr.ref):
+                                f.set_interest[s] += 1
+                        else:
+                            f.sells += 1
+                            f.earned += pr.price
+                            if s := set_of(pr.ref):
+                                f.set_interest[s] -= 1
+        except (AttributeError, TypeError, ValueError, KeyError):
+            continue  # another team's malformed event (e.g. a string topic) never stops a tick
     return sorted(flows.values(), key=lambda f: f.team)
 
 

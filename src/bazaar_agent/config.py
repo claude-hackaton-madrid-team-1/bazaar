@@ -6,7 +6,8 @@ The target is a feature flag over two hardcoded URLs, decided here and nowhere e
 - `BAZAAR_SIM` unset or 0 → the real game, https://bazaar.causaprima.ai, with `BAZAAR_KEY`.
 - `BAZAAR_SIM=1` → the simulator (`bazaar-sim`, README "Simulator") with `BAZAAR_SIM_KEY`
   (default `sim-team1`). The real `BAZAAR_KEY` is not even read in this mode.
-- `BAZAAR_SIM=local` → the same, against `uv run bazaar-sim serve` on this laptop (127.0.0.1:8765).
+- `BAZAAR_SIM=local` → the same, against `uv run bazaar-sim serve` on this laptop (127.0.0.1:8765, or the
+  port in `BAZAAR_SIM_PORT` when several simulators share the laptop).
 - `BAZAAR_URL` is gone: set, it fails fast (a free-form URL is how a real key reaches a wrong host).
 - Guards on top: a `sim-...` key never reaches the real host, and only a `sim-...` key reaches the
   simulator; the key is refused before any request.
@@ -33,6 +34,7 @@ OFFICIAL_HOST = "bazaar.causaprima.ai"
 SIM_KEY_PREFIX = "sim-"
 REAL_DATABASE = "railway"  # the team's shared Railway database: real-game memory only
 SIM_DATA_DIR = REPO_ROOT / ".local" / "sim-client"  # default data dir against a simulator
+BROKER_ENV_FILE = "broker.env"  # <data_dir>/broker.env (0600): the broker key a live `venue open` saved
 
 
 class ConfigError(RuntimeError):
@@ -63,8 +65,11 @@ class Settings(BaseModel):
     claude_code_oauth_token: SecretStr | None = None  # `claude setup-token`: Claude models on the subscription
     llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
+    sim_database: bool = False  # BAZAAR_SIM_DATABASE_URL is the database: one of the simulator's own
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
+    broker_key: SecretStr | None = None  # BAZAAR_BROKER_KEY: our venue's X-Broker-Key (returned once on open)
+    venue_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")  # BAZAAR_VENUE: our venue id
 
     @property
     def feed_dir(self) -> Path:
@@ -113,6 +118,14 @@ class Settings(BaseModel):
             )
         return url
 
+    def require_broker_key(self) -> str:
+        if self.broker_key is None or not self.broker_key.get_secret_value():
+            raise ConfigError(
+                "BAZAAR_BROKER_KEY is not set: a live `bazaar venue open` saves it to "
+                f"{BROKER_ENV_FILE} in the data dir; on Railway set the variable by hand."
+            )
+        return self.broker_key.get_secret_value()
+
 
 def is_official(url: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == OFFICIAL_HOST
@@ -136,6 +149,19 @@ def check_key_for_url(url: str, key: str) -> None:
         )
 
 
+def same_database(a: str, b: str) -> bool:
+    """Do two URLs name the same database (host, port, name)? Unparsable counts as the same: fail safe."""
+    try:
+        pa, pb = urlsplit(a), urlsplit(b)
+        return ((pa.hostname or "").lower(), pa.port or 5432, database_name(a)) == (
+            (pb.hostname or "").lower(),
+            pb.port or 5432,
+            database_name(b),
+        )
+    except ValueError:
+        return True
+
+
 def database_name(url: str) -> str:
     """The database a Postgres URL names: its path, or a `dbname=` query override (libpq honours both)."""
     parts = urlsplit(url)
@@ -145,9 +171,26 @@ def database_name(url: str) -> str:
     return unquote(parts.path.lstrip("/"))
 
 
+def env_file_path() -> Path:
+    """The env file every reader uses: BAZAAR_ENV_FILE when set, else the repo's `.env`.
+
+    The override REPLACES `.env`, so a typo must not silently drop it (a BAZAAR_SIM=1 kept in `.env`
+    would vanish and the target would become the real game): a missing or relative path fails fast."""
+    override = os.environ.get("BAZAAR_ENV_FILE")
+    if not override:
+        return REPO_ROOT / ".env"
+    path = Path(override)
+    if not path.is_absolute() or not path.is_file():
+        raise ConfigError("BAZAAR_ENV_FILE must name an existing file by absolute path (it replaces .env).")
+    return path
+
+
 def load_settings(env_file: Path | None = None) -> Settings:
-    """Environment variables win over `.env`, so a one-off override needs no file edit."""
-    file_values = read_env_file(env_file or REPO_ROOT / ".env")
+    """Environment variables win over `.env`, so a one-off override needs no file edit.
+
+    BAZAAR_ENV_FILE names another env file instead of the repo's `.env` (the simulator smoke points it
+    at an empty file, so a laptop's real secrets never load into a smoke run)."""
+    file_values = read_env_file(env_file or env_file_path())
 
     def pick(name: str) -> str | None:
         value = os.environ.get(name) or file_values.get(name)
@@ -162,7 +205,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     simulated = flag != "real"
     data = {
         "simulated": simulated,
-        "bazaar_url": {"real": DEFAULT_URL, "sim": SIM_URL, "local": LOCAL_SIM_URL}[flag],
+        "bazaar_url": (
+            local_sim_url(pick("BAZAAR_SIM_PORT")) if flag == "local" else {"real": DEFAULT_URL, "sim": SIM_URL}[flag]
+        ),
         # Against the simulator the real key is never loaded at all, so nothing can send it there.
         "bazaar_key": (pick("BAZAAR_SIM_KEY") or DEFAULT_SIM_KEY) if simulated else pick("BAZAAR_KEY"),
         "typesafe_api_key": pick("TYPESAFE_API_KEY"),
@@ -172,16 +217,35 @@ def load_settings(env_file: Path | None = None) -> Settings:
         "llm_runtime": pick("BAZAAR_LLM_RUNTIME"),
         "database_url": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "database_url_sim": pick("BAZAAR_SIM_DATABASE_URL"),
+        "database_url_real": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "team_id": pick("BAZAAR_TEAM_ID"),
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):
         data["data_dir"] = data_dir
     elif simulated:
         data["data_dir"] = str(SIM_DATA_DIR)  # the real feed capture and ledger never see simulated play
-    sim_db = data.pop("database_url_sim")
+    sim_db, real_db = data.pop("database_url_sim"), data.pop("database_url_real")
     if sim_db and simulated:
         data["database_url"] = sim_db
+        data["sim_database"] = not same_database(str(sim_db), str(real_db))  # not the real one, respelled
+    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved. Against
+    # the simulator BAZAAR_BROKER_KEY / BAZAAR_VENUE are not read (only the data dir's file), and the host
+    # guard (`venue.check_broker_key_for_url`) refuses to send a real key there anyway.
+    saved = read_env_file(Path(str(data.get("data_dir") or REPO_ROOT / ".local")) / BROKER_ENV_FILE)
+    env_key, env_venue = (None, None) if simulated else (pick("BAZAAR_BROKER_KEY"), pick("BAZAAR_VENUE"))
+    data["broker_key"] = env_key or saved.get("BAZAAR_BROKER_KEY") or None
+    data["venue_id"] = env_venue or saved.get("BAZAAR_VENUE") or None
     return Settings.model_validate(data)
+
+
+def local_sim_url(port: str | None) -> str:
+    """BAZAAR_SIM=local's address: 127.0.0.1, port 8765 unless BAZAAR_SIM_PORT names another (one laptop, several
+    workers' simulators). Always loopback: the port is the only part that moves, and only for BAZAAR_SIM=local."""
+    if port is None:
+        return LOCAL_SIM_URL
+    if not (port.isascii() and port.isdigit()) or not 1024 <= int(port) <= 65535:  # "²".isdigit() is True
+        raise ConfigError("BAZAAR_SIM_PORT must be a port number from 1024 to 65535 (the laptop simulator's port).")
+    return f"http://127.0.0.1:{int(port)}"
 
 
 def sim_flag(raw: str | None) -> str:

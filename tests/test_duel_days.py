@@ -1,0 +1,459 @@
+"""Two-issue duels (B8): the sign latch, the rival's days, our days and the repricing that keeps our value."""
+
+import json
+from dataclasses import dataclass
+
+import pytest
+
+from bazaar_agent import guardrails as gr
+from bazaar_agent.agents import duel_days as dd
+
+SIM_TEXT = "primas you gain (+) or lose (-) per delivery day, 0-10"
+
+
+def duel(**over) -> dict:
+    base = {
+        "duel": 7,
+        "session": 1,
+        "status": "live",
+        "role": "seller",
+        "issues": ["price", "days"],
+        "your_limit": 100,
+        "your_days_weight": 2.0,
+        "days_meaning": None,
+        "rival": "Rival Azul",
+        "messages": [],
+    }
+    return base | over
+
+
+def rival(*offers: tuple[int, int, int]) -> list[dict]:
+    return [{"tick": t, "from": "Rival Azul", "price": p, "days": d, "text": ""} for t, p, d in offers]
+
+
+@pytest.mark.parametrize(
+    ("meaning", "real", "verdict"),
+    [
+        (SIM_TEXT, True, "signed"),
+        (SIM_TEXT, False, "unknown"),  # the simulator's own words are not evidence
+        (None, True, "unknown"),  # Friday's real payloads
+        ("Primas per delivery day", True, "unknown"),  # the openapi's words: no direction
+        ("primas each delivery day costs you", True, "cost"),
+        ("primas you gain per delivery day", True, "unknown"),  # a gain alone: can a weight be negative? not said
+        ("primas it costs (+) or saves you per day", True, "reversed"),  # + is a cost: the other convention
+        ("positive weights mean you gain primas per day", True, "signed"),
+        ("positive weights cost you primas per day", True, "reversed"),
+        ("primas you gain or lose per delivery day", True, "unknown"),  # no sign tied to either
+    ],
+)
+def test_only_a_real_payload_that_names_a_gain_and_a_loss_confirms_the_sign(meaning, real, verdict):
+    assert dd.evidence(duel(days_meaning=meaning), real) == verdict
+    assert dd.evidence(duel(days_meaning=meaning, issues=["price"]), real) == "unknown"
+
+
+@pytest.mark.parametrize(
+    "meaning",
+    [  # #150 review P1: a direction word or a comparative can turn "gain (+)" into a cost per day of OUR days
+        "positive: you gain primas for each day earlier",
+        "you gain (+) per day sooner",
+        "primas you gain (+) per day the delivery is brought forward",
+        "positive weights mean you earn less per day",
+        "positive weights mean you gain fewer primas per day",
+        "primas you gain (+) per day of delay",  # the same direction as ours, but a person reads it, not a regex
+        "you gain (+) for every day later",
+        "primas you gain (+) or lose (-) per day faster",
+    ],
+)
+def test_a_direction_word_or_a_comparative_never_latches_a_sign(meaning):
+    assert dd.evidence(duel(days_meaning=meaning), True) == "unknown"
+
+
+def test_the_switch_latches_the_first_real_evidence_and_persists_it(tmp_path):
+    path = tmp_path / "days.json"
+    switch = dd.DaysSwitch.load(path)
+    assert switch.observe([duel(days_meaning=SIM_TEXT)], real_game=False) == "unknown" and not path.exists()
+    assert switch.observe([duel(days_meaning=None), duel(duel=8, days_meaning=SIM_TEXT)], real_game=True) == "signed"
+    assert not switch.signed(allowed=True)  # a text alone is one signal: a score must agree (#150 security P1)
+    again = dd.DaysSwitch.load(path)
+    assert (again.verdict, again.duel, again.text, again.texts) == ("signed", 8, SIM_TEXT, [1])
+
+
+def test_a_reversed_convention_latches_and_keeps_the_switch_off(tmp_path):
+    switch = dd.DaysSwitch.load(tmp_path / "days.json")
+    assert switch.observe([duel(days_meaning="primas it costs (+) or saves you per day")], True) == "reversed"
+    assert not switch.signed(True)
+
+
+def test_real_payloads_that_disagree_switch_it_off_for_good(tmp_path):
+    switch = dd.DaysSwitch.load(tmp_path / "days.json")
+    switch.observe([duel(days_meaning=SIM_TEXT)], True)
+    switch.observe([duel(days_meaning="each day costs you primas")], True)
+    assert switch.verdict == "conflict" and not switch.signed(True)
+    switch.observe([duel(days_meaning=SIM_TEXT)], True)
+    assert dd.DaysSwitch.load(tmp_path / "days.json").verdict == "conflict"
+
+
+def test_an_unreadable_state_file_is_a_conflict_until_a_person_deletes_it(tmp_path):
+    path = tmp_path / "days.json"
+    path.write_text("{not json")  # a truncated write must never silently undo a recorded conflict (security P3)
+    assert dd.DaysSwitch.load(path).verdict == "conflict"
+    assert dd.DaysSwitch.load(tmp_path / "missing.json").verdict == "unknown"
+
+
+def test_the_rivals_days_show_which_end_it_prefers():
+    tens = dd.rival_days(duel(messages=rival((1, 150, 10), (2, 145, 10), (3, 140, 10))))
+    assert (tens.prefers, tens.confidence, tens.offers) == (10, 1.0, 3)
+    zeros = dd.rival_days(duel(messages=rival((1, 150, 0), (2, 145, 0), (3, 140, 0))))
+    assert (zeros.prefers, zeros.confidence) == (0, 0.5)  # a 0 may only mean it ignores days
+    assert dd.rival_days(duel(messages=rival((1, 150, 5)))).prefers is None
+    assert dd.rival_days(duel()).offers == 0
+
+
+def test_our_days_are_0_in_the_worst_case_and_the_joint_best_end_when_signed():
+    none = dd.RivalDays(None, 0.0, 0)
+    likes_ten = dd.RivalDays(10, 1.0, 3)  # its weight is unknown: the prior, 2 P a day
+    assert dd.choose_days(duel(), signed=False, rival=likes_ten) == 0
+    assert dd.choose_days(duel(your_days_weight=2.0), signed=True, rival=none) == 10
+    assert dd.choose_days(duel(your_days_weight=-1.0), signed=True, rival=likes_ten) == 10  # it gains ~2, we lose 1
+    assert dd.choose_days(duel(your_days_weight=-4.0), signed=True, rival=likes_ten) == 0
+    assert dd.choose_days(duel(issues=["price"]), signed=True, rival=none) is None
+
+
+def test_repricing_keeps_our_value_and_never_leaves_our_limit():
+    seller = duel(your_days_weight=-1.0)  # signed: each day costs us 1 P
+    assert dd.reprice(seller, 120, 0, 10, signed=True) == 130  # 10 days cost 10: ask 10 more
+    assert dd.value(seller, 130, 10, True) == dd.value(seller, 120, 0, True) == 120
+    buyer = duel(role="buyer", your_limit=100, your_days_weight=-1.0)
+    assert dd.reprice(buyer, 80, 0, 10, signed=True) == 70
+    assert dd.reprice(buyer, 95, 0, 10, signed=True) == 85  # bid 10 less: still worth 95 to us
+    # A gain per day lets a seller ask less for the same value: 100 at 1 day is worth 101, inside our cost of 100.
+    assert dd.reprice(duel(your_days_weight=1.0, your_limit=100), 101, 0, 1, signed=True) == 100
+    assert dd.reprice(duel(your_days_weight=1.0, your_limit=100), 99, 0, 1, signed=True) is None  # worth 99: outside
+
+
+@dataclass(frozen=True)
+class Move:
+    kind: str
+    price: int | None = None
+    days: int | None = None
+
+
+def test_the_wrapper_reprices_offers_only_and_keeps_moves_it_cannot_reprice():
+    likes_ten = rival((1, 150, 10), (2, 145, 10), (3, 140, 10))
+    d = duel(your_days_weight=-1.0, messages=likes_ten)  # we lose 1 a day, it prefers 10 days
+    offer = dd.days_aware(lambda duel, tick, started: Move("offer", 120, 0), signed=True)
+    assert offer(d, 4, 0) == Move("offer", 130, 10)
+    accept = dd.days_aware(lambda duel, tick, started: Move("accept", 140), signed=True)
+    assert accept(d, 4, 0) == Move("accept", 140)
+    worst = dd.days_aware(lambda duel, tick, started: Move("offer", 120, 0), signed=False)
+    assert worst(d, 4, 0) == Move("offer", 120, 0)
+
+
+def done(weight: float, result: float, role: str = "seller", price: int = 120, days: int = 3) -> dict:
+    """A finished real deal: limit 100, 3 days, 2 rounds at decay 0.08 (kept 0.8464)."""
+    return duel(role=role, your_days_weight=weight, status="deal", price=price, days=days, result=result, rounds=2,
+                decay_per_round=0.08)  # fmt: skip
+
+
+def test_a_finished_deals_score_shows_how_the_game_counts_days():
+    kept = 0.92**2
+    assert dd.scored_evidence(done(2.0, round((20 + 6) * kept, 1)), True) == "signed"  # 3 days at +2 added 6
+    assert dd.scored_evidence(done(2.0, round((20 - 6) * kept, 1)), True) == "cost"  # they cost 6
+    assert dd.scored_evidence(done(-2.0, round((20 + 6) * kept, 1)), True) == "reversed"  # -2 a day added 6
+    assert dd.scored_evidence(done(-2.0, round((20 - 6) * kept, 1)), True) == "unknown"  # signed or cost: same
+    assert dd.scored_evidence(done(2.0, round(20 * kept, 1)), True) == "conflict"  # days not scored: no model fits
+    assert dd.scored_evidence(done(2.0, round(26 * kept, 1)), False) == "unknown"  # the simulator: no evidence
+    assert dd.scored_evidence(done(2.0, round(26 * kept, 1), days=0), True) == "unknown"
+    buyer = done(2.0, round((100 - 80 + 6) * kept, 1), role="buyer", price=80)
+    assert dd.scored_evidence(buyer, True) == "signed"
+
+
+def test_a_score_that_disagrees_with_the_text_is_a_conflict(tmp_path):
+    switch = dd.latch(tmp_path)
+    assert switch.observe([duel(days_meaning=SIM_TEXT)], True) == "signed"
+    assert switch.observe([done(2.0, round((20 - 6) * 0.92**2, 1))], True) == "conflict"  # 3 days cost 6
+
+
+def test_two_processes_on_one_file_never_undo_each_other(tmp_path):
+    run, runtime = dd.latch(tmp_path), dd.latch(tmp_path)  # `duel run` and the runtime, both started at unknown
+    run.observe([duel(days_meaning=SIM_TEXT)], True)
+    runtime.observe([duel(days_meaning="each day costs you primas")], True)  # merges the file first: conflict
+    assert dd.latch(tmp_path).verdict == "conflict"
+    run.observe([duel(days_meaning=SIM_TEXT)], True)  # the stale "signed" in memory does not win
+    assert run.verdict == "conflict" and dd.latch(tmp_path).verdict == "conflict"
+    assert [p.name for p in (tmp_path / "duels").iterdir()] == ["days_sign.json"]  # no temp file left behind
+
+
+# ---------------------------------------------------------------- two real signals before the sign is trusted
+
+
+def signed_score(did: int, days: int = 3) -> dict:
+    """A finished real deal whose score shows the days added +2 a day (3 days by default, kept 0.92 ** 2)."""
+    return {**done(2.0, round((20 + 2 * days) * 0.92**2, 1), days=days), "duel": did}
+
+
+def test_one_signal_alone_never_turns_the_sign_on(tmp_path):
+    # #150 security P1: one misread text (or one score) must not drop the guard's worst case for every duel.
+    text_only = dd.latch(tmp_path / "a")
+    assert text_only.observe([duel(days_meaning=SIM_TEXT)], True) == "signed" and not text_only.signed(True)
+    score_only = dd.latch(tmp_path / "b")
+    assert score_only.observe([duel(), signed_score(11)], True) == "signed" and not score_only.signed(True)
+    assert score_only.observe([duel(), signed_score(11)], True) == "signed" and not score_only.signed(True)  # same
+
+
+def test_a_text_and_a_score_or_two_scores_corroborate_the_sign(tmp_path):
+    both = dd.latch(tmp_path / "a")
+    both.observe([duel(days_meaning=SIM_TEXT)], True)
+    both.observe([signed_score(11)], True)
+    assert both.signed(True) and not both.signed(False)
+    scores = dd.latch(tmp_path / "b")
+    scores.observe([duel(), signed_score(11), signed_score(12, days=2)], True)  # a live duel says which session is now
+    assert scores.signed(True)
+
+
+def signed_now(where) -> bool:
+    """What a process that loads the file and reads the live duels (session 1) decides."""
+    switch = dd.latch(where)
+    switch.observe([duel()], True)
+    return switch.signed(True)
+
+
+def test_corroboration_is_shared_through_the_file(tmp_path):
+    duel_run, runtime = dd.latch(tmp_path), dd.latch(tmp_path)
+    duel_run.observe([duel(days_meaning=SIM_TEXT)], True)
+    runtime.observe([duel(), signed_score(11)], True)
+    assert runtime.signed(True) and signed_now(tmp_path)
+    assert not dd.latch(tmp_path).signed(True)  # a fresh load knows no current session until it reads the live duels
+
+
+# ---------------------------------------------------------------- #150 round 2: what still fooled the latch
+
+
+def test_a_score_that_fits_no_model_counts_against_the_sign(tmp_path):
+    # Days counted back from 10: a 2-day deal at +2 a day adds 16, which none of signed / cost / reversed predicts.
+    odd = done(2.0, round((20 + 16) * 0.92**2, 1), days=2)
+    assert dd.scored_evidence(odd, True) == "conflict"
+    switch = dd.latch(tmp_path)
+    switch.observe([duel(days_meaning=SIM_TEXT), odd], True)
+    assert switch.verdict == "conflict" and not switch.signed(True)
+
+
+@pytest.mark.parametrize(
+    "meaning",
+    [
+        "primas you gain (+) for each day before day 10",
+        "primas you gain (+) per remaining day",
+        "you gain (+) per day, counted backwards",
+        "you gain (+) per day left until delivery",
+    ],
+)
+def test_counting_words_never_latch_a_sign(meaning):
+    assert dd.evidence(duel(days_meaning=meaning), True) == "unknown"
+
+
+def test_a_conflict_reached_by_merging_the_file_is_written_back(tmp_path):
+    runtime = dd.latch(tmp_path)
+    runtime.observe([duel(days_meaning=SIM_TEXT), signed_score(11)], True)
+    assert signed_now(tmp_path)
+    duel_run = dd.DaysSwitch(verdict="conflict", path=tmp_path / dd.LATCH_FILE)  # held in memory, file says signed
+    duel_run.observe([], True)
+    assert dd.latch(tmp_path).verdict == "conflict" and not signed_now(tmp_path)
+
+
+@pytest.mark.parametrize("issues", [5, True, 1.5, "days", None])
+def test_a_malformed_issues_field_skips_only_its_own_row(tmp_path, issues):
+    # #150 security r2 P3: `observe` runs on every v1 tick; a bad row used to raise and stop every duel that tick.
+    switch = dd.latch(tmp_path)
+    good = duel(duel=8, days_meaning=SIM_TEXT)
+    assert switch.observe([duel(issues=issues, days_meaning=SIM_TEXT), good], True) == "signed"
+    assert dd.two_issue({"issues": issues}) is False
+
+
+# ---------------------------------------------------------------- #150 security r2 P2: signals count per session
+
+
+def live(session, **over) -> dict:
+    """A live duel of `session` (no days text unless given): it tells the latch which session is current."""
+    return duel(duel=50 + (session if isinstance(session, int) else 0), session=session, **over)
+
+
+def scored_in(session, did: int, days: int = 3) -> dict:
+    return {**signed_score(did, days), "session": session}
+
+
+V2_AUTO = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
+
+
+def test_two_signed_scores_from_an_earlier_session_never_corroborate_a_later_one(tmp_path):
+    # `?done=true` lists every duel we ever finished: Saturday's deals must not vouch for Sunday's rules.
+    switch = dd.latch(tmp_path)
+    switch.observe([live(4), scored_in(2, 11), scored_in(2, 12, days=2)], True)
+    assert switch.verdict == "signed" and switch.session == 4 and not switch.signed(True)
+    assert not dd.effective_rules(V2_AUTO, switch).duel_days_signed  # the guard keeps its worst case
+    rearmed = dd.latch(tmp_path / "rearmed")  # the file deleted, restarted: the next read brings the same deals back
+    rearmed.observe([live(4), scored_in(2, 11), scored_in(2, 12, days=2)], True)
+    assert not rearmed.signed(True)
+    then = dd.latch(tmp_path / "then")
+    then.observe([live(2), scored_in(2, 11), scored_in(2, 12, days=2)], True)
+    assert then.signed(True)  # inside their own session they do
+
+
+def test_a_text_and_a_score_corroborate_only_inside_the_current_session(tmp_path):
+    split = dd.latch(tmp_path / "split")
+    split.observe([live(2, days_meaning=SIM_TEXT)], True)
+    split.observe([live(4), scored_in(4, 11)], True)
+    assert split.verdict == "signed" and not split.signed(True)  # a session-2 text and a session-4 score
+    now = dd.latch(tmp_path / "now")
+    now.observe([live(4, days_meaning=SIM_TEXT), scored_in(4, 11)], True)
+    assert now.signed(True) and (now.texts, now.scored) == ([4], [[4, 11, 3]])  # [session, duel, days]
+    saved = json.loads((tmp_path / "now" / dd.LATCH_FILE).read_text())
+    assert (saved["texts"], saved["scored"]) == ([4], [[4, 11, 3]]) and "session" not in saved  # the session is live
+
+
+def test_an_old_format_file_loads_as_not_corroborated(tmp_path):
+    path = tmp_path / dd.LATCH_FILE
+    path.parent.mkdir(parents=True)
+    old = {"verdict": "signed", "duel": 8, "text": SIM_TEXT, "text_signed": True, "scored": [11, 12]}
+    path.write_text(json.dumps(old))
+    switch = dd.latch(tmp_path)
+    assert switch.verdict == "signed" and not switch.signed(True)
+    switch.observe([live(1)], True)  # its signals carry no session: they count in none
+    assert not switch.signed(True) and (switch.texts, switch.scored) == ([], [])
+    assert dd.latch(tmp_path).verdict == "signed"
+
+
+def test_a_conflict_from_an_earlier_session_still_blocks_a_later_one(tmp_path):
+    switch = dd.latch(tmp_path)
+    switch.observe([live(2, days_meaning=SIM_TEXT), live(2, days_meaning="each day costs you primas")], True)
+    assert switch.verdict == "conflict"
+    later = dd.latch(tmp_path)
+    later.observe([live(4, days_meaning=SIM_TEXT), scored_in(4, 11), scored_in(4, 12, days=2)], True)
+    assert later.verdict == "conflict" and not later.signed(True)
+    by_hand = gr.Guardrails(duel_policy="v2", duel_days_auto=True, duel_days_signed=True)
+    assert not dd.effective_rules(by_hand, later).duel_days_signed
+
+
+@pytest.mark.parametrize("session", [None, "4", True, 4.0])
+def test_a_row_without_an_int_session_never_counts(tmp_path, session):
+    bad_scores = dd.latch(tmp_path / "scores")
+    bad_scores.observe([live(4, days_meaning=SIM_TEXT), scored_in(session, 11), scored_in(session, 12, 2)], True)
+    assert not bad_scores.signed(True)  # the text counts, the two scores do not
+    no_current = dd.latch(tmp_path / "live")
+    no_current.observe([live(session, days_meaning=SIM_TEXT), scored_in(4, 11), scored_in(4, 12, days=2)], True)
+    assert no_current.session is None and not no_current.signed(True)  # no current session: never corroborated
+
+
+# ---------------------------------------------------------------- #150 round 3: before anyone flips duel_days_auto
+
+
+def without_session(row: dict) -> dict:
+    return {k: v for k, v in row.items() if k != "session"}
+
+
+@pytest.mark.parametrize("bad", [without_session(live(0)), live(None), live("1"), live(True), live(1.0)])
+def test_one_live_row_without_an_int_session_leaves_no_current_session(tmp_path, bad):
+    # The review's probe: rows lacking `session` plus one stale live row of session 1 read session=1, corroborated.
+    switch = dd.latch(tmp_path)
+    switch.observe([bad, live(1, days_meaning=SIM_TEXT), scored_in(1, 11)], True)
+    assert switch.verdict == "signed" and switch.session is None and not switch.signed(True)
+    switch.observe([live(1)], True)  # every live row has its session again: the same signals now corroborate
+    assert switch.session == 1 and switch.signed(True)
+
+
+def test_two_signed_scores_corroborate_only_at_two_different_delivery_days(tmp_path):
+    # A scorer counting days back from 2·d scores a day-d deal w·(2d - d) = w·d: deals at one day read signed alike.
+    same = dd.latch(tmp_path / "same")
+    same.observe([live(1), scored_in(1, 11), scored_in(1, 12)], True)
+    assert same.verdict == "signed" and same.scored == [[1, 11, 3], [1, 12, 3]] and not same.signed(True)
+    apart = dd.latch(tmp_path / "apart")
+    apart.observe([live(1), scored_in(1, 11), scored_in(1, 12, days=2)], True)
+    assert apart.signed(True) and apart.scored == [[1, 11, 3], [1, 12, 2]]
+    text = dd.latch(tmp_path / "text")
+    text.observe([live(1, days_meaning=SIM_TEXT), scored_in(1, 11)], True)
+    assert text.signed(True)  # a text and one score: unchanged
+
+
+def test_scored_pairs_from_an_older_file_are_deals_of_unknown_days(tmp_path):
+    path = tmp_path / dd.LATCH_FILE
+    path.parent.mkdir(parents=True)
+    old = {"verdict": "signed", "duel": 11, "text": None, "texts": [], "scored": [[1, 11], [1, 12]]}
+    path.write_text(json.dumps(old))
+    pairs = dd.latch(tmp_path)
+    pairs.observe([live(1)], True)
+    assert pairs.scored == [[1, 11], [1, 12]] and not pairs.signed(True)  # two scores, days unknown: not enough
+    pairs.observe([live(1), scored_in(1, 13, days=3)], True)
+    assert not pairs.signed(True)  # one known day value
+    pairs.observe([live(1, days_meaning=SIM_TEXT)], True)
+    assert pairs.signed(True)  # a text and a score: an old pair still counts there
+    assert dd.latch(tmp_path).scored == [[1, 11], [1, 12], [1, 13, 3]]
+
+
+@pytest.mark.parametrize(
+    ("rounds", "decay"),
+    [(-2, 0.08), (2.5, 0.08), (2, -0.08), (0, 1.0), (2, 1.5), (0.5, 1.5)],
+)
+def test_a_bad_round_count_or_decay_scores_unknown(rounds, decay):
+    # A negative or fractional round count, or a decay outside [0, 1), used to mis-score a deal or raise.
+    kept = (1 - decay) ** rounds
+    result = round(26 * kept, 1) if isinstance(kept, int | float) else 26.0
+    assert dd.scored_evidence(done(2.0, result) | {"rounds": rounds, "decay_per_round": decay}, True) == "unknown"
+    assert dd.scored_evidence(done(2.0, round(26 * 0.92**2, 1)) | {"rounds": 2.0}, True) == "signed"  # a whole float
+
+
+def test_a_lone_surrogate_in_a_server_text_is_saved_and_read_back(tmp_path):
+    # `ensure_ascii=False` + a utf-8 write raised UnicodeEncodeError on every tick for such a text.
+    text = SIM_TEXT + " \ud800"
+    switch = dd.latch(tmp_path)
+    assert switch.observe([duel(days_meaning=text)], True) == "signed"
+    assert (tmp_path / dd.LATCH_FILE).read_bytes().isascii() and dd.latch(tmp_path).text == text
+
+
+# ---------------------------------------------------------------- PR #165 security review
+
+
+def test_an_int_too_large_for_a_float_is_not_a_number():
+    # P3-3: math.isfinite(10**400) raises OverflowError (int too large to convert to float).
+    assert dd._number(10**400) is None and dd._number(-(10**400)) is None and dd._number(10**300) == 1e300
+
+
+@pytest.mark.parametrize("field", ["price", "days", "result", "your_days_weight", "your_limit", "rounds"])
+def test_a_400_digit_field_skips_only_its_own_row(tmp_path, field):
+    # P3-3: the overflow aborted `observe`, so a cost text after the bad row was never read and `signed` survived it.
+    switch = dd.latch(tmp_path)
+    switch.observe([live(1, days_meaning=SIM_TEXT), scored_in(1, 11, days=3)], True)
+    assert switch.signed(True)
+    huge = scored_in(1, 12, days=2) | {field: 10**400}
+    assert dd.scored_evidence(huge, True) == "unknown"
+    assert switch.observe([huge, duel(duel=13, days_meaning="each day costs you primas")], True) == "conflict"
+    assert not switch.signed(True)
+
+
+def test_a_400_digit_rival_day_is_skipped():
+    tens = rival((1, 150, 10), (2, 145, 10), (3, 140, 10))
+    huge = [{"tick": 4, "from": "Rival Azul", "price": 140, "days": 10**400, "text": ""}]
+    assert dd.rival_days(duel(messages=tens + huge)) == dd.RivalDays(10, 1.0, 3)
+
+
+def counted_back(did: int, weight: float, days: int) -> dict:
+    """A finished real deal a game scored counting days back from 10: the days added weight × (10 - days)."""
+    return {**done(weight, round((20 + weight * (dd.DAYS_MAX - days)) * 0.92**2, 1), days=days), "duel": did}
+
+
+def test_a_small_weight_near_day_5_never_corroborates_signed(tmp_path):
+    # P3-4: w·(10 - d) lies within the tolerance of w·d when |w|·|10 - 2d| <= 1, as w 0.2 at days 4 and 6.
+    four, six = counted_back(11, 0.2, 4), counted_back(12, 0.2, 6)
+    assert dd.scored_evidence(four, True) == dd.scored_evidence(six, True) == "unknown"
+    switch = dd.latch(tmp_path)
+    switch.observe([live(1), four, six], True)
+    assert switch.verdict == "unknown" and not switch.signed(True)
+
+
+@pytest.mark.parametrize("weight", [-4.0, -0.2, 0.2, 2.0, 4.0])
+def test_a_day_5_deal_never_tells_the_models_apart(weight):
+    # Counted back from 10, day 5 adds w·5: exactly what the signed model predicts, whatever the weight.
+    assert dd.scored_evidence(counted_back(11, weight, 5), True) == "unknown"
+
+
+def test_days_that_add_too_little_cannot_say_whether_they_were_scored():
+    # |w|·d <= 1: "days not scored" (added 0) lies within the tolerance of signed: 0.25 at 2 days read signed.
+    assert dd.scored_evidence(done(0.25, round(21 * 0.92**2, 1), price=121, days=2), True) == "unknown"
