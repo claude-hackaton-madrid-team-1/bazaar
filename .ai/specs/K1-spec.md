@@ -12,6 +12,25 @@ One place that says how points are earned, so every task can say which points it
 ## Acceptance criteria (each MUST be testable)
 - [ ] 1. Each N-task in 02-plan.md names the score component it moves (negotiating, market, judges).
 
+## Current scoring (rules audit, Sat 3 Oct; wins over the source text below where they differ)
+Full text: `docs/briefing.md` ("Scoring", "Dealers and ladder", "Duels", "Our own market", "Windows this weekend") and
+`STRATEGY.md` ("What scores"). The official rules win on any clash: `vendor/bazaar-kit/RULES.md`.
+- Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team
+  trade (price minus our `your_value`, into `neg_points`) or a dealer deal (the share of that dealer's own range, buying
+  or selling; the opening price scores 0, the dealer's final scores the whole range; best 3 deals per level; restarts
+  every round).
+- Market-making per round = 22.5 x Market Test bench points + 7.5 x organic (value other teams create on our venue). The
+  free stall is bench 0.5. Negotiating per round is about ladder 7.5 + duels 7.5 + team trades 15 (an estimate). Each part
+  is capped at the top-3 mean.
+- A round starts on the organisers' `round` action in `/api/schedule`, not when the doors open and not each day. Round 2
+  started at tick 160; round 3 starts at game hour 16.65 (about Sun 11:34). A new round's weight ramps from 0 to full over
+  about 160 ticks. Friday counts half and had 0 market-making for everyone.
+- A duel round is one priced message from each side: rounds = min(ours, the rival's), and our result = surplus x
+  (1 - decay)^rounds. Duels II are about Sat 20:34 (16 ticks, decay 0.08, price + days); Duels III about Sun 13:34
+  (12 ticks, decay 0.1); the Grand Final is at game hour 21.65, scheduled after the doors close.
+- The plan checklist and the game hours in the source text below (Duels I h6.5, Duels II h13, Duels III h20, Final h23)
+  are history: re-read `/api/schedule`.
+
 ## Source (the original issue text, verbatim)
 
 ### #17 — [tracker] How The Bazaar is scored + plan to win

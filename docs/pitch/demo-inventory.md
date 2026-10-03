@@ -81,7 +81,7 @@ timeline / score-sim is in main yet.**
 
 | Command | Ran? | What it shows | Network |
 |---|---|---|---|
-| `BAZAAR_SIM=1 uv run bazaar cockpit` | ran (sim) | 10 panels with ok/WARN/BAD: Clock, Next (playbook), Cash vs floor (270 P) + headroom, Ledger, Agents (/health), Caps, Duels, Ladder, Market Test, Alerts | sim + Railway /health |
+| `BAZAAR_SIM=1 uv run bazaar cockpit` | ran (sim) | 10 panels with ok/WARN/BAD: Clock, Next (playbook), Cash vs floor (`cash_floor` in GUARDRAILS.md) + headroom, Ledger, Agents (/health), Caps, Duels, Ladder, Market Test, Alerts | sim + Railway /health |
 | `uv run bazaar cockpit --no-key` | not run | keyless reads only (clock, schedule, dealers, /health) | real game, keyless |
 | `uv run bazaar cockpit --watch` | not run | refresh every 2 ticks mid-tick (~30 s on Sunday's 15 s ticks) | **real game + team key**: only for the live demo |
 | `uv run bazaar timeline` | ran | every scheduled event in game hours and Madrid time (Duels I/II/III, Market Tests, rounds, Grand Final) | offline, but the fixture clock anchors to *now*: on Sunday the Madrid times shift a day |

@@ -1183,6 +1183,18 @@ cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 
 and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
 1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
 every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).
+### [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
+Marius's rules audit (8dbf50b7, PR #222; `docs/briefing.md` "Scoring", `STRATEGY.md` "What scores") fitted the score on `/me`
+snapshots. Holdings, the album and `collection_value` never score by themselves; a card scores only when it moves: a team
+trade (price − our `your_value` → `neg_points`) or a dealer deal (ladder share of that dealer's own range, opening price 0,
+its final the whole range, best 3 per level, restarted every round). Per round, market ≈ 22.5 × `bench_points` + 7.5 ×
+organic, negotiating ≈ ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. Incident that this does NOT
+excuse: selling SAL-07, the only copy on a complete Salamanca page (Sat 3 Oct ~18:28), took `neg_points` from 134.7 to 44.6
+at tick 948 (coordinator's decode of `/me`; score 28.25 → 23.98, rank 5 → 12, per `protect_page_sets`), although holdings
+"never score": the page cards we had bought from teams were revalued at the new `your_value`. Our reading (inferred, not in the audit): team-acquired cards are
+marked at the current `your_value`, not frozen at the trade. Lesson: a rules-text inference that touches the album gets
+checked against the live `/api/me` score before it is acted on. `protect_page_sets` lists every set (hard rule).
+
 
 ### [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
 symptom: on main, `scripts/sim_smoke.py` failed at `dealer buy LAT-01` with "no_buyback_ticks ... (our sales

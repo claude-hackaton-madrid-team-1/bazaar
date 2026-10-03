@@ -186,10 +186,10 @@
           "mark": "✓"
         },
         {
-          "text": "dealer sell (#179, #183); #190 on"
+          "text": "dealer sell (#179 #183 #190): OFF again"
         },
         {
-          "text": "team threads + Jev gate: #188"
+          "text": "team threads ON + Jev gate (#188)"
         }
       ],
       "mark": "◐"
@@ -380,7 +380,7 @@
       "status": "wip",
       "label": "Pilar",
       "title": "Sell to Doña Pilar",
-      "body": "Open to all at h5.51: uncommons/rares, SAL and RET +25 % until 17:30; she never buys commons."
+      "body": "Open to all at h5.51: she buys uncommons, rares and epics (SAL and RET preferred), never commons, and sells only Gold packs. Salamanca fever: +25 % over book for SAL until about 20:04 (/api/schedule)."
     }
   ],
   "not_started": [
@@ -522,24 +522,24 @@
         "title": "Market Test"
       },
       {
-        "at": "2026-10-03T18:00",
+        "at": "2026-10-03T17:55",
+        "label": "MT",
+        "title": "Market Test (round 2)"
+      },
+      {
+        "at": "2026-10-03T19:55",
+        "label": "MT",
+        "title": "Market Test (round 2)"
+      },
+      {
+        "at": "2026-10-03T20:34",
         "label": "Duels II",
-        "title": "Duels II: price + delivery day, 2 rounds · Market Test"
+        "title": "Duels II: price + delivery day, 16 ticks, decay 0.08"
       },
       {
-        "at": "2026-10-03T20:00",
+        "at": "2026-10-03T21:55",
         "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T21:00",
-        "label": "Hard MT",
-        "title": "The hard Market Test"
-      },
-      {
-        "at": "2026-10-03T22:00",
-        "label": "MT",
-        "title": "Market Test"
+        "title": "Market Test (round 2)"
       },
       {
         "at": "2026-10-03T23:00",
@@ -548,33 +548,38 @@
       },
       {
         "at": "2026-10-04T09:00",
+        "label": "Open",
+        "title": "Sunday doors open, 15 s ticks; still round 2 until round 3 starts"
+      },
+      {
+        "at": "2026-10-04T09:34",
+        "label": "Hard MT",
+        "title": "Hard Market Test (12 traders), then a Market Test at 09:55: both still count for round 2"
+      },
+      {
+        "at": "2026-10-04T11:34",
         "label": "R3",
-        "title": "Round 3 (Sunday · Chamberí) + 150 primas, 15 s ticks"
+        "title": "Round 3 starts (Sunday · Chamberí released, 150 primas that do not score); its weight ramps up over about 160 ticks"
       },
       {
-        "at": "2026-10-04T10:00",
+        "at": "2026-10-04T11:55",
         "label": "MT",
-        "title": "Market Test"
+        "title": "Market Test (round 3)"
       },
       {
-        "at": "2026-10-04T11:00",
+        "at": "2026-10-04T13:34",
         "label": "Duels III",
-        "title": "Duels III: two issues, shorter clock"
+        "title": "Duels III: price + delivery day, 12 ticks, decay 0.10"
       },
       {
-        "at": "2026-10-04T12:00",
+        "at": "2026-10-04T13:55",
         "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-04T14:00",
-        "label": "Final",
-        "title": "Stalls close, the Grand Final"
+        "title": "Market Test (round 3)"
       },
       {
         "at": "2026-10-04T15:00",
-        "label": "Freeze",
-        "title": "Scores freeze, the Bazaar closes"
+        "label": "Close",
+        "title": "The Bazaar closes. The finale, all four stalls closing, the Grand Final and the score freeze are scheduled after the close: watch for the organisers moving the hours"
       }
     ],
     "lanes": [
@@ -713,10 +718,10 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Own venue + broker (#71: built, shipped OFF by team decision)",
+            "title": "Own venue + broker (#71): ON by team decision, v19 open",
             "start": "2026-10-03T03:20",
             "end": "2026-10-03T06:00",
-            "status": "wip",
+            "status": "done",
             "priority": "P1",
             "owner": "worker"
           },
@@ -728,10 +733,10 @@
             "priority": "P2"
           },
           {
-            "title": "Venue open + broker live (needs a closed-door go: edge or organic trades)",
+            "title": "v19 exact broker = stall's 0.5; edge broker (#218) behind BAZAAR_BENCH_POLICY",
             "start": "2026-10-03T11:30",
             "end": "2026-10-04T14:00",
-            "status": "todo",
+            "status": "partial",
             "priority": "P1",
             "owner": "maker"
           }
