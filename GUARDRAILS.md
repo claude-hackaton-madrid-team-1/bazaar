@@ -10,8 +10,9 @@ unknown id or a bad value), and commit. A new rule id also needs a field in
 Bullets without the `` `id` = value `` shape are principles: shown by the CLI, not enforced in code.
 
 ## Kill switch
-- `trading_enabled` = true — false stops every write (bids, accepts, listings, duel moves); reads continue.
-- `pause_file` = .local/PAUSE — if this file exists, every write of the processes run from that checkout is refused (`touch .local/PAUSE` stops the agents started there; another checkout or worktree, and each Railway service, has its own: README "Pause writes").
+- `trading_enabled` = true — false HOLDS: our processes send nothing to the game (no bids, accepts, posts, duel moves, and also no cancels, thread closes or walks); reads continue, open offers and threads stay exactly as they are, and agents resume where they were when it is true again. Read again every tick: an edit counts without a restart.
+- `pause_file` = .local/PAUSE — if this file exists, the same hold for the processes run from that checkout (`touch .local/PAUSE` holds the agents started there, delete it to resume; another checkout or worktree, and each Railway service, has its own: README "Pause writes").
+- Pause holds, it never flattens. To empty the book (before the doors close overnight, after a bad run) pause first, then run `uv run bazaar flatten --live`: it cancels every open offer of ours (add `--threads` to also close our open threads, a walk dealers remember). Its cancels and closes are the only writes sent while the kill switch is on; one paced pass that stops on a 429 and says what is left.
 
 ## Money
 - `cash_floor` = 270 — never let a purchase take cash below this (venue bond 250 + 20 opening fee for level 2).
@@ -27,6 +28,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `block_buying_held_cards` = true — never buy a page card we already hold; duplicates are worth 0.25× or less to us.
 - `holdings_from_db` = false — true: answer /me from the shared Postgres snapshot while it is provably current (same tick, no write of ours since, no thread message this tick, young enough). Ships false (every reader calls /api/me itself; snapshots are still written) until 15+ minutes of live snapshots are proven fresh against /api/me; the flip to true is its own one-line PR.
 - `holdings_max_age_s` = 5.0 — a snapshot older than this is never a decision input, whatever else holds: it bounds what we cannot see coming (a dealer accepting our standing bid between two of our sends).
+- `protect_page_sets` = RET,CHA — never sell (list, or accept a bid with) our only copy of a page card of these sets: the new pages (El Retiro Saturday, Chamberí Sunday) need every card we pull, and nobody can price them yet; a duplicate may still be sold; `none` turns it off.
 
 ## Ticks and limits
 - `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker never accepts).

@@ -92,7 +92,7 @@ negotiates well.
 |---|---|---|---|
 | N2 · was #21 | Feed capture + dealer curves | 0 → 1 | 🔵 `bazaar monitor` (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela `open`/`limit`/β estimate, ladder view (PR #43) |
 | N4 · was #2 | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
-| N9 · was #3 | Tick loop, governor, scheduler, kill switch | 0 → 1 | 🔵 tick loop + budget + `.local/PAUSE` done; cancel-open-offers kill switch ⬜ |
+| N9 · was #3 | Tick loop, governor, scheduler, kill switch | 0 → 1 | ✅ tick loop + budget + `.local/PAUSE`; the kill switch HOLDS (no writes, offers stay open) and `bazaar flatten` is the explicit cancel-everything (PR #72, from #68) |
 | [N14](N14-spec.md) · was #8 | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
 | [N14](N14-spec.md) · was #9 | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is `bazaar evals report` (#58); `egg.found` alert and the L2 rule write-up ⬜ |
 | [D1](D1-spec.md) · was #4 | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
@@ -108,7 +108,7 @@ negotiates well.
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
@@ -192,6 +192,42 @@ Files: `src/bazaar_agent/agents/status.py`, `tests/test_status.py`, `docs/servic
 - Step 2 — nested `topic` / `give` / `want` keep only card, pack and cash keys. · **Acceptance:** probe test.
 - Step 3 — seeded random property test: no private key or number in `/state` or `/events`. · **Acceptance:** 8 seeds green.
 - Step 4 — docs drift in `docs/services.md` and README. · Left open (low): rows are published before the send.
+
+### PR72 / PR62 / PR60 — takeover of Marius's live-trading PRs (2026-10-03, coordinator task_378a4ee99754)
+Spec (external, no local spec file): the PR review comments on #72, #68, #62, #61 and #60 (ours are the
+authoritative ones) and Greptile's open threads; RULES.md "Dealers" (a deal at the opening price does not
+count) and "The clock" (pace 5–60 s, `/api/clock` `max_tick_seconds`). One PR merged at a time; each one is
+rebased on `main` after the previous one merges.
+- PR72 (lands #61 + #68 + #72; base retargeted to `main`). Steps: refund dating at `max_tick_seconds` ·
+  one open offer per dealer thread · `dealer buy` guard with open commitments except its own thread ·
+  never close at her opening ask (walk, reopen lower once; the taker rests the item 1 game hour) · desk
+  settle timeout clears `accepted_price`, deal booked at the settled offer · busy accept slot bids her ask ·
+  kill switch re-read before every send · partial flatten exits 1 · stale `dealer_buy` text.
+  · **Acceptance:** each step has a test that fails on the old code; gate + `scripts/sim_smoke.py` green;
+  taker `--live` on the simulator; `/pr-review` APPROVE.
+- PR62 (shared-ledger reconnect). Steps: merge `main` (cli.py conflict) · `idle_in_transaction_session_timeout
+  = '5s'` · reconnect with a plain connect (schema on the first connection only) · `LedgerUnavailable` in
+  `dealer buy` HOLDS the tick (never walks or closes) · `sell` exits cleanly on an outage · reply to the
+  private-IP Greptile P1 (false for us). · **Acceptance:** tests, gate, sim smoke, `/pr-review` APPROVE.
+- PR60 (two-issue duels). Steps: drop `round()` in the inside-limit checks · finite `_number` for days in
+  `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
+  raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
+
+### N14b — Packs, supply and new pages (spec: N14-spec.md, criteria 4–6)
+PR 1 (new pages, before the 09:30 window). Files: `GUARDRAILS.md`, `STRATEGY.md`, `guardrails.py`,
+`strategy.py`, `agents/{runtime,taker,maker}.py`, `tests/test_new_pages.py`.
+- Step 1 — `protect_page_sets` (GUARDRAILS.md, RET,CHA): `check()` refuses a sell or an accepted bid of our
+  only copy of a new page's card; `strategy.sell_moves` never proposes it, so the maker cancels an open
+  ask. · **Acceptance:** guardrail, strategy and maker tests; RED with the rule stubbed off.
+- Step 2 — `dealer_mints_unminted` (STRATEGY.md, false) from B26 #129, with its release tests. ·
+  **Acceptance:** a zero-minted RET card is a dealer buy only with the switch.
+- Step 3 — `PageWatch`: the running taker and maker log a new page once; one Taker instance ranks RET the
+  tick it appears. · **Acceptance:** two-tick taker test; sim smoke green.
+PR 2 (supply + packs, 09:30 window or next).
+- Step 4 — supply map: starting hands (ids 1–270, block k = team k) + feed settlements and `pack.opened`
+  → `supply_cards` in Postgres; `bazaar supply`. · **Acceptance:** pure tests on fixtures + DB test schema.
+- Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
+  packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
 
 ### S1 — Safety: offer inspector on every accept, bad-faith flags, injection hardening
 Spec: [`S1-spec.md`](S1-spec.md). Takes over Marius's #93 inspector (credit kept, squashed; #81/#61 under it

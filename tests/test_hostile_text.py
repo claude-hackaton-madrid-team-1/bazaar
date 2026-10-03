@@ -92,11 +92,16 @@ def test_the_taker_desk_sends_the_same_writes_and_tags_the_attempt(tmp_path, nam
         root.mkdir()
         t, lines, _ = taker(root, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
         t.on_tick(clock())
-        offer = {"id": 801, "maker": "abuela", "status": "open", "final": True}  # inside our max: accepted
+        opening = {"id": 800, "maker": "abuela", "status": "open", "final": False}  # her opening, above our max
+        opening |= {"give": {"types": ["card:LAV-08"]}, "want": {"cash": 24}}
+        said = {"message": 8999, "sender": "abuela", "text": text, "offer": opening}
+        team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [said], "standing_offers": [opening]}
+        t.on_tick(at(team, TICK + 1))
+        offer = {"id": 801, "maker": "abuela", "status": "open", "final": True}  # her final, inside our max
         offer |= {"give": {"types": ["card:LAV-08"]}, "want": {"cash": 21}}
         message = {"message": 9000, "sender": "abuela", "text": text, "offer": offer}
         team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [offer]}
-        t.on_tick(at(team, TICK + 1))
+        t.on_tick(at(team, TICK + 2))
         return [s[:2] + tuple(x for x in s[2:] if not isinstance(x, str)) for s in team.sent], lines
 
     hostile, lines = desk(tmp_path / "h", HOSTILE[name])
@@ -104,10 +109,10 @@ def test_the_taker_desk_sends_the_same_writes_and_tags_the_attempt(tmp_path, nam
     assert hostile == neutral and ("accept", 801) in hostile  # the same writes, the accept of the priced offer
     (row,) = [r for r in rows(tmp_path / "h") if r.get("kind") == "dealer_accept"]
     assert row["inputs"]["inspector"]["verdict"] == "clean"  # the gate read the hostile words and stayed clean
-    tagged = [line for line in lines if "injection attempt tagged (abuela, message 9000)" in line]
-    assert len(tagged) == 1 and HOSTILE[name][:20] not in tagged[0]  # flags only, never the raw words
-    (stored,) = rows(tmp_path / "h", "injections.jsonl")
-    assert stored["source"] == "abuela" and stored["flags"] and "text" not in stored
+    tagged = [line for line in lines if "injection attempt tagged (abuela, message" in line]
+    assert len(tagged) == 2 and all(HOSTILE[name][:20] not in line for line in tagged)  # once per message, no words
+    stored = rows(tmp_path / "h", "injections.jsonl")
+    assert [r["key"] for r in stored] == ["8999", "9000"] and all(r["flags"] and "text" not in r for r in stored)
 
 
 def duel(text, price=70):

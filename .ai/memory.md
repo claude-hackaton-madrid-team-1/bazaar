@@ -335,6 +335,33 @@ reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
 
+### [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
+Its bundle (`LiveFeed`, `EventLine`, `useEvents`) seeds from `GET /api/feed?limit=150` and follows
+`/api/events/stream?scope=public` (limit 200), one line per event type. So our capture already sees it all.
+Types that matter for blockers, not yet seen live: `persona.cooloff {persona, team, until_tick}` ("sent Team X
+away until T…"), `persona.strike {persona, team, kinds, strikes}`, `day.closed {reopens}`. Organiser news
+reaches teams as `announcement` (the `/api/admin/news` routes are admin-only). `bazaar learnings` reads them.
+
+### [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
+`BAZAAR_SIM=local` with `DATABASE_URL` unset still connects to `localhost:5433` (`bazaar-db`), which holds an
+old copy of the REAL feed: the agents merge real `feed_events` with the simulator's window, and the ids
+collide. For an end-to-end sim run, set `BAZAAR_SIM_DATABASE_URL` to a sim database or stop `bazaar-db`.
+
+### [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
+Rude words drove sim Abuela to `cooloff` in 3 messages (tick 5 → `until_tick` 25). The thread shows
+`closed_reason: cooloff`, `persona.cooloff` carries `until_tick: 25`, and a re-open is refused `cooloff` with
+`extra.until_tick`. The live taker then logged `skip abuela for LAT-08: abuela cooloff with us until T25`
+for ticks 6–8 instead of sending a refused `open_thread`.
+
+### [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
+Found by the PR #89 review: running `init_schema` inside a tick waited the full 15 s `lock_timeout` while
+another session wrote to the table. Apply the schema once at process start (the ledger's `connect_ready` does),
+never in a tick loop.
+
+### [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
+`insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
+window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
+
 ### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
 `holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
 the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
@@ -418,6 +445,69 @@ call stayed inside `jev_timeout_s` 3 s. A 90 P request reused the cache in a new
 browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title or line before committing it.
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
+
+### [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
+The simulator numbers duels and threads from 1 like the game, so sim duel 85 is not our duel 85. A
+simulator run must never write scores onto the real Phoenix traces: with `BAZAAR_SIM`, the agents'
+in-loop evals and `bazaar evals run` keep their outcomes in the simulator's Postgres (no annotation),
+and every trace goes to the `<project>-sim` Phoenix project (telemetry.tracing_config).
+
+### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
+`GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
+`cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)
+`cancelled`, her 681 (7) `settled` — her OPENING ask, so that deal scored nothing on the ladder. The deal
+price is the `settled` offer in the messages (`dealer.settled_price`); `open_commitments` counts one offer
+per thread (the most cash) in case an old bid still reads open mid-thread (not observed live yet).
+
+### [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+`t_hours` is game time played (tick 159 → 2.65 h at 60 s ticks) and the pace changes (60 s Fri, 30 s Sat).
+Back-dating a cancelled bid's refund by `ticks × tick_seconds` after a 60 → 30 s change dated it 5 min
+after its spend (hour's spend read −40). `refund_row` now uses `/api/clock` `max_tick_seconds` (+1 tick
+for the rounded `t_hours`); an unknown created tick books no refund in the window.
+
+### [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+`BAZAAR_SIM=local uv run bazaar agent taker --live` said "ledger: shared Postgres table": the default
+`DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
+real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
+address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.
+
+### [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
+All 1,024 dealer offers in the captured feed have `expires_tick - created_tick = 2` (security audit of #72).
+After a kill-switch hold of 2+ ticks there is no standing ask, and `decide()` bid up to her OPENING ask, which
+she took (a deal that scores nothing). Fix: `Negotiation.bid_cap()` keeps a bid below her opening until she
+came down; with no bid left below it, we walk and reopen lower.
+
+### [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+Fail safe but costly: at 30 s ticks a bid cancelled more than ~30 min after it was posted gets a refund dated
+outside the hour while its spend still counts (at 15 s, after ~15 min), so repriced bids can eat the 150 cap.
+The exact fix is to date the refund at the matching spend row's `t_hours` (a ledger lookup by offer id);
+left for after #62's ledger rewrite lands.
+
+### [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
+Several sessions run `scripts/sim_smoke.py` / `bazaar-sim serve` on this laptop, all on port 8765. If yours
+fails to bind (`[Errno 48] address already in use` in its log), every `BAZAAR_SIM=local` command you run next
+writes to another session's simulator (and can break its smoke). Before any write: check your server's log
+says it is serving, or `lsof -iTCP:8765 -sTCP:LISTEN` shows a process whose cwd is your worktree.
+
+### [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
+Real thread 187 (Chato): ids `1145 t01, 1159 t01, 1153 chato, 1169 chato, 1176 t01, …`, so a slow reply is listed
+AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last must be read by message id
+(`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
+`200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
+as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
+The smoke and `BAZAAR_SIM=local` both hardcode 127.0.0.1:8765. A wrapper that imports `sim_smoke`, sets
+`PORT`/`SIM` to another port and `GUARD` to a dir whose `sitecustomize.py` runs the repo's guard and then sets
+`bazaar_agent.config.LOCAL_SIM_URL` runs the whole gate there (children get only `GUARD` on PYTHONPATH). N14b
+used 8815: `SMOKE PASSED in 18 s`.
+
+### [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
+The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every tick, and "released" comes only
+from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
+maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
+value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.
+
 ### [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 The port is hardcoded twice (`scripts/sim_smoke.py` PORT/SIM and `config.LOCAL_SIM_URL`, which the CLI children
 use), and the smoke refuses a busy port. With several workers on one laptop: `git worktree add --detach <scratch>
