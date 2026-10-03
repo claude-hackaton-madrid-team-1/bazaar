@@ -216,7 +216,7 @@ def test_a_refused_duel_accept_gives_the_slot_back(duel_cli, code, status, kept)
     client.duel_accept = refused
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert client.sent == [("accept", 95)]
+    assert client.sent == [("accept", 95)] * (2 if code == "network" else 1)  # a network error is retried once
     assert _duel_ledger(tmp_path).accepts_in_tick(134) == kept
 
 
