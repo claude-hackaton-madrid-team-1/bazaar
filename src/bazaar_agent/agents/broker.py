@@ -69,6 +69,9 @@ BenchPolicy = Literal["exact", "edge"]
 BENCH_POLICIES: dict[str, BenchPolicy] = {"exact": "exact", "edge": "edge"}
 BENCH_POLICY_ENV = "BAZAAR_BENCH_POLICY"
 BENCH_MARGIN_ENV = "BAZAAR_BENCH_GUARD_MARGIN"
+# edge runs only with this one set to `yes` too: a stray BAZAAR_BENCH_POLICY=edge on the maker (Market Test h11)
+# must not switch the live bench to the edge, which scored 0.000-0.003 efficiency live (#84, MM_DEEP)
+BENCH_EDGE_CONFIRM_ENV = "BAZAAR_BENCH_EDGE_CONFIRM"
 UNGUARDED = ("none", "-inf", "-infinity")  # BAZAAR_BENCH_GUARD_MARGIN values for no guard at all
 NOT_WIRED = ("BAZAAR_BENCH_CROSS", "BAZAAR_BENCH_PRESET")  # #84's other switches: limit probes and presets stay off
 
@@ -98,7 +101,8 @@ def bench_config_from_env(
 ) -> BrokerConfig:
     """The bench options of a broker with no command line (the maker's venue keeper on Railway), case-insensitive:
     BAZAAR_BENCH_POLICY (`exact` or `edge`) and BAZAAR_BENCH_GUARD_MARGIN (estimated primas; `none` or `-inf`: no
-    guard). Unset or empty: `base` unchanged. Any other value is IGNORED, loudly (its length only, never its text),
+    guard). `edge` takes effect only with BAZAAR_BENCH_EDGE_CONFIRM=yes; without it, IGNORED loudly and `base` stays.
+    Unset or empty: `base` unchanged. Any other value is IGNORED, loudly (its length only, never its text),
     and `base` stays: a typo must never stop the maker, which also posts our offers. #84's BAZAAR_BENCH_CROSS and
     BAZAAR_BENCH_PRESET are not wired here: set, they are reported as ignored."""
     env = os.environ if environ is None else environ
@@ -109,6 +113,11 @@ def bench_config_from_env(
         policy = BENCH_POLICIES.get(value)
         if policy is None:
             say(f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact or edge); it stays {base.bench_policy}")
+        elif policy == "edge" and (env.get(BENCH_EDGE_CONFIRM_ENV) or "").strip().lower() != "yes":
+            say(
+                f"broker: bench policy edge IGNORED: set {BENCH_EDGE_CONFIRM_ENV}=yes to run it live; #84 edge scored "
+                f"0.000-0.003 live (MM_DEEP); it stays {base.bench_policy}"
+            )
         else:
             config = replace(config, bench_policy=policy)
     value = (env.get(BENCH_MARGIN_ENV) or "").strip().lower()

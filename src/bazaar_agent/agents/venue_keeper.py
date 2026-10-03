@@ -143,7 +143,8 @@ class VenueKeeper:
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.quiet_rec = Recorder("broker", decisions, live, log)  # rows the public status never shows
         # BAZAAR_BENCH_POLICY / BAZAAR_BENCH_GUARD_MARGIN (Railway, set by hand; default exact) pick how the broker
-        # matches the Market Test; the edge says so at start (the venue runbooks look for this line)
+        # matches the Market Test (edge only with BAZAAR_BENCH_EDGE_CONFIRM=yes too); the edge says so at start (the
+        # venue runbooks look for this line)
         self.broker_config = bench_config_from_env(broker_config or BrokerConfig(pace_s=0.2), log=log)
         if self.broker_config.bench_policy == "edge":
             log(f"venue keeper: broker bench {bench_text(self.broker_config)}")

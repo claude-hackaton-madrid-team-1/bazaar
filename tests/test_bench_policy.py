@@ -71,12 +71,15 @@ def test_the_edge_never_sends_fewer_pairs_than_the_exact_plan(monkeypatch):
 # ---------------------------------------------------------------- the switch
 
 
+CONFIRM = {"BAZAAR_BENCH_EDGE_CONFIRM": "yes"}  # edge runs only with it (a stray edge on the maker, Market Test h11)
+
+
 @pytest.mark.parametrize(
     ("value", "policy"),
     [(None, "exact"), ("", "exact"), ("edge", "edge"), (" EDGE ", "edge"), ("Exact", "exact")],
 )
 def test_bench_policy_comes_from_the_environment(value, policy):
-    env = {} if value is None else {"BAZAAR_BENCH_POLICY": value}
+    env = CONFIRM | ({} if value is None else {"BAZAAR_BENCH_POLICY": value})
     assert bench_config_from_env(BrokerConfig(pace_s=0.2), env).bench_policy == policy
     assert bench_config_from_env(BrokerConfig(pace_s=0.2), env).pace_s == 0.2
 
@@ -86,6 +89,30 @@ def test_an_unknown_bench_policy_is_ignored_loudly_and_today_stays():
     config = bench_config_from_env(BrokerConfig(), {"BAZAAR_BENCH_POLICY": "edgy" + "x" * 50}, lines.append)
     assert config.bench_policy == "exact"
     assert len(lines) == 1 and "IGNORED BAZAAR_BENCH_POLICY (54 chars" in lines[0] and "edgy" not in lines[0]
+
+
+@pytest.mark.parametrize("confirm", [None, "", "no", "true", "1", "y", "yes please"])
+def test_edge_without_its_confirmation_is_ignored_loudly_and_exact_stays(confirm):
+    env = {"BAZAAR_BENCH_POLICY": "edge"} | ({} if confirm is None else {"BAZAAR_BENCH_EDGE_CONFIRM": confirm})
+    lines: list[str] = []
+    config = bench_config_from_env(BrokerConfig(pace_s=0.2), env, lines.append)
+    assert config == BrokerConfig(pace_s=0.2)
+    assert len(lines) == 1 and "bench policy edge IGNORED: set BAZAAR_BENCH_EDGE_CONFIRM=yes" in lines[0]
+    assert "it stays exact" in lines[0]
+
+
+@pytest.mark.parametrize("confirm", ["yes", " YES ", "Yes"])
+def test_edge_with_its_confirmation_runs(confirm):
+    lines: list[str] = []
+    env = {"BAZAAR_BENCH_POLICY": "edge", "BAZAAR_BENCH_EDGE_CONFIRM": confirm}
+    assert bench_config_from_env(BrokerConfig(), env, lines.append).bench_policy == "edge" and lines == []
+
+
+@pytest.mark.parametrize("policy", [None, "exact"])
+def test_the_confirmation_alone_changes_nothing(policy):
+    lines: list[str] = []
+    env = CONFIRM | ({} if policy is None else {"BAZAAR_BENCH_POLICY": policy})
+    assert bench_config_from_env(BrokerConfig(), env, lines.append) == BrokerConfig() and lines == []
 
 
 @pytest.mark.parametrize(
@@ -103,7 +130,7 @@ def test_an_unknown_bench_policy_is_ignored_loudly_and_today_stays():
     ],
 )
 def test_the_guard_margin_comes_from_the_environment(value, margin):
-    env = {"BAZAAR_BENCH_POLICY": "edge"} | ({} if value is None else {"BAZAAR_BENCH_GUARD_MARGIN": value})
+    env = CONFIRM | {"BAZAAR_BENCH_POLICY": "edge"} | ({} if value is None else {"BAZAAR_BENCH_GUARD_MARGIN": value})
     lines: list[str] = []
     config = bench_config_from_env(BrokerConfig(), env, lines.append)
     assert config.bench_policy == "edge" and config.bench_guard_margin == margin and lines == []
@@ -120,7 +147,7 @@ def test_a_margin_that_is_not_a_number_is_ignored_by_its_length_and_ten_stays(va
 
 def test_84s_other_switches_are_reported_as_not_wired():
     lines: list[str] = []
-    env = {"BAZAAR_BENCH_POLICY": "edge", "BAZAAR_BENCH_CROSS": "limit", "BAZAAR_BENCH_PRESET": "hard"}
+    env = CONFIRM | {"BAZAAR_BENCH_POLICY": "edge", "BAZAAR_BENCH_CROSS": "limit", "BAZAAR_BENCH_PRESET": "hard"}
     config = bench_config_from_env(BrokerConfig(), env, lines.append)
     assert config == BrokerConfig(bench_policy="edge")
     assert [line.split(":")[1].strip() for line in lines] == [
@@ -140,6 +167,10 @@ def test_the_keeper_takes_the_policy_from_the_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("BAZAAR_BENCH_POLICY", raising=False)
     assert keeper(tmp_path, Team()).broker_config.bench_policy == "exact"
     monkeypatch.setenv("BAZAAR_BENCH_POLICY", "edge")
+    unconfirmed: list[str] = []
+    assert keeper(tmp_path, Team(), lines=unconfirmed).broker_config.bench_policy == "exact"
+    assert any("bench policy edge IGNORED" in line for line in unconfirmed)
+    monkeypatch.setenv("BAZAAR_BENCH_EDGE_CONFIRM", "yes")
     assert keeper(tmp_path, Team()).broker_config.bench_policy == "edge"
     monkeypatch.setenv("BAZAAR_BENCH_POLICY", "bogus")
     lines: list[str] = []
@@ -237,6 +268,7 @@ def test_the_keeper_says_which_bench_policy_its_broker_runs(tmp_path, monkeypatc
     from tests.test_venue_keeper import ours, snap, window
 
     monkeypatch.setenv("BAZAAR_BENCH_POLICY", "edge")
+    monkeypatch.setenv("BAZAAR_BENCH_EDGE_CONFIRM", "yes")
     monkeypatch.delenv("BAZAAR_BENCH_GUARD_MARGIN", raising=False)
     lines: list[str] = []
     k = keeper(tmp_path, Team(), lines=lines)
@@ -332,5 +364,6 @@ def test_an_unguarded_edge_on_an_empty_bench_says_nothing(tmp_path):
 def test_an_exported_bench_switch_never_reaches_the_suite(monkeypatch, tmp_path):
     import os
 
-    assert all(os.environ.get(n) is None for n in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN"))
+    names = ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN", "BAZAAR_BENCH_EDGE_CONFIRM")
+    assert all(os.environ.get(n) is None for n in names)
     assert keeper(tmp_path, Team()).broker_config == BrokerConfig(pace_s=0.0)

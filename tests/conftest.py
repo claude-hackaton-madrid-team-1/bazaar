@@ -108,7 +108,13 @@ def human_approval_off(request, monkeypatch):
 def bench_policy_by_default(monkeypatch):
     """A BAZAAR_BENCH_* exported on a laptop must never change the venue keeper's broker in the suite: every test
     starts on today's exact matching, and the tests that need the edge set it themselves."""
-    for name in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN", "BAZAAR_BENCH_CROSS", "BAZAAR_BENCH_PRESET"):
+    for name in (
+        "BAZAAR_BENCH_POLICY",
+        "BAZAAR_BENCH_GUARD_MARGIN",
+        "BAZAAR_BENCH_EDGE_CONFIRM",
+        "BAZAAR_BENCH_CROSS",
+        "BAZAAR_BENCH_PRESET",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 

@@ -8,6 +8,7 @@ Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at 16
 > the maker logs `IGNORED`, and no limit probe is ever sent. With `edge` the maker's start line is
 > `venue keeper: broker bench edge (guard margin 10 P)` (or `(unguarded, as #84)`), and the keeper's
 > `broker on for vNN (LIVE), bench ...` line repeats it. Proof and points tables: `scripts/bench_edge_proof.py`, PR #218.
+> **Since `fix/bench-edge-needs-confirm`:** `edge` also needs `BAZAAR_BENCH_EDGE_CONFIRM=yes`; otherwise the maker logs `bench policy edge IGNORED` and stays `exact`.
 
 ## The premise needs one correction
 

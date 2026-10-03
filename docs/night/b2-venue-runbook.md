@@ -8,6 +8,7 @@ Night backlog item B2, 4 Oct 2026. Branch `night/b2-venue-runbook`, draft PR #92
 > the maker logs `IGNORED`, and no limit probe is ever sent. With `edge` the maker's start line is
 > `venue keeper: broker bench edge (guard margin 10 P)` (or `(unguarded, as #84)`), and the keeper's
 > `broker on for vNN (LIVE), bench ...` line repeats it. Proof and points tables: `scripts/bench_edge_proof.py`, PR #218.
+> **Since `fix/bench-edge-needs-confirm`:** `edge` also needs `BAZAAR_BENCH_EDGE_CONFIRM=yes`; otherwise the maker logs `bench policy edge IGNORED` and stays `exact`.
 
 **Rewritten at 03:50 for the new #71** (e82ba8d at 03:14–03:23, then e489449 at ~03:50: the venue opens once across restarts, a venue closed by hand is never reopened). It now opens our board venue from the **maker's venue keeper** at game hour 6.5 (11:30 if the clock jumps, 12:51 if it resumes) with an exact broker, keeps the broker key in Postgres, and sets `allow_venue_open = true`, `cash_floor = 100`, `venue_bond_reserve = 270` and `venue_open_after_game_hours = 6.5`. Nothing here touched the live game. Every guardrail change below is a **proposal against #71's values**.
 

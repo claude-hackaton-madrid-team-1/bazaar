@@ -150,7 +150,7 @@ def test_the_bench_policy_is_hand_set_on_the_maker_only_and_never_valued_here(
     """BAZAAR_BENCH_POLICY=edge switches the maker's venue broker to the bench edge, and BAZAAR_BENCH_GUARD_MARGIN sets
     its guard, without a code change: declared preserve() on the maker (the venue keeper runs there), never a value
     in this file, nowhere else."""
-    for var in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN"):
+    for var in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN", "BAZAAR_BENCH_EDGE_CONFIRM"):
         policy = {name: (s.get("variables") or {}).get(var) for name, s in services.items()}
         assert {n for n, v in policy.items() if v == {"type": "preserve"}} == {"bazaar-maker"}, var
         assert all(v is None for n, v in policy.items() if n != "bazaar-maker"), policy

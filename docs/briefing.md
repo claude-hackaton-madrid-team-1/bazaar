@@ -111,6 +111,7 @@ One-on-one between teams, under aliases. Each pair plays twice, as seller and as
   - Matching the auto stall gives half the points; the top-3 average gives the maximum.
   - *[audit]* Our board venue v19 with the exact broker scores exactly the stall's 0.5 (efficiency 0.878–0.933 all gave 0.5). No team shows more than 0.5 today.
   - The edge broker (BE1, #218, a port of #84) is on main behind `BAZAAR_BENCH_POLICY` on the maker: `exact` (default) or `edge`. It is guarded by the exact plan unless the edge beats it by 10 estimated P.
+  - `edge` runs only with `BAZAAR_BENCH_EDGE_CONFIRM=yes` as well; without it the maker logs `bench policy edge IGNORED` and stays `exact` (#84's edge scored 0.000–0.003 efficiency live).
   - A session with no venue open scores 0, and so does a board venue whose broker is down.
   - Key: *"Traders quote away from limits they keep hidden"*. The broker that estimates those limits wins. Details in #11, #12 and #13.
 - You cannot trade on your own venue with the team key (`self_venue`).
