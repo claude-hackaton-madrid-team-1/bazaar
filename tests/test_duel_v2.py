@@ -211,3 +211,10 @@ def test_messages_without_ticks_never_look_stalled_and_a_bad_row_holds_only_itse
     good = duel(2, rival=[(100, 120)], ours=[(100, 160)])
     moves = plan_moves([{**duel(1), "messages": 5}, good], 110, {1: 100, 2: 100})
     assert moves[1].kind == "hold" and "unreadable" in moves[1].reason and moves[2].kind == "accept"
+
+
+def test_the_arena_can_let_us_move_before_the_rival_within_a_tick():
+    scenario = arena.Scenario("seller", 50, 120, "linear", rival_open=0.6, rival_floor=0.3)
+    for team_first in (False, True):
+        o = arena.run_session([scenario], arena.v2_policy(), team_first=team_first)[0]
+        assert o.status == "deal" and o.gain_signed > 0 and o.denied == 0

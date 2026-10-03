@@ -269,9 +269,11 @@ def run_session(
     start: int = 100,
     first_id: int = 1,
     rules: gr.Guardrails | None = None,
+    team_first: bool = False,
 ) -> list[Outcome]:
     """Every scenario as one live duel in the same session (same start and deadline per duration).
-    Every move goes through `guardrails.check` first, as `duel run --play` sends it."""
+    Every move goes through `guardrails.check` first, as `duel run --play` sends it. Within a tick the rival
+    moves first (the simulator's order) unless `team_first`: then we move before we see its tick-t message."""
     rules = rules or gr.Guardrails()
     duels = [
         Live(first_id + i, s, Rival(s, start), ALIASES[i % len(ALIASES)], start, start + s.ticks)
@@ -280,18 +282,20 @@ def run_session(
     denied = {d.did: 0 for d in duels}
     first_seen = {d.did: start for d in duels}
     end = max(d.deadline for d in duels)
-    for tick in range(start, end + 1):
+
+    def settle(tick: int) -> None:
         for d in duels:
             if d.status != "live":
                 continue
             if d.accepted_by is not None and d.accepted_at < tick:
                 d.status, d.closed_tick = "deal", tick
                 d.price, d.days = d.accepted_terms or (0, 0)
-                continue
-            if tick >= d.deadline:
+            elif tick >= d.deadline:
                 d.status, d.closed_tick = "no_deal", tick
-                continue
-            if d.accepted_by is not None:
+
+    def rival_turn(tick: int) -> None:
+        for d in duels:
+            if d.status != "live" or d.accepted_by is not None:
                 continue
             new = d.ours is not None and d.ours_tick >= d.rival_tick  # it has not answered our offer yet
             step = 0.0
@@ -306,19 +310,19 @@ def run_session(
                 d.rival_offer_id += 1
                 days = d.rival.days if d.s.two_issue else None
                 d.messages.append({"tick": tick, "from": d.alias, "text": "", "price": int(price), "days": days})
+
+    def team_turn(tick: int) -> None:
         live = [d for d in duels if d.status == "live" and d.accepted_by is None]
         if not live or tick >= end:
-            continue
+            return
         moves = policy([d.payload() for d in live], tick, first_seen)
         accepted = 0
         for d in live:
             move = moves.get(d.did, DuelMove("hold"))
             if move.kind == "hold":
                 continue
-            payload = d.payload()
             ctx = gr.Context(cash=0, held={}, tick=tick, t_hours=0.0, accepts_this_tick=accepted)
-            verdict = gr.check(duel_action(payload, move), ctx, rules)
-            if not verdict.allowed:
+            if not gr.check(duel_action(d.payload(), move), ctx, rules).allowed:
                 denied[d.did] += 1
                 continue
             if move.kind == "accept":
@@ -333,6 +337,11 @@ def run_session(
                 d.messages.append(
                     {"tick": tick, "from": OUR_SENDER, "text": "", "price": move.price, "days": move.days}
                 )
+
+    for tick in range(start, end + 1):
+        settle(tick)
+        for turn in (team_turn, rival_turn) if team_first else (rival_turn, team_turn):
+            turn(tick)
     out = []
     for d in duels:
         gs, gw = _gains(d.s, d.price, d.days) if d.status == "deal" and d.price is not None else (0.0, 0.0)
@@ -394,6 +403,7 @@ def tournament(
     per_session: int = 6,
     seed: int = 7,
     rules: Mapping[str, gr.Guardrails] | None = None,
+    team_first: bool = False,
 ) -> dict[str, list[Outcome]]:
     """Each policy on the same scenarios: style × scenario × role × decay × duration, `per_session` duels
     sharing one accept per tick (they start and end together, the hard case for the accept slot).
@@ -411,7 +421,8 @@ def tournament(
         out: list[Outcome] = []
         for i in range(0, len(cases), per_session):
             batch = cases[i : i + per_session]
-            out.extend(run_session(batch, policy, first_id=i + 1, rules=(rules or {}).get(name)))
+            guard = (rules or {}).get(name)
+            out.extend(run_session(batch, policy, first_id=i + 1, rules=guard, team_first=team_first))
         results[name] = out
     return results
 

@@ -111,6 +111,11 @@ def main() -> None:
     every = arena.tournament(pols, scenarios=n, decays=(0.06, 0.08, 0.10), ticks=(12, 16))
     out.append(compare(every, [(f"decay {d}", {"decay": d}) for d in (0.06, 0.08, 0.10)]))
 
+    out.append("\n## Within-tick order: we move before the rival (decays 0.08 and 0.10, 6 duels per deadline)\n")
+    out.append("We no longer see the rival's tick-t message before our tick-t move (the simulator lets us).\n")
+    first = arena.tournament(pols, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16), team_first=True)
+    out.append(compare(first, [*styles, ("all", {})]))
+
     out.append("\n## Accept-slot congestion: 2 duels per session instead of 6 (decays 0.08 and 0.10)\n")
     pairs = arena.tournament(pols, scenarios=n, decays=(0.08, 0.10), ticks=(12, 16), per_session=2)
     out.append(compare(pairs, [*styles, ("all", {})]))
