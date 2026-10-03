@@ -358,3 +358,9 @@ Fail safe but costly: at 30 s ticks a bid cancelled more than ~30 min after it w
 outside the hour while its spend still counts (at 15 s, after ~15 min), so repriced bids can eat the 150 cap.
 The exact fix is to date the refund at the matching spend row's `t_hours` (a ledger lookup by offer id);
 left for after #62's ledger rewrite lands.
+
+### [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
+Several sessions run `scripts/sim_smoke.py` / `bazaar-sim serve` on this laptop, all on port 8765. If yours
+fails to bind (`[Errno 48] address already in use` in its log), every `BAZAAR_SIM=local` command you run next
+writes to another session's simulator (and can break its smoke). Before any write: check your server's log
+says it is serving, or `lsof -iTCP:8765 -sTCP:LISTEN` shows a process whose cwd is your worktree.
