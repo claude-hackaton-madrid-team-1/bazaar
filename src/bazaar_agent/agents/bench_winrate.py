@@ -119,7 +119,8 @@ def _gain(by_id: dict[str, _Trader], pairs: Iterable[tuple[str, str]]) -> int:
 
 
 def _matchings(edges: Sequence[tuple[str, str]], cap: int) -> list[list[tuple[str, str]]]:
-    """Every matching of the crossing graph (the empty one included), at most `cap` of them, largest first."""
+    """Matchings of the crossing graph, at most `cap` of them, largest first (on a big graph the cap can drop the
+    empty one: the caller always adds it and the stall's plan)."""
     out: list[list[tuple[str, str]]] = []
 
     def walk(i: int, chosen: list[tuple[str, str]], used: frozenset[str]) -> None:
@@ -168,16 +169,17 @@ class WinRatePolicy:
     # ---------------------------------------------------------------- what the book shows
 
     def _observe(self, book: dict[str, Any]) -> tuple[int, list[tuple[str, str, int]]]:
-        offers = []
+        offers, runs = [], set()
         for o in book.get("bench_offers") or []:
             oid = str(o.get("id", ""))
             want, give = o.get("want") or {}, o.get("give") or {}
+            runs.add(str(o["run"]) if o.get("run") is not None else oid.partition("-")[0])
             if want.get("cash"):
                 offers.append((oid, "sell", int(want["cash"])))
             elif give.get("cash"):
                 offers.append((oid, "buy", int(give["cash"])))
         tick = int(book.get("tick") or 0)
-        run = offers[0][0].partition("-")[0] if offers else self.run
+        run = min(runs) if runs else self.run
         if run != self.run:
             self.run, self.start, self.seen, self.ours = run, tick, {}, []
         k = tick - self.start
@@ -192,6 +194,11 @@ class WinRatePolicy:
             if oid in matched:  # a match of ours was refused: the trader is still there
                 self.ours = [p for p in self.ours if oid not in p]
         return k, offers
+
+    def refused(self, sell: str, buy: str) -> None:
+        """The broker loop tells us a match was refused: both traders are open again. Without this call a refusal
+        is only noticed when one of them shows up in the next book (if both leave first, it stays counted)."""
+        self.ours = [p for p in self.ours if p != (sell, buy)]
 
     # ---------------------------------------------------------------- one sampled future
 
@@ -296,8 +303,9 @@ class WinRatePolicy:
         if not edges:
             return []
         candidates = _matchings(edges, self.max_candidates)
-        if stall_plan not in candidates:
-            candidates.append(stall_plan)
+        for must in (stall_plan, []):  # the stall's plan and waiting are always on the table
+            if must not in candidates:
+                candidates.append(must)
         scores: list[list[float]] = [[] for _ in candidates]
         drawn = 0
         for _ in range(self.samples * 2):

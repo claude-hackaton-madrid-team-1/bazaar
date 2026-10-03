@@ -64,3 +64,13 @@ def test_with_the_zero_loss_curve_and_a_large_edge_it_plays_the_stall():
     policy = WinRatePolicy(NORMAL_PRIOR, seed=4, samples=16, min_edge=1.01, loss_curve="zero")
     sent = policy(book(30, offer("b1-0", "sell", 30), offer("b1-1", "buy", 50)))
     assert [(s, b) for s, b, _ in sent] == [("b1-0", "b1-1")] and policy.deviations == 0
+
+
+def test_the_run_comes_from_the_offers_run_field_and_a_refusal_can_be_reported():
+    policy = WinRatePolicy(seed=5, samples=8)
+    first = offer("x-0", "sell", 30) | {"run": 7}
+    policy(book(10, first, offer("x-1", "buy", 50) | {"run": 7}))
+    assert policy.run == "7" and policy.start == 10
+    policy.ours = [("x-0", "x-1")]
+    policy.refused("x-0", "x-1")
+    assert policy.ours == []

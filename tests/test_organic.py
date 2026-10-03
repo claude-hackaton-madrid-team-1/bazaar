@@ -10,7 +10,7 @@ from bazaar_agent.organic import organic_fraction, organic_raw, scenario_table, 
 def listed(maker: str, venue: str | None, *, sell: bool = True, thread: int | None = None) -> dict:
     give = {"assets": [{"id": 1, "ref": "LAV-01"}], "cash": 0} if sell else {"assets": [], "cash": 20}
     offer = {"maker": maker, "venue": venue, "thread": thread, "give": give, "want": {"cash": 20 if sell else 0}}
-    return {"type": "offer.listed", "payload": {"offer": offer, "venue": venue}}
+    return {"type": "offer.listed", "actor": maker, "payload": {"offer": offer, "venue": venue}}
 
 
 def settled(a: str, b: str, venue: str | None, price: int = 20, fee: int = 2) -> dict:

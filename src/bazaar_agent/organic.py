@@ -62,8 +62,9 @@ def venue_flows(events: Iterable[Mapping[str, Any]]) -> dict[str, VenueFlow]:
             f.listed += 1
             f.sells += bool((offer.get("give") or {}).get("assets"))
             f.bids += not (offer.get("give") or {}).get("assets")
-            if offer.get("maker"):
-                f.makers.add(str(offer["maker"]))
+            maker = e.get("actor") or offer.get("maker")  # the event's actor first: the offer's maker may be masked
+            if maker:
+                f.makers.add(str(maker))
         elif kind == "settlement" and p.get("venue") and p.get("kind") in (None, "trade", "match"):
             parties = [str(t) for t in p.get("parties") or []]
             f = flow(str(p["venue"]))
