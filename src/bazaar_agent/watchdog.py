@@ -255,11 +255,13 @@ def swap_cash(
         if thread is not None and team_of[did]:
             posted[thread].append((_int(e.get("tick")) or 0, _int(give.get("cash")) or 0))
             team_of_thread[thread] = team_of[did]
-    for thread, offers in posted.items():
-        for at in settled.get(team_of_thread[thread], []):
-            before = [o for o in sorted(offers) if o[0] <= at]
-            if before:
-                keep(thread, at, before[-1][1])
+    for team, ticks in settled.items():
+        for at in ticks:  # one settled swap = one thread: the one with that team's newest offer before it
+            last = [(max(o for o in offers if o[0] <= at), th) for th, offers in posted.items()
+                    if team_of_thread[th] == team and any(o[0] <= at for o in offers)]  # fmt: skip
+            if last:
+                (_, cash), thread = max(last)
+                keep(thread, at, cash)
     taken = {_int(_inputs(d).get("thread")) for d in _done(decisions, "team_accept")}
     for row in ledger:
         item = str(row.get("item") or "")
@@ -299,12 +301,12 @@ def swap_rules(
         if n > rules.watchdog_max_swaps_per_team:
             last = max(t.tick for t in swaps if t.other == team)
             reason = f"{n} swaps with {team} in the window (max {rules.watchdog_max_swaps_per_team})"
-            out.append(Finding("team_swap", reason, last))
+            out.append(Finding("team_swap", reason, last, until_tick=last + rules.watchdog_repeat_trip_ticks))
     total = sum(c for _, c in cash.values())
     if total > rules.watchdog_swap_cash_per_hour:
         last = max(t for t, _ in cash.values())
         reason = f"{total} cash added to team swaps in the window (max {rules.watchdog_swap_cash_per_hour})"
-        out.append(Finding("team_swap", reason, last))
+        out.append(Finding("team_swap", reason, last, until_tick=last + rules.watchdog_repeat_trip_ticks))
     return out
 
 

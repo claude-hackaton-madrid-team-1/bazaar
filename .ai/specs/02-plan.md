@@ -125,6 +125,7 @@ negotiates well.
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 | [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
+| CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -160,6 +161,8 @@ Phase 1 ✅ triage of Marius's #79 / #98 / #101 (`/pr-review` + `security-audito
   `BAZAAR_BLUFF`, untrusted text escaped. · **Acceptance:** spec criterion 8.
 - N17-7 — `bazaar swaps` (read-only plan, `--json`), decisions kinds, `/state` allow-list unchanged.
   · **Acceptance:** spec criterion 10.
+- N17-enable — Jev gate per swap, the maker leaves the desk its spare copy, hourly swap cash cap, flag on.
+  · **Acceptance:** N17-spec "N17-enable" criteria 1-5.
 - N17-8 — Simulator end to end: `tests/test_team_threads_sim.py` (one swap settled, one feeding offer
   refused, the inbound idle thread closed) and a team-threads step in `scripts/sim_smoke.py`; docs
   (GUARDRAILS.md, STRATEGY.md, RUNTIME.md, `docs/architecture.status.json`), `.ai/memory.md`,
@@ -497,6 +500,15 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
   keyless client (2 s timeout, no retries), after the sends; one learnings row per item; `market_events.json`.
   · **Acceptance:** `tests/test_news.py`.
 - Step 4 — `active_signals` consumers in strategy/maker behind `news_signals_enabled`. · ⬜ not started.
+- Step 5 (stacked PR) — `schedule_watch.py`: every `/api/schedule` action and every `/api/levels` level still to
+  open becomes a `schedule` learning with its lead time in ticks, said again at 20, 10 and 3 ticks ("Market Test in
+  10 ticks: keep the maker and our venue's broker up, no deploy"), and listed under `upcoming` in
+  `market_events.json`. · **Acceptance:** `tests/test_schedule_watch.py`.
+- Step 6 (stacked PR) — `rank_watch.py`: from `/api/leaderboard` (same read window), a rival that climbs 3+ ranks
+  within 20 ticks gets a `rival_move` learning explaining it from the leaderboard components, its dealer deals and
+  team trades in the feed window and the trades between other teams on its venue. · **Acceptance:**
+  `tests/test_rank_watch.py`, sentinel wiring in `tests/test_news.py`.
+
 ### RO1 — Read-only Postgres login for teammates (PR #184)
 - Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
   revoked. · **Acceptance:** integration tests on local docker (throwaway role + schema).

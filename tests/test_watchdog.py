@@ -404,3 +404,19 @@ def test_run_survives_a_broken_query_and_rolls_back(pg):
     assert wd.run(pg, 10, RULES, lines.append) == []
     assert any("watchdog" in line for line in lines)
     pg.execute("select 1")  # the connection is usable again
+
+
+def test_a_settled_swap_counts_one_thread_never_the_lapsed_offers_to_the_same_team():
+    """#203 round 2 (P2): lapsed offers in other threads with the same team must not add up to a trip."""
+    decisions = [drow(i, 100 + i, "team_offer", {"team": "t05", "thread": 11 + i}) for i in range(3)]
+    executions = [say(0, 100, 11, 15), say(1, 101, 12, 15), say(2, 103, 13, 12)]
+    trades = wd.trades_of([swap(60, 104, "t05", (1, "LAV-03"), (2, "SAL-01"))], US)
+    cash = wd.swap_cash(decisions, executions, [], trades)
+    assert cash == {13: (104, 12)}
+    assert wd.swap_rules(trades, [], cash, RULES) == []
+
+
+def test_the_swap_count_and_cash_trips_lapse_by_themselves():
+    trades = wd.trades_of([swap(70 + i, 100 + i, "t05", (10 + i, "LAV-03"), (20 + i, "SAL-01")) for i in range(5)], US)
+    found = [f for f in wd.swap_rules(trades, [], {1: (104, 50)}, RULES) if "last copy" not in f.reason]
+    assert found and all(f.until_tick == 104 + RULES.watchdog_repeat_trip_ticks for f in found)

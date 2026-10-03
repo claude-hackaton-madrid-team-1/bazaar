@@ -16,7 +16,7 @@ from bazaar_agent.news import (
     parse_events,
     set_names,
 )
-from tests.agent_fakes import FakePublic, FakeTeam, clock, parts
+from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, parts
 
 CATALOG = {"sets": [{"id": "SAL", "name": "Salamanca"}, {"id": "RET", "name": "El Retiro"}, {"id": "LAV"}]}
 NAMES = set_names(CATALOG)
@@ -56,21 +56,24 @@ FEED_NEWS = {
 }
 
 
+READS = ["/api/news", "/api/schedule", "/api/levels", "/api/leaderboard"]
+
+
 class Public:
-    def __init__(self, news=NEWS, schedule=SCHEDULE, fail=False):
-        self.news, self.sched, self.fail, self.calls = news, schedule, fail, []
+    def __init__(self, news=NEWS, schedule=SCHEDULE, fail=False, levels=None, leaderboard=None):
+        self.fail, self.calls = fail, []
+        self.answers = {
+            "/api/news": news,
+            "/api/schedule": schedule,
+            "/api/levels": levels or {"levels": []},
+            "/api/leaderboard": leaderboard or {"teams": []},
+        }
 
     def call(self, method, path):
         self.calls.append(path)
         if self.fail:
             raise RuntimeError("down")
-        return self.news
-
-    def schedule(self):
-        self.calls.append("/api/schedule")
-        if self.fail:
-            raise RuntimeError("down")
-        return self.sched
+        return self.answers[path]
 
 
 def sentinel(tmp_path, public):
@@ -118,15 +121,17 @@ def test_signals_are_off_by_default_and_on_only_for_official_moves_in_their_wind
 def test_the_sentinel_stores_and_logs_each_item_once_and_reads_the_api_every_ten_ticks(tmp_path):
     public = Public()
     s, stored, lines = sentinel(tmp_path, public)
-    fresh = s.on_tick(400, [FEED_NEWS], CATALOG)
-    assert len(fresh) == 5 and len(stored) == 5  # 1 feed + 2 news + 2 schedule patches
-    assert public.calls == ["/api/news", "/api/schedule"]
+    assert len(s.on_tick(400, [FEED_NEWS], CATALOG)) == 3 and public.calls == READS[:1]  # 1 feed + 2 news
+    assert len(s.on_tick(401, [FEED_NEWS], CATALOG)) == 2 and public.calls == READS[:2]  # + 2 schedule patches
+    assert len(stored) == 5
     assert any("news (radio, unverified): Atleti win 2-1" in line for line in lines)
-    assert any("news (official): Salamanca fever" in line for line in lines)
-    assert s.on_tick(401, [FEED_NEWS], CATALOG) == [] and len(stored) == 5  # dedupe, and no read before 10 ticks
-    assert len(public.calls) == 2
+    assert not any("news (official)" in line for line in lines)  # the schedule watch says those, with a lead time
+    s.on_tick(402, [FEED_NEWS], CATALOG)
+    s.on_tick(403, [FEED_NEWS], CATALOG)
+    assert s.on_tick(404, [FEED_NEWS], CATALOG) == [] and len(stored) == 5  # dedupe; one read per tick, 4 a window
+    assert public.calls == READS
     s.on_tick(410, [], CATALOG)
-    assert len(public.calls) == 4 and len(stored) == 5
+    assert len(public.calls) == 5 and len(stored) == 5
     saved = load_market_events(tmp_path / EVENTS_FILE)
     assert {(e.set_code, e.official) for e in saved} == {("SAL", True), ("RET", False)}
 
@@ -176,9 +181,12 @@ def test_the_taker_runs_the_sentinel_after_its_sends(tmp_path):
         news=NewsSentinel(news_public, stored.extend, lines.append, tmp_path),
         **{**parts(tmp_path), "feed": MarketFeed(lambda n: [dict(FEED_NEWS)])},
     )
-    t.on_tick(clock())
-    assert any("Atleti win 2-1" in line for line in lines) and news_public.calls == ["/api/news", "/api/schedule"]
-    assert len(stored) == 5
+    for tick in (TICK, TICK + 1):
+        t.on_tick(clock(tick=tick))
+    assert any("Atleti win 2-1" in line for line in lines) and news_public.calls == READS[:2]  # one read a tick
+    assert sum(lr.kind == "news" for lr in stored) == 5
+    assert sum(lr.kind == "schedule" for lr in stored) == 3  # the bench and both Pilar patches, with lead times
+    assert any("schedule: The Market Test at game hour 5" in line for line in lines)
 
 
 def test_the_cli_sentinel_reads_on_its_own_client_with_a_short_timeout_and_no_retries(tmp_path):
@@ -190,3 +198,25 @@ def test_the_cli_sentinel_reads_on_its_own_client_with_a_short_timeout_and_no_re
     s = _news_sentinel({"log": lambda line: None}, settings)
     assert (s.public.timeout, s.public.retries, s.public.key) == (2.0, 0, "")
     assert s.path == tmp_path / "agents" / EVENTS_FILE
+
+
+def _board(tick, order, bonus=0.0):
+    teams = [
+        {"team": t, "rank": i + 1, "score": 30.0 - i, "negotiating": 15.0, "market": 7.5 + (bonus if t == "t14" else 0)}
+        for i, t in enumerate(order)
+    ]
+    return {"tick": tick, "snapshot_tick": tick, "teams": teams, "venues": []}
+
+
+def test_the_sentinel_feeds_the_leaderboard_to_the_rank_watch_and_never_flags_us(tmp_path):
+    public = Public(leaderboard=_board(400, ["t02", "t03", "t04", "t05", "t14", "t01"]))
+    stored, lines = [], []
+    s = NewsSentinel(public, stored.extend, lines.append, tmp_path)
+    for tick in range(400, 404):  # the leaderboard is the window's 4th read
+        s.on_tick(tick, [], CATALOG, None, "t01")
+    public.answers["/api/leaderboard"] = _board(410, ["t14", "t01", "t02", "t03", "t04", "t05"], 4.4)
+    for tick in range(410, 414):
+        s.on_tick(tick, [], CATALOG, None, "t01")
+    moves = [lr for lr in stored if lr.kind == "rival_move"]
+    assert [lr.subject for lr in moves] == ["t14"] and "market +4.4" in moves[0].text
+    assert any(line.startswith("tick 413 rival move: t14 +4 ranks") for line in lines)
