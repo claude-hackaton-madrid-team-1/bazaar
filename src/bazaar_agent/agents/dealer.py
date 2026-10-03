@@ -615,6 +615,9 @@ def negotiate(
         if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the next tick
 
             def close_again(clock: Clock) -> None:
+                if holding(f"tick {clock.tick}, before closing thread {tid} again"):
+                    state["status"] = "held"  # the switch went on since: the thread stays open, never closed
+                    return
                 state["status"] = close("timeout", clock)
 
             run_per_tick(client.clock, close_again, max_ticks=1, sleep=sleep)

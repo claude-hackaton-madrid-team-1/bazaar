@@ -368,3 +368,29 @@ def test_the_taker_reads_the_switch_again_before_an_accept(tmp_path, switch):
     )
     t.on_tick(clock())
     assert writes(team, "accept") == [] and any("kill switch on: holding" in line for line in lines)
+
+
+def test_the_retry_of_a_rate_limited_timeout_close_holds_under_the_switch():
+    from bazaar_agent.sdk import BazaarError
+
+    class Limited(FakeDealerClient):
+        switch_on = False
+        closes: list[int] = []
+
+        def close_thread(self, tid):
+            self.closes.append(tid)
+            self.switch_on = True  # the pause lands right after the first, rate-limited close
+            raise BazaarError("rate_limited", "slow down", 429)
+
+    client = Limited(asks=[30] * 20)
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+        kill_switch=lambda: ("pause file .local/PAUSE exists",) if client.switch_on else (),
+    )
+    assert client.closes == [85] and out.status == "held"  # one close only: the retry held under the switch
