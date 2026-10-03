@@ -28,7 +28,9 @@ Kind = Literal[
     "announcement",  # levels, venues, organiser notices
 ]
 Source = Literal["rules", "llm"]
-KEY_STABLE_SOURCES = frozenset({"rules", "outcome"})  # sources whose dedupe key carries no source suffix
+KEY_STABLE_SOURCES: frozenset[str] = frozenset(
+    {"rules", "outcome"}
+)  # sources whose dedupe key carries no source suffix
 BLOCKING_KINDS: frozenset[str] = frozenset({"blocker", "cooloff", "quota", "sold_out"})
 SUBJECT_PATTERN = r"^[A-Za-z0-9_.:\-]{1,64}$"
 TEXT_MAX = 300

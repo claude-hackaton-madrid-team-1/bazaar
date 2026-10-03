@@ -43,7 +43,7 @@ SEEN_MAX = 5000
 INTERPRET_TIMEOUT_S = 25.0  # off the tick loop: a call may take a while, never forever
 MAX_TOKENS = 1500
 # What a reading of feed text may be: never a kind another writer owns (the N3 learner's lessons and policies).
-FEED_KINDS = frozenset(
+FEED_KINDS: frozenset[str] = frozenset(
     {"blocker", "cooloff", "quota", "sold_out", "price_floor", "behaviour", "rule_change", "fee_change", "announcement"}
 )
 UNTIL_HORIZON_TICKS = 2000  # an expiry the text "states" further out than this is not believed
