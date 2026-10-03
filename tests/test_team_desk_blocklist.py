@@ -10,11 +10,12 @@ from tests.test_team_desk import TICK, Team, desk, their_offer, thread, trade, v
 RIVALS = "t03,t05,t06,t10,t12,t13,t14,t17,t18"
 
 
-def test_the_shipped_guardrails_block_the_podium_and_our_neighbours():
+def test_the_shipped_guardrails_trade_with_every_team_but_cap_their_share():
+    # Omar, Sat 3 Oct ~21:50: trade with everyone, but every swap leaves them at most half of the pie
     rules = load_guardrails().rules
-    assert team_ids(rules.team_desk_never_trade) == tuple(RIVALS.split(","))
-    assert rules.never_trades_with("t17") and rules.never_trades_with(" T05 ")
-    assert not rules.never_trades_with("t02") and not rules.never_trades_with(None)
+    assert team_ids(rules.team_desk_never_trade) == ()
+    assert not rules.never_trades_with("t17") and not rules.never_trades_with("t05")
+    assert rules.team_swap_max_their_share <= 0.5
 
 
 def test_a_bad_team_id_is_refused_and_none_turns_it_off():

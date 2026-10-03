@@ -1096,6 +1096,7 @@ def dealer_sell(
             kill_switch=lambda: gr.kill_switch(rules),
             on_deal=on_deal,
             on_move=on_move,
+            kind=_dealer_kind(settings, dealer),
             **_offer_inspector(settings, dealer, topic, rules),
         )
     finally:
@@ -2260,6 +2261,19 @@ def _team_client() -> Any:
     raise typer.Exit(1)
 
 
+def _dealer_kind(settings: Any, dealer: str) -> str:
+    """The dealer's published kind (one keyless `/api/dealers` read): a trickster's FINAL is no limit (SA1). An
+    unreadable answer is "dealer", today's reading of a final."""
+    from bazaar_agent.agents.dealer_sell_desk import dealer_kind
+
+    try:
+        answer = public_client(settings).dealers()
+    except BazaarError:
+        return "dealer"
+    rows = answer.get("personas") or answer.get("dealers") if isinstance(answer, dict) else answer
+    return dealer_kind(rows if isinstance(rows, list) else [], dealer)
+
+
 def _team_me() -> tuple[Any, dict[str, Any]]:
     client = _team_client()
     try:
@@ -2356,8 +2370,9 @@ def taller_cmd(
     ] = None,
     live: bool = typer.Option(False, "--live", help="Actually craft. Without it: dry run, nothing is sent"),
 ) -> None:
-    """The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The
-    same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
+    """The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`).
+
+    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
     hourly cap counts the taker's crafts only). Dry run by default."""
     from rich.markup import escape
 
@@ -2392,7 +2407,7 @@ def taller_cmd(
     try:
         answer = tl.craft(client, assets)
     except BazaarError as e:
-        _fail(f"refused: {e.code} ({e.message[:80]})")
+        _fail(f"refused: {escape(str(e.code))} ({escape(tl.pulled({'card': str(e.message)[:80]}))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
 
 

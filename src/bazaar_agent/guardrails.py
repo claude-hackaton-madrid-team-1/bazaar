@@ -186,6 +186,7 @@ class Guardrails(BaseModel):
     card_release_boost_enabled: bool = False
     card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
+    playbook_enabled: bool = False  # off here, so code built without GUARDRAILS.md behaves as before
     persona_model_enabled: bool = True
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
@@ -354,6 +355,7 @@ ENFORCED_BY: dict[str, str] = {
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
+    "playbook_enabled": "playbook.Playbook (news sentinel) → agents.taker._playbook_holds (no new dealer thread)",
     "persona_model_enabled": "agents.persona_desk via taker._persona_shaped + agents.dealer_sell_desk (ranking)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
@@ -963,6 +965,10 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
+        named = [c.ref if (c := ctx.cards.copy(a)) is not None else None for a in action.assets]
+        if named != refs:
+            v.append(f"the Workshop's copies {list(action.assets)} are not the cards {refs} in our /me")
     if not v and rules.max_score_loss_per_move > 0 and not ctx.ranking:
         v.extend(_taller_impact(action, refs, ctx, rules))
     return v

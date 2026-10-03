@@ -1,6 +1,7 @@
 """The Workshop (SA1): free spares only, the triple ranking, the guardrails and the taker's step."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from bazaar_agent import move_impact
 from bazaar_agent.agents import taller as tl
@@ -175,9 +176,10 @@ def test_a_craft_of_copies_a_team_trade_brought_us_answers_to_the_score_impact_r
     assert not unnamed.allowed and "not named one by one" in unnamed.violations[0]
 
 
-def test_guardrails_md_ships_the_workshop_off():
+def test_guardrails_md_ships_the_workshop_on_and_capped():
+    # Omar, Sat 3 Oct ~22:15: the Workshop is on; the taker's own crafts stay capped per game hour
     rules = load_guardrails().rules
-    assert rules.taller_enabled is False and rules.max_taller_per_game_hour == 2
+    assert rules.taller_enabled is True and rules.max_taller_per_game_hour == 2
 
 
 # ---------------------------------------------------------------- the taker's step
@@ -205,13 +207,15 @@ class Team(FakeTeam):
         return {"card": {"ref": "LAV-07", "name": "Samosas"}}
 
 
-def run_taker(tmp_path, *, news, live=True, ticks=1, team=None, **rules):
+def run_taker(tmp_path, *, news, live=True, ticks=1, team=None, before=None, **rules):
     lines: list[str] = []
     team = team or Team(me=me(*[a for a in SPARES["assets"] if a["ref"] != "LAV-07"]))
     public = FakePublic(catalog=CATALOG, dealers=DEALERS)
     kw = parts(tmp_path, **rules)
     t = Taker(team, public, live=live, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
               config=TakerConfig(max_dealer_threads=0), news=news, **kw)  # fmt: skip
+    if before is not None:
+        before(t, kw["ledger"])
     for i in range(ticks):
         team.now = clock(tick=100 + i)
         t.on_tick(team.now)
@@ -267,3 +271,51 @@ def test_a_copy_in_an_open_offer_of_ours_is_never_crafted(tmp_path):
 
 def test_the_shared_fixture_me_has_no_triple():
     assert tl.rank_triples(ME, CATALOG, DEALERS) == []
+
+
+def test_a_card_a_live_team_desk_talk_may_give_is_never_crafted(tmp_path):
+    def talk(t, ledger):  # security-auditor + pr-reviewer P1 on #235: the desk gives LAV-01 #1 in a swap
+        t.team_desk.talks[99] = SimpleNamespace(trade=SimpleNamespace(refs=("LAV-01", "LAV-09"), asset_id=1))
+
+    team, _ = run_taker(tmp_path, news=News(LEVELS), before=talk, taller_enabled=True)
+    assert crafts(team) == []  # LAV-01 is out: SAL-01 #5 is the only free spare left
+
+
+def test_the_team_desk_posting_after_a_craft_sees_the_crafted_copies_promised(tmp_path):
+    seen: list[list] = []
+
+    def spy(t, ledger):
+        t.team_desk.converse = lambda view, taken: seen.append(list(view.offers))
+
+    team, _ = run_taker(tmp_path, news=News(LEVELS), before=spy, taller_enabled=True)
+    assert crafts(team) and seen
+    from bazaar_agent.agents.team_desk import spare_copy
+
+    assert spare_copy(team.me(), seen[0], "t01", "LAV-01") is None  # #2, #3 crafted: #1 is no spare any more
+
+
+def test_a_card_accepted_this_or_last_tick_is_never_crafted(tmp_path):
+    def accepted(t, ledger):  # the maker's dealer sell reserves the card ref (dealer_sell_desk.standard_hooks)
+        ledger.reserve_accept(99, 1.5, 9, "LAV-01", 1)
+
+    team, _ = run_taker(tmp_path, news=News(LEVELS), before=accepted, taller_enabled=True)
+    assert crafts(team) == []
+
+
+def test_a_copy_a_sell_thread_of_ours_is_about_is_never_crafted(tmp_path):
+    sell = {"id": 7, "with": "abuela", "status": "open", "topic": {"sell": {"assets": [2]}}}
+    team = Team(me=me(*[a for a in SPARES["assets"] if a["ref"] != "LAV-07"]), threads=[sell])
+    team, _ = run_taker(tmp_path, news=News(LEVELS), team=team, taller_enabled=True)
+    assert crafts(team) == []
+    assert tl.sell_thread_assets([sell, {"topic": {"buy": {"card": "LAV-01"}}}, "junk"]) == {2}
+
+
+def test_the_guard_refuses_copies_that_are_not_the_cards_named():
+    cards = move_impact.our_cards(SPARES)
+    lie = Action("taller", "SAL-01,LAV-01,LAV-01", "common", assets=(9, 2, 3))  # #9 is LAV-09, not SAL-01
+    verdict = check(lie, ctx(cards=cards), ON)
+    assert not verdict.allowed and "are not the cards" in verdict.violations[0]
+
+
+def test_pulled_never_carries_control_or_bidi_characters():
+    assert tl.pulled({"card": {"ref": "LAV-07", "name": "Sam\u202eosas\n[red]x"}}) == "LAV-07 Sam osas [red]x"
