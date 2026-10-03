@@ -1221,6 +1221,8 @@ class Taker:
             # threads; one read never retires a thread the server still lists
             if e.status == THREAD_GONE_STATUS and conv.thread_id not in run.listed:
                 self.convs.pop(conv.dealer, None)
+                gone = {"status": "closed", "closed_reason": "gone"}  # no deal can be booked on a thread it lost
+                self._wrapped(run, conv.thread_id, conv.dealer, conv.item, gone, None)  # a restart never re-reads it
                 self.log(
                     f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} is gone; dropped"
                 )

@@ -13,6 +13,7 @@ import pytest
 from bazaar_agent.agents.jev_cache import VerdictCache, state_key, state_tick
 from bazaar_agent.agents.runtime import JevAdvice, MarketFeed, read_snapshot, read_together
 from bazaar_agent.agents.taker import Taker, TakerConfig
+from bazaar_agent.decisions import THREAD_CLOSED
 from bazaar_agent.guardrails import load_guardrails
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, clock, parts, rows
@@ -427,3 +428,5 @@ def test_a_dealer_thread_the_server_no_longer_knows_is_dropped(tmp_path):
         team.now = clock(tick=TICK + 1)
         t.on_tick(team.now)
         assert ("abuela" in t.convs) is kept and team.sent == [], (code, status, listed)
+        closed = [r for r in rows(tmp_path / str(n)) if r.get("kind") == THREAD_CLOSED]
+        assert len(closed) == (0 if kept else 1)  # a dropped thread leaves its THREAD_CLOSED row for a restart
