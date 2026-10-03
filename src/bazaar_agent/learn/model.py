@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SubjectKind = Literal["dealer", "venue", "team", "organiser"]
+SubjectKind = Literal["dealer", "venue", "team", "organiser", "rival"]  # rival: a duel rival's alias
 Kind = Literal[
     "blocker",  # a dealer will not deal with us (locked level, a lock after bad treatment)
     "cooloff",  # a dealer sent a team away until a tick
@@ -26,17 +26,21 @@ Kind = Literal[
     "rule_change",  # the clock, limits, rounds
     "fee_change",  # a venue's fee notice
     "announcement",  # levels, venues, organiser notices
+    "lesson",  # what one settled decision taught us (`learn.lessons`, from the evals' outcomes)
+    "policy",  # a learned parameter set, e.g. a dealer ladder (`learn.evolve`), with its evidence
 ]
-Source = Literal["rules", "llm"]
-KEY_STABLE_SOURCES: frozenset[str] = frozenset(
-    {"rules", "outcome"}
-)  # sources whose dedupe key carries no source suffix
+Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
+# What the outcome learner writes: everything else in the table is the feed reader's (N12).
+OUTCOME_KINDS: frozenset[str] = frozenset({"lesson", "policy"})
+KEY_STABLE_SOURCES: frozenset[str] = frozenset({"rules", "outcome"})  # no source suffix in their dedupe key
 BLOCKING_KINDS: frozenset[str] = frozenset({"blocker", "cooloff", "quota", "sold_out"})
 SUBJECT_PATTERN = r"^[A-Za-z0-9_.:\-]{1,64}$"
 TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
-IDENTITY_FIELDS = frozenset({"item", "rarity", "code", "aggregate", "venue", "effective_tick"})
+IDENTITY_FIELDS = frozenset(
+    {"item", "rarity", "code", "aggregate", "venue", "effective_tick", "outcome", "price_class", "pattern"}
+)
 # Where a rules blocker may come from (matched with `fullmatch`).
 ORIGIN_THAT_BLOCKS = re.compile(r"(feed|refusal|thread:\d+)")
 

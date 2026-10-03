@@ -1515,6 +1515,15 @@ def _run_agent(
         store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
         extra["learner"] = LiveLearner(store, log, _feed_interpreter(settings, rules, log) if llm_read else None)
+        if name == "taker":  # one outcome learner per team: lessons + embeddings every few ticks (N3)
+            from bazaar_agent.learn.embed import shared_models
+            from bazaar_agent.learn.outcomes import OutcomeLearner
+
+            models = shared_models(log)
+            models.warm()  # background download/load: lessons start once the models are ready
+            outcome_store = LearningStore(connect, log)
+            outcome_store.open()  # connect now, never inside a tick
+            extra["outcome_learner"] = OutcomeLearner(connect, outcome_store, models, log)
         from bazaar_agent.learn.threads import ThreadStore
 
         extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
