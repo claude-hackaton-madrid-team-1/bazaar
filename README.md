@@ -602,6 +602,19 @@ today's ladder. Chato's fills sit above our caps (uncommons 28–32 vs 26, rares
 human-raised cap of 32, the replay closes 11 of 12 Chato uncommons at a mean 30.45 (share 0.467). The
 learner never raises a cap.
 
+**End to end on the simulator.** The real taker CLI ran live against a local `bazaar-sim` with 2 s ticks.
+The cash floor and the hourly spend cap were raised in memory for the run only, since a simulator game
+hour is a real hour; the per-card caps were unchanged.
+- **The trap.** With no fills seen, today's strategy bids 25 straight for an uncommon. Abuela takes it,
+  and 25 becomes "the floor". Team t01 paid 25 five times.
+- **The fix.** The learner sees that those fills took our first bid, so they only bound her limit from
+  above. It probes lower: 20→25, step 1.
+- **The result.** A second team (t02), in the same world, learned that from the public threads. Its
+  uncommons went 25 (before its first pass) → 22 → 20 → 21 → 22 as the ladder moved 20→25 → 17→25 →
+  16→25, at most 3 P per pass. Commons closed at 7–8 on a learned 7→9.
+- **Blockers.** Abuela's hourly quota then stopped each team. The N12 blocker skipped her until the
+  quota's tick.
+
 ```sh
 uv run bazaar learnings --policy            # learned ladders vs today's, with the replay on real threads
 ```
@@ -1054,6 +1067,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the learner escapes the first-bid trap on the simulator: uncommons 25 → 20-22 (N3)
 - [2026-10-03] finding — today's Abuela ladder is already the best on replay; a bigger step loses (N3)
 - [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
 - [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
@@ -1061,7 +1075,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 - [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
 - [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
-- [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
 
 <!-- BAZAAR:STATUS:END -->
 
