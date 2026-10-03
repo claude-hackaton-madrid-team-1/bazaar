@@ -107,6 +107,27 @@ def test_a_copy_already_in_an_open_ask_counts_as_sold():
     assert not verdict.allowed and "protect_page_sets" in str(verdict)
 
 
+def test_an_accepted_ask_still_settling_counts_as_sold():
+    # #145 security P3: a team accepted our ask on #301 this tick; /me still shows both copies until it settles.
+    accepted = {**our_ask(73, 301, "RET-01", 30), "status": "accepted"}
+    verdict = sell_verdict(released_ret(ME, copies=2), "300", [accepted])
+    assert not verdict.allowed and "protect_page_sets" in str(verdict)
+
+
+def test_an_ask_that_does_not_name_its_card_counts_against_every_card():
+    # #145 security P3: a bare asset id cannot be matched to a card, so it fails closed.
+    bare = {**our_ask(74, 301, "RET-01", 30), "give": {"cash": 0, "assets": [301], "types": []}}
+    assert not sell_verdict(released_ret(ME, copies=2), "300", [bare]).allowed
+
+
+@pytest.mark.parametrize("rarity", [None, "None", "", "Common", "RARE", "mystery"])
+def test_any_rarity_but_epic_or_legendary_counts_as_a_page_card(rarity):
+    # #145 security P3: odd spellings of a rarity (or none) must not fail open.
+    assert PROTECT.protects("RET-03", rarity, 1)
+    assert PROTECT.protects("ret-03", rarity, 1)  # a lowercase ref too
+    assert not PROTECT.protects("RET-11", "Epic", 1) and not PROTECT.protects("RET-12", "legendary", 1)
+
+
 def test_a_copy_of_unknown_rarity_is_treated_as_a_page_card():
     assert not gr.check(gr.Action("sell", "CHA-03", None, 40, 9.0), ctx({"CHA-03": 1}), PROTECT).allowed
 

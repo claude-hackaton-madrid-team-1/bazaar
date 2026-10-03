@@ -28,7 +28,7 @@ GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
 PRINCIPLE_LINE = re.compile(r"^- (?!`)(?P<text>.+)$")
 SET_CODE = re.compile(r"^[A-Z]{3}$")
-PAGE_RARITIES = ("common", "uncommon", "rare")  # RULES.md: a page is a set's commons, uncommons and rares
+OFF_PAGE_RARITIES = ("epic", "legendary")  # RULES.md: on top of the page; any other rarity counts as a page card
 NO_SETS = ("", "none", "-")
 
 
@@ -84,8 +84,8 @@ class Guardrails(BaseModel):
     def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
         """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
         counts as a page card (fail closed); a duplicate may still be sold."""
-        code = ref.split("-", 1)[0] if "-" in ref else ""
-        page_card = rarity is None or rarity in PAGE_RARITIES
+        code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
+        page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
         return copies <= 1 and page_card and code in set_codes(self.protect_page_sets)
 
     def max_price_for(self, rarity: str | None) -> int | None:
