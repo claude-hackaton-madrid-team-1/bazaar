@@ -180,3 +180,17 @@ def test_a_dealer_price_cap_in_guardrails_unblocks_that_dealer_only(real):
     assert plans[("chato", "card:uncommon")].choice.plan == BidPlan(27, 1, 31)
     assert plans[("abuela", "card:uncommon")].choice.plan == BidPlan(21, 1, 25)  # Abuela keeps 26 (and floor + 2)
     assert plans[("chato", "card:rare")].choice.plan is None
+
+
+def test_with_a_dealer_cap_chato_gets_its_best_three_and_abuela_the_rest_cheaper(real):
+    rules = Guardrails(dealer_price_caps="chato:uncommon=31")
+    plans = class_plans(real, floor_table(real), rules, runs=100)
+    refs = [(f"LAV-0{i}", "uncommon") for i in (6, 7, 8)] + [("SAL-06", "uncommon"), ("SAL-06", "uncommon")]
+    targets = [t for t in default_targets(plans, DEFAULT_QUOTAS, refs=refs) if t.ref]
+    assert [(t.dealer, t.ref) for t in targets] == [
+        ("chato", "LAV-06"),
+        ("chato", "LAV-07"),
+        ("chato", "LAV-08"),
+        ("abuela", "SAL-06"),  # Abuela plans uncommons cheaper (21→25) than Chato (27→31)
+        ("abuela", "SAL-06"),  # a ref listed twice is two buys
+    ]

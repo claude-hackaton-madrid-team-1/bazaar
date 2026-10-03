@@ -165,7 +165,7 @@ def lowest_value_copy(me: Mapping[str, Any], item: str) -> float | None:
 
 def guardrail_action(intent: Intent, rarity: str | None, me: Mapping[str, Any]) -> Action | None:
     if intent.kind == "buy" and intent.item:
-        return Action("buy", intent.item, rarity, intent.max_price)
+        return Action("buy", intent.item, rarity, intent.max_price, dealer=intent.counterparty)
     if intent.kind == "sell" and intent.item:
         return Action("sell", intent.item, rarity, intent.min_price, lowest_value_copy(me, intent.item))
     return None

@@ -9,6 +9,7 @@ reachable (`ledger_pg.open_ledger`, shared across machines), else `.local/ledger
 from __future__ import annotations
 
 import fcntl
+import functools
 import json
 import re
 from collections import Counter
@@ -63,12 +64,13 @@ class Guardrails(BaseModel):
 
     @property
     def dealer_caps(self) -> dict[tuple[str, str], int]:
-        return parse_dealer_caps(self.dealer_price_caps)
+        return dict(_parsed_dealer_caps(self.dealer_price_caps))
 
     def max_price_for(self, rarity: str | None, dealer: str | None = None) -> int | None:
         """The cap for one rarity; a `dealer_price_caps` entry replaces it for that dealer only."""
-        if dealer is not None and (dealer, rarity or "") in self.dealer_caps:
-            return self.dealer_caps[(dealer, rarity or "")]
+        own = dict(_parsed_dealer_caps(self.dealer_price_caps)).get((dealer or "", rarity or ""))
+        if dealer is not None and own is not None:
+            return own
         return {
             "common": self.max_price_common,
             "uncommon": self.max_price_uncommon,
@@ -78,19 +80,28 @@ class Guardrails(BaseModel):
 
 
 CAPPED_RARITIES = ("common", "uncommon", "rare", "pack")
+MAX_DEALER_CAP = 1000  # runtime.actions.MAX_DEALER_PRICE: a cap above it is a typo
 
 
 def parse_dealer_caps(value: str) -> dict[tuple[str, str], int]:
     """`none`, or comma-separated `dealer:rarity=price` (`chato:uncommon=31`) → {(dealer, rarity): price}."""
+    return dict(_parsed_dealer_caps(value))
+
+
+@functools.lru_cache(maxsize=16)
+def _parsed_dealer_caps(value: str) -> tuple[tuple[tuple[str, str], int], ...]:
     out: dict[tuple[str, str], int] = {}
     if value.strip().lower() in ("", "none"):
-        return out
+        return ()
     for entry in value.split(","):
-        m = re.fullmatch(r"\s*([a-z0-9_]+):([a-z]+)=(\d+)\s*", entry)
-        if m is None or m[2] not in CAPPED_RARITIES or int(m[3]) < 1:
-            raise ValueError(f"dealer_price_caps entry {entry!r}: use dealer:rarity=price, e.g. chato:uncommon=31")
+        m = re.fullmatch(r"\s*([a-z0-9][a-z0-9_-]{0,31}):([a-z]+)=(\d+)\s*", entry)
+        if m is None or m[2] not in CAPPED_RARITIES or not 1 <= int(m[3]) <= MAX_DEALER_CAP:
+            raise ValueError(
+                f"dealer_price_caps entry {entry!r}: use dealer:rarity=price with a price 1..{MAX_DEALER_CAP}, "
+                "e.g. chato:uncommon=31"
+            )
         out[(m[1], m[2])] = int(m[3])
-    return out
+    return tuple(out.items())
 
 
 # Which code enforces each rule: shown by `bazaar rules`, kept honest by a test.
@@ -116,7 +127,8 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
-    "dealer_price_caps": "guardrails.check (Action.dealer: cli dealer buy, the desk, strategy, runtime dealer_buy)",
+    "dealer_price_caps": "guardrails.check (Action.dealer: cli dealer buy, rules check --dealer, the desk's opens, "
+    "bids and accepts, strategy, runtime dealer_buy, ask intents)",
 }
 
 
@@ -336,7 +348,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     accepting = action.kind in ("accept_buy", "accept_sell", "duel_accept")
     if buying and action.price is not None:
         cap = rules.max_price_for(action.rarity, action.dealer)
-        own = action.dealer is not None and (action.dealer, action.rarity or "") in rules.dealer_caps
+        own = cap != rules.max_price_for(action.rarity) or (action.dealer, action.rarity or "") in rules.dealer_caps
         if cap is None:
             v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
         elif action.price > cap:

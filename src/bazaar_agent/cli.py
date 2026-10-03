@@ -713,6 +713,7 @@ def rules_check(
     item: str = typer.Argument(help="Card ref (LAV-05) or pack id"),
     price: int = typer.Option(..., help="Price in primas"),
     your_value: float | None = typer.Option(None, help="For sells: what we lose by selling that copy"),
+    dealer: str | None = typer.Option(None, help="A dealer buy: its own dealer_price_caps entry applies"),
 ) -> None:
     """Dry-run one action against the guardrails with our live /me, clock and ledger."""
     from bazaar_agent import guardrails as gr
@@ -723,7 +724,7 @@ def rules_check(
     c = Clock.model_validate(client.clock())
     ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
     try:
-        action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
+        action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value, dealer=dealer)
     except ValueError as e:
         _fail(str(e))
     verdict = gr.check(action, ctx, rules)

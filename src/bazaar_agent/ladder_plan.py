@@ -316,14 +316,11 @@ def default_targets(
     """What to buy, in order. Without `refs`: every dealer's best three deals first (highest level
     first: its deals also unlock the next level early), each in that dealer's highest-share class; then
     the album fill, dealers interleaved, each rotating through its classes up to its deals per hour ×
-    `hours`. With `refs` ((ref, rarity) pairs, e.g. the missing page cards from `bazaar strategy`): each
-    ref goes to the highest-level dealer that has a plan for its rarity, that dealer's three
-    highest-share refs first, then the rest in the given order. Classes we cannot plan for are listed
-    once so the schedule reports them as blocked."""
+    `hours`. With `refs` ((ref, rarity) pairs in priority order, e.g. the missing page cards from
+    `bazaar strategy`): see `_ref_targets`; the plannable pack classes follow them. Classes we cannot
+    plan for are listed once so the schedule reports them as blocked."""
     dealers = sorted(quotas, key=lambda d: -quotas[d].level)
     blocked = [Target(d, c) for (d, c), cp in sorted(plans.items()) if cp.choice.plan is None]
-    if refs:
-        return _ref_targets(plans, dealers, refs) + blocked
     best: list[tuple[str, str]] = []
     fill: dict[str, list[str]] = {}
     for dealer in dealers:
@@ -340,28 +337,53 @@ def default_targets(
         for d in fill
         if i < len(fill[d])
     ]
-    return [Target(dealer, cls) for dealer, cls in best + rest] + blocked
+    by_class = [Target(dealer, cls) for dealer, cls in best + rest]
+    if refs:
+        packs = [t for t in by_class if t.price_class.startswith("pack:")]
+        return _ref_targets(plans, dealers, refs) + packs + blocked
+    return by_class + blocked
 
 
 def _ref_targets(
     plans: Mapping[tuple[str, str], ClassPlan], dealers: Sequence[str], refs: Sequence[tuple[str, str]]
 ) -> list[Target]:
-    def share(t: Target) -> float:
-        bt = plans[(t.dealer, t.price_class)].backtest
-        return bt.mean_share if bt else 0.0
+    """Each dealer first gets its best three (highest level first): up to three refs it can plan, its
+    highest-share class first. Every other ref goes to the dealer that plans its rarity cheapest. A ref
+    no dealer can plan stays on the list (with the dealer that sells that class, if any) to be reported
+    as blocked. Duplicates are kept: a ref listed twice is two buys."""
 
-    placed: list[Target] = []
-    for ref, rarity in refs:
-        cls = RARITY_CLASS.get(rarity, "")
-        dealer = next((d for d in dealers if (cp := plans.get((d, cls))) and cp.choice.plan is not None), None)
-        dealer = dealer or next((d for d in dealers if (d, cls) in plans), None)  # blocked: say by whom
-        placed.append(Target(dealer or (dealers[-1] if dealers else ""), cls, ref))
-    plannable = [t for t in placed if (cp := plans.get((t.dealer, t.price_class))) and cp.choice.plan is not None]
-    first: list[Target] = []
+    def plan_of(dealer: str, cls: str) -> ClassPlan | None:
+        cp = plans.get((dealer, cls))
+        return cp if cp is not None and cp.choice.plan is not None else None
+
+    def share(dealer: str, cls: str) -> float:
+        cp = plan_of(dealer, cls)
+        return cp.backtest.mean_share if cp and cp.backtest else 0.0
+
+    def price(dealer: str, cls: str) -> float:
+        cp = plan_of(dealer, cls)
+        if cp is None or cp.choice.plan is None:
+            return float("inf")
+        return cp.backtest.mean_price if cp.backtest and cp.backtest.mean_price else float(cp.choice.plan.max_price)
+
+    wanted = [(ref, RARITY_CLASS.get(rarity, f"card:{rarity}")) for ref, rarity in refs]
+    taken: dict[int, str] = {}  # ref index → dealer
     for dealer in dealers:
-        mine = sorted((t for t in plannable if t.dealer == dealer), key=share, reverse=True)[:3]
-        first += mine
-    return first + [t for t in placed if t not in first]
+        mine = [i for i, (_, cls) in enumerate(wanted) if i not in taken and plan_of(dealer, cls)]
+        for i in sorted(mine, key=lambda i: -share(dealer, wanted[i][1]))[:3]:
+            taken[i] = dealer
+    first = sorted(taken, key=lambda i: (dealers.index(taken[i]), -share(taken[i], wanted[i][1]), i))
+    out = [Target(taken[i], wanted[i][1], wanted[i][0]) for i in first]
+    for i, (ref, cls) in enumerate(wanted):
+        if i in taken:
+            continue
+        able = [d for d in dealers if plan_of(d, cls)]
+        if able:
+            out.append(Target(min(able, key=lambda d: (price(d, cls), dealers.index(d))), cls, ref))
+        else:
+            seller = next((d for d in dealers if (d, cls) in plans), dealers[0] if dealers else "")
+            out.append(Target(seller, cls, ref))
+    return out
 
 
 def plan_document(

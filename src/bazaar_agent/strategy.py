@@ -685,6 +685,9 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
         else:
             est = Estimate(m.expected_book.get(pack, 0.0), "expected book (no seller)")
         cap = rules.max_price_for("pack", quote.dealer if quote else None)
+        cap_rule = (
+            "max_price_pack" if cap == rules.max_price_pack else f"dealer_price_caps {quote and quote.dealer}:pack"
+        )
         plan = bid_range(fills, est.price, ev, cap, params.min_buy_surplus, opening_ratio(m))
         capped = plan is not None and plan[1] < est.price
         actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
@@ -706,7 +709,7 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 plan[1] if plan else 0,
                 f"EV {ev:.1f} = {slot_text}; price {est.basis} {est.price:g}"
                 + ("" if quote else "; no dealer we can reach sells it")
-                + (f"; max_price_pack caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
+                + (f"; {cap_rule} caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
                 (
                     dealer_command(pack, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread))
                     if actionable and quote and plan

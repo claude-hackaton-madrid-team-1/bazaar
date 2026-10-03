@@ -582,7 +582,8 @@ class Taker:
         skip_thread = p.desk.conv.thread_id if p.desk else None
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
-        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price), ctx, self.rules)
+        dealer = None if p.source == "board" else p.source  # a dealer's ask: its own dealer_price_caps entry
+        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price, dealer=dealer), ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
