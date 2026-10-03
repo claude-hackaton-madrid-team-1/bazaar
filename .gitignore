@@ -35,3 +35,6 @@ __pycache__/
 .coverage
 .venv/
 *.egg-info/
+
+# Night-shift private numbers (our cash, values, asset ids, prices): never committed
+_night/

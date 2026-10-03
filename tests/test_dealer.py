@@ -483,6 +483,31 @@ def test_a_busy_accept_slot_bids_her_ask_instead_of_going_silent():
     assert (client.closed, out.status, out.price) == (False, "deal", 9)
 
 
+def test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask():
+    # pr-reviewer #79 P2: a ledger outage is not "slot taken". `reserve` answers None: nothing is sent that
+    # tick (no accept, no meet-her-ask bid whose spend the dead ledger could not book), and the thread stays.
+    from bazaar_agent.agents.dealer import negotiate
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    calls: list[int] = []
+
+    def reserve(move, clock):
+        calls.append(clock.tick)
+        return None if len(calls) == 1 else True  # the ledger is down once, then answers
+
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        reserve=reserve,
+    )
+    assert client.sent == [6, 7, 8] and len(calls) == 2  # no bid of 9 on the held tick
+    assert client.accepted and (client.closed, out.status) == (False, "deal")
+
+
 def test_a_busy_accept_slot_never_bids_her_opening_ask():
     from bazaar_agent.agents.dealer import meet_ask
 

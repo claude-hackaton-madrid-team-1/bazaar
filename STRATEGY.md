@@ -42,3 +42,4 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.
 - `dealer_mints_unminted` = false — true: a card with zero minted copies is still a dealer buy when a dealer sells its rarity for its released set (dealers mint: Friday, Chato sold LAV-09 serials 2–4 and Abuela LAV-04 serials 15–16 without buying them first). Matters the hour a set is released (RET Saturday, CHA Sunday), when every card of it has zero copies.
+- `chaser_min_p` = 0 — who chases a set (sell_to_need buyers, the maker's `to` under the counterparty cap, buy urgency): 0 = the team-flow guess (`intel.TeamFlow.top_set`); above 0 = the teams whose top set it is with at least this probability in the rival affinity map (`bazaar affinity`; 0.5 is the night report's cut).

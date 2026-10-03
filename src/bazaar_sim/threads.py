@@ -287,6 +287,7 @@ def post_message(
     message = Message(id=w.next_id("message"), tick=w.tick, sender=sender, text=text, offer=offer_id)
     th.messages.append(message)
     th.last_activity_tick = w.tick
+    capped = th.kind == "team" and th.status == "open" and len(th.messages) >= w.limit("messages_per_team_thread")
     offer = w.state.offers.get(offer_id) if offer_id is not None else None
     w.emit(
         "thread.message",
@@ -302,6 +303,8 @@ def post_message(
         },
         actor=sender,
     )
+    if capped:  # RULES.md: a conversation between two teams ends in a deal or after 200 messages
+        end(w, th, "closed", "message_cap")
     return message
 
 
