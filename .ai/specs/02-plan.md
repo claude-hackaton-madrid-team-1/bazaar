@@ -626,6 +626,14 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
   **Acceptance:** tests/test_taller.py; full gate + sim smoke.
 
+### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
+- Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
+  · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
+  tests/test_guardrails.py; full gate.
+- Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
+  would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
+  sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)
