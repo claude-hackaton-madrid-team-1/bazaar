@@ -1308,12 +1308,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 - [2026-10-03] finding — the published traits predict Friday's dealer limits within 5 % (N19)
+- [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
 - [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
 - [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
 - [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
-- [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
 
 <!-- BAZAAR:STATUS:END -->
 
