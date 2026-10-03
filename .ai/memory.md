@@ -1044,3 +1044,8 @@ a buyer's bid down (9 times in duel session 2, one per restart tick, from `duels
 the old process had already offered in also sent a second message, refused `wait_for_tick` (8 in the Railway logs).
 Fix: `payload_start(..., wait)` backs our earliest message off by the wait, and `duel run` holds an offer when the
 duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not in `executions`: read `duels`.
+
+### [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
+`scripts/sim_smoke.py` fails a step on any ` refused ` in its output (CRASH_MARKERS), our own WARN lines included: the
+human-approval board's first fail-closed note ("… is refused (fail closed)") failed `agent taker --live`. Word new
+WARN lines without " refused " (HA1 says "no trade at or above … goes out").

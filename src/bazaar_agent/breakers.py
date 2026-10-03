@@ -64,12 +64,17 @@ class BreakerRow:
         return self.until_tick is None or tick is None or self.until_tick > tick
 
 
-class BreakerBoard:
-    """The tripped scopes, read once per tick on a worker thread with a deadline; fail open.
+class TickBoard[T]:
+    """One Postgres read per tick per process, on a worker thread with a deadline.
 
-    `connect` opens a connection (None: no database, nothing is ever tripped). A read that is still running
-    from an earlier tick is never doubled: the board answers NOTHING until that worker ends.
+    `connect` opens a connection (None: no database, every read answers `fallback`). A failed or slow read answers
+    `fallback` for the rest of that tick and skips Postgres for `RETRY_EVERY_S`; a read still running from an earlier
+    tick is never doubled. A missing table answers `no_table`. The subclass picks what `fallback` means: the breakers
+    fail open (nothing tripped), the human approvals fail closed (no approval readable).
     """
+
+    name = "board"
+    fallback_note = ""
 
     def __init__(
         self,
@@ -82,42 +87,51 @@ class BreakerBoard:
         self._down_until = 0.0
         self._conn: psycopg.Connection | None = None
         self._tick: int | None = None
-        self._scopes: frozenset[str] = NOTHING
+        self._value: T = self.fallback()
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self._failed_tick: int | None = None
 
-    def tripped(self, tick: int) -> frozenset[str]:
+    def fallback(self) -> T:
+        raise NotImplementedError
+
+    def no_table(self) -> T:
+        return self.fallback()
+
+    def query(self, conn: psycopg.Connection, tick: int) -> T:
+        raise NotImplementedError
+
+    def read(self, tick: int) -> T:
         if self._connect is None:
-            return NOTHING
+            return self.fallback()
         with self._lock:
             if self._tick == tick:
-                return self._scopes
+                return self._value
             if self._worker is not None and self._worker.is_alive():
-                return self._fail_open(tick, "an earlier read is still running")
+                return self._fail(tick, "an earlier read is still running")
             if self._now() < self._down_until:
-                return self._fail_open(tick, f"Postgres failed less than {RETRY_EVERY_S:g} s ago", backoff=False)
+                return self._fail(tick, f"Postgres failed less than {RETRY_EVERY_S:g} s ago", backoff=False)
             box: dict[str, Any] = {}
-            worker = threading.Thread(target=self._read, args=(tick, box), name="breakers-read", daemon=True)
+            worker = threading.Thread(target=self._read, args=(tick, box), name=f"{self.name}-read", daemon=True)
             self._worker = worker
             worker.start()
             worker.join(self._timeout_s)
             if worker.is_alive():
-                return self._fail_open(tick, f"no answer in {self._timeout_s:g} s")
+                return self._fail(tick, f"no answer in {self._timeout_s:g} s")
             if "error" in box:
-                return self._fail_open(tick, str(box["error"]))
-            self._tick, self._scopes = tick, frozenset(box.get("scopes", ()))
-            return self._scopes
+                return self._fail(tick, str(box["error"]))
+            self._tick, self._value = tick, box["value"]
+            return self._value
 
-    def _fail_open(self, tick: int, why: str, backoff: bool = True) -> frozenset[str]:
+    def _fail(self, tick: int, why: str, backoff: bool = True) -> T:
         # The failure is this tick's answer (one try per tick), and the next tries wait out the backoff.
-        self._tick, self._scopes = tick, NOTHING
+        self._tick, self._value = tick, self.fallback()
         if backoff:
             self._down_until = self._now() + RETRY_EVERY_S
         if self._failed_tick != tick:  # once per tick, never a flood
             self._failed_tick = tick
-            self._notify(f"breakers: read failed at tick {tick} ({why}); no breaker applies (fail open)")
-        return NOTHING
+            self._notify(f"{self.name}: read failed at tick {tick} ({why}); {self.fallback_note}")
+        return self._value
 
     def _read(self, tick: int, box: dict[str, Any]) -> None:
         try:
@@ -126,13 +140,12 @@ class BreakerBoard:
                 self._conn = self._connect()
                 self._conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 self._conn.commit()
-            rows = self._conn.execute(READ, (tick,)).fetchall()
+            box["value"] = self.query(self._conn, tick)
             self._conn.commit()
-            box["scopes"] = [str(r[0]) for r in rows]
         except psycopg.errors.UndefinedTable:
             self._rollback()
-            box["scopes"] = []  # no breaker was ever tripped on this database
-        except Exception as e:  # noqa: BLE001 — fail open on anything; the type is enough for the log
+            box["value"] = self.no_table()
+        except Exception as e:  # noqa: BLE001 — any failure answers the fallback; the type is enough for the log
             self._drop()
             box["error"] = type(e).__name__
 
@@ -148,6 +161,22 @@ class BreakerBoard:
         if conn is not None:
             with contextlib.suppress(Exception):
                 conn.close()
+
+
+class BreakerBoard(TickBoard[frozenset[str]]):
+    """The tripped scopes, read once per tick; fail open (a failed read: nothing tripped)."""
+
+    name = "breakers"
+    fallback_note = "no breaker applies (fail open)"
+
+    def fallback(self) -> frozenset[str]:
+        return NOTHING  # also no breaker was ever tripped on a database without the table
+
+    def query(self, conn: psycopg.Connection, tick: int) -> frozenset[str]:
+        return frozenset(str(r[0]) for r in conn.execute(READ, (tick,)).fetchall())
+
+    def tripped(self, tick: int) -> frozenset[str]:
+        return self.read(tick)
 
 
 _BOARD: dict[str, BreakerBoard] = {}

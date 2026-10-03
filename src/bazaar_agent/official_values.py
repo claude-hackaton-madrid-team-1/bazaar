@@ -62,6 +62,10 @@ class OfficialValues:
         """The value book of a team client (the SDK's `value(card)`)."""
         return cls(lambda card: client.value(card))  # looked up at read time: a client without it fails closed
 
+    def cached(self, ref: str, tick: int, held: int) -> float | None:
+        """The value already read this tick, or None: never sends a request."""
+        return self._cache.get((ref, tick, held))
+
     def value(self, ref: str, tick: int, held: int) -> float | None:
         """Our official value of one more `ref` this tick, or None when it could not be read (refuse the buy)."""
         key = (ref, tick, held)
