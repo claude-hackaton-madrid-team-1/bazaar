@@ -14,9 +14,14 @@ chaos = pytest.importorskip("tests.bites.chaos")  # needs the simulator (main ha
 RULES = load_guardrails().rules
 
 
-@pytest.fixture(scope="module", params=[0, 10], ids=["steady", "redeploy-every-10-ticks"])
+@pytest.fixture(
+    scope="module",
+    params=[(0, 900), (10, 900), (0, 330)],
+    ids=["steady", "redeploy-every-10-ticks", "steady-near-the-floor"],
+)
 def report(request, tmp_path_factory):
-    return chaos.run_chaos(tmp_path_factory.mktemp("chaos"), ticks=130, restart_every=request.param, start_cash=900)
+    restart, cash = request.param  # 900: the hourly cap binds; 330: the cash floor (270) binds
+    return chaos.run_chaos(tmp_path_factory.mktemp("chaos"), ticks=130, restart_every=restart, start_cash=cash)
 
 
 def test_cash_never_goes_below_the_floor(report):

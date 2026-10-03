@@ -56,7 +56,8 @@ class ChaosReport:
         """The rolling game hour (by settlement `t_hours`) in which we paid the most: (start, total)."""
         best = (0.0, 0)
         for p in self.paid:
-            total = sum(q.amount for q in self.paid if p.t_hours - 1.0 < q.t_hours <= p.t_hours)
+            # the ledger's own window (`spent_since(t - 1.0)`: strictly after): rounded, so 1.0083 - 1.0 is not < 0.0083
+            total = sum(q.amount for q in self.paid if 0 <= round(p.t_hours - q.t_hours, 6) < 1.0)
             if total > best[1]:
                 best = (p.t_hours, total)
         return best
