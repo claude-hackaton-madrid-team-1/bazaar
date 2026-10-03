@@ -1666,7 +1666,10 @@ def venue_open(
             }
         )
         vault = vn.KeyVault.from_settings(settings, _db_connect("bazaar-venue"))
-        outcome, opened = vn.open_venue(_team_client(), spec, rules, live=live, vault=vault)
+        client = _team_client()
+        me = client.me()  # the bond is judged like a purchase: on the cash our open offers do not already promise
+        me = {**me, "cash": int(me.get("cash") or 0) - _open_commitments(client, me).cash}
+        outcome, opened = vn.open_venue(client, spec, rules, live=live, vault=vault, me=me)
         if opened is not None and not opened.saved:  # the key exists only in this process, which now ends
             raise ConfigError(
                 f"venue {opened.venue} is OPEN but its broker key could not be saved. "

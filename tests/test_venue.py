@@ -29,6 +29,9 @@ class FakeTeam:
     def me(self):
         return {"id": "t01", "cash": self.cash, "assets": []}
 
+    def my_offers(self):
+        return {"offers": []}
+
     def clock(self):
         return {"tick": 150, "t_hours": 7.0}
 

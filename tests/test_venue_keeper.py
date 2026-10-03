@@ -447,3 +447,19 @@ def test_a_408_may_have_opened_the_venue_so_the_claim_is_kept(tmp_path):
     k = keeper(tmp_path, Team(refuse=BazaarError("http_408", "", 408)), store=store)
     k.on_tick(snap().clock, snap(), window())
     assert ("", "_claim") in store and k.held_claim
+
+
+def test_a_pause_that_lands_during_the_claim_stops_the_opening_and_gives_the_claim_back(tmp_path, monkeypatch):
+    """Security review round 6, P3: the kill switch is read again right before the POST."""
+    store, team = {}, Team()
+    k = keeper(tmp_path, team, store=store)
+    claim = vn.KeyVault.claim
+
+    def claim_then_pause(self, tick):
+        won = claim(self, tick)
+        (tmp_path / "PAUSE").touch()
+        return won
+
+    monkeypatch.setattr(vn.KeyVault, "claim", claim_then_pause)
+    k.on_tick(snap().clock, snap(), window())
+    assert team.opened == [] and store == {}

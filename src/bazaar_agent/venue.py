@@ -455,6 +455,10 @@ def open_venue(
                 if again is None:  # no answer is not a yes: give the claim back and try again later
                     raise ConfigError("Postgres cannot say whether we opened a venue before: not opening")
                 raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
+        if stops := kill_switch(rules):  # read again after the Postgres round trips: a pause lands any time
+            if durable:
+                vault.release()
+            raise ConfigError(f"kill switch: {'; '.join(stops)}: not opening")
         mechanism = {"mechanism": spec.mechanism}
         try:
             return team.open_venue(
