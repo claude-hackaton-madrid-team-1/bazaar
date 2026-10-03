@@ -70,7 +70,9 @@ VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain value
 SCALAR = (str, int, float, bool, type(None))
 # Nested values (a topic, a give/want side) keep only keys that name a card, a pack or our cash: a probe once
 # published topic {"max": 26, "value": 56.1}. Anything else, at any depth, is dropped.
-NESTED_KEYS = frozenset({"cash", "card", "cards", "ref", "pack", "buy", "sell", "item", "kind"})
+NESTED_KEYS = frozenset(
+    {"cash", "card", "cards", "ref", "pack", "buy", "sell", "item", "kind", "assets", "types", "id", "rarity"}
+)
 NESTED_DEPTH = 3
 
 
@@ -78,8 +80,8 @@ def _clean(value: object, depth: int = NESTED_DEPTH) -> tuple[bool, Any]:
     """(keep, value): a scalar, a list of scalars, or a dict cut down to NESTED_KEYS; else dropped."""
     if isinstance(value, SCALAR):
         return True, value
-    if isinstance(value, list | tuple) and all(isinstance(v, SCALAR) for v in value):
-        return True, list(value)
+    if isinstance(value, list | tuple) and depth > 0:
+        return True, [v for ok, v in (_clean(x, depth - 1) for x in value) if ok]
     if isinstance(value, dict) and depth > 0:
         kept = {k: v for k, (ok, v) in ((k, _clean(x, depth - 1)) for k, x in value.items()) if ok and k in NESTED_KEYS}
         return True, kept
@@ -104,8 +106,10 @@ def _is_sent(row: dict[str, Any]) -> bool:
 
 
 def publishable(row: dict[str, Any]) -> bool:
-    """An unsent `accept_*` row is never published: it says this ask sat below our value."""
-    return _is_sent(row) or not str(row.get("kind") or "").startswith("accept")
+    """Only a sent row is published. The existence, kind and status of an unsent one (a skipped accept, a
+    rejected bid, an expired post) say which limit or quota bound us, so those never leave the process.
+    A `hold_*` row sends nothing, so it is not published either."""
+    return _is_sent(row) and not str(row.get("kind") or "").startswith("hold")
 
 
 def _guardrail(verdict: object, sent: bool) -> str:
@@ -143,7 +147,7 @@ def public_execution(row: dict[str, Any]) -> dict[str, Any]:
         "method": row.get("method"),
         "request": _pick(row.get("request"), REQUEST_FIELDS),
         "ok": row.get("error_code") is None,
-        "error_code": row.get("error_code"),
+        "error_code": None if row.get("error_code") is None else "refused",  # the game's code names our cash/quota
         "created_id": created if isinstance(created, int) else None,
     }
 

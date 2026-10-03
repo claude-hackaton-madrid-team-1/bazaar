@@ -101,11 +101,12 @@ A decision, as published:
   (the counterparty's price), `fee`, `final` and our own `price`, and the `move` (`{kind, price}`,
   `{accept, price}`, `{open_thread, topic}`, `{give, want, venue}`, `{cancel}`, `{hold}`). Nested values
   (`topic`, `give`, `want`) keep only card, pack and cash keys.
-- Any other row (`rejected`, `expired`, every dry-run row, and a maker `reprice_*` row, which is approved but not
-  chosen: its price is the strategy's target) is cut down to
-  `{agent, tick, kind, status, guardrail: "-", jev: null, inputs: {item | ref | card, venue, side}, move: {}}`.
-- An unsent `accept_*` row (a quota skip, a rejection, a dry-run would-accept) is **not published at all**: it
-  would say the counterparty's ask sat below our value.
+- Any other row is **not published at all**: `rejected`, `expired`, every dry-run row, an unsent accept (it would
+  say the ask sat below our value), a `hold_*` row, and a maker `reprice_*` row (approved but not chosen: its
+  price is the strategy's target). Even their kind and status would say which limit or quota bound us, so a dry
+  agent publishes only `agent.tick`.
+- `agent.execution.error_code` is `null` or `refused`: the game's codes (`insufficient_cash`, `persona_quota`,
+  `rate_limited`) name our cash and quota, and stay in the `decisions` table.
 - An execution shows the `request` we sent (`offer`, `thread`, `with`, `topic`, `price`, `give`, `want`,
   `venue`), whether it worked (`ok`, `error_code`) and the id it created (`created_id`), not the
   game's answer body.

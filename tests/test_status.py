@@ -289,11 +289,39 @@ def test_guardrail_and_jev_publish_labels_not_our_cash_or_limits(served):
     denied = "denied: cash 301 - 40 < cash_floor 270; price 40 > max_price_uncommon 26"
     hub.decision(decision(kind="post_bid", guardrail=denied, status="rejected", chosen=False))
     hub.decision(decision(guardrail="-", jev={"verdict": "no", "value": 0.12}))
-    first, second = get(port, "/state")[2]["decisions"]
-    assert (first["guardrail"], second["guardrail"], first["jev"], second["jev"]) == ("-", "-", None, None)
+    (second,) = get(port, "/state")[2]["decisions"]  # the rejected row is not published
+    assert (second["guardrail"], second["jev"]) == ("-", None) and "0.12" not in json.dumps(second)
     hub.decision(decision())  # a sent row was allowed by definition
     assert get(port, "/state")[2]["decisions"][-1]["guardrail"] == "allowed"
-    assert numbers(first).isdisjoint({301.0, 270.0, 26.0}) and "0.12" not in json.dumps(second)
+    assert "denied" not in json.dumps(get(port, "/state")[2]) and "cash_floor" not in json.dumps(get(port, "/state")[2])
+
+
+def test_a_sent_post_keeps_its_cards_and_cash_but_not_extra_keys(served):
+    hub, port = served
+    give = {"cash": 0, "assets": [{"id": 7, "kind": "card", "ref": "LAT-09", "rarity": "common", "value": 35.5}]}
+    hub.decision(decision(kind="post_ask", move={"give": give, "want": {"cash": 68, "assets": []}}))
+    (d,) = get(port, "/state")[2]["decisions"]
+    asset = {"id": 7, "kind": "card", "ref": "LAT-09", "rarity": "common"}
+    assert d["move"] == {"give": {"cash": 0, "assets": [asset]}, "want": {"cash": 68, "assets": []}}
+
+
+def test_only_sent_rows_are_published_and_refusal_codes_are_coarse(served):
+    hub, port = served
+    for kind in ("dealer_accept", "post_bid", "hold_ask", "reprice_bid", "dealer_bid"):
+        for extra in (
+            {"status": "rejected", "chosen": False},
+            {"status": "expired", "chosen": False},
+            {"dry_run": True},
+        ):
+            hub.decision(decision(kind=kind, **extra))
+    hub.decision(decision(kind="hold_ask"))  # approved + chosen + live, but nothing is sent
+    hub.decision(decision(kind="post_bid"))
+    assert [d["kind"] for d in get(port, "/state")[2]["decisions"]] == ["post_bid"]
+    for code in ("insufficient_cash", "persona_quota", "rate_limited"):
+        hub.execution({"decision_id": 1, "tick": 100, "method": "POST", "request": {"offer": 1}, "error_code": code})
+    body = json.dumps(asyncio.run(_drain(port)))
+    assert body.count('"error_code": "refused"') == 3
+    assert not any(c in body for c in ("insufficient_cash", "persona_quota", "rate_limited"))
 
 
 def test_an_unsent_accept_is_not_published_at_all(served):
@@ -312,23 +340,15 @@ def test_an_unsent_accept_is_not_published_at_all(served):
 
 
 @pytest.mark.parametrize("dry_run", [True, None])  # None: a row without the flag counts as a dry run
-def test_a_dry_run_row_is_cut_down_to_card_and_venue(served, dry_run):
+def test_a_dry_run_row_is_not_published(served, dry_run):
     hub, port = served
     row = {"side": "ask", "ref": "LAV-02", "venue": "rastro", "price": 40, "value": 35}
     hub.decision(decision(kind="post_ask", inputs=row, dry_run=dry_run, sent="would-send", move={"want": {"cash": 40}}))
-    (d,) = get(port, "/state")[2]["decisions"]
-    assert (d["status"], d["inputs"], d["move"], d["jev"], d["guardrail"]) == (
-        "approved",
-        {"side": "ask", "ref": "LAV-02", "venue": "rastro"},
-        {},
-        None,
-        "-",
-    )
-    assert numbers(d) == {100.0, 2.0}
+    assert get(port, "/state")[2]["decisions"] == [] and asyncio.run(_drain(port)) == []
 
 
 @pytest.mark.parametrize("kind", ["reprice_ask", "reprice_bid", "hold_ask"])
-def test_a_maker_reprice_row_publishes_no_price(served, kind):
+def test_a_maker_reprice_or_hold_row_is_not_published(served, kind):
     """maker.py writes reprice rows approved + chosen=False with the strategy's TARGET as move.price: for a
     bid that target gives away our top bid (aggressive = 2*fair - quick)."""
     hub, port = served
@@ -342,9 +362,7 @@ def test_a_maker_reprice_row_publishes_no_price(served, kind):
             jev={"verdict": "quick_sale", "value": 0.9},
         )
     )
-    (d,) = get(port, "/state")[2]["decisions"]
-    assert d["move"] == {} and d["jev"] is None and "price" not in d["inputs"]
-    assert numbers(d).isdisjoint({40.0, 27.0, 77.0, 0.9}) and "quick_sale" not in json.dumps(d)
+    assert get(port, "/state")[2]["decisions"] == [] and asyncio.run(_drain(port)) == []
 
 
 def test_nested_values_keep_only_card_and_cash_keys(served):
@@ -364,8 +382,7 @@ def test_a_price_we_never_sent_is_not_published(served):
     unsent = {"side": "ask", "ref": "LAT-09", "price": 68, "value": 35, "venue": "rastro"}
     hub.decision(decision(kind="post_ask", inputs=unsent, status="expired", move={"want": {"cash": 68}}))
     hub.decision(decision(kind="post_ask", inputs=unsent, status="approved", move={"want": {"cash": 68}}))
-    expired, posted = get(port, "/state")[2]["decisions"]
-    assert expired["inputs"] == {"side": "ask", "ref": "LAT-09", "venue": "rastro"} and expired["move"] == {}
+    (posted,) = get(port, "/state")[2]["decisions"]  # the expired row is not published
     assert posted["inputs"]["price"] == 68 and posted["move"] == {"want": {"cash": 68}}
 
 
@@ -380,7 +397,7 @@ def test_a_maker_jev_state_shows_the_card_not_our_cash_or_value(served):
         "cash_floor": 270,
         "cash_above_floor": 142,
     }
-    hub.decision(decision(kind="hold_ask", inputs=state, move={"hold": 77}))
+    hub.decision(decision(kind="post_ask", inputs=state, move={"want": {"cash": 70}}))
     (d,) = get(port, "/state")[2]["decisions"]
     assert d["inputs"] == {"side": "ask", "card": "LAT-09", "price": 70, "venue": "rastro"}
     assert numbers(d).isdisjoint({62.0, 35.5, 35.0, 10.0, 412.0, 270.0, 142.0})
