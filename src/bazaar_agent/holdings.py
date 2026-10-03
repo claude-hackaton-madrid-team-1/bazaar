@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -94,6 +95,19 @@ class MePayload(BaseModel):
     album: dict[str, Any] = Field(default_factory=dict)
     affinity: dict[str, float] = Field(default_factory=dict)
     score: dict[str, Any] | None = None
+
+
+SECRET_FIELD = re.compile(r"key|token|secret|password", re.IGNORECASE)
+
+
+def without_secrets(value: Any) -> Any:
+    """`/api/me` carries `starter_broker_key` once our free stall exists: no field named like a key, token,
+    secret or password is ever stored or answered (read it from a live `team.me()` when you need it)."""
+    if isinstance(value, dict):
+        return {k: without_secrets(v) for k, v in value.items() if not SECRET_FIELD.search(str(k))}
+    if isinstance(value, list):
+        return [without_secrets(v) for v in value]
+    return value
 
 
 def parse_me(raw: Any) -> MePayload | None:
@@ -491,7 +505,7 @@ class Holdings:
     def _read_and_store(self, conn: psycopg.Connection, clock: Clock | None, epoch: int, why: str) -> MeRead:
         """/me from the game, then the upsert in a savepoint: a failed write never loses the read."""
         started = self._now()
-        raw = self._read_me()
+        raw = without_secrets(self._read_me())
         latency = self._now() - started
         self.counts["live"] += 1
         read = self._as_read(raw, clock, epoch, why)
@@ -522,7 +536,7 @@ class Holdings:
         return self._read_and_store(conn, clock, epoch, why)
 
     def _plain(self, clock: Clock | None, why: str) -> MeRead:
-        raw = self._read_me()
+        raw = without_secrets(self._read_me())
         self.counts["live"] += 1
         return self._as_read(raw, clock, None, why)
 

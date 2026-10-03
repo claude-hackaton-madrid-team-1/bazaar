@@ -76,6 +76,16 @@ def test_the_second_reader_in_a_tick_answers_from_the_first_ones_snapshot(opener
     assert maker.counts["db"] == 1 and taker.counts["live"] == 1
 
 
+def test_the_stored_row_never_holds_the_broker_key(opener):
+    game = Game()
+    game.payload["starter_broker_key"] = "bk_live_SECRET_000"
+    reader(opener, game).me(clock(tick=TICK))
+    with SharedDb(opener).session() as conn:
+        (me,) = conn.execute("select me from me_snapshots where team = 't01'").fetchone()
+        assert "starter_broker_key" not in me and "bk_live_SECRET_000" not in str(me)
+    assert "starter_broker_key" not in reader(opener, game, "maker").me(clock(tick=TICK)).me
+
+
 def test_a_snapshot_from_an_older_tick_is_never_used(opener):
     game = Game(tick=TICK)
     reader(opener, game).me(clock(tick=TICK))

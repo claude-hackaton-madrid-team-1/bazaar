@@ -116,6 +116,13 @@ def test_no_clock_unknown_team_or_the_kill_switch_read_live():
     assert off.me(clock()).why == "holdings_from_db = false"
 
 
+def test_no_key_shaped_field_is_ever_answered():
+    secret = {**ME, "tick": 100, "starter_broker_key": "bk_live_SECRET_000", "venue": {"api_token": "x", "name": "v"}}
+    read = Holdings(Reads(secret), SharedDb(None), reader="t", rules=Guardrails(), team="t01").me(clock())
+    assert "starter_broker_key" not in read.me and read.me["venue"] == {"name": "v"}
+    assert "bk_live_SECRET_000" not in str(read.me) and read.me["cash"] == ME["cash"]
+
+
 def test_a_refused_me_read_is_raised_not_hidden():
     def refused():
         raise BazaarError("rate_limited", "slow down", 429)
