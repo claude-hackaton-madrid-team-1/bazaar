@@ -370,3 +370,12 @@ def test_a_responsive_rival_answers_each_offer_of_ours_once_in_either_tick_order
     hold = scenario(style="holdout", params={"open": 0.6, "hold": 0.2, "steps": 1}, rival_limit=200)
     _, final = zoo.play(Script(zoo.Act("offer", 400)), zoo.Scenario(**{**hold.__dict__, "team_first": team_first}))
     assert rival_prices(final).count(160) == 1  # it restated its hold price to our one offer once, not every tick
+
+
+def test_a_deaf_conceder_still_concedes_but_never_accepts():
+    sc = scenario(style="linear", params={**LINEAR, "listens": 0.0}, rival_limit=200)
+    record, final = zoo.play(Script(*[zoo.Act("offer", 120)] * 12), sc)  # 120 leaves it 80 P: a listener takes it
+    assert record.status == "no_deal" and len(rival_prices(final)) >= 2
+    assert zoo.play(Script(*[zoo.Act("offer", 120)] * 12), scenario(style="linear", params=LINEAR, rival_limit=200))[
+        0
+    ].deal

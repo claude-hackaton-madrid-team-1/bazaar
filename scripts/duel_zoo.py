@@ -204,6 +204,7 @@ SENSITIVITY: tuple[tuple[str, tuple[str, ...], dict[str, float]], ...] = (
     ("tit-for-tat ratio 0.4, no drift", ("tit_for_tat",), {"ratio": 0.4, "drift": 0.0}),
     ("tit-for-tat ratio 1.2, drift 2 %", ("tit_for_tat",), {"ratio": 1.2, "drift": 0.02}),
     ("holdout holds at 30 %", ("holdout",), {"hold": 0.3}),
+    ("conceders and holdouts never accept", ("linear", "convex", "tit_for_tat", "holdout"), {"listens": 0.0}),
 )
 
 

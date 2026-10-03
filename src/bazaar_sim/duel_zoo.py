@@ -282,9 +282,10 @@ Rival = Callable[[RivalView], Act]
 
 def _accepts(view: RivalView, next_price: int | None, floor: float = 0.0) -> bool:
     """The common rule: take our standing offer when it is newer than the rival's own, inside the rival's
-    limit, and at least as good for it as its next price, or in the endgame when it beats `floor`."""
+    limit, and at least as good for it as its next price, or in the endgame when it beats `floor`. A rival
+    with `listens` = 0 never accepts (a sensitivity case: drawn rivals of these styles always listen)."""
     ours = view.our_offer
-    if ours is None or not view.fresh():
+    if ours is None or not view.fresh() or not view.params.get("listens", 1.0):  # a deaf rival never accepts
         return False
     mine = view.utility(ours.price, ours.days)
     if mine <= 0:
