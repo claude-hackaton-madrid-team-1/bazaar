@@ -1451,6 +1451,9 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Branch |
 |---|---|---|
+| [#270](../../pull/270) | docs: correct the Sunday schedule | `docs/sunday-times` |
+| [#269](../../pull/269) | feat: calibrated Sunday scenario for bazaar-sim | `feat/sim-sunday` |
+| [#268](../../pull/268) | docs: 3-minute motion pitch deck | `docs/pitch-motion` |
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
