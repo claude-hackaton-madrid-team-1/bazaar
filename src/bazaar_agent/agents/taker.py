@@ -946,6 +946,8 @@ class Taker:
         if dp is not None and dp.final_max is not None:
             op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        if not verdict.allowed and op.item in run.boost and self.cards is not None:
+            self.cards.unboost(op.item)  # a refused release never holds this dealer's slot again
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""
         # Private keys (not on the public /state allow-list): which learning changed the plan, and what was recalled.

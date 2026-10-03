@@ -208,17 +208,19 @@ def test_a_tampered_hint_file_drops_its_bad_rows_and_never_raises(tmp_path):
         {"kind": "new_card", "card": "RET-01", "set": "RET", "rarity": "common", "tick": "7", "minted": 1},
         {"kind": "new_card", "card": ["x"], "tick": 1, "minted": 1},
         {"kind": "rm -rf", "card": "RET-02", "tick": 1, "minted": 1},
+        {"kind": "new_card", "card": "RET-04", "tick": 10**400, "minted": 1},
+        {"kind": "new_card", "card": "RET-05", "tick": 1, "minted": 10**400, "print_run": 10**400},
         {"kind": "new_card", "card": "RET-03", "set": "RET", "rarity": "rare", "tick": 1, "minted": 2,
          "sold_by": ["chato", 5, "[red]x"], "packs": "nope"},
     ]  # fmt: skip
-    baseline = {"LAV-01": {"set": "LAV", "minted": "x", "visible": True}, "LAV-02": {"set": "LAV", "visible": True}}
+    baseline = {"LAV-02": {"set": "LAV", "visible": True, "minted": 3}}
     (tmp_path / "agents").mkdir()
     (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"events": bad, "baseline": baseline}))
     h, lines, _ = beat(tmp_path)
     assert [(e.card, e.sold_by, e.packs) for e in h.events] == [("RET-03", ("chato", "_red_x"), ())]
-    assert list(h.baseline) == ["LAV-02"] and h.baseline["LAV-02"]["minted"] is None
+    assert list(h.baseline) == ["LAV-02"] and h.baseline["LAV-02"]["minted"] == 3
     assert h.boost(5) == {"RET-03": hb.BOOST}
-    h.observe(5, cat(lav(card("LAV-01"), card("LAV-02", minted=9))), MENUS)
+    h.observe(5, cat(lav(card("LAV-02", minted=4))), MENUS)
     h.flush(5)
     assert not any("skipped" in x or "no boost" in x or "not written" in x for x in lines)
 
@@ -253,3 +255,38 @@ def test_the_taker_opens_a_boosted_dealer_buy_first():
     plain = strategy.build_playbook(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES)
     low, high = sorted((m for m in plain.buys if m.source == "abuela"), key=lambda m: m.score)[:2]
     assert boosted_score(low, {low.ref: 10.0}) > boosted_score(high, {}) and boosted_score(low, None) == low.score
+
+
+def test_a_baseline_that_lost_an_entry_is_a_first_look_not_a_wave_of_releases(tmp_path):
+    baseline = {"LAV-01": {"set": "LAV", "minted": "x", "visible": True}, "LAV-02": {"set": "LAV", "visible": True}}
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"baseline": baseline, "events": []}))
+    h, _, _ = beat(tmp_path)
+    assert h.baseline == {}
+    assert h.observe(1, cat(lav(card("LAV-01"), card("LAV-02"))), MENUS) == []
+
+
+def test_huge_numbers_in_the_hint_file_never_stop_the_taker_from_starting(tmp_path):
+    (tmp_path / "agents").mkdir()
+    big = {"LAV-01": {"set": "LAV", "visible": True, "minted": 10**400, "print_run": 10**400}}
+    (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"baseline": big, "events": "x"}))
+    h, _, _ = beat(tmp_path)
+    assert h.baseline == {} and h.events == [] and h.boost(1) == {}
+
+
+@pytest.mark.official_values
+def test_a_refused_boosted_opening_gives_the_slot_back_on_the_next_tick(tmp_path, monkeypatch):
+    monkeypatch.setattr(hb, "BOOST", 10.0)
+    lines: list[str] = []
+    cards = hb.CardsHeartbeat(ON, lambda rows: None, lines.append, tmp_path / "agents")
+    cards.events = [hb.CardEvent("new_card", "LAV-02", "LAV", "common", 1, 1, 30, ("abuela",), (), ())]
+    team = ValueTeam({"LAV-02": 1.0, "LAV-08": 100.0})
+    t = Taker(
+        team, FakePublic(), live=True, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=1), cards=cards, **parts(tmp_path),
+    )  # fmt: skip
+    t.on_tick(clock(tick=1))
+    assert team.sent == [] and cards.boost(2) == {}  # refused: the boost is gone
+    t.on_tick(clock(tick=2))
+    assert [s[0] for s in team.sent][:1] == ["open_thread"]
+    assert any("open thread with abuela for LAV-08" in x and "allowed" in x for x in lines)

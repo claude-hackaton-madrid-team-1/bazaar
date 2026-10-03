@@ -34,6 +34,7 @@ from bazaar_agent.learn.model import Learning
 EVENTS_FILE = "card_events.json"
 MINTED_JUMP = 3  # copies printed since the last report that make a jump worth a hint
 BOOST = 1.5  # rank multiplier of a boosted card's score (ranking only)
+MAX_COUNT = 2**31 - 1  # a tick or a count beyond this is not a game number (and would not fit the store)
 KEEP_EVENTS = 200  # the file keeps the newest events only
 KINDS = frozenset({"new_card", "set_released", "minted_jump"})
 BOOSTED = frozenset({"new_card", "set_released"})  # a minted jump is a hint, never a rank boost
@@ -89,7 +90,9 @@ def _count(value: Any) -> int | None:
     """A non-negative whole count, or None (missing, a bool, a float that is not whole, text)."""
     if isinstance(value, bool) or not isinstance(value, int | float) or value != value or value < 0:
         return None
-    return int(value) if float(value).is_integer() else None
+    if isinstance(value, int):
+        return value if value <= MAX_COUNT else None
+    return int(value) if value.is_integer() and value <= MAX_COUNT else None  # inf is not an integer
 
 
 def _entry(value: Any) -> dict[str, Any] | None:
@@ -241,6 +244,7 @@ class CardsHeartbeat:
         self.baseline: dict[str, dict[str, Any]] = {}
         self.events: list[CardEvent] = []
         self._pending: list[CardEvent] = []
+        self._dropped: set[str] = set()  # cards whose boosted opening guardrails refused
         self._load()
 
     def observe(self, tick: int, catalog: Mapping[str, Any], dealers: Iterable[Mapping[str, Any]]) -> list[CardEvent]:
@@ -257,9 +261,14 @@ class CardsHeartbeat:
             self.log(f"tick {tick} cards: skipped ({type(e).__name__})")
             return []
 
+    def unboost(self, card: str) -> None:
+        """Guardrails refused this card's opening (e.g. no official value above the ladder start): it goes back to
+        today's order for the rest of its window, so it never holds a dealer's slot tick after tick (#185 review)."""
+        self._dropped.add(card)
+
     def boost(self, tick: int) -> dict[str, float]:
         try:
-            return boost(self.rules, self.events, tick)
+            return {k: v for k, v in boost(self.rules, self.events, tick).items() if k not in self._dropped}
         except Exception as e:  # noqa: BLE001 — no boost is today's ranking: never break a tick
             self.log(f"tick {tick} cards: no boost ({type(e).__name__})")
             return {}
@@ -300,8 +309,10 @@ class CardsHeartbeat:
             body = json.loads(self.path.read_text())
             raw = body.get("baseline") or {}
             entries = {_str(k): _entry(v) for k, v in raw.items() if isinstance(k, str)}
-            self.baseline = {k: v for k, v in entries.items() if k and v is not None}
+            # A baseline that lost an entry is no baseline: its cards would all read as fresh releases.
+            ok = all(k and v is not None for k, v in entries.items())
+            self.baseline = {k: v for k, v in entries.items() if v is not None} if ok else {}
             rows = body.get("events") if isinstance(body.get("events"), list) else []
             self.events = [ev for ev in map(_event, rows[-KEEP_EVENTS:]) if ev is not None]
-        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+        except Exception:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
             self.baseline, self.events = {}, []
