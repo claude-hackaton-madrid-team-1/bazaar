@@ -253,3 +253,9 @@ def test_level_events_with_both_level_and_persona_join_on_the_dealer():
     ]
     (lv,) = levels(events)
     assert lv.dealer == "chato" and lv.unlocked == (("t01", 99, "x"),)
+
+
+def test_the_reason_names_the_opening_ask_when_it_is_the_bound():
+    tight = FloorRow("abuela", "card:common", 10, 5, 5, (10, 10, 10, 10, 10), 5, None, 2.0)
+    choice = plan_for(tight, cap=None)
+    assert choice.plan is None and "its opening ask 10 below market" in choice.reason

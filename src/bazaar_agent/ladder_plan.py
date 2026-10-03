@@ -267,7 +267,9 @@ def schedule(
                 tick = next_hour_tick
             else:  # a rolling-hour cap: try again when the oldest slot in it ages out
                 later = [s.tick + hour_ticks for s in slots if s.tick + hour_ticks > tick]
-                if not later:  # nothing ages out (a 0 quota, or spend from before the window): give up
+                if spent_this_hour and tick < hour_ticks:
+                    later.append(hour_ticks)  # spend from before the window ages out an hour in
+                if not later:  # nothing ages out (a 0 quota): give up
                     break
                 tick = min(later)
         if not placed:
