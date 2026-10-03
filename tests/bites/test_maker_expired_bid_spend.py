@@ -16,7 +16,7 @@ from tests.agent_fakes import bid
 from tests.test_maker import NoAccept, maker, posted
 
 SUNDAY_TICK_S = 15.0
-TTL = 40  # MakerConfig.offer_ttl_ticks
+TTL = 40  # the lifetime the server grants (`expires_tick` in its answer), whatever the maker asks for
 
 
 def sunday(tick: int, t0: int, h0: float) -> Clock:
@@ -34,6 +34,8 @@ class Listing(NoAccept):
         posted = super().list_offer(give, want, venue, to, expires_in_ticks)
         if give.get("cash"):
             self.bid_ids = [*getattr(self, "bid_ids", []), posted["id"]]
+            # the live server grants less than asked (Sat 3 Oct: 40 asked, 20 given): the bid lapses at TTL
+            posted = {**posted, "expires_tick": self.now.tick + TTL}
         return posted
 
 
@@ -43,22 +45,25 @@ def test_one_standing_bid_reposted_after_expiry_counts_once_in_the_hour(tmp_path
     t0, h0 = 2000, 20.0
     for cycle in range(3):  # 3 TTLs = 30 min on Sunday: well inside one game hour
         team.offers = []  # the previous bid lapsed unfilled: the server no longer lists it
-        m.on_tick(sunday(t0 + cycle * TTL, t0, h0))
+        team.now = sunday(t0 + cycle * TTL, t0, h0)
+        m.on_tick(team.now)
         now = sunday(t0 + cycle * TTL, t0, h0)
         assert m.ledger.spent_since(now.t_hours - 1.0) <= 130  # the new bid + at most the lapse being confirmed
     now = sunday(t0 + 2 * TTL + 1, t0, h0)
     team.offers = [bid(team.bid_ids[-1], "LAV-09", 65, expires=now.tick + TTL - 1, created=now.tick - 1)]
+    team.now = now
     m.on_tick(now)  # the lapse seen at the last cycle is confirmed (the card never came); the newest bid stands
     # Only one bid of 65 was ever open at a time: the hour's committed spend is 65.
     assert m.ledger.spent_since(now.t_hours - 1.0) == 65
 
 
 def test_the_bid_target_stays_on_the_board_all_hour(tmp_path):
-    team = NoAccept()
+    team = Listing()  # answers each bid with the server's expires_tick
     m, lines = maker(tmp_path, team, live=True)
     t0, h0 = 2000, 20.0
     for cycle in range(5):  # 50 min on Sunday
         team.offers = []
-        m.on_tick(sunday(t0 + cycle * TTL, t0, h0))
+        team.now = sunday(t0 + cycle * TTL, t0, h0)
+        m.on_tick(team.now)
     bids = [p for p in posted(team) if p[1].get("cash")]
     assert len(bids) == 5, [line for line in lines if "max_spend_per_game_hour" in line][:1]

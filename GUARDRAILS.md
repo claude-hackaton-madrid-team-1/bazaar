@@ -47,6 +47,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Jev
 - `jev_can_accept_early` = true — a decided Jev "accept" may close a deal sooner, never above the limit.
+- `jev_accept_min_share` = 0.5 — a Jev early accept in a dealer thread also needs her ask to give up at least this share of the gap between her opening ask and our first bid (0 = any ask inside the limit). The dealers match our step, so holding on meets her near the middle; Sat 3 Oct: three deals taken at her ask after 2-3 bids captured 0.13-0.33 of it, and our ladder share was 0.009.
 - `jev_timeout_s` = 3.0 — a Jev call that takes longer is `undecided` (Sunday ticks are 15 s).
 - `jev_cache_ticks` = 4 — the taker reuses a Jev answer (offer accept, pack slot) for the same state, tick and game hour aside, for this many ticks; a failed call is asked again next tick; 0 asks every time (SP1).
 

@@ -906,6 +906,7 @@ def dealer_buy(
                 **inspector,
                 bluff=bluff,
                 events=_feed_reader(settings),
+                jev_min_share=rules.jev_accept_min_share,
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break

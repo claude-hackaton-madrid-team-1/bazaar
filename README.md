@@ -1332,14 +1332,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
+- [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
 - [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
 - [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 - [2026-10-03] finding — the published traits predict Friday's dealer limits within 5 % (N19)
 - [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
-- [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
-- [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
 
 <!-- BAZAAR:STATUS:END -->
 

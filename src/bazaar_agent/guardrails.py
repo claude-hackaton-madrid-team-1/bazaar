@@ -82,6 +82,7 @@ class Guardrails(BaseModel):
     max_accepts_per_tick: int = 1
     dealer_max_ticks_per_thread: int = 14
     jev_can_accept_early: bool = True
+    jev_accept_min_share: float = Field(default=0.0, ge=0, le=1)
     jev_timeout_s: float = 3.0
     # Speed (SP1). Off here, so code built without GUARDRAILS.md behaves as before; the file turns them on.
     jev_cache_ticks: int = Field(default=0, ge=0, le=60)
@@ -230,6 +231,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_accepts_per_tick": "guardrails.check + ledger.reserve_accept (shared, atomic)",
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice; agents.duel_jev.choose",
+    "jev_accept_min_share": "agents.dealer.apply_advice (taker._jev_early, cli dealer buy)",
     "jev_timeout_s": "jev.judge (dealer buy, taker, duels, maker)",
     "jev_cache_ticks": "agents.jev_cache (taker offer Jev, pack gate)",
     "parallel_reads": "agents.runtime.read_together (snapshot, taker boards and threads)",
