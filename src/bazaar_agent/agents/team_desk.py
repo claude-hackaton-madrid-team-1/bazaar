@@ -202,6 +202,7 @@ class TeamDesk:
         self._payloads: dict[int, dict[str, Any]] = {}
         self._closed: set[int] = set()  # threads we closed this tick: still in this tick's list, never adopted
         self._refused: set[int] = set()  # their offers we refused (logged once)
+        self._tried: set[int] = set()  # threads whose read was tried this tick (refused ones included)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
@@ -240,15 +241,17 @@ class TeamDesk:
     # ------------------------------------------------------------ (1) what they offer us
 
     def proposals(self, v: DeskView) -> list[SwapAccept]:
-        self._payloads, self._closed = {}, set()
+        self._payloads, self._closed, self._tried = {}, set(), set()
         if disabled(self.rules, self.env):  # no accepts; still read our team threads (at most six, and none when
             for t in self._team_threads(v):  # /api/me/threads carries them), so a take is booked and its thread
+                self._tried.add(int(t["id"]))
                 if payload := self._payload(t):  # is never closed under a deal, with no memory after a restart
                     self._payloads[int(t["id"])] = payload
             return []
         venues = {x.id: x for x in v.venues}
         out: list[SwapAccept] = []
         for t in self._team_threads(v):
+            self._tried.add(int(t["id"]))  # tried this tick, read or refused: never read twice in a tick
             payload = self._payload(t)
             if not payload:
                 continue
@@ -732,9 +735,11 @@ class TeamDesk:
         """Offers of ours whose end we have not seen yet (a closed thread, an unclear cancel): read their thread
         again, give the spend back once one reads dead, keep it if it settled or after `CHECK_TICKS`."""
         for oid, (tid, offer, since) in list(self.to_check.items()):
-            if tid not in self._payloads:  # one read per thread per tick, a refused one included (no retry)
-                self._payloads[tid] = self._payload({"id": tid})
-            payload = self._payloads[tid]
+            if tid not in self._tried:  # one read per thread per tick, a refused one included (no retry);
+                self._tried.add(tid)  # only a successful read is stored: the talk loop and _inbound trust it
+                if fetched := self._payload({"id": tid}):
+                    self._payloads[tid] = fetched
+            payload = self._payloads.get(tid, {})
             status = offer_status(payload, oid, v.us)
             if status in DEAD:
                 self._refund(v, offer)

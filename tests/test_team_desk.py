@@ -979,3 +979,23 @@ def test_a_send_answered_5xx_keeps_its_spend_and_the_offer_is_picked_up(tmp_path
     landed |= {"give": {"assets": [{"id": 3}], "cash": 1}, "want": {"cards": ["LAV-02"]}}
     d.proposals(view([thread(offers=[landed])], tick=TICK + 1))
     assert (d.talks[42].offer_id, d.talks[42].cash, d.talks[42].sent_tick) == (709, -1, TICK)
+
+
+def test_a_refused_read_while_checking_a_refund_never_counts_as_seeing_the_thread(tmp_path):
+    # pr-reviewer #123 r6 P2: a refused read stored as {} made the talk loop treat thread 42 as read and close it.
+    from bazaar_agent.sdk import BazaarError
+
+    class NoRead(Team):
+        def thread(self, tid):
+            self.sent.append(("thread", tid))
+            raise BazaarError("rate_limited", "slow down", 429)
+
+    team = NoRead()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    d.to_check[702] = (42, {"id": 702, "give": {"cash": 1}}, TICK)
+    team.sent.clear()
+    bare = {k: v for k, v in thread().items() if k not in ("messages", "standing_offers")}  # needs a read
+    d.proposals(view([bare], tick=TICK + 5))
+    d.converse(view([bare], tick=TICK + 5), set())
+    assert team.sent == [("thread", 42)]  # one refused read, no second one, and nothing sent unseen
