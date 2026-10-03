@@ -82,8 +82,8 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
 - **Page cards still cost points when sold:** `your_value` is the collection value lost by removing
   that copy, and on a complete page our only copy of a page card carries the whole page bonus. On
   Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never
-  score". *[inferred by the coordinator, not in the audit: the page cards we had bought from teams
-  were revalued at the new `your_value`; see `.ai/memory.md`, same date.]*
+  score": the sale to Pilar at 29 of a copy whose `your_value` was 118.6 scores price − `your_value` =
+  −89.6 `neg_points`, even to a dealer (`.ai/memory.md`, finding at tick 947).
 - **Separate scoring models (Omar, Sat 3 Oct):** RULES.md counts duels inside the Negotiating 30, but each
   mechanism has its own formula and the agents never mix their numbers or lessons.
   - Duels: the share of each deal's pie we capture × (1 − decay)^rounds, rounds = min(our priced messages,
