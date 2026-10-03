@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field
 
 from bazaar_agent.config import BROKER_ENV_FILE, REPO_ROOT, ConfigError, Settings
-from bazaar_agent.guardrails import VENUE_COST, Action, Context, Guardrails, Verdict, check
+from bazaar_agent.guardrails import VENUE_COST, Action, Context, Guardrails, Verdict, check, kill_switch
 
 GAME_HOST = "bazaar.causaprima.ai"
 SIM_BROKER_PREFIX = "simbk-"
@@ -124,13 +124,14 @@ class VenueOutcome:
 
 
 def venue_context(rules: Guardrails, clock: dict[str, Any], cash: int = 0) -> Context:
-    """What `check()` needs for a venue write: cash (for the bond), the tick, and the pause file."""
+    """What `check()` needs for a venue write: cash (for the bond), the tick, and the kill switch read live (#68)."""
     return Context(
         cash=cash,
         held={},
         tick=int(clock.get("tick") or 0),
         t_hours=float(clock.get("t_hours") or 0.0),
         paused=(REPO_ROOT / rules.pause_file).exists(),
+        stops=kill_switch(rules),
     )
 
 
