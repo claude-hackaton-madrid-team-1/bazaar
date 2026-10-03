@@ -763,6 +763,7 @@ symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspecto
 was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
 offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
 the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
+
 ### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
 ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
