@@ -885,3 +885,10 @@ bonus; a wrong one costs points.
 `docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
 `docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
+
+### [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
+`console.print(f"    {words}")` indents only the first line: the wrapped rest starts at column 0, and padding made
+of "printable" blanks (U+2800 braille blank, U+3164/U+FFA0 Hangul fillers) can push a forged line there (#176 review).
+Print untrusted text as `Padding(Text(words), (0, 0, 0, 4))` (literal, every wrapped line indented) after blanking
+unprintable characters and those fillers (`flags_cli.printable`).
+

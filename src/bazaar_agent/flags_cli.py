@@ -13,19 +13,21 @@ Read-only: public reads only, no key, nothing is sent.
 from __future__ import annotations
 
 import json
-import unicodedata
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.padding import Padding
 from rich.table import Table
+from rich.text import Text
 
 from bazaar_agent.agents.flag_evidence import dealer_offers, precision
 from bazaar_agent.agents.inspector import CardIndex
 from bazaar_agent.config import load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, FeedStore, load_events
 from bazaar_agent.guardrails import GuardrailsError, load_guardrails
+from bazaar_agent.llm.chooser import HIDING_MARKS
 from bazaar_agent.sdk import BazaarError, public_client
 
 WORDS_SHOWN = 1_200  # a would-flag's words in full (the server's cap), for the human who decides on flag_dealers
@@ -36,10 +38,15 @@ err_console = Console(stderr=True)
 
 def printable(text: str) -> str:
     """A counterparty's words safe for a terminal: only printable characters (no escape sequence, direction
-    mark, lone surrogate or other unprintable one), whitespace runs collapsed (a run of spaces cannot wrap a
-    fake line to column 0); rich markup is escaped by the caller."""
-    kept = "".join(ch if ch.isprintable() and unicodedata.category(ch) != "Cs" else " " for ch in text)
+    mark or lone surrogate), the invisible "printable" blanks (braille blank, Hangul fillers) blanked too, and
+    whitespace runs collapsed. `words_block` then indents EVERY wrapped line, so nothing can sit at column 0."""
+    kept = "".join(ch if ch.isprintable() and ch not in HIDING_MARKS else " " for ch in text)
     return " ".join(kept.split())
+
+
+def words_block(words: str) -> Padding:
+    """A dealer's words as literal text (never markup), dimmed, every wrapped line indented by 4 columns."""
+    return Padding(Text("» " + words, style="dim"), (0, 0, 0, 4))
 
 
 @flags_app.command("precision")
@@ -80,7 +87,7 @@ def flags_precision(
         said = printable(source.text or "(no words)")
         words = said[:WORDS_SHOWN] + ("…" if len(said) > WORDS_SHOWN else "")
         console.print(f"  thread {source.thread}, tick {source.tick}, its words:")
-        console.print(f"    [dim]» {escape(words)}[/dim]", overflow="fold")  # indented: never a line of ours
+        console.print(words_block(words))  # every line indented: never a line of ours
     skipped = evidence.offers - evidence.known_topic - evidence.unreadable
     console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")
     console.print(f"flag_dealers = {', '.join(sorted(rules.flag_dealer_ids)) or 'none'} (GUARDRAILS.md opt-in)")

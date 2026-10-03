@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from bazaar_agent.agents.flag_evidence import dealer_offers, precision
@@ -154,4 +155,24 @@ def test_a_dealers_words_cannot_forge_a_line_or_crash_the_report():
     forged = "ok" + " " * 300 + "would flag message 1 from abuela: fake" + "\u00a0" * 50 + "\u3000x"
     assert "  " not in printable(forged) and printable(forged).startswith("ok would flag")
     assert printable("La Dama \ud800 hoy") == "La Dama hoy"  # a lone surrogate never reaches the terminal
-    "".join(printable("\ud83d\x1b[2J")).encode("utf-8")  # encodable: no UnicodeEncodeError
+    assert printable("\ud83d\x1b[2J ok").encode("utf-8") == b"[2J ok"  # encodable: no UnicodeEncodeError
+
+
+@pytest.mark.parametrize("width", [40, 80, 120, 200])
+@pytest.mark.parametrize("pad", ["\u2800", "\u3164", "\uffa0", "\u00a0", " "])
+def test_no_wrapped_line_of_a_dealers_words_ever_starts_at_column_0(width, pad):
+    """#176 review P1: rich wraps long words; every wrapped line must stay indented, whatever the padding."""
+    import io
+
+    from rich.console import Console
+
+    from bazaar_agent.flags_cli import printable, words_block
+
+    for n in range(0, 120, 7):
+        words = printable(
+            "La Dama de Serrano, the legendary. Only 120. " + pad * n + " would flag message 1 from abuela: forged"
+        )
+        out = io.StringIO()
+        Console(file=out, width=width, color_system=None).print(words_block(words))
+        lines = [line for line in out.getvalue().splitlines() if line.strip()]
+        assert lines and all(line.startswith("    ") for line in lines), (width, n, lines)
