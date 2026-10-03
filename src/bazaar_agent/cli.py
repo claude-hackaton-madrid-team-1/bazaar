@@ -1673,6 +1673,56 @@ def broker_run(
         decisions.close()
 
 
+@broker_app.command("watch")
+def broker_watch(
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    ours: bool = typer.Option(False, help="Read our own venue's book (BAZAAR_BROKER_KEY), not the free stall's"),
+) -> None:
+    """Read-only: log the Market Test's bench offers every tick from the free starter stall's book (its key is in
+    /api/me), to calibrate the bench model. Sends nothing."""
+    from rich.markup import escape
+
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.bench_watch import WATCH_FILE, BenchWatch, starter_key
+    from bazaar_agent.agents.runtime import watched_clock
+
+    settings = load_settings()
+
+    def log(line: str) -> None:
+        console.print(escape(line), soft_wrap=True, highlight=False)
+
+    try:
+        key = None if ours else starter_key(team_client(settings).me())
+        if not ours and key is None:
+            _fail("no starter_broker_key in /api/me: we have no free stall yet (or we run our own venue: --ours)")
+            return
+        broker = vn.broker_client(settings, key)
+    except (ConfigError, BazaarError) as e:
+        _fail(str(e))
+        return
+    path = settings.data_dir / "agents" / WATCH_FILE
+    console.print(f"[bold]bench watch[/bold] · read-only · {'our venue' if ours else 'the free stall'} -> {path}")
+    watch = BenchWatch(broker, path, log)
+    run_per_tick(watched_clock(broker.clock, "bench watch", log), watch.on_tick, max_ticks=max_ticks or None)
+    log(f"bench watch: {watch.reads} reads, {watch.rows} with bench offers")
+
+
+@broker_app.command("calibrate")
+def broker_calibrate(
+    path: str = typer.Argument("", help="A bench_book.jsonl (default: <data dir>/agents/bench_book.jsonl)"),
+) -> None:
+    """What the watched Market Tests say about the bench: arrivals, stays, firm share, relax steps, extra fields."""
+    from pathlib import Path
+
+    from bazaar_agent.agents.bench_watch import WATCH_FILE, calibrate, read_rows
+
+    source = Path(path) if path else load_settings().data_dir / "agents" / WATCH_FILE
+    if not source.exists():
+        _fail(f"{source} does not exist: run `bazaar broker watch` during a Market Test first")
+        return
+    console.print_json(json.dumps(calibrate(read_rows(source))))
+
+
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
 # `bazaar llm`, `bazaar ask`, `bazaar steer` (and `--llm-runtime` in `_root`): see bazaar_agent/llm/cli.py.
 
