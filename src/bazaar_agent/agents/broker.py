@@ -43,7 +43,7 @@ from bazaar_agent import telemetry as tm
 from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge_plan, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.bench_probe import BenchProbe
-from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
+from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
@@ -280,6 +280,7 @@ class BrokerAgent:
         self.edge = BenchEdge(PRIORS["normal"])  # used only with bench_policy = "edge"
         self.edge_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that come from the edge itself
         self.probe = BenchProbe()  # used only with bench_policy = "probe"
+        self.bench_runs: set[str] = set()  # "b87-": bench runs seen, to spot their rows in the book's settlements
         self.probe_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that are probes (quotes do not cross)
         self.stats_dir = stats_dir
         self.rec = Recorder("broker", decisions, live, log, hub)
@@ -318,6 +319,8 @@ class BrokerAgent:
         if bench := sorted((q for q in found.quotes if q.bench), key=lambda q: str(q.id)):
             # the whole bench book, every tick: arrivals, quote drift and departures are only seen here
             self.log(f"tick {clock.tick} broker: bench book " + " ".join(f"{q.id}:{q.side[0]}{q.price}" for q in bench))
+        if self.config.bench_policy == "probe":
+            self._log_bench_settlements(clock.tick, book, found.quotes)
         plan = self._plan(quotes, Fee(book.fee_bps, book.fee_per_card), clock.tick, book)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
@@ -352,6 +355,15 @@ class BrokerAgent:
             )
         public = [q for q in quotes.quotes if not q.bench]
         return picked.matches + plan_matches(public, fee, cap - len(picked.matches))
+
+    def _log_bench_settlements(self, tick: int, book: BrokerBook, found: list[Quote]) -> None:
+        """The book's `settlements` rows that name a bench run we saw: whether a queued probe really settled (the
+        POST only says `queued`) may show nowhere else before the session's score."""
+        self.bench_runs |= {q.item.removeprefix("bench:") + "-" for q in found if q.bench}
+        rows = (book.model_extra or {}).get("settlements") or []
+        named = [json.dumps(r, sort_keys=True) for r in rows if any(run in json.dumps(r) for run in self.bench_runs)]
+        if named:
+            self.log(f"tick {tick} broker: bench settlements {len(named)}: " + " | ".join(named)[:600])
 
     def _with_probes(self, exact: list[Match], quotes: Quotes, fee: Fee, tick: int, cap: int) -> list[Match]:
         """The exact plan, untouched and first, then the probes in the slots left: a probe never displaces,

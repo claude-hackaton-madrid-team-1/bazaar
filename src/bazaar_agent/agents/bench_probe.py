@@ -77,12 +77,13 @@ class BenchProbe:
         self.codes: Counter[str] = Counter()  # refusal codes over every run: the server's answer to the question
         self.pending: list[Match] = []  # probes the server queued, settled (or dropped) by the next read
         self.quote_rule = False  # a whole run refused every probe: no more probes while this process lives
+        self.limit_rule = False  # a probe settled: the server checks limits, and no run gives up any more
 
     def _run(self, item: str) -> _Run:
         return self.runs.setdefault(item.removeprefix("bench:"), _Run())
 
     def active(self, item: str) -> bool:
-        return not self.quote_rule and not self._run(item).given_up(self.config)
+        return self.limit_rule or (not self.quote_rule and not self._run(item).given_up(self.config))
 
     def resolve(self, bench: Iterable[Quote]) -> list[tuple[Match, bool]]:
         """Settle last tick's queued probes against this tick's book: accepted when both traders are gone."""
@@ -136,14 +137,19 @@ class BenchProbe:
         run.prices[key].add(m.price)
         if accepted:
             run.accepted += 1
+            self.limit_rule, self.quote_rule = True, False
         else:
             run.refused += 1
             self.codes[code or "unknown"] += 1
-            self.quote_rule = self.quote_rule or run.given_up(self.config)
+            self.quote_rule = not self.limit_rule and (self.quote_rule or run.given_up(self.config))
 
     def summary(self, item: str) -> str:
         run = self._run(item)
-        state = "given up" if run.given_up(self.config) else "stopped" if self.quote_rule else "probing"
+        state = (
+            "probing"
+            if self.limit_rule
+            else "given up" if run.given_up(self.config) else "stopped" if self.quote_rule else "probing"
+        )
         return f"probes {run.accepted} accepted, {run.refused} refused ({state})"
 
     def forget(self, run: str) -> None:

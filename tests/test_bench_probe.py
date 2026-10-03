@@ -113,6 +113,10 @@ def test_one_accepted_probe_keeps_the_run_probing():
     _, [m2] = plan([bench_sell("b7-2", 80), bench_buy("b7-3", 75)], probe)
     probe.record(m2, accepted=False)
     assert probe.active("bench:b7") and probe.summary("bench:b7") == "probes 1 accepted, 1 refused (probing)"
+    for k in range(5):  # one settled probe settles the rule: a later run never gives up
+        _, [m3] = plan([bench_sell(f"b8-{2 * k}", 80), bench_buy(f"b8-{2 * k + 1}", 75)], probe)
+        probe.record(m3, accepted=False)
+    assert probe.limit_rule and probe.active("bench:b8") and not probe.quote_rule
 
 
 # ---------------------------------------------------------------- the broker
@@ -256,3 +260,14 @@ def test_on_the_simulator_the_quote_rule_costs_nothing_and_the_limit_rule_gains(
         assert exact.realised == exact.stall_realised
         gain += simulate(SimProbe(True), preset, seed, rule="limit").efficiency - exact.efficiency
     assert gain / len(seeds) > 0.01
+
+
+def test_bench_settlements_in_the_book_are_logged_under_probe(tmp_path):
+    lines: list[str] = []
+
+    class WithSettlements(QuoteRuleBroker):
+        def book(self) -> dict[str, Any]:
+            return super().book() | {"settlements": [{"sell": "b7-0", "buy": "b7-1", "price": 60}, {"sell": 4}]}
+
+    probe_broker(tmp_path, WithSettlements(bench=two_books()), lines).on_tick(clock(tick=5))
+    assert any('bench settlements 1: {"buy": "b7-1", "price": 60, "sell": "b7-0"}' in line for line in lines)
