@@ -130,6 +130,22 @@ def tournament_section(policies: dict[str, Policy], n: int) -> str:
     )
     by_style = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("style",))]
     parts.append("### By rival style\n\n" + table(("policy", "style", *METRICS), by_style))
+    mixes = {
+        "practice": duel_replay.practice_mix(),
+        "waiting one-shots = tit-for-tat": duel_replay.practice_mix(waiting_is_tit_for_tat=True),
+        "responsive rivals = linear": duel_replay.practice_mix(responsive_is_linear=True),
+    }
+    mix_rows = [
+        (name, label, round(duel_zoo.mix_mean(rs, mix), 2), round(duel_zoo.mix_mean(rs, mix, "deal"), 3))
+        for name, rs in records.items()
+        for label, mix in mixes.items()
+    ]
+    weights = "; ".join(f"{label}: {mix}" for label, mix in mixes.items())
+    parts.append(
+        "### Weighted by the practice session's mix of rival styles\n\n"
+        f"Style weights = how often each style was seen in the 26 practice duels ({weights}).\n\n"
+        + table(("policy", "mix", "mean P", "deal rate"), mix_rows)
+    )
     by_decay = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("decay", "duel_ticks"))]
     parts.append("### By decay and duel length\n\n" + table(("policy", "decay", "ticks", *METRICS), by_decay))
     by_role = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("role",))]

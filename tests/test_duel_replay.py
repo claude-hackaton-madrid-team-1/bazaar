@@ -102,3 +102,29 @@ def test_the_classifier_recognises_the_zoos_own_styles():
         grid = zoo.scenarios((style,), n=50, decays=(0.06,))
         hits = sum(replay.classify(zoo.play(policy, sc)[1]) == style for sc in grid)
         assert hits >= 0.8 * len(grid), (style, hits)
+
+
+def test_the_practice_mix_counts_the_labels_and_its_two_brackets():
+    assert replay.practice_mix() == {
+        "convex": 1,
+        "holdout": 2,
+        "linear": 2,
+        "no_show": 6,
+        "one_shot": 7,
+        "tit_for_tat": 7,
+    }
+    waiting = replay.practice_mix(waiting_is_tit_for_tat=True)  # 95, 119, 120 posted once and waited
+    assert (waiting["one_shot"], waiting["tit_for_tat"]) == (4, 10)
+    timed = replay.practice_mix(responsive_is_linear=True)  # 85, 86, 96, 202, 263, 268 conceded as we talked
+    assert (timed["linear"], timed["tit_for_tat"]) == (8, 1)
+
+
+def test_a_mix_weights_styles_not_duel_counts():
+    def rec(style: str, result: float) -> zoo.Record:
+        return zoo.Record(style, "seller", 0.06, 12, False, "deal", "team", 1, 0, 0, 0, result, result, 10, 1, 1,
+                          False, 1)  # fmt: skip
+
+    records = [rec("linear", 10.0), rec("linear", 20.0), rec("linear", 30.0), rec("one_shot", 0.0)]
+    assert zoo.mix_mean(records, {"linear": 1, "one_shot": 3}) == 5.0  # 1/4 × 20 + 3/4 × 0
+    assert zoo.mix_mean(records, {"linear": 1, "sim": 9}) == 20.0  # styles without records drop out
+    assert zoo.mix_mean(records, {"linear": 1, "one_shot": 1}, "deal") == 1.0

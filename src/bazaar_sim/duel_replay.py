@@ -242,3 +242,28 @@ def fit(duels: Sequence[Mapping[str, Any]] | None = None) -> list[Features]:
         f = features(d)
         out.append(replace(f, label=classify(d)))
     return out
+
+
+def practice_mix(
+    duels: Sequence[Mapping[str, Any]] | None = None,
+    waiting_is_tit_for_tat: bool = False,
+    responsive_is_linear: bool = False,
+) -> dict[str, int]:
+    """How often each zoo style appeared in the practice session (undetermined duels left out), and two brackets.
+
+    A rival that posted one offer and then waited for an answer we never sent is a one-shot on paper, but a
+    tit-for-tat rival looks the same against silence (`classify` on the zoo's own paths): with
+    `waiting_is_tit_for_tat` those single-message one-shots count as tit-for-tat (bad for silent policies).
+    A rival that conceded while we countered every tick is labelled tit-for-tat, but a time-based conceder looks
+    the same: with `responsive_is_linear` those count as linear conceders (good for silent policies)."""
+    counts: dict[str, int] = {}
+    for f in fit(duels):
+        label = f.label
+        if label == "undetermined":
+            continue
+        if waiting_is_tit_for_tat and label == "one_shot" and f.n == 1 and not f.played:
+            label = "tit_for_tat"
+        if responsive_is_linear and label == "tit_for_tat" and f.n >= 3:
+            label = "linear"
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))

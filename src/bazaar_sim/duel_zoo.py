@@ -693,6 +693,19 @@ def by(records: Sequence[Record], *keys: str) -> dict[tuple[Any, ...], Summary]:
     return {k: summarize(v) for k, v in sorted(groups.items(), key=lambda kv: tuple(map(str, kv[0])))}
 
 
+def mix_mean(records: Sequence[Record], mix: Mapping[str, float], field_name: str = "result") -> float:
+    """A per-duel mean with each style weighted by `mix` (e.g. `duel_replay.practice_mix()`), not by its count."""
+    total = sum(w for s, w in mix.items() if any(r.style == s for r in records))
+    if not total:
+        return 0.0
+    out = 0.0
+    for style, weight in mix.items():
+        picked = [getattr(r, field_name) for r in records if r.style == style]
+        if picked:
+            out += weight / total * statistics.fmean(float(v) for v in picked)
+    return out
+
+
 # ---------------------------------------------------------------- reference policies (baselines, no bazaar_agent)
 
 
