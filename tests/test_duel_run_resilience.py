@@ -123,6 +123,52 @@ def test_a_server_field_that_breaks_the_latch_is_escaped_in_the_line(duel_cli, m
     assert "ValueError: [/red] bad days_meaning" in output and client.sent == [("accept", 95)]
 
 
+def test_a_new_verdict_whose_text_holds_a_lone_surrogate_never_costs_the_tick(duel_cli, monkeypatch):  # noqa: F811
+    # #165 security review P3-1: the "duel days sign: <verdict>" line ran outside the latch's protection, so a real
+    # `days_meaning` with a lone surrogate raised UnicodeEncodeError on the stdout write before any send.
+    cli, client, _, _ = duel_cli
+    client.payload = [ENDGAME]
+
+    def observe(self, duels, real_game):
+        self.verdict, self.duel, self.text = "cost", 95, "x\ud800"
+        return self.verdict
+
+    monkeypatch.setattr(dd.DaysSwitch, "observe", observe)
+    _, output = run_one_tick(cli)
+    assert client.sent == [("accept", 95)]
+    assert "duel days sign: cost (duel 95: 'x\\ud800')" in output  # ascii(): printable, never raises
+
+
+def test_a_switch_that_cannot_be_copied_skips_the_latch_and_still_plays(duel_cli, monkeypatch, tmp_path):  # noqa: F811
+    # #165 security review P3-2: the rollback copy ran outside the protection; a pathological value (a 500-deep
+    # nested `days_meaning`) broke `deepcopy` with RecursionError and every later tick failed.
+    cli, client, _, _ = duel_cli
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    client.payload = [{**ENDGAME, "session": 1}]
+    confirmed = dd.DaysSwitch(verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1)
+    assert confirmed.signed(True)  # corroborated in this very session: only a cleared session turns it off
+    monkeypatch.setattr(dd, "latch", lambda data_dir: confirmed)
+    seen: list[bool] = []
+    effective = dd.effective_rules
+
+    def spy(rules, days):
+        out = effective(rules, days)
+        seen.append(bool(out.duel_days_signed))
+        return out
+
+    def no_copy(value):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    observed: list[str] = []
+    monkeypatch.setattr(dd, "effective_rules", spy)
+    monkeypatch.setattr(dd.DaysSwitch, "observe", lambda self, duels, real_game: observed.append(self.verdict))
+    monkeypatch.setattr(cli, "deepcopy", no_copy)
+    _, output = run_one_tick(cli)
+    assert client.sent == [("accept", 95)] and observed == []  # no copy, no observe: the switch stays as it was
+    assert seen and not any(seen)  # the tick runs on the worst case, not on the sign it could not re-check
+    assert output.count(f"{LATCH_FAILED} (RecursionError: maximum recursion depth exceeded)") == 1
+
+
 # ---------------------------------------------------------------- 2. the kill switch on the duel send path
 
 

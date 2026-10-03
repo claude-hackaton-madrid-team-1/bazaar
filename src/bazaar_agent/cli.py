@@ -1061,28 +1061,37 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
+    def latch_failed(tick: int, e: Exception) -> None:
+        """This tick's session is unknown (#165 r1 P2): no sign from an older one; one dim line per tick says why."""
+        days_switch.session = None
+        if days_failed[-1:] != [tick]:
+            days_failed[:] = [tick]
+            why = f"{type(e).__name__}: {str(e)[:80]}"
+            console.print(f"[dim]  duel days sign unchanged: the latch failed ({escape(ascii(why)[1:-1])})[/dim]")
+
     def observe_days(tick: int, rows: list[dict[str, Any]]) -> None:
         """Feed the days-sign latch. It never costs a tick its moves (#150 security r3): when it raises (a malformed
         server field, a latch file that cannot be written) the latch keeps the verdict it had before the call, one
-        dim line per tick says why, and the tick goes on."""
+        dim line per tick says why, and the tick goes on. The rollback copy and the verdict line sit inside the
+        protection too (#165 security P3-1, P3-2): a value `deepcopy` cannot copy skips this tick's observe, and a
+        server text is printed through `ascii()`, so a lone surrogate never fails the stdout write."""
         nonlocal days_switch
-        kept = deepcopy(days_switch)
+        try:
+            kept = deepcopy(days_switch)
+        except Exception as e:  # noqa: BLE001 - RecursionError on a pathological server value: keep the switch as is
+            latch_failed(tick, e)
+            return
         try:
             days_switch.observe(rows, real)
+            if days_switch.verdict != kept.verdict:
+                console.print(
+                    f"  duel days sign: {days_switch.verdict} (duel {escape(ascii(days_switch.duel))}: "
+                    f"{escape(ascii(days_switch.text))})"
+                )
         except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
             if days_switch.verdict not in ("cost", "reversed", "conflict"):  # a safer verdict found stays
                 days_switch = kept  # never a half-merged `signed` for the policy and the guard
-            days_switch.session = None  # this tick's session is unknown: no sign from an older one (#165 r1 P2)
-            if days_failed[-1:] != [tick]:
-                days_failed[:] = [tick]
-                why = f"{type(e).__name__}: {str(e)[:80]}"
-                console.print(f"[dim]  duel days sign unchanged: the latch failed ({escape(why)})[/dim]")
-            return
-        if days_switch.verdict != kept.verdict:
-            console.print(
-                f"  duel days sign: {days_switch.verdict} (duel {escape(str(days_switch.duel))}: "
-                f"{escape(str(days_switch.text))})"
-            )
+            latch_failed(tick, e)
 
     def read_done_days(tick: int) -> None:
         """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
