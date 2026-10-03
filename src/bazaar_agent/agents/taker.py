@@ -1048,6 +1048,8 @@ class Taker:
                 "notional": op.price,
             }
         )
+        if self.live:
+            self._after_deal(run, f"sale into bid {op.offer_id}")  # album first (#105), as after any accept
         return True
 
     def _duel_grace(self, run: _TickRun) -> None:
