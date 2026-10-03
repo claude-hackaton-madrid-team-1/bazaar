@@ -265,11 +265,13 @@ def team_source(
             if price > est.price:
                 basis = f"{est.basis}, raised to the cheapest holder's reservation"
     fee = rastro_fee(price)
-    top, cap = _cap(rules, card.rarity, value, params.min_buy_surplus)
+    cap = rules.max_price_for(card.rarity)
+    top = math.floor(value - params.min_buy_surplus - fee)  # the guardrail cap applies to the price, not the fee
+    top = min(top, cap) if cap is not None else top
     blocked = None
     if cap is not None and round(price) > cap:
         blocked = f"max_price_{card.rarity} {cap} < team price {price:g}"
-    elif top < price + fee:
+    elif value - params.min_buy_surplus < price + fee:
         blocked = f"worth {value:.0f}, teams ask ~{price:g} + fee {fee}: surplus below min_buy_surplus"
     note = f"holders paid {', '.join(f'{t} {p}' for t, p in sorted(paid.items()))}" if paid else ""
     if rivals:
@@ -311,6 +313,15 @@ class CardEconomics:
     def cheapest(self) -> Source | None:
         """The cheapest source at all (it may need a guardrail change)."""
         return min(self.sources, key=lambda s: s.price) if self.sources else None
+
+    def pick(self, min_surplus: float) -> Source | None:
+        """The source to buy from. A dealer deal scores only while it is one of our best three per level
+        (RULES.md), a team buy scores its surplus at our private values: so a team, when its price leaves at
+        least `min_surplus` of the card's own value (no page bonus), else the cheapest fillable source."""
+        trade = [s for s in self.sources if s.blocked is None and s.channel == "trade"]
+        if trade and self.value - trade[0].price >= min_surplus:
+            return trade[0]
+        return self.best
 
     @property
     def surplus(self) -> float | None:
@@ -500,7 +511,7 @@ def ladder_slots_from(plan: dict[str, Any]) -> list[LadderSlot]:
 @dataclass(frozen=True)
 class Step:
     hour: int
-    kind: Literal["grant", "venue", "ladder", "buy", "sell", "held"]
+    kind: Literal["grant", "venue", "ladder", "trade", "buy", "sell", "held"]
     item: str
     source: str
     amount: float  # cash out (positive) or in (negative)
@@ -540,7 +551,7 @@ class Scenario:
     @property
     def trade_surplus(self) -> float:
         """Private value gained on the planned team purchases (the page bonus on the card that completes it)."""
-        return sum(s.gain for s in self.steps if s.kind == "buy" and s.gain is not None)
+        return sum(s.gain for s in self.steps if s.kind in ("buy", "trade") and s.gain is not None)
 
     @property
     def end_cash(self) -> float:
@@ -557,6 +568,7 @@ class Want:
     completes: bool = False  # the last missing card of a page worth finishing
     page_bonus: float = 0.0
     finishing: bool = False  # one leg of a page worth finishing: bought only when the rest of it fits too
+    slot_only: bool = False  # a dealer buy outside a page we finish: only inside a planned ladder deal
 
     @property
     def price_class(self) -> str:
@@ -572,33 +584,61 @@ class Want:
         return self.card.value + (self.page_bonus if self.completes else 0.0) - self.source.price
 
 
-def buy_list(pages: Sequence[PageEconomics], min_surplus: float) -> list[Want]:
-    """The order to buy in. Pages worth finishing first (best surplus first); in each page the dealer legs
-    (ladder share) before the team legs, so the card that completes the page is bought from a team, where
-    the page bonus can count as trade surplus. Then single cards worth more than they cost, from any page."""
+def buy_list(pages: Sequence[PageEconomics], min_surplus: float, skip: Iterable[str] = ()) -> list[Want]:
+    """The order to buy in, each card from its `pick`. Pages worth finishing first (best surplus first); in
+    each page the dealer legs before the team legs, so the card that completes the page is bought from a
+    team, where the page bonus can count as trade surplus. Then single cards worth more than they cost.
+    `skip`: cards another plan already buys (W4's trade plan), never bought twice."""
     wants: list[Want] = []
-    seen: set[str] = set()
+    seen: set[str] = set(skip)
     for p in pages:
         if p.verdict != "finish":
             continue
-        legs = [c for c in p.missing if c.best is not None]
-        legs.sort(key=lambda c: (c.best is not None and c.best.channel == "trade", -c.value))
-        for i, c in enumerate(legs):
-            if c.best is not None:
-                wants.append(
-                    Want(c, c.best, p.set_code, completes=i == len(legs) - 1, page_bonus=p.bonus, finishing=True)
-                )
-                seen.add(c.ref)
+        legs = [(c, src) for c in p.missing if c.ref not in seen and (src := c.pick(min_surplus)) is not None]
+        legs.sort(key=lambda cs: (cs[1].channel == "trade", -cs[0].value))
+        for i, (c, src) in enumerate(legs):  # the trade plan's legs go first (its offers open at the start)
+            wants.append(Want(c, src, p.set_code, completes=i == len(legs) - 1, page_bonus=p.bonus, finishing=True))
+            seen.add(c.ref)
     singles = [
-        c
+        (c, src)
         for p in pages
         for c in p.missing
-        if c.ref not in seen and c.best is not None and (c.value - c.best.price) >= min_surplus
+        if c.ref not in seen and (src := c.pick(min_surplus)) is not None and c.value - src.price >= min_surplus
     ]
-    for c in sorted(singles, key=lambda c: -((c.value - c.best.price) / c.best.price if c.best else 0)):
-        if c.best is not None:
-            wants.append(Want(c, c.best, c.set_code))
+    for c, src in sorted(singles, key=lambda cs: -(cs[0].value - cs[1].price) / max(cs[1].price, 1.0)):
+        # a dealer deal beyond our best three scores nothing: such a card rides a planned ladder deal or waits
+        wants.append(Want(c, src, c.set_code, slot_only=src.channel == "ladder"))
     return wants
+
+
+@dataclass(frozen=True)
+class PlannedTrade:
+    """A team trade another plan already makes (W4's `trade-plan.json`): its cash is committed while it is open."""
+
+    counterparty: str
+    refs_in: tuple[str, ...]  # the cards we receive
+    cash_out: int
+    cash_in: int
+    expected: float  # the plan's expected surplus for us
+    note: str
+
+
+def trades_from(plan: dict[str, Any]) -> list[PlannedTrade]:
+    """W4's trade plan (`listings` and `threads`): what each trade brings in and the cash it promises."""
+    out = []
+    for item in (plan.get("listings") or []) + (plan.get("threads") or []):
+        give, want = item.get("give") or {}, item.get("want") or {}
+        out.append(
+            PlannedTrade(
+                str(item.get("counterparty") or item.get("to") or "anyone"),
+                tuple(str(r) for r in want.get("cards") or []),
+                int(give.get("cash") or 0),
+                int(want.get("cash") or 0),
+                float(item.get("expected") or 0),
+                str(item.get("reason") or item.get("kind") or ""),
+            )
+        )
+    return out
 
 
 def _buy_step(hour: int, w: Want, price: float, cash: float, how: str) -> Step:
@@ -620,6 +660,7 @@ def cash_plan(
     venue_hour: int | None = None,
     ladder: Sequence[LadderSlot] = (),
     sells: Sequence[tuple[int, str, float]] = (),
+    trades: Sequence[PlannedTrade] = (),
     floor: int | None = None,
 ) -> Scenario:
     """Walk the game hours from `start_hour`: grants and planned sells in, the venue (bond + fee) out, then
@@ -629,6 +670,7 @@ def cash_plan(
     `cash_floor`. Prices are the expected fills; whatever does not fit is `held`, with the reason."""
     base = rules.cash_floor if floor is None else floor
     planned = venue_hour
+    held_why: dict[str, str] = {}
     steps: list[Step] = []
     pending = list(wants)
     opened = False
@@ -657,6 +699,27 @@ def cash_plan(
                 venue_hour, floor = None, base  # not retried: the plan says when; Marius decides again
                 steps.append(Step(hour, "held", "venue", "organisers", 0, None, cash, note))
         spent = 0.0
+        for t in trades if hour == start_hour else ():
+            out = t.cash_out
+            if cash - out < floor or spent + out > rules.max_spend_per_game_hour:
+                why = f"cash {cash:.0f} − {out} < floor {floor}" if cash - out < floor else "hour cap"
+                steps.append(
+                    Step(
+                        hour,
+                        "held",
+                        f"trade {'+'.join(t.refs_in) or t.counterparty}",
+                        t.counterparty,
+                        0,
+                        None,
+                        cash,
+                        why,
+                    )
+                )
+                continue
+            cash -= out
+            spent += out
+            item = "+".join(t.refs_in) or "sell"
+            steps.append(Step(hour, "trade", item, t.counterparty, out, None, cash, f"W4 plan: {t.note}", t.expected))
         for slot in (s for s in ladder if s.hour == hour):
             match = next(
                 (w for w in pending if w.source.source == slot.dealer and w.price_class == slot.price_class), None
@@ -677,6 +740,9 @@ def cash_plan(
         still: list[Want] = []
         done: list[Want] = []
         for w in pending:
+            if w.slot_only:
+                still.append(w)
+                continue
             price = w.source.price
             # a team leg of a page we finish waits until the page's other team legs fit as well: a lone rare
             # bought without the card that completes the page earns its book value, not the bonus
@@ -693,6 +759,11 @@ def cash_plan(
             reserve = rest if w.source.channel == "trade" else 0.0
             if cash - price - reserve < floor or spent + price > rules.max_spend_per_game_hour:
                 still.append(w)
+                held_why[w.card.ref] = (
+                    f"cash {cash:.0f} − {price:.0f}"
+                    + (f" − the page's other team legs {reserve:.0f}" if reserve else "")
+                    + f" < floor {floor}"
+                )
                 continue
             cash -= price
             spent += price
@@ -700,8 +771,8 @@ def cash_plan(
             steps.append(_buy_step(hour, w, price, cash, "own conversation" if w.source.channel == "ladder" else "bid"))
         pending = still
     for w in pending:
-        why = f"cash {cash:.0f} − {w.source.price:.0f} < floor {base}"
-        steps.append(Step(GAME_ENDS, "held", w.card.ref, w.source.source, 0, w.source.max_price, cash, why))
+        reason = "no planned ladder deal of its class left" if w.slot_only else held_why.get(w.card.ref, "")
+        steps.append(Step(GAME_ENDS, "held", w.card.ref, w.source.source, 0, w.source.max_price, cash, reason))
     return Scenario(name, planned, base, tuple(steps))
 
 
@@ -731,6 +802,18 @@ def unopened_packs(me: dict[str, Any]) -> list[str]:
     return [str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "pack"]
 
 
+def best_three(slots: Sequence[LadderSlot], keep: int = 3) -> list[LadderSlot]:
+    """The first `keep` planned deals per dealer: only a level's best three deals score (RULES.md), so the
+    rest of a ladder plan buys cards, not ladder points."""
+    count: dict[str, int] = defaultdict(int)
+    out = []
+    for slot in slots:
+        if count[slot.dealer] < keep:
+            out.append(slot)
+            count[slot.dealer] += 1
+    return out
+
+
 def build_plan(
     me: dict[str, Any],
     catalog: dict[str, Any],
@@ -742,15 +825,18 @@ def build_plan(
     *,
     now_hours: float | None = None,
     ladder: Sequence[LadderSlot] = (),
+    trades: Sequence[PlannedTrade] = (),
     venue_later: int = 9,
     what_if_floor: int | None = None,
     chasers: Mapping[str, Sequence[str]] | None = None,
 ) -> PagePlan:
-    """Pages, the buy order and the cash plan under three venue scenarios (Saturday morning, later, never),
-    plus the no-venue plan with our planned sells, and each venue plan again at a what-if cash floor."""
+    """Pages, the buy order and the cash plan: the venue at the open, later, on Sunday or never (with W3's
+    ladder slots and W4's trades as given), the no-venue plan with our planned sells, a consolidated plan
+    (W3's best three only, then W4's trades, then pages), and the venue plans at a what-if cash floor."""
     dealers = list(dealers)
     pages = page_economics(me, catalog, events, dealers, params, rules, chasers)
-    wants = buy_list(pages, params.min_buy_surplus)
+    taken = {ref for t in trades for ref in t.refs_in}
+    wants = buy_list(pages, params.min_buy_surplus, skip=taken)
     grants = grants_from(schedule, now_hours)
     body = schedule.get("body", schedule)
     hour_now = now_hours if now_hours is not None else float(body.get("now_hours") or 0)
@@ -760,7 +846,8 @@ def build_plan(
     sells = planned_sells(me, m, params, rules, start)
 
     def run(name: str, venue: int | None, **kw: Any) -> Scenario:
-        return cash_plan(name, cash, start, grants, wants, rules, venue_hour=venue, ladder=ladder, **kw)
+        kw = {"ladder": ladder, "trades": trades, **kw}
+        return cash_plan(name, cash, start, grants, wants, rules, venue_hour=venue, **kw)
 
     venues = [(f"venue at open (h{start})", start), (f"venue at h{venue_later}", venue_later)]
     if venue_later < SUNDAY_OPENS and start < SUNDAY_OPENS:
@@ -769,12 +856,20 @@ def build_plan(
     if sells:
         scenarios.append(run(f"venue at open (h{start}) + planned sells", start, sells=sells))
         scenarios.append(run("no venue + planned sells", None, sells=sells))
+    if ladder:
+        top3 = best_three(ladder)
+        scenarios.append(run("no venue · ladder best three, then trades and pages", None, ladder=top3))
+        if what_if_floor is not None:
+            name = f"venue at open (h{start}) · what-if cash_floor {what_if_floor} · best three, trades, pages"
+            scenarios.append(run(name, start, ladder=top3, floor=what_if_floor))
     if what_if_floor is not None:
         scenarios += [run(f"{n} · what-if cash_floor {what_if_floor}", v, floor=what_if_floor) for n, v in venues[:2]]
     notes = []
     packs = unopened_packs(me)
     if packs:
         notes.append(f"open first ({', '.join(packs)}): free, and a pull changes what is missing")
+    if taken:
+        notes.append(f"bought by the trade plan, not again here: {', '.join(sorted(taken))}")
     if not grants:
         notes.append("no organiser grant left in the schedule")
     return PagePlan(me.get("tick"), cash, tuple(pages), tuple(wants), tuple(grants), tuple(scenarios), tuple(notes))

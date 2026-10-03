@@ -306,3 +306,52 @@ def test_bazaar_plan_pages_runs_offline_from_files(tmp_path, monkeypatch):
     table = CliRunner().invoke(cli.app, [a for a in args if a != "--json"] + ["--steps"], env={"COLUMNS": "250"})
     assert table.exit_code == 0, table.output
     assert "Cash plan" in table.output and "h4" in table.output
+
+
+def test_a_team_source_is_picked_over_a_cheaper_dealer_when_its_trade_scores_on_its_own():
+    dealer = pages.Source("abuela", "ladder", 22, 17, "", 26, ("abuela",))
+    team = pages.Source("teams", "trade", 27, 24, "", 26, ("t03",))
+    c = pages.CardEconomics("LAV-08", "LAV", "uncommon", 25, 1.6, 40, 16, 13, 90, (), (), (dealer, team))
+    assert c.best is dealer  # the cheapest
+    assert c.pick(min_surplus=2) is team  # 40 − 27 = 13 of trade surplus beats a 4th dealer deal (scores 0)
+    assert c.pick(min_surplus=20) is dealer
+
+
+def test_trades_from_reads_w4_plan_and_its_cards_are_not_bought_twice():
+    plan = {
+        "listings": [{"counterparty": "t03", "give": {"cash": 22}, "want": {"cards": ["LAV-06"]}, "expected": 30}],
+        "threads": [
+            {"counterparty": "t08", "give": {"assets": [7], "cash": 14}, "want": {"cards": ["LAV-09"]}, "expected": 9}
+        ],
+    }
+    trades = pages.trades_from(plan)
+    assert [(t.counterparty, t.refs_in, t.cash_out, t.expected) for t in trades] == [
+        ("t03", ("LAV-06",), 22, 30.0),
+        ("t08", ("LAV-09",), 14, 9.0),
+    ]
+    p = pages.build_plan(ME, CATALOG, EVENTS, DEALERS, SCHEDULE, PARAMS, RULES, now_hours=4.0, trades=trades)
+    assert not {w.card.ref for w in p.wants} & {"LAV-06", "LAV-09"}
+    assert p.notes[1] == "bought by the trade plan, not again here: LAV-06, LAV-09"
+    nv = next(s for s in p.scenarios if s.name == "no venue")
+    assert [(x.kind, x.item, x.amount) for x in nv.steps[1:3]] == [("trade", "LAV-06", 22), ("trade", "LAV-09", 14)]
+    assert nv.trade_surplus == pytest.approx(39)
+
+
+def test_only_the_first_three_planned_deals_per_dealer_can_score():
+    slots = [pages.LadderSlot(4, d, "card:common", 9, 12) for d in ("abuela",) * 5 + ("chato",) * 2]
+    assert [s.dealer for s in pages.best_three(slots)] == ["abuela"] * 3 + ["chato"] * 2
+
+
+def test_a_dealer_single_waits_for_a_ladder_slot_of_its_class():
+    single = want("LAV-06", "abuela", 23, channel="ladder", rarity="uncommon", slot_only=True)
+    s = pages.cash_plan("x", 600, 4, [], [single], RULES)
+    assert s.steps[-1].kind == "held" and s.steps[-1].note == "no planned ladder deal of its class left"
+    slot = pages.LadderSlot(5, "abuela", "card:uncommon", 22, 25)
+    assert pages.cash_plan("x", 600, 4, [], [single], RULES, ladder=[slot]).bought == ("LAV-06",)
+
+
+def test_a_held_page_leg_says_the_other_legs_are_what_does_not_fit():
+    legs = [want("LAV-09", "teams", 75, finishing=True), want("LAV-10", "teams", 75, finishing=True, completes=True)]
+    s = pages.cash_plan("p", 400, 4, [], legs, RULES)
+    assert s.held == ("LAV-09", "LAV-10")
+    assert s.steps[0].note == "cash 400 − 75 − the page's other team legs 75 < floor 270"

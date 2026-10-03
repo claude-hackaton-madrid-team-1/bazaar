@@ -1185,6 +1185,9 @@ def plan_pages(
     now_hours: float | None = typer.Option(None, "--now-hours", help="Game hour to plan from (default: schedule)"),
     venue_later: int = typer.Option(9, "--venue-later", help="Game hour of the 'venue later' scenario"),
     what_if_floor: int | None = typer.Option(None, "--what-if-floor", help="Also plan the venue at this cash floor"),
+    trades_file: str | None = typer.Option(
+        None, "--trades", help="W4's trade-plan.json: its trades' cash is committed and their cards not bought twice"
+    ),
     chasers_file: str | None = typer.Option(
         None, "--chasers", help="JSON {set: [team, ...]}: who chases each set (e.g. from `bazaar affinity`)"
     ),
@@ -1220,6 +1223,7 @@ def plan_pages(
         rules,
         now_hours=now_hours,
         ladder=ladder,
+        trades=pg.trades_from(_json_file(trades_file)) if trades_file else [],
         venue_later=venue_later,
         what_if_floor=what_if_floor,
         chasers=_json_file(chasers_file),
