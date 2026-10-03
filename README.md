@@ -545,6 +545,37 @@ prices, bid ladders, surplus, cash, limits or reasons (`docs/services.md`, "Publ
 on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
 
+### Live-feed reader: learnings and dealer blockers (N12)
+
+The taker reads the live feed the way a person reads the "On air · Live feed" panel of the game's
+homepage (that panel is `GET /api/feed` plus the public SSE stream, one line per event type) and keeps
+what it learns in the `learnings` table (`src/bazaar_agent/learn/`). Deterministic first: a field the
+server set is a fact, free text is kept as quoted data and never acted on.
+
+| Read from | Learned |
+|---|---|
+| `persona.cooloff` (team, `until_tick`), our thread's `closed_reason` (`cooloff`, `persona_quota`, `sold_out`), an `open_thread` refusal (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, `locked`) | a **blocker** for that dealer (or that item), expiring at its tick or at the end of the game hour; `locked` is rechecked after 10 ticks and lifted by `level.unlocked` / `persona.open_to_all` |
+| `persona.strike`, another team's unlock, duel outcomes per item | behaviour |
+| `venue.fee_announced` / `fee_changed` (with the tick it takes effect), venue opened / suspended / notices | fee changes and venue news |
+| `clock.changed`, `day.opened` / `day.closed`, rounds, `announcement`, `level.*` | rule changes and announcements |
+
+Before it opens a dealer thread, the taker recalls the blockers in force **for our team** and skips that
+dealer (a `dealer_skip` decision row) so the thread goes to the next dealer instead of a refusal. A
+blocker only ever removes a send; any learner or database error leaves the taker exactly as it was.
+`bazaar agent taker --no-learn` turns it off.
+
+**Where the feed comes from on Railway.** `bazaar-monitor` runs on a laptop only, so the taker (which
+already reads the shared `feed_events` table plus the public 500-event window every tick) also writes
+that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
+keeps growing while the laptop sleeps, with no new service and no extra game call.
+
+```sh
+uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
+uv run bazaar learnings --all --subject v04 --json
+uv run bazaar learnings --kind cooloff --kind quota --tick 180
+uv run bazaar learnings --save             # also upsert them into the shared learnings table
+```
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -953,7 +984,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |

@@ -335,6 +335,33 @@ reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
 
+### [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
+Its bundle (`LiveFeed`, `EventLine`, `useEvents`) seeds from `GET /api/feed?limit=150` and follows
+`/api/events/stream?scope=public` (limit 200), one line per event type. So our capture already sees it all.
+Types that matter for blockers, not yet seen live: `persona.cooloff {persona, team, until_tick}` ("sent Team X
+away until T…"), `persona.strike {persona, team, kinds, strikes}`, `day.closed {reopens}`. Organiser news
+reaches teams as `announcement` (the `/api/admin/news` routes are admin-only). `bazaar learnings` reads them.
+
+### [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
+`BAZAAR_SIM=local` with `DATABASE_URL` unset still connects to `localhost:5433` (`bazaar-db`), which holds an
+old copy of the REAL feed: the agents merge real `feed_events` with the simulator's window, and the ids
+collide. For an end-to-end sim run, set `BAZAAR_SIM_DATABASE_URL` to a sim database or stop `bazaar-db`.
+
+### [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
+Rude words drove sim Abuela to `cooloff` in 3 messages (tick 5 → `until_tick` 25). The thread shows
+`closed_reason: cooloff`, `persona.cooloff` carries `until_tick: 25`, and a re-open is refused `cooloff` with
+`extra.until_tick`. The live taker then logged `skip abuela for LAT-08: abuela cooloff with us until T25`
+for ticks 6–8 instead of sending a refused `open_thread`.
+
+### [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
+Found by the PR #89 review: running `init_schema` inside a tick waited the full 15 s `lock_timeout` while
+another session wrote to the table. Apply the schema once at process start (the ledger's `connect_ready` does),
+never in a tick loop.
+
+### [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
+`insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
+window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
+
 ### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
 `holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
 the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
