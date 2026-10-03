@@ -1,6 +1,7 @@
 """Our venue, build only: the writes refused by `allow_venue_open`, the cash floor and the kill switch, dry
 runs, and the broker key (saved 0600, never printed, only sent to the host it belongs to). No network."""
 
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -216,6 +217,36 @@ def test_the_vault_table_is_the_schema_s_venue_broker_keys(tmp_path):
 
     schema = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
     assert vn.VENUE_KEYS_DDL + ";" in schema
+
+
+@pytest.mark.parametrize("real_venue", ["v07", "xonce:market"])
+def test_one_shot_claims_do_not_count_as_opened_venues(tmp_path, real_venue):
+    with sqlite3.connect(":memory:") as db:
+
+        class Conn:
+            closed = False
+
+            def execute(self, sql, params=()):
+                # Execute the vault's SQL locally; adapt only PostgreSQL syntax.
+                sql = sql.replace("%s", "?").replace("::text", "").replace("default now()", "default current_timestamp")
+                return db.execute(sql, params)
+
+        v = vn.KeyVault(tmp_path, Conn, target="game")
+        assert v.claim_once("bench_match_probe", 10) is True
+        assert v.opened_before() is False
+        assert v.load() is None
+        assert v.claim(11) is True
+        assert v.opened_before() is False
+        other = vn.KeyVault(tmp_path, Conn, target="other-game")
+        assert other.mark("v99", 11) is True
+        assert v.opened_before() is False
+        assert v.mark(real_venue, 12) is True  # A real venue counts even when its key was lost.
+        assert v.opened_before() is True
+        db.execute("update venue_broker_keys set broker_key = 'test-only-key'")
+        db.execute("update venue_broker_keys set created_at = '2999-01-01' where venue = '_once:bench_match_probe'")
+        loaded = v.load()
+        assert loaded is not None and loaded.venue == real_venue
+        assert v.load("_once:bench_match_probe") is None
 
 
 def test_saving_the_key_follows_no_symlink_planted_in_the_data_dir(tmp_path):

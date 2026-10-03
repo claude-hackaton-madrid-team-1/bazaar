@@ -1202,3 +1202,12 @@ unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the 
 the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
 from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
 ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+### [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+Claim-only storage made `opened_before()` true (regression: `2 failed, 22 deselected`) → it excluded `_claim`
+but counted `_once:bench_match_probe` → exclude the literal `_once:` prefix from both venue count and load.
+Keep real keyless venue markers; an in-memory SQL regression covers both states and target isolation.
+Validation also hit local Postgres contention: the full suite stalled inside psycopg, then a retry failed
+the `rival_board` lock-timing test; the parallel coverage run hit a schema lock timeout in approvals setup.
+Both affected tests passed alone (`2 passed in 2.89s`); the final full gate without competing coverage passed:
+`5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.

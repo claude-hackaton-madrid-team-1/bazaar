@@ -232,7 +232,9 @@ class KeyVault:
             row = (
                 self._db()
                 .execute(
-                    "select count(*) from venue_broker_keys where target = %s and venue <> %s", (self.target, CLAIM)
+                    "select count(*) from venue_broker_keys where target = %s and venue <> %s "
+                    "and substr(venue, 1, 6) <> '_once:'",
+                    (self.target, CLAIM),
                 )
                 .fetchone()
             )
@@ -354,6 +356,7 @@ class KeyVault:
                     self._db()
                     .execute(
                         "select venue, broker_key from venue_broker_keys where target = %s and venue <> %s "
+                        "and substr(venue, 1, 6) <> '_once:' "
                         "and broker_key <> '' and (%s::text is null or venue = %s) order by created_at desc limit 1",
                         (self.target, CLAIM, venue, venue),
                     )
