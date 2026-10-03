@@ -762,6 +762,47 @@ BAZAAR_SIM_PORT=8818 uv run python scripts/sim_dealers.py --dealer chato --lift 
 `scripts/sim_dealers.py` is the proof per dealer: a fresh in-memory simulator for each lift, and our
 live taker against it.
 
+### Bluffing in the words (N16)
+
+Our agents may lie to win the card and the points, but only in the text. RULES.md: "Words persuade,
+structure binds. Your agent may say anything." The code and `guardrails.check()` decide each move
+(price, days, accept, walk) exactly as before. A tactic then writes the words of a dealer bid or a duel
+offer. It never writes an accept, so an accept is never delayed by a bluff.
+
+- **Tactics** (`agents/tactics.py`, Spanish and English), in three families:
+  - bluffs: `budget_cap`, `outside_option`, `low_need`, `walk_threat`, `scarcity`, `social_proof`,
+    and for sells `fake_demand` and `cost_floor`;
+  - psychology, from the vendored `negotiation` (Voss) and `influence-psychology` (Cialdini) skills in
+    `.ai/skills/`: `empathy_label`, `calibrated_question`, `accusation_audit` (first message only),
+    `no_question`, `reciprocity`, `mirror`;
+  - kindness: `kind_gratitude`, `kind_flattery`, `kind_patience`.
+
+  Abuela gets kindness, `empathy_label` and `calibrated_question` only, because RULES.md says
+  "Abuela likes kindness". No template holds a digit. A number in the text is our structured price,
+  the counterparty's own structured price (`mirror`, `calibrated_question`), or one invented from our
+  price. It is never our limit, max or value. The counterparty's words are never parsed or quoted.
+- **Chooser** (`agents/bluff.py`): one deterministic bandit (UCB1) per counterparty: each dealer, duel
+  rival and team. A `plain` arm (today's words, no tactic) is the control every tactic is measured
+  against. Each arm is tried once, then the one with the best learned value wins. Ties are broken by a
+  seeded hash. The seed is secret per process; set `BAZAAR_BLUFF_SEED` for a reproducible simulator run.
+- **Learning:** every scored message becomes a `tactic` row in `learnings` (`source = outcome`). The
+  scores: their next price moved toward us +1, held 0, moved away −0.5, deal +1 (+0.5 within 3
+  messages), they walked −1. A message still unanswered when we send the next one scores nothing. A
+  cooloff, a strike or a flag on our message scores −10 and turns that tactic off for that counterparty
+  for the rest of the day. Two penalties in a day mute every tactic to it. Three tries with no gain turn
+  a tactic off for the day. A penalty after our plain words also mutes that counterparty: the price
+  upset them, not a lie. The taker reads strikes and flags from its feed. `dealer buy` reads the
+  keyless feed (2 s, no retry) at the start of each tick, before that tick's message. `duel run`
+  reads it after its sends. A flag can only be matched when the game's
+  answer to our send carries our message id; that is unverified on the real game. N3's recall never
+  returns `tactic` rows, so they never reach Jev or the words context.
+- **Private:** the tactic id and why it was picked go to the decision row under input keys that
+  `/state`, `/events` and `/health` never list.
+- **Kill switches:** `BAZAAR_BLUFF=0` on a service turns its tactics off without a code deploy (the
+  variable is declared `preserve()` in `.railway/railway.py`). Only unset, 1, true, on or yes leave them
+  on; any other value turns them off. `bluff_enabled` = false in GUARDRAILS.md
+  turns them off everywhere at the next deploy. Either one brings back today's words.
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -1176,7 +1217,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
-| N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0` | 1 → 2 | 🔵 worker (PR before Duels II, Sat 18:00) |
+| N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0`; spec [`N16-spec.md`](./N16-spec.md) | 1 → 2 | 🔵 PR #131 (both reviews APPROVE, round 2) |
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
@@ -1243,14 +1284,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
+- [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
+- [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
+- [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
+- [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+- [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
 - [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
 - [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
-- [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
-- [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
-- [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
-- [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
-- [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
-- [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1263,6 +1304,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#131](../../pull/131) | Omar's order (merge all approved). N16 bluffing in the words: both reviewers APPROVE round 2; narrow pr-reviewer APPROVE on 2d9f262 (issuecomment-5966874029); later rounds only merge main (import/docs unions; test fixture pins v1 like #170). Gate 3229 passed + smoke; CI green. Tactics: on for dealer words, off for duels under v2; kill switch BAZAAR_BLUFF / bluff_enabled. | Sat 10:20 | `7cb41ae` |
+| [#171](../../pull/171) | Open our venue now: allow_venue_open = true from game hour 3.0, cash_floor 100 | Sat 10:19 | `d113167` |
 | [#170](../../pull/170) | Omar's order (live session): duel_policy v2. pr-reviewer: all four safety checks verified (issuecomment-5967024103); its only P1 (merge conflict in sim_smoke.py/README with #123) resolved exactly as the reviewer tested (main's swaps step + the PR's duel-to-deadline block); gate 3150 passed, smoke duels deal inside limit (gains 26, 27); CI green. | Sat 10:12 | `90b0bdf` |
 | [#169](../../pull/169) | Omar's rule: keep 270 for a custom market. pr-reviewer APPROVE (issuecomment-5966943243) on 755d7ee; 5070da4 fixes its two P2s (venue-opening procedure text, open-offers test at 380); CI green. | Sat 10:06 | `4549454` |
 | [#123](../../pull/123) | Merged during the session on Omar's order. Lands the N17 stack (#137 + #138 + #123). pr-reviewer APPROVE on all three (issuecomment-5966897383, -5966898127, -5966898346) + security-auditor APPROVE (issuecomment-5966879686); 3eafaf7 only merges main (docs-only conflicts, PR code delta 0 lines); gate 3139 passed + smoke; CI green. Defaults OFF: team_threads_enabled=false, accept_bids=false. | Sat 10:00 | `6fc5bb9` |
@@ -1273,14 +1316,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
 | [#146](../../pull/146) | Merged during the session on Omar's order (09:07: merge everything approved ASAP). Approved on this exact head; CI green. | Sat 09:08 | `f9a193b` |
 | [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
-| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
-| [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#171](../../pull/171) | Open our venue now: allow_venue_open = true from game hour 3.0 | `chore/venue-open-asap` |
 | [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
 | [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
@@ -1299,6 +1339,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
-| [#131](../../pull/131) | feat: strategic bluffing in the words, learned per counterparty (N16) | `ogarciarevett/feat-bluff-tactics` |
+| [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
+| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
