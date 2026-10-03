@@ -913,3 +913,9 @@ unprintable characters, those fillers, and the characters rich measures 0 wide b
 modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself would wrap to column 0)
 (`flags_cli.printable`).
 
+
+### [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
+`bazaar_team_ro` (#184): CONNECT to every database, TEMP and EXECUTE on `pg_advisory_lock` come from PUBLIC, so a
+role-only revoke does nothing (the RO role could take our ledger's advisory lock and stall accepts; documented).
+`alter default privileges ... grant select on tables` also covers a later secret table or a view over one: the
+script creates `venue_broker_keys` first, then revokes it. `pg_stats` hides columns the role cannot read.
