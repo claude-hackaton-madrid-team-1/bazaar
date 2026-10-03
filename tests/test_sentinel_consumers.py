@@ -11,12 +11,14 @@ from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
 from tests.test_db import database_url, open_in, schema  # noqa: F401 — pytest fixtures
 
 BENCH = {"event_id": "bench:1.6", "action": "bench", "note": "The Market Test", "at_hours": 1.6, "subject": None}
-SOON = {**BENCH, "event_id": "bench:1.55", "at_hours": 1.55}  # 3 ticks after the fixture clock (t 1.5 h, 60 s)
+SOON = {**BENCH, "event_id": "bench:soon", "at_hours": 1.5 + 4 / 60}  # 4 ticks after the fixture clock (1.5 h, 60 s)
+FAR = {**BENCH, "event_id": "bench:far", "at_hours": 1.7}  # 12 ticks
 
 
 def test_a_ladder_runs_one_tick_per_distinct_bid_up_to_the_thread_limit():
-    assert ladder_ticks((18, 26, 1), 14) == 9 and ladder_ticks((10, 60, 1), 14) == 14
-    assert ladder_ticks((17, 26, 3), 14) == 4 and ladder_ticks(None, 14) == 14
+    assert ladder_ticks((18, 26, 1), 14) == 10 and ladder_ticks((10, 60, 1), 14) == 15  # + her answer's tick
+    assert ladder_ticks((17, 26, 3), 14) == 5 and ladder_ticks(None, 14) == 15
+    assert ladder_ticks((17, 26, 2), 14) == 7  # 17, 19, 21, 23, 25, then 26 (clamped to the top), then her answer
 
 
 def test_crossing_finds_a_bench_or_duels_starting_inside_the_ladder_only():
@@ -50,17 +52,17 @@ def guarded_taker(tmp_path, team, upcoming, **config):
 
 def test_no_dealer_ladder_opens_across_a_market_test(tmp_path):
     team = FakeTeam()
-    t, _ = guarded_taker(tmp_path, team, [SOON])  # 3 ticks away: LAV-08's ladder (18→22) runs 5, LAV-02's 2
+    t, _ = guarded_taker(tmp_path, team, [SOON])  # 4 ticks away: LAV-08's ladder (18→22) runs 5 + 1, LAV-02's 2 + 1
     t.on_tick(clock())
     assert [s[2] for s in team.sent if s[0] == "open_thread"] == [{"buy": {"card": "LAV-02"}}]
     t.on_tick(clock())  # the same event: no second skip row
     found = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
-    assert len(found) == 1 and found[0]["reason"] == "The Market Test starts in 3 ticks"
+    assert len(found) == 1 and found[0]["reason"] == "The Market Test starts in 4 ticks"
 
 
 def test_the_guard_lets_a_ladder_open_when_the_event_is_far_or_the_guard_is_off(tmp_path):
     team = FakeTeam()
-    t, _ = guarded_taker(tmp_path / "far", team, [BENCH])  # 6 ticks away: LAV-08's 5 bids end before it
+    t, _ = guarded_taker(tmp_path / "far", team, [FAR])  # 12 ticks away: LAV-08's 6 ticks end before it
     t.on_tick(clock())
     assert [s[2] for s in team.sent if s[0] == "open_thread"] == [{"buy": {"card": "LAV-08"}}]
     team2 = FakeTeam()

@@ -273,6 +273,10 @@ rebased on `main` after the previous one merges.
   = '5s'` · reconnect with a plain connect (schema on the first connection only) · `LedgerUnavailable` in
   `dealer buy` HOLDS the tick (never walks or closes) · `sell` exits cleanly on an outage · reply to the
   private-IP Greptile P1 (false for us). · **Acceptance:** tests, gate, sim smoke, `/pr-review` APPROVE.
+- PR72 follow-up (#161, 23:00 window). Steps: the close retry catches any clock-read error, re-reads the thread
+  before it gives up and caps its sleep · a walk refused with a 429 on the last tick is closed on the next one and
+  keeps its lower reopen · the accepted_pending exit re-reads · `reread` never raises. · **Acceptance:** each fix has
+  a test that fails on `main` 90191ec; gate + sim smoke; `/pr-review` APPROVE.
 - PR60 (two-issue duels). Steps: drop `round()` in the inside-limit checks · finite `_number` for days in
   `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
   raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).

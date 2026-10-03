@@ -206,11 +206,14 @@ def _at_or_last(row: Mapping[str, Any]) -> float:
 
 
 def ladder_ticks(ladder: tuple[int, int, int] | None, max_ticks: int) -> int:
-    """Ticks a dealer ladder may run: one bid per tick, every distinct bid, at most the thread's tick limit."""
+    """Ticks a dealer ladder may run: one bid per tick, every distinct bid (the last one clamped to the top, so a
+    step that does not divide the range still ends on it), at most the thread's tick limit, plus the tick on which
+    she answers our last bid or we accept."""
     if ladder is None:
-        return max_ticks
+        return max_ticks + 1
     start, top, step = ladder
-    return max(1, min(max_ticks, (top - start) // max(1, step) + 1))
+    bids = math.ceil(max(0, top - start) / max(1, step)) + 1
+    return min(max_ticks, bids) + 1
 
 
 def crossing(

@@ -22,8 +22,8 @@ from bazaar_agent.learn.model import Learning
 CONFIDENCE = 0.9  # public facts: the board and the feed say so; the "why" is our reading of them
 MIN_MOVE = 0.1  # a component that moved less is not named
 LIST_CAP = 5  # items named per list in the text
-DETAIL_CAP = 20
-LATEST_MAX = 3  # rival moves kept for Jev's state  # items kept per list in `detail`
+DETAIL_CAP = 20  # items kept per list in `detail`
+LATEST_MAX = 3  # rival moves kept for Jev's state
 FIELD_MAX = 24
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 COMPONENTS = ("negotiating", "market")
