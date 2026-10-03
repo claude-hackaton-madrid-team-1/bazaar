@@ -33,7 +33,7 @@ def run(mod, start, lag, skew):
 rng = random.Random(7)
 for label, path in (("main", sys.argv[1]), ("B13", sys.argv[2])):
     mod = load(path, label)
-    for lag, skew in ((0, 0), (0, 3), (0, -3), (90, 0)):
+    for lag, skew in ((0, 0), (0, 3), (0, -3), (90, 0), (61.3, 0), (92, 0), (93.7, 0)):
         rows = [run(mod, OPEN - 6 * 3600 - rng.uniform(0, 300), lag, skew) for _ in range(1000)]
         late = [r[0] for r in rows]; ticks = [r[1] for r in rows]; reads = [r[2] for r in rows]
         print(f"{label:4} lag={lag:3}s skew={skew:+}s  late p50={statistics.median(late):6.1f}s max={max(late):6.1f}s "

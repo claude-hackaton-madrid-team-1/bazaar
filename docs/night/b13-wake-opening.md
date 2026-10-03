@@ -38,12 +38,15 @@ row and 30 s ticks.
 |---|---|---|---|---|---|---|
 | main | on time | exact | 161.8 s | 299.9 s | 4.68 / 9 | 74 |
 | main | 90 s late | exact | 153.5 s | 299.6 s | 4.61 / 9 | 74 |
-| B13 | on time | exact | **0.3 s** | 1.0 s | **0 / 0** | 74 |
+| B13 | on time | exact | **0.3 s** | 0.8 s | **0 / 0** | 74 |
 | B13 | on time | 3 s fast | 2.3 s | 2.7 s | 0 / 0 | 75 |
 | B13 | on time | 3 s slow | 3.3 s | 3.3 s | 0 / 0 | 74 |
-| B13 | 90 s late | exact | 0.3 s | 0.8 s | 0 / 0 | 92 (+18 polls at 5 s) |
+| B13 | 90 s late | exact | 0.3 s | 0.9 s | 0 / 0 | 92 (+18 polls at 5 s) |
+| B13 | 61.3 / 92 / 93.7 s late | exact | 4.0 / 3.3 / 1.6 s | 4.5 / 3.6 / 2.3 s | 0 / 0 | 87–93 |
 
-The request cost overnight is unchanged (74 reads). A late opening costs one read per 5 s per loop.
+The request cost overnight is unchanged (74 reads). A late opening costs one read per 5 s per loop. The 0.3 s at
+"90 s late" only holds because 90 is a multiple of the 5 s poll (r1). Other delays land anywhere in 0–5 s, still
+within the first 30 s tick.
 
 ## Tests (each one fails on main, passes here)
 - `tests/bites/test_doors_open_wakeup.py`: r2's two bite tests with the strict `xfail` markers dropped. On main,
@@ -62,8 +65,14 @@ The request cost overnight is unchanged (74 reads). A late opening costs one rea
 - **Merge conflict to expect:** `tests/bites/test_doors_open_wakeup.py` also exists on `night/r2-bite-hunter`
   with strict xfails. If that branch is merged after this one, keep this version (without the markers), or the
   strict xfails turn into failures.
+- **Doors closed during a day window:** this is undocumented, and the only precedent is a pause with the doors
+  open, which already polls every 5 s. In that case every loop polls every 5 s for the whole closure: about
+  6 loops ≈ 1.2 req/s of the team key's 5 req/s (r1, low). I'm leaving it as is. Backing off would need state or
+  a longer poll, and the longer poll would cost ticks when the doors reopen.
 - **#78 (stagger)** also changes `seconds_until_next_tick` (a positional `offset_s`). Resolve the text conflict
-  as `(clock, offset_s=0.0, *, now=None)`. `now` is keyword-only, so the two can't be confused.
+  as `(clock, offset_s=0.0, *, now=None)`. `now` is keyword-only, so the two can't be confused. When both land,
+add the stagger to the opening wake too (`… + AFTER_TICK_S + offset`). Without it, every loop wakes at
+09:00:00.3 together (r1, low).
 - **Decision:** merge any time before ~08:50. A redeploy while the doors are closed costs no ticks (bite X16 is
   free overnight). The only cost left is X3 (dealer threads left open on Friday are orphaned), the same at 08:58
   or 09:00:05, and B17 handles it. If it isn't merged, restart the services at ~09:00:05.
