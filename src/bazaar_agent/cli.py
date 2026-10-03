@@ -854,6 +854,7 @@ def dealer_sell(
         copy_to_sell,
         dealer_refusal,
         negotiate_sell,
+        only_copy,
         sell_topic,
     )
     from bazaar_agent.agents.runtime import Recorder
@@ -864,8 +865,9 @@ def dealer_sell(
     rules = _rules().rules
     settings = load_settings()
     client, me = _team_me()  # album first: the copy, its your_value and how many we hold, from /api/me
+    mine = open_commitments(_my_offers(client), str(me.get("id") or ""))  # copies our asks give
     try:
-        asset = copy_to_sell(me, ref)
+        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed)
         your_value = float(asset["your_value"])
         check_floor(floor, your_value)
         plan = AskPlan(start, step, floor)
@@ -895,8 +897,16 @@ def dealer_sell(
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
         return gr.Action(kind, ref, rarity, price, your_value=your_value)
 
+    def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
+        """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
+        verdict = gr.check(action(kind, price), ctx, rules)
+        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
+            why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
+            return gr.Verdict(False, (*verdict.violations, why))
+        return verdict
+
     try:
-        pre = gr.check(action("sell", floor), committed(Clock.model_validate(client.clock())), rules)
+        pre = checked("sell", floor, committed(Clock.model_validate(client.clock())))
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
     if not pre.allowed:
@@ -909,7 +919,7 @@ def dealer_sell(
             ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
-        verdict = gr.check(action("accept_sell" if move.kind == "accept" else "sell", move.price), ctx, rules)
+        verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     decisions = DecisionLog(

@@ -87,7 +87,7 @@ def test_sell_offers_must_give_cash_only_for_exactly_our_copy():
 
 def test_only_copy_of_a_page_card_is_refused_and_the_cheapest_duplicate_is_picked():
     one = {"assets": [{"id": 1, "kind": "card", "ref": "MAL-02", "rarity": "common", "your_value": 3}]}
-    with pytest.raises(SellRefused, match="only copy"):
+    with pytest.raises(SellRefused, match="never sell the last one"):
         copy_to_sell(one, "MAL-02")
     two = {
         "assets": [
@@ -251,6 +251,7 @@ ME = {
         {"id": 9, "kind": "card", "ref": "SAL-10", "rarity": "rare", "your_value": 30.0},
     ],
 }
+OFFERS: list = []
 ABUELA = {"id": "abuela", "menu": {"buys": [{"rarity": "common"}, {"rarity": "uncommon"}]}}
 
 
@@ -266,7 +267,12 @@ def sell_cli(monkeypatch, tmp_path):
             return {"personas": [ABUELA]}
 
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
-    monkeypatch.setattr(cli, "_team_me", lambda: (object(), ME))
+
+    class Client:
+        def my_offers(self):
+            return {"offers": OFFERS}
+
+    monkeypatch.setattr(cli, "_team_me", lambda: (Client(), ME))
     monkeypatch.setattr(cli, "public_client", lambda settings: Public())
     return lambda *args: CliRunner().invoke(cli.app, ["dealer", "sell", *args])
 
@@ -282,7 +288,7 @@ def test_cli_refuses_a_floor_under_your_value_an_only_copy_and_a_dealer_that_doe
     low = sell_cli("MAL-02", "--start", "12", "--min", "1")
     assert low.exit_code == 1 and "your_value" in low.output
     only = sell_cli("SAL-10", "--start", "90", "--min", "40")
-    assert only.exit_code == 1 and "only copy" in only.output
+    assert only.exit_code == 1 and "never sell the last one" in " ".join(only.output.split())
     upside = sell_cli("MAL-02", "--start", "5", "--min", "6")
     assert upside.exit_code == 1 and "bad plan" in upside.output
     nobody = sell_cli("MAL-02", "--start", "12", "--min", "6", "--dealer", "chato")
@@ -316,3 +322,41 @@ def test_dealer_refusal_needs_an_active_unlocked_buyer():
     assert "announced" in dealer_refusal("pilar", [{**PILAR, "status": "announced"}], me, rare)
     assert "not among" in dealer_refusal("vault", [PILAR], me, rare)
     assert "does not buy" in dealer_refusal("pilar", [PILAR], me, {**rare, "ref": "MAL-10", "set": "MAL"})
+
+
+def test_cli_refuses_the_last_copy_not_already_listed_by_the_maker(sell_cli, monkeypatch):
+    ask = {
+        "id": 50,
+        "maker": "t01",
+        "status": "open",
+        "give": {"assets": [{"id": 8, "ref": "MAL-02"}]},
+        "want": {"cash": 9},
+    }
+    monkeypatch.setattr(f"{__name__}.OFFERS", [ask])
+    result = sell_cli("MAL-02", "--start", "12", "--min", "6")
+    assert result.exit_code == 1 and "never sell the last one" in " ".join(result.output.split())
+
+
+def test_listed_copies_do_not_count_toward_the_only_copy_rule():
+    held = {
+        "assets": [{"id": i, "kind": "card", "ref": "LAT-04", "rarity": "common", "your_value": 1.3} for i in (4, 5)]
+    }
+    with pytest.raises(SellRefused, match="never sell the last one"):
+        copy_to_sell(held, "LAT-04", listed=frozenset({5}))
+    with pytest.raises(SellRefused, match="never sell the last one"):
+        copy_to_sell(held, "LAT-04", unnamed=1)
+    assert copy_to_sell(held, "LAT-04")["id"] == 5
+    three = {"assets": [*held["assets"], {**held["assets"][0], "id": 6}]}
+    assert copy_to_sell(three, "LAT-04", listed=frozenset({6}))["id"] in (4, 5)  # never the listed one
+
+
+def test_only_copy_guard_reads_the_sellable_count():
+    from bazaar_agent.agents.dealer_sell import only_copy
+
+    assert only_copy("LAT-04", "common", 1) and not only_copy("LAT-04", "common", 2)
+    assert not only_copy("LAT-11", "legendary", 0)
+
+
+def test_an_opening_bid_at_or_above_our_start_is_countered_above_it_not_walked():
+    move = decide_sell(SellNegotiation(AskPlan(10, 1, 6)), 12, 99, False)
+    assert (move.kind, move.price) == ("bid", 13)

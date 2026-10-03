@@ -110,9 +110,11 @@ def _patient(neg: SellNegotiation, reason: str) -> Move | None:
 
 def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     """Her bid meets our next ask but she has not come up from her opening: ask strictly above it (an ask at
-    her bid would close at her opening price) and strictly below our last ask."""
-    last = neg.asks[-1] if neg.asks else neg.plan.start + 1
-    price = min(last - 1, bid + neg.plan.step)
+    her bid would close at her opening price) and strictly below our last ask. An opening bid at or above our
+    `start` is countered one step above it, never walked from."""
+    price = bid + neg.plan.step  # before our first ask (her opening ≥ our start) nothing caps it from above
+    if neg.asks:
+        price = min(neg.asks[-1] - 1, price)
     if price <= bid or price < neg.plan.floor:
         return _patient(neg, "her answer to our last ask is not in yet") or Move(
             "walk", reason=f"she held her opening bid {bid}: no ask left above it"
@@ -243,22 +245,31 @@ def dealer_refusal(dealer_id: str, personas: list[Any], me: Mapping[str, Any], c
     return None
 
 
-def copy_to_sell(me: Mapping[str, Any], ref: str) -> dict[str, Any]:
-    """The copy of `ref` we lose least by selling, from /api/me. Refused: no copy, no `your_value` (no floor),
-    or our ONLY copy of a page card (it would open a hole in the album)."""
+def copy_to_sell(
+    me: Mapping[str, Any], ref: str, listed: frozenset[int] = frozenset(), unnamed: int = 0
+) -> dict[str, Any]:
+    """The copy of `ref` we lose least by selling, from /api/me, among the copies none of our open offers
+    gives (`listed` asset ids; `unnamed`: listed assets whose card we cannot tell, counted against every card).
+    Refused: no free copy, no `your_value` (no floor), or the last uncommitted copy of a page card (selling it
+    while an ask of ours fills would open a hole in the album)."""
     cards = [a for a in me.get("assets") or [] if isinstance(a, dict) and a.get("kind", "card") == "card"]
     copies = [a for a in cards if a.get("ref") == ref and isinstance(a.get("id"), int)]
     if not copies:
         raise SellRefused(f"we hold no card {ref!r} (check `uv run bazaar status`)")
-    rarity = str(copies[0].get("rarity") or "").lower()
-    if len(copies) == 1 and rarity not in OFF_PAGE_RARITIES:
-        raise SellRefused(f"{ref} is our only copy of a page card: never sold")
-    valued = [
-        a for a in copies if isinstance(a.get("your_value"), int | float) and not isinstance(a["your_value"], bool)
-    ]
+    free = [a for a in copies if a["id"] not in listed]
+    if only_copy(ref, copies[0].get("rarity"), len(free) - unnamed):
+        raise SellRefused(
+            f"{ref}: {len(free) - unnamed} free copies (not on our offers); never sell the last one of a page card"
+        )
+    valued = [a for a in free if isinstance(a.get("your_value"), int | float) and not isinstance(a["your_value"], bool)]
     if not valued:
-        raise SellRefused(f"no copy of {ref} has a your_value in /api/me: not pricing it blind")
+        raise SellRefused(f"no free copy of {ref} has a your_value in /api/me: not pricing it blind")
     return min(valued, key=lambda a: (float(a["your_value"]), -int(a["id"])))
+
+
+def only_copy(ref: str, rarity: Any, sellable: int) -> bool:
+    """`sellable` copies of `ref` not committed to an offer of ours: one or none of a page card is never sold."""
+    return sellable <= 1 and str(rarity or "").lower() not in OFF_PAGE_RARITIES
 
 
 def check_floor(floor: int, your_value: float) -> None:
