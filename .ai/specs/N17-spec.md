@@ -220,6 +220,9 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
   #138, accepted ones), so the maker and the taker never offer it twice; an accept claims `team:<thread>` in the
   shared ledger. No separate `team:<asset>` ledger row.
 - **Public view:** team-thread decisions publish neither the counterparty nor the terms (a private thread).
+- **Deferred (kept here, not in 98-nice-to-haves or the status page, to stay conflict-free with main):**
+  `team_threads_venue = cheapest`; cash-only legs in a thread; Jev on "open or not"; the status page entry
+  once the desk goes live.
 - **Not wired yet:** an eval row and a #96 lesson per settled swap (N11's evals already score team trades from
   the feed); N16's tactic bank (the hook is `TeamDesk.words`); the shape filter for a thread offer whose `to` is
   missing on the real server (Q2/Q6 first).
