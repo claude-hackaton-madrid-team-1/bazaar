@@ -760,7 +760,7 @@ class TeamDesk:
 
     def _propose(self, v: DeskView, talk: Talk, advice: JevAdvice | None = None) -> None:
         cash = cash_at(talk.trade, talk.step, self.ladder)
-        standing = talk.offer_id is not None and self._still_open(v, talk)  # this proposal replaces it
+        standing = self._seen_open(v, talk)  # this proposal replaces it (netted only when SEEN open)
         verdict = self._guard(v, talk.trade, cash, talk.thread_id, max(0, -talk.cash) if standing else 0)
         if verdict.halted:
             self.log(f"tick {v.tick} team desk: kill switch on: holding thread {talk.thread_id} ({verdict})")
@@ -778,7 +778,7 @@ class TeamDesk:
             ok, advice, why = self.jev_gate(v, talk.trade, cash, 0, talk.thread_id, talk.step)
             if not ok:
                 self._jev_refused(v, "team_offer", talk.trade, talk.thread_id, why, advice)
-                last = max(talk.opened_tick, talk.sent_tick, talk.heard_tick)
+                last = max(talk.opened_tick, talk.sent_tick)  # their messages never extend the hold
                 if (
                     advice is not None
                     and advice.reason == NO_JEV_BUDGET
@@ -812,6 +812,9 @@ class TeamDesk:
                     self.log(f"tick {v.tick} team desk: cancel of offer {old} refused: no new offer this tick")
                     return  # never two standing offers in one thread; the next tick reads what stands
                 self._after_cancel(v, talk.thread_id, self._talk_offer(talk), body)
+                if body.get("status") not in DEAD:  # e.g. `settled`: it was taken, our copy may be gone
+                    self.log(f"tick {v.tick} team desk: offer {old} reads {body.get('status')}: no new offer")
+                    return  # the next tick reads the thread (a deal ends it)
             elif talk.offer_id is not None and self._gone(v, talk):  # expired or cancelled by the server
                 self._refund(v, self._talk_offer(talk))
             talk.offer_id = None
@@ -838,6 +841,14 @@ class TeamDesk:
         if self.live and self.ledger is not None:
             # A thread offer is a new listing: the maker's offers_per_team_per_tick budget sees it.
             self.ledger.record("listing", v.tick, v.t_hours, 0, f"team:{talk.thread_id}")
+
+    def _seen_open(self, v: DeskView, talk: Talk) -> bool:
+        """Our last offer in the thread is SEEN open this tick and its spend not given back: only then does a
+        replacement net its cash out of `team_swap_max_cash_per_hour` (unseen may mean settled)."""
+        payload = self._payloads.get(talk.thread_id) or {}
+        seen = [o for o in [*(payload.get("standing_offers") or []), *v.offers] if o.get("id") == talk.offer_id]
+        open_ = any(o.get("status") in (None, "open", "queued") for o in seen)
+        return talk.offer_id is not None and talk.offer_id not in self.refunded and open_
 
     def _still_open(self, v: DeskView, talk: Talk) -> bool:
         """Is our last offer in the thread still standing? An expired or cancelled one needs no cancel."""

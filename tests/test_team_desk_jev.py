@@ -273,3 +273,24 @@ def test_the_maker_lists_again_when_the_desk_is_killed_by_its_environment(monkey
     assert not maker_may_list(me, "LAT-03", 4, rules)
     monkeypatch.setenv("BAZAAR_TEAM_THREADS", "0")
     assert maker_may_list(me, "LAT-03", 4, rules)
+
+
+def test_a_cancel_answered_settled_posts_no_new_offer_and_nets_nothing(tmp_path):
+    # security-auditor #188 r2 P2-1: a settled offer is not seen; netting it let the cap be passed by its cash.
+    class Settled(Team):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            return {"status": "settled"}
+
+    team = Settled()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.converse(view(), set())  # anchor: books 1 P
+    d.ledger.record("spend", TICK, 1.4, 37, f"{TEAM_SPEND}MAL-09")  # 38 booked
+    reply = thread(messages=[{"sender": "t01", "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    team.sent.clear()
+    d.proposals(view([reply], tick=TICK + 1))  # our offer is gone from the thread: unseen, never netted
+    assert not d._seen_open(view([reply], tick=TICK + 1), d.talks[42])
+    d.converse(view([reply], tick=TICK + 1), set())
+    assert not [s for s in team.sent if s[0] == "say"]
+    assert d.ledger.spent_since(0.5, TEAM_SPEND) <= 40

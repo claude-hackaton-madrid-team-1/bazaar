@@ -982,8 +982,10 @@ def test_a_cancel_answered_settled_keeps_the_spend(tmp_path):
     d.converse(view(), set())  # anchor: + 1 P
     reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
     d.proposals(view([reply], tick=TICK + 1))
-    d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: + 3 P, no refund
-    assert d.ledger.spent_since(0) == 1 + 3
+    team.sent.clear()
+    d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: no refund, and
+    assert d.ledger.spent_since(0) == 1  # no new offer either (#188 r2: our copy may already be gone)
+    assert [s[0] for s in team.sent] == ["cancel"]
 
 
 def test_a_team_accept_shows_only_its_thread_and_fee_on_the_public_view():
