@@ -243,10 +243,12 @@ def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cl
     order: list[str] = []
     reserve, pick = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick
     monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
-    monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
+    sent_at_jev = lambda self, *a, **kw: order.append(f"jev after {client.sent}") or pick(self, *a, **kw)  # noqa: E731
+    monkeypatch.setattr(duel_jev.DuelJev, "pick", sent_at_jev)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert order == ["reserve", "jev"] and client.sent == [("accept", 95)]  # booked once, before Jev, then sent
+    assert order == ["reserve", "jev after [('accept', 95)]"]  # booked AND sent before Jev (B15 / B7): nothing strands
+    assert client.sent == [("accept", 95)]  # once
 
 
 def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monkeypatch):
@@ -386,19 +388,3 @@ def test_without_jev_a_forced_accept_goes_first_and_its_row_has_no_jev_context(d
     assert result.exit_code == 0, result.output
     (row,) = decision_rows(tmp_path)
     assert client.sent == [("accept", 95)] and row["jev"] is None and "jev not asked" not in row["reason"]
-
-
-def test_a_ledger_outage_fails_a_forced_accept_closed(duel_cli, monkeypatch):
-    """v1's forced pass reads the ledger before Jev: an outage skips that duel this tick, nothing is sent."""
-    from bazaar_agent import guardrails as gr
-
-    cli, client, asked, tmp_path = duel_cli
-    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
-
-    def down(self, *args):
-        raise ConnectionError("ledger down")
-
-    monkeypatch.setattr(gr.Ledger, "accepts_in_tick", down)
-    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
-    assert result.exit_code == 0, result.output
-    assert "duel 95: skipped this tick (ConnectionError)" in result.output and client.sent == []

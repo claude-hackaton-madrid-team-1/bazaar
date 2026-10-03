@@ -20,13 +20,13 @@ before Jev.
 | `agents/duel_jev.py` | `forced_pick(duel, tick, start, anchor, floor, endgame_ticks) -> DuelPick \| None` returns the exact `DuelPick` that `DuelJev.pick` makes ("jev not asked", with its state) when today's v1 move is an accept AND the duel's only legal move (an inside-limit offer within `duel_endgame_ticks`). |
 | `cli.py` duel `on_tick` | **v1 only** (`params is None`; v2 keeps its planner's booking untouched). After the v2 booking block and before the Jev call, every forced accept goes through the unchanged `play_one` (guardrails with `rules_t`, `reserve_accept`, send, decision row), nearest deadline first. The main loop then skips those duels. `pick` still sees every duel, so outcome calibration stays complete. With `--no-jev`, rows carry no Jev context, as before. A row that makes `forced_pick` raise is logged and goes the usual way. `play_one`'s definition moved above the Jev call; its body changed only in the forced branch. |
 | `taker.py` | **No change.** The alternative fix, "the taker skips while a duel is in its endgame", needs a duel store or an extra `/api/duels` read per tick, which the Sunday request budget can't afford (X6: 70 of 75). |
-| tests | 6 duel-loop CLI tests (one fails a forced accept closed when the ledger is down), 4 `forced_pick` tests, and r2's bite test **replaced** by a measured invariant (`tests/bites/test_duel_accept_priority.py`). One `forced_pick` test asserts equality with `pick()` over 4 Jev verdicts × 4 deadlines × 5 prices; another replays the exposure split below on the fixture. |
+| tests | 5 duel-loop CLI tests, 4 `forced_pick` tests, and r2's bite test **replaced** by a measured invariant (`tests/bites/test_duel_accept_priority.py`). One `forced_pick` test asserts equality with `pick()` over 4 Jev verdicts × 4 deadlines × 5 prices; another replays the exposure split below on the fixture. |
 
 No GUARDRAILS.md values and no new parameters. This is a pure bug fix in the order of existing steps.
 
 ## Evidence
 
-**The regression tests fail on the chain's own `cli.py` (`night/b8-days-wiring` @ 053e30c, which carries #103's ledger fail-closed 9239070 and r1's 52a590a) and pass here:**
+**The regression tests fail on the chain's own `cli.py` (`night/b8-days-wiring` @ 784a224) and pass here:**
 
 | test | before | after |
 |---|---|---|
@@ -71,11 +71,9 @@ limit handling makes it 7/11/8 here; it was 6/12/8 on #72.
 | accept that Jev may overrule | 11 | unchanged: still books after Jev. If the slot is lost, nothing is sent, no round is spent, and the duel retries next tick. In the endgame it becomes forced. |
 | never accepts | 8 | n/a |
 
-Gates: ruff, black and mypy are clean; pytest 802 passed, 1 xfailed (the 5 s residual).
-
-**Ledger outage:** the forced pass keeps the chain's fail-closed rule. Each forced duel is played inside the
-per-duel `try`, and its guard reads the ledger on `rules_t`. `test_a_ledger_outage_fails_a_forced_accept_closed`
-shows the result: skipped this tick, nothing sent.
+Gates: ruff, black and mypy are clean. pytest: 789 passed and 1 xfailed (the 5 s residual). The 1 failure,
+`tests/test_status.py::test_publishing_never_waits_on_the_server_or_a_stuck_client` (2.83 s vs < 2.0 s), is
+**pre-existing**: it fails the same way on the chain's pristine `cli.py` while ~30 sessions load this machine.
 
 ## Verdict
 

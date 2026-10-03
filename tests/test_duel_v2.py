@@ -324,3 +324,32 @@ def test_an_explicit_price_only_duel_stays_price_only_even_with_a_weight():
     assert not _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 0}})
     assert _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 4}})
     assert _two_issue({"your_days_weight": 2.0, "rival_offer": {"price": 90}})  # no issues list: the weight decides
+
+
+# ---------------------------------------------------------------- B7: within-tick order and the Jev path
+
+
+def test_the_practice_payloads_show_a_mixed_within_tick_order():
+    order = arena.tick_order(arena.load_practice(FIXTURE))
+    assert (order["we_first"], order["rival_first"]) == (27, 22)  # 55 % of shared ticks we spoke first
+    assert order["per_duel"][85] == (5, 0) and order["per_duel"][274] == (1, 6)  # it depends on the rival
+
+
+def test_the_arena_draws_each_rivals_order_and_v2_keeps_its_lead_under_the_mix():
+    res = arena.tournament(
+        {"v1": arena.v1_policy(), "v2": arena.v2_policy()}, scenarios=10, decays=(0.08,), team_first_share=0.55
+    )
+    v1, v2 = arena.summarize(res["v1"]), arena.summarize(res["v2"])
+    assert v2.mean_result > v1.mean_result and v2.outside == v2.denied == 0
+
+
+def test_under_v2_jev_may_counter_within_the_caps_and_its_counter_stays_inside_our_limit():
+    d = duel(rival=[(100, 110), (101, 110), (102, 110)], ours=[(100, 160)])  # stalled at 110 against our cost 100
+    jev = DuelJev(lambda state: JevAdvice("counter", 0.9))
+    pick = jev.pick([d], 103, {1: 100}, anchor=0.6, floor=0.05, endgame_ticks=2, left=lambda: 30.0, v2=V2Params())[1]
+    assert pick.move.kind == "offer" and pick.move.price > 110  # Jev's counter, at v2's target
+    ctx = gr.Context(cash=0, held={}, tick=0, t_hours=0)
+    assert gr.check(duel_action(d, pick.move), ctx, gr.Guardrails(duel_policy="v2")).allowed
+    hold = DuelJev(lambda state: JevAdvice("hold", 0.9))
+    held = hold.pick([d], 104, {1: 100}, anchor=0.6, floor=0.05, endgame_ticks=2, left=lambda: 30.0, v2=V2Params())[1]
+    assert held.default.kind == "offer" and held.move.kind == "hold"  # Jev may keep a v2 counter from costing a round

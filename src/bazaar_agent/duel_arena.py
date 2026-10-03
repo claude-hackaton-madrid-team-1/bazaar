@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +61,7 @@ class Scenario:
     rival_step: float = 0.35  # oneshot: share of its remaining gap it gives per answer; titfortat: mirror ratio
     rival_every: int = 1  # time-based rivals reprice every N ticks
     greedy: bool = False  # exploiters: never take our offer at their last move (else they take any deal inside)
+    team_first: bool | None = None  # within a tick we move before this rival (None: the session's order)
 
     @property
     def pie(self) -> int:
@@ -330,10 +332,13 @@ def run_session(
     first_id: int = 1,
     rules: gr.Guardrails | None = None,
     team_first: bool = False,
+    second_read: bool = False,
 ) -> list[Outcome]:
     """Every scenario as one live duel in the same session (same start and deadline per duration).
     Every move goes through `guardrails.check` first, as `duel run --play` sends it. Within a tick the rival
-    moves first (the simulator's order) unless `team_first`: then we move before we see its tick-t message."""
+    moves first (the simulator's order) unless `team_first` (or the scenario's own `team_first`): then we move before
+    we see its tick-t message. `second_read` (B7): we read the duels again after every rival moved this tick and may
+    still accept (an accept is not a message), within the tick's one accept."""
     rules = rules or gr.Guardrails()
     duels = [
         Live(first_id + i, s, Rival(s, start), ALIASES[i % len(ALIASES)], start, start + s.ticks)
@@ -355,9 +360,12 @@ def run_session(
             elif tick >= d.deadline:
                 d.status, d.closed_tick = "no_deal", tick
 
-    def rival_turn(tick: int) -> None:
+    def ours_first(d: Live) -> bool:
+        return team_first if d.s.team_first is None else d.s.team_first
+
+    def rival_turn(tick: int, before_us: bool) -> None:
         for d in duels:
-            if d.status != "live" or d.accepted_by is not None:
+            if d.status != "live" or d.accepted_by is not None or ours_first(d) == before_us:
                 continue
             new = d.ours is not None and d.ours_tick >= d.rival_tick  # it has not answered our offer yet
             step = 0.0
@@ -373,16 +381,18 @@ def run_session(
                 days = d.rival.days if d.s.two_issue else None
                 d.messages.append({"tick": tick, "from": d.alias, "text": "", "price": int(price), "days": days})
 
-    def team_turn(tick: int) -> None:
+    accepts: dict[int, int] = {}  # tick -> our accepts so far (the team's one per tick, across both reads)
+
+    def team_turn(tick: int, accept_only: bool = False) -> None:
         live = [d for d in duels if d.status == "live" and d.accepted_by is None]
-        if not live or tick >= end:
+        if not live or tick >= end or (accept_only and accepts.get(tick, 0) >= 1):
             return
         moves = policy([d.payload() for d in live], tick, first_seen)
-        accepted = 0
         for d in live:
             move = moves.get(d.did, DuelMove("hold"))
-            if move.kind == "hold":
+            if move.kind == "hold" or (accept_only and move.kind != "accept"):
                 continue
+            accepted = accepts.get(tick, 0)
             ctx = gr.Context(cash=0, held={}, tick=tick, t_hours=0.0, accepts_this_tick=accepted)
             if not gr.check(duel_action(d.payload(), move), ctx, rules).allowed:
                 denied[d.did] += 1
@@ -390,7 +400,7 @@ def run_session(
             if move.kind == "accept":
                 if d.rival.price is None:
                     continue
-                accepted += 1
+                accepts[tick] = accepted + 1
                 d.accepted_by, d.accepted_at = "us", tick
                 d.accepted_terms = (d.rival.price, d.rival.days if d.s.two_issue else 0)
             elif move.price is not None:
@@ -402,8 +412,11 @@ def run_session(
 
     for tick in range(start, end + 1):
         settle(tick)
-        for turn in (team_turn, rival_turn) if team_first else (rival_turn, team_turn):
-            turn(tick)
+        rival_turn(tick, before_us=True)
+        team_turn(tick)
+        rival_turn(tick, before_us=False)
+        if second_read:
+            team_turn(tick, accept_only=True)
     out = []
     for d in duels:
         gs, gw = _gains(d.s, d.price, d.days) if d.status == "deal" and d.price is not None else (0.0, 0.0)
@@ -479,6 +492,8 @@ def tournament(
     seed: int = 7,
     rules: Mapping[str, gr.Guardrails] | None = None,
     team_first: bool = False,
+    team_first_share: float | None = None,
+    second_read: bool | Mapping[str, bool] = False,
 ) -> dict[str, list[Outcome]]:
     """Each policy on the same scenarios: style × scenario × role × decay × duration, `per_session` duels
     sharing one accept per tick (they start and end together, the hard case for the accept slot).
@@ -491,13 +506,20 @@ def tournament(
                 for _ in range(scenarios):
                     for role in ("seller", "buyer"):
                         cases.append(draw(rng, style, role, decay, n_ticks, two_issue))
+    if team_first_share is not None:  # B7: each rival either moves before us in a tick or answers after us
+        order = random.Random(f"{seed}:order")
+        for case in cases:
+            case.team_first = order.random() < team_first_share
     results: dict[str, list[Outcome]] = {}
     for name, policy in policies.items():
+        reread = second_read.get(name, False) if isinstance(second_read, Mapping) else second_read
         out: list[Outcome] = []
         for i in range(0, len(cases), per_session):
             batch = cases[i : i + per_session]
             guard = (rules or {}).get(name)
-            out.extend(run_session(batch, policy, first_id=i + 1, rules=guard, team_first=team_first))
+            out.extend(
+                run_session(batch, policy, first_id=i + 1, rules=guard, team_first=team_first, second_read=reread)
+            )
         results[name] = out
     return results
 
@@ -718,3 +740,32 @@ b11_jitter025 = single(B11_PRESETS["jitter025"])
 b11_eg1_share03_jitter025 = single(B11_PRESETS["eg1_share03_jitter025"])
 b11_eg1_share05_jitter025 = single(B11_PRESETS["eg1_share05_jitter025"])
 b11_eg0_share03_jitter025 = single(B11_PRESETS["eg0_share03_jitter025"])
+
+
+# ---------------------------------------------------------------- B7: who moves first within a tick
+
+
+def tick_order(duels: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Within-tick order on real payloads: in every tick where both we and the rival priced, whose message comes first
+    in the duel's (chronological) `messages`. Per duel too: some rivals answer after us every tick, others move first.
+    """
+    total = {"we_first": 0, "rival_first": 0}
+    per_duel: dict[int, tuple[int, int]] = {}
+    for d in duels:
+        rival, by_tick = d.get("rival"), defaultdict(list)
+        for m in d.get("messages") or []:
+            if isinstance(m, Mapping) and m.get("price") is not None and isinstance(m.get("tick"), int):
+                by_tick[m["tick"]].append(
+                    "us" if m.get("from") == OUR_SENDER else "rival" if m.get("from") == rival else "?"
+                )
+        ours = theirs = 0
+        for who in by_tick.values():
+            if "us" in who and "rival" in who:
+                first = next(w for w in who if w in ("us", "rival"))
+                ours, theirs = ours + (first == "us"), theirs + (first == "rival")
+        if ours or theirs:
+            per_duel[int(d["duel"])] = (ours, theirs)
+            total["we_first"] += ours
+            total["rival_first"] += theirs
+    shared = total["we_first"] + total["rival_first"]
+    return {**total, "we_first_share": total["we_first"] / shared if shared else 0.0, "per_duel": per_duel}

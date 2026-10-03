@@ -46,6 +46,9 @@ def test_with_today_s_rules_the_duel_tick_never_reads_the_finished_duels(duel_cl
     client = DoneClient([{**LIVE}], [])
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     assert cli._rules().rules.duel_days_auto is False  # the shipped default
+    from bazaar_agent import duel_store
+
+    monkeypatch.setattr(duel_store.DuelStore, "read_finished", lambda self, duels: False)  # main's own read: off
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
     assert result.exit_code == 0, result.output
     assert client.done_calls == 0
