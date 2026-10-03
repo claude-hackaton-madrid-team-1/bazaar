@@ -9,7 +9,6 @@ from collections import Counter, defaultdict
 from statistics import median
 
 import psycopg
-
 from q import dsn  # type: ignore[import-not-found]
 
 SAT = 160
@@ -59,7 +58,8 @@ def main() -> None:
             tp[rarity.get(t["items"][0]["ref"], "?")].append(t["price"])
         venue_trades["rastro" if t.get("venue") == "rastro" else "team venues"] += 1
     print(
-        "rarity     | public asks n / median | public bids n / median | addressed asks n / median | team trades n / median"
+        "rarity     | public asks n / median | public bids n / median | addressed asks n / median"
+        " | team trades n / median"
     )
     for r in ("common", "uncommon", "rare", "epic", "legendary"):
         a, b, aa, t = px[(r, "ask", False)], px[(r, "bid", False)], px[(r, "ask", True)], tp[r]

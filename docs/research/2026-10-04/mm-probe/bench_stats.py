@@ -10,7 +10,6 @@ average, so session k = k * avg_k - (k - 1) * avg_(k-1) (BENCH_BEAT_STALL §1 fi
 from statistics import median
 
 import psycopg
-
 from q import dsn  # type: ignore[import-not-found]
 
 SESSIONS = [("h3", 201), ("h5", 441), ("h7", 681), ("h9", 921), ("h11", 1161), ("h13", 1401)]
