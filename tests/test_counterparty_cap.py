@@ -5,7 +5,9 @@ could take; an offer anyone may take counts against the team we trade most with.
 offer (`to`) when the public one would break the cap; the taker refuses a board accept from a capped maker.
 """
 
+import tempfile
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -279,8 +281,130 @@ def test_the_runtime_reads_our_volume_only_when_the_cap_is_on(tmp_path):
     assert actions._base(backend(tmp_path), clock()).ctx.trades is None
     b = backend(tmp_path / "on", rules=CAP)
     reads = []
-    real = b.events
-    b.events = lambda: reads.append(1) or real()  # type: ignore[method-assign]
+    b.history = lambda: reads.append(1) or []  # type: ignore[method-assign]  # the whole feed (DB first)
     on = actions._base(b, clock())
     actions._base(b, clock())  # the same tick: the feed is not read again
     assert on.ctx.trades == TradeBook({}, {}, 0) and reads == [1]
+
+
+# ---------------------------------------------------------------- guarded swaps (bazaar sell swap)
+
+
+def swap(**kw):
+    from bazaar_agent.agents.seller import Swap
+
+    base = dict(
+        asset_id=4,
+        give_ref="LAT-03",
+        give_rarity="common",
+        your_value=1.2,
+        want_ref="LAV-08",
+        want_rarity="uncommon",
+        worth=50.0,
+        venue="rastro",
+        to="t05",
+        notional=35,
+    )
+    return Swap(**{**base, **kw})
+
+
+def test_a_swap_is_checked_as_a_sale_at_what_we_receive_and_a_bid_for_the_cash_we_add():
+    from bazaar_agent.agents.seller import Commitments, post_swap
+
+    ctx = Context(cash=300, held={}, tick=1, t_hours=0.1)
+    ok = post_swap(None, swap(give_cash=20), ctx, Guardrails(), live=False)
+    assert ok.verdict.allowed and "would swap asset 4 (LAT-03) + 20 P for any LAV-08 on rastro to t05" in ok.message
+    floor = post_swap(None, swap(give_cash=40), ctx, Guardrails(), live=False)
+    assert "cash 300 - 40 < cash_floor 270" in str(floor.verdict)
+    cap = post_swap(
+        None, swap(give_cash=27), Context(cash=1000, held={}, tick=1, t_hours=0.1), Guardrails(), live=False
+    )
+    assert "price 27 > max_price_uncommon 26" in str(cap.verdict)
+    cheap = post_swap(None, swap(your_value=60.0), ctx, Guardrails(), live=False)  # the copy is worth more than we get
+    assert "sell price 50 < 1.0 × your_value 60.0" in str(cheap.verdict)
+    held = post_swap(None, swap(), Context(cash=300, held={"LAV-08": 1}, tick=1, t_hours=0.1), Guardrails(), live=False)
+    assert "we already hold LAV-08" not in str(held.verdict)  # the sale leg never blocks on the wanted card
+    twice = post_swap(None, swap(), ctx, Guardrails(), live=False, commitments=Commitments(listed=frozenset({4})))
+    assert "already in one of our open offers" in str(twice.verdict)
+    capped = post_swap(
+        None, swap(), Context(cash=300, held={}, tick=1, t_hours=0.1, trades=TradeBook({"t05": 30})), CAP, live=False
+    )
+    assert "counterparty t05: 30 + 35" in str(capped.verdict)
+
+
+def test_a_live_swap_posts_its_structured_offer_to_one_team_and_books_its_cash():
+    from bazaar_agent.agents.seller import post_swap
+    from bazaar_agent.guardrails import Ledger
+
+    class Client:
+        sent: list = []
+
+        def list_offer(self, give, want, venue=None, to=None, expires_in_ticks=40):
+            self.sent.append((give, want, venue, to))
+            return {"id": 9}
+
+    client = Client()
+    ledger = Ledger(Path(tempfile.mkdtemp()) / "ledger.jsonl")
+    ctx = Context(cash=300, held={}, tick=1, t_hours=0.1)
+    out = post_swap(client, swap(give_cash=14), ctx, Guardrails(), live=True, ledger=ledger)
+    assert out.sent and client.sent == [({"assets": [4], "cash": 14}, {"cards": ["LAV-08"]}, "rastro", "t05")]
+    assert ledger.spent_since(0) == 14
+    post_swap(client, swap(want_cash=3), ctx, Guardrails(), live=True, ledger=ledger)
+    assert client.sent[-1][1] == {"cards": ["LAV-08"], "cash": 3} and ledger.spent_since(0) == 14
+
+
+@pytest.mark.usefixtures("cli_env")
+def test_the_cli_proposes_a_swap_dry_run():
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+
+    out = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "t05", "--give-cash", "5"])
+    assert out.exit_code == 0, out.output
+    assert "would swap asset 4 (LAT-03) + 5 P for any LAV-08 on rastro to t05" in out.output.replace("\n", " ")
+    bad = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "m77"])
+    assert bad.exit_code == 1 and "--to takes a team id" in bad.output
+
+
+# ---------------------------------------------------------------- hands off: the maker leaves hand posts alone
+
+
+def test_the_maker_leaves_offers_posted_by_hand_alone(tmp_path):
+    from tests.agent_fakes import our_ask
+
+    hand = [our_ask(1, 5, "LAT-09", 90), bid(2, "LAV-02", 9)]  # a target's copy at another price; a non-target
+    team = Recording(offers=hand)
+    kw = parts(tmp_path)
+    for oid in (1, 2):
+        kw["ledger"].record("listing", 90, 1.4, 0, f"hands-off:{oid}")
+    Maker(team, FakePublic(), live=True, log=lambda m: None, now=lambda: 1000.0, **kw).on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "cancel"]  # today the maker would cancel 2 and reprice 1
+    assert not [s for s in team.sent if s[0] == "list_offer" and s[1].get("assets") == [5]]  # no second LAT-09 ask
+    today = Recording(offers=hand)
+    Maker(today, FakePublic(), live=True, log=lambda m: None, now=lambda: 1000.0, **parts(tmp_path / "b")).on_tick(
+        clock()
+    )
+    assert ("cancel", 2) in today.sent and ("cancel", 1) in today.sent
+
+
+def test_the_ledger_knows_the_hand_posts():
+    from bazaar_agent.guardrails import Ledger, hands_off_id
+
+    ledger = Ledger(Path(tempfile.mkdtemp()) / "ledger.jsonl")
+    ledger.record("listing", 1, 0.1, 10, "hands-off:42")
+    ledger.record("listing", 1, 0.1, 10, "LAV-02")
+    ledger.record("spend", 1, 0.1, 10, "hands-off:43")
+    assert ledger.hands_off_ids() == {42} and ledger.count_in_tick("listing", 1) == 2
+    assert hands_off_id("hands-off:x") is None and hands_off_id("LAV-02") is None
+
+
+def test_a_live_hand_post_is_booked_hands_off(monkeypatch, tmp_path, cli_env):  # noqa: F811
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+    from bazaar_agent.guardrails import Ledger
+
+    out = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--live"])
+    assert out.exit_code == 0, out.output
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    assert len(ledger.hands_off_ids()) == 1 and "booked hands-off" in out.output

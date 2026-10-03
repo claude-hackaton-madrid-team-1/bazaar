@@ -19,8 +19,10 @@ Album first (`/api/me`), then:
   - with Jev (`maker_jev.MakerJev`), each price picked among three legal candidates by
     `list_price_choice` and each reprice weighed by `reprice_or_hold`; `undecided` keeps today's move.
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
-ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
-that is not a strategy target is cancelled, so stop the maker before trading by hand.
+ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers, except those a person
+posted with `bazaar sell ... --live` (booked in the shared ledger as `guardrails.HANDS_OFF` listings): it
+never cancels or reprices those, and posts nothing for the copy or card they already cover. Any other
+offer of ours that is not a strategy target is cancelled.
 While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
 posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
 Dry run (the default) sends nothing and logs WOULD-moves.
@@ -117,6 +119,11 @@ def targets_from(book: Playbook) -> list[Target]:
         if mv.action == "bid" and mv.limit > 0
     ]
     return sorted(asks + bids, key=lambda t: -t.score)
+
+
+def _covered_by(t: Target, offers: Iterable[OpenOffer]) -> bool:
+    """An offer a person posted by hand already stands for this target's copy (asks) or card (bids)."""
+    return any(o.side == t.side and (o.asset_id == t.asset_id if t.side == "ask" else o.ref == t.ref) for o in offers)
 
 
 def sell_floor(your_value: float, rules: Guardrails) -> int:
@@ -239,6 +246,9 @@ class Maker:
                 f"stay open): {'; '.join(stops)}"
             )
             return
+        hands_off = self.ledger.hands_off_ids()
+        by_hand = [o for o in mine if o.id in hands_off]
+        mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
         listed = self.ledger.count_in_tick("listing", clock.tick)
@@ -256,7 +266,7 @@ class Maker:
                 else None
             ),
         )
-        targets = targets_from(book)
+        targets = [t for t in targets_from(book) if not _covered_by(t, by_hand)]
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")

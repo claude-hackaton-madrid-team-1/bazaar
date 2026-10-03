@@ -209,6 +209,14 @@ def is_pack(item: str) -> bool:
 
 
 LedgerKind = Literal["spend", "accept", "listing"]
+# A listing a person posted by hand (`bazaar sell ... --live`) is booked with this item prefix and its offer id:
+# the maker, which owns our board offers, never cancels or reprices it.
+HANDS_OFF = "hands-off:"
+
+
+def hands_off_id(item: str) -> int | None:
+    rest = item[len(HANDS_OFF) :] if item.startswith(HANDS_OFF) else ""
+    return int(rest) if rest.isdigit() else None
 
 
 class LedgerStore(Protocol):
@@ -223,6 +231,7 @@ class LedgerStore(Protocol):
     def count_in_tick(self, kind: str, tick: int) -> int: ...
     def accept_items(self, tick: int) -> list[str]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
+    def hands_off_ids(self) -> set[int]: ...
 
 
 class Ledger:
@@ -265,6 +274,11 @@ class Ledger:
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>`."""
         return [str(e.get("item") or "") for e in self.entries() if e.get("kind") == "accept" and e.get("tick") == tick]
+
+    def hands_off_ids(self) -> set[int]:
+        """Offer ids a person posted by hand (`HANDS_OFF` listing rows)."""
+        ids = (hands_off_id(str(e.get("item") or "")) for e in self.entries() if e.get("kind") == "listing")
+        return {i for i in ids if i is not None}
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         """Count and record an accept under one file lock: two processes cannot both take the last slot."""
