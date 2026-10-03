@@ -15,7 +15,8 @@ from bazaar_agent.agents.inspector import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CARDS = CardIndex.from_catalog(json.loads((FIXTURES / "api" / "get_api_catalog.anon.json").read_text())["body"])
+CATALOG_BODY = json.loads((FIXTURES / "api" / "get_api_catalog.anon.json").read_text())["body"]
+CARDS = CardIndex.from_catalog(CATALOG_BODY)
 
 
 def offer(give, want=None, oid=77):
@@ -151,16 +152,18 @@ def test_the_message_that_carried_an_offer():
 def test_the_flag_book_sends_up_to_its_limit_and_never_flags_a_trusted_dealer():
     from bazaar_agent.guardrails import Guardrails
 
-    book = FlagBook.from_rules(Guardrails(max_flags_per_process=1, flag_trusted_dealers="abuela"))
+    rules = Guardrails(max_flags_sent=1, flag_trusted_dealers="abuela", flag_dealers="trile")
+    book = FlagBook.from_rules(rules)
     (i,) = inspect_thread(THREAD, "trile", CARDS)
     assert book.candidate(i) and book.room() and book.trusted == frozenset({"abuela"})
-    book.sent[901] = i.reason
+    assert book.opted_out(i) is None and book.opted_in == frozenset({"trile"})
+    book.remember(901, i.reason)
     assert not book.candidate(i) and not book.room()  # sent once; the send limit is reached
     assert not FlagBook(trusted=frozenset({"trile"})).candidate(i)  # a trusted dealer is never flagged
 
 
 def test_a_denied_flag_is_logged_once_and_sent_once_flags_are_allowed():
-    book, sent, lines = FlagBook(), [], []
+    book, sent, lines = FlagBook(opted_in=frozenset({"trile"})), [], []
     allowed = {"now": False}
 
     def run():
@@ -210,7 +213,7 @@ def step(guard_reason=None, send=True):
         THREAD,
         "trile",
         CARDS,
-        FlagBook(),
+        FlagBook(opted_in=frozenset({"trile"})),
         guard=lambda _: guard_reason,
         send=(lambda mid, reason: sent.append((mid, reason))) if send else None,
         log=lines.append,
@@ -267,9 +270,9 @@ def test_a_bare_no_is_not_a_denial_so_a_covering_trickster_still_flags():
 def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
     from bazaar_agent.sdk import BazaarError
 
-    for status, tries in ((400, 1), (0, 1), (503, 2)):
+    for status, tries in ((400, 1), (0, 1), (503, 1), (504, 1), (429, 2)):
         calls: list[int] = []
-        book = FlagBook()
+        book = FlagBook(opted_in=frozenset({"trile"}))
 
         def send(mid, reason, status=status, calls=calls):
             calls.append(mid)
@@ -277,7 +280,8 @@ def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
 
         for _ in range(2):
             flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=send, log=lambda _: None)
-        assert len(calls) == tries  # 4xx: refused for good; no response: it may have landed; 5xx: try again
+        assert len(calls) == tries  # never twice, except a 429 (not processed)
+        assert book.landed == (0 if status in (400, 429) else 1)  # a refusal never counts toward the cap
 
 
 @pytest.mark.parametrize(
@@ -304,3 +308,41 @@ def test_one_denied_mention_never_hides_a_claim_in_another():
     o = offer({"types": ["card:LAV-03"]}, {"cash": 21})
     text = "No Teatro Valle-Inclán like mine anywhere! Teatro Valle-Inclán for you, 21 P."
     assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "flag"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "LAV-06? Gone. Take this one instead, it is cheaper.",
+        "LAV-06 isn't available today. This common is all I have.",
+        "La Tabacalera no está disponible, cariño. Te doy este.",
+    ],
+)
+def test_honest_disclosures_from_the_security_audit_block_but_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=13).verdict == "block"
+
+
+def test_a_corrupt_flags_file_never_stops_a_start_and_keeps_every_readable_flag(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+
+    path = tmp_path / "flags.jsonl"
+    path.write_text('{"message_id": 77, "landed": true, "reason": "x"}\n{"message_id": 79, "rea\n[1, 2]\n')
+    book = FlagBook.from_rules(Guardrails(flag_dealers="trile"), path)
+    assert book.sent == {77: "x"} and book.landed == 1 and book.skipped == 2
+    assert book.remember(80, "y", landed=False) is None and book.landed == 1  # a refusal never counts
+    assert FlagBook.from_rules(Guardrails(), path).sent.keys() == {77, 80}
+
+
+def test_an_untrusted_dealer_not_opted_in_is_logged_never_sent():
+    sent, lines = [], []
+    flag_step(
+        THREAD,
+        "trile",
+        CARDS,
+        FlagBook(),  # flag_dealers = none: no dealer may be flagged
+        guard=lambda _: None,
+        send=lambda mid, reason: sent.append(mid),
+        log=lines.append,
+    )
+    assert sent == [] and lines and "trile is not in flag_dealers" in lines[0]

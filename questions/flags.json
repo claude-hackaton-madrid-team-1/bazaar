@@ -1,16 +1,16 @@
 {
- "about": "Bad-faith flags (S1). `POST /api/flags` scores when the flagged dealer message was bad faith and costs points when it was not. The flag rule is deterministic (agents/inspector.py: the structured offer binds a lesser item than the thread asked for, AND the words claim the better one); Jev only decides whether the evidence justifies switching GUARDRAILS.md allow_flags on. A yes never sends a flag by itself: a human sets allow_flags and the desk sends at most max_flags_per_process, never to a trusted dealer.",
+ "about": "Bad-faith flags (S1). `POST /api/flags` scores when the flagged dealer message was bad faith and costs points when it was not. The flag rule is deterministic (agents/inspector.py: the structured offer binds a lesser item than the thread asked for, AND the words claim the better one). An honest dealer that discloses it is out of a card can read like a trick, so a flag may only go to a dealer a human opted in (GUARDRAILS.md flag_dealers) after checking its would-flag rows. Jev only decides whether the evidence justifies switching allow_flags on; a yes never sends a flag by itself.",
  "questions": {
   "enable_bad_faith_flags": {
    "type": "noul",
    "stakes": "design",
    "instructions": {
-    "question": "Should we switch bad-faith flags on now, given the flag rule replayed over the captured feed: `dealer_offers_inspected`, `clean`, `blocked`, `would_flag_untrusted_dealers`, `would_flag_trusted_dealers`, `untrusted_dealers_seen` and `untrusted_dealer_offers`?",
-    "note": "Trusted dealers (`trusted_dealers`, Abuela and Chato) are honest by construction and never flagged: a would-flag on them is a false positive of the rule. The rule targets the L4 'Tricksters', who slip a lesser card into the structured offer while the words name a good one. Each correct flag scores and each wrong one costs; at most `max_flags_per_process` flags are sent per process."
+    "question": "Should we switch bad-faith flags on now, given the flag rule replayed over the captured feed: `would_flag_on_flag_dealers`, `flag_dealers`, `would_flag_trusted_dealers`, `would_flag_untrusted_dealers`, `dealer_offers_inspected`, `clean` and `blocked`?",
+    "note": "`flag_dealers` lists the dealers a human checked and opted in; only they can ever be flagged, so `would_flag_on_flag_dealers` is the only count that can turn into a sent flag. A would-flag on an untrusted dealer that is NOT in `flag_dealers` may be an honest out-of-stock message and proves nothing. Trusted dealers (`trusted_dealers`) are honest by construction: a would-flag on them is a false positive of the rule. Each correct flag scores and each wrong one costs; at most `max_flags_sent` flags are ever sent."
    },
    "criteria": {
-    "true": "The rule has fired on untrusted dealers' offers (`would_flag_untrusted_dealers` > 0) and never on the trusted dealers' many honest offers (`would_flag_trusted_dealers` = 0 over hundreds of offers), so a flag would most likely be correct.",
-    "false": "No untrusted dealer has been seen or none of its offers would be flagged (nothing to gain yet), or the rule fired on a trusted dealer's honest offer (it is not precise enough), or the sample is too small to trust."
+    "true": "A human opted dealers in (`flag_dealers` is not empty), the rule fires on their offers (`would_flag_on_flag_dealers` > 0), and it never fired on the trusted dealers' many honest offers (`would_flag_trusted_dealers` = 0 over hundreds of offers).",
+    "false": "No dealer is opted in (`flag_dealers` is empty), or none of their offers would be flagged, or the rule fired on a trusted dealer's honest offer, or the sample is too small to trust. Would-flags on dealers nobody opted in never justify a yes."
    }
   }
  }

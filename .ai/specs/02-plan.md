@@ -207,8 +207,9 @@ are not part of S1). Three PRs: A (inspector, target 10:30 Sat), B (flags), C (i
 - Step A4 — Would-flag log on every dealer thread read (desk + `dealer buy`), `allow_flags` stays false.
 - Step B1 — Flags as decision rows (`kind=flag`, evidence = the inspection), sent through the Recorder only
   when `allow_flags` is true; one flag per message, a 4xx never re-sent. · **Acceptance:** tests.
-- Step B2 — `bazaar inspect feed`: precision of the flag rule over the captured feed (the evidence Jev reads
-  before `allow_flags` goes on). · **Acceptance:** report on the real capture.
+- Step B2 — `bazaar flags precision [--json]`: precision of the flag rule over the captured feed (the evidence
+  Jev reads before `allow_flags` goes on); flags go only to opted-in `flag_dealers`. · **Acceptance:** report on
+  the real capture.
 - Step C1 — Hostile-text tests on every counterparty-text path (words LLM, runtime tools, duel text, dealer
   words): injection, fake offer JSON, fake limits, markup, odd Unicode, long input; none changes a binding
   field. · **Acceptance:** tests green; injection attempts tagged whether or not `llm_words` is on.

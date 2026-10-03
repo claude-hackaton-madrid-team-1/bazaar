@@ -443,8 +443,7 @@ class Taker:
             thread = self.team.thread(conv.thread_id)
             conv.ticks += 1
             self._inspect(run, conv, thread)
-            mid, text = latest_message(thread, conv.dealer)
-            self.injections.tag(conv.dealer, mid, text, run.snap.clock.tick, self.log)
+            self._tag(run, conv, thread)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread)
             if dm.status != "open":
                 self._finished(run, conv, thread)
@@ -498,12 +497,23 @@ class Taker:
         except Exception as e:  # inspection must never break the desk
             self.log(f"tick {tick} taker: offer inspection failed ({type(e).__name__}); desk continues")
 
+    def _tag(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
+        """Tag the dealer's newest words for injection shapes (S1); a tagger bug never costs the desk its tick."""
+        try:
+            mid, text = latest_message(thread, conv.dealer)
+            self.injections.tag(conv.dealer, mid, text, run.snap.clock.tick, self.log)
+        except Exception as e:
+            self.log(f"tick {run.snap.clock.tick} taker: injection tagging failed ({type(e).__name__}); desk continues")
+
     def _flag_row(
         self, run: _TickRun, conv: Conversation, thread: dict[str, Any], i: Inspection, why: str | None
     ) -> int:
         """The decision row that proves a flag: what the thread asked, what the structure binds, and how the
         words contradict it (catalog refs and names only, never the counterparty's raw text)."""
-        offer = next((o for o in thread.get("standing_offers") or [] if o.get("id") == i.offer_id), None) or {}
+        standing = (o for o in thread.get("standing_offers") or [] if isinstance(o, dict) and o.get("id") == i.offer_id)
+        said = (m.get("offer") for m in thread.get("messages") or [] if isinstance(m, dict))
+        carried = (o for o in said if isinstance(o, dict) and o.get("id") == i.offer_id)
+        offer = next(standing, None) or next(carried, None) or {}  # a withdrawn offer is still in its message
         inputs = {
             "dealer": conv.dealer,
             "thread": conv.thread_id,

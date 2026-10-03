@@ -55,26 +55,39 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
 WORD = re.compile(r"\w+")
 
 
+CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC"})  # Latin look-alikes
+EMOJI_JOINERS = frozenset({"\u200d", "\ufe0f"})  # zero-width joiner and emoji variation selector: emoji, not tricks
+HIDING_MARKS = frozenset({"\u034f"})  # combining grapheme joiner: invisible, splits a word
+
+
 def odd_unicode(text: str) -> bool:
-    """Invisible or direction-changing characters, or a word that mixes Latin letters with another script
-    (a Cyrillic "а" inside "асcept"): the shapes that hide a word from a pattern or from a reader."""
-    if any(unicodedata.category(ch) == "Cf" for ch in text):
+    """Invisible or direction-changing characters (emoji joiners aside), or a word that mixes Latin letters
+    with a look-alike script (a Cyrillic "а" inside "асcept"): the shapes that hide a word from a pattern
+    or a reader. "nº", "µ" and "ʼ" are not tricks."""
+    if any((unicodedata.category(ch) == "Cf" and ch not in EMOJI_JOINERS) or ch in HIDING_MARKS for ch in text):
         return True
     for word in WORD.findall(text):
         scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
-        if "LATIN" in scripts and len(scripts) > 1:
+        if "LATIN" in scripts and scripts & CONFUSABLE_SCRIPTS:
             return True
     return False
 
 
+def folded(text: str) -> str:
+    """The text the patterns read: compatibility-decomposed (fullwidth and superscript digits become
+    digits, accents split off), then without format characters and combining marks, so nothing invisible
+    splits a word. The patterns accept unaccented Spanish ("actua", "envia")."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) not in ("Cf", "Mn", "Me"))
+
+
 def injection_flags(text: str | None) -> tuple[str, ...]:
-    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input). The patterns
-    read the NFKC-folded text without invisible characters, so fullwidth digits or a zero-width space do not
-    hide a shape; `odd_unicode` names the hiding itself."""
+    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input), read on the
+    folded text; `odd_unicode` names the hiding itself."""
     if not text:
         return ()
-    folded = "".join(ch for ch in unicodedata.normalize("NFKC", text) if unicodedata.category(ch) != "Cf")
-    found = [name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(folded)]
+    plain = folded(text)
+    found = [name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(plain)]
     return tuple(found + (["odd_unicode"] if odd_unicode(text) else []))
 
 

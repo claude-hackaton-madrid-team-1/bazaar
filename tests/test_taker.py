@@ -373,7 +373,7 @@ def trickster_tick(root, *, allow, live=True):
     root.mkdir(exist_ok=True)
     config = TakerConfig(max_dealer_threads=3)
     t, lines, _ = taker(root, team, FakePublic(), live=live, config=config, allow_flags=allow)
-    t.flags = replace(t.flags, trusted=frozenset())  # the fake trickster plays Abuela, trusted by default
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))  # the fake trickster plays Abuela
     t.on_tick(clock())
     team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
     t.on_tick(at(team, TICK + 1))

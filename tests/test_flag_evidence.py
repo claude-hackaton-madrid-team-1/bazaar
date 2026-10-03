@@ -97,3 +97,21 @@ def test_the_flags_precision_command_prints_jevs_state(monkeypatch, tmp_path):
     assert state["would_flag_untrusted_dealers"] == 1 and state["dealer_offers_inspected"] == 4
     table = CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)])
     assert table.exit_code == 0 and "would flag message 3 from trile" in " ".join(table.output.split())
+
+
+def test_malformed_feed_events_are_skipped_never_crash_and_never_count_as_a_dealer():
+    bad = [
+        opened(20, 30, "trile", {"buy": {"card": ["LAV-08"]}}),  # a list where a card ref should be
+        said(21, 30, "trile", 9, ["not", "a", "dict"], 10, "LAV-08!"),
+        {"id": 22, "tick": 1, "type": "thread.message", "payload": {"thread": 31, "kind": "persona", "offer": {}}},
+        {"id": 23, "tick": 1, "type": "thread.message", "payload": "nope"},
+    ]
+    e = precision(dealer_offers(EVENTS + bad), CARDS, TRUSTED)
+    assert e.unreadable == 1 and "None" not in e.by_dealer and e.as_state()["unreadable_offers"] == 1
+
+
+def test_only_opted_in_dealers_count_toward_a_flag_jev_can_say_yes_to():
+    e = precision(dealer_offers(EVENTS), CARDS, TRUSTED)
+    assert e.as_state()["would_flag_untrusted_dealers"] == 1 and e.as_state()["would_flag_on_flag_dealers"] == 0
+    opted = precision(dealer_offers(EVENTS), CARDS, TRUSTED, frozenset({"trile"}))
+    assert opted.as_state()["would_flag_on_flag_dealers"] == 1 and opted.as_state()["flag_dealers"] == ["trile"]

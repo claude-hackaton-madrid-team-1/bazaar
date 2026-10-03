@@ -110,8 +110,11 @@ NEGATION_BEFORE = (
     r"|out of|acab[óo]|vend[ií]|vendid|agotad|instead of|rather than|en vez de|en lugar de|se fue|gone|sold)[^.!?]*$"
 )
 NEGATION_AFTER = (
-    r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid)"
+    r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid"
+    r"|(?:is|are)n't available|(?:is|are) not available|not in stock|no est[áa] disponible|no disponible)"
 )
+# The answer right after the mention: "LAV-06? Gone.", "La Corrala: agotada".
+NEGATION_RIGHT_AFTER = r"^\s*[?!.:,;-]?\s*(?:gone|sold out|agotad[oa]s?|vendid[oa]s?|none left|no queda)\b"
 # A negator right before the mention: "no rare card left", "I have no X for you", "ni un cromo raro", "ningún X".
 # Only right before it: "No lo dudes: X" is still a claim of X.
 NEGATION_RIGHT_BEFORE = r"(?:\bno|\bni(?:\s+una?)?|\bning[uú]n[oa]?|\bnot\s+an?|\bnone\s+of\s+the)\s+$"
@@ -122,7 +125,9 @@ def _negated_at(low: str, start: int, end: int) -> bool:
     The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole text (S1 audit)."""
     before, after = low[max(0, start - 30) : start], low[end : end + 25]
     negators = (NEGATION_BEFORE, NEGATION_RIGHT_BEFORE)
-    return any(re.search(p, before) for p in negators) or bool(re.search(NEGATION_AFTER, after))
+    return any(re.search(p, before) for p in negators) or any(
+        re.search(p, after) for p in (NEGATION_AFTER, NEGATION_RIGHT_AFTER)
+    )
 
 
 CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
@@ -330,37 +335,59 @@ TRUSTED_DEALERS = frozenset({"abuela", "chato"})
 
 @dataclass
 class FlagBook:
-    """Flag decisions in this process. Each certain trickster message is logged once (uncapped, so the
-    `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a wrong
-    flag costs points); a server error (5xx) is retried on the next read, a refusal (4xx) or a lost answer
-    never is. Trusted dealers are never flagged. GUARDRAILS.md sets `limit` and `trusted` (read once per
-    process: switching allow_flags on needs a restart)."""
+    """Flag decisions, per data dir. Each certain trickster message is logged once (uncapped, so the `would
+    flag` calibration log never goes silent). A flag is SENT only to an opted-in dealer (GUARDRAILS.md
+    `flag_dealers`, none by default: an honest out-of-stock message can read like a trick), never to a
+    trusted one, and at most `limit` flags that may have landed, ever (`agents/flags.jsonl` survives
+    restarts). No message is flagged twice: only a 429 (not processed) is tried again; a refusal (4xx)
+    is never re-sent and does not count; a 5xx or a lost answer may have landed, so it counts and is never
+    re-sent. GUARDRAILS.md is read once per process: switching flags on needs a restart."""
 
     limit: int = 2
     trusted: frozenset[str] = TRUSTED_DEALERS
+    opted_in: frozenset[str] = frozenset()
     seen: set[int] = field(default_factory=set)
-    sent: dict[int, str] = field(default_factory=dict)
-    path: Path | None = None  # sent flags survive a restart here: a message is never flagged twice
+    sent: dict[int, str] = field(default_factory=dict)  # every message we ever tried: never again
+    landed: int = 0  # flags that were accepted or may have landed: what `limit` caps
+    path: Path | None = None
+    skipped: int = 0  # unreadable lines in `path` (a half-written line after a crash)
 
     @classmethod
     def from_rules(cls, rules: Any, path: Path | None = None) -> FlagBook:
-        book = cls(int(rules.max_flags_per_process), frozenset(rules.trusted_dealers), path=path)
-        for line in path.read_text(encoding="utf-8").splitlines() if path is not None and path.is_file() else []:
-            row = json.loads(line) if line.strip().startswith("{") else {}
-            if isinstance(row.get("message_id"), int):
+        book = cls(
+            int(rules.max_flags_sent), frozenset(rules.trusted_dealers), frozenset(rules.flag_dealer_ids), path=path
+        )
+        for line in _lines(path):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                book.skipped += 1
+                continue
+            if isinstance(row, dict) and isinstance(row.get("message_id"), int):
                 book.sent[row["message_id"]] = str(row.get("reason") or "")
+                book.landed += 1 if row.get("landed", True) is not False else 0
+            else:
+                book.skipped += 1
         return book
 
-    def remember(self, message_id: int, reason: str) -> None:
-        """A flag that was sent (or may have landed): never again, in this process or the next one."""
+    def remember(self, message_id: int, reason: str, *, landed: bool = True) -> str | None:
+        """A flag we tried: never again, in this process or the next. Returns a write problem, or None."""
         self.sent[message_id] = reason
-        if self.path is not None:
+        self.landed += 1 if landed else 0
+        if self.path is None:
+            return None
+        row = {"message_id": message_id, "landed": landed, "reason": reason[:FLAG_REASON_CHARS]}
+        try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"message_id": message_id, "reason": reason[:FLAG_REASON_CHARS]}) + "\n")
+                handle.write(json.dumps(row) + "\n")
+        except OSError as e:  # the in-memory book still holds it: this process never re-sends it
+            return f"flags file not written ({type(e).__name__})"
+        return None
 
     def candidate(self, inspection: Inspection) -> bool:
-        """A certain trickster message from an untrusted dealer that we have not flagged yet."""
+        """A certain trickster message from an untrusted dealer that we have not tried yet (logged and
+        recorded; whether it is SENT is `opted_out`, the guard and `room`)."""
         mid = inspection.message_id
         return (
             inspection.verdict == "flag"
@@ -369,8 +396,19 @@ class FlagBook:
             and inspection.dealer not in self.trusted
         )
 
+    def opted_out(self, inspection: Inspection) -> str | None:
+        if inspection.dealer in self.opted_in:
+            return None
+        return f"{inspection.dealer} is not in flag_dealers"
+
     def room(self) -> bool:
-        return len(self.sent) < self.limit
+        return self.landed < self.limit
+
+
+def _lines(path: Path | None) -> list[str]:
+    if path is None or not path.is_file():
+        return []
+    return [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
 
 
 def inspect_thread(thread: Mapping[str, Any], dealer: str, cards: CardIndex) -> list[Inspection]:
@@ -435,7 +473,7 @@ def flag_step(
     first = mid not in book.seen
     book.seen.add(mid)
     reason = inspection.reason[:FLAG_REASON_CHARS]
-    denied = guard(inspection)
+    denied = guard(inspection) or book.opted_out(inspection)
     if denied or send is None or not book.room():
         if first:  # logged once per message
             why = denied or ("dry run" if send is None else f"flag limit {book.limit} reached")
@@ -447,13 +485,17 @@ def flag_step(
         record(inspection, None)
     try:
         send(mid, reason)
-        book.remember(mid, reason)
-        log(f"flagged message {mid} from {dealer}: {reason}")
     except Exception as e:  # a refused flag never breaks the negotiation
         status = int(getattr(e, "status", 0) or 0)
-        if status >= 500:  # the server failed: try again on the next read
-            log(f"flag of message {mid} failed ({status}); retrying next read")
-        else:  # refused (4xx: never re-POST) or ambiguous (no response: it may have landed): count it as sent
-            book.remember(mid, f"not retried after {type(e).__name__} {status or 'no response'}: {reason}")
-            log(f"flag of message {mid} not retried ({type(e).__name__}: {str(e)[:80]})")
+        if status == 429:  # rate limited: the server did not process it, so it may be tried on a later read
+            log(f"flag of message {mid} rate limited; tried again on a later read")
+            return inspection
+        landed = status == 0 or status >= 500  # no answer or a server error: it may have landed
+        problem = book.remember(mid, f"{type(e).__name__} {status or 'no response'}: {reason}", landed=landed)
+        log(f"flag of message {mid} not retried ({type(e).__name__} {status or 'no response'})")
+    else:
+        problem = book.remember(mid, reason)
+        log(f"flagged message {mid} from {dealer}: {reason}")
+    if problem:
+        log(problem)
     return inspection

@@ -53,7 +53,7 @@ def flags_precision(
         err_console.print(f"[red]public read refused: {escape(e.code)}[/red]")
         raise typer.Exit(1) from None
     events = load_events(FeedStore(Path(feed_dir) if feed_dir else settings.feed_dir), window)
-    evidence = precision(dealer_offers(events), cards, rules.trusted_dealers)
+    evidence = precision(dealer_offers(events), cards, rules.trusted_dealers, rules.flag_dealer_ids)
     if as_json:
         print(json.dumps(evidence.as_state(), sort_keys=True))
         return
@@ -67,5 +67,7 @@ def flags_precision(
     console.print(table)
     for i in evidence.would_flag:
         console.print(f"would flag message {i.message_id} from {escape(i.dealer)}: {escape(i.reason)}")
-    console.print(f"offers without a known topic (skipped): {evidence.offers - evidence.known_topic}")
+    skipped = evidence.offers - evidence.known_topic - evidence.unreadable
+    console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")
+    console.print(f"flag_dealers = {', '.join(sorted(rules.flag_dealer_ids)) or 'none'} (GUARDRAILS.md opt-in)")
     console.print(f"allow_flags = {str(rules.allow_flags).lower()} (GUARDRAILS.md); ask Jev with --json")
