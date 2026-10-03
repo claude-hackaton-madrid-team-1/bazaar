@@ -24,23 +24,28 @@ Nothing here touched the live game; the shared Postgres was read with read-only 
 | X15 | An expired maker bid is reposted and its spend booked again: 130 P booked for one 65 P bid after 2 TTLs; in the simulator one expired 70 P bid blocked every buy for the rest of game hour 1 (95 P really paid of 150) | high | main, #72 | open (B14) |
 | X3 | A redeploy orphans the taker's dealer threads: never driven or closed; a dealer-side deal is never booked | high | main, #72 | open (B17) |
 | X16 | Every merge touching `src/**` (and other watched paths) redeploys the live duels/taker/maker mid-play | high | config | ops: merge windows |
-| X17 | The taker takes the one accept 2 s into the tick; a Jev-slow duel books it at ~3.5 s → a deadline duel scores 0 | high | v1 | fixed for v2 (#86 4417c54); v1 open (B15) |
+| X17 | The taker takes the one accept 2 s into the tick; a Jev-slow duel books it at ~3.5 s → a deadline duel scores 0 | high | v1 | fixed for v2 (#86) and v1 (B15 branch), verified |
 | X20 | A 429 `rate_limited` accept keeps the reserved accept slot: the tick's only accept is wasted | high | main, #72 | open (B18) |
 | X19 | The live maker cancels every board offer it did not plan (hand trades); PAUSE does not stop cancels on main | high (ops) | main | #79 hands-off rows; #68 for PAUSE |
 | X5-B3 | One accept per tick: six shared-deadline duels inside our limit → 2 deals in v1 | high | v1 | v2: 6/6 |
 | X5-B6 | v1 re-anchors after a redeploy (offers 160 instead of 126) | high | v1 | fixed for v2 |
 | X5-B2 | Payload shapes: `issues` missing → accept worth 74 < limit 100; one bad row killed the duel tick | medium | all | fixed on #86 f6f4435 |
 | X5-B4 | Skipped ticks skip the endgame accept | medium | v1, v2 | v2 fixed on f6f4435; v1 open |
-| X4 | Closed doors poll every 300 s: the 09:00 opening is handled up to 5 min late | medium | all | open (B13) |
+| X4 | Closed doors poll every 300 s: the 09:00 opening is handled up to 5 min late | medium | all | fixed in #106 (verified) |
 | X6 | Sunday budget 71 of 75 keyed requests at the ceiling; the SDK re-sends 429-refused GETs and POSTs | medium | all | #78 model updated |
 | X2 | One hung keyed read stalls a loop 46.5 s (15 s timeout × 3); sends stay safe | medium | all | open (B18) |
-| X8 | `pending_fee` ignored: an accept can settle above `max_price_*` if the server charges the new fee | medium | all | open (B19) |
+| X8 | `pending_fee` ignored: an accept can settle above `max_price_*` if the server charges the new fee | medium | all | fixed in #110 (verified) |
 | X18 | An unsettled accept is not "held": a duplicate can be bought if `/api/me` lags settlement | medium | main, #72 | open (B16) |
+| X21 | Nothing opens a pack we hold (no `open_pack` call anywhere): bought and granted packs stay sealed | medium-high | all | open (B20); W7 runbook opens by hand |
+| X24 | An agent whose every tick raises keeps `/health` ok with a fresh `last_tick_at`: no restart, green dashboard, no trading | medium-high | all | open (B21) |
+| X25 | Buy values add a pro-rata page-bonus share, but real `your_value` has none on incomplete pages (19/19 held cards, Friday) and no page is completable under today's caps → negative trade gains in low-affinity sets | medium-low | main | `page_bonus_weight` decision |
+| X23 | After a redeploy without a laptop monitor, the playbook rebuilds from stale `feed_events` + 500 events and shifts (a team bid limit +17 P in a Friday replay) | medium-low | main | ops: monitor all day |
 
-Disproved: ledger carry-over across the day boundary (the shared `ledger` table is empty), self-trading between
+Disproved: payload fuzzing through the strategy (None fields, new rarity/set, unknown asset kinds survive), ledger carry-over across the day boundary (the shared `ledger` table is empty), self-trading between
 our taker and maker, extra `want` items in board offers (the parser is strict), rival text driving a duel price.
 In the simulator (240 ticks, with and without a redeploy every 10 ticks) the real cash floor and the real hourly
-spend held; only our own ledger overbooked (X15).
+spend held; only our own ledger overbooked (X15). On the b5 rehearsal integration (#60 #62 #61 #68 #72 #71) the bite
+suite has 0 failures and 22 XPASS, and the chaos ledger matches what was really paid.
 
 ## Decisions for Marius
 
@@ -48,5 +53,8 @@ spend held; only our own ledger overbooked (X15).
 2. Merge only before 09:00 or between duel sessions (X16); after any redeploy close orphan dealer threads (X3).
 3. X15 stopgap: `MakerConfig.offer_ttl_ticks` ≈ one game hour. It is a code change, so it needs a merge window.
 4. Hand trades only via `bazaar sell … --live` with #79's hands-off rows (X19).
-5. Run the 09:00 read-only probes (BITES.md; in #102 as P1–P8): `t_hours` jump vs resume, thread bids in
+5. #71 is no longer build-only: merging it makes the live maker open a 270 P venue at h6.5 and moves `cash_floor`
+   270 → 100 (+270 reserve until then). Merge it only on purpose.
+6. Open every sealed pack by hand until B20 (X21); keep one laptop monitor running all day (X23).
+7. Run the 09:00 read-only probes (BITES.md; in #102 as P1–P8): `t_hours` jump vs resume, thread bids in
    `/api/me/offers`, settlement timing, fee at settlement, whether duel accepts count per tick, the days-weight sign.
