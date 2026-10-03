@@ -333,9 +333,7 @@ class Recorder:
         try:
             response = call()
         except BazaarError as e:
-            # A 5xx may come after the game applied the write: counted as landed too (fail safe for the caps).
-            self.maybe_landed = e.code in MAYBE_LANDED or e.status >= 500
-            self.last_code, self.last_status = e.code, e.status
+            self.maybe_landed, self.last_code, self.last_status = e.code in MAYBE_LANDED, e.code, e.status
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

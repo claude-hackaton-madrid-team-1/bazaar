@@ -806,7 +806,10 @@ class Taker:
             except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on
                 self._accepts_stop = f"accept refused {code}; its slot could not be given back ({e})"
             return False
-        if body is None and not self.rec.maybe_landed:
+        # A 5xx may come after the game applied the accept: booked as landed (fail safe for the caps). Only for
+        # accepts: a maker post refused with a 5xx is not booked (nothing would ever refund it).
+        landed = self.rec.maybe_landed or (self.rec.last_status or 0) >= 500
+        if body is None and not landed:
             return True  # `wait_for_tick`: the team's accept of this tick is already used, the slot stays spent
         # Accepted, or lost on the way back (a network error): booked as bought (fail safe for the caps).
         if p.desk is not None:

@@ -108,15 +108,20 @@ def test_a_refusal_every_candidate_would_meet_frees_the_slot_and_ends_the_ticks_
     assert any("no more accepts this tick" in line for line in lines)
 
 
-def test_at_most_two_refused_accepts_per_tick(tmp_path):
+def test_at_most_two_refused_accepts_per_tick(tmp_path, monkeypatch):
     """Each refused try costs a keyed clock read and a POST on the key every process shares (review of #141)."""
     team = RefusingAccept("offer_closed", 409)
     team.accept = lambda offer_id, assets=None: (team.attempts.append(offer_id), _raise("offer_closed", 409))[1]
-    asks = [ask(1, "LAV-02", 10), ask(2, "LAV-08", 20, asset=901), ask(3, "LAV-02", 11, asset=902)]
-    board = FakePublic(boards={"rastro": asks + [ask(4, "LAV-08", 21, asset=903)]})
-    t, _, ledger = make_taker(tmp_path, team, board, threads=0)
+    refs = ["LAV-02", "LAV-08", "LAV-09", "LAV-11", "LAV-01"]
+    board = FakePublic(boards={"rastro": [ask(i, ref, 5, asset=900 + i) for i, ref in enumerate(refs, 1)]})
+    t, _, ledger = make_taker(tmp_path, team, board, threads=0, max_spend_per_game_hour=1000)
     t.on_tick(clock())
     assert len(team.attempts) == 2 and ledger.accepts_in_tick(TICK) == 0
+    monkeypatch.setattr("bazaar_agent.agents.taker.MAX_REFUSED_ACCEPTS", 99)  # the cap is what stops it
+    team.attempts.clear()
+    t2, _, _ = make_taker(tmp_path / "uncapped", team, board, threads=0, max_spend_per_game_hour=1000)
+    t2.on_tick(clock())
+    assert len(team.attempts) > 2
 
 
 def _raise(code, status):
