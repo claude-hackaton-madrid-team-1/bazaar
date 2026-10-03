@@ -141,6 +141,7 @@ negotiates well.
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 | [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 | [TL1](TL1-spec.md) (new) | The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger `taller:` rows, CLI included), the duel/bench guard, the received card credited in the score impact | 2 | 🔵 PR #259 (feat/taller-harden) |
+| [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -700,3 +701,19 @@ time-critical: do them directly, no team fan-out.
 - Restore duel sending, its tests and request budgets to origin/main.
 - Review the retained changes in parallel, regenerate docs, run the final-head gate and private simulator
   smoke, push only the feature branch, and update PR #265 with the Honest Implementation Report.
+
+## IJ1 review repair (PR #234, 2026-10-04)
+
+Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded, separate index setup.
+
+1. Merge `origin/main`, retain its trading behavior and task history, regenerate derived docs.
+2. Bound schema setup and skip existing-index DDL; prepare before backfill reads and keep `store()` DDL-free.
+3. Prove startup/backfill concurrency and lock timeout on local Postgres; run the full suite once, the static gate and simulator smoke.
+4. Review code and security independently in parallel, record evidence, commit and push the feature branch.
+
+### IJ1 final review repair (PR #234, 2026-10-04)
+- Merge current `origin/main`, preserve both histories, and regenerate README and architecture output.
+- Keep extraction inside `note_thread`/`note_duels` guards; prove malformed payloads preserve taker sends and duel processing.
+- Derive recorder source from thread kind so inline team messages are recorded once with correct attribution.
+- Retain DDL-free reads, prove a SELECT-only role can list, cover every `HIDING_MARKS` character, and document the unchanged deployed key.
+- Review code/security in parallel; run the full pytest once alone, then the requested gate and isolated smoke; update the PR report and push only the feature branch.

@@ -1350,6 +1350,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 | [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 | [TL1](TL1-spec.md) (new) | The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger `taller:` rows, CLI included), the duel/bench guard, the received card credited in the score impact | 2 | 🔵 PR #259 (feat/taller-harden) |
+| [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1413,14 +1414,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+- [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+- [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+- [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+- [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
 - [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
 - [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
 - [2026-10-04] build-error: PR #263 merge verification separator
-- [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
-- [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
-- [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
-- [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
-- [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -1245,3 +1245,32 @@ PR #265 is limited to these three guardrail changes; duel sending and request bu
 The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
 The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
 showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
+
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
+
+### [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+`CREATE INDEX IF NOT EXISTS` still takes a ShareLock, so startup can wait behind a writer and a backfill can
+block live inserts until its transaction ends. Check `to_regclass` first, bound setup lock/statement waits
+to 1.5 s, and commit schema setup before backfill reads; `store()` now does no DDL. Local Postgres regression
+tests cover the held-write transaction, missing-index timeout and released setup locks.
+
+### [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+Ruff F811 on a local connection named `conn` → the module imports that name as a fixture → renamed the local
+connection to `fresh`; the fixture and its callers are unchanged.
+
+### [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+`Taker._keep()` sees every listed thread but labeled each `dealer_thread`; the later team-desk pass then
+recorded the same message under `team_thread`. Derive the source from thread kind and test both passes
+against one buffer. Keep extraction inside the recorder's never-raises guards; malformed metadata must not
+cost a taker move or stop the duel runner's post-send processing.
+
+### [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+`run_per_tick` catches tick exceptions, so a sent move plus CLI exit 0 can hide a failed recorder. The wiring
+regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
+The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
