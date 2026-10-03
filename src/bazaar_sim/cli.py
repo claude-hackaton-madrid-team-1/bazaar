@@ -2,7 +2,7 @@
 
 uv run bazaar-sim serve                      # http://127.0.0.1:8765, one tick every 10 s
 SIM_TICK_SECONDS=2 uv run bazaar-sim serve   # faster
-BAZAAR_URL=http://127.0.0.1:8765 BAZAAR_KEY=sim-team1 uv run bazaar status
+BAZAAR_SIM=local uv run bazaar status       # our CLI against it (BAZAAR_SIM=1: the public one)
 SIM_ADMIN_TOKEN=... uv run bazaar-sim reset --url https://<sim host>
 """
 
@@ -51,7 +51,7 @@ def serve(
 
 @app.command()
 def reset(
-    url: str = typer.Option(os.environ.get("BAZAAR_URL") or "http://127.0.0.1:8765", help="Simulator URL"),
+    url: str = typer.Option("http://127.0.0.1:8765", help="Simulator URL (the public one is in the README)"),
     seed: int | None = typer.Option(None, help="A new world seed (default: keep the current one)"),
 ) -> None:
     """Reset the world to tick 0 (POST /sim/reset). Reads the token from SIM_ADMIN_TOKEN, never a flag."""

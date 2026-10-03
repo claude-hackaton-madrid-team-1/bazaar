@@ -16,7 +16,8 @@ from bazaar_agent.agents.status import REPLAY, StatusHub, start_status_server
 
 @pytest.fixture
 def served():
-    hub = StatusHub("taker", live=False, wall=lambda: 1_790_000_000.0)
+    target = {"mode": "real", "url": "https://bazaar.causaprima.ai"}
+    hub = StatusHub("taker", live=False, wall=lambda: 1_790_000_000.0, target=target)
     port = start_status_server(hub, "127.0.0.1", 0)
     return hub, port
 
@@ -56,6 +57,7 @@ def test_health_and_state_serve_the_contract_with_open_cors(served):
         "ok": True,
         "agent": "taker",
         "mode": "dry",
+        "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"},  # where its requests go
         "tick": None,
         "last_tick_at": None,
         "doors": "closed",

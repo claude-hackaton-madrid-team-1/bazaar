@@ -189,8 +189,8 @@ def dealers_table(personas: list) -> Table:
     return t
 
 
-def status_table(me: dict) -> Table:
-    t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False)
+def status_table(me: dict, target: str | None = None) -> Table:
+    t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False, caption=target)
     t.add_column("field", style="bold")
     t.add_column("value")
     score = me.get("score") or {}

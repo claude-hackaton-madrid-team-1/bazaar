@@ -2,8 +2,9 @@
 
 Buy three cards from Abuela with negotiation (`dealer buy --live`), list a duplicate (`sell list
 --live`) that a rival team buys, bid for a card (`sell bid --live`), play a duel to a deal (`duel run
---play`), and run the monitor with its live SSE stream. The real game is never reached: BAZAAR_URL
-is a local simulator and the key is `sim-team1`.
+--play`), and run the monitor with its live SSE stream. The real game is never reached: the CLI
+runs with BAZAAR_SIM=1, the simulator's hardcoded URL is pointed at a local in-process server for the
+test, and the key is `sim-team1`.
 """
 
 from __future__ import annotations
@@ -26,9 +27,11 @@ NOWHERE_DB = "postgresql://nobody:nothing@127.0.0.1:9/bazaar_sim_test"  # never 
 def session(tmp_path, monkeypatch):
     config = replace(QUIET, tick_seconds=0.5, rivals=6, duel_first_tick=4, duel_ticks=12, duel_every_ticks=200)
     with running_sim(config) as (url, sim):
+        monkeypatch.setattr("bazaar_agent.config.SIM_URL", url)  # BAZAAR_SIM=1 → this local simulator
+        for name in ("BAZAAR_URL", "BAZAAR_KEY", "BAZAAR_SIM_KEY"):
+            monkeypatch.delenv(name, raising=False)
         env = {
-            "BAZAAR_URL": url,
-            "BAZAAR_KEY": "sim-team1",
+            "BAZAAR_SIM": "1",
             "BAZAAR_TEAM_ID": US,
             "BAZAAR_DATA_DIR": str(tmp_path),
             "DATABASE_URL": NOWHERE_DB,
@@ -140,7 +143,18 @@ def test_a_full_scripted_session_against_the_simulator(session):
 
 
 def test_the_cli_refuses_the_real_key_against_the_simulator(session, monkeypatch):
-    monkeypatch.setenv("BAZAAR_KEY", "tk-real-0042")
+    monkeypatch.setenv("BAZAAR_SIM_KEY", "tk-real-0042")
     result = CliRunner().invoke(cli.app, ["status"])
     assert result.exit_code == 1
     assert "only a simulator key" in result.output and "tk-real-0042" not in result.output
+
+
+def test_every_command_names_its_target_and_bazaar_url_fails_fast(session, monkeypatch):
+    url, _, _ = session
+    out = run("clock")
+    assert f"target: SIMULATOR {url}" in out
+    status = run("status", "--no-cards")
+    assert "SIMULATOR" in status
+    monkeypatch.setenv("BAZAAR_URL", "https://bazaar.causaprima.ai")
+    result = CliRunner().invoke(cli.app, ["clock"])
+    assert result.exit_code == 2 and "BAZAAR_URL is no longer read" in result.output
