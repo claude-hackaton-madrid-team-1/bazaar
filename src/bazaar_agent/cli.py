@@ -291,6 +291,9 @@ def thread_cmd(
 # ---------------------------------------------------------------- dealers (writes: needs BAZAAR_KEY)
 
 
+DEALER_REOPENS = 1  # new threads after she held her opening ask (each with a lower first bid)
+
+
 @dealer_app.command("buy")
 def dealer_buy(
     item: str = typer.Argument(help="Card ref (LAV-03) or pack id (sobre_barrio)"),
@@ -301,9 +304,10 @@ def dealer_buy(
     live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
     jev: bool = typer.Option(False, help="Ask Jev negotiation_move each tick (advisory, inside the limit)"),
 ) -> None:
-    """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
+    """Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask."""
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.dealer import BidPlan, bid_schedule, negotiate, template_words
+    from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -315,29 +319,33 @@ def dealer_buy(
     if not live:
         schedule = bid_schedule(plan)
         console.print(
-            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}, accept any ask ≤ next bid, "
-            f"walk above {max_price}. Add --live to trade."
+            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}; take her ask only once she came down "
+            f"from her opening (≤ our next bid), counter below an opening ask, walk above {max_price}; if she "
+            f"holds her opening, walk and reopen once lower. Add --live to trade."
         )
         return
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("dealer-buy")
+
+    def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
+        """/me + the shared ledger + every open offer of ours (the maker's bids, the taker's dealer threads),
+        except this command's own thread, whose bid the next move replaces."""
+        me = client.me()
+        offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
+        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules)
+        return committed_context(base, open_commitments(offers, str(me.get("id") or "")))
+
     clock_now = Clock.model_validate(client.clock())
-    pre = gr.check(
-        gr.Action("buy", item, rarity, start),
-        gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
-        rules,
-    )
+    pre = gr.check(gr.Action("buy", item, rarity, start), committed(clock_now), rules)
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
 
-    def guard(move: Any) -> str | None:
-        c = Clock.model_validate(client.clock())
-        ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
+    def guard(move: Any, thread_id: int) -> str | None:
         # The accept quota is no reason to walk: `reserve` claims it atomically on the tick the accept
         # is sent, and a full quota makes the accept wait for the next tick.
-        ctx = replace(ctx, accepts_this_tick=0)
+        ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
@@ -354,22 +362,27 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
-    with traces.trace_negotiation(dealer, topic, plan) as observer:
-        out = negotiate(
-            client,
-            dealer,
-            topic,
-            plan,
-            log=console.print,
-            advisor=advisor,
-            guard=guard,
-            on_deal=on_deal,
-            max_ticks=rules.dealer_max_ticks_per_thread,
-            observer=observer,
-            words_fn=llm_cli.words_for(settings, rules, template_words),
-            reserve=reserve,
-            kill_switch=lambda: gr.kill_switch(rules),
-        )
+    for attempt in range(1 + DEALER_REOPENS):
+        with traces.trace_negotiation(dealer, topic, plan) as observer:
+            out = negotiate(
+                client,
+                dealer,
+                topic,
+                plan,
+                log=console.print,
+                advisor=advisor,
+                guard=guard,
+                on_deal=on_deal,
+                max_ticks=rules.dealer_max_ticks_per_thread,
+                observer=observer,
+                words_fn=llm_cli.words_for(settings, rules, template_words),
+                reserve=reserve,
+                kill_switch=lambda: gr.kill_switch(rules),
+            )
+        if out.reopen_start is None or attempt == DEALER_REOPENS:
+            break
+        console.print(f"she held her opening ask on thread {out.thread}: reopening lower, first bid {out.reopen_start}")
+        plan = replace(plan, start=out.reopen_start)
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
