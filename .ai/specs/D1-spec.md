@@ -2,7 +2,7 @@
 
 - Task id: D1 (migrated from GitHub issue(s) #5, #7)
 - Priority: P0
-- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday. #150 (Sat 06:50) merged Marius's duel chain: two-issue offers strictly inside our limit (#60 + review fixes), duel policy v2, B11 squeeze mitigations and the days-sign latch, behind GUARDRAILS flags. Omar set `duel_policy` = v2 live with #170 (Sat ~10:00; Jev had stayed undecided at 0.76 on the 0.90 bar); B11 (`duel_endgame_min_share` 0.3, `duel_endgame_ticks` 1) is on since #174; `duel_days_auto` stays OFF. Simulator proof: `docs/night/d1-sim-proof.md` (2,904 duels, 0 outside our limit, v2 1.55x v1 in the Duels II shape). Sim harness #151 merged (Sat 10:42). Open: criterion 3 (calibration, #91 merged), #165 for the 23:00 window, #173 (duel-log surrogate fix) merged Sat 11:08, a days flip only on real evidence.
+- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday. #150 (Sat 06:50) merged Marius's duel chain: two-issue offers strictly inside our limit (#60 + review fixes), duel policy v2, B11 squeeze mitigations and the days-sign latch, behind GUARDRAILS flags. Omar set `duel_policy` = v2 live with #170 (Sat ~10:00; Jev had stayed undecided at 0.76 on the 0.90 bar); B11 (`duel_endgame_min_share` 0.3, `duel_endgame_ticks` 1) is on since #174; `duel_days_auto` is ON for Duels II (GUARDRAILS.md: it turns the signed days reading on only when two real signals agree). Simulator proof: `docs/night/d1-sim-proof.md` (2,904 duels, 0 outside our limit, v2 1.55x v1 in the Duels II shape). Sim harness #151 merged (Sat 10:42). Open: criterion 3 (calibration; #91 merged). Merged since: #165 (23:00 window hardening), #173 (duel-log surrogate fix, Sat 11:08). `duel_days_signed` flips only on real evidence.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
@@ -13,6 +13,11 @@ Win the largest share of every duel pie: never below our limit, accept good offe
 - [ ] 1. Duels II: every offer carries `days`; our utility uses `your_days_weight`; tests on the simulator with both roles.
 - [ ] 2. An offer inside our limit with a good share is accepted, never left to time out (Friday's evals: 8 log-only duels had the rival inside our limit).
 - [ ] 3. Post-duel calibration: each finished duel's share is scored (evals #91) and fed to the learner.
+
+Superseded Sat 3 Oct (rules audit, 68 of 68 payloads): one duel round is one priced message from each side, rounds = min(ours,
+the rival's), and our result = surplus x (1 - decay)^rounds. Duels II are about Sat 20:34 (16 ticks, decay 0.08, price +
+days); Duels III about Sun 13:34 (12 ticks, decay 0.1); the Grand Final is at game hour 21.65, scheduled after the doors
+close. See `docs/briefing.md` ("Duels", "Windows this weekend"); the session hours in the source text below are history.
 
 ## Source (the original issue text, verbatim)
 

@@ -75,13 +75,13 @@ class Trader:
         return self.name or self.id
 
 
-NOT_DEALERS = ("team", "bench", "rival_alias")  # the other `traders` kinds; every `/api/dealers` kind is a dealer
+DEALER_KINDS = (None, "dealer", "collector", "trickster", "banker")  # `traders` stores them all as 'dealer'
 
 
 def trader_from(row: Mapping[str, Any]) -> Trader | None:
     """A dealer from a `traders` row or an `/api/dealers` persona of any kind (dealer, collector, trickster,
     banker: the table stores them all as 'dealer'); None for anything else."""
-    if not row.get("id") or row.get("kind") in NOT_DEALERS:
+    if not row.get("id") or row.get("kind") not in DEALER_KINDS:
         return None
     menu = row.get("menu") if isinstance(row.get("menu"), Mapping) else {}
     unlock = row.get("unlock") if isinstance(row.get("unlock"), Mapping) else {}

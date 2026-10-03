@@ -1,0 +1,40 @@
+{
+  "as_of": {"day": "Saturday", "tick": 1201, "madrid": "~21:00", "paused": true, "source": "_night/BENCH_BEAT_STALL.md (subagents S1-S6), read-only SQL and GETs"},
+  "scoring": {
+    "efficiency": "realised / feasible gains between the traders' hidden limits, on one synthetic book shared by every venue",
+    "round": "bench points from the round-average efficiency E vs the stall's Es: 0.5*E/Es below the stall (fitted on t03/t13); 1.0 at the top-3 mean above it (published wording; above-stall branch unverified)",
+    "our_round2": {"bench_efficiency": 0.886, "bench_points": 0.5, "sessions_at_stall": 5},
+    "teams_above_stall": 0,
+    "value_if_alone_above_one_round": "+11.25 round points, about +4.5 on the final leaderboard",
+    "cost_of_0_05_below_in_one_session": "about -0.03 on the final leaderboard",
+    "sessions_left": {"round2": ["h13 tonight (old code)", "h14.65 hard", "h15"], "round3": ["h17", "h19"]}
+  },
+  "unknown": {
+    "question": "does POST /api/broker/matches accept a bench pair whose quotes do not cross when the price is inside both hidden limits?",
+    "tested_live": false,
+    "our_matches_ever": {"sent": 21, "all_crossing_by_quote": true, "answer": "queued, settles next tick"},
+    "for_limits": [
+      "starter_broker.py (organisers): the stall earns half 'because it crosses by quote and a quote is not a limit'; 'a broker that estimates those limits, and who is about to leave, beats the stall'",
+      "organisers' admin bench page: 'Share whose quotes never relax: a broker waiting for them to cross waits in vain'",
+      "two real near-miss pairs had provably crossing limits but never crossed by quote (h7 gap 1, h9 gap 2)"
+    ],
+    "for_quotes": [
+      "openapi (our notes) describes a match as 'ask <= price and price + fee <= bid'",
+      "9 board venues, some claiming smarter brokers, and none has beaten the stall in 5 sessions"
+    ]
+  },
+  "simulation": {
+    "quote_rule": "probe = exact on 65,100 simulated sessions and on the 3 real books (difference 0); 1-5 refused calls per session",
+    "limit_rule_round_points": {"exact": 0.5, "probe_g20": "0.74-0.92", "probe_g10": "0.71-0.89"},
+    "limit_rule_P_round_above_stall": {"probe_g20": {"10_per_side": 0.5, "12_per_side": 0.56, "heavy_shading": 0.85}, "probe_g10": {"10_per_side": 0.51, "12_per_side": 0.57, "heavy_shading": 0.78}},
+    "real_books_limit_rule_gain": {"h7": 0.062, "h9": 0.023, "h11": 0.0},
+    "caveat": "the simulator refuses at the POST; a server that drops at settlement and removes the traders would make the gains smaller (capped at 6 probes a session)"
+  },
+  "risks": [
+    "a probe breaks the documented match condition; organisers can suspend a venue for breaking rules (a refused call is probably not a breach)",
+    "a server that validates at settlement could remove up to 6 near-miss trader pairs a session",
+    "every redeploy near a bench risks the 0.5 floor (3 maker restarts hit the h11 guard window)",
+    "the above-stall scoring branch is unverified"
+  ],
+  "clock": {"paused_at_tick": 1201, "h13_bench_ticks": "1401-1417", "duels_ii": "starts 1239, ends ~1420", "close": "Sat 23:00", "sunday_open": "09:00, 15 s ticks", "h14_65_bench": "~09:34 + pause", "h15_bench": "~09:55 + pause", "deploy_to_first_tick_s": "58-100"}
+}

@@ -30,6 +30,7 @@ from bazaar_agent.guardrails import (
     Guardrails,
     GuardrailsError,
     RuleLine,
+    Verdict,
     action_kind,
     check,
     parse_md_config,
@@ -926,7 +927,12 @@ def build_playbook(
 def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[int] = frozenset()) -> Playbook:
     """Every move with the verdict GUARDRAILS.md would give it now (strategy proposes, guardrails dispose).
     `listed` holds assets already in our open offers: listing one again is refused. A ranking check: the
-    official value cap is read by the send's own check, not per move."""
+    official value cap is read by the send's own check, not per move.
+
+    A dealer ladder (start, top, step) is judged at its FIRST rung: cash and the hour's spend are what that bid
+    commits, and every later rung (and her ask) passes `check()` again when it is sent, so only an unaffordable
+    rung is refused there. Its top still answers to the price caps (UB1: reserving the top 67 against cash 58
+    kept MAL-09 unopened for 70 ticks while a first bid of 50 was affordable)."""
     ranked = replace(ctx, ranking=True)
 
     def verdict(mv: Move) -> Move:
@@ -936,7 +942,12 @@ def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[i
             return replace(mv, guardrail=f"denied: asset {mv.asset_id} is already in one of our open offers")
         your_value = mv.value if mv.side == "sell" else None
         action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value)
-        return replace(mv, guardrail=str(check(action, ranked, rules)))
+        if mv.ladder is None or mv.side == "sell" or mv.ladder[0] >= mv.limit:
+            return replace(mv, guardrail=str(check(action, ranked, rules)))
+        first = check(replace(action, price=mv.ladder[0]), ranked, rules)
+        caps = tuple(x for x in check(action, ranked, rules).violations if x.startswith("price "))
+        violations = (*caps, *first.violations)
+        return replace(mv, guardrail=str(Verdict(not violations, violations, first.halted)))
 
     return replace(
         book,

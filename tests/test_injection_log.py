@@ -166,6 +166,10 @@ class FakeConn:
 
     def execute(self, sql, *args):
         self.sql.append(sql)
+        return self
+
+    def fetchone(self):
+        return (None,)
 
     def transaction(self):
         return FakeCursor(self)
@@ -306,9 +310,10 @@ def test_a_secret_across_the_cut_and_a_fullwidth_copy_are_both_scrubbed():
 def test_open_creates_the_table_at_start_and_ticks_never_run_ddl():
     conn = FakeConn()
     log = il.InjectionLog(lambda: conn)
-    assert log.open() and conn.sql == [il.DDL, il.INDEX_DDL]
+    assert log.open() and il.DDL in conn.sql and il.INDEX_DDL in conn.sql
+    conn.sql.clear()
     log.note([il.attempt("duel", PAYLOADS["override"], duel_id=1, message_id=1)])
-    assert log.flush(3) == 1 and il.DDL not in conn.sql[1:]
+    assert log.flush(3) == 1 and not {il.DDL, il.INDEX_DDL} & set(conn.sql)
 
 
 def test_the_cli_shows_fillers_and_line_separators_and_never_renders_markup():

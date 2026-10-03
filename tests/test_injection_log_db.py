@@ -1,6 +1,7 @@
 """`injection_attempts` against a real Postgres, in a throwaway schema (skipped when Postgres is unreachable)."""
 
 import json
+import time
 
 import pytest
 
@@ -74,3 +75,48 @@ def test_visible_shows_the_hiding_and_never_a_terminal_escape():
 
     assert visible("Ign​ore \x1b[31mred") == "Ign⟨U+200B⟩ore ⟨U+001B⟩[31mred"
     assert visible("Hola, cariño") == "Hola, cariño"
+
+
+def test_startup_and_live_flush_do_not_wait_for_backfill(conn, database_url, schema):  # noqa: F811
+    log = il.InjectionLog(lambda: open_in(database_url, schema))
+    attempt = il.attempt("duel", PAYLOADS["override"], duel_id=1, message_id=1)
+    with open_in(database_url, schema) as live:
+        # Bound the regression too: the old open() blocked indefinitely behind this writer.
+        live.execute("set statement_timeout = 3000")
+        live.commit()
+        recorder = il.InjectionLog(lambda: live)
+        with conn.transaction():
+            assert il.store(conn, log, [attempt]) == 1
+            locks = conn.execute(
+                "select mode from pg_locks where pid = pg_backend_pid() and relation = 'injection_attempts'::regclass"
+            ).fetchall()
+            assert {row[0] for row in locks} == {"AccessShareLock", "RowExclusiveLock"}
+            assert recorder.open()  # an existing index needs no ShareLock
+            recorder.note([il.attempt("duel", PAYLOADS["override"], duel_id=2, message_id=1)])
+            assert recorder.flush(1) == 1
+
+
+def test_missing_index_startup_has_a_bounded_lock_wait(conn, database_url, schema):  # noqa: F811
+    conn.execute("drop index injection_attempts_recent")
+    conn.commit()
+    with open_in(database_url, schema) as live:
+        live.execute("set statement_timeout = 3000")
+        live.commit()
+        recorder = il.InjectionLog(lambda: live)
+        with conn.transaction():
+            conn.execute(
+                il.INSERT, il.InjectionLog(None).row(il.attempt("duel", PAYLOADS["override"], duel_id=1, message_id=1))
+            )
+            started = time.monotonic()
+            assert recorder.open() is False and live.closed
+            assert time.monotonic() - started < 2.5
+    # The failed setup released its transaction and the next process can finish it.
+    with open_in(database_url, schema) as retry:
+        assert il.InjectionLog(lambda: retry).open()
+
+
+def test_schema_setup_commits_index_locks_before_backfill(database_url, schema):  # noqa: F811
+    with open_in(database_url, schema) as fresh:
+        il.ensure_schema(fresh)
+        assert fresh.info.transaction_status.name == "IDLE"
+        assert fresh.execute("select to_regclass('injection_attempts_recent')").fetchone()[0]

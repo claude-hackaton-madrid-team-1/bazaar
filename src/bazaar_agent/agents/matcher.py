@@ -91,6 +91,7 @@ class Quote:
     item: str  # "card:LAV-03", or "bench:b12" for every offer of bench run b12
     price: int  # the ask of a sell, the bid of a buy
     maker: str  # a pseudonym; a bench trader is its own maker
+    to: str | None = None  # an addressed offer: only the offer of this maker may take it
 
     @property
     def bench(self) -> bool:
@@ -115,21 +116,24 @@ class Match:
 
 
 def _public_quote(o: BookOffer) -> Quote | None:
-    """A plain public sell (one card for cash) or buy (cash for one card type); anything else is skipped,
-    and so is an offer addressed to one team (`to`): only that team may take it."""
+    """A plain public sell (one card for cash) or buy (cash for one card type); anything else is skipped. An offer
+    addressed to one team (`to`) keeps it: `feasible` crosses it only with an offer whose maker is that `to` (when the
+    book shows `to` in another namespace than the makers' pseudonyms, nothing ever equals it: no match, fail safe)."""
     if o.status not in (None, "open") or o.thread is not None or not isinstance(o.id, int) or not o.maker:
         return None
-    if (o.model_extra or {}).get("to"):
+    raw_to = (o.model_extra or {}).get("to")
+    if raw_to is not None and not isinstance(raw_to, str):
         return None
+    to = raw_to or None
     give_cash, want_cash = o.give.cash or 0, o.want.cash or 0
     if len(o.give.assets) == 1 and not give_cash and want_cash > 0 and not o.want.types and not o.want.assets:
         asset = o.give.assets[0]
         if not asset.get("ref"):
             return None
-        return Quote(o.id, "sell", f"{asset.get('kind') or 'card'}:{asset['ref']}", want_cash, o.maker)
+        return Quote(o.id, "sell", f"{asset.get('kind') or 'card'}:{asset['ref']}", want_cash, o.maker, to)
     if give_cash > 0 and not o.give.assets and len(o.want.types) == 1 and not want_cash and not o.want.assets:
         wanted = o.want.types[0]
-        return Quote(o.id, "buy", wanted if ":" in wanted else f"card:{wanted}", give_cash, o.maker)
+        return Quote(o.id, "buy", wanted if ":" in wanted else f"card:{wanted}", give_cash, o.maker, to)
     return None
 
 
@@ -235,7 +239,13 @@ def max_weight_assignment(weights: Sequence[Sequence[int]]) -> list[tuple[int, i
 
 
 def feasible(sell: Quote, buy: Quote, fee: Fee) -> bool:
-    return sell.item == buy.item and sell.maker != buy.maker and sell.price + fee.of(sell.price) <= buy.price
+    addressed_ok = sell.to in (None, buy.maker) and buy.to in (None, sell.maker)
+    return (
+        sell.item == buy.item
+        and sell.maker != buy.maker
+        and addressed_ok
+        and sell.price + fee.of(sell.price) <= buy.price
+    )
 
 
 def match_price(ask: int, bid: int, fee: Fee) -> int:

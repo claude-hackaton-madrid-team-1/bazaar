@@ -48,6 +48,7 @@ class FakePostgres:
 class FakeConnection:
     def __init__(self, server):
         self._server, self._db = server, sqlite3.connect(server.path, isolation_level=None, timeout=5)
+        self._db.create_function("starts_with", 2, lambda text, prefix: int(str(text).startswith(str(prefix))))
         self.autocommit, self.closed, self.broken = False, False, False
 
     def execute(self, sql, args=()):

@@ -71,6 +71,7 @@ def run(
         raise typer.Exit(2)
     with _open(connect) as conn:
         if backfill:
+            il.ensure_schema(conn)
             found = il.backfill(conn, team)
             added = il.store(conn, il.InjectionLog(None, world, secrets), found)
             by = Counter((a.from_team, a.severity) for a in found)

@@ -78,6 +78,18 @@ MessageKey = tuple[str, object, object]  # (source, thread or duel id, message i
 SOURCES = ("feed", "team_thread", "duel", "dealer_thread", "offer_text")
 
 
+def ensure_schema(conn: psycopg.Connection) -> None:
+    """Prepare a fresh connection before reads/writes; commit DDL locks before the backfill."""
+    with conn.transaction():
+        conn.execute(f"set local lock_timeout = {STATEMENT_TIMEOUT_MS}")
+        conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+        conn.execute(DDL)
+        # IF NOT EXISTS still takes ShareLock: skip existing indexes before running any index DDL.
+        row = conn.execute("select to_regclass('injection_attempts_recent')").fetchone()
+        if row is not None and row[0] is None:
+            conn.execute(INDEX_DDL)
+
+
 @dataclass(frozen=True)
 class Attempt:
     source: str
@@ -368,8 +380,7 @@ class InjectionLog:
         try:
             conn = self._db(0)
             if conn is not None:
-                conn.execute(DDL)
-                conn.execute(INDEX_DDL)
+                ensure_schema(conn)
             return conn is not None
         except Exception as e:  # noqa: BLE001
             self._fail(e)
@@ -423,13 +434,11 @@ def backfill(conn: psycopg.Connection, us: str | None) -> list[Attempt]:
 
 
 def store(conn: psycopg.Connection, log: InjectionLog, attempts: Iterable[Attempt]) -> int:
-    """Insert `attempts` in one transaction; returns the rows that were new."""
+    """Insert into the prepared schema without DDL locks; returns the rows that were new."""
     rows = [log.row(a) for a in sorted(attempts, key=_order)]
     if not rows:
         return 0
     with conn.transaction(), conn.cursor() as cur:
-        cur.execute(DDL)
-        cur.execute(INDEX_DDL)
         before = cur.execute("select count(*) from injection_attempts").fetchone()
         cur.executemany(INSERT, rows)
         after = cur.execute("select count(*) from injection_attempts").fetchone()
