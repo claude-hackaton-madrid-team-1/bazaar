@@ -84,6 +84,7 @@ class V2Plan:
     value: float  # our surplus in that offer (0 without one)
     stalled: bool
     ticks_left: int
+    pace: float = 0.0  # what the rival's offer gained us per tick lately (0 = nothing to wait for)
 
 
 # ---------------------------------------------------------------- reading a duel
@@ -171,6 +172,15 @@ def last_gain_tick(history: list[tuple[int, float]]) -> int | None:
     return when
 
 
+def recent_pace(history: list[tuple[int, float]], tick: int, ticks: int) -> float:
+    """Our surplus gained per tick from the rival's offers over the last `ticks` ticks (0 when it has not moved)."""
+    if not history:
+        return 0.0
+    before = [s for t, s in history if t <= tick - ticks]
+    start = before[-1] if before else history[0][1]
+    return max(0.0, history[-1][1] - start) / max(1, ticks)
+
+
 def mean_step(history: list[tuple[int, float]]) -> float:
     """The rival's average concession per priced move in our favour (0 when it never conceded)."""
     gains = [b - a for (_, a), (_, b) in zip(history, history[1:], strict=False) if b > a]
@@ -245,7 +255,8 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
     acceptable, on_table = _acceptable(duel, signed)
     if acceptable is not None:
-        plan = lambda move: V2Plan(move, acceptable, on_table, stalled, left)  # noqa: E731
+        pace = recent_pace(history, tick, params.stall_ticks)
+        plan = lambda move: V2Plan(move, acceptable, on_table, stalled, left, pace)  # noqa: E731
         step = mean_step(history)
         if left <= params.accept_margin + 1 or (endgame and stalled):
             return plan(replace(acceptable, reason="endgame, inside limit"))
@@ -379,8 +390,9 @@ def plan_moves(
 
 
 def _by_urgency(dids: list[int], plans: Mapping[int, V2Plan]) -> list[int]:
-    """Earliest deadline first; then the stalled ones (nothing more to wait for); then the biggest surplus."""
-    return sorted(dids, key=lambda did: (plans[did].ticks_left, not plans[did].stalled, -plans[did].value))
+    """Earliest deadline first; then the slowest rival (least to wait for: a stalled one first); then the biggest
+    surplus. The fast conceders keep conceding while the slots go to the others."""
+    return sorted(dids, key=lambda did: (plans[did].ticks_left, plans[did].pace, -plans[did].value))
 
 
 def single_duel_move(duel: dict[str, Any], tick: int, started_tick: int) -> DuelMove:

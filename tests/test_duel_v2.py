@@ -218,3 +218,10 @@ def test_the_arena_can_let_us_move_before_the_rival_within_a_tick():
     for team_first in (False, True):
         o = arena.run_session([scenario], arena.v2_policy(), team_first=team_first)[0]
         assert o.status == "deal" and o.gain_signed > 0 and o.denied == 0
+
+
+def test_when_accepts_must_queue_the_slowest_rival_is_taken_first():
+    fast = duel(1, rival=[(100, 110), (105, 120), (106, 125), (107, 130)], ours=[(100, 160)])  # +5 a tick
+    slow = duel(2, rival=[(100, 112), (107, 113)], ours=[(100, 160)])
+    moves = plan_moves([fast, slow], 109, {1: 100, 2: 100})  # 3 ticks left, 2 accepts to make: one is due now
+    assert moves[2].kind == "accept" and moves[1].kind == "hold"
