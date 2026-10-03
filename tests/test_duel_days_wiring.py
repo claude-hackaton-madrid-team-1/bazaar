@@ -13,6 +13,7 @@ def duel(meaning: str | None = SIM_TEXT, weight: float = 2.0) -> dict:
     """A two-issue duel one tick in: we sell at cost 100, gaining `weight` P per day if signed; the rival bid 70."""
     return {
         "duel": 1,
+        "session": 1,
         "status": "live",
         "role": "seller",
         "issues": ["price", "days"],

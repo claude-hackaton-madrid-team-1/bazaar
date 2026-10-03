@@ -1,9 +1,11 @@
 """Two-issue duels (B8): the sign latch, the rival's days, our days and the repricing that keeps our value."""
 
+import json
 from dataclasses import dataclass
 
 import pytest
 
+from bazaar_agent import guardrails as gr
 from bazaar_agent.agents import duel_days as dd
 
 SIM_TEXT = "primas you gain (+) or lose (-) per delivery day, 0-10"
@@ -12,6 +14,8 @@ SIM_TEXT = "primas you gain (+) or lose (-) per delivery day, 0-10"
 def duel(**over) -> dict:
     base = {
         "duel": 7,
+        "session": 1,
+        "status": "live",
         "role": "seller",
         "issues": ["price", "days"],
         "your_limit": 100,
@@ -71,7 +75,7 @@ def test_the_switch_latches_the_first_real_evidence_and_persists_it(tmp_path):
     assert switch.observe([duel(days_meaning=None), duel(duel=8, days_meaning=SIM_TEXT)], real_game=True) == "signed"
     assert not switch.signed(allowed=True)  # a text alone is one signal: a score must agree (#150 security P1)
     again = dd.DaysSwitch.load(path)
-    assert (again.verdict, again.duel, again.text, again.text_signed) == ("signed", 8, SIM_TEXT, True)
+    assert (again.verdict, again.duel, again.text, again.texts) == ("signed", 8, SIM_TEXT, [1])
 
 
 def test_a_reversed_convention_latches_and_keeps_the_switch_off(tmp_path):
@@ -193,8 +197,8 @@ def test_one_signal_alone_never_turns_the_sign_on(tmp_path):
     text_only = dd.latch(tmp_path / "a")
     assert text_only.observe([duel(days_meaning=SIM_TEXT)], True) == "signed" and not text_only.signed(True)
     score_only = dd.latch(tmp_path / "b")
-    assert score_only.observe([signed_score(11)], True) == "signed" and not score_only.signed(True)
-    assert score_only.observe([signed_score(11)], True) == "signed" and not score_only.signed(True)  # same deal
+    assert score_only.observe([duel(), signed_score(11)], True) == "signed" and not score_only.signed(True)
+    assert score_only.observe([duel(), signed_score(11)], True) == "signed" and not score_only.signed(True)  # same
 
 
 def test_a_text_and_a_score_or_two_scores_corroborate_the_sign(tmp_path):
@@ -203,15 +207,23 @@ def test_a_text_and_a_score_or_two_scores_corroborate_the_sign(tmp_path):
     both.observe([signed_score(11)], True)
     assert both.signed(True) and not both.signed(False)
     scores = dd.latch(tmp_path / "b")
-    scores.observe([signed_score(11), signed_score(12)], True)
+    scores.observe([duel(), signed_score(11), signed_score(12)], True)  # a live duel says which session is now
     assert scores.signed(True)
+
+
+def signed_now(where) -> bool:
+    """What a process that loads the file and reads the live duels (session 1) decides."""
+    switch = dd.latch(where)
+    switch.observe([duel()], True)
+    return switch.signed(True)
 
 
 def test_corroboration_is_shared_through_the_file(tmp_path):
     duel_run, runtime = dd.latch(tmp_path), dd.latch(tmp_path)
     duel_run.observe([duel(days_meaning=SIM_TEXT)], True)
-    runtime.observe([signed_score(11)], True)
-    assert runtime.signed(True) and dd.latch(tmp_path).signed(True)
+    runtime.observe([duel(), signed_score(11)], True)
+    assert runtime.signed(True) and signed_now(tmp_path)
+    assert not dd.latch(tmp_path).signed(True)  # a fresh load knows no current session until it reads the live duels
 
 
 # ---------------------------------------------------------------- #150 round 2: what still fooled the latch
@@ -242,10 +254,10 @@ def test_counting_words_never_latch_a_sign(meaning):
 def test_a_conflict_reached_by_merging_the_file_is_written_back(tmp_path):
     runtime = dd.latch(tmp_path)
     runtime.observe([duel(days_meaning=SIM_TEXT), signed_score(11)], True)
-    assert dd.latch(tmp_path).signed(True)
+    assert signed_now(tmp_path)
     duel_run = dd.DaysSwitch(verdict="conflict", path=tmp_path / dd.LATCH_FILE)  # held in memory, file says signed
     duel_run.observe([], True)
-    assert dd.latch(tmp_path).verdict == "conflict" and not dd.latch(tmp_path).signed(True)
+    assert dd.latch(tmp_path).verdict == "conflict" and not signed_now(tmp_path)
 
 
 @pytest.mark.parametrize("issues", [5, True, 1.5, "days", None])
@@ -255,3 +267,77 @@ def test_a_malformed_issues_field_skips_only_its_own_row(tmp_path, issues):
     good = duel(duel=8, days_meaning=SIM_TEXT)
     assert switch.observe([duel(issues=issues, days_meaning=SIM_TEXT), good], True) == "signed"
     assert dd.two_issue({"issues": issues}) is False
+
+
+# ---------------------------------------------------------------- #150 security r2 P2: signals count per session
+
+
+def live(session, **over) -> dict:
+    """A live duel of `session` (no days text unless given): it tells the latch which session is current."""
+    return duel(duel=50 + (session if isinstance(session, int) else 0), session=session, **over)
+
+
+def scored_in(session, did: int) -> dict:
+    return {**signed_score(did), "session": session}
+
+
+V2_AUTO = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
+
+
+def test_two_signed_scores_from_an_earlier_session_never_corroborate_a_later_one(tmp_path):
+    # `?done=true` lists every duel we ever finished: Saturday's deals must not vouch for Sunday's rules.
+    switch = dd.latch(tmp_path)
+    switch.observe([live(4), scored_in(2, 11), scored_in(2, 12)], True)
+    assert switch.verdict == "signed" and switch.session == 4 and not switch.signed(True)
+    assert not dd.effective_rules(V2_AUTO, switch).duel_days_signed  # the guard keeps its worst case
+    rearmed = dd.latch(tmp_path / "rearmed")  # the file deleted, restarted: the next read brings the same deals back
+    rearmed.observe([live(4), scored_in(2, 11), scored_in(2, 12)], True)
+    assert not rearmed.signed(True)
+    then = dd.latch(tmp_path / "then")
+    then.observe([live(2), scored_in(2, 11), scored_in(2, 12)], True)
+    assert then.signed(True)  # inside their own session they do
+
+
+def test_a_text_and_a_score_corroborate_only_inside_the_current_session(tmp_path):
+    split = dd.latch(tmp_path / "split")
+    split.observe([live(2, days_meaning=SIM_TEXT)], True)
+    split.observe([live(4), scored_in(4, 11)], True)
+    assert split.verdict == "signed" and not split.signed(True)  # a session-2 text and a session-4 score
+    now = dd.latch(tmp_path / "now")
+    now.observe([live(4, days_meaning=SIM_TEXT), scored_in(4, 11)], True)
+    assert now.signed(True) and (now.texts, now.scored) == ([4], [[4, 11]])
+    saved = json.loads((tmp_path / "now" / dd.LATCH_FILE).read_text())
+    assert (saved["texts"], saved["scored"]) == ([4], [[4, 11]]) and "session" not in saved  # the session is live
+
+
+def test_an_old_format_file_loads_as_not_corroborated(tmp_path):
+    path = tmp_path / dd.LATCH_FILE
+    path.parent.mkdir(parents=True)
+    old = {"verdict": "signed", "duel": 8, "text": SIM_TEXT, "text_signed": True, "scored": [11, 12]}
+    path.write_text(json.dumps(old))
+    switch = dd.latch(tmp_path)
+    assert switch.verdict == "signed" and not switch.signed(True)
+    switch.observe([live(1)], True)  # its signals carry no session: they count in none
+    assert not switch.signed(True) and (switch.texts, switch.scored) == ([], [])
+    assert dd.latch(tmp_path).verdict == "signed"
+
+
+def test_a_conflict_from_an_earlier_session_still_blocks_a_later_one(tmp_path):
+    switch = dd.latch(tmp_path)
+    switch.observe([live(2, days_meaning=SIM_TEXT), live(2, days_meaning="each day costs you primas")], True)
+    assert switch.verdict == "conflict"
+    later = dd.latch(tmp_path)
+    later.observe([live(4, days_meaning=SIM_TEXT), scored_in(4, 11), scored_in(4, 12)], True)
+    assert later.verdict == "conflict" and not later.signed(True)
+    by_hand = gr.Guardrails(duel_policy="v2", duel_days_auto=True, duel_days_signed=True)
+    assert not dd.effective_rules(by_hand, later).duel_days_signed
+
+
+@pytest.mark.parametrize("session", [None, "4", True, 4.0])
+def test_a_row_without_an_int_session_never_counts(tmp_path, session):
+    bad_scores = dd.latch(tmp_path / "scores")
+    bad_scores.observe([live(4, days_meaning=SIM_TEXT), scored_in(session, 11), scored_in(session, 12)], True)
+    assert not bad_scores.signed(True)  # the text counts, the two scores do not
+    no_current = dd.latch(tmp_path / "live")
+    no_current.observe([live(session, days_meaning=SIM_TEXT), scored_in(4, 11), scored_in(4, 12)], True)
+    assert no_current.session is None and not no_current.signed(True)  # no current session: never corroborated

@@ -15,6 +15,10 @@ which way the weight points, every day must be valued at the worst case (|weight
 
 `signed` switches anything on only when two real signals agree (a signed text and a signed score, or the scores of
 two different finished deals): one misread signal must never drop the guard's worst case (#150 security review).
+Both signals must come from the CURRENT session (#150 security r2 P2): `?done=true` lists every duel we ever finished,
+and Saturday and Sunday bring rule variants, so an earlier session's deals never vouch for a later one. Each signal
+records its payload's `session`; the current session is the highest `session` among the live duels this process
+last read (never taken from the file); none known, nothing is corroborated. A conflict stays for good, every session.
 It persists to a small JSON file, so a restart keeps the verdict; an unreadable file reads as a conflict.
 The caller passes `real_game` (from
 `Settings.simulator`), and decides whether the latch may switch anything on (a guardrail, default off).
@@ -69,6 +73,18 @@ DIRECTION = re.compile(
     r"before|after|prior|until|remain(?:s|ing)?|left|backwards?|back|counted|counting|countdown)\b",
     re.IGNORECASE,
 )
+
+
+def _int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _union(a: Iterable[int], b: Iterable[int]) -> list[int]:
+    return sorted({*a, *b})  # sorted: two processes write the same file the same way (no rewrite ping-pong)
+
+
+def _union_pairs(a: Iterable[list[int]], b: Iterable[list[int]]) -> list[list[int]]:
+    return [list(pair) for pair in sorted({(s, d) for s, d in (*a, *b)})]
 
 
 def _number(value: object) -> float | None:
@@ -160,14 +176,17 @@ class DaysSwitch:
     """The first real evidence about the sign, latched and persisted. `signed(allowed)` is what a policy reads.
 
     `signed` needs two real signals that agree (#150 security P1: one misread text or score would drop the guard's
-    worst case for every duel): a signed text and a signed score, or the scores of two different finished deals."""
+    worst case for every duel): a signed text and a signed score, or the scores of two different finished deals,
+    both from the current session (#150 security r2 P2). A file from before sessions were recorded keeps its verdict
+    but none of its signals, so it is never corroborated."""
 
     verdict: Verdict = "unknown"
     duel: int | None = None  # the payload that decided it
     text: str | None = None
     path: Path | None = None
-    text_signed: bool = False  # a real `days_meaning` text said signed
-    scored: list[int] = field(default_factory=list)  # finished real deals whose score said signed
+    texts: list[int] = field(default_factory=list)  # sessions whose real `days_meaning` text said signed
+    scored: list[list[int]] = field(default_factory=list)  # [session, duel] of finished real deals scored signed
+    session: int | None = None  # the current session: from the live duels last read, never saved to the file
 
     @classmethod
     def load(cls, path: Path) -> DaysSwitch:
@@ -186,22 +205,29 @@ class DaysSwitch:
             "conflict": "conflict",
         }
         verdict = verdicts.get(str(raw.get("verdict")), "unknown")
-        scored = [d for d in raw.get("scored") or [] if isinstance(d, int) and not isinstance(d, bool)]
-        text_signed = raw.get("text_signed") is True
-        return cls(verdict, raw.get("duel"), raw.get("text"), path, text_signed, scored)
+        texts, pairs = raw.get("texts"), raw.get("scored")  # an old file's `text_signed` and bare ids: dropped
+        sessions = [s for s in texts if _int(s) is not None] if isinstance(texts, list) else []
+        scored = (
+            [p for p in pairs if isinstance(p, list) and len(p) == 2 and all(_int(x) is not None for x in p)]
+            if isinstance(pairs, list)
+            else []
+        )
+        return cls(verdict, raw.get("duel"), raw.get("text"), path, _union(sessions, []), _union_pairs(scored, []))
 
     def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> Verdict:
         """Read every payload, live or finished: its text and, for a finished deal, its score. The first real
         evidence latches; later evidence that disagrees is a conflict, for good. Another process's verdict in the
-        file is merged in first, so `duel run` and the runtime never undo each other."""
+        file is merged in first, so `duel run` and the runtime never undo each other. Rows whose `status` is live
+        set the current session: the highest int `session` among them (None when none has one)."""
         self.refresh()
         before, before_corroborated = self.verdict, self.corroborated
-        for duel in duels:
+        rows = list(duels)
+        live = [duel for duel in rows if duel.get("status") == "live"]
+        if live:
+            self.session = max((s for duel in live if (s := _int(duel.get("session"))) is not None), default=None)
+        for duel in rows:
             said, scored = evidence(duel, real_game), scored_evidence(duel, real_game)
-            self.text_signed = self.text_signed or said == "signed"
-            did = duel.get("duel")
-            if scored == "signed" and isinstance(did, int) and did not in self.scored:
-                self.scored.append(did)
+            self._count(duel, said, scored)
             for seen in (said, scored):
                 if seen == "unknown":
                     continue
@@ -215,28 +241,42 @@ class DaysSwitch:
             self._save()  # also when the file lags what we merged (a conflict another process must see: #150 r2)
         return self.verdict
 
+    def _count(self, duel: Mapping[str, Any], said: Verdict, scored: Verdict) -> None:
+        """Record a signed text or score under its payload's session; a row without an int `session` never counts."""
+        session, did = _int(duel.get("session")), _int(duel.get("duel"))
+        if session is None:
+            return
+        if said == "signed":
+            self.texts = _union(self.texts, [session])
+        if scored == "signed" and did is not None:
+            self.scored = _union_pairs(self.scored, [[session, did]])
+
     def refresh(self) -> None:
-        """Merge the verdict on disk (another process may have written it) into this one."""
+        """Merge the verdict on disk (another process may have written it) into this one: the per-session signals
+        as unions. The current session is never read from the file: only this process's live duels set it."""
         if self.path is None:
             return
         disk = DaysSwitch.load(self.path)
         if disk.verdict != "unknown" and self.verdict == "unknown":
             self.duel, self.text = disk.duel, disk.text
         self.verdict = _merge(self.verdict, disk.verdict)
-        self.text_signed = self.text_signed or disk.text_signed
-        self.scored = self.scored + [d for d in disk.scored if d not in self.scored]
+        self.texts = _union(self.texts, disk.texts)
+        self.scored = _union_pairs(self.scored, disk.scored)
 
     @property
     def corroborated(self) -> bool:
-        """Two real signals agree on signed: a text and a score, or the scores of two different deals."""
-        return self.verdict == "signed" and (len(self.scored) >= 2 or (bool(self.scored) and self.text_signed))
+        """Two real signals of the current session agree on signed: a text and a score, or two deals' scores."""
+        if self.verdict != "signed" or self.session is None:
+            return False
+        deals = {did for session, did in self.scored if session == self.session}
+        return len(deals) >= 2 or (bool(deals) and self.session in self.texts)
 
     def signed(self, allowed: bool) -> bool:
-        """Value days with their sign only when allowed (a guardrail) AND two real signals said so."""
+        """Value days with their sign only when allowed (a guardrail) AND two real signals of this session said so."""
         return allowed and self.corroborated
 
     def _record(self) -> dict[str, Any]:
-        return {k: v for k, v in asdict(self).items() if k != "path"}
+        return {k: v for k, v in asdict(self).items() if k not in ("path", "session")}
 
     def _on_disk(self) -> dict[str, Any] | None:
         if self.path is None:
@@ -277,7 +317,8 @@ def latch(data_dir: Path) -> DaysSwitch:
 
 def effective_rules(rules: Any, switch: DaysSwitch) -> Any:
     """The rules a duel tick runs with, one object for the policy and the guard alike:
-    - `duel_days_signed` on when `duel_days_auto` allows it AND a real payload confirmed the sign;
+    - `duel_days_signed` on when `duel_days_auto` allows it AND two real signals of the current session confirmed
+      the sign (`observe` the live duels first: a switch that has read none knows no session and stays off);
     - `duel_days_signed` OFF, even when set by hand, once real evidence says otherwise (reversed, cost, conflict);
     - otherwise the very same rules."""
     if switch.verdict in ("reversed", "cost", "conflict"):
