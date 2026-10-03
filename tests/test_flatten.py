@@ -71,10 +71,11 @@ def test_live_cancels_every_open_offer_paced_and_refunds_a_bids_spend(tmp_path):
 
 
 def test_a_flattened_bid_is_refunded_in_the_hour_it_was_spent(tmp_path):
-    # Bid 2 was posted at tick 90 (10 ticks of 60 s before h1.5): its refund is booked there, not now.
+    # Bid 2 was posted at tick 90 (10 ticks of 60 s before h1.5): its refund is booked there, not now, one
+    # more slowest tick back so it is never dated after its spend (`refund_row`).
     _, ledger = _run(tmp_path, Team(), offers_to_cancel({"offers": OFFERS}, US))
     (refund,) = [e for e in ledger.entries() if e["price"] < 0]
-    assert (refund["tick"], round(refund["t_hours"], 4), refund["price"]) == (90, round(1.5 - 10 / 60, 4), -9)
+    assert (refund["tick"], round(refund["t_hours"], 4), refund["price"]) == (90, round(1.5 - 11 / 60, 4), -9)
 
 
 def test_a_rate_limit_stops_the_pass_and_reports_what_is_left(tmp_path):

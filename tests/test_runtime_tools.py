@@ -275,7 +275,8 @@ def test_a_cancelled_bid_refunds_its_spend_in_the_hour_it_was_spent(tmp_path):
     b = backend(tmp_path, live=True, team=team)
     assert run(b, "sell_cancel", {"offer_id": 91})[0]["status"] == "done"
     (refund,) = Ledger(tmp_path / "ledger.jsonl").entries()
-    assert refund["price"] == -60 and refund["tick"] == 40 and refund["t_hours"] == pytest.approx(0.5)
+    # 40 ticks back at the slowest pace, plus one (`refund_row`): never dated after the bid's spend
+    assert refund["price"] == -60 and refund["tick"] == 40 and refund["t_hours"] == pytest.approx(0.5 - 1 / 60)
 
 
 def test_a_server_never_falls_back_to_a_local_ledger(tmp_path, monkeypatch):

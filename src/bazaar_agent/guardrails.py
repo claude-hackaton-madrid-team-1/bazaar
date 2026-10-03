@@ -279,13 +279,21 @@ LedgerRow = tuple[str, int, float, int, str]  # kind, tick, t_hours, price, item
 
 
 def refund_row(
-    price: int, item: str, created_tick: int | None, tick: int, t_hours: float, tick_seconds: float
+    price: int, item: str, created_tick: int | None, tick: int, t_hours: float, max_tick_seconds: float
 ) -> LedgerRow:
     """The ledger row that gives back a withdrawn bid's spend, booked in the game hour it was spent (the
     bid's `created_tick`): a refund booked at cancel time would outlive its spend inside the one-hour
-    window and let `max_spend_per_game_hour` be spent twice. Unknown or future created tick: now."""
-    ticks_ago = tick - created_tick if isinstance(created_tick, int) and created_tick <= tick else 0
-    return ("spend", tick - ticks_ago, t_hours - ticks_ago * tick_seconds / 3600, -price, item)
+    window and let `max_spend_per_game_hour` be spent twice.
+
+    Only the spend's tick is known, and the pace may have changed since (60 s Friday ticks, 30 s on
+    Saturday), so every tick since is taken at the clock's slowest pace (`max_tick_seconds`), plus one tick
+    for the clock's rounded `t_hours`: the refund is never dated after its spend. Dated a little earlier, it
+    leaves the window first, and the hour's spend over-counts for a moment (fail safe). A future created
+    tick counts as now; an unknown one is dated an hour back, outside every window: no refund, fail safe."""
+    if not isinstance(created_tick, int):
+        return ("spend", tick, t_hours - 1.0, -price, item)
+    ticks_ago = max(0, tick - created_tick)
+    return ("spend", tick - ticks_ago, t_hours - (ticks_ago + 1) * max_tick_seconds / 3600, -price, item)
 
 
 # ---------------------------------------------------------------- the check

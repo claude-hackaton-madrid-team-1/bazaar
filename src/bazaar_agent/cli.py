@@ -1300,7 +1300,7 @@ def flatten_cmd(
             ledger=ledger,
             live=live,
             kill_switch=stops,
-            tick_seconds=now.tick_seconds,
+            max_tick_seconds=now.max_tick_seconds,
         )
     finally:
         decisions.close()

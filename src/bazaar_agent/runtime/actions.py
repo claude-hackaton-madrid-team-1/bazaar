@@ -354,7 +354,7 @@ def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
         return {}
     ref = str(wanted[0]).split(":")[-1]
     row = gr.refund_row(
-        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.tick_seconds
+        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.max_tick_seconds
     )
     return _book(b, [row])
 

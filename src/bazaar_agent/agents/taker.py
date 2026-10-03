@@ -710,6 +710,6 @@ class Taker:
             return
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
             self.ledger.record(
-                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.tick_seconds)
+                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
             )
             run.offers = [o for o in run.offers if o.get("id") != bid.id]

@@ -307,7 +307,7 @@ class Maker:
 
     def _refund(self, run: _MakerRun, offer: OpenOffer) -> LedgerRow:
         clock = run.snap.clock
-        return refund_row(offer.price, offer.ref, offer.created_tick, clock.tick, clock.t_hours, clock.tick_seconds)
+        return refund_row(offer.price, offer.ref, offer.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
 
     def _refunded(self, run: _MakerRun, offer: OpenOffer) -> int:
         """The spend a cancel gives back inside this game hour's window: a bid's, unless it was spent
