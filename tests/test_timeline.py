@@ -187,3 +187,26 @@ def test_cli_reads_an_offset_free_time_as_madrid():
     out = CliRunner().invoke(app, ["timeline", "--frozen-at", "2.65", "--at", "2026-10-03T08:55"])
     assert out.exit_code == 0, out.output
     assert "resume: h2.65 = Sat 09:00" in out.output
+
+
+def test_cli_from_api_reads_the_two_public_bodies(monkeypatch):
+    """`--from-api` makes two keyless GETs; the bodies come unwrapped, a closed clock gives both columns."""
+    clock = tl.frozen(tl.load(tl.CLOCK_FIXTURE), 2.65, NIGHT)
+    schedule = dict(tl.load(tl.SCHEDULE_FIXTURE))
+    calls: list[str] = []
+
+    class Public:
+        def clock(self) -> dict:
+            calls.append("clock")
+            return clock
+
+        def schedule(self) -> dict:
+            calls.append("schedule")
+            return schedule
+
+    monkeypatch.setattr("bazaar_agent.cli.public_client", lambda settings: Public())
+    out = CliRunner().invoke(app, ["timeline", "--from-api", "--at", "2026-10-03T08:55:00+02:00", "--json"])
+    assert out.exit_code == 0, out.output
+    data = json.loads(out.stdout)
+    assert sorted(calls) == ["clock", "schedule"] and data["source"] == "api"
+    assert [(a["name"], a["t_hours"]) for a in data["anchors"]] == [("resume", 2.65), ("jump", 4.0)]
