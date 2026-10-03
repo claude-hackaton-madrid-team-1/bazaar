@@ -622,7 +622,7 @@ class Scenario:
 
     @property
     def ladder_deals(self) -> int:
-        return sum(1 for s in self.steps if s.kind == "ladder" or (s.kind == "buy" and "ladder slot" in s.note))
+        return sum(1 for s in self.steps if s.kind == "ladder" or (s.kind == "buy" and s.source != "teams"))
 
     @property
     def ladder_held(self) -> int:
@@ -774,13 +774,15 @@ def cash_plan(
     sells: Sequence[tuple[int, str, float]] = (),
     trades: Sequence[PlannedTrade] = (),
     floor: int | None = None,
+    venue_floor_rule: bool = True,
 ) -> Scenario:
     """Walk the game hours from `start_hour`: grants and planned sells in, the venue (bond + fee) out, W4's
     trades (tried every hour until they fit), W3's ladder slots (a slot that names a card buys it from its
     dealer; one that only names a price class buys a wanted page card of that class), then the other wanted
     cards, while the hour's spend cap (`max_spend_per_game_hour`) and the floor allow. `floor` is a what-if;
     by default GUARDRAILS.md's `cash_floor`. Prices are the expected fills; whatever does not fit is `held`,
-    with the reason. Ladder slots before `start_hour` are history (the feed has them)."""
+    with the reason. Ladder slots before `start_hour` are history (the feed has them). `venue_floor_rule`:
+    PR #71's check (unmerged), the bond and fee may not take cash below the floor; off, only the cash."""
     base = rules.cash_floor if floor is None else floor
     start_cash, planned = cash, venue_hour
     taken = {ref for t in trades for ref in t.refs_in}
@@ -792,7 +794,8 @@ def cash_plan(
     for hour in range(start_hour, GAME_ENDS):
         # until the venue opens, its bond and fee are kept on top of the floor (PR #71 refuses the opening
         # when they would take cash below the floor)
-        floor = base + (VENUE_BOND + VENUE_FEE if venue_hour is not None and not opened else 0)
+        reserve_venue = venue_floor_rule and venue_hour is not None and not opened
+        floor = base + (VENUE_BOND + VENUE_FEE if reserve_venue else 0)
         for g in grants:
             if hour <= g.hour < hour + 1 or (hour == start_hour and g.hour < start_hour):
                 cash += g.cash
@@ -803,14 +806,15 @@ def cash_plan(
                 steps.append(Step(hour, "sell", ref, "teams", -price, None, cash, "expected fill of a planned sell"))
         if venue_hour == hour:
             # PR #71's guardrail: the bond and fee may not take cash below the floor either
-            if cash - (VENUE_BOND + VENUE_FEE) >= base:
+            if cash - (VENUE_BOND + VENUE_FEE) >= (base if venue_floor_rule else 0):
                 cash -= VENUE_BOND + VENUE_FEE
                 opened, floor = True, base
                 note = f"bond {VENUE_BOND} (refundable after closing and a cooldown) + fee {VENUE_FEE}"
                 steps.append(Step(hour, "venue", "venue", "organisers", VENUE_BOND + VENUE_FEE, None, cash, note))
             else:
-                need = VENUE_BOND + VENUE_FEE + base
-                note = f"cash {cash:.0f} < {need} (bond + fee {VENUE_BOND + VENUE_FEE} + floor {base}): refused"
+                need = VENUE_BOND + VENUE_FEE + (base if venue_floor_rule else 0)
+                rule = f" + floor {base}, #71's rule" if venue_floor_rule else ""
+                note = f"cash {cash:.0f} < {need} (bond + fee {VENUE_BOND + VENUE_FEE}{rule}): refused"
                 venue_hour, floor = None, base  # not retried: the plan says when; Marius decides again
                 steps.append(Step(hour, "held", "venue", "organisers", 0, None, cash, note))
         spent = 0.0
@@ -927,20 +931,39 @@ def scoring_dealers(
     *,
     start_hour: int = 0,
     taken: Iterable[str] = (),
+    since_tick: int | None = 0,
 ) -> dict[str, int]:
-    """dealer -> how many more deals still count among our best three: three minus our deals in the feed and
-    the ladder plan's still to come (from `start_hour`; a slot naming a card the trade plan buys never runs).
-    Counts every deal we made, so it assumes the ladder does not restart each round (unverified, see W5):
-    a restart only opens more slots."""
+    """dealer -> how many more deals still count among our best three: three minus our deals this round
+    (ticks ≥ `since_tick`; None: none yet, the round has not opened in the feed) and the ladder plan's still
+    to come (from `start_hour`; a slot naming a card the trade plan buys never runs). Earlier rounds' deals
+    do not close a slot: if the ladder restarts each round they are gone, and if it does not, a better deal
+    replaces them (W5: unverified which), so a round's first three good deals always score."""
     skip = set(taken)
     ours: Counter[str] = Counter()
     for p in intel.tape(events):
-        if p.persona and us in (p.buyer, p.seller):
+        if since_tick is not None and p.tick >= since_tick and p.persona and us in (p.buyer, p.seller):
             ours[p.persona] += 1
     for slot in ladder:
         if slot.hour >= start_hour and not (slot.ref and slot.ref in skip):
             ours[slot.dealer] += 1
     return {str(d.get("id")): 3 - ours[str(d.get("id"))] for d in dealers if ours[str(d.get("id"))] < 3}
+
+
+def day_of(hour: float) -> str:
+    """The game day (`day.opened` payload's `day`) a game hour falls in."""
+    return "fri" if hour < SATURDAY_OPENS else "sat" if hour < SUNDAY_OPENS else "sun"
+
+
+def round_start_tick(events: Iterable[intel.Event], hour: float) -> int | None:
+    """The tick the feed shows the current day opening at; None when that day has not opened in the feed yet
+    (planning Saturday from Friday's feed)."""
+    day = day_of(hour)
+    ticks = [
+        int(e.get("tick") or 0)
+        for e in events
+        if e.get("type") == "day.opened" and (e.get("payload") or {}).get("day") == day
+    ]
+    return max(ticks) if ticks else None
 
 
 def best_three(slots: Sequence[LadderSlot], keep: int = 3) -> list[LadderSlot]:
@@ -971,6 +994,7 @@ def build_plan(
     what_if_floor: int | None = None,
     chasers: Mapping[str, Sequence[str]] | None = None,
     expected: Multipliers | None = None,
+    venue_floor_rule: bool = True,
 ) -> PagePlan:
     """Pages, the buy order and the cash plan: the venue at the open, later, on Sunday or never (with W3's
     ladder slots and W4's trades as given), the no-venue plan with our planned sells, a consolidated plan
@@ -984,13 +1008,14 @@ def build_plan(
     start = max(SATURDAY_OPENS, math.floor(hour_now))
     taken = {ref for t in trades for ref in t.refs_in}
     us = str(me.get("id") or "")
-    scoring = scoring_dealers(events, us, dealers, ladder, start_hour=start, taken=taken)
+    since = round_start_tick(events, hour_now)
+    scoring = scoring_dealers(events, us, dealers, ladder, start_hour=start, taken=taken, since_tick=since)
     wants = buy_list(pages, params.min_buy_surplus, skip=taken, scoring=scoring)
     cash = int(me.get("cash") or 0)
     sells = planned_sells(me, m, params, rules, start)
 
     def run(name: str, venue: int | None, **kw: Any) -> Scenario:
-        kw = {"ladder": ladder, "trades": trades, **kw}
+        kw = {"ladder": ladder, "trades": trades, "venue_floor_rule": venue_floor_rule, **kw}
         return cash_plan(name, cash, start, grants, wants, rules, venue_hour=venue, **kw)
 
     venues = [(f"venue at open (h{start})", start)]
@@ -999,6 +1024,8 @@ def build_plan(
     if venue_later < SUNDAY_OPENS and start < SUNDAY_OPENS:
         venues.append((f"venue Sunday (h{SUNDAY_OPENS})", SUNDAY_OPENS))
     scenarios = [run(n, v) for n, v in venues] + [run("no venue", None)]
+    if venue_floor_rule:  # the same opening without #71's floor check: the floor then blocks buys instead
+        scenarios.append(run(f"venue at open (h{start}) · without #71's floor rule", start, venue_floor_rule=False))
     if sells:
         scenarios.append(run(f"venue at open (h{start}) + planned sells", start, sells=sells))
         scenarios.append(run("no venue + planned sells", None, sells=sells))

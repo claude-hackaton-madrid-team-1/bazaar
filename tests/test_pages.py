@@ -441,7 +441,7 @@ def test_bazaar_plan_pages_reads_every_input_from_the_simulator_over_http(sessio
     out = run("plan", "pages", "--json", "--now-hours", "4", "--no-live")
     data = json.loads(out[out.index("{") :])
     assert {p["set"] for p in data["pages"]} >= {"LAV", "MAL", "LAT", "SAL"}
-    assert data["scenarios"][-1]["name"].startswith("no venue")
+    assert "no venue" in [s["name"] for s in data["scenarios"]]
     assert all(s["floor"] == RULES.cash_floor for s in data["scenarios"])
     assert ours() == before  # read-only: no offer, no thread, no cash moved
 
@@ -511,3 +511,29 @@ def test_plan_files_from_other_tools_are_checked_at_the_cli(tmp_path, monkeypatc
     assert "is not a W3 ladder plan (schedule rows): KeyError" in result.output
     with pytest.raises((TypeError, ValueError)):
         pages.multipliers_from({"t07": {"LAV": None}})
+
+
+def test_only_this_rounds_deals_close_a_best_three_slot():
+    friday = [
+        {"id": 1, "tick": 0, "type": "day.opened", "payload": {"day": "fri"}},
+        settle(2, 1, "abuela", "t01", "LAV-06", 22, tick=5, kind="card"),
+        settle(3, 2, "abuela", "t01", "LAV-01", 9, tick=6, kind="card"),
+        settle(4, 3, "abuela", "t01", "LAV-01", 9, tick=7, kind="card"),
+    ]
+    assert pages.round_start_tick(friday, 2.0) == 0
+    assert pages.round_start_tick(friday, 4.0) is None  # Saturday has not opened in Friday's feed
+    assert pages.scoring_dealers(friday, "t01", DEALERS, since_tick=0) == {"chato": 3}
+    assert pages.scoring_dealers(friday, "t01", DEALERS, since_tick=None) == {"abuela": 3, "chato": 3}
+    saturday = [*friday, {"id": 5, "tick": 240, "type": "day.opened", "payload": {"day": "sat"}}]
+    saturday.append(settle(6, 4, "abuela", "t01", "LAV-06", 21, tick=241, kind="card"))
+    assert pages.scoring_dealers(saturday, "t01", DEALERS, since_tick=pages.round_start_tick(saturday, 5)) == {
+        "abuela": 2,
+        "chato": 3,
+    }
+
+
+def test_without_71s_rule_the_venue_opens_and_the_floor_then_blocks_the_buys():
+    grants = [pages.Grant(4.05, 150, "Saturday")]
+    s = pages.cash_plan("v", 353, 4, grants, [want("LAV-09", "teams", 75)], RULES, venue_hour=4, venue_floor_rule=False)
+    assert s.venue_opened == 4 and s.held == ("LAV-09",)
+    assert s.steps[-1].note == "cash 233 − 75 < floor 270"

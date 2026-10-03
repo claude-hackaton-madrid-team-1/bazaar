@@ -1197,6 +1197,9 @@ def plan_pages(
     chasers_file: str | None = typer.Option(
         None, "--chasers", help="JSON {set: [team, ...]}: who chases each set (e.g. from `bazaar affinity`)"
     ),
+    venue_floor_rule: bool = typer.Option(
+        True, "--venue-floor-rule/--no-venue-floor-rule", help="PR #71: the bond + fee keep cash ≥ cash_floor"
+    ),
     steps: bool = typer.Option(False, "--steps", help="Print every scenario hour by hour"),
     as_json: bool = typer.Option(False, "--json", help="Print the plan as JSON"),
     live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
@@ -1250,6 +1253,7 @@ def plan_pages(
         what_if_floor=what_if_floor,
         chasers=chasers,
         expected=expected,
+        venue_floor_rule=venue_floor_rule,
     )
     if as_json:
         typer.echo(json.dumps(pg.plan_dict(plan), indent=2, ensure_ascii=False))

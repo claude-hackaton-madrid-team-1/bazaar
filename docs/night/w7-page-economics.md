@@ -52,12 +52,13 @@ The walk goes hour by hour and respects:
 - W3's ladder slots (a slot that names a card W4 already buys is flagged as a duplicate);
 - W4's trades, whose cash is committed at the open.
 
-| scenario (floor 270 unless stated) | venue | ladder deals | W4 trades placed | trade surplus | Saturday spend | end cash |
+| scenario (floor 270 unless stated; venue rows apply PR #71's rule, unmerged, unless stated) | venue | ladder deals | W4 trades placed | trade surplus | Saturday spend | end cash |
 |---|---|---|---|---|---|---|
 | no venue | – | 3 | 7 on Sat | **+82 P** | 144 | 510 |
 | venue at the open (h4) | **refused** (503 < 540) | 3 | 7 on Sat | +82 P | 144 | 510 |
 | venue at h9 (14:00) | **refused**: the 540 P reserve freezes the morning | 0 (all held) | 7, after 14:00 | +82 P | 90 | 563 |
 | venue Sunday (h18) | opens (653 ≥ 540) | 0 (all held) | 7 on Sunday | +82 P | 0 | 293 |
+| venue at the open, **without #71's floor rule** | opens (503 − 270 = 233) | 0 | 7 on Sunday | +82 P | 270 | 293 |
 | venue at the open + planned sells (LAT-09 and 2 more, +93 P) | opens | 0 | 4 Sat, 3 Sun | +82 P | 325 | 386 |
 | venue at the open, **what-if `cash_floor` 0** | opens | 3 | 7 on Sat | +82 P | 414 | 240 |
 
