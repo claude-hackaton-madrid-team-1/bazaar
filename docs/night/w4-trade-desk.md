@@ -131,7 +131,7 @@ So listings go public wherever the cap allows. Direct proposals use a team threa
 2. `max_price_rare` 80 against Chato's 82–93: LAV-09/10 are the page's real lever (about 70 P each). No guardrail value was changed tonight.
 3. Swap cash legs route around the price caps. The caps apply to cash only, so "LAT-09 + 59 P for a rare" passes. Decide whether to cap swaps by value.
 4. Split the 83 P above the floor between the trade desk (bids) and W3's ladder (`--cash-budget`).
-5. Run `uv run bazaar trade-plan` at 09:00 to read fresh inputs, then post the plan (in `sell bid` / `sell list --to` order) or hand it to the maker.
+5. At 09:00, run `uv run bazaar trade-plan --live`. It reads the feed history from the shared DB plus the live window, and our `/me`, open offers and this hour's spend; it sends nothing. Then post the plan (`sell bid`, `sell list --to`) or hand it to the maker.
 
 Code review (`/code-review high`, 10 findings, all fixed in ec28ab1):
 - the search crashed on pools of 1,100+ candidates (RecursionError);
