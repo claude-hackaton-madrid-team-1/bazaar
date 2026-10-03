@@ -42,7 +42,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 | accept first inside | 11.22 | 0.739 | 0 | 10.2 – 11.3 | 85.0 |
 
 1. **Talking is what decays the result.** v1 averages 6.85 rounds per deal (0.94^6.85 keeps 65 %). The real practice shows the same: we scored 0 P on the 12 duels we never answered, and the oracle on them is 195 P.
-2. **Pure silence is not enough.** Silent endgame-accept fails 3 of 5 checks. Against tit-for-tat its deal rate is 0.49 vs v1's 0.99, and against listening one-shots it is 0.76 vs v1's 0.87. v2 talks about once per deal and keeps both deal rates (0.999 and 0.895).
+2. **Pure silence is not enough.** Silent endgame-accept fails 3 of 5 checks at 0.06/0.08. Against tit-for-tat its deal rate is 0.49 vs v1's 0.99, and against one-shots (half of them still listen) it is 0.77 vs v1's 0.88. v2 talks about once per deal and keeps both deal rates (0.999 and 0.895).
 3. **Two-issue duels.** This branch's v1 (`days=5`) closes outside our limit in 70 of 2,800 two-issue duels: 23 signed, 47 worst case (not in the tables; `scripts/duel_zoo.py --policy v1` without `PYTHONPATH` runs this branch's agent). PR #60's v1 closes 0, and so does v2 in 14,400 duels. **#60 should land.**
 4. **Independent gate of W2b's v2 @ 1d7cc26: GO at every decay pair.**
    - Lift 1.420 at 0.06/0.08, 1.550 at 0.08/0.10, 1.483 at 0.06/0.10. Seeds 1–5 at 0.06/0.08 read 1.427–1.439 (sd 0.005).
@@ -51,14 +51,13 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 5. **Robust to the zoo's assumptions, less so to tick order.**
    - Pinning any one assumption gives a v2/v1 lift of 1.29–1.44 (9 rows in the tables), including conceders and holdouts that never accept (1.44).
    - If we move before the rival in a tick, v2 drops 12 % (20.89 → 18.46 P) vs v1's 6 %, so its lift at 0.06/0.08 falls to 1.34. v2's replay drops from 173.5 to 152.8 P; W2b acted on this finding, and it was at 140.1 before.
-
 6. **One accept per tick binds when duels share a deadline.** RULES.md allows one accept per tick per team, and our GUARDRAILS `max_accepts_per_tick` = 1 applies it to duels. In the practice, 6 of our duels ended at tick 132.
    - `play_batch` runs a team's duels in lockstep and refuses an accept past the budget.
    - Silent endgame-accept collapses: in batches of 6, 19.2 → 9.5 P/duel; on the replay of the 12 duels on one clock, 185 → 140 P.
    - v1 is unaffected: it accepts when its target is met, which spreads its accepts over the duel.
    - v2's planner (`plan_moves`) queues its accepts early, so the cap costs it nothing. But planning for a shared deadline costs v2 about 4 % against isolated duels: 19.92 → 19.15 P/duel in batches of 6 at decay 0.06.
    - Lift in batches of 6: 1.27 at 0.06, 1.39 at 0.08, 1.53 at 0.10, or 1.45 for the 0.08/0.10 pair.
-   - Replay with the cap: v2 178.4 P, the same as W2b's own arena (176.4 on its earlier commit), vs v1 121.7.
+   - Replay with the cap: v2 178.4 P vs v1 121.7. On W2b's earlier commit a170148 this harness gave 176.4, exactly the figure from W2b's own arena.
 
 ## Caveats (stated, not fixed)
 
