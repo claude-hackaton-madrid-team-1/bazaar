@@ -42,3 +42,21 @@ def test_words_only() -> None:
     sent: list[tuple[str, str, Any]] = []
     _client(sent).duel_say(7, "hola")
     assert sent[0][2] == {"text": "hola"}
+
+
+def test_the_body_reaches_the_sdk_transport_and_the_write_hook_still_fires(monkeypatch: Any) -> None:
+    import bazaar_sdk
+
+    seen: list[tuple[str, Any]] = []
+    hooks: list[tuple[str, str, str]] = []
+
+    def transport(self: Any, method: str, path: str, body: Any = None, query: dict[str, Any] | None = None) -> Any:
+        seen.append((path, body))
+        return {"ok": True}
+
+    monkeypatch.setattr(bazaar_sdk.Bazaar, "_call", transport)
+    client = TeamBazaar("http://127.0.0.1:9", "tk-t-t", on_write=lambda m, p, ph: hooks.append((m, p, ph)))
+    client.duel_say(7, "hola", price=60, days=3)
+    body = {"text": "hola", "price": 60, "days": 3, "offer": {"price": 60, "days": 3}}
+    assert seen == [("/api/duels/7/messages", body)]
+    assert hooks == [("POST", "/api/duels/7/messages", "before"), ("POST", "/api/duels/7/messages", "after")]
