@@ -42,7 +42,9 @@ How a level arrives (Friday's El Chato):
   The near-misses all block but never flag: undressed mismatches, dearer cards, extra `want` items, other assets on a sale, unknown topics, and the three review cases.
 - **Wiring:** every thread read in `bazaar dealer buy` (new `negotiate(on_thread=…)` hook), the desk and `bazaar dealer sell` runs `flag_step()`.
   - Each certain message is logged once, uncapped (`would flag message N (…allow_flags = false): <structural reason>`).
-  - At most 2 flags per process are actually sent, and only if `guardrails.check(Action("flag"))` passes.
+  - At most `max_flags_per_process` (GUARDRAILS.md, 2) flags are actually sent, and only if `guardrails.check(Action("flag"))` passes.
+  - A denied or failed flag is re-checked on the next read, so allowing flags mid-run still sends it.
+  - `flag_trusted_dealers` (abuela, chato) are never flagged.
   - The catalog is read lazily inside the guarded hook, so an inspection failure never changes or breaks a negotiation.
   - Unverified: a real thread message's id key. The openapi says `message`; the code falls back to `id`.
 
@@ -53,17 +55,17 @@ Dealers that buy (Abuela, Chato, and most likely the Collector) could not be sol
 - take it when no whole price is left between us;
 - a final is take-it-or-walk.
 
-`bazaar dealer sell <id|ref> --start --min [--dealer] [--live]` is a dry run by default. It refuses a `--min` below `sell_min_value_ratio × your_value`. Every ask and accept passes `guardrails.check` (`sell` / `accept_sell` with the copy's value), and the accept slot is reserved on the shared ledger.
+`bazaar dealer sell <id|ref> --start --min [--dealer] [--live]` is a dry run by default. It refuses a `--min` below `sell_min_value_ratio × your_value`, and runs a guardrail check before it opens a thread (so the kill switch stops it). A settled sale is recorded on the ledger as negative spend, as the maker does. In the simulator over real HTTP, it made 2 of 2 sales to Abuela (`scripts/sim_e2e/test_b3_sell.py`). Every ask and accept passes `guardrails.check` (`sell` / `accept_sell` with the copy's value), and the accept slot is reserved on the shared ledger.
 
 Sale ladders from Friday's sale threads, replayed through the W3 machinery (share = (price − its opening bid) / (its limit − its opening bid)):
 
 | dealer, class | opening bid | limits seen | plan | model share | replay | real teams got |
 |---|---|---|---|---|---|---|
-| Abuela, uncommon | 12 | 12–16 | ask 16 → 12 | 0.872 | 0.875 | 0.75 |
-| Abuela, common | 5 | 5–6 | ask 8 → 4 | 0.617 | 0.526 | 0.474 |
-| Chato, uncommon | 13 | 13–16 | ask 17 → 13 | 0.328 | 0.600 (n 5) | 0.20 |
+| Abuela, uncommon | 12 | 12–16 | ask 16 → 13 | 0.872 (deal 0.99) | 0.875 | 0.75 |
+| Abuela, common | 5 | 5–6 | ask 8 → 6 | 0.617 (deal 0.77) | 0.526 | 0.474 |
+| Chato, uncommon | 13 | 13–16 | ask 17 → 14 | 0.328 (deal 0.61) | 0.600 (n 5) | 0.20 |
 
-These ranges are tiny (one or two primas), so a sale's share is coarse. Its real value is as a ladder deal and an unlock deal at a level where we cannot buy.
+A sale plan never goes down to the dealer's opening bid, since a sale there captures nothing and does not count toward unlocking. When its limit *is* its opening bid we keep the card. These ranges are tiny (one or two primas), so a sale's share is coarse. Its real value is as a ladder deal and an unlock deal at a level where we cannot buy.
 
 ## Plan per persona (when each one opens)
 - **Any new dealer, at announce:** `uv run bazaar ladder levels` (offline, from the captured feed) shows the teaser. The monitor alerts on `level.*`.
