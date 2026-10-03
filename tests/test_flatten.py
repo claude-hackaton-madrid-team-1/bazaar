@@ -151,6 +151,14 @@ def test_flatten_goes_out_under_the_kill_switch_while_the_maker_holds(flatten_cl
     }
 
 
+def test_a_partial_flatten_never_exits_as_a_success(flatten_cli):
+    team, cli = flatten_cli
+    team.refuse = {1: BazaarError("asset_locked", "settling", 400)}
+    result = CliRunner().invoke(cli.app, ["flatten", "--live"])
+    assert result.exit_code == 1 and team.sent == [("cancel", 2)]  # the rest of the pass still went out
+    assert "refused cancel 1" in result.output and "1 refused; check" in result.output
+
+
 def test_the_command_reports_what_a_rate_limit_left(flatten_cli):
     team, cli = flatten_cli
     team.refuse = {2: BazaarError("rate_limited", "slow down", 429)}

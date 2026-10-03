@@ -1327,6 +1327,8 @@ def flatten_cmd(
         console.print(f"  refused {item.kind} {item.id} ({item.what}): {code}")
     if out.left:
         _fail(f"stopped by {out.stopped}: {len(out.left)} left; run `bazaar flatten --live` again next tick")
+    if out.failed:  # a refused cancel or close may have left an offer or a thread open: never report success
+        _fail(f"{len(out.failed)} refused; check `bazaar sell offers` / `bazaar threads` and run it again")
 
 
 # ---------------------------------------------------------------- autonomous agents (needs BAZAAR_KEY)
