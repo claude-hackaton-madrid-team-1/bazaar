@@ -296,3 +296,37 @@ def render_summary(summary: list[KindSummary], path: Path) -> str:
     if not summary:
         lines.append("| - | 0 | | | | | | | |")
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------- the same tracker over a captured day
+
+
+def replay(
+    events: list[Event],
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    params: WatchParams,
+    rules: Guardrails,
+    strategy: StrategyParams,
+) -> list[dict[str, Any]]:
+    """What the monitor would have logged had it scanned every tick of a captured feed: the boards rebuilt from
+    `offer.listed` / cancels / fills (`arb_study`), our album as `me` has it now (an approximation)."""
+    from bazaar_agent import arb_study
+
+    last = max((int(e.get("tick") or 0) for e in events), default=0)
+    rows_by_span, fees = arb_study.spans(events, last), arb_study.venues_by_tick(events, last)
+    us = str(me.get("id") or "")
+    s = Scanner(params, rules, strategy)
+    s.refresh(catalog, events, us, me)
+    market = build_market(me, catalog, events, [])
+    tracker = Tracker(params)
+    out: list[dict[str, Any]] = []
+    for tick, board in arb_study.boards(rows_by_span, last):
+        venues = {k: v for k, v in fees[tick].items() if v.owner != us}
+        offers = [o for o in board if o.maker != us]
+        floor = params.log_floor
+        found = seen_from_scan(arb.scan(market, venues, offers, ours=set(), min_net=int(floor), min_surplus=floor))
+        if params.b4 and s.amap is not None:
+            found += s._b4(offers, market, me, venues, tick)
+        out += tracker.update(tick, found)[1]
+    return out + tracker.close_all()

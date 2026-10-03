@@ -342,6 +342,29 @@ def arb_watch_log(
     typer.echo(opp_watch.render_summary(opp_watch.summarise(opp_watch.read_rows(where), since_tick), where))
 
 
+@arb_app.command("watch-replay")
+def arb_watch_replay(
+    stream: str = typer.Argument(help="Feed events as JSONL (stream.jsonl or a feed_events export)"),
+    me_file: str = typer.Option(..., "--me", help="Our /api/me or an agent.me event (our album and values)"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    log_floor: float = typer.Option(0.0, help="Log every opportunity whose value reaches this"),
+    out: str | None = typer.Option(None, help="Also write the replayed log (JSONL) here; it holds our values"),
+) -> None:
+    """Replay a captured day through the monitor's opportunity tracker: what it would have alerted and logged."""
+    from pathlib import Path
+
+    from bazaar_agent import arb_study, opp_watch
+
+    events = arb_study.load_events(Path(stream))
+    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    rules = _rules().rules
+    params = opp_watch.WatchParams(1, rules.arb_min_net_spread, rules.dup_min_surplus, 5.0, log_floor)
+    rows = opp_watch.replay(events, _json_file(me_file), catalog, params, rules, _strategy().params)
+    if out:
+        opp_watch.append_rows(Path(out), rows)
+    typer.echo(opp_watch.render_summary(opp_watch.summarise(rows), Path(stream)))
+
+
 @arb_app.command("study")
 def arb_study_cmd(
     stream: str | None = typer.Argument(

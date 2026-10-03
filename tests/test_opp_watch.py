@@ -214,3 +214,17 @@ def test_against_the_simulator_over_http(tmp_path, monkeypatch):
         loop.on_tick(Clock.model_validate(team.clock()))
     assert any("opportunity:arb" in line and card.ref in line for line in said)
     assert sim.world.asset(card.id).owner == "t02"  # read-only: nothing was bought
+
+
+def test_replay_a_captured_day_through_the_tracker():
+    from tests.test_arb import a_bid, an_ask
+
+    events = [
+        {"id": 1, "tick": 0, "type": "venue.opened", "payload": {"venue": "v02", "owner": "t12", "fee_bps": 0}},
+        an_ask(2, 1, 10, "t06", "LAV-01", 5, 500),  # we hold LAV-01: 5 + fee 2 on El Rastro ...
+        a_bid(3, 1, 11, "t17", "LAV-01", 16, venue="v02"),  # ... into 16 on v02: net +9, from tick 1
+        {"id": 4, "tick": 4, "type": "offer.cancelled", "payload": {"offer": 11}},  # gone at tick 4
+    ]
+    rows = ow.replay(events, ME, CATALOG, ow.WatchParams(b4=False), Guardrails(), PARAMS)
+    (arb,) = [r for r in rows if r["kind"] == "arb" and r["event"] == "closed"]
+    assert (arb["first_tick"], arb["last_tick"], arb["scans"], arb["best"], arb["alerted"]) == (1, 3, 3, 9.0, True)
