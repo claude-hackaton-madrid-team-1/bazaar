@@ -192,7 +192,7 @@
       },
       "play": {
         "who": "Marius + anyone",
-        "do": "Doors open at 09:00 on the calendar in both columns. G0 at 08:55 picks the column; restart bazaar-duels, bazaar-taker and bazaar-maker just after 09:00:00 (300 s closed-door poll).",
+        "do": "Doors open at 09:00 on the calendar in both columns. G0 at 08:55 picks the column; #106 (merged) wakes the services at the opening; restart one only if it shows no tick by 09:01.",
         "points": 0
       }
     },
@@ -1093,7 +1093,7 @@
   "unscheduled": [
     {
       "event": "day.opened (09:00)",
-      "do": "with the doors closed every loop polls the clock every 300 s (ticks.CLOSED_POLL_MAX_S): restart bazaar-duels, bazaar-taker and bazaar-maker just after 09:00:00, or check each logs a tick by 09:01"
+      "do": "#106 (merged 05:07) wakes the loops at the announced opening; restart bazaar-duels, bazaar-taker and bazaar-maker only if one shows no tick by 09:01"
     },
     {
       "event": "level.announced",
