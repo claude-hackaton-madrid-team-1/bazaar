@@ -56,11 +56,28 @@ Other variants:
 ## Verdict and recommendation
 - **Recommended: `duel_endgame_min_share` = 0.3 with `duel_endgame_ticks` = 1, jitter 0.**
 - It passes the gate on both harnesses with margin:
-  - Pie share vs exploiters: 0.100 → 0.226 on ours, 0.189 → 0.298 on W2a's three exploiters.
+  - Pie share vs exploiters: 0.100 → 0.226 on ours (3 seeds: 0.224–0.230), 0.193 → 0.298 on W2a's three exploiters
+    (W2a's final tables, PR #97 @ a98640c, 3 seeds, sd ≤ 0.007).
   - Honest zoo: result ≥ 0.996× v2, deals ≥ 0.975× v2 (bars 0.97 / 0.95).
   - 0 outside-limit closes.
 - Min share 0.4 gains more (W2a squeezer 0.442) and still passes, but our arena's honest deals fall to 0.955, at the bar.
   0.5 and above fail our deal-rate bar.
+
+**W2a's final tables** (PR #97 @ a98640c, presets at 14786a7, 3 seeds, n = 200, decays 0.08/0.10). Exploiters = mean of
+squeezer, oracle and mirror B with shared limits.
+
+| preset | exploiters | stubborn oracle | honest P | honest deals |
+|---|---|---|---|---|
+| today | 0.193 | 0.154 | — | — |
+| eg1_share02 | 0.260 | 0.148 | 0.996× | 0.999× |
+| **eg1_share03** | **0.298** | 0.141 | 1.007× | 0.994× |
+| eg1_share03_jitter025 | 0.297 | 0.142 | 1.006× | 0.994× |
+| eg1_share05 | 0.365 | 0.122 | 1.037× | 0.982× |
+| eg0_share03_jitter025 | 0.260 | 0.128 | 1.000× | 0.966× |
+
+Break-even against stubborn exploiters (W2a): share 0.3 pays unless more than 89 % of exploiters never back off; share 0.5
+pays unless more than 84 % do. Share 0.5 scores higher on W2a's exploiters, but on our arena its honest deal rate (0.930)
+fails the 0.95 bar. So 0.3 is the conservative point; Marius can take 0.4–0.5 if he trusts W2a's honest zoo over ours.
 
 ## Risks
 - **A bet that exploiters give in when refused.** Against an oracle that never backs off (1 P to the very end), every setting
