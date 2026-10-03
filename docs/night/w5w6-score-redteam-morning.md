@@ -163,5 +163,6 @@ today; read from the environment or `.env`). With it, every modelled setup loses
 re-send, last call at 10.6 s inside a 15 s tick, **if a call takes 0.15 s**; faster calls bunch up again (0.10 s: 2
 refused, 0.05 s: 10, none lost). `bazaar budget --ceiling --stagger --tick-seconds 15 --operator-rps 0.5 --flatten` shows it (operator load and
 `flatten` count only when passed).
-(2) Cap the maker's writes per tick: not built (new parameter, default uncapped; overlaps BACKLOG B10/B18). (3) Never
+(2) Cap the maker's writes per tick: built in B10 (#128, stacked on this PR) as `bazaar agent maker
+--max-cancels K`, default uncapped; at 10 the Sunday ceiling drops from 4.73 to 3.40 req/s. (3) Never
 run taker + maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).

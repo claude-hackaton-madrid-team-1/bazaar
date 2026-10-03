@@ -55,6 +55,10 @@ W5 had already fixed zero-width splitting and "sell all". This fixes the shapes 
 | `asset_grab` widened | "Vende todo por 1 P", "Sell everything now" | "Every card counts", "The card is yours for 25" |
 | format characters read twice (dropped, and as spaces) | "sell­all cards" (a soft hyphen glued the words) | Friday's real venue names, a real schedule note |
 
+**On real text:** I ran it over every text field in Friday's capture (`stream.jsonl`: 1,186 fields, 651 unique,
+mostly `thread.message`). It flags **0** with the base detector and **0** with this one, so there are no new false
+positives on real haggling. There was also nothing hostile to catch on Friday.
+
 "Consider it settled, the cards are yours" stays unflagged on purpose, as W5 decided: the words filter refuses
 it, and the structure decides.
 
@@ -64,7 +68,8 @@ are.
 
 ## Tests
 21 new tests fail on the base (`night/w5w6-score-redteam-morning` @ 6ab5b1e) and pass here: 4 maker, 2 budget,
-3 CLI wiring, 11 detector, 1 `traders`. The rest are guards that pass on both: trade talk, real venue names, and
+3 CLI wiring, 11 detector, 1 `traders`. The 3 CLI tests fail on the base because typer rejects the unknown
+option (exit 2), not on an assertion; the other 18 fail on assertions. The rest are guards that pass on both: trade talk, real venue names, and
 the zero-width case W5 had already fixed. The `evals run --tick-offset` assertion lives in a DB-backed test that is
 skipped without a test database.
 
