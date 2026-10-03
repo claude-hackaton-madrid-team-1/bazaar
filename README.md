@@ -204,7 +204,7 @@ the environment first, then `.env`. Unset means the local docker Postgres
   schema still creates every table and skips only the `embedding vector(384)` columns; run
   `db init` again after enabling it and they are added.
 - **One monitor writes per team.** It runs in the CLI on one laptop (`uv run bazaar monitor`);
-  `bazaar-monitor` on Railway is off by team decision (see "Production on Railway").
+  There is no Railway monitor: `bazaar-monitor` was removed on 2026-10-03 (see "Production on Railway").
   Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
   writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
   history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
@@ -436,7 +436,9 @@ here and on Railway. Code: `src/bazaar_agent/runtime/claude.py`.
 Two tick-driven agents trade on their own, inside `GUARDRAILS.md`, with the strategy from `STRATEGY.md`.
 Both are **dry runs by default**: they read everything, decide, log `WOULD …` and write every decision
 to Postgres, but send nothing. Live needs `--live`, or `BAZAAR_LIVE=1` in the process environment (never
-read from `.env`); on Railway that variable is set by hand, never in `.railway/railway.py`.
+read from `.env`); on Railway that variable is set by hand, never in `.railway/railway.py`. **On Railway
+both are LIVE since Sat 2026-10-03 01:45 Madrid** (team decision; they trade from the 09:00 opening):
+see "Production on Railway" for how to stop them.
 
 ```sh
 uv run bazaar agent taker            # dry run; --threads N dealer conversations (default 3), --no-jev
@@ -658,13 +660,11 @@ dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:
 `eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
 the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
 
-**Always on.** Railway service `bazaar-evals` runs `bazaar evals run --every-ticks 6`. Like every
-loop here it follows the game clock (tick discipline), read from the keyless public `/api/clock`, so
-it never touches the team key: doors closed, no pass. Every 6 ticks it scores again when an input moved
-in Postgres (a game tick, a duel from `duel done` or `import-duels`, a `/me` snapshot, a decision) or an
-outcome still waits for its Phoenix span (each is looked up on three passes: a trace lands when its duel
-or negotiation ends). A Postgres outage is retried at the next due tick. After a restart, `bazaar duel
-run` reads `?done=true` once, so a duel that finished while it was down is stored.
+**Where they run.** Not as a Railway service (Omar, 2026-10-03): the taker, the maker and the duel
+player are to score their own settled decisions inside their tick loop, from Postgres only. Until that
+lands, run a pass from a laptop: `uv run bazaar evals run` once, or `uv run bazaar evals run --every-ticks 6`
+to keep scoring on the game clock (keyless `/api/clock`, never the team key). After a restart,
+`bazaar duel run` reads `?done=true` once, so a duel that finished while it was down is stored.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
@@ -676,11 +676,10 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `phoenix` | https://phoenix-production-6aa3.up.railway.app (login `admin@localhost`, password in its Railway variables) | `phoenix.railway.internal:6006` (OTLP/HTTP), `:4317` (gRPC) | traces UI for every negotiation, duel, monitor tick and CLI line | running |
 | `Postgres` | `iriguchi.proxy.rlwy.net:28880`, db `railway`, user `postgres`, SSL (password: Postgres service → Variables) | `${{Postgres.DATABASE_URL}}` | the team's shared memory (feed, tape, dealer curves, traders, snapshots, alerts, decisions) | running |
 | `bazaar-duels` | none (worker, no HTTP) | — | the team's ONE duel player (`duel run --play`) | running |
-| `bazaar-monitor` | none (worker, no HTTP) | — | kept but OFF (no source, no deployment): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision | off |
-| `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | dry run (no `BAZAAR_LIVE`) |
-| `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
+| `bazaar-monitor` | — | — | removed 2026-10-03 (Omar): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) | removed |
+| `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | **LIVE** since Sat 01:45 Madrid (`BAZAAR_LIVE=1`, set by hand) |
+| `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | **LIVE** since Sat 01:45 Madrid (`BAZAAR_LIVE=1`, set by hand) |
 | `bazaar-mcp` | https://bazaar-mcp-production.up.railway.app/mcp (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | running, dry run (no `BAZAAR_LIVE`) |
-| `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
 | `bazaar-sim` | https://bazaar-sim-production-1d48.up.railway.app (`/api/health`, `/sim/state`) | `bazaar-sim.railway.internal:8080` | the simulated Bazaar for testing agents (keys `sim-team1`…`8`), world in the `bazaar_sim` database | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
@@ -698,12 +697,10 @@ Code, Python authoring, beta): change it by PR.
 
 | Service | What runs | Data | Notes |
 |---|---|---|---|
-| `bazaar-monitor` | `bazaar monitor` (feed → JSONL + Postgres, traders, `/me`, alerts) | volume `bazaar-monitor-data` on `/app/.local` | OFF by team decision (no source, no deployment): the monitor runs in the CLI on a laptop |
 | `bazaar-duels` | `bazaar duel run --play` (offers/accepts inside `GUARDRAILS.md`) | volume `bazaar-duels-data` on `/app/.local` | the team's ONE duel player; first claim on the team's accept each tick |
-| `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand |
-| `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
+| `bazaar-taker` | `bazaar agent taker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-taker-data` on `/app/.local` | **LIVE**: `BAZAAR_LIVE=1` set by hand Sat 01:45 Madrid; the file `preserve()`s it |
+| `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | **LIVE**: `BAZAAR_LIVE=1` set by hand Sat 01:45 Madrid; the file `preserve()`s it; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
-| `bazaar-evals` | `bazaar evals run --every-ticks 6` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: only the keyless `/api/clock` paces it |
 | `bazaar-sim` | `bazaar-sim serve` on `PORT` 8080 (healthcheck `/api/health`), one tick every 10 s | database `bazaar_sim` (schema `sim`) on the team's Postgres | https://bazaar-sim-production-1d48.up.railway.app; the generated domain is not IaC (Railway does not declare generated domains) |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
@@ -713,12 +710,14 @@ Code, Python authoring, beta): change it by PR.
   `GUARDRAILS.md` resolve from `/app`). Every push to `main` that touches `src/`, `vendor/bazaar-kit/`,
   `pyproject.toml`, `uv.lock`, `GUARDRAILS.md`, `STRATEGY.md`, `RUNTIME.md`, `questions/` or `.railway/`
   redeploys it; README-only commits are skipped. Restart policy: always.
-- **The monitor is off, not deleted.** Railway has no 0-replica setting (the API rejects
-  `numReplicas` 0, and dropping the region moves the service to a default region), so "off" is no
-  source and no deployment: `.railway/railway.py` declares `bazaar-monitor` with `enabled=False`.
-  To turn it back on: set `enabled=True`, `railway config plan` (shows `source.repo` reconnecting),
-  `apply`, then `railway redeploy --service bazaar-monitor --from-source --yes` if no build starts,
-  and stop the laptop monitor: one monitor per team.
+- **No OFF services.** Railway redeploys a service's last image whenever an apply changes its config,
+  source or not. On Fri 23:14 UTC an apply that added `RUNTIME.md` to the shared watch patterns revived
+  the off `bazaar-monitor` (an `iac-change-set` redeploy) and it held one of the key's six live-stream
+  slots until `railway down` (Sat 01:55 Madrid). So a service we do not run is not declared at all:
+  `bazaar-monitor` and its volume were removed on 2026-10-03 (Omar; the monitor runs in the CLI), and
+  `bazaar-evals` too (the evals move into the agents). `tests/test_railway_iac.py` fails on any
+  `enabled=False` service. To run the monitor on Railway again, re-add its volume and
+  `runtime("bazaar-monitor", "monitor", ...)` in `.railway/railway.py`, apply, and stop the laptop monitor.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
   `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
@@ -771,11 +770,16 @@ then redeploy `bazaar-duels`.
   `dealer buy` see one count (see "Autonomous agents"). A process that cannot reach Postgres at start
   falls back to its own `ledger.jsonl` and says so in its log; a ledger failure mid-run sends nothing
   that tick (fail closed).
-- **Turn an agent live** (a team decision, not a deploy):
-  `printf 1 | railway variable set BAZAAR_LIVE --stdin --service bazaar-taker` (it redeploys); delete
-  the variable to go back to dry run. `/health` says `mode: live|dry`; check it after any
-  `railway config apply` too, since the file does not declare `BAZAAR_LIVE`. The kill switch still applies:
-  `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`.
+- **Live or dry run** (a team decision, not a deploy). **The taker and the maker are LIVE since
+  Sat 2026-10-03 01:45 Madrid** (`BAZAAR_LIVE=1` set by hand on both; nothing trades before the doors
+  open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
+  `railway config apply` keeps whatever is set by hand.
+  - **Stop one:** `railway variable delete BAZAAR_LIVE --service bazaar-taker` (or `bazaar-maker`): it
+    redeploys in dry run; `/health` then says `mode: dry`. To stop every write at once without a
+    redeploy, the kill switch: `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`
+    (`rm` it to resume).
+  - **Turn one on:** `printf 1 | railway variable set BAZAAR_LIVE --stdin --service bazaar-taker` (it
+    redeploys); `/health` says `mode: live`.
 - **Known limit: other state in `BAZAAR_DATA_DIR` is per container.** `steering.json`: a laptop
   `bazaar steer` does not reach Railway's duel player; steer it in its container
   (`railway ssh --service bazaar-duels -- /app/.venv/bin/bazaar steer "..."`). The runtime LLM runs
@@ -842,7 +846,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
 | N3 (new) | **P0 (Omar) · Learner / auto-evolve**: outcomes → lessons in `learnings`/`traders_behaviors`; hybrid RAG (BM25 + pgvector + local cross-encoder reranker, Postgres only — Jev: no graph DB); per-dealer concession parameters learned within GUARDRAILS; lessons into Jev and the LLM words | 1 | 🔵 worker (v1 before Sat 12:00) |
-| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`, dry run on Railway; live switch-on ⬜ |
+| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
 | [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); `untrusted_text` wrapping (#59); open: executor, flags, hostile-text tests, public `/state` follow-up, duel limit (PR #60) |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
@@ -850,13 +854,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
-| N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored; `bazaar-evals` service; Market Test stub until we run a venue |
+| N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored (CLI `bazaar evals`); next: inside the agents, no Railway service; Market Test stub until we run a venue |
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 worker (first version before Duels I) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 worker (before Sat 08:30) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
-| [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (dry run); our own venue ⬜ |
+| [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | 🔵 outcome evals (#58) partly cover it; top-3 normalisation ⬜, dashboard in PR #43 |
 | [#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17) | Pitch + scoring tracker | 3 | ⬜ |
@@ -904,6 +908,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
 - [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
@@ -911,7 +916,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
 - [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 - [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
-- [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
 
 <!-- BAZAAR:STATUS:END -->
 
