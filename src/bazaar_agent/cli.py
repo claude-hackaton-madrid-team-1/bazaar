@@ -472,6 +472,7 @@ def duel_run(
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.duel_jev import DuelPick
+    from bazaar_agent.agents.duel_v2 import V2Params, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
@@ -507,7 +508,9 @@ def duel_run(
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
-    duel_words = llm_cli.words_for(settings, rules, template_duel_words)
+    v2 = rules.duel_policy == "v2"
+    # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
+    duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -584,12 +587,29 @@ def duel_run(
         for live_id in live_ids:
             first_seen.setdefault(live_id, c.tick)
         picks: dict[int, DuelPick] = {}
+        slots = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        params = V2Params.from_rules(rules, anchor, floor) if v2 else None
+        planned: dict[int, DuelMove] = {}
+        if params is not None:
+            try:
+                planned = plan_moves(duels, c.tick, first_seen, params, slots)
+            except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
+                console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
+                planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
         if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
             endgame = rules.duel_endgame_ticks
             left = lambda: send_by - time.monotonic()  # noqa: E731
             try:
                 picks = duel_jev.pick(
-                    duels, c.tick, first_seen, anchor=anchor, floor=floor, endgame_ticks=endgame, left=left
+                    duels,
+                    c.tick,
+                    first_seen,
+                    anchor=anchor,
+                    floor=floor,
+                    endgame_ticks=endgame,
+                    left=left,
+                    v2=params,
+                    slots=slots,
                 )
             except Exception as e:  # a bug in the Jev layer must never cost a duel its move
                 console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
@@ -598,13 +618,13 @@ def duel_run(
             if did is None:
                 continue
             pick = picks.get(did)
-            move = (
-                pick.move
-                if pick is not None
-                else duel_move(
-                    d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=rules.duel_endgame_ticks
-                )
-            )
+            if pick is not None:
+                move = pick.move
+            elif did in planned:
+                move = planned[did]
+            else:
+                endgame = rules.duel_endgame_ticks
+                move = duel_move(d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=endgame)
             duel_traces.seen(d, c.tick, move)
             if pick is not None:
                 duel_traces.jev(did, pick)

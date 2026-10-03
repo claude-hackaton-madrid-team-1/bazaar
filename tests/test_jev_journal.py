@@ -237,3 +237,39 @@ def test_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_site(duel
     assert client.sent == [] and "duel_inside_limit" in " ".join(result.output.split())
     (row,) = decision_rows(tmp_path)
     assert row["status"] == "rejected"
+
+
+@pytest.mark.parametrize("jev", [False, True])
+def test_duel_run_under_v2_holds_in_silence_and_jev_cannot_take_the_planners_accept(duel_cli, monkeypatch, jev):
+    from dataclasses import replace
+
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert client.sent == []  # the rival's 110 just arrived: v2 waits, and Jev's "accept" is not a legal move
+    output = " ".join(result.output.split())
+    assert "silence is free" in output and ("not a legal move" in output) == jev
+
+
+def test_a_bug_in_the_v2_planner_holds_every_duel(duel_cli, monkeypatch):
+    from dataclasses import replace
+
+    from bazaar_agent.agents import duel_v2
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    monkeypatch.setattr(duel_v2, "plan_moves", lambda *a, **kw: 1 / 0)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "planner failed (ZeroDivisionError)" in result.output and client.sent == []

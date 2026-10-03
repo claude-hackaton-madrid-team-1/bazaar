@@ -84,6 +84,7 @@ class Backend:
         self._catalog: tuple[int, dict[str, Any]] | None = None
         self.dealer_runs: dict[str, Any] = {}  # dealer -> the live `dealer buy` child this process started
         self.duel_said: set[tuple[int, int]] = set()  # (duel, tick): one message per duel per tick
+        self.duel_first_seen: dict[int, int] = {}  # duel -> the first tick we read it (the payload has no start)
 
     @property
     def team(self) -> Any:
