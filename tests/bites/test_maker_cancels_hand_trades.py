@@ -21,3 +21,17 @@ def test_the_live_maker_cancels_a_hand_posted_listing_and_bid(tmp_path):
     m.on_tick(clock())
     cancelled = {s[1] for s in team.sent if s[0] == "cancel"}
     assert cancelled == {77, 78}
+
+
+def test_on_main_the_pause_file_does_not_stop_the_makers_cancels(tmp_path, monkeypatch):
+    """On main PAUSE stops posts, not cancels. Fixed by #68 (in #72): this test fails there; delete it on merge."""
+    from bazaar_agent import guardrails
+
+    monkeypatch.setattr(guardrails, "REPO_ROOT", tmp_path)
+    (tmp_path / ".local").mkdir()
+    (tmp_path / ".local" / "PAUSE").touch()
+    team = NoAccept(offers=[bid(78, "MAL-07", 20)])
+    m, _ = maker(tmp_path, team, live=True)
+    m.on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "list_offer"]  # posts are held
+    assert ("cancel", 78) in team.sent  # ...but the hand bid is still cancelled
