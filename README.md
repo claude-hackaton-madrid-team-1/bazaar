@@ -867,6 +867,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#76](../../pull/76) | chore: pr-reviewer sub-agent + /pr-review merge gate (replaces Greptile) | Sat 02:16 | `6d729ce` |
 | [#74](../../pull/74) | docs: status page after #55 and #69 | Sat 02:10 | `7c10b7b` |
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | Sat 02:08 | `d5e769e` |
 | [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | Sat 02:06 | `9c8cbda` |
@@ -878,13 +879,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#65](../../pull/65) | docs: architecture status after #57/#59, token no longer blocked | Sat 01:24 | `be99f75` |
 | [#63](../../pull/63) | chore: add black as the formatter, checked in CI | Sat 01:19 | `65dc0b5` |
 | [#59](../../pull/59) | feat: agent runtime on the Claude Agent SDK (desk, subagents, hooks) + bazaar-mcp remote server | Sat 01:10 | `e75f4b9` |
-| [#57](../../pull/57) | feat: Jev decides duel moves and maker prices among legal candidates | Sat 00:54 | `488a7fb` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#76](../../pull/76) | chore: pr-reviewer sub-agent + /pr-review merge gate (replaces Greptile) | `chore/pr-reviewer-gate` |
 | [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | `ogarciarevett/sim-merge-gate` |
 | [#73](../../pull/73) | fix: BAZAAR_LIVE survives applies; the OFF monitor can't be revived; docs say taker/maker are LIVE | `ogarciarevett/fix-railway-live-monitor` |
 | [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
