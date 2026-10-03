@@ -266,3 +266,100 @@ def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monke
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "duel 94: skipped this tick (ValueError)" in result.output and client.sent[0][:2] == ("say", 95)
+
+
+def _book_order(monkeypatch, client):
+    """The order of the duel loop's ledger reservations, its accepts sent and its `DuelJev.pick` calls."""
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import duel_jev
+
+    order: list[str] = []
+    reserve, pick, accept = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick, client.duel_accept
+    monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
+    monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
+    monkeypatch.setattr(client, "duel_accept", lambda did: order.append("accept") or accept(did))
+    return order
+
+
+def test_a_forced_endgame_accept_is_booked_and_sent_before_jev_is_asked(duel_cli, monkeypatch):
+    """r2 bite X17 (B15): the taker claims the team's accept 2 s into the tick, Jev may take 3 s or more. In
+    the endgame an inside-limit offer is the only legal move: it is booked and sent before Jev, once."""
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    order = _book_order(monkeypatch, client)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert order == ["reserve", "accept", "jev"] and client.sent == [("accept", 95)] and asked == []
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "done")
+    assert row["inputs"]["legal_moves"] == ["accept"] and "jev not asked" in row["reason"]  # as pick() wrote it
+
+
+def test_with_one_accept_for_two_forced_duels_the_nearest_deadline_goes_first(duel_cli):
+    cli, client, asked, tmp_path = duel_cli
+    rival = {"id": 702, "price": 110, "tick": 133, "days": 0}
+    client.payload = [
+        {**LIVE, "deadline_tick": 136, "rival_offer": rival},
+        {**LIVE, "duel": 96, "deadline_tick": 134, "rival_offer": rival},
+    ]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 96)]  # 96 ends this tick; 95 still has two ticks to accept
+
+
+def test_a_forced_accept_that_finds_the_slot_taken_holds_and_sends_nothing(duel_cli):
+    from bazaar_agent import guardrails as gr
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    gr.Ledger(tmp_path / "ledger.jsonl").reserve_accept(134, 2.2, 12, "LAV-02", 1)  # the taker went first
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == []
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
+
+
+def test_an_accept_jev_may_still_overrule_is_booked_after_jev(duel_cli, monkeypatch):
+    """Outside the endgame Jev may turn today's accept into a counter or a hold, and a booked slot cannot be
+    given back: that accept still books after Jev, as before."""
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "rival_offer": {"id": 702, "price": 170, "tick": 133, "days": 0}}]  # meets 166
+    order = _book_order(monkeypatch, client)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert order == ["jev", "reserve", "accept"] and client.sent == [("accept", 95)] and len(asked) == 1
+
+
+def test_the_taker_claiming_the_accept_while_jev_thinks_no_longer_costs_the_deadline_deal(duel_cli, monkeypatch):
+    """r2 bite X17 end to end: while Jev thinks about another duel, the taker reserves the team's accept (its
+    2 s grace ran out). The deadline duel already holds the slot and its accept went out."""
+    from bazaar_agent import guardrails as gr
+
+    cli, client, asked, tmp_path = duel_cli
+    deadline = {**LIVE, "deadline_tick": 134, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}
+    open_duel = {**LIVE, "duel": 96}  # rival at 98, below our cost: counter or hold, Jev is asked
+    client.payload = [open_duel, deadline]
+    taker: list[bool] = []
+
+    def slow_fns(settings, rules, journal, pack, *questions):
+        def move(state):
+            taker.append(gr.Ledger(tmp_path / "ledger.jsonl").reserve_accept(134, 2.2, 12, "LAV-02", 1))
+            return JevAdvice("hold", 0.9, dict(PROBS), None, "digest-1")
+
+        return [move, FakeJev("undecided")][: len(questions)]
+
+    monkeypatch.setattr(cli, "_jev_fns", slow_fns)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)] and taker == [False]
+    assert gr.Ledger(tmp_path / "ledger.jsonl").accept_items(134) == ["duel:95"]
+
+
+def test_without_jev_a_forced_accept_goes_first_and_its_row_has_no_jev_context(duel_cli):
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    (row,) = decision_rows(tmp_path)
+    assert client.sent == [("accept", 95)] and row["jev"] is None and "jev not asked" not in row["reason"]
