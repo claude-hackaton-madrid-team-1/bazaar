@@ -34,13 +34,17 @@ Session `night-r1-reviewer`, 03:14 to about 07:30 on Saturday 3 October. Two thi
 | #142 / #143 (B14 / B16 takeovers) | Mergeable | B14 fixes phantom spend only for bids this process posted. Two makers refund one lapse twice. B16 isn't wired into `dealer buy` or the desk. |
 | #146 → #152 inspector / flags | Mergeable; flags stay off | #152: a truncated `flags.jsonl` stops the taker from starting, and the flag cap is now a lifetime cap. |
 | #157 faster ticks, #158 hard dealers | Fix first | #157 turns both new rules on in GUARDRAILS.md. #158 has a high: at lift 0 the taker opens threads by its cash room instead of its free slots (proof in `_night/`). |
-| #89 / #96 / #112 learner stack, #131 bluff tactics | **Do not merge** | All of them ride `BAZAAR_LEARN`, which is on by default: learned ladders replace live bids, and lessons wrap every Jev move. #131 bluffs at dealers by default. |
-| #145 / #155 new sets | After Omar decides 2 defaults | `protect_page_sets = RET,CHA` and `supply_scarcity` are both on. B26's fix for dealer-minted cards was dropped. |
+| #96 / #112 learner stack, #131 bluff tactics | **Do not merge** | All of them ride `BAZAAR_LEARN`, which is on by default: learned ladders replace live bids, and lessons wrap every Jev move. #131 bluffs at dealers by default. |
+| #155 new sets (supply, packs) | After Omar decides | `supply_scarcity` is on. |
 | #139 lean tracing | Merge after Duels I | Card values can still be recovered from "for X … surplus Y" on every accept. |
 | #154 / #160 docs | Docs only | #160's Q&A still overclaims, including "r1 re-ran every claim"; r1 re-ran each PR's headline numbers, not every claim. Our cash appears in a spoken answer. Keep the repo private until after the Final. |
 | #162 shared ledger (takes over #62), #161 (#72 follow-up) | Review in progress at the time of writing | See REVIEWS.md. |
 
-Already merged during the night: #72 (with #61's content), #105, #106, #108, #91. #105 strips `starter_broker_key` from the agents' `/me`. #71's latest head handles that.
+Already merged during the night: #72 (with #61's content), #105, #106, #108, #91, **#89 and #145 (04:24-04:26Z)**.
+
+**Live now, check before 09:00:**
+- **#89:** the taker learns dealer blockers and skips those dealers by default. That includes r1's two over-blocking mediums: a refusal on one card blocks that dealer's packs for the hour, and an unseen sold-out blocks the whole dealer for the hour. They apply unless `BAZAAR_LEARN=0` is set by hand on bazaar-taker.
+- **#145:** `protect_page_sets = RET,CHA` never sells our only copy of a new-set page card. #105 strips `starter_broker_key` from the agents' `/me`. #71's latest head handles that.
 
 ## Proofs
 `docs/night/r1-proofs/` holds the first batch. `_night/r1_proof*.py` holds the rest; the first line of each file names the PR and head it targets.
