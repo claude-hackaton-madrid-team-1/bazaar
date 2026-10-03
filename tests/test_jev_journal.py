@@ -101,7 +101,11 @@ def use_policy(monkeypatch, cli, policy):
     from bazaar_agent.guardrails import load_guardrails
 
     loaded = load_guardrails()
-    rules = loaded.rules.model_copy(update={"duel_policy": policy})
+    # the endgame these tests were written for (any accept inside the limit in the last 2 ticks); the committed
+    # B11 defence (1 tick, 0.3 share) is covered in test_duel_v2 and test_guardrails
+    rules = loaded.rules.model_copy(
+        update={"duel_policy": policy, "duel_endgame_ticks": 2, "duel_endgame_min_share": 0.0}
+    )
     monkeypatch.setattr(cli, "_rules", lambda: replace(loaded, rules=rules))
 
 
