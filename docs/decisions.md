@@ -136,7 +136,7 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
   Why: the text that gives the sign of days came from our own simulator. Real practice payloads have `days_meaning: null`.
   Evidence: with the right sign, v2 gains 3–10 % per two-issue duel. Flipped on without evidence, 7–11 % of duels close outside our limit. r1 found 3 HIGH issues in #113's latch; all were fixed and r1 closed the review at 04:30. Link: #60, #113, #117.
 
-- **02:37 → 03:54 · Market Test: our broker's edge over the free stall is small, so being open matters more than the matching margin** · `proposed` · night w1a, w1b, b1, b2
+- **02:37 → 03:54 · Market Test: the free stall already earns half the bench points, so a venue pays only if its broker beats the stall in most sessions (the edge broker, ~+0.17 final simulated; exact = stall)** · `proposed` · night w1a, w1b, b1, b2
   Evidence: in the bench, even the oracle beats the stall by only +0.03–0.06 (p50), so the plan's "stall + 0.15" bar is a no-go. #71's keeper as shipped (exact matching) scores the same as the stall; with the edge policy, +0.17. A venue at 09:00 vs stall only: +0.19 final points (break-even at ~6 % broker downtime).
   Organic market-making is a no-go as a points source: 0 of 739 public offers sat on team venues. Link: #77, #84, #94, #92.
 
