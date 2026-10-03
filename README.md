@@ -1255,6 +1255,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar affinity` | Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone. |
 | `uv run bazaar trade-plan` | Dry-run trade plan for the next opening, fair by construction; sends nothing. |
 | `uv run bazaar swaps` | Read-only: the swaps the taker's team desk would propose in team threads (N17), sends nothing. |
+| `uv run bazaar team-checks` | Read-only: the N17 spec's Q1-Q6 answered from the shared DB (the feed, our refused sends, thread offers) |
 | `uv run bazaar rivals` | Rival behaviour profiles: pricing against the tape and own value, fills, takes, reprices. |
 | `uv run bazaar opportunities` | Read-only scanner: standing offers ranked by what accepting them gains us, guardrails checked. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
