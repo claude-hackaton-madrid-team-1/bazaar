@@ -63,6 +63,7 @@ class Guardrails(BaseModel):
     duel_jitter: float = Field(default=0.0, ge=0, le=0.9)
     duel_jitter_seed: int = 0
     duel_days_signed: bool = False
+    duel_days_auto: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
@@ -108,6 +109,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_jitter": "agents.duel_v2.jittered (v2 only)",
     "duel_jitter_seed": "agents.duel_v2.jittered (v2 only)",
     "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
+    "duel_days_auto": "cli duel run + runtime duel_move (agents.duel_days.effective_rules; v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",

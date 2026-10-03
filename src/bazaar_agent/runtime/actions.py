@@ -176,6 +176,7 @@ def _started(b: Backend, duel: Mapping[str, Any], tick: int) -> int:
 
 
 def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> Planned:
+    from bazaar_agent.agents.duel_days import effective_rules, latch, real_game
     from bazaar_agent.agents.duel_v2 import V2Params, plan_moves
     from bazaar_agent.agents.duelist import duel_action, duel_id, duel_move
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
@@ -187,11 +188,14 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
     if (args.duel_id, clock.tick) in b.duel_said:
         return Planned("duel_move", _denied(f"already moved in duel {args.duel_id} this tick"), clock, read_at)
     anchor, floor = steered_duel_params(b.rules, b.settings.data_dir / STEERING_FILE, clock.tick)
+    switch = latch(b.settings.data_dir)  # the days sign, shared with `duel run` through its file (B8)
+    switch.observe(duels, real_game(b.settings.bazaar_url))
+    rules = effective_rules(b.rules, switch)  # one rules object for the policy and the guard
     if b.rules.duel_policy == "v2":  # across every live duel, so the team's one accept goes where it is due
         first_seen = {did: _started(b, d, clock.tick) for d in duels if (did := duel_id(d)) is not None}
         limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
         slots = max(0, limit - b.ledger.accepts_in_tick(clock.tick))  # the taker may have taken it already
-        params = V2Params.from_rules(b.rules, anchor, floor)
+        params = V2Params.from_rules(rules, anchor, floor)
         move = plan_moves(duels, clock.tick, first_seen, params, slots)[args.duel_id]
     else:  # #60's v1, unchanged: a payload without a start opens at the anchor every call
         started = duel.get("started_tick") or duel.get("created_tick") or clock.tick
@@ -210,7 +214,7 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
     )
     action = duel_action(duel, move)  # the price and days we would agree to, with our limit and role
     detail = {"duel": duel, "move": move}
-    return Planned("duel_move", check(action, ctx, b.rules), clock, read_at, action, detail)
+    return Planned("duel_move", check(action, ctx, rules), clock, read_at, action, detail)
 
 
 def check_write(b: Backend, tool: str, args: BaseModel) -> Planned:
