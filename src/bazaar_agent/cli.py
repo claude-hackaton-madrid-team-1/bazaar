@@ -1850,17 +1850,96 @@ def venue_status() -> None:
     )
 
 
+@broker_app.command("probe")
+def broker_probe(
+    sell: str = typer.Argument(..., help="The sell offer: a bench id (b12-3) or a public offer id"),
+    buy: str = typer.Argument(..., help="The buy offer: a bench id or a public offer id"),
+    price: int = typer.Argument(..., min=0, help="The match price"),
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
+) -> None:
+    """Send ONE match, crossing or not, and print the venue's verdict: the morning probe of the match rule.
+
+    A bench pair whose quotes do not cross, priced between them, shows whether `POST /api/broker/matches`
+    checks the quotes (refused, 400) or the hidden limits (accepted, or refused only outside them). Dry run
+    unless --live; live still goes through the guardrails (kill switch, pause file, allow_venue_open)."""
+    from rich.markup import escape
+
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.broker import broker_context
+    from bazaar_agent.agents.runtime import Recorder, live_mode
+    from bazaar_agent.decisions import DecisionLog
+    from bazaar_agent.guardrails import Action, check
+    from bazaar_agent.sdk import BazaarError
+    from bazaar_agent.ticks import Clock
+
+    settings, rules = load_settings(), _rules().rules
+    is_live = live_mode(live)
+
+    def log(line: str) -> None:
+        console.print(escape(line), soft_wrap=True, highlight=False)
+
+    try:
+        broker = vn.broker_client(settings)
+    except ConfigError as e:
+        _fail(str(e))
+        return
+    clock = Clock.model_validate(broker.clock())
+    request = {"sell": int(sell) if sell.isdigit() else sell, "buy": int(buy) if buy.isdigit() else buy, "price": price}
+    verdict = check(Action("broker_match"), broker_context(rules, clock), rules)
+    decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log)
+    try:
+        rec = Recorder("broker", decisions, is_live, log)
+        did = rec.decide(
+            clock.tick,
+            "broker_match",
+            f"probe: sell {sell} × buy {buy} at {price}",
+            inputs={**request, "probe": True},
+            reason="manual probe of the match rule (quotes or hidden limits)",
+            guardrail=str(verdict),
+            chosen=verdict.allowed,
+            status="approved" if verdict.allowed else "rejected",
+            move=request,
+        )
+        if not verdict.allowed:
+            _fail(f"probe refused by the guardrails: {verdict}")
+        if not is_live:
+            log("probe: DRY RUN, nothing sent (add --live)")
+            return
+        errors: list[BazaarError] = []
+
+        def call() -> Any:
+            try:
+                return broker.match(**request)
+            except BazaarError as e:
+                errors.append(e)
+                raise
+
+        body = rec.send(did, clock.tick, "broker_match", request, call)
+        if body is not None:
+            log(f"probe: ACCEPTED {body}")
+        else:
+            why = errors[0] if errors else None
+            code, status = (why.code, why.status) if why else ("?", "?")
+            log(f"probe: REFUSED {code} (HTTP {status}): {why.message if why else ''}")
+    finally:
+        decisions.close()
+
+
 @broker_app.command("run")
 def broker_run(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     feed: bool = typer.Option(True, help="Read bench.started / bench.finished from the public feed"),
+    bench_policy: str = typer.Option("exact", help="Market Test matching: exact (quoted surplus) or edge"),
+    bench_preset: str = typer.Option("normal", help="The edge's bench priors: normal or hard"),
+    bench_cross: str = typer.Option("quote", help="limit = also probe non-crossing bench pairs (unverified)"),
+    bench_reads: int = typer.Option(1, min=1, max=3, help="Book reads per tick while a Market Test runs"),
 ) -> None:
     """Every tick: read our venue's book and send the maximum-surplus matches (bench first)."""
     from rich.markup import escape
 
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.broker import BrokerAgent
+    from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig
     from bazaar_agent.agents.runtime import live_mode, watched_clock
     from bazaar_agent.decisions import DecisionLog
 
@@ -1870,6 +1949,18 @@ def broker_run(
     def log(line: str) -> None:
         console.print(escape(line), soft_wrap=True, highlight=False)
 
+    choices = {"bench-policy": (bench_policy, ("exact", "edge")), "bench-preset": (bench_preset, ("normal", "hard"))}
+    choices["bench-cross"] = (bench_cross, ("quote", "limit"))
+    for name, (value, allowed) in choices.items():
+        if value not in allowed:
+            _fail(f"--{name} must be one of {', '.join(allowed)}")
+            return
+    config = BrokerConfig(
+        bench_policy=bench_policy,  # type: ignore[arg-type]  # checked above
+        bench_preset=bench_preset,  # type: ignore[arg-type]
+        bench_cross=bench_cross,  # type: ignore[arg-type]
+        bench_reads_per_tick=bench_reads,
+    )
     try:
         broker = vn.broker_client(settings)
     except ConfigError as e:
@@ -1894,6 +1985,11 @@ def broker_run(
         log=log,
         events=(lambda: public.feed_window(DEFAULT_WINDOW)) if feed else None,
         stats_dir=settings.data_dir / "agents",
+        config=config,
+    )
+    log(
+        f"broker: bench {config.bench_policy} ({config.bench_preset}, accepts by {config.bench_cross}, "
+        f"{config.bench_reads_per_tick} read(s)/tick)"
     )
     log(f"broker: decisions {decisions.where} · stats {settings.data_dir / 'agents'}/broker_*.jsonl")
     try:

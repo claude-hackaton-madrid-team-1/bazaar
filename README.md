@@ -951,6 +951,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar venue fee` | Announce new fees on our venue; they take effect after the public notice. |
 | `uv run bazaar venue announce` | Post a notice on our venue with the broker key. |
 | `uv run bazaar venue status` | Read only: the build-only switch, our venue on the public list, what the broker would match now. |
+| `uv run bazaar broker probe` | Send ONE match, crossing or not, and print the venue's verdict: the morning probe of the match rule. |
 | `uv run bazaar broker run` | Every tick: read our venue's book and send the maximum-surplus matches (bench first). |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
