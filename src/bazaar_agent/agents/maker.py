@@ -8,13 +8,18 @@ Album first (`/api/me`), then:
     offer already promises counted, so open bids can never take cash below `cash_floor`;
   - each on the venue with the best expected fill (`market.best_venue`: El Rastro or a busier, cheaper
     team venue), never our own venue (`self_venue`);
-  - stale offers repriced (the target moved by `reprice_min_change`: tape and supply move it) or
-    cancelled (no longer a target: we hold the card, the copy is needed, the sell surplus is gone);
+  - stale offers repriced (the target moved by `reprice_min_change`: tape and supply move it, or an ask
+    fell below its floor) or cancelled (no longer a target: we hold the card, the copy is needed, the sell
+    surplus is gone). A reprice cancels only once its replacement would pass the guardrails; an offer
+    that can no longer stand (an ask below its floor, a bid above its new target) is cancelled even
+    when it cannot be replaced (no listing left, the post denied), any other one is kept;
   - with Jev (`maker_jev.MakerJev`), each price picked among three legal candidates by
     `list_price_choice` and each reprice weighed by `reprice_or_hold`; `undecided` keeps today's move.
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
 ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
 that is not a strategy target is cancelled, so stop the maker before trading by hand.
+While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
+posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -55,7 +60,17 @@ from bazaar_agent.agents.seller import (
     sell_listing,
 )
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.guardrails import (
+    Action,
+    Context,
+    Guardrails,
+    LedgerRow,
+    LedgerStore,
+    check,
+    context_from,
+    kill_switch,
+    refund_row,
+)
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
@@ -114,8 +129,20 @@ def moved(current: int, target: int, min_change: float) -> bool:
     return abs(current - target) >= max(1, round(target * min_change))
 
 
-def plan_offers(targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int, cfg: MakerConfig) -> list[MakerAction]:
-    """Cancels first (they free open-offer slots), then reprices, then new posts by score."""
+def cannot_stand(o: OpenOffer, t: Target, rules: Guardrails) -> str | None:
+    """Why an open offer may not stay at its price: an ask below the floor of what selling its copy costs us
+    now (e.g. a page completed since it was posted), a bid above its new target. None: it may stand."""
+    if o.side == "ask":
+        floor = ask_floor(t.value, rules)
+        return f"ask {o.price} is below its floor {floor}" if o.price < floor else None
+    return f"bid {o.price} is above its target {t.price}" if o.price > t.price else None
+
+
+def plan_offers(
+    targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int, cfg: MakerConfig, rules: Guardrails
+) -> list[MakerAction]:
+    """Cancels first (they free open-offer slots), then reprices, then new posts by score. An ask below its
+    floor is repriced however little its target moved."""
     targets = list(targets)
     asks = {t.asset_id: t for t in targets if t.side == "ask"}
     bids = {t.ref: t for t in targets if t.side == "bid"}
@@ -131,7 +158,8 @@ def plan_offers(targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int,
             continue
         covered.add(key)
         lapsing = o.expires_tick is not None and o.expires_tick <= tick
-        if not lapsing and moved(o.price, t.price, cfg.reprice_min_change):
+        below_floor = o.side == "ask" and cannot_stand(o, t, rules)
+        if not lapsing and (moved(o.price, t.price, cfg.reprice_min_change) or below_floor):
             reprices.append(MakerAction("reprice", f"target moved {o.price} → {t.price}", t, o))
     posts = [
         MakerAction("post", "new target", t)
@@ -195,9 +223,18 @@ class Maker:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        mine, total = our_open_offers(snap.offers, snap.us)
+        stops = kill_switch(self.rules)
+        if stops:
+            if self.hub is not None:
+                self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=[])
+            self.log(
+                f"tick {clock.tick} maker: kill switch on: holding (no posts, no cancels; {total} open offer(s) "
+                f"stay open): {'; '.join(stops)}"
+            )
+            return
         params = self.params(clock.tick)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
-        mine, total = our_open_offers(snap.offers, snap.us)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
             snap,
@@ -214,7 +251,7 @@ class Maker:
                 self.log(f"tick {clock.tick} maker: {line}")
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
-        actions = plan_offers(targets, mine, clock.tick, self.config)
+        actions = plan_offers(targets, mine, clock.tick, self.config, self.rules)
         for action in actions:
             self._do(run, action)
         if self.hub is not None:
@@ -228,30 +265,65 @@ class Maker:
         )
 
     def _ctx(self, run: _MakerRun) -> Context:
-        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be)."""
-        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent)
+        """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
+        kill switch as it is now (it may go on mid-tick)."""
+        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent, stops=kill_switch(self.rules))
 
     def _do(self, run: _MakerRun, action: MakerAction) -> None:
         if action.kind == "cancel" and action.offer is not None:
             self._cancel(run, action.offer, action.why)
         elif action.kind == "reprice" and action.target is not None and action.offer is not None:
-            if run.listings_left <= 0:
-                offer = action.offer
-                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: no listing left")
-                return
-            hold, advice = self._jev_hold(run, action.offer, action.target)
-            if hold:
-                return
-            if self._cancel(run, action.offer, action.why):
-                offer_id = self._post(run, action.target, f"reprice: {action.why}")
-                if self.jev is not None and offer_id is not None:
-                    self.jev.watch.watch(offer_id, advice, REPRICE_QUESTION, self._expires(run))
+            self._reprice(run, action.offer, action.target, action.why)
         elif action.target is not None:
             self._post(run, action.target, action.why)
 
+    def _reprice(self, run: _MakerRun, offer: OpenOffer, t: Target, why: str) -> None:
+        """Cancel, then post at the target, but only when the post would pass: a denied repost would leave
+        the card without an offer for a tick. Not repostable: an offer that cannot stand is cancelled anyway
+        (a cancel needs no listing slot), any other keeps its price."""
+        advice: JevAdvice | None = None
+        if run.listings_left <= 0:
+            refused: str | None = "no listing left"
+        else:
+            hold, advice = self._jev_hold(run, offer, t)
+            if hold:
+                return
+            refused = self._refusal(self._without(run, offer), t)
+        if refused is None:
+            if self._cancel(run, offer, why):
+                offer_id = self._post(run, t, f"reprice: {why}")
+                if self.jev is not None and offer_id is not None:
+                    self.jev.watch.watch(offer_id, advice, REPRICE_QUESTION, self._expires(run))
+            return
+        if (problem := cannot_stand(offer, t, self.rules)) is not None:
+            self._cancel(run, offer, f"{problem}; not repriced: {refused}")
+            return
+        self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: {refused}")
+
+    def _without(self, run: _MakerRun, offer: OpenOffer) -> _MakerRun:
+        """The tick as it would be once `offer` is cancelled: its cash, slot and (a bid's) spend given back."""
+        return replace(
+            run,
+            offers=[o for o in run.offers if o.get("id") != offer.id],
+            open_total=run.open_total - 1,
+            spent=run.spent - self._refunded(run, offer),
+        )
+
+    def _refund(self, run: _MakerRun, offer: OpenOffer) -> LedgerRow:
+        clock = run.snap.clock
+        return refund_row(offer.price, offer.ref, offer.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
+
+    def _refunded(self, run: _MakerRun, offer: OpenOffer) -> int:
+        """The spend a cancel gives back inside this game hour's window: a bid's, unless it was spent
+        before the window (its refund is booked in the hour it was spent)."""
+        if offer.side != "bid":
+            return 0
+        return offer.price if self._refund(run, offer)[2] > run.base.t_hours - 1.0 else 0
+
     def _cancel(self, run: _MakerRun, offer: OpenOffer, why: str) -> bool:
         tick = run.snap.clock.tick
-        status: Status = "approved" if run.window.open() else "expired"
+        verdict = check(Action("cancel", str(offer.id)), self._ctx(run), self.rules)  # only the kill switch applies
+        status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
         inputs = {
             "offer_id": offer.id,
             "side": offer.side,
@@ -262,10 +334,11 @@ class Maker:
         did = self.rec.decide(
             tick,
             f"cancel_{offer.side}",
-            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why}",
+            f"cancel {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: {why} "
+            f"· guardrails {verdict}",
             inputs=inputs,
             reason=why,
-            guardrail="allowed",
+            guardrail=str(verdict),
             chosen=status == "approved",
             status=status,
             move={"cancel": offer.id},
@@ -278,7 +351,8 @@ class Maker:
             if self.jev is not None:
                 self.jev.watch.cancelled(offer.id)
             if offer.side == "bid":  # a bid's cash was counted as spend when posted: give it back
-                self.ledger.record("spend", tick, run.snap.clock.t_hours, -offer.price, offer.ref)
+                self.ledger.record(*self._refund(run, offer))
+        run.spent -= self._refunded(run, offer)  # `base` was read before the refund: later checks see it here
         run.offers = [o for o in run.offers if o.get("id") != offer.id]
         run.open_total -= 1
         return True
@@ -351,12 +425,13 @@ class Maker:
                     listing.give, listing.want, venue=venue.id, expires_in_ticks=self.config.offer_ttl_ticks
                 ),
             )
-            if body is None:
+            if body is None and not self.rec.maybe_landed:
                 return None
+            # Sent, or lost on the way back (a network error): a bid that may be open counts as spend.
             self.ledger.record("listing", tick, run.snap.clock.t_hours, t.price, t.ref)
             if t.side == "bid":
                 self.ledger.record("spend", tick, run.snap.clock.t_hours, t.price, t.ref)
-            offer_id = body.get("id") if isinstance(body.get("id"), int) else None
+            offer_id = body.get("id") if body is not None and isinstance(body.get("id"), int) else None
             applied = advice is not None and (candidates or {}).get(advice.verdict) == t.price
             if self.jev is not None and offer_id is not None and applied:  # judged only on the price it set
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
@@ -410,12 +485,25 @@ class Maker:
         An ask also stays at or above what selling costs us, page bonus included (`ask_floor` of its value)."""
         if t.side == "ask" and t.price < ask_floor(t.value, self.rules):
             return False
+        return self._denied(run, t, venue) is None
+
+    def _denied(self, run: _MakerRun, t: Target, venue: str) -> str | None:
+        """Why the listing for `t` on `venue` is refused (the sell floor, then every guardrail with our open
+        offers counted); None when it would pass. Nothing is sent or recorded."""
         try:
             listing = self._listing(run, t, venue)
-        except OfferError:
-            return False
+        except OfferError as e:
+            return f"denied: {e}"
         commitments = open_commitments(run.offers, run.snap.us)
-        return post(self.team, listing, self._ctx(run), self.rules, live=False, commitments=commitments).verdict.allowed
+        verdict = post(self.team, listing, self._ctx(run), self.rules, live=False, commitments=commitments).verdict
+        return None if verdict.allowed else str(verdict)
+
+    def _refusal(self, run: _MakerRun, t: Target) -> str | None:
+        """Why `_post` would refuse `t` in `run` at its target price (no venue, no slot, a guardrail)."""
+        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        if venue is None:
+            return "no venue we may trade on"
+        return self._blocked(run) or self._denied(run, t, venue.id)
 
     def _jev_context(self, run: _MakerRun) -> dict[str, Any]:
         cash = int(run.snap.me.get("cash") or 0)

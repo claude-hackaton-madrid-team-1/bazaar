@@ -226,9 +226,7 @@ class ThreadStore:
             return 0
         except (psycopg.Error, ValueError) as e:  # the data itself: write thread by thread, drop only the bad ones
             self._fail("write", e)
-            written = self._write_each(conn, tick) if conn is not None else 0
-            self.buffer = {}
-            return written
+            return self._write_each(conn, tick) if conn is not None else 0
         except Exception as e:  # never into the tick loop
             self._fail("write", e)
             return 0
@@ -243,7 +241,8 @@ class ThreadStore:
         self._db(0)
 
     def _write_each(self, conn: psycopg.Connection, tick: int) -> int:
-        """After a batch the server refused: each thread in its own transaction; a bad one is logged and dropped."""
+        """After a batch the server refused: each thread in its own transaction. A bad thread is logged and
+        dropped; a connection problem (a lock, a cancelled statement) stops here and keeps the rest buffered."""
         written = 0
         for tid in sorted(self.buffer):
             threads, messages = _rows([self.buffer[tid]])
@@ -255,9 +254,16 @@ class ThreadStore:
                             cur.executemany(THREAD_UPSERT, threads)
                         if messages:
                             cur.executemany(MESSAGE_UPSERT, messages)
-                written += len(threads)
+            except psycopg.OperationalError as e:
+                self._fail("write", e)
+                conn.close()
+                self._conn, self._down_at = None, tick
+                return written
             except (psycopg.Error, ValueError) as e:
                 self._fail(f"thread {tid}", e)
+            else:
+                written += len(threads)
+            del self.buffer[tid]
         return written
 
     def _fail(self, what: str, error: Exception) -> None:

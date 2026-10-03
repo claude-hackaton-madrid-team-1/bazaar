@@ -153,7 +153,8 @@ def test_a_walked_thread_is_kept_as_walked(tmp_path):
         team.now = clock(tick=tick)
         t.on_tick(team.now)
     assert ("close_thread", 5000) in team.sent
-    assert store.buffer[5000].thread["status"] == "walked" and store.buffer[5000].thread["closed_reason"] == "walked"
+    kept = store.buffer[5000].thread  # the close answer's status (the fake says "closed"), never left "open"
+    assert kept["status"] == "closed" and kept["closed_reason"] == "walked"
 
 
 @pytest.mark.integration
@@ -191,4 +192,29 @@ def test_an_ended_thread_never_goes_back_to_open_and_a_bad_thread_costs_only_its
     with open_in(database_url, schema) as conn:
         rows = conn.execute("select id, status, closed_reason, counterpart from threads order by id").fetchall()
     assert rows == [(41, "cooloff", "cooloff", "abuela"), (42, "cooloff", "cooloff", "abuela")]  # 41 stays ended
+    store.close()
+
+
+@pytest.mark.integration
+def test_a_thread_the_server_refuses_costs_only_itself(database_url, schema, monkeypatch):  # noqa: F811
+    from bazaar_agent import db
+    from bazaar_agent.learn import threads as threads_module
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    real = threads_module.thread_row
+
+    def bad_topic(s):  # type: ignore[no-untyped-def]
+        row = real(s)
+        return (*row[:3], "{not json", *row[4:]) if row is not None and row[0] == 42 else row
+
+    monkeypatch.setattr(threads_module, "thread_row", bad_topic)
+    lines: list[str] = []
+    store = ThreadStore(lambda: open_in(database_url, schema), lines.append)
+    store.saw(THREAD, US, 6)
+    store.saw({**THREAD, "id": 42}, US, 6)
+    assert store.flush(6) == 1 and store.buffer == {}  # 41 written thread by thread, 42 logged and dropped
+    with open_in(database_url, schema) as conn:
+        assert [r[0] for r in conn.execute("select id from threads").fetchall()] == [41]
+    assert any(line.startswith("threads: thread 42 failed (") for line in lines)
     store.close()

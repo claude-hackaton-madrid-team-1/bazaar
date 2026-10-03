@@ -26,6 +26,9 @@ from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
 ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer than this
+# Refusals after which a write may have reached the game anyway: the connection failed after the request
+# went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
+MAYBE_LANDED = ("network", "bad_response")
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -260,6 +263,8 @@ class Recorder:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
+        self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
         self,
@@ -353,13 +358,17 @@ class Recorder:
     def send(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], call: Callable[[], Any]
     ) -> dict[str, Any] | None:
-        """Send one request; None when the server refused it (logged, recorded, the loop goes on)."""
+        """Send one request; None when the server refused it (logged, recorded, the loop goes on). After a
+        None, `maybe_landed` says whether the write may have gone through anyway (see MAYBE_LANDED): a
+        spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
         self.last_error = None
+        self.maybe_landed, self.last_code = False, None
         try:
             response = call()
         except BazaarError as e:
+            self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
             self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
             self._executed(decision_id, tick, method, request, None, e.code)

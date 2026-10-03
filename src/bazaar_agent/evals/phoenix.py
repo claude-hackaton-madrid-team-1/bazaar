@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -116,7 +117,8 @@ def annotator_from(
     try:
         reply = client.get(f"/v1/projects/{project}/spans", params={"limit": 1})
     except httpx.HTTPError as e:
-        warn(f"phoenix: {endpoint} unreachable ({type(e).__name__}), scores stay in Postgres only")
+        host = urlsplit(endpoint).hostname or "?"  # never the whole URL: it could carry credentials
+        warn(f"phoenix: {host} unreachable ({type(e).__name__}), scores stay in Postgres only")
         client.close()
         return None
     if reply.status_code in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
