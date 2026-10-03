@@ -272,6 +272,14 @@ Market Test session counts the best venue open during it). The kill switch stops
 and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`
 (an in-process `bazaar_sim`, the maker live against it, our efficiency next to the stall's per session).
 
+**Market Test options** (defaults = today; evidence in `docs/night/w1b-broker-edge.md`): `uv run bazaar broker run`
+takes `--bench-policy edge` (match the bench on *estimated* true surplus, `agents/bench_edge.py`), `--bench-preset hard`,
+`--bench-reads 2|3` (re-read the book within the tick while a bench run is in it; only useful with the probe) and
+`--bench-cross limit` (also probe non-crossing bench pairs; only worth it if the server checks hidden limits, and it
+stops by itself once refusals show it does not). The first read of each bench run logs its offer keys to
+`<data_dir>/agents/broker_bench_shapes.jsonl`. `uv run bazaar broker probe <sell> <buy> <price> [--live]` sends one
+match and prints the venue's verdict: a non-crossing bench pair tells whether the server checks quotes or limits.
+
 A real broker key (`bk_...`) is only sent to `https://bazaar.causaprima.ai`, a simulator key (`simbk-...`)
 only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is never loaded.
 
