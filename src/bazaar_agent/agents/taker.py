@@ -30,6 +30,7 @@ from functools import partial
 from typing import Any
 
 from bazaar_agent import buy_targets
+from bazaar_agent.activity import ActivityWatch
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
@@ -39,6 +40,7 @@ from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
     WordsFn,
+    affordable_rung,
     apply_advice,
     bid_words,
     reopen_start,
@@ -578,6 +580,14 @@ class Taker:
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
         self.watchdog: Any = Watchdog(getattr(decisions, "_connect", None), log)
+        # The activity check (GUARDRAILS.md `activity_stall_seconds`): is any agent of ours still sending? Logs only.
+        store = getattr(learner, "store", None)
+        self.activity: Any = ActivityWatch(
+            getattr(decisions, "_connect", None),
+            log,
+            decide=self.rec.decide,
+            record=store.record if store is not None else None,
+        )
         self._playbook_said: set[str] = set()  # playbook instructions the taker already said it obeys
         self._crafts: list[float] = []  # game hours of our Workshop crafts (`max_taller_per_game_hour`, this process)
         self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
@@ -630,6 +640,25 @@ class Taker:
                 self.watchdog.tick(tick, self.rules)  # Postgres only, bounded; it never raises by design
             except Exception as e:  # noqa: BLE001 — a watchdog bug must never cost the tick
                 self.log(f"tick {tick} taker: watchdog failed ({type(e).__name__}); the tick goes on")
+            self._activity_check(tick)
+
+    def _activity_check(self, tick: int) -> None:
+        """Postgres only, bounded, after the watchdog: WARN + an `activity_stall` row when no agent sends (UB1)."""
+        try:
+            view = self._news_view if self._news_view is not None and self._news_view[0] == tick else None
+            report = self.activity.tick(
+                tick,
+                self.rules,
+                clock=view[3] if view is not None else None,
+                stops=kill_switch(self.rules),
+                upcoming=self.news.upcoming if self.news is not None else (),
+                taker_busy=bool(self.convs),
+                us=view[4] if view is not None else None,
+            )
+            if self.hub is not None:
+                self.hub.activity(report.public() if report is not None else None)
+        except Exception as e:  # noqa: BLE001 — an activity bug must never cost the tick
+            self.log(f"tick {tick} taker: activity check skipped ({type(e).__name__}); the tick goes on")
 
     def _card_boost(self, tick: int) -> dict[str, float]:
         """The cards heartbeat's rank multipliers; any failure is "no boost" (today's order), never a failed tick."""
@@ -1804,7 +1833,8 @@ class Taker:
             action = Action("bid", conv.item, conv.rarity, move.price, final=at_final)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
-        verdict = check(action, self._ctx(run, skip_thread=conv.thread_id), self.rules)
+        ctx = self._ctx(run, skip_thread=conv.thread_id)
+        verdict = check(action, ctx, self.rules)
         verdict_text = str(verdict)
         if verdict.halted:  # the kill switch went on this tick: hold, the thread stays open
             self.log(f"tick {tick} taker: kill switch on: holding {move.kind} on thread {conv.thread_id} ({verdict})")
@@ -1820,8 +1850,23 @@ class Taker:
             # No official value this tick (a failed read): hold, the thread stays open (review #177 P1-2).
             self.log(f"tick {tick} taker: {conv.dealer} hold on thread {conv.thread_id} ({verdict})")
             return
+        if not verdict.allowed and move.kind == "bid" and not action.final:
+            # UB1: only this rung is unaffordable: bid the most we may still commit instead of walking the thread
+            # (never on a meet of her final: a lower bid there is no answer to it).
+            floor, cap = effective_cash_floor(self.rules, ctx), self.rules.max_spend_per_game_hour
+            room = min(ctx.cash - floor, cap - ctx.spent_last_hour)
+            if (lower := affordable_rung(verdict.violations, conv.neg.bids, room)) is not None:
+                move = replace(move, price=lower, reason=f"{move.reason}; rung {move.price} above our cash room {room}")
+                action = replace(action, price=lower)
+                verdict = check(action, ctx, self.rules)
+                verdict_text = str(verdict)
+                if not verdict.allowed and unread_only(verdict.violations):  # its first value read failed: hold
+                    self.log(f"tick {tick} taker: {conv.dealer} hold on thread {conv.thread_id} ({verdict})")
+                    return
         if not verdict.allowed:
-            move = Move("walk", reason=f"guardrail: {verdict}")
+            # A guardrail walk RESTS on the item (UB1): the next tick would reopen it and replay the same ladder up to
+            # the same refused rung (RET-10 at its official value, Sat ticks 1205-1227; or our cash room).
+            move = Move("walk", reason=f"guardrail: {verdict}", rest=True)
         choice = self._tactic(conv, move, dm.ask)
         inputs = {
             "dealer": conv.dealer,

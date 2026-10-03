@@ -244,6 +244,7 @@ class Guardrails(BaseModel):
     buy_target_start_share: float = Field(default=0.75, gt=0, le=1)
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
+    activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -429,6 +430,7 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
+    "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
 }
 
 

@@ -475,6 +475,32 @@ def test_guarded_shows_what_guardrails_would_say_for_each_move():
     assert next(m for m in book.packs if not m.command).guardrail == "-"
 
 
+def _dealer_buy(start: int, top: int) -> strategy.Move:
+    return strategy.Move(
+        "buy", "dealer", "MAL-09", "rare", 150.0, float(start), 90.0, 0.5, 1.0, "picaros", ("picaros",),
+        "buy", top, "worth 150", "uv run bazaar dealer buy MAL-09", ladder=(start, top, 1),
+    )  # fmt: skip
+
+
+def test_a_dealer_ladder_is_guarded_at_its_first_rung_not_its_top():
+    """UB1 (Sat 3 Oct, ticks 1095-1166): MAL-09 (worth ~150) was never opened because the ranking reserved the
+    ladder's top 67 against cash 58 (floor 5), while Los Pícaros asked 60-65 and a first bid of 50 was affordable.
+    Each rung is checked again when it is sent; only an unaffordable rung is refused there."""
+    rules = Guardrails(cash_floor=5, venue_bond_reserve=0)
+    book = strategy.Playbook(None, 58, (), (_dealer_buy(50, 67),), (), (), (), {})
+    ctx = Context(cash=58, held={}, tick=1109, t_hours=9.0)
+    assert strategy.guarded(book, ctx, rules).buys[0].guardrail == "allowed"
+    unaffordable = strategy.Playbook(None, 58, (), (_dealer_buy(56, 67),), (), (), (), {})
+    assert "cash 58 - 56 < cash_floor 5" in strategy.guarded(unaffordable, ctx, rules).buys[0].guardrail
+
+
+def test_a_dealer_ladder_whose_top_breaks_a_price_cap_is_still_denied():
+    rules = Guardrails(cash_floor=5, venue_bond_reserve=0, max_price_rare=60)
+    book = strategy.Playbook(None, 400, (), (_dealer_buy(50, 67),), (), (), (), {})
+    verdict = strategy.guarded(book, Context(cash=400, held={}, tick=1, t_hours=1.0), rules).buys[0].guardrail
+    assert "price 67 > max_price_rare 60" in verdict
+
+
 def test_an_asset_already_in_our_open_offers_is_not_listed_again():
     ctx = Context(cash=400, held={"LAT-03": 2, "LAT-09": 1}, tick=50, t_hours=1.0)
     book = strategy.guarded(playbook(), ctx, RULES, listed=frozenset({5}))

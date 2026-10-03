@@ -651,6 +651,15 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Every swap proposal adds one true line inviting the team to our venue (`team_words_venue_invite` = v19: 0 % vs
   Rastro's 5 % + 1 P, broker crosses every tick). · **Acceptance:** tests/test_team_desk_partners.py.
 
+### UB1 — Unblock: guardrails that cost opportunities + an activity watchdog ([spec](UB1-spec.md))
+- Step 1 — a dealer ladder is ranked at its first rung, not its top (`strategy.guarded`); a rung refused only for
+  cash or the hour's spend bids the most we may still commit (`dealer.affordable_rung`); a walk at our official-value
+  top or cash room rests on the card (`Move(rest=True)`) · **Acceptance:** tests/test_strategy.py,
+  tests/test_dealer.py, tests/test_official_value_agents.py.
+- Step 2 — `activity.py` in the taker: a team-wide stall after `activity_stall_seconds` (at least one tick) with no
+  send, its top blocker, expected idle labelled; WARN + `activity_stall` decision + learning + /health · **Acceptance:**
+  tests/test_activity.py; full gate + sim smoke.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)
