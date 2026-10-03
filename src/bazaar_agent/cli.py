@@ -2506,6 +2506,26 @@ def _offer_jev(settings: Any, timeout_s: float) -> Any:
     return ask
 
 
+def _swap_jev(settings: Any, rules: Any) -> Any:
+    """Jev `team_swap_worth_it` (questions/team_swaps.json) as the team desk's gate: decided at
+    `team_swap_jev_min_confidence`, and `undecided` past `jev_timeout_s` (the desk then sends nothing)."""
+    from bazaar_agent.agents.runtime import JevAdvice
+    from bazaar_agent.jev import judge, load_questions
+
+    name = "team_swap_worth_it"
+    question = {name: load_questions(REPO_ROOT / "questions" / "team_swaps.json")[name]}
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+    bar = {name: rules.team_swap_jev_min_confidence}
+
+    def ask(state: dict[str, Any]) -> JevAdvice:
+        result = judge(state, question, api_key=key, timeout_s=rules.jev_timeout_s, thresholds=bar)
+        tm.record_jev(result, name)
+        verdict = result.verdicts[name]
+        return JevAdvice(verdict.verdict, verdict.value, verdict.probabilities, verdict.reason)
+
+    return ask
+
+
 def _status_port(port: int | None) -> int:
     """`--port`, else Railway's PORT, else 0 (no status server on a laptop unless asked)."""
     import os
@@ -2653,6 +2673,17 @@ def _run_agent(
         decisions.close()
 
 
+def _cards_heartbeat(kw: dict[str, Any], settings: Any) -> Any:
+    """New cards in the catalog the taker already reads: stored in the feed reader's learnings store (Postgres +
+    memory) when it runs, else in memory only; ranked up per GUARDRAILS `card_release_boost_enabled`."""
+    from bazaar_agent.cards_heartbeat import CardsHeartbeat
+    from bazaar_agent.learn.store import LearningStore
+
+    learner = kw.get("learner")
+    store = learner.store if learner is not None else LearningStore(None, kw["log"])
+    return CardsHeartbeat(kw["rules"], store.record, kw["log"], settings.data_dir / "agents")
+
+
 def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     """Radio Rastro and the schedule, read by the taker after its sends on its own keyless client (2 s, never
     retried: a hung or rate-limited read costs one attempt, never the next tick): stored in the feed reader's
@@ -2725,8 +2756,10 @@ def agent_taker(
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
+            swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             **kw,
         )
