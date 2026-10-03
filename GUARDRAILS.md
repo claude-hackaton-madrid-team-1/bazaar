@@ -20,6 +20,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `max_price_uncommon` = 26 — never pay more for an uncommon card.
 - `max_price_rare` = 80 — never pay more for a rare card.
 - `max_price_pack` = 20 — never pay more for a sealed pack (Abuela's floor looks like 17).
+- `dealer_price_caps` = none — per dealer × rarity caps that replace max_price_<rarity> for that dealer only, e.g. chato:uncommon=31 (none: the caps above apply to every dealer; W3 report, docs/night/w3-ladder.md).
 - `max_packs_per_game_hour` = 3 — packs we may buy in one game hour, across all processes (Abuela sells `sobre_barrio` 3 per team per hour; each dealer's quota is in `/api/dealers`).
 - `sell_min_value_ratio` = 1.0 — never sell a card below this × its `your_value` (what we lose by selling it).
 

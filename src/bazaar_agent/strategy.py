@@ -495,7 +495,7 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     fills = dealer_fills(m, quote.dealer)
     est = estimate_price(card.ref, card.rarity, fills, rarity_of, quote.list_price, card.book)
     same = [float(p.price) for p in fills if rarity_of.get(p.ref) == card.rarity]
-    cap = rules.max_price_for(card.rarity)
+    cap = rules.max_price_for(card.rarity, quote.dealer)
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
     row = m.floors.get((quote.dealer, f"card:{card.rarity}")) if params.ladder_floor_quantile > 0 else None
     floored = floor_range(row, case.value, cap, params.min_buy_surplus, params.ladder_floor_quantile) if row else None
@@ -684,7 +684,8 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
             est = estimate_price(pack, "pack", dealer_fills(m, quote.dealer), {}, quote.list_price, quote.list_price)
         else:
             est = Estimate(m.expected_book.get(pack, 0.0), "expected book (no seller)")
-        plan = bid_range(fills, est.price, ev, rules.max_price_for("pack"), params.min_buy_surplus, opening_ratio(m))
+        cap = rules.max_price_for("pack", quote.dealer if quote else None)
+        plan = bid_range(fills, est.price, ev, cap, params.min_buy_surplus, opening_ratio(m))
         capped = plan is not None and plan[1] < est.price
         actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
         slot_text = " + ".join("/".join(f"{odds:g} {r} {means[r]:.1f}" for r, odds in slot.items()) for slot in slots)
@@ -781,7 +782,8 @@ def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[i
         if mv.asset_id is not None and mv.asset_id in listed:
             return replace(mv, guardrail=f"denied: asset {mv.asset_id} is already in one of our open offers")
         your_value = mv.value if mv.side == "sell" else None
-        action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value)
+        dealer = None if is_team(mv.source) or mv.source in ("teams", "rastro") else mv.source  # dealer_price_caps
+        action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value, dealer=dealer)
         return replace(mv, guardrail=str(check(action, ctx, rules)))
 
     return replace(

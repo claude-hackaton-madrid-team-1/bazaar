@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from bazaar_agent.agents.dealer import BidPlan
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.ladder import floor_table, from_rows
 from bazaar_agent.ladder_plan import (
@@ -169,3 +170,11 @@ def test_refs_go_to_a_dealer_that_can_plan_their_rarity_best_share_first(plans):
     assert [s.target.ref for s in sched.slots] == ["SAL-02", "SAL-05", "LAV-08"]
     assert ("chato", "card:rare") in [(d, c) for d, c, _ in sched.blocked]
     assert ("chato", "card:rare", "LAV-09") in named  # Chato sells rares: blocked by the cap, not unknown
+
+
+def test_a_dealer_price_cap_in_guardrails_unblocks_that_dealer_only(real):
+    rules = Guardrails(dealer_price_caps="chato:uncommon=31")
+    plans = class_plans(real, floor_table(real), rules, runs=100)
+    assert plans[("chato", "card:uncommon")].choice.plan == BidPlan(27, 1, 31)
+    assert plans[("abuela", "card:uncommon")].choice.plan == BidPlan(21, 1, 25)  # Abuela keeps 26 (and floor + 2)
+    assert plans[("chato", "card:rare")].choice.plan is None

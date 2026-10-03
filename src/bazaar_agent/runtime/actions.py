@@ -161,7 +161,7 @@ def _plan_dealer(b: Backend, clock: Clock, read_at: float, args: DealerBuyArgs) 
     if running is not None:
         refused = _denied(f"a live dealer negotiation with {running} is still running from this runtime")
         return Planned("dealer_buy", refused, clock, read_at)
-    action = Action("buy", args.item, b.rarity_of(args.item, clock.tick), args.max_price)
+    action = Action("buy", args.item, b.rarity_of(args.item, clock.tick), args.max_price, dealer=args.dealer)
     base = _base(b, clock)
     verdict = check(action, committed_context(base.ctx, base.commitments), b.rules)
     return Planned("dealer_buy", verdict, clock, read_at, action)

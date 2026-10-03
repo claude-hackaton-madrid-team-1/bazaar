@@ -94,3 +94,24 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
     assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+
+
+def test_dealer_price_caps_replace_a_rarity_cap_for_that_dealer_only():
+    assert REAL.rules.dealer_caps == {}  # the committed default changes nothing
+    rules = gr.parse_guardrails("- `dealer_price_caps` = chato:uncommon=31,chato:rare=93 — W3").rules
+    assert rules.dealer_caps == {("chato", "uncommon"): 31, ("chato", "rare"): 93}
+    assert (rules.max_price_for("uncommon", "chato"), rules.max_price_for("uncommon", "abuela")) == (31, 26)
+    assert rules.max_price_for("uncommon") == 26  # no dealer named: the rarity cap
+    assert gr.check(gr.Action("bid", "LAV-07", "uncommon", 30, dealer="chato"), ctx(), rules).allowed
+    denied = gr.check(gr.Action("bid", "LAV-07", "uncommon", 32, dealer="chato"), ctx(), rules)
+    assert "dealer_price_caps chato:uncommon 31" in str(denied)
+    assert "max_price_uncommon 26" in str(
+        gr.check(gr.Action("bid", "LAV-07", "uncommon", 30, dealer="abuela"), ctx(), rules)
+    )
+    assert "max_price_uncommon 26" in str(gr.check(gr.Action("bid", "LAV-07", "uncommon", 30), ctx(), rules))
+
+
+@pytest.mark.parametrize("value", ["chato:uncommon", "chato:epic=5", "chato:uncommon=0", "Chato:uncommon=31"])
+def test_a_bad_dealer_price_caps_entry_fails_fast(value):
+    with pytest.raises(gr.GuardrailsError, match="dealer_price_caps"):
+        gr.parse_guardrails(f"- `dealer_price_caps` = {value} — x")

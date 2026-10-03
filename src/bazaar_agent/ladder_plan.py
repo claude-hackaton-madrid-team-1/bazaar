@@ -144,7 +144,7 @@ def class_plans(
     for one dealer × class: a what-if for the report, never what the runtime enforces."""
     out = {}
     for key, row in main_rows(r for r in rows if r.price_class != "sell").items():
-        cap = (caps or {}).get(key, rules.max_price_for(rarity_of_class(row.price_class)))
+        cap = (caps or {}).get(key, rules.max_price_for(rarity_of_class(row.price_class), key[0]))
         choice = plan_for(row, cap, q=q)
         summary = None
         if choice.plan is not None:

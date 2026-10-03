@@ -381,7 +381,7 @@ class Taker:
 
     def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> None:
         tick = run.snap.clock.tick
-        verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        verdict = check(Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         inputs = {
             "dealer": op.dealer,
@@ -480,7 +480,7 @@ class Taker:
         verdict_text = "allowed"
         if move.kind == "bid":
             verdict = check(
-                Action("bid", conv.item, conv.rarity, move.price),
+                Action("bid", conv.item, conv.rarity, move.price, dealer=conv.dealer),
                 self._ctx(run, skip_thread=conv.thread_id),
                 self.rules,
             )

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from bazaar_agent.config import REPO_ROOT
 
@@ -53,14 +53,44 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    dealer_price_caps: str = "none"  # "chato:uncommon=31,chato:rare=93": replaces max_price_<rarity> for that dealer
 
-    def max_price_for(self, rarity: str | None) -> int | None:
+    @field_validator("dealer_price_caps")
+    @classmethod
+    def _dealer_caps_parse(cls, value: str) -> str:
+        parse_dealer_caps(value)
+        return value
+
+    @property
+    def dealer_caps(self) -> dict[tuple[str, str], int]:
+        return parse_dealer_caps(self.dealer_price_caps)
+
+    def max_price_for(self, rarity: str | None, dealer: str | None = None) -> int | None:
+        """The cap for one rarity; a `dealer_price_caps` entry replaces it for that dealer only."""
+        if dealer is not None and (dealer, rarity or "") in self.dealer_caps:
+            return self.dealer_caps[(dealer, rarity or "")]
         return {
             "common": self.max_price_common,
             "uncommon": self.max_price_uncommon,
             "rare": self.max_price_rare,
             "pack": self.max_price_pack,
         }.get(rarity or "")
+
+
+CAPPED_RARITIES = ("common", "uncommon", "rare", "pack")
+
+
+def parse_dealer_caps(value: str) -> dict[tuple[str, str], int]:
+    """`none`, or comma-separated `dealer:rarity=price` (`chato:uncommon=31`) → {(dealer, rarity): price}."""
+    out: dict[tuple[str, str], int] = {}
+    if value.strip().lower() in ("", "none"):
+        return out
+    for entry in value.split(","):
+        m = re.fullmatch(r"\s*([a-z0-9_]+):([a-z]+)=(\d+)\s*", entry)
+        if m is None or m[2] not in CAPPED_RARITIES or int(m[3]) < 1:
+            raise ValueError(f"dealer_price_caps entry {entry!r}: use dealer:rarity=price, e.g. chato:uncommon=31")
+        out[(m[1], m[2])] = int(m[3])
+    return out
 
 
 # Which code enforces each rule: shown by `bazaar rules`, kept honest by a test.
@@ -86,6 +116,7 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "dealer_price_caps": "guardrails.check (Action.dealer: cli dealer buy, the desk, strategy, runtime dealer_buy)",
 }
 
 
@@ -247,6 +278,7 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    dealer: str | None = None  # a dealer buy: `dealer_price_caps` may set its own cap
 
 
 @dataclass(frozen=True)
@@ -303,11 +335,13 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     buying = action.kind in ("buy", "accept_buy", "bid")
     accepting = action.kind in ("accept_buy", "accept_sell", "duel_accept")
     if buying and action.price is not None:
-        cap = rules.max_price_for(action.rarity)
+        cap = rules.max_price_for(action.rarity, action.dealer)
+        own = action.dealer is not None and (action.dealer, action.rarity or "") in rules.dealer_caps
         if cap is None:
             v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
         elif action.price > cap:
-            v.append(f"price {action.price} > max_price_{action.rarity} {cap}")
+            where = f"dealer_price_caps {action.dealer}:{action.rarity}" if own else f"max_price_{action.rarity}"
+            v.append(f"price {action.price} > {where} {cap}")
         if ctx.cash - action.price < rules.cash_floor:
             v.append(f"cash {ctx.cash} - {action.price} < cash_floor {rules.cash_floor}")
         if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:

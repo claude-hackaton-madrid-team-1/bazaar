@@ -298,9 +298,9 @@ def dealer_buy(
     plan = BidPlan(start, step, max_price)
     topic = {"buy": {"pack": item}} if "-" not in item else {"buy": {"card": item}}
     rarity = _rarity_of(item)
-    cap = rules.max_price_for(rarity)
+    cap = rules.max_price_for(rarity, dealer)
     if cap is not None and max_price > cap:
-        _fail(f"--max {max_price} is above max_price_{rarity} = {cap} in GUARDRAILS.md")
+        _fail(f"--max {max_price} is above the {dealer} cap for {rarity} = {cap} in GUARDRAILS.md")
     if not live:
         schedule = bid_schedule(plan)
         console.print(
@@ -313,7 +313,7 @@ def dealer_buy(
     ledger = _ledger("dealer-buy")
     clock_now = Clock.model_validate(client.clock())
     pre = gr.check(
-        gr.Action("buy", item, rarity, start),
+        gr.Action("buy", item, rarity, start, dealer=dealer),
         gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
         rules,
     )
@@ -328,7 +328,7 @@ def dealer_buy(
         # is sent, and a full quota makes the accept wait for the next tick.
         ctx = replace(ctx, accepts_this_tick=0)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
-        verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
+        verdict = gr.check(gr.Action(kind, item, rarity, move.price, dealer=dealer), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
