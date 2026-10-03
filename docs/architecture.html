@@ -131,14 +131,15 @@ footer { color: var(--muted); font-size: 13px }
       <text x="882" y="434" class="s">ops calls: v2, rare 95, venue ✓</text>
       <text x="882" y="462" class="s">team swaps gated by Jev (#188) ◑</text>
       <text x="882" y="490" class="s">undecided is never a yes</text>
-      <rect x="1588" y="70" width="380" height="252" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="1588" y="70" width="380" height="280" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1608" y="112" class="t">runtime (Railway) ✓</text>
       <text x="1608" y="148" class="s">taker, maker, duels: LIVE, real game ✓</text>
       <text x="1608" y="176" class="s">Postgres ledger shared by all ✓</text>
       <text x="1608" y="204" class="s">phoenix traces (#139) · bazaar-mcp ✓</text>
       <text x="1608" y="232" class="s">news sentinel in the taker (#182) ✓</text>
-      <text x="1608" y="260" class="s">bazaar-live: agent screen fixed (#19) ✓</text>
-      <text x="1608" y="288" class="s">CI: Blacksmith queued, local gate</text>
+      <text x="1608" y="260" class="s">team matrix → negotiators (#225) ✓</text>
+      <text x="1608" y="288" class="s">bazaar-live: agent screen fixed (#19) ✓</text>
+      <text x="1608" y="316" class="s">CI: Blacksmith queued, local gate</text>
       <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1608" y="418" class="t">LLM → Jev picks ✓</text>
       <text x="1608" y="454" class="s">Claude Agent SDK runtime (#59) ✓</text>
@@ -277,6 +278,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><span class="mono">N17 (new)</span><b>**P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag <code>BAZAAR_TEAM_THREADS=0</code>)</b><p>🔵 worker (triage + spec now; code after #72; PR before Duels II)</p></div>
       <div class="item"><span class="mono">N18 (new)</span><b>Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): <code>session.id</code> per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96)</b><p>🔵 worker (afternoon window after Duels I)</p></div>
       <div class="item"><span class="mono">N19 (new)</span><b>**P1 · Persona model**: each dealer's published traits, menu and unlock rules (<code>/api/dealers</code>) become negotiation params (<code>persona_model.py</code>); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in <code>traders</code>; flag <code>persona_model_enabled</code>; spec [<code>N19-spec.md</code>](./N19-spec.md)</b><p>🔵 PR open</p></div>
+      <div class="item"><span class="mono">N20 (new)</span><b>Team matrix in the sentinel: every team × card (holds, spare, missing for a near page) and per-team rank, trend, rival, wants, has-for-us; stored in <code>team_matrix</code> + <code>team_matrix_summary</code>; fed to the decider states of accepts, team swaps and our asks (<code>market_teams</code>)</b><p>🔵 PR #225</p></div>
       <div class="item"><span class="mono">N10 (new)</span><b>NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo <code>bazaar-live</code></b><p>🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch</p></div>
       <div class="item"><span class="mono">[T1](T1-spec.md) · was #14, #23</span><b>Strategy engine (scarcity, valuation, buy/sell, 3-pack quota)</b><p>#23 closed (done in #37: <code>bazaar strategy</code>); #14 open: <code>/api/me/value</code> check on 20 cards, <code>delta(give, want)</code>, per-counterparty cap</p></div>
       <div class="item"><span class="mono">[M1](M1-spec.md) · was #11, #12</span><b>Venue + limit-estimating broker</b><p>🔵 #71 approved, shipped OFF (<code>allow_venue_open = false</code>, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off</p></div>

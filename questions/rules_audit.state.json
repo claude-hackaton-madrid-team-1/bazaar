@@ -1,0 +1,61 @@
+{
+  "as_of": {
+    "day": "Saturday",
+    "wall": "2026-10-03 17:50 Madrid",
+    "tick": 870,
+    "tick_seconds": 30,
+    "source": "rules audit (8 areas): RULES.md, /api/schedule, /api/dealers, /api/levels, /api/me score parts, Postgres me_snapshots / feed_events / duels (read-only)"
+  },
+  "scoring_fitted": {
+    "market_per_round": "22.5 x bench_points + 7.5 x min(1, organic / top-3 mean); free stall = bench 0.5; nine teams sit at exactly the stall level, two at the organic cap",
+    "negotiating_per_round_estimate": "ladder ~7.5, duels ~7.5, team trades ~15 (fitted, each capped at the top-3 mean)",
+    "rounds": "Friday 0.5 (closed), Saturday 1, Sunday 1; a new round ramps 0 -> full over ~160 ticks after the organisers' round action",
+    "round_3_start": "game hour 16.65 = Sunday ~11:34; Sunday closes 15:00, so round 3 lasts ~3.4 h (15 s ticks)",
+    "saturday_negotiating_now": "29.1 of 30 round points: at the top-3 cap; Saturday gains from dealers are ~0",
+    "ladder_resets_each_round": "ladder_points 0.058 -> 0 at tick 160 (Saturday's round start)"
+  },
+  "ladder_rule": "share of the dealer's own price range captured, buying OR selling; a deal at the dealer's opening price scores 0, a deal at its final (its limit) scores 1; best three deals per level, a missing one counts as zero, higher levels weigh more",
+  "observed_dealer_deals": {
+    "pilar_sales_at_her_final": "3 sales taken at her final (ticks 718-737): each added 0.044-0.050 ladder_points, our best deals",
+    "abuela_finals_walked": "3 sell threads (732, 770, 776) walked her final of 6 because it sat below 0.5 x our first ask",
+    "chato_final_walked": "sell thread 883 walked his final of 14 for the same reason",
+    "chato_uncommon_buy_finals": "28-29 against our max_price_uncommon 26: 1 level-2 deal out of 4 Chato threads; level 2 has 2 of 3 best-three slots empty",
+    "chato_strictness": "traits strictness 0.85, memory 0.9"
+  },
+  "rules_now": {
+    "dealer_sell_final_min_first_ask_share": 0.5,
+    "dealer_final_lift": 0,
+    "max_price_uncommon": 26,
+    "duel_accept_margin_ticks": 1,
+    "flag_dealers": "none",
+    "dealer_sell_enabled": false
+  },
+  "duels": {
+    "deadline_evidence": "3 of our own accepts sent at deadline - 1 settled on the deadline tick as deals at the price we accepted; 9 deals closed exactly on the deadline tick",
+    "next": "Duels II Sat ~20:34 (16 ticks, decay 0.08, 6 concurrent, 2 rounds = 68 duels); Duels III Sun ~13:34 (12 ticks, decay 0.1, 4 concurrent)",
+    "freeze": "main is frozen from 18:15 until Duels II ends; a margin change would only apply to Duels III"
+  },
+  "picaros": {
+    "rule": "Los Picaros: bargains and bad faith; read every offer, flag a trick (POST /api/flags); a correct flag scores, a wrong one costs",
+    "evidence": "4 of their offers to us (messages 7124, 7130 final, 7201, 7285) gave a different card than the thread topic; our inspector refused each mismatched offer; none was flagged",
+    "proposed_scope": "flag only an offer whose give differs from the topic card (structure, not words)"
+  },
+  "workshop": {
+    "rule": "POST /api/taller: three spare copies of one rarity (keep at least one of each card) become one random card of the next rarity; the pull is luck and never scores",
+    "usage": "9 teams crafted 19 times, all common -> uncommon; not in our SDK or code",
+    "for": "an uncommon is a Chato ladder deal (level 2 slots empty); Abuela may stop buying commons (an unconfirmed rumour)",
+    "against": "duplicates are our best trade-surplus goods (worth 0.25x or 0.1x to us, full value to a team missing them); a new random card has little resale surplus; build effort M with an untested request shape"
+  },
+  "overnight_candidates": {
+    "bench_edge": "Market Test broker that estimates hidden limits (branch night/w1b-broker-edge, stacked on an old base, needs a rebase); sim: +0.16 to +2.3 final points; nobody is above the stall today so any edge may earn the full point; 2 Saturday-round sessions on Sunday morning (+0.56 each) and 2 round-3 sessions (+1.5 each); a session with the broker down scores 0 instead of 0.5",
+    "ladder_round_tracker": "best three deals per level per round, counting sales, targeting empty slots at the dealer's final; round 3 ladder 0 -> cap ~ +3 final points; can be filled by hand at 11:34 if not built",
+    "team_trades_round_3": "no team trade since tick 386; round 3 team trades 0 -> cap ~ +6 final points if neg_points resets per round (unknown until 11:34); needs cash kept for trades"
+  },
+  "flags_now": {
+    "allow_flags": false,
+    "flag_dealers": "none (Jev flag_dealers_choice: picaros 0.84, decided)",
+    "max_flags_sent": 2,
+    "flag_trusted_dealers": "abuela,chato",
+    "what_a_flag_scores": "unknown: 'a correct flag scores, a wrong one costs' (RULES.md)"
+  }
+}

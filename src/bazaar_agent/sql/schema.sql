@@ -365,3 +365,40 @@ create or replace view team_affinity_board as
   from (select * from team_affinity where source = 'said') s
   full join (select * from team_affinity where source = 'inferred') i
     on i.team = s.team and i.set_code = s.set_code;
+
+-- The team matrix (`team_matrix.py`, kept by `team_matrix_store.py`): every team × card we can place and one
+-- summary per team, as the news sentinel last built them. A save replaces its world's rows in one transaction, so
+-- each world holds exactly one matrix. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
+create table if not exists team_matrix (
+  world text not null, team text not null, card text not null, holds int not null, spare int not null,
+  missing_for_page bool not null, page_have int, page_of int, confidence numeric, tick int not null,
+  primary key (world, team, card));
+create table if not exists team_matrix_summary (
+  world text not null, team text not null, rank int, score numeric, trend int, top_set text, venue text,
+  rival bool not null, rival_why text, wants text, has_for_us text, last_trades text, us text, tick int not null,
+  primary key (world, team));
+
+-- The read-only logins (`readonly_user.sql`) read the matrix: granted ONCE, to every role that reads our private
+-- `decisions` table (never the public feed's readers), then the table is marked so a later deliberate REVOKE stays
+-- revoked (`readonly_user.sql` re-run grants it again on purpose). A grant that fails or times out is a notice:
+-- it never stops a process from starting.
+do $$
+declare
+  r record;
+begin
+  if coalesce(obj_description(to_regclass(format('%I.team_matrix_summary', current_schema())), 'pg_class'), '')
+     = 'read-only grants made' then
+    return;
+  end if;
+  for r in
+    select distinct g.grantee::text as role from information_schema.role_table_grants g
+     where g.table_schema = current_schema() and g.table_name = 'decisions' and g.privilege_type = 'SELECT'
+       and g.grantee::text not in (current_user::text, 'PUBLIC')
+  loop
+    execute format('grant select on %I.team_matrix, %I.team_matrix_summary to %I',
+                   current_schema(), current_schema(), r.role);
+  end loop;
+  execute format('comment on table %I.team_matrix_summary is %L', current_schema(), 'read-only grants made');
+exception when query_canceled or others then
+  raise notice 'team matrix grants skipped (%)', sqlerrm;
+end $$;

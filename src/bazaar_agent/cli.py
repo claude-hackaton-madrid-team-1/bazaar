@@ -889,6 +889,7 @@ def dealer_buy(
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
+    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan)  # a trickster's FINAL is not its limit
 
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, the thread stays open, next tick decides again):
@@ -1134,6 +1135,39 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         return None if gate.allowed else f"{gate.verdict}: {gate.reason}"  # `negotiate`'s log escapes it
 
     return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
+
+
+def _dealer_personas(settings: Any) -> list[dict[str, Any]]:
+    """`GET /api/dealers` (keyless): every dealer as it publishes itself (kind, traits, menu)."""
+    body = public_client(settings).dealers()
+    return [d for d in body.get("personas") or body.get("dealers") or [] if isinstance(d, dict)]
+
+
+def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any) -> Any:
+    """`dealer buy`'s plan against a forgiving dealer (agents/trickster.py): its FINAL is not its limit. Its persona
+    comes from `/api/dealers`: unreadable, nothing is opened (fail closed: a fake final could be taken as a limit).
+    Its fills come from the feed history the agents read (`_history`): none, and its asks are never taken (we only
+    bid). Every other dealer's plan comes back unchanged."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving, note
+    from bazaar_agent.intel import tape
+    from bazaar_agent.persona_model import parse_personas
+
+    try:
+        persona = parse_personas(_dealer_personas(settings)).get(dealer)
+    except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
+        _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
+    if persona is None or not is_forgiving(persona, rules):
+        return plan
+    try:
+        events = _history(None, live=True)
+    except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
+        console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
+        events = []
+    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules)
+    console.print(escape(f"{dealer} forgives (kind {persona.kind}): {note(shaped)}"))
+    return shaped
 
 
 def _rules() -> Any:
@@ -2859,8 +2893,34 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
     return NewsSentinel(
-        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+        reader,
+        store.record,
+        kw["log"],
+        settings.data_dir / "agents",
+        history=_rank_history(kw, settings),
+        matrix_store=_matrix_store(kw, settings),
     )
+
+
+def _matrix_store(kw: dict[str, Any], settings: Any) -> Any:
+    """The team matrix's tables in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.team_matrix_store import TeamMatrixStore
+
+    return TeamMatrixStore(lambda: db.connect(app="bazaar-team-matrix", connect_timeout_s=3), kw["log"],
+                           scope_of(settings).world)  # fmt: skip
+
+
+def _latest_matrix(kw: dict[str, Any], settings: Any) -> Any:
+    """The maker reads the matrix the taker stores, at most every 10 ticks after its sends."""
+    from bazaar_agent.team_matrix_store import LatestMatrix
+
+    store = _matrix_store(kw, settings)
+    return LatestMatrix(store) if store is not None else None
 
 
 def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
@@ -3002,6 +3062,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
+            latest_matrix=_latest_matrix(kw, settings),
             **kw,
         )
 

@@ -49,6 +49,7 @@ from bazaar_agent.swaps import (
     offer_terms,
     read_offer,
 )
+from bazaar_agent.team_matrix import TeamMatrix
 from bazaar_agent.trade_desk import PlanParams, Trade, build_plan, dealer_prices, wanted_cards
 
 TEAM_THREADS_ENV = "BAZAAR_TEAM_THREADS"  # "0" turns the desk off at the next tick
@@ -275,6 +276,7 @@ class TeamDesk:
         self._refused: set[int] = set()  # their offers we refused (logged once)
         self._tried: set[int] = set()  # threads whose read was tried this tick (refused ones included)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
+        self.matrix: TeamMatrix | None = None  # the taker's team matrix, set each tick (`team_matrix.py`)
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._synthetic = 0  # negative ids for the refund of a send the server refused
@@ -338,6 +340,9 @@ class TeamDesk:
             tid = int(t["id"])
             self._payloads[tid] = payload
             self._listen(v, tid, self._other(t, v.us), payload)
+            if self.rules.never_trades_with(self._other(t, v.us)):
+                self.first_seen.setdefault(tid, v.tick)  # `team_desk_never_trade`: never take a blocked team's offer;
+                continue  # `_inbound` closes its thread
             talk = self.talks.get(tid)
             if talk is None:
                 self.first_seen.setdefault(tid, v.tick)
@@ -555,8 +560,8 @@ class TeamDesk:
             return
         self._settle(v)
         for tid, talk in list(self.talks.items()):
-            if tid in taken or tid not in self._payloads:
-                continue
+            if tid in taken or tid not in self._payloads or self.rules.never_trades_with(talk.team):
+                continue  # a blocked team's thread gets no move: `_inbound` closes it
             self._next_move(v, talk)
         self._inbound(v)
         self._open(v)
@@ -636,9 +641,14 @@ class TeamDesk:
         whatever is written in it (another team cannot park on our conversation slots)."""
         for t in self._team_threads(v):
             tid = int(t["id"])
-            if tid in self.talks or tid in self._closed or tid not in self._payloads:
+            if tid in self._closed or tid not in self._payloads:
                 continue
             team, payload = self._other(t, v.us), self._payloads[tid]
+            if self.rules.never_trades_with(team):  # `team_desk_never_trade`: closed at once (our offers there are
+                self._close_blocked(v, tid, team)  # cancelled), ours or theirs, after a restart or a list edit too
+                continue
+            if tid in self.talks:
+                continue
             house = (payload.get("venue") or t.get("venue")) == HOUSE_VENUE
             talk = self._adopt(v, tid, team, payload) if house else None
             if talk is not None:
@@ -648,6 +658,14 @@ class TeamDesk:
                 continue  # a team took our offer there: it settles at the next tick, never closed under it
             elif v.tick - self.first_seen.get(tid, v.tick) >= self.rules.team_thread_idle_ticks:
                 self._close(v, tid, team, "a team thread with no swap of ours planned with that team")
+
+    def _close_blocked(self, v: DeskView, tid: int, team: str) -> None:
+        """A blocked team's thread is closed, never left to park on our slots (a team conversation ends only on a
+        deal or after 200 messages: RULES.md); a take of our offer already pending there settles first."""
+        if self._taken(v, tid) or any(k.accepted for k in self.talks.values() if k.thread_id == tid):
+            return
+        if self._close(v, tid, team, f"{team} is in team_desk_never_trade"):
+            self.talks.pop(tid, None)
 
     def _adopt(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> Talk | None:
         busy = {k.trade.asset_id for k in self.talks.values()} | {k.trade.refs[1] for k in self.talks.values()}
@@ -748,6 +766,8 @@ class TeamDesk:
         verdicts = [check(a, ctx, self.rules) for a in swap.actions()]
         problems = [p for x in verdicts for p in x.violations]
         halted = any(x.halted for x in verdicts)
+        if self.rules.never_trades_with(trade.counterparty):
+            problems.append(f"{trade.counterparty} is in team_desk_never_trade")
         fair = judge(trade, cash, 0, self.rules, repeat=self.deals[trade.counterparty] > 0)
         if not fair.ok:
             problems.append(fair.reason)
@@ -773,6 +793,8 @@ class TeamDesk:
         we are the accepting side) is a bid for their card. The fairness verdict was taken in `proposals`."""
         if (why := disabled(self.rules, self.env)) is not None:
             return Verdict(False, (why,))
+        if self.rules.never_trades_with(a.trade.counterparty):
+            return Verdict(False, (f"{a.trade.counterparty} is in team_desk_never_trade",))
         swap = self._swap(v, a.trade, a.offer.cash_in - a.offer.cash_out - a.fee)
         if swap is None:
             return Verdict(False, ("our copy or the card's value is unknown",))
@@ -858,6 +880,19 @@ class TeamDesk:
             },
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
+            "market_teams": self._teams(trade),
+        }
+
+    def _teams(self, trade: Trade) -> dict[str, Any] | None:
+        """The team matrix (`team_matrix.py`): the counterparty's row and, for both cards, the teams that hold them
+        spare or miss them for a page (top 5 each). None until the taker's sentinel built one."""
+        m = self.matrix
+        if m is None:
+            return None
+        return {
+            "tick": m.tick,
+            "counterparty": m.row(trade.counterparty),
+            "card": {ref: m.card(ref) for ref in trade.refs[:2]},
         }
 
     def _page_bonus(self, need: PageNeed, ref: str, official: float | None) -> dict[str, Any]:
@@ -1111,15 +1146,19 @@ class TeamDesk:
     def _inputs(self, trade: Trade, thread: int | None) -> dict[str, Any]:
         """Public-safe: only the thread, venue and fee reach `/state` (the team, the cards and our values stay
         out: none of their keys is in the public allow-list)."""
-        return {
-            "thread": thread,
-            "team": trade.counterparty,
-            "give_card": trade.refs[0],
-            "want_card": trade.refs[1],
-        } | {
-            "venue": HOUSE_VENUE,
-            "fee": trade.fee,
-        }
+        return (
+            {
+                "thread": thread,
+                "team": trade.counterparty,
+                "give_card": trade.refs[0],
+                "want_card": trade.refs[1],
+            }
+            | {
+                "venue": HOUSE_VENUE,
+                "fee": trade.fee,
+            }
+            | ({"counterparty_matrix": self.matrix.text(trade.counterparty)} if self.matrix is not None else {})
+        )
 
     # ------------------------------------------------------------ the plan
 
@@ -1157,6 +1196,9 @@ class TeamDesk:
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()
+        # `team_desk_never_trade`: the podium and the teams ranked around us are never planned (Sat 3 Oct: the
+        # desk proposed SAL-03 to t17, a direct rival missing it).
+        threads = [t for t in threads if not self.rules.never_trades_with(t.counterparty)]
         trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
         self._plan = _Plan(v.tick, trades, worth, pages, {ref: c.book for ref, c in m.cards.items()})
         return trades
