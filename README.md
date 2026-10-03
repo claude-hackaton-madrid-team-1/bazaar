@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#121](../../pull/121) | fix: public /state and /events must not reveal our limits (#69 follow-up) | `ogarciarevett/fix-state-leaks` |
 | [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
 | [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
 | [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#103](../../pull/103) | Night B11: endgame squeeze mitigations for duel v2 (behind params, defaults = today) | `night/b11-endgame` |
 | [#102](../../pull/102) | night(B6): Saturday hour-by-hour playbook + bazaar timeline (clock resume/jump columns) | `night/b6-saturday-playbook` |
 | [#101](../../pull/101) | W8: cross-venue arbitrage and duplicate buys, guarded and off by default (stacked on #72) | `night/w8-arbitrage` |
-| [#100](../../pull/100) | feat(dealer): seeded step jitter for dealer bids, default off (B12, stacked on #81) | `night/b12-dealer-jitter` |
 
 <!-- BAZAAR:ACTIVITY:END -->
