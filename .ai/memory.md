@@ -1049,3 +1049,9 @@ duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not
 `scripts/sim_smoke.py` fails a step on any ` refused ` in its output (CRASH_MARKERS), our own WARN lines included: the
 human-approval board's first fail-closed note ("… is refused (fail closed)") failed `agent taker --live`. Word new
 WARN lines without " refused " (HA1 says "no trade at or above … goes out").
+
+### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
+Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
+7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
+and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
+third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
