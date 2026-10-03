@@ -39,9 +39,9 @@ def test_plans_count_only_the_sessions_after_the_venue_opens():
     by = {r.plan: r for r in rows}
     full = sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT  # every session at 1.0
     assert by["never"].final_mean == pytest.approx(full / 2) and by["never"].sessions_ours == 0
-    assert by["09:00"].final_mean == pytest.approx(full) and by["09:00"].sessions_ours == 8
-    assert by["11:30"].sessions_ours == 7 and by["11:30"].final_mean == pytest.approx(full * (7 + 0.5) / 8)
-    assert by["09:00"].p_worse == 0.0
+    assert by["h4.05"].final_mean == pytest.approx(full) and by["h4.05"].sessions_ours == 8
+    assert by["h6.5"].sessions_ours == 7 and by["h6.5"].final_mean == pytest.approx(full * (7 + 0.5) / 8)
+    assert by["h4.05"].p_worse == 0.0
 
 
 def test_a_broker_down_in_every_session_scores_nothing():
@@ -49,8 +49,8 @@ def test_a_broker_down_in_every_session_scores_nothing():
         2, worlds=("default/quote",), fields=("stall",), policies=("edge",), down=1.0, runner=fixed_runner(0.85)
     )
     by = {r.plan: r for r in rows}
-    assert by["09:00"].final_mean == 0.0 and by["09:00"].p_worse == 1.0
-    assert by["11:30"].final_mean == pytest.approx(sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT * 0.5 / 8)
+    assert by["h4.05"].final_mean == 0.0 and by["h4.05"].p_worse == 1.0
+    assert by["h6.5"].final_mean == pytest.approx(sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT * 0.5 / 8)
 
 
 def test_the_in_process_runner_plays_real_sessions():
@@ -59,8 +59,8 @@ def test_the_in_process_runner_plays_real_sessions():
     )
     assert {r.world for r in rows} == {"default/quote", "tick0/quote"}
     tick0 = {r.plan: r for r in rows if r.world == "tick0/quote"}
-    assert tick0["09:00"].delta_mean > 0
-    assert "| tick0/quote | stall | edge | 09:00 |" in sat.markdown(rows)
+    assert tick0["h4.05"].delta_mean > 0
+    assert "| tick0/quote | stall | edge | h4.05 |" in sat.markdown(rows)
 
 
 def test_main_writes_json(tmp_path, capsys):
@@ -82,7 +82,7 @@ def test_each_plan_has_its_own_broker_that_learns_only_from_the_sessions_it_ran(
     by_probes = {}
     for k, probes in seen:
         by_probes.setdefault(probes, []).append(k)
-    assert sorted(by_probes.values()) == [[0, 1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7]]  # 09:00, then 11:30
+    assert sorted(by_probes.values()) == [[0, 1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7]]  # h4.05, then h6.5
 
 
 def test_against_three_oracle_level_rivals_only_the_margin_counts():
@@ -91,8 +91,24 @@ def test_against_three_oracle_level_rivals_only_the_margin_counts():
     )
     share = 0.5 + 0.5 * (0.85 - 0.8) / (0.9 - 0.8)  # top three = the three oracle venues
     by = {r.plan: r for r in rows}
-    assert by["09:00"].final_mean == pytest.approx(sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT * share, abs=1e-3)
+    assert by["h4.05"].final_mean == pytest.approx(sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT * share, abs=1e-3)
 
 
 def test_the_plans_follow_the_keepers_opening_hour():
-    assert sat.PLANS == {"09:00": 4.05, "11:30": 6.5, "never": None}
+    assert sat.PLANS == {"h4.05": 4.05, "h6.5": 6.5, "never": None}
+
+
+def test_a_resumed_clock_leaves_saturday_seven_sessions_and_the_keeper_six():
+    assert [h for h, _ in sat.CLOCKS["resume"]] == [5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 16.0]
+    rows = sat.simulate_days(
+        1,
+        worlds=("default/quote",),
+        fields=("stall",),
+        policies=("edge",),
+        runner=fixed_runner(0.85),
+        sessions=sat.CLOCKS["resume"],
+    )
+    by = {r.plan: r for r in rows}
+    assert (by["h4.05"].sessions_ours, by["h6.5"].sessions_ours) == (7, 6)
+    full = sat.BENCH_ROUND_POINTS * sat.FINAL_PER_ROUND_POINT
+    assert by["h6.5"].final_mean == pytest.approx(full * (6 + 0.5) / 7, abs=1e-3)

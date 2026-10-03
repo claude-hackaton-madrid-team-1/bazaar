@@ -5,8 +5,9 @@
 **The day** (tests/fixtures/api/get_api_schedule.anon.json, Saturday opens at h4 = 09:00, game hour = wall hour):
 bench sessions at h5, h7, h9, h11, h13, h15, h17 (10 traders) and h16 (the hard test, 12 traders).
 
-**Plans.** `never`: the free stall all day. `11:30`: #71's venue keeper opens our board venue at game hour 6.5;
-`09:00`: the same at 4.05 (a guardrail change). The stall is replaced on the spot (RULES.md), so every session after
+**Plans** (game hours; wall times depend on the clock, see `CLOCKS`). `never`: the free stall all day. `h6.5`: #71's
+venue keeper opens our board venue then (11:30 if the clock jumps, 12:51 if it resumes); `h4.05`: the same right after
+the grant (a guardrail change). The stall is replaced on the spot (RULES.md), so every session after
 the opening is matched by our broker: `exact` (#71's keeper today, ties like the stall), `edge`, or `edge+probe`
 (the limit probe, its statistics kept across the day as one broker process keeps them).
 
@@ -48,7 +49,14 @@ SESSIONS: tuple[tuple[float, str], ...] = (
 )
 # Game hour the venue opens: #71's keeper opens at `venue_open_after_game_hours` = 6.5 (11:30); 09:00 would need
 # that value at 4.05 (the first tick after the 150 P grant, the earliest the cash floor allows).
-PLANS: dict[str, float | None] = {"09:00": 4.05, "11:30": 6.5, "never": None}
+PLANS: dict[str, float | None] = {"h4.05": 4.05, "h6.5": 6.5, "never": None}
+# Which sessions Saturday's round gets (#102, B6): if the organisers jump the frozen clock to h4 at 09:00, all eight
+# (h5 = 10:00 ... h17 = 22:00); if it resumes at h2.65, every event lands 1 h 21 min later, h3 (09:21) still counts
+# for Friday and h17 (23:21) falls after Saturday's 23:00 close: seven (h5 = 11:21 ... h16 = 22:21).
+CLOCKS: dict[str, tuple[tuple[float, str], ...]] = {
+    "jump": SESSIONS,
+    "resume": tuple(s for s in SESSIONS if s[0] < 17.0),
+}
 BENCH_ROUND_POINTS = 15.0  # W5: market-making 30 = 15 bench + 15 venue (assumed split)
 FINAL_PER_ROUND_POINT = 0.40  # W5: one Saturday round point in final game points
 # Bench worlds: (W1a variant, match rule). The default cell is the best guess; the others are its unknowns.
@@ -170,6 +178,7 @@ def simulate_days(
     down: float = 0.0,
     runner: Runner | None = None,
     seed: int = 2026,
+    sessions: Sequence[tuple[float, str]] = SESSIONS,
 ) -> list[DayRow]:
     """Every plan on the same `days` Saturdays (same books, same broker outages) per world, policy and field.
 
@@ -182,13 +191,13 @@ def simulate_days(
         variant, rule = WORLDS[world]
         for policy in policies:
             rng = random.Random(f"{seed}:{world}:{policy}:down")
-            downs = [[rng.random() < down for _ in SESSIONS] for _ in range(days)]
+            downs = [[rng.random() < down for _ in sessions] for _ in range(days)]
             shares: dict[str, dict[Field, list[list[float]]]] = {p: {f: [] for f in fields} for p in PLANS}
             for plan, opens in PLANS.items():
                 for day in range(days):
                     probes = ProbeStats()  # this plan's broker process for the day
                     day_shares: dict[Field, list[float]] = {f: [] for f in fields}
-                    for k, (hour, preset) in enumerate(SESSIONS):
+                    for k, (hour, preset) in enumerate(sessions):
                         ours = opens is not None and opens < hour
                         session = None
                         if ours and not downs[day][k]:
@@ -215,7 +224,7 @@ def simulate_days(
                             round(statistics.fmean(deltas), 3),
                             round(_q(deltas, 0.1), 3),
                             round(sum(d < -1e-9 for d in deltas) / days, 3),
-                            sum(opens is not None and opens < hour for hour, _ in SESSIONS),
+                            sum(opens is not None and opens < hour for hour, _ in sessions),
                         )
                     )
     return rows
@@ -254,11 +263,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--policies", nargs="+", default=["exact", "edge", "edge+probe"])
     parser.add_argument("--down", type=float, default=0.0, help="chance per session that our broker is down")
     parser.add_argument("--own", action="store_true", help="our in-process bench even if bazaar_sim is installed")
+    parser.add_argument("--clock", choices=list(CLOCKS), default="jump", help="jump: h4 = 09:00; resume: h2.65 = 09:00")
     parser.add_argument("--json", help="also write the rows to this file")
     args = parser.parse_args(argv)
     name, runner = ("W1b in-process bench", own_runner()) if args.own else default_runner()
-    rows = simulate_days(args.days, args.worlds, args.fields, args.policies, args.down, runner)
-    print(f"Saturday bench, {args.days} simulated days per row, {name}, broker down {args.down:.0%} per session\n")
+    rows = simulate_days(
+        args.days, args.worlds, args.fields, args.policies, args.down, runner, sessions=CLOCKS[args.clock]
+    )
+    print(
+        f"Saturday bench, {args.days} simulated days per row, {name}, broker down {args.down:.0%} per session, "
+        f"clock {args.clock} ({len(CLOCKS[args.clock])} sessions)\n"
+    )
     print(markdown(rows))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as handle:
