@@ -351,7 +351,7 @@ class TeamDesk:
             guardrail="allowed",
             chosen=status == "approved",
             status=status,
-            move={"open_thread": trade.counterparty, "topic": TOPIC, "venue": HOUSE_VENUE},
+            move={"kind": "team_open", "venue": HOUSE_VENUE},  # public: never the team (a private thread)
         )
         if status != "approved" or not self.live:
             return
@@ -359,7 +359,7 @@ class TeamDesk:
             did,
             v.tick,
             "open_thread",
-            {"with": trade.counterparty, "topic": TOPIC, "venue": HOUSE_VENUE},
+            {"team": trade.counterparty, "topic": TOPIC, "venue": HOUSE_VENUE},  # "team", not the public "with"
             lambda: self.team.open_thread(trade.counterparty, topic=TOPIC, venue=HOUSE_VENUE),
         )
         if body is None or not isinstance(body.get("id"), int):
@@ -442,7 +442,7 @@ class TeamDesk:
             chosen=status == "approved",
             status=status,
             thread_id=talk.thread_id,
-            move={"give": terms["give"], "want": terms["want"]},
+            move={"kind": "team_offer"},  # public: never the cards or cash of a private thread
         )
         if status != "approved":
             return
@@ -456,7 +456,7 @@ class TeamDesk:
                 did,
                 v.tick,
                 "say",
-                {"thread": talk.thread_id, "give": terms["give"], "want": terms["want"]},
+                {"thread_id": talk.thread_id, "swap": terms},  # kept out of the public request fields
                 lambda: self.team.say(talk.thread_id, text, offer=terms),
             )
             if body is None:

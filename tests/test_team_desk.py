@@ -390,3 +390,33 @@ def test_only_a_duplicate_is_ever_offered_never_the_last_copy(tmp_path):
     v = DeskView(**{**view().__dict__, "offers": [ask4]})  # #4 is in our ask: #3 is the last FREE LAT-03
     d2.converse(v, set())
     assert d2.team.sent == []
+
+
+def test_the_public_view_of_a_team_thread_decision_names_no_team_and_no_value(tmp_path):
+    from bazaar_agent.agents.status import public_decision
+
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    from tests.agent_fakes import rows as decision_rows
+
+    rows = [r for r in decision_rows(tmp_path) if str(r.get("kind", "")).startswith("team_")]
+    assert {r["kind"] for r in rows} == {"team_open", "team_offer"}
+    for row in rows:
+        shown = public_decision({**row, "dry_run": False})
+        flat = repr(shown)
+        assert "t05" not in flat and "plan" not in flat and "reason" not in shown  # counterparty, our reasons
+        assert set(shown["inputs"]) <= {"thread", "card", "ref", "venue", "fee"} and "give" not in flat
+
+
+def test_the_public_record_of_a_team_send_names_no_team_and_no_terms(tmp_path):
+    from bazaar_agent.agents.status import public_execution
+    from tests.agent_fakes import rows as decision_rows
+
+    d, _ = desk(tmp_path, Team())
+    d.converse(view(), set())
+    sent = decision_rows(tmp_path, "executions.jsonl")
+    assert [r["sdk_method"] for r in sent] == ["open_thread", "say"]
+    for row in sent:
+        flat = repr(public_execution({**row, "method": row["sdk_method"]}))
+        assert "t05" not in flat and "LAV-02" not in flat and "cash" not in flat
