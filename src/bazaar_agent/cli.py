@@ -2545,6 +2545,17 @@ def _run_agent(
         decisions.close()
 
 
+def _cards_heartbeat(kw: dict[str, Any], settings: Any) -> Any:
+    """New cards in the catalog the taker already reads: stored in the feed reader's learnings store (Postgres +
+    memory) when it runs, else in memory only; ranked up per GUARDRAILS `card_release_boost_enabled`."""
+    from bazaar_agent.cards_heartbeat import CardsHeartbeat
+    from bazaar_agent.learn.store import LearningStore
+
+    learner = kw.get("learner")
+    store = learner.store if learner is not None else LearningStore(None, kw["log"])
+    return CardsHeartbeat(kw["rules"], store.record, kw["log"], settings.data_dir / "agents")
+
+
 @agent_app.command("taker")
 def agent_taker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
@@ -2590,6 +2601,7 @@ def agent_taker(
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            cards=_cards_heartbeat(kw, settings),
             **kw,
         )
 

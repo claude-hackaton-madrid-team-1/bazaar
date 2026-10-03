@@ -90,6 +90,7 @@ from bazaar_agent.agents.seller import (
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.team_desk import DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.words import WordsRequest
+from bazaar_agent.cards_heartbeat import CardsHeartbeat
 from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
 from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.guardrails import (
@@ -447,6 +448,7 @@ class Taker:
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
         bluff: TacticBook | None = None,
+        cards: CardsHeartbeat | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -460,6 +462,7 @@ class Taker:
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
+        self.cards = cards  # the catalog diffed each tick: new releases rank up (no request; logged and stored after)
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
@@ -519,6 +522,8 @@ class Taker:
             self.thread_store.flush(tick)
         if self.bluff is not None:
             self.bluff.flush()
+        if self.cards is not None:
+            self.cards.flush(tick)
         self.feed.archive_pending()
 
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
@@ -541,6 +546,8 @@ class Taker:
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
             run.settled = settled_volume(snap.events, snap.us, book_values(snap.catalog))
+        if self.cards is not None:  # memory only: the catalog and menus this tick already read
+            self.cards.observe(clock.tick, snap.catalog, snap.dealers)
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -561,7 +568,10 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan)
+        boost = self.cards.boost(clock.tick) if self.cards is not None else None
+        book = build_playbook(
+            snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=boost
+        )
         self._open(run, book, threads)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]

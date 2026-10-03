@@ -903,3 +903,8 @@ ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Po
 `duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
 move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
 owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.
+
+### [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
+Keyless `GET /api/catalog`: LAV/MAL/LAT/SAL `+0h`, RET `sat+0h`, CHA `sun+0h` with `released: false`, 12 cards
+each, none `hidden`, CHA minted 0. The taker's cards heartbeat (`cards_heartbeat.py`) diffs the catalog it already
+reads each tick (no request): Sunday's flip reports 12 `set_released` events with the dealers that sell/buy each.

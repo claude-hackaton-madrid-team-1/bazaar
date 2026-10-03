@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from statistics import median
@@ -712,13 +712,18 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     return moves + rank(spares, m, params)[: params.sell_spare_slots]
 
 
-def rank(moves: Iterable[Move], m: Market, params: StrategyParams) -> list[Move]:
-    """Highest score first; ties go to duplicates, then to low-affinity sets."""
+def rank(
+    moves: Iterable[Move], m: Market, params: StrategyParams, boost: Mapping[str, float] | None = None
+) -> list[Move]:
+    """Highest score first; ties go to duplicates, then to low-affinity sets. `boost` (card ref -> multiplier, the
+    cards heartbeat's fresh releases) scales a positive score for the ORDER only: the moves are unchanged."""
+    boost = boost or {}
 
     def key(mv: Move) -> tuple[float, int, float]:
         card = m.cards.get(mv.ref)
         aff = m.affinity.get(card.set_code, 1.0) if card else 1.0
-        return (-mv.score, 0 if m.held.get(mv.ref, 0) > 1 else 1, aff)
+        score = mv.score * boost.get(mv.ref, 1.0) if mv.score > 0 else mv.score
+        return (-score, 0 if m.held.get(mv.ref, 0) > 1 else 1, aff)
 
     return sorted(moves, key=key)[: params.max_moves]
 
@@ -890,7 +895,9 @@ def build_playbook(
     params: StrategyParams,
     rules: Guardrails,
     scan: Sequence[dict[str, Any]] = (),
+    boost: Mapping[str, float] | None = None,
 ) -> Playbook:
+    """`boost`: card ref -> rank multiplier for the buys (`cards_heartbeat.boost`); ranking only."""
     m = build_market(me, catalog, events, dealers, scan)
     if params.chaser_min_p > 0:
         m = replace(m, chasers=map_chasers(me, catalog, events, params.chaser_min_p, m.chasers))
@@ -903,7 +910,7 @@ def build_playbook(
         tick=m.tick,
         cash=m.cash,
         supply=tuple(supply_view(m, params)),
-        buys=tuple(rank(buys, m, params)),
+        buys=tuple(rank(buys, m, params, boost)),
         sells=tuple(rank(sell_moves(m, me.get("assets") or [], params, rules), m, params)),
         packs=tuple(pack_moves(m, params, rules)),
         skipped=tuple(skipped),
