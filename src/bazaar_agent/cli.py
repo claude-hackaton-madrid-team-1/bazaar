@@ -108,10 +108,57 @@ def _ledger(source: str) -> Any:
 # ---------------------------------------------------------------- public views (no key)
 
 
+def _tl_fixture(kind: str) -> Any:
+    from bazaar_agent import timeline as tl
+
+    return REPO_ROOT / (tl.SCHEDULE_FIXTURE if kind == "schedule" else tl.CLOCK_FIXTURE)
+
+
 @app.command()
 def clock() -> None:
     """Current tick, pace, doors, per-tick limits and the action budget left in this tick."""
     console.print(render.clock_table(Clock.model_validate(public_client(load_settings()).clock())))
+
+
+@app.command("timeline")
+def timeline_cmd(
+    schedule: str = typer.Option(str(_tl_fixture("schedule")), "--schedule", help="A /api/schedule JSON file"),
+    clock_file: str = typer.Option(str(_tl_fixture("clock")), "--clock", help="A /api/clock JSON file"),
+    from_api: bool = typer.Option(False, "--from-api", help="Read /api/clock and /api/schedule keyless instead"),
+    frozen_at: float | None = typer.Option(None, "--frozen-at", help="Treat the clock as closed at this game hour"),
+    at: str | None = typer.Option(None, "--at", help="The wall time to plan from (ISO 8601; default: now)"),
+    teams: int = typer.Option(18, "--teams", help="Teams in the duel round-robin"),
+    as_json: bool = typer.Option(False, "--json", help="Print the timeline as JSON"),
+) -> None:
+    """Every scheduled event in game hours and Madrid time: `resume` and `jump` columns while closed, `live` open.
+
+    Read-only: files by default; `--from-api` makes two keyless GETs. No team key, nothing written.
+    """
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from bazaar_agent import timeline as tl
+
+    now = datetime.fromisoformat(at) if at else datetime.now(ZoneInfo("Europe/Madrid"))
+    clock_doc: Any
+    if from_api:
+        api = public_client(load_settings())
+        clock_doc, sched_doc, source = api.clock(), api.schedule(), "api"
+    else:
+        clock_doc, sched_doc = tl.load(Path(clock_file)), tl.load(Path(schedule))
+        source = f"{Path(schedule).name} + {Path(clock_file).name}"
+    if frozen_at is not None:
+        clock_doc = tl.frozen(clock_doc, frozen_at, now)
+    events, days = tl.parse_events(sched_doc), tl.parse_days(clock_doc)
+    found = tl.anchors(clock_doc, events, now)
+    rows = tl.timeline(events, days, found, teams)
+    if as_json:
+        typer.echo(json.dumps(tl.as_dict(rows, found, source), indent=2, ensure_ascii=False))
+        return
+    anchored = ", ".join(f"{a.name}: h{a.t_hours:g} = {a.wall:%a %H:%M}" for a in found)
+    typer.echo(f"{source} · {anchored}")
+    for line in tl.render(rows, found):
+        typer.echo(line)
 
 
 @app.command()
