@@ -82,7 +82,7 @@
       "when": "all day",
       "question": "Is this a safe moment to merge?",
       "check": "a merge to main touching src/**, GUARDRAILS.md, STRATEGY.md, RUNTIME.md, uv.lock, pyproject.toml, vendor/bazaar-kit/**, questions/** or .railway/** redeploys bazaar-duels, bazaar-taker and bazaar-maker (.railway/railway.py watchPatterns)",
-      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (on #61 -> #68) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE); on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5)",
+      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (now contains #61 + #68; merge commit, never #61 alone, close #68 by hand) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE); on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5)",
       "owner": "Marius"
     },
     {
@@ -153,7 +153,7 @@
       "service": "broker",
       "command": "while true; do uv run bazaar broker run --live --bench-policy edge --read-offset 0.5; sleep 2; done",
       "params": "#71 + #84 + #92; only once a board venue is open",
-      "note": "a board venue whose broker is down scores 0 in that session (B2: break-even ~6 % downtime)"
+      "note": "a board venue whose broker is down scores 0 in that session (B2: break-even ~6 % downtime); with #71's current head merged the Railway maker's VenueKeeper runs the broker (exact) itself: never start this laptop loop as well (two brokers on one key, r1)"
     }
   ],
   "unscheduled": [
