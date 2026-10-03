@@ -6,7 +6,8 @@ The target is a feature flag over two hardcoded URLs, decided here and nowhere e
 - `BAZAAR_SIM` unset or 0 → the real game, https://bazaar.causaprima.ai, with `BAZAAR_KEY`.
 - `BAZAAR_SIM=1` → the simulator (`bazaar-sim`, README "Simulator") with `BAZAAR_SIM_KEY`
   (default `sim-team1`). The real `BAZAAR_KEY` is not even read in this mode.
-- `BAZAAR_SIM=local` → the same, against `uv run bazaar-sim serve` on this laptop (127.0.0.1:8765).
+- `BAZAAR_SIM=local` → the same, against `uv run bazaar-sim serve` on this laptop (127.0.0.1:8765, or the
+  port in `BAZAAR_SIM_PORT` when several simulators share the laptop).
 - `BAZAAR_URL` is gone: set, it fails fast (a free-form URL is how a real key reaches a wrong host).
 - Guards on top: a `sim-...` key never reaches the real host, and only a `sim-...` key reaches the
   simulator; the key is refused before any request.
@@ -193,7 +194,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
     simulated = flag != "real"
     data = {
         "simulated": simulated,
-        "bazaar_url": {"real": DEFAULT_URL, "sim": SIM_URL, "local": LOCAL_SIM_URL}[flag],
+        "bazaar_url": {"real": DEFAULT_URL, "sim": SIM_URL, "local": local_sim_url(pick("BAZAAR_SIM_PORT"))}[flag],
         # Against the simulator the real key is never loaded at all, so nothing can send it there.
         "bazaar_key": (pick("BAZAAR_SIM_KEY") or DEFAULT_SIM_KEY) if simulated else pick("BAZAAR_KEY"),
         "typesafe_api_key": pick("TYPESAFE_API_KEY"),
@@ -215,6 +216,16 @@ def load_settings(env_file: Path | None = None) -> Settings:
         data["database_url"] = sim_db
         data["sim_database"] = not same_database(str(sim_db), str(real_db))  # not the real one, respelled
     return Settings.model_validate(data)
+
+
+def local_sim_url(port: str | None) -> str:
+    """BAZAAR_SIM=local's address: 127.0.0.1, port 8765 unless BAZAAR_SIM_PORT names another (one laptop, several
+    workers' simulators). Always loopback: the port is the only part that moves, and only for BAZAAR_SIM=local."""
+    if port is None:
+        return LOCAL_SIM_URL
+    if not port.isdigit() or not 1024 <= int(port) <= 65535:
+        raise ConfigError("BAZAAR_SIM_PORT must be a port number from 1024 to 65535 (the laptop simulator's port).")
+    return f"http://127.0.0.1:{int(port)}"
 
 
 def sim_flag(raw: str | None) -> str:

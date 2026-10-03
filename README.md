@@ -91,7 +91,9 @@ raises on any non-loopback connection before a packet leaves (a dead proxy backs
    ```
 
    (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
-   answers there, a `bazaar-sim serve` or the MCP server: stop it first.)
+   answers there, a `bazaar-sim serve` or the MCP server: stop it first. When several simulators share
+   one laptop, `BAZAAR_SIM_PORT=8817` moves both the smoke and `BAZAAR_SIM=local` to another loopback
+   port.)
 4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
    token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
    never lands in your shell history:
@@ -682,6 +684,35 @@ uv run bazaar learnings --lessons --save          # ...and upsert + embed them, 
 uv run bazaar learnings --query "open a thread with chato to buy LAV-08; his ask 33" --json
 ```
 
+### Hard dealers: the per-dealer plan and dealer finals (N14a)
+
+Each dealer buy is planned from what the learner recalled. The inputs are the ladder policy (a
+`learnings` row), the dealer's curve (its patience, its opening ask, a bid it ignored) and the
+blockers. The `dealer_open`, `dealer_bid` and `dealer_accept` rows say which learning changed the bid
+(`changed_by`) and which lessons were recalled for that dealer (`recalled`). Neither key is on the
+public `/state`.
+
+A dealer's final offer is its limit: refuse it and the dealer walks. `dealer_final_lift` in
+GUARDRAILS.md (0 = today) lets the desk take a final on a card, or bid exactly at it, up to the rarity
+cap × (1 + lift). The price is never above our value minus `min_buy_surplus`, never above what the cash
+floor and the hourly spend still allow, and never on packs. Our own bids still never pass the cap.
+
+With the lift on, two things change:
+- **The patience play.** The ladder starts low enough that the final arrives before our bids run
+  out: step 1, the dealer's median patience + 3 distinct bids, at least 9.
+- **The pricier dealer gets a thread too.** The strategy also offers the pricier dealer for a card
+  (`level_ladder`), because the ladder scores each level's best three deals. El Chato is level 2,
+  and his uncommon fills (28-32) sit above our cap of 26.
+
+```sh
+uv run bazaar dealer finals                         # replay the captured feed under lifts 0 / 0.15 / 0.25
+uv run bazaar dealer finals --lift 0.15 --dealer chato --threads   # which conversations each lift closes
+BAZAAR_SIM_PORT=8818 uv run python scripts/sim_dealers.py --dealer chato --lift 0 --lift 0.15 --lift 0.25
+```
+
+`scripts/sim_dealers.py` is the proof per dealer: a fresh in-memory simulator for each lift, and our
+live taker against it.
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -1139,14 +1170,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
+- [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
 - [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
 - [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 - [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
 - [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
 - [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
 - [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
-- [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
-- [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
 
 <!-- BAZAAR:STATUS:END -->
 
