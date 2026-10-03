@@ -110,7 +110,6 @@ negotiates well.
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 worker (first version before Duels I) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 worker (before Sat 08:30) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
-| N18 (new) | **Lean agent-behaviour tracing in Phoenix** (ADR 0001, PR #46 by Jhonny; his stacked PRs 1-4 were never opened, so this is the lean take-over): `session.id`, Jev EVALUATOR spans, AGENT span per agent tick + TOOL spans, LLM spans, pitch-replay recipe | 1 | 🔵 worker; merge in the afternoon window after Duels I (11:30); spec [`N18-spec.md`](./N18-spec.md) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
@@ -176,6 +175,18 @@ Files: `src/bazaar_agent/agents/status.py`, `tests/test_status.py`, `docs/servic
 - Step 4 — docs drift in `docs/services.md` and README. · Left open (low): rows are published before the send.
 
 ---
+
+### N18 — Lean agent-behaviour tracing in Phoenix
+Spec: [`N18-spec.md`](./N18-spec.md) over ADR 0001 (`docs/adr/0001-agent-behavior-tracing.md`, PR #46). The backlog
+table row for N18 is on PR #124. Files: `telemetry.py`, `traces.py`, `llm/traced.py`, `agents/{dealer,runtime,duel_jev}.py`,
+`cli.py`, `docs/observability.md`, `tests/test_tracing_n18.py`.
+- Step 1 — `session.id` (contextvar + explicit) on dealer, duel and loop spans. · **Acceptance:** session tests.
+- Step 2 — Jev calls as EVALUATOR spans (`record_jev`), no state. · **Acceptance:** evaluator test.
+- Step 3 — AGENT span per agent tick, TOOL span per request sent. · **Acceptance:** tool and recorder tests.
+- Step 4 — LLM spans (`TracedProvider`), text only for `words`. · **Acceptance:** llm span tests.
+- Step 5 — evals (#91) as annotations: not done (list in `docs/observability.md`).
+- Step 6 — `docs/observability.md` pitch replay. · **Invariants:** on/off parity (fake client + `sim_smoke`), dead
+  exporter, no private number in any span (8 seeds).
 
 ## Parallel-work notes
 
