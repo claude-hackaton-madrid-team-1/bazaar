@@ -762,6 +762,10 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
   plan's task index, in the same hook and CI job. Git hooks and CI cannot publish claude.ai artifacts, so
   after every merge that changes `docs/architecture.html`, the coordinator republishes it to
   https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39.
+- **Every PR is reviewed before it merges (Greptile is disabled):** run `/pr-review <PR number>`. The
+  `pr-reviewer` sub-agent merges the PR onto current `main` in a scratch worktree, runs the gate, and posts
+  a P0-P3 verdict on the PR. Fix every P0 and P1, re-run until it says APPROVE, then ask for the merge.
+  Run `sh scripts/sync-ai-docs.sh` once per clone or worktree so your tool sees the agent and the command.
 - **Backlog:** GitHub issues are the source of truth; the plan mirrors them.
 - **Never** push from an agent, never commit `.env`, one team key only.
 
@@ -843,6 +847,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
 - [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
 - [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
 - [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
@@ -850,7 +855,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
 - [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
 - [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
-- [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -303,3 +303,10 @@ it `preserve()` (no value in the file). PR #55 does that for BAZAAR_LIVE and kee
 `BAZAAR_SIM=1 uv run bazaar status` talks to the simulator with `BAZAAR_SIM_KEY` (default sim-team1);
 unset is the real game with `BAZAAR_KEY`. `BAZAAR_URL` makes every command stop: delete it from `.env`.
 
+
+### [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
+From 2026-10-03 ~02:15 Greptile answered "reached the 50-credit limit for trial accounts" and stopped
+reviewing new heads. Omar disabled it. Every PR now runs `/pr-review <n>` (`.ai/agents/pr-reviewer.md`):
+a fresh-context sub-agent that merges the PR onto current main, runs the gate and posts a P0-P3 verdict.
+Tonight's manual reviews in that shape caught a test that only failed after merging with main (#62) and
+leaks of our limits on the public `/state` (#69).

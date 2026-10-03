@@ -7,6 +7,7 @@ Specialist personas that play a single role with a single perspective. Each pers
 | [code-reviewer](code-reviewer.md) | Senior Staff Engineer | Five-axis review before merge |
 | [security-auditor](security-auditor.md) | Security Engineer | Vulnerability detection, OWASP-style audit |
 | [test-engineer](test-engineer.md) | QA Engineer | Test strategy, coverage analysis, Prove-It pattern |
+| [pr-reviewer](pr-reviewer.md) | Bazaar PR gate (replaces Greptile) | One PR vs current main: gate, P0-P3 findings, verdict posted on the PR (`/pr-review`) |
 | [performance-reviewer](performance-reviewer.md) | Performance Engineer | Hot-path / allocation / query-cost review (3rd seat in `/consensus-review`) |
 
 ## How personas relate to skills and commands
