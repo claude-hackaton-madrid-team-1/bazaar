@@ -270,9 +270,13 @@ class RivalView:
         return base + (self.days_weight or 0.0) * days if self.two_issues else base
 
     def days(self) -> int:
-        """The rival's delivery day: the end of the range that suits it (`duels._rival_days`)."""
+        """The rival's delivery day: the end of the range that suits it (`duels._rival_days`). A `days_fixed`
+        parameter (0-10) makes it days-blind: it always sends that day, though it still values days by its weight."""
         if not self.two_issues:
             return 0
+        fixed = self.params.get("days_fixed", -1)
+        if 0 <= fixed <= 10:
+            return int(fixed)
         weight = self.days_weight or 0.0
         return 10 if weight > 0 else 0 if weight < 0 else 5
 
