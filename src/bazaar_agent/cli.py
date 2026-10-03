@@ -178,6 +178,83 @@ def timeline_cmd(
         typer.echo(line)
 
 
+HEALTH_OPTION = typer.Option(
+    None, "--health", help="name=url of an agent's GET /health (repeatable; default: taker and maker on Railway)"
+)
+
+
+@app.command("cockpit")
+def cockpit_cmd(
+    watch: bool = typer.Option(False, "--watch", help="Refresh every --every-ticks ticks, mid-tick (Ctrl-C stops)"),
+    every_ticks: int = typer.Option(2, "--every-ticks", min=1, help="With --watch: ticks between refreshes"),
+    no_key: bool = typer.Option(False, "--no-key", help="Keyless reads only (no /me, offers, threads, duels)"),
+    plays: str = typer.Option(
+        str(REPO_ROOT / "docs/night/saturday-plays.json"), "--plays", help="The playbook's plays JSON (B6)"
+    ),
+    health: list[str] | None = HEALTH_OPTION,
+    as_json: bool = typer.Option(False, "--json", help="Print the panels as JSON"),
+) -> None:
+    """Saturday's operator screen, read-only: clock, next playbook events, cash vs floor, ledger, agents, caps,
+    duels, ladder, Market Test, alerts.
+
+    Each refresh: 3 keyless game reads, 4 reads with the team key (none with --no-key), one GET /health per agent,
+    read-only Postgres. Nothing is ever sent to the game.
+    """
+    import functools
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from bazaar_agent import cockpit as ck
+    from bazaar_agent.monitor import read_alerts
+    from bazaar_agent.ticks import seconds_until_next_tick
+
+    settings = load_settings()
+    loaded = _rules()
+    plays_doc = json.loads(Path(plays).read_text(encoding="utf-8")) if Path(plays).is_file() else None
+    urls = dict(h.split("=", 1) for h in health or [] if "=" in h) or dict(ck.HEALTH_URLS)
+    madrid = ZoneInfo("Europe/Madrid")
+
+    def snapshot() -> tuple[list[ck.Panel], ck.Reads]:
+        reads = ck.Reads(now=datetime.now(madrid), plays=plays_doc)
+        pub = public_client(settings)
+        sources: dict[str, Callable[[], Any]] = {"clock": pub.clock, "schedule": pub.schedule, "dealers": pub.dealers}
+        if not no_key:
+            try:
+                team = team_client(settings)
+                sources.update(me=team.me, offers=team.my_offers, threads=team.my_threads, duels=team.duels)
+            except ConfigError as e:
+                reads.errors.update({k: str(e) for k in ("me", "offers", "threads", "duels")})
+        for name, url in urls.items():
+            sources[f"health:{name}"] = functools.partial(ck.get_json, url)
+        sources["alerts"] = lambda: read_alerts(settings.data_dir / "alerts.jsonl", 5)
+        ck.read_each(reads, sources)
+        clock_now = reads.clock or {}
+        try:
+            reads.ledger = ck.read_ledger(
+                settings.data_dir, int(clock_now.get("tick") or 0), float(clock_now.get("t_hours") or 0.0)
+            )
+        except Exception as e:  # the other panels still render
+            reads.errors["ledger"] = f"{type(e).__name__}: {e}"[:200]
+        paused = (REPO_ROOT / loaded.rules.pause_file).exists()
+        return ck.build(reads, ck.limits_from(loaded.rules, paused)), reads
+
+    while True:
+        panels, reads = snapshot()
+        if as_json:
+            typer.echo(json.dumps(ck.as_dict(panels), indent=2, ensure_ascii=False))
+        else:
+            if watch:
+                console.clear()
+            for line in ck.render(panels, reads.now):
+                typer.echo(line)
+        if not watch:
+            return
+        c = Clock.model_validate(reads.clock) if reads.clock else None
+        tick_s = c.tick_seconds if c else 30.0
+        wait = seconds_until_next_tick(c) if c else 30.0
+        time.sleep(min(300.0, wait + tick_s * (every_ticks - 1) + tick_s / 2))  # mid-tick: off the tick-edge burst
+
+
 @app.command()
 def dealers() -> None:
     """Dealers in play: traits, menu, list prices, hourly quotas."""

@@ -888,6 +888,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 |---|---|
 | `uv run bazaar clock` | Current tick, pace, doors, per-tick limits and the action budget left in this tick. |
 | `uv run bazaar timeline` | Every scheduled event in game hours and Madrid time: `resume` and `jump` columns while closed, `live` open. |
+| `uv run bazaar cockpit` | Saturday's operator screen, read-only: clock, next playbook events, cash vs floor, ledger, agents, caps, |
 | `uv run bazaar dealers` | Dealers in play: traits, menu, list prices, hourly quotas. |
 | `uv run bazaar tape` | Every settlement (trade print): who bought what from whom, at what price. |
 | `uv run bazaar curves` | Dealer concession curves rebuilt from every team's public threads; ours are tagged. |
