@@ -14,6 +14,7 @@ from bazaar_agent.agents.dealer import BidPlan, Negotiation
 from bazaar_agent.agents.desk import Conversation
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask
 from tests.bites.kit import at, make_taker, standing_thread_bids, thread_bid
+from tests.bites.strictness import STRICT
 
 FLOOR = 270
 
@@ -22,7 +23,7 @@ def _accepted_totals(team, prices):
     return sum(prices[s[1]] for s in team.sent if s[0] == "accept")
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
 def test_a2a_a_board_accept_and_a_dealer_bid_in_the_same_tick_keep_the_cash_floor(tmp_path):
     """Same tick: the taker accepts LAV-02 on El Rastro (10 + fee 2 = 12) and then opens abuela for
     LAV-08 and bids 18. /me was read before the accept, so the bid's check must still count the 12."""
@@ -50,7 +51,7 @@ def _two_threads(team, t, *, a_price):
     t.convs = {"abuela": a, "chato": b}
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
 def test_a2b_standing_thread_bids_together_stay_within_max_spend_per_game_hour(tmp_path):
     """Both dealers may take our bids at the same boundary. The ledger books a thread bid only when its
     deal settles, so the spend check must add the bids still standing in our threads."""
@@ -63,7 +64,7 @@ def test_a2b_standing_thread_bids_together_stay_within_max_spend_per_game_hour(t
     assert worst <= 30, f"if both dealers take our bids {standing}, spend {worst} > max_spend_per_game_hour 30"
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X7: main only; fixed by #72 (drop the marker when it merges)")
 def test_a2c_standing_thread_bids_together_keep_the_cash_floor(tmp_path):
     """Same two threads, cash-bound. Across ticks /api/me/offers lists our thread bids, so they count;
     within the tick, abuela's new 21 replaces her old 20 and chato's check must see 21, not 20."""
@@ -91,7 +92,7 @@ def test_a2c_cross_tick_standing_bids_keep_the_cash_floor(tmp_path):
     assert team._me["cash"] - sum(standing.values()) >= FLOOR, f"{standing} breach the floor"
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X18: main and #72 (settlement lag)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X18: main and #72 (settlement lag)")
 def test_a2d_an_accept_from_the_previous_tick_still_settling_counts_against_the_floor(tmp_path):
     """Server-timing dependent. Tick T accepts LAV-02 (12). If /api/me at T+1 does not yet show the
     settlement (cash not debited, card not held), a second accept (LAV-08, 20 + fee 2 = 22) must still see

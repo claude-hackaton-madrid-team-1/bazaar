@@ -1,4 +1,4 @@
-# Duel bite tests (r2 X5/B1-B6) that FAIL on origin/main: strict xfails via conftest.py.
+# Duel bite tests (r2 X5/B1-B6) that FAIL on origin/main (+ v2-only ones failing on #86): xfails via conftest.py.
 # A fix makes one XPASS (strict → error): delete its line here. One pytest node id per line.
 tests/bites/test_b1_two_issue_days.py::test_duel_run_never_sends_a_two_issue_offer_outside_the_limit
 tests/bites/test_b1_two_issue_days.py::test_jev_counter_is_legal_only_inside_the_limit_after_days
@@ -35,3 +35,6 @@ tests/bites/test_b4_skipped_ticks.py::test_an_inside_limit_offer_is_taken_despit
 tests/bites/test_b6_restart_mid_duel.py::test_duel_run_restart_changes_nothing[v1]
 tests/bites/test_b6_restart_mid_duel.py::test_duel_run_restart_end_to_end
 tests/bites/test_b6_restart_mid_duel.py::test_v1_after_a_restart_never_retreats_from_our_standing_offer
+# v2-only (skipped on main, fail on #86 @ 4417c54: B4 skipped ticks hit v2 too)
+tests/bites/test_b4_skipped_ticks.py::test_an_inside_limit_offer_is_taken_despite_skipped_ticks[v2-ticks0-135-two ticks skipped (D-2, D-1), D-1 settles as in the sim]
+tests/bites/test_b4_skipped_ticks.py::test_an_inside_limit_offer_is_taken_despite_skipped_ticks[v2-ticks1-134-one tick skipped (D-2), D-1 does NOT settle (unverified)]

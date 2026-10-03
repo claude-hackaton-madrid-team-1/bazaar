@@ -23,6 +23,7 @@ from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.guardrails import Ledger
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, clock, parts
+from tests.bites.strictness import STRICT
 
 SUNDAY_TICK_S = 15.0
 PR78_TAKER_CEILING = 16  # rate_budget.taker(): 4 reads + 3 per dealer thread (3) + fresh clock, accept, cancel
@@ -97,7 +98,7 @@ def test_taker_keyed_calls_per_tick_with_three_dealer_threads_fit_pr78_ceiling(t
     assert keyed <= PR78_TAKER_CEILING
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X6e: one keyed clock read per proposal after a lost race")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X6e: one keyed clock read per proposal after a lost race")
 def test_taker_rereads_the_clock_once_per_proposal_when_it_loses_the_reservation_race(tmp_path):
     """`_accept` loops over every ranked proposal; `_accept_one` calls `_fresh_tick` (GET /api/clock with
     the key) BEFORE `reserve_accept`. When another process holds the slot (`accepts_in_tick` read 0 at the
@@ -129,7 +130,7 @@ class RateLimitedAccept(FakeTeam):
         raise BazaarError("rate_limited", "more than 5 requests per second", 429)
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X20: a 429 accept keeps the reserved accept slot")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X20: a 429 accept keeps the reserved accept slot")
 def test_a_rate_limited_accept_does_not_burn_the_teams_accept_slot(tmp_path):
     """RULES: a refused request 'costs nothing and moves nothing'. A 429 `rate_limited` accept never
     reached the quota, yet `Recorder.send` returns None and `_accept_one` returns True ('an accept that may
@@ -164,7 +165,7 @@ def _team_client():
     return sdk.team_client(settings)
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X6c: the SDK re-sends 429-refused calls (GET and POST) x3")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X6c: the SDK re-sends 429-refused calls (GET and POST) x3")
 def test_sdk_sends_a_429_refused_call_up_to_three_times(monkeypatch):
     """team_client: retries=2. A 429 is an HTTPError, so it is retried for GET AND POST (the
     'never repeat a write' guard covers only the network branch), after 0.25 s and 0.5 s."""
@@ -186,7 +187,7 @@ def test_sdk_sends_a_429_refused_call_up_to_three_times(monkeypatch):
     assert Counter(sent) == Counter({"GET": 1, "POST": 1}), "each refused call was re-sent (x3) into a full bucket"
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X2: one hung keyed GET blocks 46.5 s (15 s timeout x3)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X2: one hung keyed GET blocks 46.5 s (15 s timeout x3)")
 def test_one_hung_keyed_read_fits_inside_a_sunday_tick(monkeypatch):
     """team_client keeps the SDK's 15 s timeout and retries a GET network error twice (0.5 s, 1 s)."""
     now = _fake_time(monkeypatch)

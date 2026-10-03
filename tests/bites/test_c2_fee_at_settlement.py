@@ -14,11 +14,13 @@ import pytest
 from bazaar_agent.agents.market import venues_from
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates
 from bazaar_agent.guardrails import Guardrails
-from bazaar_sim import market
 from tests.agent_fakes import RASTRO, TICK, FakePublic, FakeTeam, ask, clock, parts
-from tests.simkit import manual_world
+from tests.bites.strictness import STRICT
 from tests.test_strategy import PARAMS
 from tests.test_strategy import market as strategy_market
+
+market = pytest.importorskip("bazaar_sim.market")  # branches cut before the simulator landed skip
+manual_world = pytest.importorskip("tests.simkit").manual_world
 
 US, THEM = "t01", "t02"
 OLD = {"fee_bps": 0, "fee_per_card": 0}
@@ -63,7 +65,7 @@ def test_sim_charges_the_accept_time_fee_when_the_change_takes_effect_on_the_set
     assert paid == 12 + old_fee
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X8b: the sim rounds fees half-to-even, the tape ceils")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X8b: the sim rounds fees half-to-even, the tape ceils")
 def test_sim_fee_rounding_matches_the_tape_the_agents_are_calibrated_on():
     """agents/market.py: El Rastro charged 5 on a 65 P trade (tape, 2026-10-02): ceil(3.25 + 1) = 5.
     The simulator uses round(): round(3.25) + 1 = 4, and round(0.5) = 0 (banker's) on a 10 P trade."""
@@ -77,14 +79,14 @@ def test_sim_fee_rounding_matches_the_tape_the_agents_are_calibrated_on():
 # ---------------------------------------------------------------- the taker: does it see the pending fee?
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X8: Venue drops pending_fee")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X8: Venue drops pending_fee")
 def test_venues_from_keeps_the_announced_fee():
     (v,) = [v for v in venues_from({"venues": [rival_venue()]}) if v.id == "v07"]
     print("Venue:", v)
     assert v.fee(10) >= 6, "Venue drops `pending_fee`: fee(10) is today's 0, not the 6 that applies from T+1"
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X8: the taker prices asks at today's fee")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X8: the taker prices asks at today's fee")
 def test_taker_prices_an_ask_with_the_fee_in_force_when_it_settles():
     """A common LAV-02 ask at 10 on a venue at 0 fee whose capped fee (10 % + 5 P) is effective at T+1.
     If the server charges the fee in force at settlement: 10 + 6 = 16 > max_price_common 12."""
@@ -99,7 +101,7 @@ def test_taker_prices_an_ask_with_the_fee_in_force_when_it_settles():
     assert all(c.total >= 16 for c in cands) or not cands, why
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X8: accept past max_price_common once the announced fee applies")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X8: accept past max_price_common once the announced fee applies")
 def test_taker_dry_run_would_accept_past_max_price_common_after_fees(tmp_path):
     """End to end on the taker (dry run): the guardrail sees ask + today's fee (10 <= 12) and approves."""
     team = FakeTeam()

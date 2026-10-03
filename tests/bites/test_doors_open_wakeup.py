@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bazaar_agent.ticks import Clock, run_per_tick, seconds_until_next_tick
+from tests.bites.strictness import STRICT
 
 
 def closed_clock(opens_in_s: float) -> dict:
@@ -28,12 +29,12 @@ def closed_clock(opens_in_s: float) -> dict:
     }
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X4: the closed-doors poll ignores next_opens (300 s)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X4: the closed-doors poll ignores next_opens (300 s)")
 def test_closed_doors_sleep_ends_at_the_next_opening():
     assert seconds_until_next_tick(Clock.model_validate(closed_clock(opens_in_s=20))) <= 21
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X4: the first Saturday tick is handled up to 300 s late")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X4: the first Saturday tick is handled up to 300 s late")
 def test_the_loop_wakes_for_the_opening_tick():
     reads = [closed_clock(opens_in_s=1), {**closed_clock(0), "doors": "open", "tick": 160, "next_tick_in": 29.0}]
     slept: list[float] = []

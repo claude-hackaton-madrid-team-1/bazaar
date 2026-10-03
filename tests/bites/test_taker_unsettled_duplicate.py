@@ -12,10 +12,11 @@ Strict xfail: passes once recent accepts count as held (then drop the marker).
 import pytest
 
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, clock
+from tests.bites.strictness import STRICT
 from tests.test_taker import at, taker
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X18: an unsettled accept is not counted as held; a duplicate is bought")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X18: an unsettled accept is not counted as held; a duplicate is bought")
 def test_a_card_accepted_last_tick_is_not_bought_again_before_it_settles(tmp_path):
     team = FakeTeam()
     public = FakePublic(boards={"rastro": [ask(2, "LAV-08", 20, asset=901), ask(3, "LAV-08", 21, asset=902)]})

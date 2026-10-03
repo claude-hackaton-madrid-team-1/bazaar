@@ -18,11 +18,12 @@ import pytest
 from bazaar_agent.agents.taker import TakerConfig
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.ticks import AFTER_TICK_S
+from tests.bites.strictness import STRICT
 
 DUELS_READ_S = 0.2  # one GET /api/duels from Railway; optimistic
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X17: taker grace (2 s) < duel loop's worst time to book its accept")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X17: taker grace (2 s) < duel loop's worst time to book its accept")
 @pytest.mark.parametrize("tick_seconds", [30.0, 15.0])
 def test_the_taker_waits_longer_than_the_duel_loop_can_take_to_book_its_accept(tick_seconds):
     grace = min(TakerConfig().duel_grace_s, tick_seconds * 0.15)  # Taker._duel_grace

@@ -12,6 +12,7 @@ import pytest
 
 from tests.agent_fakes import TICK, FakePublic, FakeTeam
 from tests.bites.kit import at, dealer_took_our_bid, make_taker, thread_bid
+from tests.bites.strictness import STRICT
 
 
 def _old_process_opens_and_bids(tmp_path, team):
@@ -31,7 +32,7 @@ def _old_process_opens_and_bids(tmp_path, team):
     "restart",
     [
         pytest.param(False, id="same-process(control)"),
-        pytest.param(True, id="after-restart", marks=pytest.mark.xfail(strict=True, reason="BITE X3: main and #72")),
+        pytest.param(True, id="after-restart", marks=pytest.mark.xfail(strict=STRICT, reason="BITE X3: main and #72")),
     ],
 )
 def test_a1_dealer_deal_on_a_thread_from_before_a_restart_is_booked_as_spend(tmp_path, restart):
@@ -48,7 +49,7 @@ def test_a1_dealer_deal_on_a_thread_from_before_a_restart_is_booked_as_spend(tmp
     )
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X3: orphan threads after a restart, main and #72")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X3: orphan threads after a restart, main and #72")
 def test_a1_an_open_thread_from_a_previous_process_is_adopted_or_closed(tmp_path):
     """A fresh process that finds our own open dealer thread must drive it (read it every tick) or close
     it; leaving it alone blocks that dealer and one of the team's thread slots until the dealer idles it

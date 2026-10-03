@@ -1,7 +1,7 @@
 """Mark the duel bite tests that fail on main as strict xfails, from `known_bites_main.txt`.
 
 Those tests are parametrized across payload shapes and policies, so the list names exact node ids instead
-of decorators. A fix makes a listed test XPASS, and strict turns that into a failure: delete its line.
+of decorators. A fix makes a listed test XPASS; with BITES_STRICT=1 that is a failure: delete its line.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+from tests.bites.strictness import STRICT
 
 KNOWN = Path(__file__).with_name("known_bites_main.txt")
 
@@ -22,4 +24,4 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     known = _known()
     for item in items:
         if item.nodeid in known:
-            item.add_marker(pytest.mark.xfail(strict=True, reason="BITE (duels): fails on main, see _night/BITES.md"))
+            item.add_marker(pytest.mark.xfail(strict=STRICT, reason="BITE (duels): fails on main, see _night/BITES.md"))

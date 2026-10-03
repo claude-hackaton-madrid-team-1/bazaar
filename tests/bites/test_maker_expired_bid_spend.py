@@ -12,6 +12,7 @@ The tests are strict xfails: they pass when the bug is fixed (then drop the mark
 import pytest
 
 from bazaar_agent.ticks import Clock
+from tests.bites.strictness import STRICT
 from tests.test_maker import NoAccept, maker, posted
 
 SUNDAY_TICK_S = 15.0
@@ -24,7 +25,7 @@ def sunday(tick: int, t0: int, h0: float) -> Clock:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X15: expired bids are never refunded; reposts book the spend again")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X15: expired bids are never refunded; reposts book the spend again")
 def test_one_standing_bid_reposted_after_expiry_counts_once_in_the_hour(tmp_path):
     team = NoAccept()  # the strategy's one bid target: LAV-09 at 65 (plus two asks)
     m, _ = maker(tmp_path, team, live=True)
@@ -37,7 +38,7 @@ def test_one_standing_bid_reposted_after_expiry_counts_once_in_the_hour(tmp_path
     assert m.ledger.spent_since(now.t_hours - 1.0) == 65
 
 
-@pytest.mark.xfail(strict=True, reason="BITE X15: phantom spend from expired bids blocks the repost (and every buy)")
+@pytest.mark.xfail(strict=STRICT, reason="BITE X15: phantom spend from expired bids blocks the repost (and every buy)")
 def test_the_bid_target_stays_on_the_board_all_hour(tmp_path):
     team = NoAccept()
     m, lines = maker(tmp_path, team, live=True)

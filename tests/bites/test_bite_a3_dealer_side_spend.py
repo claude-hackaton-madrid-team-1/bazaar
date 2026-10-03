@@ -11,6 +11,7 @@ import pytest
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam
 from tests.bites.kit import at, dealer_took_our_bid, make_taker
+from tests.bites.strictness import STRICT
 
 
 def _spend_rows(ledger):
@@ -52,10 +53,10 @@ class _LostReply(FakeTeam):
         pytest.param(
             True,
             id="thread-shows-settled-offer",
-            marks=pytest.mark.xfail(strict=True, reason="BITE X7c: main; fixed by #72"),
+            marks=pytest.mark.xfail(strict=STRICT, reason="BITE X7c: main; fixed by #72"),
         ),
         pytest.param(
-            False, id="thread-without-offer", marks=pytest.mark.xfail(strict=True, reason="BITE X7c: main and #72")
+            False, id="thread-without-offer", marks=pytest.mark.xfail(strict=STRICT, reason="BITE X7c: main and #72")
         ),
     ],
 )
@@ -75,10 +76,10 @@ def test_a3_dealer_takes_a_bid_whose_reply_was_lost_is_still_booked(tmp_path, of
         pytest.param(
             True,
             id="thread-shows-settled-offer",
-            marks=pytest.mark.xfail(strict=True, reason="BITE X7c: main; fixed by #72"),
+            marks=pytest.mark.xfail(strict=STRICT, reason="BITE X7c: main; fixed by #72"),
         ),
         pytest.param(
-            False, id="thread-without-offer", marks=pytest.mark.xfail(strict=True, reason="BITE X7c: main and #72")
+            False, id="thread-without-offer", marks=pytest.mark.xfail(strict=STRICT, reason="BITE X7c: main and #72")
         ),
     ],
 )
