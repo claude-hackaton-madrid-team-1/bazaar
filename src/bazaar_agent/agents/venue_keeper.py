@@ -330,6 +330,18 @@ class VenueKeeper:
             return False
         return any(v.id == venue and v.owner == snap.us and not v.starter and not v.house for v in snap.venues)
 
+    def _bench_books(self, venue: str) -> Any:
+        """The Market Test book recorder of our broker: Postgres `bench_books` for the real game (its own short
+        connection, off the tick), the JSONL alone on a simulator or without a DATABASE_URL."""
+        from bazaar_agent import db
+        from bazaar_agent.agents.bench_capture import BenchBooks
+        from bazaar_agent.holdings import scope_of
+
+        connect = (
+            None if self.settings.simulator else (lambda: db.connect(app="bazaar-bench-books", connect_timeout_s=3))
+        )
+        return BenchBooks(connect, self.stats_dir, self.log, world=scope_of(self.settings).world, venue=venue)
+
     def _broker_tick(self, venue: str, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
@@ -354,6 +366,7 @@ class VenueKeeper:
                 stats_dir=self.stats_dir,
                 config=self.broker_config,
                 hub=self.hub,
+                books=self._bench_books(venue),
             )
             self._broker = (venue, agent)
             self.log(

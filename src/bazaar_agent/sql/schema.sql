@@ -349,6 +349,16 @@ create table if not exists leaderboard_snapshots (
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
 
+-- The Market Test bench book as the broker read it, one row per raw bench offer per tick (`agents/bench_capture.py`):
+-- arrivals, lifetimes and the relax curve can be read off it. `offer` keeps every field the server sent.
+-- `world`: "real" (the simulator writes only its JSONL). `quote`: a seller's ask or a buyer's bid.
+create table if not exists bench_books (
+  world text not null, run text not null, tick int not null, offer_id text not null,
+  side text not null check (side in ('sell','buy')), quote int, venue text, fee_bps int, fee_per_card int,
+  offer jsonb not null, read_at timestamptz not null default now(),
+  primary key (world, run, tick, offer_id));
+create index if not exists bench_books_run_tick on bench_books (run, tick);
+
 -- Other teams' set multipliers (AF1, `team_affinity.py`): what a team SAID in a team thread (untrusted words,
 -- parsed; `quote` is their scrubbed message, at most 200 characters) and what we INFERRED from the feed
 -- (`affinity.affinity_map`: the likeliest multiplier and its probability). One row per team, set and source.
