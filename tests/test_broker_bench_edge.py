@@ -201,3 +201,36 @@ def test_a_closed_session_is_forgotten_by_the_edge(tmp_path):
     broker.bench = []
     a.on_tick(clock(tick=101))
     assert a.edge.models == {}
+
+
+def _probe(tmp_path, monkeypatch, *args, allow=False, refuse=()):
+    broker = ClockedBroker(bench=[bench_sell("b5-0", 62), bench_buy("b5-1", 58)], refuse=refuse)
+    settings = Settings(data_dir=tmp_path, team_id="t01", broker_key=SecretStr("simbk-test-only-key"))
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(vn, "broker_client", lambda s: broker)
+    monkeypatch.setattr(cli, "_db_connect", lambda app: None)
+    rule = "true" if allow else "false"
+    monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(f"- `allow_venue_open` = {rule} — test"))
+    return broker, CliRunner().invoke(cli.app, ["broker", "probe", *args])
+
+
+def test_cli_broker_probe_is_a_dry_run_by_default(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "b5-0", "b5-1", "60", allow=True)
+    assert result.exit_code == 0, result.output
+    assert "DRY RUN" in result.output and broker.sent == []
+    (decision,) = [d for d in rows(tmp_path) if "reason" in d]
+    assert decision["move"] == {"sell": "b5-0", "buy": "b5-1", "price": 60} and decision["inputs"]["probe"]
+
+
+def test_cli_broker_probe_live_stays_build_only(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "b5-0", "b5-1", "60", "--live")
+    assert result.exit_code == 1 and "allow_venue_open = false" in " ".join(result.output.split())
+    assert broker.sent == []
+
+
+def test_cli_broker_probe_live_prints_the_venues_verdict(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "b5-0", "b5-1", "60", "--live", allow=True, refuse={"b5-0"})
+    assert broker.sent == [("b5-0", "b5-1", 60)]
+    assert "REFUSED invalid (HTTP 400)" in result.output
+    broker, result = _probe(tmp_path, monkeypatch, "7", "8", "60", "--live", allow=True)
+    assert broker.sent == [(7, 8, 60)] and "ACCEPTED" in result.output

@@ -54,7 +54,7 @@ class BrokerConfig:
     # offers. "edge": `agents/bench_edge.py`, the maximum *estimated true* surplus from per-trader limit models
     # (docs/night/w1b-broker-edge.md has the tournament behind it).
     bench_policy: Literal["exact", "edge"] = "exact"
-    bench_preset: Literal["normal", "hard"] = "normal"  # the edge's priors (#12: hard = 12 traders, more firm)
+    bench_preset: Literal["normal", "hard"] = "normal"  # the edge's priors (#12: hard = 12 traders, more impatient)
     # "limit" also proposes bench pairs whose quotes do not cross but whose estimated limits do. Only worth it if
     # the real server checks hidden limits (unverified); after `EdgeConfig.give_up_after` refusals with no
     # acceptance it stops by itself. Off by default.

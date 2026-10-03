@@ -1541,6 +1541,81 @@ def venue_status() -> None:
     )
 
 
+@broker_app.command("probe")
+def broker_probe(
+    sell: str = typer.Argument(..., help="The sell offer: a bench id (b12-3) or a public offer id"),
+    buy: str = typer.Argument(..., help="The buy offer: a bench id or a public offer id"),
+    price: int = typer.Argument(..., min=0, help="The match price"),
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
+) -> None:
+    """Send ONE match, crossing or not, and print the venue's verdict: the morning probe of the match rule.
+
+    A bench pair whose quotes do not cross, priced between them, shows whether `POST /api/broker/matches`
+    checks the quotes (refused, 400) or the hidden limits (accepted, or refused only outside them). Dry run
+    unless --live; live still goes through the guardrails (kill switch, pause file, allow_venue_open)."""
+    from rich.markup import escape
+
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.broker import broker_context
+    from bazaar_agent.agents.runtime import Recorder, live_mode
+    from bazaar_agent.decisions import DecisionLog
+    from bazaar_agent.guardrails import Action, check
+    from bazaar_agent.sdk import BazaarError
+    from bazaar_agent.ticks import Clock
+
+    settings, rules = load_settings(), _rules().rules
+    is_live = live_mode(live)
+
+    def log(line: str) -> None:
+        console.print(escape(line), soft_wrap=True, highlight=False)
+
+    try:
+        broker = vn.broker_client(settings)
+    except ConfigError as e:
+        _fail(str(e))
+        return
+    clock = Clock.model_validate(broker.clock())
+    request = {"sell": int(sell) if sell.isdigit() else sell, "buy": int(buy) if buy.isdigit() else buy, "price": price}
+    verdict = check(Action("broker_match"), broker_context(rules, clock), rules)
+    decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log)
+    try:
+        rec = Recorder("broker", decisions, is_live, log)
+        did = rec.decide(
+            clock.tick,
+            "broker_match",
+            f"probe: sell {sell} × buy {buy} at {price}",
+            inputs={**request, "probe": True},
+            reason="manual probe of the match rule (quotes or hidden limits)",
+            guardrail=str(verdict),
+            chosen=verdict.allowed,
+            status="approved" if verdict.allowed else "rejected",
+            move=request,
+        )
+        if not verdict.allowed:
+            _fail(f"probe refused by the guardrails: {verdict}")
+        if not is_live:
+            log("probe: DRY RUN, nothing sent (add --live)")
+            return
+        errors: list[BazaarError] = []
+
+        def call() -> Any:
+            try:
+                return broker.match(**request)
+            except BazaarError as e:
+                errors.append(e)
+                raise
+
+        body = rec.send(did, clock.tick, "broker_match", request, call)
+        if body is not None:
+            log(f"probe: ACCEPTED {body}")
+        else:
+            why = errors[0] if errors else None
+            code, status = (why.code, why.status) if why else ("?", "?")
+            log(f"probe: REFUSED {code} (HTTP {status}): {why.message if why else ''}")
+    finally:
+        decisions.close()
+
+
 @broker_app.command("run")
 def broker_run(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),

@@ -12,7 +12,7 @@ Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stac
 | `evals/bench.py` | In-process tournament: stall, greedy (= `starter_broker.bench_plan`, checked against the kit), exact (#71), edge and edge_limit, plus three bounds: prescient (knows present limits and departures), oracle_quote and oracle_limit. Run with `uv run python -m bazaar_agent.evals.bench`. |
 | `evals/bench_w1a.py` | The same policies on **W1a's bench** (`bazaar_sim.bench`, #77), with W1a's stall, oracle and session points. It needs bazaar_sim; tonight it ran on a local copy of W1a's four files. |
 
-Gates: 1,268 passed and 35 skipped (the W1a adapter test skips until bazaar_sim is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 13 ms with the probe (#12's limit is 50 ms).
+Gates: 1,278 passed and 35 skipped (the W1a adapter test skips until bazaar_sim is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 14 ms with the probe, retries included (#12's limit is 50 ms). `bazaar broker probe <sell> <buy> <price> [--live]` sends one match and prints the venue's verdict: the morning probe as a command, logged as a decision and gated like any match.
 
 ## Evidence: W1a's bench, 1,000 books per row, p50 efficiency
 
@@ -60,7 +60,7 @@ Greedy (the starter broker) and exact (#71) equal the stall in every cell of bot
 - **Rate budget: GO.** ≤ 15 requests per tick.
 - **W1a's points bar** (never below the stall on any book; mean points ≥ 0.70): the edge loses 1–10 % of sessions, so "never below" fails. Mean points ≥ 0.70 holds only in the tick-0 and limit-rule cells. The edge is never below 0.5 in mean.
 
-**Recommendation:** merge as build-only (defaults unchanged). On the day a board venue opens, run `--bench-policy edge --bench-reads 3`: in every world modelled it is ≥ the stall in mean, and it never sends a refused match by quote. Add `--bench-cross limit` only if Marius accepts refused probe requests, a handful in total.
+**Recommendation:** merge as build-only (defaults unchanged). On the day a board venue opens, run `--bench-policy edge` with one read a tick: in every world modelled it is ≥ the stall in mean, and it never sends a match the quote rule refuses. Under the quote rule extra reads buy nothing, because the book changes within a tick only through our own matches. Use `--bench-reads 3` only together with `--bench-cross limit` (probe retries), and only if Marius accepts refused probe requests, a handful in total if the server checks quotes.
 
 ## Risks
 
@@ -72,5 +72,5 @@ Greedy (the starter broker) and exact (#71) equal the stall in every cell of bot
 ## What Marius must decide
 
 1. **The bar:** keep "stall + 0.15" (no-go) or adopt W1a's points bar.
-2. **The morning probe:** one manual non-crossing match, or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue, which means `allow_venue_open` and 540 P with today's `cash_floor`. Neither changes tonight.
+2. **The morning probe:** one manual non-crossing match during a Market Test (`uv run bazaar broker probe b12-3 b12-4 <price between the quotes> --live`; a 400 means quotes), or let `--bench-cross limit` probe and give up by itself. Either way it needs an open board venue, which means `allow_venue_open` and 540 P with today's `cash_floor`. Neither changes tonight.
 3. **Default after the first real Market Test:** read `broker_bench_shapes.jsonl` (an expiry field would turn on the hold, +0.01–0.02; check what the field means before setting `expiry_margin` to 0). Compare our `/me` `bench_efficiency` with W1a's calibration table, then choose `bench_policy`.
