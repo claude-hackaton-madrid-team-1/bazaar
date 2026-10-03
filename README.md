@@ -1021,7 +1021,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar venue announce` | Post a notice on our venue with the broker key. |
 | `uv run bazaar venue status` | Read only: the build-only switch, our venue on the public list, what the broker would match now. |
 | `uv run bazaar broker run` | Every tick: read our venue's book and send the maximum-surplus matches (bench first). |
-| `uv run bazaar broker watch` | Read-only: log the Market Test's bench offers every tick from the free starter stall's book (its key is in |
+| `uv run bazaar broker watch` | Read-only: log the Market Test's bench offers every tick from the free stall's book (key from /api/me). |
 | `uv run bazaar broker calibrate` | What the watched Market Tests say about the bench: arrivals, stays, firm share, relax steps, extra fields. |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
