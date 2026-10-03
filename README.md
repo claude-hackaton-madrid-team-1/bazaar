@@ -668,7 +668,10 @@ the Market Test. Each starts one pass every 6 ticks (`--evals-every N` on `duel 
 a background thread: Postgres and Phoenix only, zero game calls, a pass still running is never doubled,
 and an error is logged and dropped. From a laptop, `uv run bazaar evals run` scores everything once (or
 `--every-ticks 6` on the game clock, keyless `/api/clock`). After a restart, `bazaar duel run` reads
-`?done=true` once, so a duel that finished while it was down is stored.
+`?done=true` once, so a duel that finished while it was down is stored. One process per agent kind
+scores (an advisory lock: a laptop dry-run taker skips while the Railway one scores). Against the
+simulator (`BAZAAR_SIM`), scores stay in its Postgres and traces go to the `bazaar-sim` Phoenix
+project: simulated duel and thread ids collide with the game's.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
