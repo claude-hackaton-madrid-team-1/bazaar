@@ -132,7 +132,7 @@ Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, ev
 Phase 1 (done in this PR): triage of Marius's #79 / #98 / #101 with `/pr-review` + `security-auditor`, the
 spec, these steps. Phase 2 starts on the coordinator's "go" after #72 merges; one thin slice per step,
 each green before the next. Re-read `vendor/bazaar-kit/RULES.md` and `README.md` before each step.
-- N17-0 — Base: rebase on `main` with #72; take the coordinator's verdict on #79 (keep → reuse `Swap`,
+- N17-0 — Base: rebase on `main` with #72 and the coordinator's #124 (it owns the N17 index row; update only its status cell); take the coordinator's verdict on #79 (keep → reuse `Swap`,
   `TradeBook`, `counterparty_refusal`, the affinity map and `hands-off:` rows; close → step N17-3 ports the
   minimal pieces). · **Acceptance:** gate green on the rebased branch.
 - N17-1 — Simulator gaps (`bazaar_sim/rivals.py`, `threads.py`): rival bots accept and counter swaps at
