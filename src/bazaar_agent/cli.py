@@ -438,7 +438,19 @@ def opportunities(
     rastro = by_id.get("rastro")
     plan = td.build_plan(me, catalog, events, amap, params, rules, td.PlanParams(), rastro, mine)
     found = op.scan(
-        offers, m, me, params, rules, amap, by_id, ctx, events, catalog, [*plan.listings, *plan.threads], min_surplus
+        offers,
+        m,
+        me,
+        params,
+        rules,
+        amap,
+        by_id,
+        ctx,
+        events,
+        catalog,
+        [*plan.listings, *plan.threads],
+        min_surplus,
+        unavailable=open_commitments(mine, us).listed,
     )
     if as_json:
         typer.echo(json.dumps([asdict(o) for o in found], indent=2, default=str))

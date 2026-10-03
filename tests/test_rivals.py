@@ -279,13 +279,29 @@ def test_the_counterparty_cap_holds_on_the_sell_side(tmp_path):
     assert team.sent == [] and any("'m9' is not a known team" in line for line in lines)  # pseudonym: fail closed
 
 
-def test_the_taker_sells_a_free_copy_when_the_cheapest_is_already_offered(tmp_path):
+def test_the_last_free_copy_carries_the_page_bonus_even_when_its_twin_is_in_our_ask(tmp_path):
+    # pr-reviewer + security-auditor #98 P1: with #4 in our own ask, #3 is our last FREE LAT-03. Selling it
+    # for 10 scored +6.8 as a "duplicate"; if the ask fills too, the page loses its bonus of 10 (net -3.2).
     from tests.agent_fakes import bid as board_bid
     from tests.agent_fakes import clock, our_ask
 
     team = SellTeam.make(offers=[our_ask(9, 4, "LAT-03", 30)])  # copy #4 is in our own ask
-    sell_taker(tmp_path, team, {"rastro": [board_bid(80, "LAT-03", 10, maker="m9")]})[0].on_tick(clock())
-    assert ("accept", 80, [3]) in team.sent  # #3: 10 - fee 2 - 1.2 = +6.8
+    sell_taker(tmp_path / "thin", team, {"rastro": [board_bid(80, "LAT-03", 10, maker="m9")]})[0].on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "accept"]  # 10 - fee 2 - (1.2 + bonus 10) = -3.2
+    rich = SellTeam.make(offers=[our_ask(9, 4, "LAT-03", 30)])
+    sell_taker(tmp_path / "rich", rich, {"rastro": [board_bid(81, "LAT-03", 30, maker="m9")]})[0].on_tick(clock())
+    assert ("accept", 81, [3]) in rich.sent  # 30 - fee 3 - 11.2 = +15.8: the free copy, never #4
+
+
+def test_the_scanner_prices_a_sell_from_our_free_copies_only():
+    o = BoardOffer(80, "rastro", "t18", "bid", "LAT-03", 10, None, None, 60, 20)
+    args = (market(), ME, PARAMS, Guardrails(), AMAP, VENUES["rastro"], ctx())
+    both_free = op.score_offer(o, *args)
+    one_free = op.score_offer(o, *args, unavailable=frozenset({4}))
+    none_free = op.score_offer(o, *args, unavailable=frozenset({3, 4}))
+    assert both_free is not None and both_free.ours == pytest.approx(10 - 2 - 1.2)
+    assert one_free is not None and one_free.ours == pytest.approx(10 - 2 - 1.2 - 10)
+    assert none_free is None
 
 
 def test_a_known_copy_fills_only_its_own_ask_and_a_buyer_taking_an_ask_keeps_its_bid():

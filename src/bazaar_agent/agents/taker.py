@@ -542,6 +542,7 @@ class Taker:
                 venues.get(o.venue),
                 ctx,
                 asset_id=copy_id,
+                unavailable=frozenset(listed | sold),
             )
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id))

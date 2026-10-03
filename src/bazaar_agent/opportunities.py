@@ -65,11 +65,14 @@ def score_offer(
     tape: tuple[dict[str, float], dict[str, float]] = ({}, {}),
     copies: int = 0,
     asset_id: int | None = None,
+    unavailable: frozenset[int] = frozenset(),
 ) -> Opportunity | None:
     """One standing offer scored for us, or None when it is not ours to take: an ask for a card we hold, a
     card off our pages or of a set not released (what the taker never buys), a bid for a card we do not
-    hold, an unknown card or venue. `copies`: how many of the card its maker is known to hold. `asset_id`: the copy
-    we would hand over into a bid (default: the one we lose least by)."""
+    hold (or hold no FREE copy of), an unknown card or venue. `copies`: how many of the card its maker is known
+    to hold. `asset_id`: the copy we would hand over into a bid (default: the one we lose least by).
+    `unavailable`: our copies already promised (in our open offers, sold and not settled yet); a sell is priced
+    from the free copies only, so the last free copy carries the page bonus even when its twin is in an ask."""
     card = m.cards.get(o.ref)
     if card is None or venue is None:  # an unknown venue has an unknown fee: not priced blind
         return None
@@ -90,13 +93,17 @@ def score_offer(
         reason = f"worth {worth:.1f} to us; ask {o.price} + fee {fee}"
     else:
         assets = me.get("assets") or []
-        mine = [a for a in assets if a.get("ref") == o.ref and isinstance(a.get("your_value"), int | float)]
-        if asset_id is not None:
-            mine = [a for a in mine if a.get("id") == asset_id]
+        free = [
+            a
+            for a in assets
+            if a.get("ref") == o.ref and isinstance(a.get("your_value"), int | float) and a.get("id") not in unavailable
+        ]
+        mine = [a for a in free if a.get("id") == asset_id] if asset_id is not None else free
         if not mine:
             return None
         value = min(float(a["your_value"]) for a in mine)
-        loss = value + bonus_at_stake(m, card, params)
+        as_held = m if m.held.get(o.ref, 0) == len(free) else replace(m, held={**m.held, o.ref: len(free)})
+        loss = value + bonus_at_stake(as_held, card, params)
         ours = o.price - fee - loss
         theirs = None if their_value is None else their_value - o.price
         tag = "overbid" if market is not None and o.price > market else ""
@@ -166,8 +173,10 @@ def scan(
     catalog: dict[str, Any] | None = None,
     plan: Sequence[Trade] = (),
     min_surplus: float = 0.0,
+    unavailable: frozenset[int] = frozenset(),
 ) -> list[Opportunity]:
-    """Every offer worth more than `min_surplus` to us, best first (allowed ones before refused ones)."""
+    """Every offer worth more than `min_surplus` to us, best first (allowed ones before refused ones).
+    `unavailable`: our copies already in our open offers (see `score_offer`)."""
     rarity_of = {ref: c.rarity for ref, c in m.cards.items()}
     tape = tape_reference(events, rarity_of)
     held = team_copies(holdings(events), m.us)
@@ -176,7 +185,7 @@ def scan(
         if o.maker == m.us:
             continue
         copies = held.get(o.maker, Counter())[o.ref]
-        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, copies)
+        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, copies, None, unavailable)
         if op is None or op.ours <= min_surplus:
             continue
         out.append(replace(op, plan=against_plan(op, plan, me)))
