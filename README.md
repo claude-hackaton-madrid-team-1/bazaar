@@ -1421,14 +1421,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
+- [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
+- [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
+- [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
+- [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
 - [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
 - [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
 - [2026-10-04] build-error: PR #263 merge verification separator
-- [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
-- [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
-- [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
-- [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
-- [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
 
 <!-- BAZAAR:STATUS:END -->
 

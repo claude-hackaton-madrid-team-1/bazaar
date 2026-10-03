@@ -1245,3 +1245,37 @@ PR #265 is limited to these three guardrail changes; duel sending and request bu
 The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
 The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
 showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
+
+### [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
+`/api/schedule` has `day_opens sun` at h16.65 and `day_closes sun` at h22.65 (6 h = 1440 ticks of 15 s), Duels III at h18.65
+(tick 480), Market Tests h17/h19/h21 (ticks 84/564/1044), the finale at h21.65 (tick 1200), the Sunday allowance at h16.7
+(tick 12). But `/api/clock` shows t = 13.367 (Saturday ended early), and the hard Market Test (h14.65) and the h15 one are
+dated BEFORE the doors open: the organisers must jump the clock or fire them at the open (the `sunday` scenario fires them
+at ticks 2 and 19, then continues). If t stays 13.37 at the open, every entry shifts by 3.28 h (787 ticks).
+
+### [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
+`src/bazaar_sim/scenario.py` + `data/sunday.json` (written by `scripts/sim_calibrate.py` from feed_events, dealer_curves,
+duels, competitor_profiles and the keyless API): five dealers (Picaros and Don Ernesto exist only here), measured openings/
+floors/patience per dealer, Picaros repeat a final 18 % of the time (text only: no dealer ever re-priced after a final in
+2 days of data), Pilar's Salamanca +25 % and Abuela's uncommon fever (the size is ASSUMED 1.15: the feed has none), Radio
+Rastro news at the 0.7 h cadence, the Workshop (`POST /api/taller`, three of a rarity -> one of the next), 16 rivals fitted to
+Saturday (5.8 listings/tick, 20-tick lifetime, 38 % cancelled, 0.1 trades/tick, 6 reciprocal pairs) and ~32 assets a team.
+Unmodelled: Pilar/Ernesto buying epics (the sim's dealer sell topics need a page card), bench efficiency per trader (the
+feed has none), real duel rival styles. `SIM_TICK_SECONDS=2` compresses the pace: the game clock still adds 15 s a tick, the
+per-second limits scale x7.5 and latency /7.5 (`SimConfig.compression`), so per-tick budgets compare with the real pace.
+
+### [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
+`World.__init__` calls `catalog.configure(extra_released=..., scenario_dealers=...)`, so two worlds with different scenarios in
+one process step on each other (the simulator runs one). Tests that build a scenario world reset it with `catalog.configure()`.
+
+### [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
+`TypeError: per_tick() got an unexpected keyword argument 'agent'` on every profiled agent; the wrapper now forwards kwargs.
+
+### [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
+`scripts/sim_sunday.py --ticks 620 --tick-seconds 2` and a real-pace sample (90 ticks of 15 s): taker wall p50 0.15 / p95 0.27 s
+of a 1.4 s budget (real pace: 0.55 / 1.05 s of 12.7 s), maker 0.05 s, duels 0.01 s; 0 x 429, 0 dropped, key at 0.74 req/s of
+5. The blockers are ours: the taker sent a write in only 45 of 620 ticks (49 messages, 16 threads, 3 accepts), refusals
+`spend > max_spend_per_game_hour` (182), cash floor (98), `price > official value` (32), `jev undecided` (436: with Jev off the
+taker takes no board ask); the maker posted ONE ask in 620 ticks (few spare copies, `protect_page_sets` all sets), and with no
+venue (`allow_venue_open = false`) mm_points and bench_points stay 0 through all four Market Tests. Score 0 -> 39.6
+(ladder 26.7, duels 11.6 from Duels III at tick 480, negotiating 1.4). The real taker has Jev on: the run could not test that.
