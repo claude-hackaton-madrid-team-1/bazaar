@@ -218,7 +218,7 @@ def test_schema_sql_holds_the_same_statement():
     from importlib.resources import files
 
     schema = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
-    assert il.DDL in schema
+    assert il.DDL in schema and il.INDEX_DDL in schema
 
 
 # ---------------------------------------------------------------- the taker's feed pass
@@ -306,7 +306,7 @@ def test_a_secret_across_the_cut_and_a_fullwidth_copy_are_both_scrubbed():
 def test_open_creates_the_table_at_start_and_ticks_never_run_ddl():
     conn = FakeConn()
     log = il.InjectionLog(lambda: conn)
-    assert log.open() and conn.sql == [il.DDL]
+    assert log.open() and conn.sql == [il.DDL, il.INDEX_DDL]
     log.note([il.attempt("duel", PAYLOADS["override"], duel_id=1, message_id=1)])
     assert log.flush(3) == 1 and il.DDL not in conn.sql[1:]
 
@@ -324,3 +324,13 @@ def test_the_cli_shows_fillers_and_line_separators_and_never_renders_markup():
     console.print(_table([row], "real"))
     out = console.export_text()
     assert "[bold red]boom[/bold red] :warning:" in out
+
+
+def test_open_closes_its_connection_when_the_table_cannot_be_created():
+    class NoCreate(FakeConn):
+        def execute(self, sql, *args):
+            raise psycopg.errors.InsufficientPrivilege("permission denied for schema public")
+
+    conn = NoCreate()
+    log = il.InjectionLog(lambda: conn)
+    assert log.open() is False and conn.closed

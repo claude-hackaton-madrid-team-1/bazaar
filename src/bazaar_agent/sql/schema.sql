@@ -664,3 +664,5 @@ end $do$;
 -- role tag or role play, an asset grab, hidden unicode); 'weak' is JSON, a URL or a priced verb alone. Ids that do
 -- not apply are 0, so the natural key dedupes. The same statement as injection_log.DDL.
 create table if not exists injection_attempts (id bigserial primary key, world text not null default 'real', tick int, source text not null check (source in ('feed','team_thread','duel','dealer_thread','offer_text')), event_id bigint not null default 0, thread_id bigint not null default 0, duel_id bigint not null default 0, message_id bigint not null default 0, from_team text, to_us bool not null default false, tags text[] not null, severity text not null check (severity in ('attempt','weak')), raw text not null, normalised text not null, our_response text not null, proof text not null, seen_at timestamptz not null default now(), unique (world, source, event_id, thread_id, duel_id, message_id, tags));
+-- bazaar-live's panel reads the newest rows of each severity (show.injection_attempts): 46 ms → 5 ms at 100k rows.
+create index if not exists injection_attempts_recent on injection_attempts (severity, seen_at desc, id desc);

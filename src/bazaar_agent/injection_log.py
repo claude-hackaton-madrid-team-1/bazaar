@@ -35,6 +35,9 @@ DDL = (
     "our_response text not null, proof text not null, seen_at timestamptz not null default now(), "
     "unique (world, source, event_id, thread_id, duel_id, message_id, tags));"
 )
+INDEX_DDL = (
+    "create index if not exists injection_attempts_recent on injection_attempts (severity, seen_at desc, id desc);"
+)
 INSERT = (
     "insert into injection_attempts (world, tick, source, event_id, thread_id, duel_id, message_id, from_team, "
     "to_us, tags, severity, raw, normalised, our_response, proof) values "
@@ -366,9 +369,12 @@ class InjectionLog:
             conn = self._db(0)
             if conn is not None:
                 conn.execute(DDL)
+                conn.execute(INDEX_DDL)
             return conn is not None
         except Exception as e:  # noqa: BLE001
             self._fail(e)
+            if self._conn is not None and not self._conn.closed:
+                self._conn.close()  # a login without CREATE must not leak one connection per start
             self._conn, self._down_at = None, 0
             return False
 
@@ -423,6 +429,7 @@ def store(conn: psycopg.Connection, log: InjectionLog, attempts: Iterable[Attemp
         return 0
     with conn.transaction(), conn.cursor() as cur:
         cur.execute(DDL)
+        cur.execute(INDEX_DDL)
         before = cur.execute("select count(*) from injection_attempts").fetchone()
         cur.executemany(INSERT, rows)
         after = cur.execute("select count(*) from injection_attempts").fetchone()
