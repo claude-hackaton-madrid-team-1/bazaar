@@ -65,7 +65,7 @@ When Abuela takes our bid, the team's accept slot is not used. Blocked, each wit
    - `dealer_price_caps = chato:uncommon=31` in GUARDRAILS.md. It applies to Chato only, so Abuela and team buys keep 26. Model: deal rate 0.83. In the simulator, `dealer buy <ref> --start 27 --max 31 --dealer chato --live` made 3 of 3 deals at the limit.
    - At 32 with a 23 start, the model gives deal rate 1.00 and share 0.97, but that rests on 6 threads.
    - Rares need `chato:rare=93`.
-   - `ladder_level_deals = 3` in STRATEGY.md lets the desk do it by itself. In the simulator the desk made 3 Chato uncommons at his limit, then went back to Abuela: 7 of 7 deals, share 0.97.
+   - `ladder_level_deals = 3` in STRATEGY.md lets the desk do it by itself: the cards still needed go to Chato, the rest stay with Abuela in parallel. In the simulator the desk closed Chato uncommons at his limit (27, 27) and ran Abuela alongside. The third Chato thread was walked by `cash_floor` 270, because the simulator starts at 400 P: the guardrail works.
    - Caveats on `ladder_level_deals`: the count runs over the whole feed the desk holds, not per day (raise it to 6 on Sunday). Once an L3 dealer opens, it becomes the "newest" dealer and gets these buys with no floor learned yet. Buys are still ranked by surplus, so Chato is not strictly first.
    - The alternative is selling duplicates to Chato: he bids 13 → 15–16 for an uncommon. That needs a sell negotiation (`dealer.py` is buy-only), and it is unverified that sales count.
 2. **`ladder_floor_quantile = 0.5`** in STRATEGY.md (default 0 = today's ladder): the desk opens Abuela uncommons at 21 instead of 17. Real threads say yes; the simulator's more patient Abuela shows no gain.
