@@ -136,7 +136,7 @@
           "mark": "✓"
         },
         {
-          "text": "bazaar-live: folder trust",
+          "text": "bazaar-live: v1 built (PR #1)",
           "note": true
         }
       ],
@@ -289,7 +289,7 @@
           "mark": "◑"
         },
         {
-          "text": "Bazaar Live show: repo ready, not built",
+          "text": "Bazaar Live show: v1 in review",
           "note": true
         }
       ],
@@ -297,12 +297,6 @@
     }
   },
   "waiting_on_you": [
-    {
-      "status": "todo",
-      "label": "blocked",
-      "title": "Trust the bazaar-live folder",
-      "body": "The trust prompt is waiting in the Orca tab of worktree feat-live-show-v1: choose \"Yes, I trust this folder\", then the live-show worker starts there."
-    },
     {
       "status": "todo",
       "label": "decision",
@@ -340,6 +334,12 @@
       "label": "review",
       "title": "Marius's live fixes before 09:00",
       "body": "#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, follow-up open."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Bazaar Live show",
+      "body": "v1 built: bazaar-live PR #1 (stage, transcript, voices, CI), Railway service in bazaar #85; under /pr-review."
     }
   ],
   "not_started": [
@@ -360,12 +360,6 @@
       "label": "gap",
       "title": "10 s per offer, then learn",
       "body": "Tick budgets and a 3 s Jev timeout exist; a per-offer timeout feeding the learner does not."
-    },
-    {
-      "status": "todo",
-      "label": "later",
-      "title": "Bazaar Live show",
-      "body": "Buyer and seller animated with Motion and voiced with TTS, in the bazaar-live repo."
     },
     {
       "status": "todo",
