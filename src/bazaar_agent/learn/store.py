@@ -264,7 +264,62 @@ class LearningStore:
             return []
         return [lr for row in rows if (lr := _from_row(row)) is not None]
 
+    # ---------------------------------------------------------------- candidates (N3: the hybrid recall)
+
+    def candidates(
+        self,
+        *,
+        kinds: Collection[str] | None,
+        subjects: Collection[str] | None,
+        sources: Collection[str] | None,
+        subject_kind: str | None,
+        team: str | None,
+        tick: int | None,
+        where: Sequence[tuple[str, str]] = (),
+        limit: int,
+    ) -> list[Learning]:
+        """Every learning that passes ALL the hard filters, newest first: the filters run in SQL before the
+        limit, so many rows about other subjects can never push the relevant ones out of the pool."""
+
+        def wanted(lr: Learning) -> bool:
+            return (
+                matches(lr, subject=None, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team)
+                and (subjects is None or lr.subject in subjects)
+                and (sources is None or lr.source in sources)
+                and all(str(lr.detail.get(k)) == v for k, v in where)
+            )
+
+        found = {k: lr for k, lr in list(self.memory.items()) if wanted(lr)}
+        conn = self._db()
+        if conn is not None:
+            query = (
+                f"select {COLUMNS} from learnings where dedupe_key is not null and superseded_by is null "
+                f"{FILTERS} order by created_tick desc nulls last, id desc limit %(limit)s"
+            )
+            params = _filters(kinds, subjects, sources, subject_kind, team, tick, where) | {"limit": limit}
+            try:
+                with conn.transaction():
+                    conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                    rows = conn.execute(query, params).fetchall()  # type: ignore[arg-type]
+            except psycopg.Error as e:
+                self._failed("candidates", e)
+                rows = []
+            for row in rows:
+                lr = _from_row(row)
+                if lr is not None and wanted(lr):
+                    found.setdefault(lr.key(), lr)
+        return sorted(found.values(), key=lambda lr: (-lr.tick, lr.key()))[:limit]
+
     # ---------------------------------------------------------------- vectors (N3: the hybrid recall)
+
+    def _vector_off(self, conn: psycopg.Connection, error: Exception) -> None:
+        """A vector column or type is missing (no pgvector, an unmigrated table): the vector leg and the
+        embeddings stop for this connection, everything else in the store goes on."""
+        if self._has_vectors is not False:
+            self._log(f"learnings: no vector search here ({type(error).__name__}); BM25 only")
+        self._has_vectors = False
+        if not conn.closed and conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            conn.rollback()
 
     def _vectors_on(self, conn: psycopg.Connection) -> bool:
         """Whether `learnings.embedding` exists (it does only where pgvector is installed)."""
@@ -286,6 +341,8 @@ class LearningStore:
         team: str | None,
         subjects: Collection[str] | None,
         limit: int,
+        sources: Collection[str] | None = None,
+        where: Sequence[tuple[str, str]] = (),
     ) -> list[tuple[str, float]]:
         """(dedupe key, cosine similarity) of the embedded learnings nearest `vector`, under the same hard
         filters as `recall()`. Empty without pgvector, without a connection, or on any error."""
@@ -294,21 +351,11 @@ class LearningStore:
             return []
         query = (
             "select dedupe_key, 1 - (embedding <=> %(v)s::vector) from learnings "
-            "where embedding is not null and dedupe_key is not null and superseded_by is null "
-            "and (%(kinds)s::text[] is null or kind = any(%(kinds)s)) "
-            "and (%(subjects)s::text[] is null or subject = any(%(subjects)s)) "
-            "and (%(sk)s::text is null or subject_kind = %(sk)s) "
-            "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
-            "and (%(team)s::text is null or team is null or team = %(team)s) "
+            f"where embedding is not null and dedupe_key is not null and superseded_by is null {FILTERS} "
             "order by embedding <=> %(v)s::vector limit %(limit)s"
         )
-        params = {
+        params = _filters(kinds, subjects, sources, subject_kind, team, tick, where) | {
             "v": vector_literal(vector),
-            "kinds": sorted(kinds) if kinds is not None else None,
-            "subjects": sorted(subjects) if subjects is not None else None,
-            "sk": subject_kind,
-            "tick": tick,
-            "team": team,
             "limit": limit,
         }
         try:
@@ -317,6 +364,9 @@ class LearningStore:
             with conn.transaction():
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 rows = conn.execute(query, params).fetchall()  # type: ignore[arg-type]
+        except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedObject) as e:
+            self._vector_off(conn, e)
+            return []
         except psycopg.Error as e:
             self._failed("vector search", e)
             return []
@@ -346,10 +396,14 @@ class LearningStore:
             with conn.transaction():
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
-                    cur.executemany(
-                        "update learnings set embedding = %s::vector, embedded_hash = md5(claim) where id = %s",
-                        [(vector_literal(v), rid) for (rid, _), v in zip(rows, vectors, strict=True)],
+                    cur.executemany(  # a claim edited meanwhile keeps its old hash: embedded again next pass
+                        "update learnings set embedding = %s::vector, embedded_hash = md5(claim) "
+                        "where id = %s and md5(claim) = md5(%s)",
+                        [(vector_literal(v), rid, claim) for (rid, claim), v in zip(rows, vectors, strict=True)],
                     )
+        except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedObject) as e:
+            self._vector_off(conn, e)
+            return 0
         except psycopg.Error as e:
             self._failed("embedding write", e)
             return 0
@@ -358,6 +412,37 @@ class LearningStore:
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
+
+
+FILTERS = (
+    "and (%(kinds)s::text[] is null or kind = any(%(kinds)s)) "
+    "and (%(subjects)s::text[] is null or subject = any(%(subjects)s)) "
+    "and (%(sources)s::text[] is null or source = any(%(sources)s)) "
+    "and (%(sk)s::text is null or subject_kind = %(sk)s) "
+    "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
+    "and (%(team)s::text is null or team is null or team = %(team)s) "
+    "and (%(where)s::jsonb is null or stats @> %(where)s::jsonb)"
+)
+
+
+def _filters(
+    kinds: Collection[str] | None,
+    subjects: Collection[str] | None,
+    sources: Collection[str] | None,
+    subject_kind: str | None,
+    team: str | None,
+    tick: int | None,
+    where: Sequence[tuple[str, str]],
+) -> dict[str, Any]:
+    return {
+        "kinds": sorted(kinds) if kinds is not None else None,
+        "subjects": sorted(subjects) if subjects is not None else None,
+        "sources": sorted(sources) if sources is not None else None,
+        "sk": subject_kind,
+        "tick": tick,
+        "team": team,
+        "where": json.dumps(dict(where)) if where else None,
+    }
 
 
 def vector_literal(vector: Sequence[float]) -> str:

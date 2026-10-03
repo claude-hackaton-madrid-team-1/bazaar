@@ -548,8 +548,23 @@ reads Postgres only and makes no game call:
 
 On Friday's real data, the relevant lessons scored +0.5 to +7.3 and an unrelated query scored −4 to
 −10. Recall runs on a worker thread with its own connection under a deadline (0.8 s by default). It
-fails open: while the models load, and on a DB error or a timeout, it returns no lessons. Hits reach
-Jev and the words model as quoted data (`Recalled.as_quoted()`), never as instructions.
+fails open: while the models load, and on a DB error or a timeout, it returns no lessons.
+
+By default recall returns only rows the outcome learner wrote (`source = outcome`). The feed reader's
+rows are opt-in (`Query.sources`). Every hard filter runs in SQL before the candidate limit, so rows
+about other subjects never push a relevant lesson out. Only known price classes are learned
+(`card:<rarity>`, `pack:sobre_*`, `sell`): a thread's topic is chosen by the team that opened it,
+so a made-up pack name never becomes a lesson. Each pass reads only the new dealer events. It
+inserts only new moves and rewrites only the lessons that changed.
+
+The two models add about 370 MB of RAM to the taker. Measured in Docker with 1 CPU and 1 GB:
+- cold download and load: 5.3 s;
+- a query embedding: 3 ms;
+- a rerank of 12: 57 ms;
+- a recall over 600 lessons: p50 222 ms, p95 252 ms.
+
+A failed model load (no network at boot) is retried every 20 passes. PR B passes the hits to Jev
+and the words model as quoted data (`Recalled.as_quoted()`), never as instructions.
 
 ```sh
 uv run bazaar learnings --lessons                 # run one pass: lessons + dealer patterns (no write)
@@ -998,6 +1013,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
+- [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
 - [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
 - [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 - [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists

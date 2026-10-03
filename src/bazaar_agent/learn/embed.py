@@ -52,6 +52,14 @@ def model_dir(data_dir: Path | None = None) -> Path:
     return data_dir / "models"
 
 
+RETRY_AFTER_WARMS = 20  # a failed load is tried again after this many warm() calls (the learner warms per pass)
+
+
+def _threads_from_env() -> int:
+    raw = os.environ.get(THREADS_ENV, "").strip()
+    return min(8, max(1, int(raw))) if raw.isdigit() else 1
+
+
 class LocalModels:
     """fastembed models, loaded once per process on a background thread."""
 
@@ -62,12 +70,13 @@ class LocalModels:
         threads: int | None = None,
     ) -> None:
         self._cache_dir, self._log = cache_dir, log
-        self._threads = threads or int(os.environ.get(THREADS_ENV, "1") or 1)
+        self._threads = threads or _threads_from_env()
         self._embedder: Any = None
         self._reranker: Any = None
         self._lock = threading.Lock()  # onnxruntime sessions are not shared across concurrent calls here
         self._loading: threading.Thread | None = None
         self._failed: str | None = None
+        self._warms_since_failure = 0
         self._queries: OrderedDict[str, list[float]] = OrderedDict()
 
     @property
@@ -83,7 +92,13 @@ class LocalModels:
         return "loading" if self._loading is not None else "not loaded"
 
     def warm(self) -> None:
-        """Start loading the models in the background (idempotent)."""
+        """Start loading the models in the background (idempotent). After a failed load (no network at
+        boot), every RETRY_AFTER_WARMS-th call tries again."""
+        if self._failed is not None and not self.ready and (self._loading is None or not self._loading.is_alive()):
+            self._warms_since_failure += 1
+            if self._warms_since_failure < RETRY_AFTER_WARMS:
+                return
+            self._failed, self._loading, self._warms_since_failure = None, None, 0
         if self.ready or self._failed or self._loading is not None:
             return
         self._loading = threading.Thread(target=self.load, name="bazaar-models", daemon=True)
