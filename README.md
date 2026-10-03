@@ -961,14 +961,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
+- [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
+- [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
+- [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
+- [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
 - [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
-- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
-- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
-- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 
 <!-- BAZAAR:STATUS:END -->
 
