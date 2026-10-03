@@ -171,6 +171,10 @@ end $$;
 -- can never both take the same slot (`ledger_pg.PgLedger.reserve_accept`).
 create unique index if not exists ledger_accept_slot on ledger (tick, slot) where kind = 'accept' and slot is not null;
 
+-- A dealer thread is wrapped up (its deal booked as spend) once, even by two takers running at once (a redeploy
+-- overlaps the old container with the new one): `decisions.DecisionLog.decide_once`.
+create unique index if not exists decisions_thread_closed on decisions (thread_id) where kind = 'dealer_closed';
+
 -- Competitor activity: every feed event our team neither did nor is party to (`intel.is_ours`).
 -- "Us" is the trader row with status 'us' (written by the monitor); feed_events keeps everything.
 do $$

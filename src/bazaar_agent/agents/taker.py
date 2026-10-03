@@ -19,12 +19,12 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 from __future__ import annotations
 
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bazaar_agent.agents.dealer import (
-    BidPlan,
     Move,
     Negotiation,
     WordsFn,
@@ -44,15 +44,7 @@ from bazaar_agent.agents.desk import (
     plan_conversation,
     topic_for,
 )
-from bazaar_agent.agents.market import (
-    BoardOffer,
-    OpenOffer,
-    Venue,
-    board_offers,
-    our_open_offers,
-    parse_offer,
-    tradable_venues,
-)
+from bazaar_agent.agents.market import BoardOffer, OpenOffer, Venue, board_offers, our_open_offers, tradable_venues
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     JevFn,
@@ -68,7 +60,7 @@ from bazaar_agent.agents.runtime import (
 )
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
-from bazaar_agent.decisions import THREAD_CLOSED, DecisionLog, Status
+from bazaar_agent.decisions import THREAD_CLOSED, Decision, DecisionLog, Status, ThreadTrail
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
@@ -84,10 +76,10 @@ class TakerConfig:
     jev_min_budget_s: float = 4.0  # ask Jev only with this much of the tick left (a call takes ~0.3 s, max 3 s)
     max_jev_calls_per_tick: int = 3
     duel_grace_s: float = 2.0  # duels own the first seconds of a tick (capped at 15 % of the tick)
-    # An open dealer thread of ours without a bid of ours newer than this many ticks has no driver (the
-    # process that opened it restarted): it is adopted or closed. A live `bazaar dealer buy` bids every tick.
+    # A watched (taker-owned) open dealer thread without a bid of ours newer than this many ticks has no
+    # driver (the process that drove it restarted): it is closed. A live negotiation bids every tick.
     orphan_after_ticks: int = 3
-    restart_lookback_ticks: int = 40  # on start: our threads with a move this recent are checked for a deal
+    restart_lookback_ticks: int = 40  # on start: our threads with a move this recent are watched
 
 
 # ---------------------------------------------------------------- (a) standing asks on the boards
@@ -320,9 +312,10 @@ class Taker:
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
         self._dry_accepts: dict[int, int] = {}
-        self._restart_checked = False  # the threads of the process before this one were wrapped up
-        self._restart_ticks = 0  # ticks spent on that (a thread read refused is tried again, a few times)
-        self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
+        self._seeded = False  # the threads of the process before this one were read from the decisions log
+        self._watch: dict[int, ThreadTrail] = {}  # our dealer threads no Conversation drives, until wrapped up
+        self._refused: Counter[int] = Counter()  # watched thread -> refused reads
+        self._quiet: dict[int, int] = {}  # watched open thread with no fresh bid of ours -> first tick seen so
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -345,8 +338,7 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
-        self._restart_wrapup(run, threads)
-        self._adopt_orphans(run, threads)
+        self._watch_threads(run, threads)
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -540,9 +532,9 @@ class Taker:
     def _finished(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
         status, tick = str(thread.get("status")), run.snap.clock.tick
         price = deal_price(conv, thread)
-        if status == "deal" and price is not None and self.live:
+        claimed = self._wrapped(run, conv.thread_id, conv.dealer, conv.item, thread, price)
+        if status == "deal" and price is not None and self.live and claimed:
             self.ledger.record("spend", tick, run.snap.clock.t_hours, int(price), conv.item)
-        self._wrapped(run, conv.thread_id, conv.dealer, conv.item, thread, price)
 
     def _converse(self, run: _TickRun, desk: list[tuple[DeskMove, dict[str, Any]]]) -> None:
         taken = {p.desk.conv.dealer for p in run.accepted if p.desk is not None}
@@ -611,6 +603,7 @@ class Taker:
                 self._after_refused_walk(run, conv, move)
                 return
             self.convs.pop(conv.dealer, None)
+            self._watch_walked(conv, tick)
             if move.reopen:
                 self._held_opening(run, conv)
             elif move.rest:  # she stopped answering: do not open, bid and walk on this item every few ticks
@@ -819,106 +812,108 @@ class Taker:
             )
             run.offers = [o for o in run.offers if o.get("id") != bid.id]
 
-    # ------------------------------------------------------------ threads from before a restart (bite X3)
+    # ------------------------------------------------------------ threads no Conversation drives (bite X3)
 
     def _wrapped(
         self, run: _TickRun, thread_id: int, dealer: str, item: str, thread: dict[str, Any], price: int | None
-    ) -> None:
-        """A thread of ours is over: one THREAD_CLOSED decision, so a restarted process knows its deal (if
-        any) is already booked (`DecisionLog.thread_trails`)."""
+    ) -> bool:
+        """A thread of ours is over: claim its one THREAD_CLOSED decision. True when this process got it and
+        so books the deal; False when another taker (a redeploy overlaps two containers) already did."""
         status = str(thread.get("status"))
         paid = price if status == "deal" else None
-        self.rec.decide(
-            run.snap.clock.tick,
-            THREAD_CLOSED,
-            f"thread {thread_id} with {dealer} {status} ({thread.get('closed_reason') or '-'}) price {paid or '-'}",
+        tick = run.snap.clock.tick
+        decision = Decision(
+            agent="taker",
+            tick=tick,
+            kind=THREAD_CLOSED,
             inputs={"dealer": dealer, "item": item, "status": status, "price": paid},
             reason=str(thread.get("closed_reason") or status),
             guardrail="-",
             chosen=False,
             status="done",
+            dry_run=not self.live,
             thread_id=thread_id,
         )
+        claimed = self.rec.decisions.decide_once(decision) is not None
+        whose = "" if claimed else " (already wrapped up by another process)"
+        line = f"thread {thread_id} with {dealer} {status} ({thread.get('closed_reason') or '-'}) price {paid or '-'}"
+        self.log(f"tick {tick} taker: {line}{whose}")
+        return claimed
 
-    def _restart_wrapup(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
-        """On start: the threads the process before this one drove (the decisions log), that are no longer
-        open and were never wrapped up. A deal there (the dealer took our standing bid while no process
-        watched) is booked as spend NOW: dated a little late, it over-counts for a moment, never under-counts.
-        A few thread reads per tick (`max_dealer_threads`) until every one is done (a refused read is tried
-        again next tick, for at most RESTART_TICKS ticks); open ones are `_adopt_orphans`' job."""
-        if self._restart_checked or not self.live:
-            return
-        clock, cfg = run.snap.clock, self.config
-        skip = {t.get("id") for t in threads} | {c.thread_id for c in self.convs.values()}
-        trails = self.rec.decisions.thread_trails("taker", clock.tick - cfg.restart_lookback_ticks)
-        todo = [tr for tr in trails.values() if not tr.closed and tr.thread_id not in skip]
-        self._restart_ticks += 1
-        done = 0
-        for trail in todo[: cfg.max_dealer_threads]:
-            try:
-                thread = self.team.thread(trail.thread_id)
-            except BazaarError as e:
-                self.log(f"tick {clock.tick} taker: thread {trail.thread_id} from before the restart: read {e.code}")
-                continue
-            done += 1
-            status = str(thread.get("status") or "open")
-            if status == "open":  # the listing was older than this read: adopted next tick if nobody drives it
-                continue
-            price = (settled_price(thread) or trail.top_price) if status == "deal" else None
-            if price is not None:
-                self.ledger.record("spend", clock.tick, clock.t_hours, int(price), trail.item)
-            dealer = str(thread.get("with") or "-")
-            self.log(f"tick {clock.tick} taker: thread {trail.thread_id} from before the restart: {status}")
-            self._wrapped(run, trail.thread_id, dealer, trail.item, thread, price)
-        self._restart_checked = done == len(todo) or self._restart_ticks >= RESTART_TICKS
-
-    def _adopt_orphans(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
-        """Open dealer threads of ours that nobody drives: no open bid of ours there newer than
-        `orphan_after_ticks` (a live negotiation, ours or a `bazaar dealer buy`, bids every tick). One whose
-        old bid still stands is adopted with that bid as its whole plan (start = max), so it is read every
-        tick, a deal on it is booked, and it walks on its next move; one with no bid standing for
-        `orphan_after_ticks` is closed (nothing of ours is at stake in it). Without this, a restart leaves
-        the dealer blocked and a thread slot used until the dealer idles the thread out (~40 ticks)."""
+    def _watch_threads(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
+        """The taker's dealer threads no Conversation drives: the ones the process before this one drove (the
+        decisions log, read once on start), and the ones this process walked from. Each is read once it has
+        left the open list: a deal there (the dealer took our standing bid while nobody watched) is booked as
+        spend NOW (a little late: over-counts for a moment, never under-counts), once per thread across
+        processes (`_wrapped`). Newest first, `max_dealer_threads` reads per tick; a thread whose read is
+        refused RESTART_TICKS times is given up. One still open with no bid of ours for `orphan_after_ticks`
+        ticks is closed. Only the taker's own threads are watched: a `bazaar dealer buy` thread never is."""
         if not self.live:
             return
-        if kill_switch(self.rules):  # nobody may bid while it holds: silence proves nothing, start counting again
+        clock, cfg = run.snap.clock, self.config
+        owned = {c.thread_id for c in self.convs.values()}
+        if not self._seeded:
+            trails = self.rec.decisions.thread_trails("taker", clock.tick - cfg.restart_lookback_ticks)
+            self._watch.update({tid: tr for tid, tr in trails.items() if not tr.closed and tid not in owned})
+            self._seeded = True
+        open_ids = {t.get("id") for t in threads}
+        gone = sorted(
+            (tr for tid, tr in self._watch.items() if tid not in open_ids and tid not in owned),
+            key=lambda tr: -tr.last_tick,
+        )
+        for trail in gone[: max(1, cfg.max_dealer_threads)]:
+            tid = trail.thread_id
+            try:
+                thread = self.team.thread(tid)
+            except BazaarError as e:
+                self._refused[tid] += 1
+                self.log(f"tick {clock.tick} taker: watched thread {tid}: read {e.code} ({self._refused[tid]})")
+                if self._refused[tid] >= RESTART_TICKS:
+                    del self._watch[tid]
+                continue
+            status = str(thread.get("status") or "open")
+            if status == "open":  # the listing was older than this read
+                continue
+            price = (settled_price(thread) or trail.top_price) if status == "deal" else None
+            if self._wrapped(run, tid, str(thread.get("with") or "-"), trail.item, thread, price) and price:
+                self.ledger.record("spend", clock.tick, clock.t_hours, int(price), trail.item)
+            del self._watch[tid]
+        self._close_quiet(run, threads, owned)
+
+    def _watch_walked(self, conv: Conversation, tick: int) -> None:
+        """We walked from `conv`: the dealer may have taken our standing bid at the same boundary."""
+        top = max(conv.neg.bids) if conv.neg.bids else None
+        self._watch[conv.thread_id] = ThreadTrail(conv.thread_id, conv.item, tick, top)
+
+    def _close_quiet(self, run: _TickRun, threads: list[dict[str, Any]], owned: set[int]) -> None:
+        """A watched thread still open, with no bid of ours newer than `orphan_after_ticks`: nobody drives it
+        (the process that did restarted), so it is closed instead of blocking its dealer and a thread slot
+        until the dealer idles it out (~40 ticks). Quiet ticks under the kill switch do not count."""
+        if kill_switch(self.rules):
             self._quiet.clear()
             return
         clock, us, after = run.snap.clock, run.snap.us, self.config.orphan_after_ticks
-        dealers = {str(d.get("id")) for d in run.snap.dealers}
-        owned = {c.thread_id for c in self.convs.values()}
-        bids: dict[int, OpenOffer] = {}
+        newest: dict[int, int | None] = {}  # watched thread -> created tick of our newest open bid there
         for o in run.offers:
-            if o.get("thread") is None or o.get("maker") != us or o.get("status") not in (None, "open"):
-                continue
-            p = parse_offer(o)
-            if p is not None and p.side == "bid" and (int(o["thread"]) not in bids or p.id > bids[int(o["thread"])].id):
-                bids[int(o["thread"])] = OpenOffer(
-                    p.id, "bid", p.ref, p.price, "", None, p.expires_tick, p.created_tick
-                )
-        open_ids = {t.get("id") for t in threads}
-        self._quiet = {tid: seen for tid, seen in self._quiet.items() if tid in open_ids}
-        for t in threads:
-            tid, dealer = t.get("id"), str(t.get("with") or "")
-            if not isinstance(tid, int) or tid in owned or dealer not in dealers or dealer in self.convs:
-                continue
-            bid = bids.get(tid)
-            if bid is not None and (bid.created_tick is None or bid.created_tick > clock.tick - after):
-                self._quiet.pop(tid, None)  # someone bid here lately: it has a driver
-                continue
-            if bid is not None:
-                self._adopt(run, tid, dealer, bid)
-            elif clock.tick - self._quiet.setdefault(tid, clock.tick) >= after:
-                self._close_orphan(run, tid, dealer)
-
-    def _adopt(self, run: _TickRun, thread_id: int, dealer: str, bid: OpenOffer) -> None:
-        tick = run.snap.clock.tick
-        rarity = _rarity(run.snap.catalog, bid.ref) if "-" in bid.ref else "pack"  # as `desk.topic_for`
-        neg = Negotiation(BidPlan(bid.price, 1, bid.price), bids=[bid.price])
-        reason = f"adopted after a restart: our bid {bid.price} still stands, nobody drives the thread"
-        opened = bid.created_tick if bid.created_tick is not None else tick
-        self.convs[dealer] = Conversation(dealer, bid.ref, rarity, bid.price, reason, neg, thread_id, opened)
-        self.log(f"tick {tick} taker: thread {thread_id} with {dealer} for {bid.ref}: {reason}")
+            tid, created = o.get("thread"), o.get("created_tick")
+            if isinstance(tid, int) and o.get("maker") == us and o.get("status") in (None, "open"):
+                old = newest.get(tid, -1)
+                newest[tid] = None if created is None or old is None else max(int(created), old)
+        watched = {
+            int(t["id"]): t
+            for t in threads
+            if isinstance(t.get("id"), int) and t["id"] in self._watch and t["id"] not in owned
+        }
+        self._quiet = {tid: seen for tid, seen in self._quiet.items() if tid in watched}
+        for tid, t in watched.items():
+            if tid in newest:  # a bid of ours stands: quiet since it was made (unknown age: fresh)
+                created = newest[tid]
+                quiet = created is not None and clock.tick - created >= after
+                self._quiet.pop(tid, None)
+            else:  # none stands (they lapse 2 ticks after they are made): quiet since we first saw that
+                quiet = clock.tick - self._quiet.setdefault(tid, clock.tick) >= after
+            if quiet:
+                self._close_orphan(run, tid, str(t.get("with") or "-"))
 
     def _close_orphan(self, run: _TickRun, thread_id: int, dealer: str) -> None:
         tick = run.snap.clock.tick
@@ -941,15 +936,7 @@ class Taker:
         if not run.window.open():
             return
         if self.rec.send(did, tick, "close_thread", {"thread": thread_id}, lambda: self.team.close_thread(thread_id)):
-            self._quiet.pop(thread_id, None)
+            self._quiet.pop(thread_id, None)  # still watched: read once it leaves the open list
 
 
-RESTART_TICKS = 5  # ticks the restart wrap-up may take (3 thread reads each) before it gives up on refusals
-
-
-def _rarity(catalog: dict[str, Any], ref: str) -> str:
-    for s in catalog.get("sets") or []:
-        for c in s.get("cards") or []:
-            if str(c.get("id")) == ref:
-                return str(c.get("rarity"))
-    return "unknown"
+RESTART_TICKS = 5  # refused reads of one watched thread before it is given up

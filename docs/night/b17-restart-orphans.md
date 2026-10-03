@@ -1,9 +1,10 @@
 # B17 · Dealer threads orphaned by a restart (bite X3, high)
 
-**Verdict: GO, merge with #72.** A pure bug fix, no new guardrail and no changed default. After a restart the taker
-now books a deal struck on a thread of the process before it, and adopts or closes the old process's open dealer
-threads instead of leaving them blocking a dealer and a thread slot. A thread a live `bazaar dealer buy` is driving is
-never touched.
+**Verdict: GO, merge with #72.** A bug fix: no guardrail changes, no changed default. After a restart, the taker
+books a deal struck on a thread of the process before it (once, even with two takers overlapping), and closes that
+process's threads once they go quiet, instead of leaving them blocking a dealer and a thread slot. A thread the taker
+never drove (a laptop `bazaar dealer buy`) is never touched. The one new write is the quiet close, and only for the
+taker's own threads.
 
 Stacked on `fix/cash-spend-accounting` (#72). B17 alone: `git diff origin/fix/cash-spend-accounting...night/b17-restart-orphans`.
 
@@ -14,34 +15,37 @@ threads of the old process were only counted as busy: never read, never walked, 
 standing bid never reached `_finished`, so it was never booked as spend. The hourly cap undercounted and the dealer
 stayed blocked until it idled the thread out (40 ticks, ~20 min at 30 s ticks).
 
-## The fix
+## The fix (reworked after r1's review)
 
-| Case after a restart | Before | Now |
+The taker **watches** its own dealer threads that no `Conversation` drives:
+- on start, the threads the process before it drove (the decisions log: `agent = taker`, `thread_id`, live rows of
+  the last 40 ticks, not yet wrapped up);
+- every thread it walks from (the dealer may take our bid at the same boundary).
+
+| Case | Before | Now |
 |---|---|---|
-| The dealer took our standing bid before the new process saw the thread | never booked | the new process finds the thread in the decisions log (`agent = taker`, `thread_id`, live rows of the last 40 ticks), reads it once, books the deal at its settled price (fallback: our highest bid there), dated now |
-| Our old bid still stands in an open thread, nobody bid there for 3 ticks | dealer blocked, slot used | adopted with that bid as its whole plan (start = max): read every tick, a deal on it is booked by `_finished`, and it walks on its next move |
-| Open thread, no bid of ours standing (real thread bids expire 2 ticks after they are made) | dealer blocked, slot used | closed after 3 quiet ticks (`orphan_after_ticks`), through `guardrails.check` (the kill switch holds it) |
-| A live `bazaar dealer buy` on a laptop drives the thread (bids every tick) | left alone | left alone: its bid is always fresher than 3 ticks |
-| Kill switch on | — | nothing is closed, and quiet ticks under the switch do not count (a held `dealer buy` sends nothing either) |
-| Dry run | — | nothing adopted, read or closed |
+| A watched thread leaves the open list (deal, idle, walked) | deal never booked | read once, newest first (3 per tick); a deal is booked at its settled price (fallback: our highest bid there), dated now (over-counts briefly, never under-counts) |
+| The dealer takes the bid **after** the new process's first tick (r1 #1) | never booked | still watched while open, booked when it leaves the open list |
+| Two takers overlap during a redeploy and both see the deal (r1 #2) | booked twice | booked once: whoever claims the thread's one `dealer_closed` decision books it (Postgres: partial unique index `decisions_thread_closed`, created by `schema.sql` when an agent opens the ledger; JSONL: a file lock) |
+| 16 walked threads plus one recent deal (r1 #3) | deal read last or never | newest first: the deal is booked on the first tick; a thread is given up only after 5 refused reads of it |
+| A watched thread stays open with no bid of ours for 3 ticks (`orphan_after_ticks`) | dealer blocked ~40 ticks | closed through `guardrails.check` (the kill switch holds it; quiet ticks under it do not count) |
+| A thread the taker never drove (a laptop `bazaar dealer buy`, even paused) (r1 #4, #5) | left alone | left alone: never read, never closed |
+| Dry run | — | nothing watched, read or closed |
 
-Every wrapped-up thread now writes one `dealer_closed` decision, so the next restart does not book its deal twice.
-`DecisionLog.thread_trails(agent, since_tick)` reads Postgres and this machine's JSONL (a write falls back to the
-file while Postgres is down). The restart wrap-up reads at most `max_dealer_threads` threads per tick and retries a
-refused read for 5 ticks; a refused read never stops the taker's tick.
-
-Two new `TakerConfig` fields (not guardrails): `orphan_after_ticks = 3`, `restart_lookback_ticks = 40`.
+The never-firing "adopt a stale standing bid" path of the first version is gone (r1 #4: real thread bids lapse 2
+ticks after they are made). `TakerConfig`: `orphan_after_ticks = 3`, `restart_lookback_ticks = 40` (not guardrails).
 
 ## Evidence
 
 - The two r2 bite tests flip (copied from `night/r2-bite-hunter` @ 51a9314 with their xfail marks removed): they fail
   on #72 (`ledger spend 0`, `orphan thread 40 never read nor closed in 3 ticks`) and pass here.
-- `tests/test_taker_restart.py` (12 tests + 1 Postgres integration test): the live `dealer buy` thread is never
-  read or closed over 6 ticks; the quiet close waits 3 ticks and restarts its count after a fresh bid; the kill switch
-  holds it and its ticks do not count; dry run touches nothing; a deal booked by the old process (or by an adopted
-  thread) is not booked again after one more restart; a thread that ended without a deal books 0 and is read once;
-  restart reads are bounded to 3 per tick; a refused read is retried 5 ticks and the taker keeps trading;
-  `thread_trails` skips dry-run rows, other agents, update rows, bad lines and rows before the lookback.
+- `tests/test_taker_restart.py` (18 tests + 1 Postgres integration test): r1's three cases (a deal after the new
+  process's first tick is booked; two overlapping takers book it once, 18 not 36; a deal behind 16 walked threads is
+  booked on the first tick); a thread the taker never drove is never read or closed, even quiet for 8 ticks; a
+  watched thread with fresh bids is left alone; the quiet close waits 3 ticks; the kill switch holds it and its ticks
+  do not count; dry run touches nothing; a walked thread that dealt at the boundary is booked; no double booking
+  across restarts; a thread that ended without a deal is read once; 3 reads per tick; a refused read is given up
+  after 5 and the taker trades on; `decide_once` writes one closing row per thread; `thread_trails` filtering.
 - Chaos run (real taker live over HTTP against the in-process simulator, 30 s ticks, 6 rivals, 240 ticks × 5 seeds,
   restart = a fresh `Taker` on the same ledger and decision log):
 
@@ -66,8 +70,9 @@ dealer idles them out; their deals are still booked. Script: `docs/night/b17_cha
 - Postgres down at restart: the new process remembers nothing from the old one (the JSONL on a fresh Railway
   container is empty): a deal struck while no process watched is still not booked (today's behaviour). Adoption and
   closes still work (they read the live `/api/me/threads` and `/api/me/offers`).
-- Adoption reads the bid age from `created_tick` of our offers (present in every real offer in Friday's feed). An
-  offer without `created_tick` is treated as fresh: never adopted.
+- The quiet close reads a bid's age from `created_tick` (present in every real offer in Friday's feed); an offer
+  without it counts as fresh. The partial unique index is created by `schema.sql` on the next agent start; until it
+  exists, two overlapping takers can still book a deal twice (over-count, as before).
 - Closing a dealer thread is a walk the dealer remembers; the alternative (keep laddering with the playbook's plan)
   is a bigger change and was not needed for the bite.
 - Not covered (follow-up): a thread of a crashed `bazaar dealer buy` that dealt before anyone saw it. The public

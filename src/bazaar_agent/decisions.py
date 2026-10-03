@@ -8,6 +8,7 @@ executions: nothing was sent. Postgres when it answers (the shared memory), else
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import itertools
 import json
@@ -146,6 +147,51 @@ class DecisionLog:
         local = -next(self._local_ids)
         self._append("decisions.jsonl", {"id": local, **asdict(d), "digest": d.digest()})
         return local
+
+    def decide_once(self, d: Decision) -> int | None:
+        """Write `d` unless a decision of its kind already exists for its thread (by any process): its id, or
+        None when another one was first. Postgres: the partial unique index on (thread_id) for THREAD_CLOSED
+        (`schema.sql`) refuses the second row; the JSONL file: checked and written under one file lock."""
+        conn = self._db()
+        if conn is not None:
+            try:
+                row = conn.execute(
+                    "insert into decisions (thread_id, tick, state_digest, candidates, policy_checks, status, reason, "
+                    "agent, kind, dry_run) values (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s) "
+                    "on conflict do nothing returning id",
+                    (
+                        d.thread_id,
+                        d.tick,
+                        d.digest(),
+                        _json(d.inputs),
+                        _json({"guardrail": d.guardrail, "allowed": d.guardrail == "allowed"}),
+                        d.status,
+                        scrubbed(d.reason),
+                        d.agent,
+                        d.kind,
+                        d.dry_run,
+                    ),
+                ).fetchone()
+                return int(row[0]) if row is not None else None
+            except psycopg.Error as e:
+                self._failed("decision insert", e)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        with (self.dir / "decisions.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                path = self.dir / "decisions.jsonl"
+                for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if row.get("kind") == d.kind and row.get("thread_id") == d.thread_id:
+                        return None
+                local = -next(self._local_ids)
+                self._append("decisions.jsonl", {"id": local, **asdict(d), "digest": d.digest()})
+                return local
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def settle(self, decision_id: int, status: Status) -> None:
         """The decision's final status once its request came back (done / failed / expired)."""

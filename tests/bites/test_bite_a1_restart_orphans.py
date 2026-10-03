@@ -10,6 +10,7 @@ Each test PASSES when the code is correct; a failure proves the bite.
 
 import pytest
 
+from bazaar_agent.decisions import Decision, DecisionLog
 from tests.agent_fakes import TICK, FakePublic, FakeTeam
 from tests.bites.kit import at, dealer_took_our_bid, make_taker, thread_bid
 
@@ -55,6 +56,23 @@ def test_a1_an_open_thread_from_a_previous_process_is_adopted_or_closed(tmp_path
     team = FakeTeam(
         threads=[{"id": 40, "with": "abuela", "team": "t01", "status": "open"}],
         offers=[thread_bid(77, 40, "LAV-08", 20)],
+    )
+    # B17: only the taker's own threads are closed (a `bazaar dealer buy` thread never is): the process before
+    # this one drove thread 40, as its decisions log says.
+    DecisionLog(tmp_path).decide(
+        Decision(
+            "taker",
+            TICK - 10,
+            "dealer_bid",
+            {"item": "LAV-08"},
+            "r",
+            "allowed",
+            True,
+            "done",
+            False,
+            thread_id=40,
+            move={"kind": "bid", "price": 20},
+        )
     )
     t, lines, _ = make_taker(tmp_path, team, FakePublic())
     for k in range(3):
