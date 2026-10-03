@@ -255,7 +255,16 @@ create index if not exists cards_set on cards (set_code, rarity);
 -- row is a decision input only while it is provably current (holdings.py: same tick, same epoch, young,
 -- no thread message of ours this tick); otherwise the reader calls /api/me and upserts the newer view.
 -- `world` is "real" or "sim:<host:port>": a simulator's tick and team ids (sim-team1 is t01 too) never
--- answer for the real game, even in a shared database.
+-- answer for the real game, even in a shared database. A cache: a pre-release copy without `world` is
+-- dropped and recreated (every reader then reads /me live once).
+do $$
+begin
+  if to_regclass(format('%I.me_snapshots', current_schema())) is not null and not exists (
+      select 1 from information_schema.columns
+       where table_schema = current_schema() and table_name = 'me_snapshots' and column_name = 'world') then
+    drop table me_snapshots;
+  end if;
+end $$;
 create table if not exists me_snapshots (
   world text not null, team text not null, tick int not null, epoch bigint not null, digest text not null,
   read_at timestamptz not null, read_by text not null,

@@ -108,7 +108,7 @@ def test_a_simulator_in_a_shared_database_writes_no_world_less_table(opener):
         assert conn.execute("select count(*) from me_snapshots").fetchone() == (1,)
 
 
-def test_a_forged_row_is_never_a_decision_input(opener):
+def test_a_tampered_row_is_never_a_decision_input(opener):
     game = Game()
     reader(opener, game).me(clock(tick=TICK))
     with SharedDb(opener).session() as conn:
@@ -216,6 +216,36 @@ def test_two_agents_starting_a_tick_together_make_one_me_call(opener):
     assert game.calls == 1
     assert sorted(a.source for a in answers.values()) == ["db", "live"]
     assert len({a.digest for a in answers.values()}) == 1
+
+
+def test_a_row_found_after_a_lock_wait_is_not_served_once_the_tick_is_ending(opener):
+    game = Game(delay=1.2)  # the leader's /me holds the team lock for 1.2 s
+    answers = {}
+
+    def lead():
+        answers["taker"] = reader(opener, game, "taker").me(clock(tick=TICK, next_tick_in=30.0))
+
+    first = threading.Thread(target=lead)
+    first.start()
+    time.sleep(0.15)
+    late = reader(opener, game, "maker").me(clock(tick=TICK, next_tick_in=1.6))  # 1.6 s left: fine at entry
+    first.join(timeout=10)
+    assert (late.source, late.why) == ("live", "the tick is about to end") and game.calls == 2
+
+
+def test_a_pre_release_snapshot_table_is_replaced(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    conn = open_in(database_url, schema)
+    conn.execute("create table me_snapshots (team text, tick int, epoch bigint, primary key (team, tick))")
+    conn.commit()
+    db.init_schema(conn)
+    columns = conn.execute(
+        "select column_name from information_schema.columns where table_schema = current_schema() "
+        "and table_name = 'me_snapshots' and column_name = 'world'"
+    ).fetchall()
+    conn.close()
+    assert columns == [("world",)]
 
 
 def test_two_writers_in_one_tick_never_move_the_row_backwards(opener):

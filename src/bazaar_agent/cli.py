@@ -251,7 +251,7 @@ def _holdings_read(settings: Settings, from_db: bool = True) -> Any:
     from bazaar_agent.holdings import SharedDb
 
     hd.name_process("cli")
-    team = team_client(settings)
+    team = team_client(settings) if from_db else team_client(settings, track=False)  # --no-db: no connection
     try:
         clock: Clock | None = Clock.model_validate(public_client(settings).clock())
     except BazaarError:

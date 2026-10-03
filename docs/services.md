@@ -167,7 +167,8 @@ answer carries where it came from:
 ```
 
 `source: "live"` with `why` (`no snapshot this tick`, `a write of ours since it was read`, `a thread message
-of ours this tick`, `older than 5 s`, `postgres unavailable`, ...) means the server read `/api/me` itself.
+of ours this tick`, `older than 5 s`, `the tick is about to end`, `stored row does not match itself`, `postgres
+busy or not connected`, `postgres error`, ...) means the server read `/api/me` itself.
 `holdings` answers `{team, cash, level, affinity, pages, missing: {rows: [{set, ref, name, rarity,
 value_to_us}]}, duplicates: {ref: [asset ids]}, packs: [{asset, pack}], cards: {rows: [{asset, ref, set,
 rarity, serial, your_value}]}, holdings}`. `cards` (`set`, `rarity`, `ref` filters) answers `{source: "db" |
@@ -184,6 +185,7 @@ later, wins; a row never moves backwards. `holdings_state` (one row per world, k
 `set_name`, `name`, `rarity`, `book`, `print_run`, `minted`, `released`, `page`, `hidden`, `updated_tick`.
 The evals' `snapshots` (one row per tick) follows the winning `me_snapshots` row of the real game (or of a
 simulator in its own database).
+
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or

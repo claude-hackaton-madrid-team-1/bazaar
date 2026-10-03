@@ -556,14 +556,14 @@ class Holdings:
     def me(self, clock: Clock | None, *, clock_read_at: float | None = None, live_because: str | None = None) -> MeRead:
         """Album first. `live_because` forces a live read (after a deal); the answer is stored either way.
         `clock_read_at`: this object's `now()` when `clock` was read (default: just now)."""
-        elapsed = self._now() - clock_read_at if clock_read_at is not None else 0.0
-        reason = live_because or self._skip_reason(clock, elapsed)
+        read_at = clock_read_at if clock_read_at is not None else self._now()
+        reason = live_because or self._skip_reason(clock, self._now() - read_at)
         if reason is not None or clock is None:
             return self._live(clock, reason or "no clock")
         with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
             if conn is None:
                 return self._plain(clock, "postgres busy or not connected")
-            return self._from_db(conn, clock, into_tick_s(clock, elapsed))
+            return self._from_db(conn, clock, read_at)
 
     def after_deal(self, clock: Clock | None, what: str) -> MeRead:
         """A deal of ours (sent, or seen settled): bump the epoch, so no process trusts an older snapshot,
@@ -598,11 +598,11 @@ class Holdings:
             return "a send of ours was not recorded"
         return None
 
-    def _from_db(self, conn: psycopg.Connection, clock: Clock, into: float) -> MeRead:
+    def _from_db(self, conn: psycopg.Connection, clock: Clock, read_at: float) -> MeRead:
         assert self.team is not None
         got: MeRead | None = None
         try:
-            found, why = self._fresh(conn, clock, into)
+            found, why = self._fresh(conn, clock, read_at)
             if found is not None:
                 return found
             with conn.transaction():  # one reader per team: the others wait, then find its row
@@ -611,7 +611,7 @@ class Holdings:
                     "select pg_advisory_xact_lock(hashtext(current_schema() || %s))",
                     (f":bazaar_agent.holdings:{self.scope.world}:{self.team}",),
                 )
-                found, why = self._fresh(conn, clock, into)
+                found, why = self._fresh(conn, clock, read_at)  # after the wait: the tick may be ending
                 if found is not None:
                     return found
                 got = self._read_and_store(conn, clock, current_epoch(conn, self.scope.world), why)
@@ -622,10 +622,14 @@ class Holdings:
             self.shared.failed(e)
             return got if got is not None else self._plain(clock, "postgres error")
 
-    def _fresh(self, conn: psycopg.Connection, clock: Clock, into: float) -> tuple[MeRead | None, str]:
-        """The stored snapshot when every rule holds, else None and the first rule it breaks."""
+    def _fresh(self, conn: psycopg.Connection, clock: Clock, read_at: float) -> tuple[MeRead | None, str]:
+        """The stored snapshot when every rule holds, else None and the first rule it breaks. Judged NOW:
+        after a lock wait, the clock read at `read_at` may be about to leave its tick."""
         assert self.team is not None
-        row = stored(conn, self.scope.world, self.team, clock.tick, into)
+        since = self._now() - read_at
+        if clock.next_tick_in - since < TICK_END_MARGIN_S:
+            return None, "the tick is about to end"
+        row = stored(conn, self.scope.world, self.team, clock.tick, into_tick_s(clock, since))
         why = verdict(row, self.team, self.rules.holdings_max_age_s)
         if row is None or why != "fresh":
             return None, why
