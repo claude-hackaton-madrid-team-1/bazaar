@@ -1,12 +1,16 @@
 """The bridge to the organisers' vendored SDK (`vendor/bazaar-kit/bazaar_sdk.py`). SDK first.
 
 `public_client()` sends no key at all: a wrong or empty key counts toward the server's
-`too_many_failures` limit, so keyless reads must not carry the header.
+`too_many_failures` limit, so keyless reads must not carry the header. `team_client()` is a
+`TrackedBazaar`: every send that can move cards or cash tells the shared holdings (`holdings.py`)
+before it goes and after it returns, so no process answers /api/me from a snapshot it made stale.
 """
 
 from __future__ import annotations
 
+import logging
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from bazaar_agent.config import REPO_ROOT, Settings
@@ -17,7 +21,10 @@ if str(_KIT) not in sys.path:
 
 from bazaar_sdk import Bazaar, BazaarError, Broker, _Http  # noqa: E402
 
-__all__ = ["Bazaar", "BazaarError", "Broker", "PublicBazaar", "public_client", "team_client"]
+__all__ = ["Bazaar", "BazaarError", "Broker", "PublicBazaar", "TrackedBazaar", "public_client", "team_client"]
+
+WriteHook = Callable[[str, str, str], None]  # (method, path, "before" | "after")
+log = logging.getLogger(__name__)
 
 
 class PublicBazaar(Bazaar):
@@ -32,10 +39,40 @@ class PublicBazaar(Bazaar):
         return [e for e in events if isinstance(e, dict) and isinstance(e.get("id"), int)]
 
 
+class TrackedBazaar(Bazaar):
+    """The SDK's team client; every request that is not a GET calls `on_write` before and after it.
+    A hook that fails is logged and ignored: it never blocks, delays past its own timeout, or breaks a send."""
+
+    def __init__(self, url: str, key: str, *, on_write: WriteHook | None = None, **kwargs: Any) -> None:
+        super().__init__(url, key, **kwargs)
+        self.on_write = on_write
+
+    def _call(self, method: str, path: str, body: Any = None, query: dict[str, Any] | None = None) -> Any:
+        hook = self.on_write
+        if hook is None or method.upper() == "GET":
+            return super()._call(method, path, body, query)
+        _tell(hook, method, path, "before")
+        try:
+            return super()._call(method, path, body, query)
+        finally:
+            _tell(hook, method, path, "after")
+
+
+def _tell(hook: WriteHook, method: str, path: str, phase: str) -> None:
+    try:
+        hook(method, path, phase)
+    except Exception as e:  # the holdings are a cache: losing one bump costs at most holdings_max_age_s
+        log.warning("holdings: write hook failed (%s)", type(e).__name__)
+
+
 def public_client(settings: Settings) -> PublicBazaar:
     return PublicBazaar(settings.bazaar_url)
 
 
-def team_client(settings: Settings) -> Bazaar:
-    """wait_on_tick=False: our tick loop owns timing, so a refused send never blocks a process."""
-    return Bazaar(settings.bazaar_url, settings.require_team_key(), wait_on_tick=False, retries=2)
+def team_client(settings: Settings, *, track: bool = True) -> Bazaar:
+    """wait_on_tick=False: our tick loop owns timing, so a refused send never blocks a process. `track`:
+    every send bumps the shared holdings epoch (`holdings.process_tracker`), for every process alike."""
+    from bazaar_agent import holdings
+
+    hook = holdings.process_tracker() if track else None
+    return TrackedBazaar(settings.bazaar_url, settings.require_team_key(), on_write=hook, wait_on_tick=False, retries=2)

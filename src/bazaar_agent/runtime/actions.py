@@ -133,7 +133,7 @@ class Base:
 
 
 def _base(b: Backend, clock: Clock) -> Base:
-    me, offers = b.team.me(), b.my_offers()
+    me, offers = b.holdings.me(clock).me, b.my_offers()
     ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
     return Base(me, offers, ctx, b.commitments(me, offers))
 
