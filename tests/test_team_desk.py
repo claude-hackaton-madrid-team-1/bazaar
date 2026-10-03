@@ -622,3 +622,28 @@ def test_a_team_desk_error_never_costs_the_taker_its_tick(tmp_path):
     t.on_tick(clock())
     assert ("accept", 77, None) in team.sent  # the board buy still happened
     assert any("team desk: proposals failed (RuntimeError: bad payload)" in line for line in lines)
+
+
+def test_a_ledger_outage_inside_the_desk_still_stops_the_taker_tick(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from tests.agent_fakes import FakePublic, clock, parts
+
+    lines: list[str] = []
+    t = Taker(
+        Team(),
+        FakePublic(),
+        live=True,
+        log=lines.append,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=0),
+        **parts(tmp_path, team_threads_enabled=True),
+    )
+
+    def down(view):
+        raise LedgerUnavailable("ledger write failed (OperationalError)")
+
+    t.team_desk.proposals = down  # type: ignore[method-assign]
+    t.on_tick(clock())
+    assert any("no write this tick (fail closed)" in line for line in lines)  # not swallowed by the desk guard

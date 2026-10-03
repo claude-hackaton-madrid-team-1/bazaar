@@ -515,8 +515,8 @@ class Taker:
         """The team desk never costs the taker its tick: an error there is reported and the desk skips."""
         try:
             return call() or []
-        except BazaarError:
-            raise  # a refused read is the taker's (on_tick reports it)
+        except (BazaarError, LedgerUnavailable):
+            raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
         except Exception as e:  # noqa: BLE001 — fail closed for the desk, never for the board or the dealers
             self.log(f"team desk: {what} failed ({type(e).__name__}: {e}); no team-thread move this tick")
             return []
