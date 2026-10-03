@@ -20,11 +20,23 @@ agent_cli, duel_cli = test_agents_market.agent_cli, test_jev_journal.duel_cli
 
 
 class Conn:
+    """A connection whose advisory lock is free (`locked=False`: another process of the kind holds it)."""
+
+    def __init__(self, free: bool = True) -> None:
+        self.free, self.autocommit, self.sql = free, False, []
+
     def __enter__(self) -> Conn:
         return self
 
     def __exit__(self, *exc: object) -> None:
         return None
+
+    def execute(self, query: str, params: Any = None) -> Conn:
+        self.sql.append(query)
+        return self
+
+    def fetchone(self) -> tuple[bool]:
+        return (self.free,)
 
 
 def make(
@@ -206,3 +218,22 @@ def test_a_hung_pass_never_holds_the_tick_thread(monkeypatch: pytest.MonkeyPatch
     assert [evals.after_tick(t) for t in range(3, 10)] == [False] * 7  # still running: skipped, not queued
     assert time.perf_counter() - started < 0.5
     release.set()
+
+
+def test_another_process_of_the_kind_holding_the_lock_skips_the_pass(passes: list[frozenset[str]]) -> None:
+    conn = Conn(free=False)
+    evals, logs = make(every=1, connect=lambda: conn)
+    for tick in (1, 2, 3):
+        evals.after_tick(tick)
+    assert passes == [] and logs == ["evals (taker): another taker process is scoring; this one skips"]
+    assert conn.autocommit is True and "set statement_timeout = 30000" in conn.sql
+    assert any("pg_try_advisory_lock" in q for q in conn.sql)
+
+
+def test_simulated_traces_go_to_their_own_phoenix_project() -> None:
+    from bazaar_agent import telemetry as tm
+
+    assert tm.tracing_config({"BAZAAR_SIM": "local"}).project == "bazaar-sim"
+    assert tm.tracing_config({"BAZAAR_SIM": "1", "PHOENIX_PROJECT": "team1"}).project == "team1-sim"
+    assert tm.tracing_config({"BAZAAR_SIM": "0"}).project == "bazaar"
+    assert tm.tracing_config({}).project == "bazaar"

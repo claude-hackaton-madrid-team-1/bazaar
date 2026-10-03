@@ -401,3 +401,25 @@ def test_an_agents_pass_makes_no_network_call_but_postgres(
         "dealer 6, trade 1",
         "nothing settled yet",
     ]
+
+
+def test_a_second_process_of_the_same_kind_skips_while_the_first_scores(
+    database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bazaar_agent.evals.inline import TickEvals
+
+    setup = open_in(database_url, schema)
+    db.init_schema(setup)
+    holder = open_in(database_url, schema)
+    holder.execute("select pg_advisory_lock(hashtext('bazaar-evals:taker'))")
+    logs: list[str] = []
+    evals = TickEvals(
+        "taker", 1, lambda: open_in(database_url, schema), lambda c: OURS, lambda: None, logs.append, lambda w: w()
+    )
+    evals.after_tick(1)
+    evals.after_tick(2)
+    assert logs == ["evals (taker): another taker process is scoring; this one skips"]
+    holder.close()  # the lock goes with its session
+    evals.after_tick(3)
+    assert any("new/changed" in m for m in logs[1:]), logs
+    setup.close()

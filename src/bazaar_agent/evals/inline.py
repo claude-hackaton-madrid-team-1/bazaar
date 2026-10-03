@@ -24,6 +24,7 @@ import psycopg
 from bazaar_agent.evals.phoenix import PhoenixAnnotator
 from bazaar_agent.evals.run import run_once
 
+STATEMENT_TIMEOUT_MS = 30_000
 TARGETS_BY_AGENT: dict[str, frozenset[str]] = {
     "duels": frozenset({"duel"}),
     "taker": frozenset({"dealer", "trade"}),
@@ -73,6 +74,11 @@ class TickEvals:
             return False
         return True
 
+    def _say(self, message: str) -> None:
+        if message not in self._said:
+            self._said.add(message)
+            self._log(message)
+
     def _pass(self) -> None:
         try:
             self._score(self.targets)
@@ -82,17 +88,21 @@ class TickEvals:
             self._running.clear()
 
     def _score(self, targets: Collection[str]) -> None:
-        annotator = self._annotator()
-        try:
-            with self._connect() as conn:
+        with self._connect() as conn:
+            conn.autocommit = True  # reads hold no transaction open while the pass computes
+            conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")  # a pass stuck on a lock ends
+            row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (f"bazaar-evals:{self.agent}",)).fetchone()
+            if not (row and row[0]):  # another process of this kind (a laptop dry run) holds this agent's targets
+                self._say(f"evals ({self.agent}): another {self.agent} process is scoring; this one skips")
+                return
+            annotator = self._annotator()
+            try:
                 summary = run_once(conn, self._team(conn), annotator=annotator, warn=self._log, targets=targets)
-        finally:
-            if annotator is not None:
-                annotator.close()
+            finally:
+                if annotator is not None:
+                    annotator.close()
         for note in summary.notes:
-            if note not in self._said:
-                self._said.add(note)
-                self._log(f"evals ({self.agent}): {note}")
+            self._say(f"evals ({self.agent}): {note}")
         scored = ", ".join(f"{k} {v}" for k, v in sorted(summary.scored.items())) or "nothing settled yet"
         self._log(
             f"evals ({self.agent}): {scored} · {summary.changed} new/changed · phoenix {summary.phoenix}: "

@@ -54,7 +54,7 @@ def duel_outcomes(
 def dealer_outcomes(conn: psycopg.Connection, ours: str, since_tick: int | None) -> list[Outcome]:
     ranges = learned_ranges(inputs.curve_rows(conn))
     levels = inputs.dealer_levels(conn)
-    threads = [t for t in dealer_threads(inputs.dealer_events(conn), ours) if t.ours]
+    threads = [t for t in dealer_threads(inputs.dealer_events(conn, ours), ours) if t.ours]
     return [score_thread(t, ranges, levels) for t in threads if since_tick is None or (t.last_tick or 0) >= since_tick]
 
 
