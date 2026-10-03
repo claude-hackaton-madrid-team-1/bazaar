@@ -260,7 +260,9 @@ def test_live_dealer_buy_with_the_ledger_down_exits_cleanly_before_opening(live_
     assert client.sent == [] and client.reads == 1  # read the clock, never opened a thread
 
 
-def test_a_ledger_failure_inside_the_guard_walks_instead_of_accepting(live_dealer_buy, monkeypatch, tmp_path):
+def test_a_ledger_failure_on_the_accept_slot_waits_instead_of_accepting(live_dealer_buy, monkeypatch, tmp_path):
+    # #61 moved the slot claim from the guard into `reserve`: an outage there is "no slot this tick" (wait, as
+    # a busy slot), never an accept and never a traceback; the thread closes only at its own timeout.
     from bazaar_agent.guardrails import Ledger
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
@@ -273,7 +275,7 @@ def test_a_ledger_failure_inside_the_guard_walks_instead_of_accepting(live_deale
     assert result.exit_code == 0, result.output
     assert client.sent == [6, 7, 8] and client.accepted == [] and client.closed  # her 9 was not taken
     assert "accept reservation failed (OperationalError); no write without the shared ledger" in output
-    assert "walked" in output
+    assert "Traceback" not in output and "timeout thread 85" in output
 
 
 def test_offer_terms_must_be_exactly_the_requested_item_for_cash_only():

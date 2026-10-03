@@ -363,8 +363,14 @@ def dealer_buy(
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
+        """Claim the team's accept slot. A ledger failure is no slot: no accept without the shared ledger."""
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+        try:
+            reserved = ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit)
+        except LedgerUnavailable as e:
+            console.print(f"  tick {c.tick}: {e}; no write without the shared ledger (fail closed)")
+            return False
+        if not reserved:
             return False
         tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return True
