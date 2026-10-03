@@ -225,8 +225,7 @@ def accept(w: World, team_id: str, did: int) -> dict[str, Any]:
     cap = w.limit("accepts_per_team_per_tick")  # RULES.md: one accept per team per tick, duels and market alike
     if w.used(team_id, "accepts") >= cap:
         raise wait_for_tick("accepts per tick", w.tick + 1)
-    w.use(team_id, f"duel_accept:{did}", 1, "one accept per duel per tick")
-    w.use(team_id, "accepts", cap, "accepts per tick")
+    w.use(team_id, "accepts", cap, "accepts per tick")  # `_team_duel` already refuses a duel accepted once
     duel.accepted, duel.accepted_tick = "team", w.tick
     return {"ok": True, "duel": did, "settles_tick": w.tick + 1}
 
