@@ -1025,16 +1025,22 @@ class Taker:
         )
         if status != "approved" or not self.live:
             return
-        body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
-        if body is None and not self.rec.maybe_landed:  # refused (locked, not_owner, ...): it cost nothing
-            self._taller_rest_until = clock.tick + 10
-            return
-        self._crafts.append(clock.t_hours)  # a craft that may have landed counts toward the hour (fail safe)
+        # Promised and counted BEFORE the send: an error after the POST (a decisions write) can never leave a crafted
+        # copy free for the team desk, nor the craft out of the hourly cap. Taken back only on a refusal for sure.
         gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
                 for s in t.spares]}}  # fmt: skip
+        view, offers = run.team_view, run.offers
         run.offers.append(gone)  # later checks this tick (the team desk's posts too) never give a crafted copy
-        if run.team_view is not None and run.team_view.offers is not run.offers:
-            run.team_view = replace(run.team_view, offers=[*run.team_view.offers, gone])
+        if view is not None and view.offers is not offers:
+            run.team_view = replace(view, offers=[*view.offers, gone])
+        self._crafts.append(clock.t_hours)
+        body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
+        if body is None and not self.rec.maybe_landed:  # refused (locked, not_owner, ...): it cost nothing
+            self._crafts.pop()
+            offers.remove(gone)
+            run.team_view = view
+            self._taller_rest_until = clock.tick + 10
+            return
         self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
 
     # ------------------------------------------------------------ (b) the dealer desk

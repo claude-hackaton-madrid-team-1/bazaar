@@ -905,6 +905,8 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     and `max_taller_per_game_hour`; every card keeps at least one free copy (a copy in an open ask of ours is not
     free: `Context.sellable`), whatever the set, so a page never loses its last copy."""
     v = [] if rules.taller_enabled else ["taller_enabled = false"]
+    if rules.dealer_sell_enabled:  # SA1 interlock: the maker's sell desk may sell the very copy the Workshop keeps
+        v.append("dealer_sell_enabled = true: the Workshop waits (nothing shared tells it what the sell desk sells)")
     if ctx.taller_last_hour >= rules.max_taller_per_game_hour:
         v.append(
             f"{ctx.taller_last_hour} Workshop craft(s) this game hour (max_taller_per_game_hour "
@@ -917,6 +919,10 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if len(set(action.assets)) != len(action.assets):
+        v.append(f"the Workshop's copies {list(action.assets)} repeat one")
+    if action.assets and ctx.cards is None:
+        v.append("the Workshop's copies cannot be matched to our /me (no cards read)")
     if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
         named = [c.ref if (c := ctx.cards.copy(a)) is not None else None for a in action.assets]
         if named != refs:

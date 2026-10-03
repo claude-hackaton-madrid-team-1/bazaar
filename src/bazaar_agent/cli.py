@@ -2376,8 +2376,10 @@ def taller_cmd(
     from bazaar_agent.agents import taller as tl
 
     client, me = _team_me()
-    rules, _, ctx, commitments = _sell_context(client, me, live)
-    busy = set(commitments.listed)
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
+    busy = set(commitments.listed) | tl.sell_thread_assets(client.my_threads("open").get("threads") or [])
+    accepted = {i for t in (ctx.tick - 1, ctx.tick) for i in ledger.accept_items(t) if ":" not in i and "-" in i}
+    busy |= {int(a["id"]) for a in me.get("assets") or [] if a.get("ref") in accepted and isinstance(a.get("id"), int)}
     public = public_client(load_settings())
     catalog = public.catalog()
     if not assets:
@@ -2403,7 +2405,7 @@ def taller_cmd(
     try:
         answer = tl.craft(client, assets)
     except BazaarError as e:
-        _fail(f"refused: {escape(str(e.code))} ({escape(tl.pulled({'card': str(e.message)[:80]}))})")
+        _fail(f"refused: {escape(tl.clean(str(e.code), 40))} ({escape(tl.clean(str(e.message)))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
 
 

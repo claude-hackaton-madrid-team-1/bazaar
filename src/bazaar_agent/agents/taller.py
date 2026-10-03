@@ -19,6 +19,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from bazaar_agent.intel import TEAM_ID
+
 TALLER_PATH = "/api/taller"
 LEVEL_ID = "taller"
 INPUTS = 3
@@ -127,9 +129,12 @@ def sell_thread_assets(threads: Iterable[Any]) -> set[int]:
     may take our ask with words only, so such a copy is never free."""
     out: set[int] = set()
     for t in threads:
-        topic = t.get("topic") if isinstance(t, Mapping) else None
+        if not isinstance(t, Mapping) or TEAM_ID.match(str(t.get("with") or "")):
+            continue  # a team thread's topic is the other team's choice (#239 review): only our dealer threads
+        topic = t.get("topic")
         sell = topic.get("sell") if isinstance(topic, Mapping) else None
-        for a in (sell.get("assets") if isinstance(sell, Mapping) else None) or []:
+        assets = sell.get("assets") if isinstance(sell, Mapping) else None
+        for a in assets if isinstance(assets, list) else []:
             aid = a.get("id") if isinstance(a, Mapping) else a
             if isinstance(aid, int) and not isinstance(aid, bool):
                 out.add(aid)
@@ -202,9 +207,13 @@ def craft(client: Any, asset_ids: Sequence[int]) -> Any:
 def pulled(answer: Any) -> str:
     """What the answer says we pulled (its shape is not documented: a card object or ref, top level or nested), as
     one printable line: the game's text never reorders or breaks a log line."""
-    raw = _pulled(answer)
-    return " ".join("".join(ch if ch.isprintable() and not unicodedata.category(ch).startswith("C") else " "
-                            for ch in raw).split()) or "?"  # fmt: skip
+    return clean(_pulled(answer)) or "?"
+
+
+def clean(text: str, cap: int = 80) -> str:
+    """One printable line, capped: no control, format (bidi) or line characters from the game's text."""
+    kept = "".join(ch if ch.isprintable() and not unicodedata.category(ch).startswith("C") else " " for ch in text)
+    return " ".join(kept.split())[:cap]
 
 
 def _pulled(answer: Any) -> str:
