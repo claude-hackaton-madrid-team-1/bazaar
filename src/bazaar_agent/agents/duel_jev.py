@@ -148,11 +148,13 @@ def accept_move(duel: Mapping[str, Any]) -> DuelMove | None:
     return DuelMove("accept", rival["price"], reason="inside our limit")
 
 
-def _dominated(duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str, signed: bool = False) -> bool:
+def _dominated(
+    duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str, signed: bool = False, v2: bool = False
+) -> bool:
     """True when the rival's standing offer is already at least as good for us as our own counter."""
     rival_days = (duel.get("rival_offer") or {}).get("days")
-    rival = value_of(duel, int(accept.price or 0), rival_days, signed)
-    ours = value_of(duel, int(counter.price or 0), counter.days, signed)
+    rival = value_of(duel, int(accept.price or 0), rival_days, signed, v2)
+    ours = value_of(duel, int(counter.price or 0), counter.days, signed, v2)
     if rival is None or ours is None:
         return False
     return rival >= ours if role == "seller" else rival <= ours
@@ -183,11 +185,12 @@ def legal_moves(
     offer = default if default.kind == "offer" else counter
     signed = v2 is not None and v2.days_signed
     price, days = offer.price, offer.days
-    worth = value_of(duel, price, days, signed) if offer.kind == "offer" and price is not None else None
+    worth = value_of(duel, price, days, signed, v2 is not None) if offer.kind == "offer" and price is not None else None
     priced = worth is not None and inside_limit(worth, *limit_role)  # after the cost of our days
     within_caps = v2 is None or default.kind == "offer" or may_counter(duel, v2)
     rival = accept or accept_move(duel)
-    if priced and within_caps and (rival is None or not _dominated(duel, offer, rival, limit_role[1], signed)):
+    dominated = rival is not None and _dominated(duel, offer, rival, limit_role[1], signed, v2 is not None)
+    if priced and within_caps and not dominated:
         moves["counter"] = offer
     if not endgame:
         moves["hold"] = DuelMove("hold", reason="wait for the rival's answer")

@@ -276,3 +276,28 @@ def test_after_a_restart_v2_recovers_the_duels_start_from_its_messages():
 
     assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108) == 103  # not 108: the clock survives
     assert payload_start(duel(), 108) == 108
+
+
+# ---------------------------------------------------------------- r2 bites B2a / B2c
+
+
+def test_days_are_valued_even_when_the_payload_drops_issues():
+    from bazaar_agent.agents.duelist import duel_move
+
+    no_issues = duel(rival=[(100, 104, 10)], ours=[(100, 160)], issues=(), weight=3.0)  # 104 − 3 × 10 = 74 < 100
+    assert duel_move(no_issues, 110, 100).kind != "accept" and duel_plan(no_issues, 110, 100).move.kind != "accept"
+    accept = DuelMove("accept", 104)
+    ctx = gr.Context(cash=0, held={}, tick=0, t_hours=0)
+    assert not gr.check(duel_action(no_issues, accept), ctx, gr.Guardrails()).allowed  # #60's guard sees the days
+
+
+def test_v2_plays_zero_days_without_a_weight_and_v1_still_holds():
+    from bazaar_agent.agents.duelist import duel_move
+
+    unweighted = duel(rival=[(100, 101, 0)], ours=[(100, 160, 0)], issues=("price", "days"), weight=None)
+    move = duel_plan(unweighted, 110, 100).move
+    assert (move.kind, move.price) == ("accept", 101)  # 0 days cost nothing under either sign
+    ctx = gr.Context(cash=0, held={}, tick=0, t_hours=0)
+    assert gr.check(duel_action(unweighted, move), ctx, gr.Guardrails(duel_policy="v2")).allowed
+    assert duel_move(unweighted, 110, 100).kind == "hold"  # #60's v1, unchanged: it cannot value days
+    assert not gr.check(duel_action(unweighted, move), ctx, gr.Guardrails()).allowed

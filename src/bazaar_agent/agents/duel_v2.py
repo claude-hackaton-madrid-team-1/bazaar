@@ -105,12 +105,14 @@ def _number(value: object) -> float | None:
     return float(value)
 
 
-def value_of(duel: Mapping[str, Any], price: int, days: object, signed: bool) -> float | None:
+def value_of(duel: Mapping[str, Any], price: int, days: object, signed: bool, v2: bool = True) -> float | None:
     """A price with its days as a price for us. Worst case (`duelist.worth`) unless `signed`: then
     `your_days_weight` is primas we gain (+) or lose (−) per day, as the simulator's `days_meaning` says."""
     if not signed or not _two_issue(duel):
-        return worth(duel, price, days)
+        return worth(duel, price, days, zero_days_free=v2)  # v1 (Jev's legal moves): #60's valuation, unchanged
     n_days, weight = _number(days), _number(duel.get("your_days_weight"))
+    if n_days == 0:
+        return float(price)
     if n_days is None or weight is None or not duel_days_ok(n_days):
         return None
     return price + weight * n_days if duel.get("role") == "seller" else price - weight * n_days
@@ -276,9 +278,6 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     left = (deadline - tick) if isinstance(deadline, int) else 12
     if duel_done(duel) or not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return V2Plan(DuelMove("hold", reason="done or unreadable duel"), None, 0.0, False, left)
-    if _two_issue(duel) and _number(duel.get("your_days_weight")) is None:
-        unvalued = DuelMove("hold", reason="two-issue duel without your_days_weight: cannot value days")
-        return V2Plan(unvalued, None, 0.0, False, left)
     signed = params.days_signed
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     elapsed = tick - started_tick
@@ -387,8 +386,6 @@ def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params:
     limit, role, deadline = duel.get("your_limit"), duel.get("role"), duel_deadline(duel)
     if not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="unreadable duel")
-    if _two_issue(duel) and _number(duel.get("your_days_weight")) is None:
-        return DuelMove("hold", reason="two-issue duel without your_days_weight: cannot value days")
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     target = our_target(limit, str(role), (tick - started_tick) / total, params.anchor, params.floor)
     move = _offer(duel, target, params.days_signed, "counter at our target")
