@@ -418,3 +418,13 @@ def test_we_run_a_venue_but_me_still_shows_the_stall_key_says_so(tmp_path):
     s = Snapshot(s.clock, {**s.me, "starter_broker_key": "bk_" + "Stale0ne"}, s.offers, {}, [], s.venues, [])
     k.on_tick(s.clock, s, window())
     assert any("set venue_bond_reserve = 0" in line for line in lines)
+
+
+def test_venue_mechanism_auto_opens_an_auto_venue_and_runs_no_broker(tmp_path):
+    team, broker, lines = Team(), FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)]), []
+    k = keeper(tmp_path, team, broker=broker, lines=lines, venue_mechanism="auto")
+    first = snap()
+    k.on_tick(first.clock, first, window())
+    assert team.opened == [("Team 1 market", 0, 0, {"mechanism": "auto"})]
+    assert broker.sent == [] and k.made == []
+    assert any("is auto (venue_mechanism)" in line for line in lines)

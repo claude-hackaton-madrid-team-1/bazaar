@@ -102,7 +102,10 @@ class VenueKeeper:
         stats_dir: Any = None,
     ) -> None:
         self.team, self.settings, self.rules, self.vault = team, settings, rules, vault
-        self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
+        self.decisions, self.live, self.log, self.hub = decisions, live, log, hub
+        # `venue_mechanism` (GUARDRAILS.md): board (our broker matches) or auto (the engine crosses every tick,
+        # the free stall's level with no broker process to fail)
+        self.plan = plan.model_copy(update={"mechanism": rules.venue_mechanism})
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.quiet_rec = Recorder("broker", decisions, live, log)  # rows the public status never shows
         self.broker_config = broker_config or BrokerConfig(pace_s=0.2)
@@ -259,6 +262,11 @@ class VenueKeeper:
         return stored.key if stored is not None else None
 
     def _broker_tick(self, venue: str, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
+        if self.plan.mechanism == "auto":  # the engine crosses an auto venue itself: a broker match is refused
+            if clock.tick - self.reminded >= REMIND_TICKS:
+                self.reminded = clock.tick
+                self.log(f"tick {clock.tick} venue: {venue} is auto (venue_mechanism): the engine matches, no broker")
+            return
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
             if key is None:

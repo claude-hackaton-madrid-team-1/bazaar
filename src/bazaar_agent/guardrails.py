@@ -56,6 +56,7 @@ class Guardrails(BaseModel):
     allow_venue_open: bool = False
     venue_bond_reserve: int = Field(default=270, ge=0)
     venue_open_after_game_hours: float = Field(default=6.5, ge=0)
+    venue_mechanism: Literal["board", "auto"] = "board"
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -92,6 +93,7 @@ ENFORCED_BY: dict[str, str] = {
     "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches); agents.venue_keeper opens it",
     "venue_bond_reserve": "guardrails.check (effective_cash_floor while a planned venue is not open yet)",
     "venue_open_after_game_hours": "guardrails.check (venue_open) + agents.venue_keeper (first tick past it)",
+    "venue_mechanism": "agents.venue_keeper (the mechanism it opens; no broker on an auto venue)",
 }
 
 
