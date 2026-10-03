@@ -688,6 +688,14 @@ someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
 
+### [2026-10-03] finding — organisers' Saturday opening (09:19): 17 teams played Friday, duels now score
+Source: `docs/transcripts/2026-10-03-morning-voice-memo.md` § 2 (organisers' talk before the Saturday market). Friday had
+17 teams, not 18 (one never showed up); four team markets opened. Today: another pack drop, team markets open, duels later
+in the day and now scored, and new dealers may arrive during the day with cards nobody has seen yet; 2 deals per minute.
+Their hints: some teams paid a first offer above the card's value to them (know `your_value` before buying); repeating the
+same "last price" moves nothing (matches the N14a finding above: repeating our top price drew a final in 1 of 11 threads);
+half of Friday's practice duels ended with no deal. The 03:22 memo in the same file reads back the night's docs: no new facts.
+
 ### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
 From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
 1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
@@ -938,6 +946,17 @@ and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms +
 Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
 sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
 measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
+
+### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
+practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
+team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
+(a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
+
+### [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
+`run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
+a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
+on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.
 
 ### [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 `bazaar_team_ro` (#184): CONNECT to every database, TEMP and EXECUTE on `pg_advisory_lock` come from PUBLIC, so a

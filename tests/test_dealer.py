@@ -874,6 +874,11 @@ def test_no_second_close_waits_out_closed_doors():
             return {**c, "doors": getattr(self, "doors", "open")}
 
     slept: list[float] = []
+
+    def bounded_sleep(seconds: float) -> None:  # a regression that waits for the doors fails here, never hangs
+        slept.append(seconds)
+        assert len(slept) < 50, "the retry is waiting for the doors to open"
+
     client = ClosingTime(asks=[30] * 20)
     lines: list[str] = []
     out = negotiate(
@@ -882,7 +887,7 @@ def test_no_second_close_waits_out_closed_doors():
         {"buy": {"card": "LAV-03"}},
         BidPlan(6, 1, 10),
         log=lines.append,
-        sleep=slept.append,
+        sleep=bounded_sleep,
         max_ticks=2,
     )
     assert client.closes == 1 and out.status == "open" and max(slept, default=0) < 300
@@ -957,3 +962,154 @@ def test_the_real_gate_lets_the_offer_we_priced_through():
     client = FakeDealerClient(asks=[12, 10, 9])
     out = negotiate(client, "abuela", topic, BidPlan(6, 1, 10), log=print, sleep=lambda _: None, inspect=inspect)
     assert (out.status, out.price) == ("deal", 9) and client.accepted == [503]
+
+
+def test_a_retry_that_gives_up_still_books_a_deal_that_landed():
+    # Security audit #72 round 6 (P3): her "Deal!" lands right after the refused close, then the doors close.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class DealThenClosing(FakeDealerClient):
+        def close_thread(self, tid):
+            self.status, self.doors = "deal", "closed"
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            return {**super().clock(), "doors": getattr(self, "doors", "open")}
+
+        def thread(self, tid):
+            if self.status == "deal":
+                return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 7}}}]}
+            return super().thread(tid)
+
+    booked: list[int] = []
+    out = negotiate(
+        DealThenClosing(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert (out.status, booked) == ("deal", [7])
+
+
+def test_an_unreadable_clock_in_the_retry_never_crashes_dealer_buy():
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class EmptyClock(FakeDealerClient):
+        def close_thread(self, tid):
+            self.broken = True
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            return {} if getattr(self, "broken", False) else super().clock()  # a 200 with an empty body
+
+    out = negotiate(
+        EmptyClock(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    assert out.status == "open"  # logged, "close it by hand", no traceback
+
+
+def test_a_walk_refused_on_the_last_tick_is_closed_on_the_next_and_still_reopens_lower():
+    # pr-reviewer #72 round 6 (P2): the walk's close got a 429 on the last counted tick and the wrap-up sent
+    # its timeout close in that same tick; the held-opening walk also lost its lower reopen.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class LimitedOnce(FakeDealerClient):
+        close_ticks: list[int] = []
+
+        def close_thread(self, tid):
+            self.close_ticks.append(100 + self.reads // self.reads_per_tick)
+            if len(self.close_ticks) == 1:
+                raise BazaarError("rate_limited", "slow down", 429)
+            self.closed = True
+            return {"ok": True, "thread": tid, "status": "closed"}
+
+    client = LimitedOnce(asks=[7])  # we bid 6, her opening 7: no counter left below it, we walk
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 9),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    first, second = client.close_ticks
+    assert second > first and client.closed and out.reopen_start == 5
+
+
+def test_an_accept_whose_settle_reads_fail_is_still_booked_on_the_way_out():
+    # pr-reviewer #72 round 6 (P3): both settle-wait reads failed, then she settled: the deal went unbooked.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class FlakyAfterAccept(FakeDealerClient):
+        failed = 0
+
+        def thread(self, tid):
+            if self.accepted:
+                if self.failed < 2:
+                    self.failed += 1
+                    raise BazaarError("network", "connection reset", 0)
+                return {"status": "deal", "messages": [{"offer": {"status": "settled", "want": {"cash": 9}}}]}
+            return super().thread(tid)
+
+    booked: list[int] = []
+    out = negotiate(
+        FlakyAfterAccept(asks=[12, 10, 9]),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=4,
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert (out.status, booked) == ("deal", [9])
+
+
+def test_a_cut_connection_on_the_last_read_never_crashes_dealer_buy():
+    # pr-reviewer #161 (P3): http.client.IncompleteRead is not an OSError, so the SDK lets it through.
+    import http.client
+
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class CutAfterClose(FakeDealerClient):
+        def close_thread(self, tid):
+            self.cut = True
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            if getattr(self, "cut", False):
+                raise http.client.IncompleteRead(b"")
+            return super().clock()
+
+        def thread(self, tid):
+            if getattr(self, "cut", False):
+                raise http.client.IncompleteRead(b"")
+            return super().thread(tid)
+
+    lines: list[str] = []
+    out = negotiate(
+        CutAfterClose(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    assert out.status == "open" and any("unreadable (IncompleteRead)" in line for line in lines)
