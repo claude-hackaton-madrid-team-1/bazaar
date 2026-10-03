@@ -15,7 +15,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import intel, ladder_cli, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.evals import cli as evals_cli
@@ -43,6 +43,7 @@ agent_app = typer.Typer(
     help="Autonomous agents: taker and maker every tick; the desk (chat) on the Claude Agent SDK. Dry run by default",
 )
 app.add_typer(agent_app, name="agent")
+app.add_typer(ladder_cli.app, name="ladder")
 console = Console()
 err_console = Console(stderr=True)
 
