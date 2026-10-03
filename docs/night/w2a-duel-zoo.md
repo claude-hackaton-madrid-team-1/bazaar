@@ -1,6 +1,6 @@
 # W2a: the duel rival zoo and the replay harness
 
-Night shift of 3–4 Oct 2026. Branch `night/w2a-duel-zoo`, draft PR #80, stacked on #55 (`ogarciarevett/feat-bazaar-sim`).
+Night shift of 3–4 Oct 2026. Branch `night/w2a-duel-zoo`, draft PR #80, base `main` (#55, the simulator, is merged).
 Refs #5, #7. Every number below is in [w2a-duel-zoo-tables.md](w2a-duel-zoo-tables.md), except where marked (n = 200; v1 = PR #60's `duel_move`,
 v2 = W2b's `duel_v2` @ 4417c54: `plan_moves` where duels share accepts, `single_duel_move` elsewhere). Offline only: nothing touched the live game.
 
@@ -43,7 +43,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 
 1. **Talking is what decays the result.** v1 averages 6.85 rounds per deal (0.94^6.85 keeps 65 %). The real practice shows the same: we scored 0 P on the 12 duels we never answered, and the oracle on them is 195 P.
 2. **Pure silence is not enough.** Silent endgame-accept fails 3 of 5 checks at 0.06/0.08. Against tit-for-tat its deal rate is 0.49 vs v1's 0.99, and against one-shots (half of them still listen) it is 0.77 vs v1's 0.88. v2 talks about once per deal and keeps both deal rates (0.999 and 0.895).
-3. **Two-issue duels.** This branch's v1 (`days=5`) closes outside our limit in 70 of 2,800 two-issue duels: 23 signed, 47 worst case (not in the tables; `scripts/duel_zoo.py --policy v1` without `PYTHONPATH` runs this branch's agent). PR #60's v1 closes 0, and so does v2 in 14,400 duels. **#60 should land.**
+3. **Two-issue duels.** This branch's v1 (`days=5`) closes outside our limit in 82 of 2,800 two-issue duels (n = 100, decay 0.08): 33 signed, 49 worst case (not in the tables; `scripts/duel_zoo.py --policy v1` without `PYTHONPATH` runs this branch's agent). PR #60's v1 closes 0, and so does v2 in 14,400 duels. **#60 should land.**
 4. **Independent gate of W2b's v2 @ 4417c54: GO at every decay pair.**
    - Lift 1.420 at 0.06/0.08, 1.550 at 0.08/0.10, 1.483 at 0.06/0.10. Seeds 1–5 at 0.06/0.08 read 1.427–1.439 (sd 0.005).
    - The other 4 checks pass in every pair: 0 outside-limit closes in 14,400 distinct duels. The signed and worst-case two-issue grids are now drawn apart; r1's review found them identical, which made them 9,600 distinct duels. Silent endgame-accept fails 3 of 5.
@@ -80,7 +80,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 Follow-ups, not done tonight to avoid w1a's files:
 - Move `SIM_DUEL_STYLES`/`SIM_DUEL_DECAY` into `SimConfig`, and store the drawn style on `Duel`. It is redrawn per tick from (seed, duel id, pool) today, so changing the pool mid-session switches rivals.
 - Route the native sim bot through `_zoo_turn`; parity is test-guarded today.
-- Play the two-issue grid once for both days truths.
+- The signed and worst-case two-issue rows are now drawn apart (r1), so their difference includes sampling noise, not only the days valuation.
 - `duel_replay.FIXTURE` points from `src/` into `tests/fixtures/`.
 - Add a README line for the new env vars.
 - `/api/schedule` still advertises `duels.DECAY` (0.06) when `SIM_DUEL_DECAY` is set. The fix is one line in `views.py`, next to w1a's edit there.
