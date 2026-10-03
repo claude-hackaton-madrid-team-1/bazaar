@@ -98,6 +98,12 @@ Gates: ruff, black and mypy are clean. pytest: 789 passed and 1 xfailed (the 5 s
 - **Cross-PR notes:**
   - #107 has an add/add on `tests/bites/test_duel_accept_priority.py`; keep this one (r1).
   - On `night/r2-bite-hunter` the same file is r2's xfail original; keep this one.
+  - **B7 (#130, w2b)** removes #86's `booked`/`fresh` and plays v2's planned accepts early (`early`, `done`,
+    `play_safely`) at the same spot, so stacking B7 on #115 conflicts there. Resolution agreed with w2b:
+    - one early pass: `early` = v2's planned accepts when `params is not None`, else this PR's v1 forced picks;
+      either way nearest deadline first, through `play_safely`;
+    - keep `play_one`'s `if did in forced` branch and add the forced ids to `done`;
+    - one skip set in the main loop; the v1 gate (`params is None`) stays as is.
 
 ## For Marius
 
