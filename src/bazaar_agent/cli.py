@@ -434,6 +434,120 @@ def arb_scan(
     )
 
 
+def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
+    """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
+    from bazaar_agent.agents.market import venues_from
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and venues_file) else public_client(load_settings())
+    catalog = _json_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_json_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    return me, catalog, venues
+
+
+@app.command()
+def rivals(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file (the multiset); else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    as_json: bool = typer.Option(False, "--json", help="Print the profiles as JSON"),
+) -> None:
+    """Rival behaviour profiles: pricing against the tape and own value, fills, takes, reprices."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import rivals as rv
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    found = rv.profiles(rv.listings(events), events, amap, catalog, exclude=[us])
+    if as_json:
+        rows = {t: {**asdict(p), "tags": p.tags} for t, p in found.items()}
+        typer.echo(json.dumps(rows, indent=2, default=str))
+        return
+    console.print(render.rivals_table(list(found.values())))
+
+
+@app.command()
+def opportunities(
+    live: bool = typer.Option(
+        False, help="Read the venue boards now (public reads); else the board rebuilt from the feed"
+    ),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    replay_day: bool = typer.Option(False, "--replay", help="Also score every offer the feed ever showed"),
+    min_surplus: float = typer.Option(0.0, help="Only offers worth more than this to us"),
+    as_json: bool = typer.Option(False, "--json", help="Print the opportunities as JSON"),
+) -> None:
+    """Read-only scanner: standing offers ranked by what accepting them gains us, guardrails checked."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent import opportunities as op
+    from bazaar_agent import rivals as rv
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.market import board_offers, tradable_venues
+    from bazaar_agent.agents.seller import committed_context, open_commitments, trade_book
+    from bazaar_agent.strategy import build_market
+
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    rules, params = _rules().rules, _strategy().params
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    m = build_market(me, catalog, events, [])
+    rows = rv.listings(events)
+    last = max((int(e.get("tick") or 0) for e in events), default=0)
+    if live:
+        public, makers = public_client(load_settings()), intel.listed_makers(events)
+        offers = []
+        for v in tradable_venues(venues, us):
+            offers += [replace(o, maker=makers.get(o.id, o.maker)) for o in board_offers(public.board(v.id), v.id, us)]
+    else:
+        offers = op.offers_from(rv.board_at(rows, last), us)
+    # Our open offers (their cash, cards and exposure) whenever /me comes from the API: never check blind.
+    mine = _my_offers(_team_client()) if not me_file else []
+    held: dict[str, int] = {}
+    for a in me.get("assets") or []:
+        if a.get("kind") == "card":
+            held[str(a.get("ref"))] = held.get(str(a.get("ref")), 0) + 1
+    base = gr.Context(int(me.get("cash") or 0), held, last, 0.0)
+    if not me_file:  # with our key: the shared ledger's spend this game hour, as the taker sees it
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        base = gr.context_from(me, now.tick, now.t_hours, _ledger("opportunities"), rules)
+    book = intel.book_values(catalog)
+    ctx = replace(
+        committed_context(base, open_commitments(mine, us)),
+        trades=trade_book(mine, us, intel.settled_volume(events, us, book), book),
+    )
+    by_id = {v.id: v for v in venues}
+    rastro = by_id.get("rastro")
+    plan = td.build_plan(me, catalog, events, amap, params, rules, td.PlanParams(), rastro, mine)
+    found = op.scan(
+        offers, m, me, params, rules, amap, by_id, ctx, events, catalog, [*plan.listings, *plan.threads], min_surplus
+    )
+    if as_json:
+        typer.echo(json.dumps([asdict(o) for o in found], indent=2, default=str))
+    else:
+        where = "the live boards" if live else f"the board rebuilt from the feed at tick {last}"
+        console.print(render.opportunities_table(found, f"Opportunities on {where} ({len(offers)} offers)"))
+    if replay_day:
+        rp = op.replay(rows, m, me, params, rules, amap, by_id, ctx, events, min_surplus)
+        latency = sorted(rp.latency)
+        console.print(
+            f"replay: {rp.offers} offers by other teams, {len(rp.worth_it)} worth it to us (+{rp.surplus} P, one"
+            f" per offer); {rp.taken_by_others} taken by others (ticks {latency}, by {rp.takers}); "
+            f"{rp.left_open} left untaken (+{rp.left_surplus} P)"
+        )
+
+
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
@@ -591,11 +705,7 @@ def dealer_buy(
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
-        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
-            return False
-        tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
-        return True
+        return _reserve_accept(ledger, rules, item, move, c)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         ledger.record("spend", tick, t_hours, price, item)
@@ -1433,10 +1543,26 @@ def _team_to(to: str | None) -> str | None:
     return to
 
 
-def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> bool:
+    """Claim the team's accept slot for a dealer accept. False holds this tick (the dealer thread stays open
+    and tries again): the slot is taken, or the shared ledger cannot answer (fail closed, never a walk)."""
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+    try:
+        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+            return False
+    except LedgerUnavailable as e:
+        console.print(f"[yellow]tick {c.tick}: no accept this tick (fail closed): {e}[/yellow]")
+        return False
+    tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
+    return True
+
+
+def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any, Any, Any]:
     """(rules, ledger, guardrail context, commitments) for a write from the CLI: /me, the shared ledger, our
     open offers and, with `max_counterparty_share` on, our team-to-team volume from the whole feed history
-    (`_history`: the shared DB first, as the maker and the taker read it)."""
+    (`_history`: the shared DB first, as the maker and the taker read it; the live window too when `live`)."""
     from bazaar_agent import guardrails as gr
 
     rules = _rules().rules
@@ -1451,7 +1577,7 @@ def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
         us = str(me.get("id") or "")
         try:
             book = intel.book_values(public_client(load_settings()).catalog())
-            settled = intel.settled_volume(_history(None, live=True), us, book)
+            settled = intel.settled_volume(_history(None, live=live), us, book)
         except BazaarError as e:
             _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
         ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
@@ -1461,7 +1587,7 @@ def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
 def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
     from bazaar_agent.agents.seller import post
 
-    rules, ledger, ctx, commitments = _sell_context(client, me)
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1596,7 +1722,7 @@ def sell_swap(
         want_cash,
         max(give_cash + want_cash, round(book.get(str(asset.get("ref")), 0.0) + book.get(want, 0.0))),
     )
-    rules, ledger, ctx, commitments = _sell_context(client, me)
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
     try:
         out = post_swap(
             client, swap, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1803,6 +1929,9 @@ def agent_taker(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     threads: int = typer.Option(3, min=0, max=6, help="Dealer conversations at once (one per dealer)"),
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
+    accept_bids: bool = typer.Option(
+        False, "--accept-bids", help="Also sell into standing bids that beat our value by sell_min_surplus"
+    ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
 ) -> None:
@@ -1819,7 +1948,7 @@ def agent_taker(
             jev=_offer_jev(settings, rules.jev_timeout_s) if jev else no_jev,
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads),
+            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             **kw,
         )
 
