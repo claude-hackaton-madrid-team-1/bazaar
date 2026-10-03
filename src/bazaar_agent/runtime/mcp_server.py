@@ -179,13 +179,12 @@ class BearerGate:
         text = _header(scope, b"authorization") or ""
         return text[7:].strip() if text[:7].lower() == "bearer " else ""
 
-    def _approver_ok(self, bearer: bytes, offered: str) -> bool:
-        """Constant-time match of X-Approver-Token. Off (no token set): always False. A miss is a WARN line naming
-        the bearer by an 8-hex prefix of its digest, never a token."""
-        right = self._approver is not None and hmac.compare_digest(digest(offered.strip()), self._approver)
-        if not right:
-            self.log(f"bazaar-mcp: WARN X-Approver-Token refused (bearer {bearer.hex()[:8]})")
-        return right
+    def _approver_key(self, offered: str | None) -> bytes | None:
+        """The approver token's digest when X-Approver-Token matches it (constant time), else None. Off (no token
+        set): always None."""
+        if offered is None or self._approver is None:
+            return None
+        return self._approver if hmac.compare_digest(digest(offered.strip()), self._approver) else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -205,17 +204,22 @@ class BearerGate:
         if not hmac.compare_digest(presented, self._expected):
             await _reply(send, 401, {"error": "unauthorized"}, [(b"www-authenticate", b'Bearer realm="bazaar-mcp"')])
             return
-        wait = self._http.take(presented)
+        offered = _header(scope, APPROVER_HEADER)
+        approver = self._approver_key(offered)
+        # The human's requests have their own buckets (keyed on the approver digest): a bearer holder draining the
+        # bearer's budget can never keep the human from a revoke.
+        key = approver or presented
+        wait = self._http.take(key)
         if wait > 0:
             await _reply(send, 429, {"error": "rate_limited"}, [(b"retry-after", str(max(1, round(wait))).encode())])
             return
+        if offered is not None and approver is None:  # asking for the human tools: the right token or nothing
+            self.log(f"bazaar-mcp: WARN X-Approver-Token refused (bearer {presented.hex()[:8]})")
+            await _reply(send, 403, {"error": "forbidden"})
+            return
         state = scope.setdefault("state", {})
-        state[STATE_KEY] = presented
-        offered = _header(scope, APPROVER_HEADER)
-        if offered is not None:  # asking for the human tools: the right approver token or nothing at all
-            if not self._approver_ok(presented, offered):
-                await _reply(send, 403, {"error": "forbidden"})
-                return
+        state[STATE_KEY] = key
+        if approver is not None:
             state[APPROVER_KEY] = True
         await self.app(scope, receive, send)
 
