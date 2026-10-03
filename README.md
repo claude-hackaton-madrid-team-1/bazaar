@@ -733,11 +733,19 @@ dashboard: `outcomes` (one row per `(target, subject)`, e.g. `duel:85`, `thread:
 `eval_scorecard`, `eval_ladder`, `eval_jev_calibration` (shapes in `docs/services.md`). The report puts
 the organisers' own numbers from the newest `/me` snapshot (`duel_points`, `ladder_points`, …) beside ours.
 
-**Where they run.** Not as a Railway service (Omar, 2026-10-03): the taker, the maker and the duel
-player are to score their own settled decisions inside their tick loop, from Postgres only. Until that
-lands, run a pass from a laptop: `uv run bazaar evals run` once, or `uv run bazaar evals run --every-ticks 6`
-to keep scoring on the game clock (keyless `/api/clock`, never the team key). After a restart,
-`bazaar duel run` reads `?done=true` once, so a duel that finished while it was down is stored.
+**Where they run: inside the agents** (Omar, 2026-10-03; no Railway service). The duel player scores
+duels, the taker the dealer ladder and every team trade (its accepts and the maker's fills), the maker
+the Market Test. Each one that trades (live, or `duel run --play`) starts one pass every 6 ticks
+(`--evals-every N` on `duel run`, `agent taker`, `agent maker`; `0` = off, and off by default for a dry
+run, so a laptop never rewrites the team's scores; the first pass comes 6 ticks after start), after the tick has sent everything, on
+a background thread: Postgres and Phoenix only, zero game calls, a pass still running is never doubled,
+and an error is logged and dropped. From a laptop, `uv run bazaar evals run` scores everything once (or
+`--every-ticks 6` on the game clock, keyless `/api/clock`). After a restart, `bazaar duel run` reads
+`?done=true` once, so a duel that finished while it was down is stored. One process per agent kind
+scores (an advisory lock, which `bazaar evals run` also takes per kind; a frozen holder's session ends
+after 2 idle minutes). Against the
+simulator (`BAZAAR_SIM`), scores stay in its Postgres and traces go to the `bazaar-sim` Phoenix
+project: simulated duel and thread ids collide with the game's.
 
 ## Services and public URLs (start here for observability and the dashboard)
 
@@ -1002,6 +1010,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
 - [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
 - [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 - [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
@@ -1009,7 +1018,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
 - [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
 - [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
-- [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
 
 <!-- BAZAAR:STATUS:END -->
 
