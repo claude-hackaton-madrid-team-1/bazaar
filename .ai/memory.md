@@ -362,6 +362,39 @@ never in a tick loop.
 `insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
 window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
 
+### [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
+`bazaar learnings --lessons --save` on a copy of the shared DB (tick 159): 26 outcomes → 26 lessons + 9 dealer
+curves + 1169 dealer moves. `--query "open a thread with chato to buy LAV-08; his opening ask 33"` → thread 187's
+lesson first (rerank +6.41, BM25 #1, vector #3: "every chato uncommon fill is 28-32, above our top bid 24");
+"accept her opening ask of 7?" → thread 99 first (+7.34: an opening-ask deal voids the unlock credit); an
+unrelated query ("list LAT-09 on rastro") scores −4 to −10 and returns nothing. 75–112 ms per query on a laptop
+(BM25 + pgvector + MiniLM-L-6 rerank of 12). Models: fastembed 0.8.1 `BAAI/bge-small-en-v1.5` (0.067 GB) and
+`Xenova/ms-marco-MiniLM-L-6-v2` (0.08 GB), ~3 s cold download, then cached in `<data_dir>/models`.
+
+### [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
+The feed publishes `thread.opened.topic` as sent (t08 opened one with `topic: {}`), and `evals.dealers.price_class`
+turns any colon-free non-card string into `pack:<string>`. A forged "pack" name could become a dealer curve and a
+lesson's text, then reach Jev. Fix: `learn/curves.KNOWN_CLASS` allowlist (`card:<rarity>`, `pack:sobre_*`, `sell`)
+and recall returns only `source = outcome` rows by default. Treat every feed string as hostile, even "structure".
+
+### [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
+`git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
+`"${B}:src/file.py"` with braces in every shell one-liner.
+
+### [2026-10-03] finding — today's Abuela ladder is already the best on replay; a bigger step loses (N3)
+Replaying every team's real Abuela threads (each brackets its own limit: countered bid < limit ≤ price taken
+or offered), uncommons: 17→26 step 1 = share 0.415 (50/58 deals); step 2 = 0.372, because her final sits near
+her limit and a big step overshoots it. Held-out (learn on ticks < 84, test after): 0.352 both. The auto-evolve
+keeps today's Abuela ladder and skips Chato (fills 28-32 vs cap 26; rares 82-93 vs 80). With cap 32 the replay
+closes 11/12 Chato uncommons at a mean 30.45 (share 0.467 vs the teams' 0.35): a human cap decision.
+
+### [2026-10-03] finding — the learner escapes the first-bid trap on the simulator: uncommons 25 → 20-22 (N3)
+Local `bazaar-sim` (2 s ticks; cash floor and hourly spend cap raised in memory for the run only). With no fills
+seen, the strategy's ladder is 25→25, Abuela takes the first bid, and those fills became "the floor" (learned
+25→25): a fill at our first bid only bounds her limit from above. Fix: probe from 80 % of the lowest fill when half
+the fills took the first bid. A second team in the same world then paid 25, 22, 20, 21, 22 as the ladder moved
+20→25 → 17→25 → 16→25. Ports 8765/8799 were taken by other workers' simulators: run yours on another port.
+
 ### [2026-10-03] gotcha — a "free" simulator port may already be another worker's simulator: check before you run
 An e2e taker patched to 127.0.0.1:8815 ran LIVE in another worktree's `bazaar-sim` (my own failed to bind,
 "address already in use") and closed 4 Abuela deals as sim-team1 in that world. Before any sim run: check the
@@ -519,6 +552,40 @@ The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every t
 from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
 maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
 value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.
+
+### [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
+Run the smoke or a proof from a scratch `git worktree` whose `config.py` `LOCAL_SIM_URL` and `scripts/sim_smoke.py`
+`SIM`/`PORT` are patched to your own port (D1: 8805 for the smoke, 8811-8824 for proofs). Never commit that patch.
+
+### [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
+`duel run --play --no-jev` over HTTP against `bazaar-sim` (3 seller/buyer pairs per team on one deadline, 12-tick duels,
+price-only and two-issue sessions, 96 finished duels per run). Mean score (share × kept): honest zoo v1 0.268, v2 0.364,
+v2 + B11 (min share 0.3, endgame 1) 0.383, + `duel_days_signed` 0.419; exploiters v1 0.169, v2 0.259, v2 + B11 0.318.
+Outside-limit closes: 0 of 776. Rounds per deal: v1 6.2, v2 1.1. Reproduce: `docs/night/d1-sim-proof.md`.
+
+### [2026-10-03] finding — six duels on one deadline can run out of accept ticks
+`plan_moves` counts only duels holding an acceptable offer; when more rivals cross into our limit on D − 3 than ticks are
+left, one duel ends with an acceptable offer unanswered (sim duel 86: rival 81 vs our value 87, three accepts wanted on
+D − 2). 1 of 96 duels for v2 and for v1 at decay 0.08. A planner that also counts converging duels would accept earlier.
+
+### [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
+`refused duel_closed (duel N is live)`: the rival accepted our previous offer earlier in the tick, the deal settles next
+tick, and the payload has no `accepted` flag to tell us. The deal still closes at our earlier offer; nothing is lost.
+
+### [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
+Offline repro (two temp dirs, connector raising ConnectionError, `reserve_accept(999999, limit=1)` each):
+main gave `[True, True]` on two `ledger.jsonl` files; now `open_ledger(live=True)` on the real game returns the
+reconnecting `PgLedger` → `['refused', 'refused']` and no file, and two processes on one Postgres → `[True, False]`.
+A live taker/maker pings the ledger before its tick's first write (`ensure_writable`), `/health` carries
+`ledger: shared|down|local file`, and `dealer buy` HOLDS on a ledger blip (no walk). DATABASE_URL must be the
+shared Postgres on every live service, or the process exits at start ("refusing to trade").
+
+### [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
+`postgresql://u:SEC@RETPW@x.proxy.rlwy.net:12345/railway` parses to host `RETPW@x.proxy.rlwy.net`, and
+`u:SEC/RETPW@...` to host `u:SEC`: a `host:port` log label then prints a piece of the password (#162 reviews).
+`ledger_pg._target` now labels only a plain host/IP/socket with a numeric port; anything else is "unparseable",
+never shared (a live process refuses it). Percent-encode passwords. Also never shared: host lists, `hostaddr`,
+`127.1`/`2130706433`/`0x7f000001`, `*.local`, single-label names (compose services).
 
 ### [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 The port is hardcoded twice (`scripts/sim_smoke.py` PORT/SIM and `config.LOCAL_SIM_URL`, which the CLI children

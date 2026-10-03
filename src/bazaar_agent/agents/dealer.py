@@ -304,6 +304,14 @@ Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move, int], str | None]  # (move, our thread id) → a deny reason, or None when allowed
 Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
 Inspect = Callable[[dict[str, Any], Move], str | None]  # the accept gate on this tick's thread: a refusal, or None
+
+
+class Hold(Exception):
+    """Raised by a guard or a reserve that cannot decide this tick (the shared ledger is down): nothing is
+    sent, the thread stays open, and the move is decided again next tick. A denial walks; a hold never does.
+    Unlike the kill switch, a held tick still counts toward `max_ticks`: a long outage ends in the timeout."""
+
+
 DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a deal settles
 KillSwitch = Callable[[], Sequence[str]]  # why every write is refused right now (empty: off)
 
@@ -589,7 +597,11 @@ def negotiate(
                 obs.guardrail(move, f"inspector: {refused}")
                 return
         if guard is not None and move.kind in ("accept", "bid"):
-            denied = guard(move, tid)
+            try:
+                denied = guard(move, tid)
+            except Hold as e:
+                log(f"tick {clock.tick}: HOLD {move.kind} {move.price}: {e} → nothing sent, deciding next tick")
+                return
             obs.guardrail(move, denied)
             if denied and hold(f"tick {clock.tick}"):  # the switch went on mid-tick: hold, never walk
                 return
@@ -607,7 +619,12 @@ def negotiate(
             send_by = time.monotonic() + action_budget_s(fresh)
             if move.kind == "accept" and hold(f"tick {clock.tick}, before reserving the accept slot"):
                 return  # never take the team's accept slot (the duel player's too) while the switch is on
-            if move.kind == "accept" and reserve is not None and not reserve(move, fresh):
+            try:
+                reserved = move.kind != "accept" or reserve is None or reserve(move, fresh)
+            except Hold as e:
+                log(f"tick {clock.tick}: HOLD accept {move.price}: {e} → nothing sent, deciding next tick")
+                return
+            if not reserved:
                 move = meet_ask(neg, ask)  # same price the guard allowed: the dealer may accept OUR offer
                 log(f"tick {fresh.tick}: the team's accept slot is taken this tick → {move.kind} {move.price or ''}")
                 if move.kind != "bid":
