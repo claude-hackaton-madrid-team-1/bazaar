@@ -512,7 +512,8 @@ def dealer_buy(
         verdict = gr.check(gr.Action(kind, item, rarity, move.price, dealer=dealer), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
-    ledger_holds: list[str] = []  # an accept slot the ledger could not answer: hold that tick's send
+    # An accept slot the ledger could not answer: hold the rest of THAT tick (its end, monotonic), never a later one.
+    ledger_holds: list[tuple[float, str]] = []
 
     def reserve(move: Any, c: Clock) -> bool:
         """Claim the team's accept slot. A ledger outage is no slot and holds the tick (`stops`): the move
@@ -521,7 +522,8 @@ def dealer_buy(
         try:
             reserved = ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit)
         except LedgerUnavailable as e:
-            ledger_holds.append(f"{e}; no write without the shared ledger (fail closed)")
+            ends = time.monotonic() + max(0.0, action_budget_s(c))
+            ledger_holds.append((ends, f"{e}; no write without the shared ledger (fail closed)"))
             return False
         if not reserved:
             return False
@@ -529,8 +531,10 @@ def dealer_buy(
         return True
 
     def stops() -> tuple[str, ...]:
-        """The kill switch read live, plus a ledger outage at this tick's accept slot (reported once)."""
-        held = tuple(ledger_holds)
+        """The kill switch read live, plus a ledger outage at this tick's accept slot: reported once, and only
+        while that tick lasts (`negotiate` may return before reading it, e.g. when `meet_ask` waits)."""
+        now = time.monotonic()
+        held = tuple(why for ends, why in ledger_holds if now <= ends)
         ledger_holds.clear()
         return (*gr.kill_switch(rules), *held)
 
