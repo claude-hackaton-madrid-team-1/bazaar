@@ -216,7 +216,7 @@ def test_a_refused_duel_accept_gives_the_slot_back(duel_cli, code, status, kept)
     client.duel_accept = refused
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
-    assert client.sent == [("accept", 95)] * (2 if code == "network" else 1)  # a network error is retried once
+    assert client.sent == [("accept", 95)]  # even a network error must not retry an unbound accept
     assert _duel_ledger(tmp_path).accepts_in_tick(134) == kept
 
 
@@ -364,3 +364,29 @@ def test_the_public_client_keeps_the_sdk_retries():
 def test_a_clock_pace_that_is_not_a_sane_number_is_ignored(pace):
     assert sdk._pace(pace) is None
     assert sdk._pace(30) == 30.0 and sdk._pace(15.0) == 15.0
+
+
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+@pytest.mark.parametrize("changed", ["price", "days", "id"])
+def test_network_accept_never_retries_a_changed_rival_offer(duel_cli, monkeypatch, policy, changed):  # noqa: F811
+    from tests.test_jev_journal import decision_rows, use_policy
+
+    cli, client, _, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, policy)
+    client.payload[0]["deadline_tick"] = 135  # both policies take an inside-limit endgame offer
+    original = dict(client.payload[0]["rival_offer"])
+
+    def accept(did):
+        client.sent.append(("accept", did))
+        if len(client.sent) == 1:
+            client.payload[0]["rival_offer"][changed] = {"price": 1, "days": 10, "id": 999}[changed]
+            raise BazaarError("network", "response lost", 0)
+        return {"ok": True}  # the previous implementation would accept the changed terms here
+
+    client.duel_accept = accept
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert original != client.payload[0]["rival_offer"], result.output
+    assert client.sent == [("accept", 95)]
+    assert _duel_ledger(tmp_path).accept_items(134) == ["duel:95"]
+    assert decision_rows(tmp_path)[0]["status"] == "failed"

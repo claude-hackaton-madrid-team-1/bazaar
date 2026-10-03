@@ -4,6 +4,7 @@ Each loop runs one tick on fakes behind a counting proxy (`CallTally`): a loop t
 calls per tick than its `LoopBudget` declares fails here. No network, no database.
 """
 
+from collections import Counter
 from copy import deepcopy
 
 import psycopg
@@ -20,6 +21,7 @@ from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.feed import FeedStore
 from bazaar_agent.guardrails import Ledger
 from bazaar_agent.monitor import Watcher
+from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import run_per_tick
 from tests.agent_fakes import CHEAP, RASTRO, TICK, FakePublic, FakeTeam, ask, bid, clock, our_ask, parts
 from tests.test_dealer import FakeDealerClient
@@ -41,7 +43,7 @@ def test_a_steady_tick_of_every_service_fits_the_key_today(tick_seconds):
 def test_every_loop_at_its_ceiling_stays_under_5_per_second_but_bursts_past_20(tick_seconds):
     plan = rb.saturday_plan()
     table = rb.budget_table(tick_seconds, plan)
-    assert table.total("team") == 71 and table.rps("team") <= rb.RATE_PER_KEY
+    assert table.total("team") == 74 and table.rps("team") <= rb.RATE_PER_KEY
     verdict = rb.check(plan, tick_seconds)
     assert not verdict.ok and all("tick boundary" in p for p in verdict.problems)  # sustained is fine
     assert rb.check(plan, tick_seconds, offsets=rb.PROPOSED_STAGGER).ok  # a stagger absorbs it
@@ -51,7 +53,7 @@ def test_sunday_has_no_room_for_extra_dealer_processes_on_top_of_the_ceiling():
     plan = rb.saturday_plan(dealer_children=3)
     assert rb.budget_table(rb.SATURDAY_TICK_S, plan).rps("team") <= rb.RATE_PER_KEY
     problems = rb.check(plan, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).problems
-    assert any("sustained 5.73 req/s" in p for p in problems)
+    assert any("sustained 5.93 req/s" in p for p in problems)
 
 
 def test_a_second_laptop_running_taker_and_maker_breaks_the_boundary_burst():
@@ -77,8 +79,8 @@ def test_the_token_bucket_refuses_only_what_the_refill_cannot_cover():
 
 def test_the_table_multiplies_copies_and_prints_a_total_row():
     table = rb.budget_table(15.0, [rb.duels(3).times(2), rb.evals()])
-    assert [(r.name, r.team, r.public) for r in table.rows] == [("duels", 12, 0), ("evals", 0, 1)]
-    assert rb.describe(table)[-1][:4] == ("total", "", "12", "0.80")
+    assert [(r.name, r.team, r.public) for r in table.rows] == [("duels", 18, 0), ("evals", 0, 1)]
+    assert rb.describe(table)[-1][:4] == ("total", "", "18", "1.20")
 
 
 # ---------------------------------------------------------------- the loops, measured
@@ -167,8 +169,31 @@ def test_the_duel_player_moves_three_duels_inside_its_budget(duel_client, monkey
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0 and "failed" not in result.output, result.output
     assert len(client.sent) == 3  # one move per live duel
-    assert tally.total("team") == rb.duels(3).team == 6  # clock, /api/duels, ?done=true, three moves
+    assert tally.total("team") == 6 <= rb.duels(3).team  # clock, /api/duels, ?done=true, three moves
     assert tally.calls[("team", "clock")] == 1 and tally.calls[("team", "duels")] == 2
+
+
+def test_every_duel_message_network_retry_counts_toward_the_budget(duel_client, monkeypatch):
+    cli, client, tally = duel_client
+    use_policy(monkeypatch, cli, "v1")
+    attempts = Counter()
+    real_say = client.duel_say
+    client.timeout = 4.0
+
+    def fail_once_per_duel(did, text, price=None, days=None):
+        attempts[did] += 1
+        if attempts[did] == 1:
+            raise BazaarError("network", "connection lost", 0)
+        return real_say(did, text, price=price, days=days)
+
+    monkeypatch.setattr(client, "duel_say", fail_once_per_duel)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert attempts == {95: 2, 96: 2, 97: 2}
+    assert len(client.sent) == 3
+    assert tally.calls[("team", "duel_say")] == 6
+    assert tally.total("team") == rb.duels(3).team == rb.duels(3).team_at_boundary == 9
+    assert client.timeout == 4.0
 
 
 def test_the_live_duel_policy_stays_inside_the_same_budget(duel_client):
@@ -222,7 +247,7 @@ def test_the_budget_command_prints_the_table_and_the_verdict_offline():
 
     out = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15"])
     assert out.exit_code == 0, out.output
-    assert "64 team-key calls → 64 requests" in out.output and "11 refused" in out.output
+    assert "67 team-key calls → 67 requests" in out.output and "14 refused" in out.output
     staggered = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15", "--stagger"])
     assert "fits the key" in staggered.output
 
@@ -231,7 +256,7 @@ def test_operator_tools_on_top_of_a_sunday_ceiling_break_the_key_but_not_on_satu
     from bazaar_agent import rate_budget as rb
 
     sunday = rb.saturday_plan() + [rb.operator(0.5, rb.SUNDAY_TICK_S)]
-    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(79 / 15)
+    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(82 / 15)
     assert not rb.check(sunday, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
     saturday = rb.saturday_plan() + [rb.operator(1.0, rb.SATURDAY_TICK_S)]
     assert rb.check(saturday, rb.SATURDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
@@ -244,28 +269,28 @@ def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday()
     runs = {lat: rb.burst(plan, offsets=rb.PROPOSED_STAGGER, latency_s=lat, retries=2) for lat in (0.15, 0.10, 0.05)}
     assert {lat: (r.refused, r.failed) for lat, r in runs.items()} == {0.15: (0, 0), 0.10: (2, 0), 0.05: (10, 0)}
     shared = rb.check(plan, rb.SUNDAY_TICK_S, broker_shares_team_bucket=True)
-    assert not shared.ok and "5.87 req/s" in shared.problems[0]
+    assert not shared.ok and "6.07 req/s" in shared.problems[0]
     assert rb.flatten().team == 32
 
 
 def test_today_s_team_client_loses_every_refused_call_at_the_edge_unless_the_loops_stagger():
     """sdk.TeamBazaar (B18) never re-sends a 429: a refused call waits for the next tick. At the ceiling the
-    simultaneous wake-up loses 11 of 64 team-key calls; the proposed stagger loses none (1 with three extra
+    simultaneous wake-up loses 14 of 67 team-key calls; the proposed stagger loses none (4 with three extra
     `dealer buy` processes)."""
     ceiling = rb.burst(rb.saturday_plan(), retries=rb.TEAM_RESENDS)
-    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 64, 11, 11)
+    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (67, 67, 14, 14)
     assert rb.burst(rb.saturday_plan(), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS).failed == 0
     crowded = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS)
-    assert (crowded.calls, crowded.failed) == (79, 1)
+    assert (crowded.calls, crowded.failed) == (82, 4)
 
 
 def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lose_it():
     """r2 bite X6, the vendored SDK's client (the broker's; the team's before B18): it re-sends a 429 twice
     (0.25 s × attempt), GETs and POSTs alike. A call lost after its last retry may be the tick's one accept."""
     ceiling = rb.burst(rb.saturday_plan(), retries=rb.SDK_RETRIES)
-    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 71, 7, 0)
+    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (67, 78, 11, 0)
     crowded = rb.burst(rb.saturday_plan(dealer_children=3), retries=rb.SDK_RETRIES)
-    assert (crowded.calls, crowded.sent, crowded.failed) == (79, 110, 2)
+    assert (crowded.calls, crowded.sent, crowded.failed) == (82, 123, 2)
     two = rb.burst(rb.with_copies(rb.steady_plan(), {"taker": 2, "maker": 2}), retries=rb.SDK_RETRIES)
     assert two.failed == 1
     staggered = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.SDK_RETRIES)

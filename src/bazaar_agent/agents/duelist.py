@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import math
+import signal
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +21,7 @@ from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook
 from bazaar_agent.agents.tactics import Side, private_numbers
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.guardrails import Action, duel_days_ok
-from bazaar_agent.sdk import BazaarError
+from bazaar_agent.sdk import Bazaar, BazaarError
 
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
@@ -168,26 +170,58 @@ def duel_move(
     return DuelMove("offer", price, days, reason=f"concede toward limit ({left} ticks left)")
 
 
-RETRY_MIN_LEFT_S = 1.5  # a retry needs this much of the tick left (a send is ~0.1-0.3 s, the SDK timeout is longer)
+RETRY_MIN_LEFT_S = 1.5  # minimum remaining action budget, already excluding the tick safety margin
 
 
-def send_with_one_retry(call: Callable[[], Any], time_left: Callable[[], float]) -> tuple[Any, bool]:
-    """Send a duel message or accept; after a `network` error (no answer at all) send it once more in the same
-    tick, only while `time_left()` allows. Returns (answer, retried). Never retries a 4xx or a 5xx (the game may
-    have applied those). The game takes one message per side per tick, so a retry cannot double-send: if it is
-    answered `wait_for_tick` the first one landed and the send counts as made (answer None, no third try). Any
-    other failure of the retry raises the FIRST error, so the caller books it as a maybe-landed send."""
+class _RetryExpired(BaseException):
+    """Escape SDK/tracking hooks that catch Exception and would otherwise continue a late send."""
+
+
+def _expire_retry(signum: int, frame: Any) -> None:
+    raise _RetryExpired
+
+
+def send_with_one_retry(call: Callable[[], Any], time_left: Callable[[], float], *, client: Bazaar) -> tuple[Any, bool]:
+    """Retry a message once after a transport error, within its ORIGINAL tick's guarded deadline.
+
+    `time_left` must count down from the planned tick's deadline, never a refreshed tick budget. Bound the
+    retry's SDK timeout and whole synchronous call to that budget. A late/failed retry keeps the first error; only
+    `wait_for_tick` confirms it landed. Accepts must not use this: their endpoint cannot pin the judged offer.
+    """
     try:
         return call(), False
     except BazaarError as first:
-        if first.code != "network" or time_left() < RETRY_MIN_LEFT_S:
+        left = time_left()
+        if first.code != "network" or first.status != 0 or not math.isfinite(left) or left < RETRY_MIN_LEFT_S:
             raise
+        # ponytail: a Unix main-thread timer bounds DNS and hooks too; other callers skip the optional retry.
+        if (
+            threading.current_thread() is not threading.main_thread()
+            or not hasattr(signal, "setitimer")
+            or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0)
+        ):
+            raise
+        timeout = client.timeout
+        handler = signal.getsignal(signal.SIGALRM)
+        # The duel loop owns this synchronous client; restore its ordinary timeout even on a refusal.
         try:
+            signal.signal(signal.SIGALRM, _expire_retry)
+            left = time_left()
+            if not math.isfinite(left) or left < RETRY_MIN_LEFT_S:
+                raise _RetryExpired
+            client.timeout = min(timeout, left)
+            signal.setitimer(signal.ITIMER_REAL, left)  # expiry of the ORIGINAL game tick, not a new tick schedule
             return call(), True
+        except _RetryExpired:
+            raise first from None
         except BazaarError as second:
             if second.code == "wait_for_tick":
                 return None, True
             raise first from second
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, handler)
+            client.timeout = timeout
 
 
 def duel_action(duel: Mapping[str, Any], move: DuelMove) -> Action:

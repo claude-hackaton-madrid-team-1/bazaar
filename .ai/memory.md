@@ -1227,3 +1227,18 @@ offers, 241 ticks, thread never freed); it now frees the thread and keeps the sp
 sale re-trips it, and `sell_min_value_ratio`/`max_score_loss_per_move`/`protect_page_sets` still refuse such a sale. A duel
 message or accept answered `network` is sent once more in the same tick (>= 1.5 s left); `wait_for_tick` on the retry means the
 first landed (no third try); 4xx and 5xx are never retried. Two replay tests pinned today's cap value and were pinned to 26.
+
+### [2026-10-04] build-error — PR #265 retry reviews: tick deadline, unbound accepts, and missing request budget (SU1)
+The old retry retained the SDK's four-second timeout even with 1.5 seconds of action budget, retried an accept
+without binding its rival terms, and counted only one message request per duel. Fix: message retries use the
+original tick's guarded deadline and cap the SDK timeout to its remaining budget; accepts never retry because
+the endpoint cannot atomically condition acceptance on the judged offer. A network-failed accept keeps its slot.
+Count both message attempts: three duels cost at most 9 requests; the combined Sunday ceiling is 74/15 s and
+needs the existing stagger. Changed-offer regression setup must reach the endgame: v2 deliberately holds early
+while its rival concedes, so an early-tick test never exercises the accept under test.
+
+### [2026-10-04] gotcha — a urllib socket timeout is not a total duel retry deadline (SU1)
+A timeout per socket operation cannot bound several network stages or a before-write hook. Bound the entire
+synchronous retry with a timer derived from the original game tick, not a new tick budget; skip when the
+main-thread timer is unavailable or already owned. The deadline exception must bypass hooks that catch
+Exception, then become the original maybe-landed network error at the retry boundary.

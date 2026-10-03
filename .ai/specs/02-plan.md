@@ -679,3 +679,11 @@ time-critical: do them directly, no team fan-out.
 ### MI1b — no_buyback_ticks on the simulator and on a stale tape (PR #258)
 - Unread sales are skipped on a simulator target (`guardrails.simulator_target`), and a tape more than 3 ticks behind
   is unread on the real game (fail closed). · **Acceptance:** tests/test_no_buyback.py; sim smoke green.
+
+### SU1 — Sunday guardrails and bounded duel retries ([spec](SU1-spec.md))
+- Preserve approved rarity caps and tick-based dealer-sell breaker expiry from PR #265.
+- Address both reviews: message-only retry within the original tick deadline, timeout bound, refusal
+  handling and retained accept reservation; regression tests for tick expiry and changed rival terms.
+- In parallel, count retries in request/burst budgets and exercise the actual CLI loop.
+- Merge origin/main, regenerate docs, run the final-commit gate and private simulator smoke, update the
+  PR with the Honest Implementation Report, then push the feature branch.

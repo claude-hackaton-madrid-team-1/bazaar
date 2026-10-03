@@ -100,12 +100,12 @@ def maker(max_open_offers: int = 30, listings_per_tick: int = 12) -> LoopBudget:
 
 
 def duels(concurrent: int = 3) -> LoopBudget:
-    team = 2 + concurrent + 1  # clock + /api/duels, one move per live duel, ?done=true when one finished
+    team = 2 + 2 * concurrent + 1  # clock + /api/duels, move and network retry per duel, ?done=true
     return LoopBudget(
         "duels",
         team=team,
         team_at_boundary=team,
-        source=f"cli.py duel run: max_concurrent {concurrent} (Duels I 3, practice 6)",
+        source=f"cli.py duel run: max_concurrent {concurrent}, one network retry per message (accepts never retry)",
     )
 
 
