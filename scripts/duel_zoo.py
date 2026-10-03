@@ -242,6 +242,36 @@ def order_section(policies: dict[str, Policy], n: int) -> str:
     return f"## Within-tick order ({len(base)} duels on the go/no-go grid, and the replay)\n\n" + table(head, rows)
 
 
+def accept_cap_section(policies: dict[str, Policy], duels: int = 1200) -> str:
+    """One accept per tick for the whole team (RULES.md; GUARDRAILS `max_accepts_per_tick` = 1, duels first),
+    against batches of duels sharing a deadline; and the real deadline groups replayed together."""
+    mixes = {"flat 6 plan styles": {s: 1.0 for s in duel_zoo.PLAN_STYLES}, "practice mix": duel_replay.practice_mix()}
+    rows = []
+    for mix_name, mix in mixes.items():
+        for decay in (0.06, 0.08):
+            for size in (1, 3, 6):
+                grid = duel_zoo.batches(size, duels // size, mix, decay=decay)
+                cells = []
+                for p in policies.values():
+                    free = duel_zoo.summarize(duel_zoo.run_batches(p, grid, None)).mean_result
+                    capped = duel_zoo.summarize(duel_zoo.run_batches(p, grid, 1)).mean_result
+                    cells.append(f"{free:.2f} → {capped:.2f}")
+                rows.append((mix_name, decay, size, *cells))
+    replay_rows = [
+        (name, round(sum(r.result for r in duel_replay.replay_groups(p, accepts_per_tick=None)), 2),
+         round(sum(r.result for r in duel_replay.replay_groups(p)), 2))
+        for name, p in policies.items()
+    ]  # fmt: skip
+    return (
+        f"## One accept per tick for the whole team ({duels} duels per row, in batches sharing a deadline)\n\n"
+        "Mean P per duel, no cap → one accept per tick. Duels move in `duel` order; an accept past the budget is "
+        "refused and retried next tick.\n\n"
+        + table(("mix", "decay", "batch", *policies), rows)
+        + "\n\nThe 12 unanswered practice duels replayed by deadline group (6 share tick 132), conservative:\n\n"
+        + table(("policy", "no cap P", "one accept per tick P"), replay_rows)
+    )
+
+
 def replay_section(policies: dict[str, Policy]) -> str:
     rows: dict[int, list[Any]] = {}
     totals = []
@@ -296,6 +326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seeds_section(policies, args.n),
         sensitivity_section(policies, args.n),
         order_section(policies, args.n),
+        accept_cap_section(policies),
         replay_section(policies),
         *(
             gate_section(label, resolve(spec), args.n, tuple(map(float, d.split(","))))

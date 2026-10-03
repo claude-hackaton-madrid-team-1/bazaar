@@ -151,6 +151,28 @@ def replay_all(
     return [replay(policy, d, counterfactual, team_first) for d in rows if unanswered(d)]
 
 
+def replay_groups(
+    policy: zoo.Policy,
+    duels: Sequence[Mapping[str, Any]] | None = None,
+    counterfactual: Counterfactual = "conservative",
+    accepts_per_tick: int | None = 1,
+) -> list[Replayed]:
+    """The unanswered duels replayed together by deadline (6 shared tick 132), sharing one accept per tick."""
+    rows = [d for d in (load() if duels is None else duels) if unanswered(d)]
+    groups: dict[int, list[Mapping[str, Any]]] = {}
+    for d in rows:
+        groups.setdefault(int(d["deadline_tick"]), []).append(d)
+    out = []
+    for _, group in sorted(groups.items()):
+        scs = [scenario_for(d) for d in group]
+        played = zoo.play_batch(policy, scs, [scripted_rival(d, counterfactual) for d in group], accepts_per_tick)
+        for d, (record, _) in zip(group, played, strict=True):
+            actual = d.get("result")
+            out.append(Replayed(int(d["duel"]), str(d["role"]), float(actual) if isinstance(actual, int | float)
+                                else 0.0, oracle(d), record))  # fmt: skip
+    return out
+
+
 # ---------------------------------------------------------------- the fit
 
 

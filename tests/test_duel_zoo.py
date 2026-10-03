@@ -379,3 +379,31 @@ def test_a_deaf_conceder_still_concedes_but_never_accepts():
     assert zoo.play(Script(*[zoo.Act("offer", 120)] * 12), scenario(style="linear", params=LINEAR, rival_limit=200))[
         0
     ].deal
+
+
+# ---------------------------------------------------------------- one accept per tick for the whole team
+
+
+def test_duels_sharing_a_deadline_share_the_teams_one_accept_per_tick():
+    scs = [scenario(style="linear", params=LINEAR, duel=i) for i in (1, 2, 3)]  # all open at 120: inside our 100
+    capped = zoo.play_batch(lambda d, t, s: zoo.Act("accept"), scs, accepts_per_tick=1)  # every duel, every tick
+    assert [r.close_tick for r, _ in capped] == [101, 102, 103]  # one accept per tick, in duel order
+    assert [r.errors.count("accept_cap") for r, _ in capped] == [0, 1, 2]
+    free = zoo.play_batch(lambda d, t, s: zoo.Act("accept"), scs, accepts_per_tick=None)
+    assert [r.close_tick for r, _ in free] == [101, 101, 101]
+
+
+def test_a_batch_of_one_plays_exactly_like_a_single_duel():
+    for sc in zoo.scenarios(zoo.STYLES, n=5, decays=(0.06,)):
+        single = zoo.play(zoo.REFERENCE_POLICIES["anchor_once"], sc)
+        batch = zoo.play_batch(zoo.REFERENCE_POLICIES["anchor_once"], [sc])[0]
+        assert single == batch
+
+
+def test_batches_start_and_end_together_with_roles_alternating():
+    grid = zoo.batches(6, 4, {"linear": 1, "one_shot": 1})
+    assert len(grid) == 4 and all(len(b) == 6 for b in grid)
+    assert all(len({(sc.started_tick, sc.deadline_tick) for sc in b}) == 1 for b in grid)
+    roles = [sc.role for b in grid for sc in b]
+    assert roles.count("seller") == roles.count("buyer") == 12
+    assert len({sc.duel for b in grid for sc in b}) == 24

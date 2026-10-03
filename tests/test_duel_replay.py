@@ -141,3 +141,13 @@ def test_the_replayed_rival_keeps_the_days_it_offered():
 
     replay.replay(look, two)
     assert seen[0]["days"] == 10 and seen[0]["price"] == 141
+
+
+def test_replaying_the_real_deadline_groups_with_one_accept_per_tick():
+    free = {r.duel: r.result for r in replay.replay_groups(zoo.endgame_accept, accepts_per_tick=None)}
+    capped = {r.duel: r for r in replay.replay_groups(zoo.endgame_accept)}
+    assert sum(free.values()) == 185.0  # = replay_all: no cap, no interaction
+    assert sum(r.result for r in capped.values()) == 140.0
+    # Deadline 132: 5, 6, 119 and 120 all want the last two ticks; 5 and 6 come first in duel order.
+    assert capped[119].record.result == capped[120].record.result == 0.0
+    assert capped[119].record.errors.count("accept_cap") == 2

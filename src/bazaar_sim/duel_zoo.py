@@ -536,29 +536,35 @@ def _rival_turn(d: _Duel, rival: Rival, tick: int, rng: random.Random) -> None:
         d.say(RIVAL_ALIAS, act.price, days, tick)
 
 
-def _team_turn(d: _Duel, policy: Policy, tick: int) -> None:
+def _team_turn(d: _Duel, policy: Policy, tick: int, can_accept: bool = True) -> bool:
+    """Our move in one duel. True when it was an accept that went through (it spends the team's accept)."""
     sc = d.sc
     move = policy(payload(d), tick, sc.started_tick)
     kind = getattr(move, "kind", "hold")
     if kind == "accept":
         if d.rival_offer is None:
             d.errors.append("no_offer")
-            return
+            return False
+        if not can_accept:
+            d.errors.append("accept_cap")  # RULES.md: one accept per tick for the whole team
+            return False
         d.accepted, d.accepted_tick = "team", tick
+        return True
     elif kind == "offer":
         price, days = getattr(move, "price", None), getattr(move, "days", None)
         if not isinstance(price, int) or isinstance(price, bool) or price < 1:
             d.errors.append("invalid_price")
-            return
+            return False
         if sc.two_issues and days is None:
             d.errors.append("missing_days")
-            return
+            return False
         if days is not None and (not isinstance(days, int) or not 0 <= days <= 10):
             d.errors.append("invalid_days")
-            return
+            return False
         d.your_offer = d.offer(price, days or 0, tick)
         d.ours += 1
         d.say(US, price, days, tick)
+    return False
 
 
 def _close(d: _Duel, tick: int) -> None:
@@ -573,25 +579,47 @@ def _close(d: _Duel, tick: int) -> None:
 
 def play(policy: Policy, sc: Scenario, rival: Rival | None = None) -> tuple[Record, dict[str, Any]]:
     """Run one duel to its close: the record, and the final payload (the real `?done=true` row)."""
-    d = _Duel(sc)
-    rival = rival or RIVALS[sc.style]
-    rng = random.Random(f"{sc.seed}:{sc.duel}")
-    for tick in range(sc.started_tick, sc.deadline_tick + 2):
-        if d.accepted is not None and (d.accepted_tick or 0) < tick:
-            _close(d, tick)
-            break
-        if tick >= sc.deadline_tick:
-            d.status, d.closed_tick = "no_deal", tick
-            break
-        if sc.team_first:
-            _team_turn(d, policy, tick)
-            if d.accepted is None:
-                _rival_turn(d, rival, tick, rng)
-        else:
-            _rival_turn(d, rival, tick, rng)
-            if d.accepted is None:
-                _team_turn(d, policy, tick)
-    return _record(d), payload(d)
+    return play_batch(policy, [sc], [rival or RIVALS[sc.style]], accepts_per_tick=None)[0]
+
+
+def play_batch(
+    policy: Policy,
+    scs: Sequence[Scenario],
+    rivals: Sequence[Rival] | None = None,
+    accepts_per_tick: int | None = 1,
+) -> list[tuple[Record, dict[str, Any]]]:
+    """One team's duels in lockstep, sharing the team's accepts: RULES.md lets a team accept one offer per tick,
+    and GUARDRAILS.md `max_accepts_per_tick` = 1 applies it to duels ("duels first"). Each tick the duels move in
+    `duel` order, as the CLI walks `/api/duels`; an accept past the budget is refused (`accept_cap`) and the duel
+    stays open. A rival accepting OUR offer spends nothing. `accepts_per_tick=None` is no cap."""
+    duels = [_Duel(sc) for sc in scs]
+    rivals = list(rivals) if rivals is not None else [RIVALS[sc.style] for sc in scs]
+    rngs = [random.Random(f"{sc.seed}:{sc.duel}") for sc in scs]
+    order = sorted(range(len(duels)), key=lambda i: scs[i].duel)
+    first, last = min(sc.started_tick for sc in scs), max(sc.deadline_tick for sc in scs)
+    for tick in range(first, last + 2):
+        live = []
+        for i in order:
+            d = duels[i]
+            if d.status != "live" or tick < d.sc.started_tick:
+                continue
+            if d.accepted is not None and (d.accepted_tick or 0) < tick:
+                _close(d, tick)
+            elif tick >= d.sc.deadline_tick:
+                d.status, d.closed_tick = "no_deal", tick
+            else:
+                live.append(i)
+        budget = accepts_per_tick
+        for i in live:
+            if not scs[i].team_first:
+                _rival_turn(duels[i], rivals[i], tick, rngs[i])
+        for i in live:
+            if duels[i].accepted is None and _team_turn(duels[i], policy, tick, budget is None or budget > 0):
+                budget = None if budget is None else budget - 1
+        for i in live:
+            if scs[i].team_first and duels[i].accepted is None:
+                _rival_turn(duels[i], rivals[i], tick, rngs[i])
+    return [(_record(d), payload(d)) for d in duels]
 
 
 def _record(d: _Duel) -> Record:
@@ -663,6 +691,34 @@ def scenarios(
 def with_params(grid: Iterable[Scenario], styles: Sequence[str], **fixed: float) -> list[Scenario]:
     """The same grid with some parameters of `styles` pinned (a sensitivity run): other duels unchanged."""
     return [replace(sc, params={**sc.params, **fixed}) if sc.style in styles else sc for sc in grid]
+
+
+def batches(
+    size: int,
+    count: int,
+    mix: Mapping[str, float],
+    decay: float = 0.06,
+    duel_ticks: int = 12,
+    seed: int = 7,
+) -> list[list[Scenario]]:
+    """`count` batches of `size` duels that start and end together (the practice had 6 sharing deadline 132),
+    roles alternating, each rival's style drawn from `mix` (e.g. `duel_replay.practice_mix()`)."""
+    rng = random.Random(f"{seed}:batches:{size}:{decay}:{duel_ticks}")
+    styles, weights = list(mix), [float(w) for w in mix.values()]
+    out, duel = [], 0
+    for _ in range(count):
+        batch = []
+        for _ in range(size):
+            duel += 1
+            style = rng.choices(styles, weights)[0]
+            role: Role = "seller" if duel % 2 else "buyer"  # alternating across the whole grid
+            batch.append(draw_scenario(style, role, rng, decay=decay, duel_ticks=duel_ticks, duel=duel))
+        out.append(batch)
+    return out
+
+
+def run_batches(policy: Policy, grid: Iterable[Sequence[Scenario]], accepts_per_tick: int | None = 1) -> list[Record]:
+    return [record for batch in grid for record, _ in play_batch(policy, batch, accepts_per_tick=accepts_per_tick)]
 
 
 def run(policy: Policy, grid: Iterable[Scenario]) -> list[Record]:
