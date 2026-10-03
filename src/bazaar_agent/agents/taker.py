@@ -5,7 +5,9 @@ Per tick, album first (`/api/me`), then:
       missing page cards whose total cost (ask + the venue fee the accepting side pays) is below the
       card's value to us (strategy: book × affinity + page bonus share) by at least `min_buy_surplus`;
   (b) keep up to `max_dealer_threads` dealer conversations (one per dealer) for the strategy's top
-      dealer buys, one move per tick each (`desk.py`), never blocking on one thread.
+      dealer buys, one move per tick each (`desk.py`), never blocking on one thread;
+  (c) with `buy_targets_enabled`, standing asks for a buy target (`buy_targets.py`: an off-page card a human
+      approved buying) whose cost, fee included, is at or under its ceiling (always below our value).
 Accepts from (a) and (b) compete for the team's accept quota (`accepts_per_team_per_tick`, shared
 across machines through the ledger): finals first, then the biggest surplus. Jev's
 `offer_is_worth_accepting` is advisory: a decided `no` vetoes a board accept, a decided `yes` may
@@ -21,11 +23,13 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 from __future__ import annotations
 
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 
+from bazaar_agent import buy_targets
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
@@ -530,6 +534,7 @@ class Taker:
         # middle of an hour may give a dealer one more probe that hour.
         self._probed: set[tuple[str, int]] = set()
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
+        self.buy_targets = buy_targets.TargetBook()  # off-page cards a human approved buying (`buy_targets.py`)
         self.rec = Recorder("taker", decisions, live, log, hub)
         if strategy_gate is None and strategy_jev is not None:  # the CLI hands Jev; the gate logs to our rows
             self.strategy_gate = StrategyGate(
@@ -691,6 +696,7 @@ class Taker:
         proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]
         board, board_venues = self._board_offers(run)
         proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
+        proposals += [board_proposal(c) for c in self._target_asks(run, board, board_venues)]
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
         self.team_desk.matrix = self.news.matrix if self.news is not None else None
@@ -854,6 +860,48 @@ class Taker:
         # stand (and she may take it), and that thread cannot be walked until we read it again
         offers = [o for o in offers if o.ref not in run.unread]
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+
+    def _target_asks(self, run: _TickRun, offers: list[BoardOffer], venues: dict[str, Venue]) -> list[AskCandidate]:
+        """The cheapest standing ask per buy target whose cost, fee included, is at or under its ceiling (the
+        approved max, the rarity cap and the official value minus `off_page_min_surplus`). Our own bid for the card
+        is withdrawn after the accept. The official value is read only for a card with an ask."""
+        tick = run.snap.clock.tick
+        held = Counter(str(a.get("ref")) for a in run.snap.me.get("assets") or [] if a.get("kind") == "card")
+        found = self.buy_targets.active(self.rules, tick, run.snap.catalog, held)
+        if not found:
+            return []
+        own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
+        ours = {o.id for o in run.mine}
+        out = []
+        for bt in found:
+            asks = [
+                o
+                for o in offers
+                if o.side == "ask" and o.ref == bt.card and o.id not in ours and o.ref not in run.unread
+            ]
+            if not asks:
+                continue
+            official = self.values.value(bt.card, tick, held.get(bt.card, 0))
+            top = buy_targets.ceiling(bt, official, self.rules)
+            if top is None or official is None:
+                continue
+            best: AskCandidate | None = None
+            for o in asks:
+                venue = venues.get(o.venue)
+                if venue is None:
+                    continue
+                fee = venue.fee(o.price)
+                total = o.price + fee
+                if total > top or (best is not None and total >= best.total):
+                    continue
+                surplus = round(official - total, 1)
+                why = f"{buy_targets.describe(bt, top, tick, self.rules)}; ask {o.price} + fee {fee} on {o.venue}"
+                best = AskCandidate(
+                    o, bt.rarity, fee, total, round(official, 1), surplus, True, surplus, why, own_bids.get(bt.card)
+                )
+            if best is not None:
+                out.append(best)
+        return out
 
     def _bids(
         self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
