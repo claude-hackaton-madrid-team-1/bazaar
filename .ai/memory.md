@@ -980,3 +980,8 @@ uncommon 30 (29-30), rare 89 (89.5-90.5). Opening ≈ list × (1.12 + 0.17 × sh
 moves the bids before a final (4-6 for both). Replayed on Friday's threads (tests/test_persona_replay.py), the trait
 prior's ladder scores the same share as the learned one (Abuela uncommon 0.402 = 0.402, packs 0.471 vs 0.465, Chato
 uncommon 0.467 = 0.467, rare 0.476 vs 0.467). Step 1 beat step 2 on Abuela (0.40 vs 0.33).
+### [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
+`bazaar_team_ro` (#184): CONNECT to every database, TEMP and EXECUTE on `pg_advisory_lock` come from PUBLIC, so a
+role-only revoke does nothing (the RO role could take our ledger's advisory lock and stall accepts; documented).
+`alter default privileges ... grant select on tables` also covers a later secret table or a view over one: the
+script creates `venue_broker_keys` first, then revokes it. `pg_stats` hides columns the role cannot read.
