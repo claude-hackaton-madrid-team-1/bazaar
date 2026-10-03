@@ -7,8 +7,11 @@
 The simulator is a fresh in-memory world on a private port (8980-8989; a busy port is refused: never share a
 simulator, see .ai/memory.md). The three agents run as sim-team1 under `scripts/tick_profile.py` (which times every
 request and tick), so they share ONE key's 5 req/s and its limits, like the real game. Their memory is a throwaway
-database on the laptop's docker Postgres (`bazaar_sim_sunday_<port>`, dropped at the end); nothing here touches the
-real game, the shared Postgres or Railway. Jev is off by default (`--jev` turns it on: it calls the Jev API).
+database on the laptop's docker Postgres (`bazaar_sim_sunday_<port>`, dropped at the end). An explicit
+BAZAAR_SIM_DATABASE_URL may select an existing local `bazaar_sim` / `bazaar_sim_*` database, or
+`postgresql://nobody@127.0.0.1:1/none` for file fallback; existing databases are never dropped.
+SIM_SUNDAY_PG_ADMIN_URL must name loopback `postgres`, without libpq overrides. Nothing here touches the
+real game, the shared Postgres or Railway. Jev is off: every child is restricted to loopback connections.
 
 The report prints, per agent: writes sent per tick, ticks with no write and the top reasons, the tick wall time
 p50/p95 against its budget, 429s; then the simulator's own count of accepted writes and refusals by code, the
@@ -49,13 +52,48 @@ AGENTS = {
 }
 WRITES = ("POST", "DELETE")
 LOCAL_ADMIN = "postgresql://bazaar:bazaar@127.0.0.1:5433/postgres"  # the docker-compose Postgres (README)
+NOWHERE_DB = "postgresql://nobody@127.0.0.1:1/none"
 INHERITED = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "VIRTUAL_ENV")
 GUARD = HERE / "sim_guard"  # sitecustomize: loopback-only sockets in every child
 
 
-def base_env() -> dict[str, str]:
+def base_env(env_file: Path) -> dict[str, str]:
     keep = {k: v for k, v in os.environ.items() if k in INHERITED or k.startswith("LC_")}
-    return {**keep, "PYTHONDONTWRITEBYTECODE": "1"}
+    return {
+        **keep,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": str(GUARD),
+        "BAZAAR_ENV_FILE": str(env_file),
+        "BAZAAR_SIM": "local",
+        "BAZAAR_SIM_DATABASE_URL": NOWHERE_DB,
+        "SIM_DATABASE_URL": "memory",
+    }
+
+
+def local_database_url(url: str, *, admin: bool = False) -> str:
+    """Validate before libpq connects; neither URL nor parser errors may expose credentials."""
+    import psycopg
+
+    allowed = {"host", "port", "user", "password", "dbname", "sslmode", "connect_timeout"}
+    try:
+        info = psycopg.conninfo.conninfo_to_dict(url)
+    except psycopg.ProgrammingError:
+        raise SystemExit("invalid simulator database URL") from None
+    name = info.get("dbname", "")
+    valid_name = name == "postgres" if admin else name.startswith("bazaar_sim_") or name == "bazaar_sim"
+    if url == NOWHERE_DB and not admin:
+        valid_name = True
+    if (
+        set(info) - allowed
+        or info.get("host") not in {"127.0.0.1", "::1", "localhost"}
+        or not valid_name
+        or "railway" in name.lower()
+        or any(key.startswith("PG") for key in os.environ)
+    ):
+        raise SystemExit("refusing unsafe simulator database URL or libpq environment override")
+    # Pin localhost to an address: libpq bypasses the Python socket guard.
+    info["host"] = "::1" if info["host"] == "::1" else "127.0.0.1"
+    return psycopg.conninfo.make_conninfo(**info)
 
 
 def get(base: str, path: str, keyed: bool = False) -> dict[str, Any]:
@@ -75,7 +113,9 @@ def database(port: int, create: bool) -> str:
     """A throwaway database on the laptop's docker Postgres; its URL goes only to our children's environment."""
     import psycopg
 
-    admin = os.environ.get("SIM_SUNDAY_PG_ADMIN_URL", LOCAL_ADMIN)
+    if port not in PORTS:
+        raise SystemExit("invalid simulator database port")
+    admin = local_database_url(os.environ.get("SIM_SUNDAY_PG_ADMIN_URL", LOCAL_ADMIN), admin=True)
     name = f"bazaar_sim_sunday_{port}"
     with psycopg.connect(admin, autocommit=True, connect_timeout=5) as conn:
         conn.execute(f'drop database if exists "{name}" with (force)')
@@ -85,7 +125,7 @@ def database(port: int, create: bool) -> str:
 
 
 def start_sim(port: int, tick_seconds: float, latency_scale: float, out: Path) -> subprocess.Popen[bytes]:
-    env = base_env()
+    env = base_env(out / "empty.env")
     env.update(
         {
             "SIM_SCENARIO": "sunday",
@@ -117,7 +157,8 @@ def start_sim(port: int, tick_seconds: float, latency_scale: float, out: Path) -
 
 
 def agent_env(port: int, db_url: str, data_dir: Path, env_file: Path) -> dict[str, str]:
-    env = base_env()
+    db_url = local_database_url(db_url)
+    env = base_env(env_file)
     env.update(
         {
             "PYTHONPATH": str(GUARD),
@@ -127,7 +168,6 @@ def agent_env(port: int, db_url: str, data_dir: Path, env_file: Path) -> dict[st
             "BAZAAR_SIM_KEY": KEY,
             "BAZAAR_TEAM_ID": TEAM,
             "BAZAAR_DATA_DIR": str(data_dir),
-            "DATABASE_URL": db_url,
             "BAZAAR_SIM_DATABASE_URL": db_url,
             "BAZAAR_TRACING": "0",
             "COLUMNS": "200",
@@ -148,14 +188,17 @@ def run(args: argparse.Namespace) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     env_file = out / "empty.env"
     env_file.write_text("")
-    db_url = database(args.port, create=True)
+    db_url = os.environ.get("BAZAAR_SIM_DATABASE_URL")
+    if db_url:
+        local_database_url(db_url)
+    else:
+        db_url = database(args.port, create=True)
     server = start_sim(args.port, args.tick_seconds, args.latency_scale, out)
     base = f"http://127.0.0.1:{args.port}"
     procs: dict[str, subprocess.Popen[bytes]] = {}
     try:
         start_tick = get(base, "/api/clock")["tick"]
         before = get(base, "/api/me", keyed=True)
-        flags = [] if args.jev else ["--no-jev"]
         for name in args.agents.split(","):
             if name not in AGENTS:
                 raise SystemExit(f"unknown agent {name!r} (one of {sorted(AGENTS)})")
@@ -172,7 +215,7 @@ def run(args: argparse.Namespace) -> Path:
                 str(out),
                 "--",
             ]
-            cmd += [*AGENTS[name], "--max-ticks", str(args.ticks), *flags]
+            cmd += [*AGENTS[name], "--max-ticks", str(args.ticks), "--no-jev"]
             log = (out / f"{name}.log").open("wb")
             procs[name] = subprocess.Popen(
                 cmd, env=agent_env(args.port, db_url, data_dir, env_file), stdout=log, stderr=log
@@ -198,7 +241,7 @@ def run(args: argparse.Namespace) -> Path:
         server.terminate()
         server.wait(timeout=15)
         tick_profile._sim_pid_file(args.port).unlink(missing_ok=True)
-        if not args.keep_db:
+        if not args.keep_db and not os.environ.get("BAZAAR_SIM_DATABASE_URL"):
             database(args.port, create=False)
     return out
 
@@ -206,6 +249,7 @@ def run(args: argparse.Namespace) -> Path:
 def decision_rows(db_url: str) -> list[dict[str, Any]]:
     import psycopg
 
+    db_url = local_database_url(db_url)
     try:
         with psycopg.connect(db_url, connect_timeout=5) as conn:
             cur = conn.execute("select tick, status, reason, policy_checks->>'guardrail' as guardrail from decisions")
@@ -327,7 +371,6 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--tick-seconds", type=float, default=2.0, help="real seconds per tick (the game clock keeps 15 s)")
     ap.add_argument("--latency-scale", type=float, default=1.0, help="scale the measured request latency (0: none)")
     ap.add_argument("--agents", default="taker,maker,duels")
-    ap.add_argument("--jev", action="store_true", help="let the agents call the Jev API (default: off)")
     ap.add_argument("--keep-db", action="store_true")
     ap.add_argument("--out", default="")
     args = ap.parse_args(argv)

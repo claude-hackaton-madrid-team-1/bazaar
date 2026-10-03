@@ -122,8 +122,11 @@ def test_the_schedule_view_lists_what_is_still_to_come():
     m.step(100)
     from bazaar_sim import views
 
-    upcoming = views.schedule_view(m.world)["upcoming"]
+    schedule = views.schedule_view(m.world)
+    upcoming = schedule["upcoming"]
     assert upcoming and all(u["at_hours"] > 16.65 for u in upcoming) and upcoming[0]["action"] == "duels"
+    assert schedule["now_hours"] == pytest.approx(16.65 + 100 * 15 / 3600, abs=0.001)
+    assert (upcoming[0]["at_hours"] - schedule["now_hours"]) * 3600 == pytest.approx(380 * 15, abs=2)
 
 
 # ---------------------------------------------------------------- a world without a scenario is the plain one
@@ -155,6 +158,41 @@ def test_the_scenario_dealers_open_a_thread_and_haggle():
     assert th.neg is not None and th.neg.opening > th.neg.list_price  # they open above their 63 P list
     th2 = threads.open_thread(m.world, US, {"with": "banco", "topic": {"buy": {"pack": "sobre_oro"}}})
     assert th2.neg is not None and th2.neg.opening == 546  # Don Ernesto's own opening ask
+
+
+@pytest.mark.parametrize("dealer,ref,rarity", [("banco", "LAV-12", "legendary"), ("picaros", "LAV-11", "epic")])
+@pytest.mark.parametrize("by_ref", [True, False])
+def test_scenario_dealers_sell_advertised_high_rarities(dealer, ref, rarity, by_ref):
+    m = sunday()
+    buy = {"card": ref} if by_ref else {"rarity": rarity, "set": "LAV"}
+    th = threads.open_thread(m.world, US, {"with": dealer, "topic": {"buy": buy}})
+    assert th.neg is not None and th.neg.item == ref and th.neg.rarity == rarity
+
+
+@pytest.mark.parametrize("ref", ["LAV-11", "LAV-12"])
+def test_scenario_banco_buys_advertised_high_rarities(ref):
+    m = sunday()
+    asset = m.world.mint(ref, US, "test")
+    th = threads.open_thread(m.world, US, {"with": "banco", "topic": {"sell": {"assets": [asset.id]}}})
+    assert th.neg is not None and th.neg.side == "buy" and th.neg.assets == [asset.id]
+
+
+def test_scenario_high_rarities_still_obey_dealer_menu_and_release():
+    m = sunday()
+    for dealer, ref in (("abuela", "LAV-11"), ("banco", "CHA-12")):
+        with pytest.raises(SimError):
+            threads.open_thread(m.world, US, {"with": dealer, "topic": {"buy": {"card": ref}}})
+    asset = m.world.mint("LAV-12", US, "test")
+    with pytest.raises(SimError):
+        threads.open_thread(m.world, US, {"with": "picaros", "topic": {"sell": {"assets": [asset.id]}}})
+
+
+def test_plain_simulator_still_refuses_non_page_dealer_topics():
+    m = manual_world(QUIET)
+    m.world.team(US).unlocked.append("pilar")
+    asset = m.world.mint("LAV-11", US, "test")
+    with pytest.raises(SimError):
+        threads.open_thread(m.world, US, {"with": "pilar", "topic": {"sell": {"assets": [asset.id]}}})
 
 
 def test_measured_numbers_replace_the_hand_set_ones():

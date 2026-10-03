@@ -123,9 +123,10 @@ def _negotiation(
 
 def _card_for(w: World, team_id: str, dealer_id: str, data: dict[str, Any], buy: dict[str, Any], rng: Any) -> str:
     released = catalog.released_sets()
+    extra_rarities = ("epic", "legendary") if w.scenario else ()
     if isinstance(buy.get("card"), str):
         card = catalog.card(buy["card"])
-        if card is None or card.set_code not in released or not card.page:
+        if card is None or card.set_code not in released or not (card.page or card.rarity in extra_rarities):
             raise invalid(f"{buy['card']} is not a card on sale")
         candidates = [card.ref]
     else:
@@ -135,7 +136,10 @@ def _card_for(w: World, team_id: str, dealer_id: str, data: dict[str, Any], buy:
         candidates = [
             c.ref
             for c in catalog.cards().values()
-            if c.page and c.set_code in released and rarity in (None, c.rarity) and code in (None, c.set_code)
+            if (c.page or c.rarity in extra_rarities)
+            and c.set_code in released
+            and rarity in (None, c.rarity)
+            and code in (None, c.set_code)
         ]
         candidates = [r for r in candidates if catalog.dealer_menu_sells(data, rarity=catalog.cards()[r].rarity)]
         if not candidates:
@@ -170,12 +174,17 @@ def _sell_topic(
         raise invalid("a sell topic lists the asset ids you sell")
     book = 0
     bid = 0.0
+    extra_rarities = ("epic", "legendary") if w.scenario else ()
     for aid in ids:
         asset = w.asset(aid)
         if asset.owner != team_id:
             raise SimError("not_owner", f"asset {aid} is not yours", 403)
         card = catalog.card(asset.ref)
-        if card is None or not card.page or not catalog.dealer_buys(data, card.rarity, card.set_code):
+        if (
+            card is None
+            or not (card.page or card.rarity in extra_rarities)
+            or not catalog.dealer_buys(data, card.rarity, card.set_code)
+        ):
             raise invalid(f"{dealer_id} does not buy {asset.ref}")
         book += card.book
         fever = w.scenario.fever_mult(w, dealer_id, card.set_code, card.rarity) if w.scenario else 1.0

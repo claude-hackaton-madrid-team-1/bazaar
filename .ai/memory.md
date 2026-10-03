@@ -1330,3 +1330,17 @@ of a 1.4 s budget (real pace: 0.55 / 1.05 s of 12.7 s), maker 0.05 s, duels 0.01
 taker takes no board ask); the maker posted ONE ask in 620 ticks (few spare copies, `protect_page_sets` all sets), and with no
 venue (`allow_venue_open = false`) mm_points and bench_points stay 0 through all four Market Tests. Score 0 -> 39.6
 (ladder 26.7, duels 11.6 from Duels III at tick 480, negotiating 1.4). The real taker has Jev on: the run could not test that.
+
+### [2026-10-04] build-error — PR #269 Sunday runner isolation and integrated review (SS1)
+Remote admin DSNs reached DROP/CREATE before child socket guards applied; a child also carried DATABASE_URL.
+Validate libpq parameters and loopback hosts before connecting, reject PG environment overrides and real-game
+names, strip DATABASE_URL from children, and force an explicit sim/dead database plus empty env files.
+The main merge conflicted in appended memory and generated README status: retain both histories and regenerate.
+The bluff wiring test randomly chose the valid plain arm; pin its seed, preserving production selection.
+Schedule elapsed now_hours disagreed with absolute at_hours; add the scenario opening origin.
+Scenario dealer menus advertised epic/legendary cards rejected by page-only validation; allow scenario rarities
+while retaining release/menu checks and ordinary simulator behavior.
+Review also caught that `/dev/null` fails the settings loader's regular-file check; all runner children now
+receive the run's actual empty environment file, including the simulator server.
+The runner's advertised `--jev` could not work with stripped credentials and loopback guards; remove that
+unsupported flag and always run these offline profiles with `--no-jev`.

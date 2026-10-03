@@ -131,7 +131,7 @@ class Scenario:
             for e in self.events
             if e.tick > w.tick
         ]
-        return {"now_hours": round(w.t_hours, 3), "upcoming": upcoming}
+        return {"now_hours": round(self.open_hours + w.t_hours, 3), "upcoming": upcoming}
 
     # ------------------------------------------------------------------ dealers
 

@@ -726,3 +726,9 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
   append the finding, regenerate docs/status, run `bazaar rules` and Ruff, then commit and open a PR.
 - Acceptance: Sunday anchor/times match the schedule; pre-opening tests remain UNVERIFIED; generated docs
   are current; requested checks pass. Evidence and Honest Implementation Report are in the PR body.
+
+### SS1 — Sunday simulator and PR #269 corrections ([spec](SS1-spec.md))
+- Merge current `origin/main`, preserving both memory append histories and regenerating README status.
+- Isolate runner and child database targets; validate local administration before connecting.
+- Align schedule clock origins, support the scenario's advertised dealer rarities, and pin the bluff test seed.
+- Review independent slices, run the final integrated gate once with pytest alone, then push `feat/sim-sunday`.
