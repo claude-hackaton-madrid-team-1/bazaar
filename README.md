@@ -1433,6 +1433,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#265](../../pull/265) | feat: Sunday guardrails (uncommon 30, rare 105, dealer_sell reset after 40 ticks) | Sun 01:13 | `e0f3ca6` |
 | [#263](../../pull/263) | feat(broker): one live non-crossing match probe in the Market Test (off by default) | Sun 00:41 | `19457c9` |
 | [#264](../../pull/264) | docs: points ledger and bazaar-points skill | Sun 00:34 | `166f9ca` |
 | [#262](../../pull/262) | fix: keep the decider and the team desk moving on 15 s ticks | Sun 00:29 | `ceef0f7` |
@@ -1444,13 +1445,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#230](../../pull/230) | docs: sync the repo with the rules audit (scoring, rounds, venue on, floor 5, hard rules) | Sun 00:02 | `9e4acc5` |
 | [#256](../../pull/256) | batch: Saturday close | Sat 23:54 | `6267eca` |
 | [#255](../../pull/255) | feat(buy-targets): a human orders an epic via MCP approve; the agents buy it from a team, always below our value | Sat 22:49 | `dd19e18` |
-| [#254](../../pull/254) | feat(venue): one auto hedge venue beside our board venue (Market Test, Omar) | Sat 22:47 | `a21e2df` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#265](../../pull/265) | feat: Sunday guardrails for 15 s ticks (caps 30/105, dealer_sell re-arm, one duel retry) | `fix/sunday-guardrails` |
+| [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
+| [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
 | [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | `feat/injection-log` |
 | [#231](../../pull/231) | fix: bench policy edge needs BAZAAR_BENCH_EDGE_CONFIRM=yes on the maker (DO NOT MERGE before tick 1190) | `fix/bench-edge-needs-confirm` |
