@@ -218,6 +218,15 @@ def accept_limit(clock: Clock, rules: Guardrails) -> int:
     return min(clock.limits.accepts_per_team_per_tick, rules.max_accepts_per_tick)
 
 
+@dataclass(frozen=True)
+class Refused:
+    """What a refusal said (`BazaarError` minus its traceback): the learner reads `until_tick` from `extra`."""
+
+    code: str
+    message: str
+    extra: dict[str, Any]
+
+
 class Recorder:
     """Every proposed move: one console line, one `decisions` row, one trace event on the tick span.
     Every live send: one `executions` row with the answer or the refusal code."""
@@ -227,7 +236,7 @@ class Recorder:
     ) -> None:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
-        self.last_error: Any = None  # the BazaarError of the last refused send (code, message, extra)
+        self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
 
     def decide(
         self,
@@ -328,7 +337,8 @@ class Recorder:
         try:
             response = call()
         except BazaarError as e:
-            self.last_error = e
+            # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
+            self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

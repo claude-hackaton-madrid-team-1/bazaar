@@ -33,6 +33,7 @@ TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
 IDENTITY_FIELDS = frozenset({"item", "rarity", "code", "aggregate", "venue", "effective_tick"})
+ORIGINS_THAT_BLOCK = ("feed", "refusal", "thread:")  # where a rules blocker may come from
 
 
 class Learning(BaseModel):
@@ -41,8 +42,8 @@ class Learning(BaseModel):
     subject_kind: SubjectKind
     subject: str = Field(pattern=SUBJECT_PATTERN)  # dealer id, venue id, team id, "organiser"
     kind: Kind
-    tick: int = Field(ge=0)  # the game tick of the evidence
-    until_tick: int | None = Field(default=None, ge=0)  # expiry (exclusive); None = no expiry
+    tick: int = Field(ge=0, le=2**31 - 1)  # the game tick of the evidence
+    until_tick: int | None = Field(default=None, ge=0, le=2**31 - 1)  # expiry (exclusive); None = no expiry
     team: str | None = Field(default=None, pattern=SUBJECT_PATTERN)  # whom it binds; None = everyone
     evidence: tuple[int, ...] = ()  # feed event ids
     confidence: float = Field(ge=0.0, le=1.0)
@@ -82,6 +83,7 @@ class Learning(BaseModel):
         identifying fields), not the wording or the confidence."""
         about = {k: self.detail[k] for k in sorted(self.detail) if k in IDENTITY_FIELDS}
         raw: list[object] = [self.subject_kind, self.subject, self.kind, self.team, self.until_tick, about]
-        if self.kind in ("announcement", "rule_change", "fee_change") or (not about and self.until_tick is None):
+        notice = self.kind in ("announcement", "rule_change", "fee_change") and "aggregate" not in self.detail
+        if notice or (not about and self.until_tick is None):
             raw.append(list(self.evidence[:1]))  # a notice is its own event
         return hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()[:32]

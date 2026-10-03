@@ -18,6 +18,7 @@ import psycopg
 from bazaar_agent.learn.model import Learning
 
 STATEMENT_TIMEOUT_MS = 1500  # a recall or a write must never eat the tick
+RETRY_EVERY = 5  # ticks between Postgres retries once it failed (a connect may take seconds)
 MEMORY_MAX = 5000
 SCOPES = {"dealer": "trader", "team": "trader", "venue": "market", "organiser": "market"}
 COLUMNS = "subject_kind, subject, kind, created_tick, until_tick, team, evidence, confidence, claim, source, stats"
@@ -107,6 +108,7 @@ class LearningStore:
         self._tick: int | None = None
         self._tried_tick: int | None = None
         self._init_tried = False
+        self._disabled = False  # the table lacks a column we need: memory only for this process
         self.memory: dict[str, Learning] = {}
 
     # ---------------------------------------------------------------- connection (DecisionLog's pattern)
@@ -122,7 +124,10 @@ class LearningStore:
     def _db(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
             return self._conn
-        if self._connect is None or (self._down and self._tried_tick == self._tick):
+        if self._connect is None or self._disabled:
+            return None
+        tick, tried = self._tick, self._tried_tick
+        if self._down and tick is not None and tried is not None and tick - tried < RETRY_EVERY:
             return None
         self._tried_tick = self._tick
         try:
@@ -156,22 +161,30 @@ class LearningStore:
             conn.rollback()
 
     def _failed(self, what: str, error: Exception) -> None:
-        self._log(f"learnings: {what} failed in Postgres ({type(error).__name__}); memory only this tick")
+        if isinstance(error, psycopg.errors.UndefinedColumn | psycopg.errors.UndefinedTable):
+            self._disabled = True  # run `bazaar db init`; retrying every tick would only log the same error
+            self._log(f"learnings: the learnings table is not migrated ({type(error).__name__}); memory only")
+        else:
+            self._log(f"learnings: {what} failed in Postgres ({type(error).__name__}); memory meanwhile")
         if self._conn is not None:
             self._conn.close()
         self._conn, self._down, self._tried_tick = None, True, self._tick
 
     # ---------------------------------------------------------------- write
 
+    def remember(self, learnings: Iterable[Learning]) -> dict[str, Learning]:
+        """Into this process's memory only (no I/O), trimmed to the newest MEMORY_MAX facts."""
+        batch = {lr.key(): lr for lr in learnings}
+        self.memory.update(batch)
+        if len(self.memory) > MEMORY_MAX:
+            self.memory = dict(sorted(self.memory.items(), key=lambda kv: kv[1].tick)[-MEMORY_MAX:])
+        return batch
+
     def record(self, learnings: Iterable[Learning]) -> int:
         """Remember and upsert; returns how many were given (memory always takes them)."""
-        batch = {lr.key(): lr for lr in learnings}
+        batch = self.remember(learnings)
         if not batch:
             return 0
-        self.memory.update(batch)
-        if len(self.memory) > MEMORY_MAX:  # keep the newest facts
-            newest = sorted(self.memory.items(), key=lambda kv: kv[1].tick)[-MEMORY_MAX:]
-            self.memory = dict(newest)
         conn = self._db()
         if conn is not None:
             try:
@@ -194,10 +207,12 @@ class LearningStore:
         subject_kind: str | None = None,
         team: str | None = None,
         limit: int = 50,
+        use_db: bool = True,
     ) -> list[Learning]:
-        """The learnings in force at `tick` (all ticks when None), newest first, deduped by key."""
+        """The learnings in force at `tick` (all ticks when None), newest first, deduped by key.
+        `use_db=False`: memory only, no I/O (what a tick reads before its sends)."""
         found = {k: lr for k, lr in self.memory.items()}
-        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit):
+        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit) if use_db else ():
             found.setdefault(lr.key(), lr)
         hits = [
             lr

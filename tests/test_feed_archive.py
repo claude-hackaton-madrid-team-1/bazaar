@@ -83,14 +83,38 @@ def test_the_learnings_command_reads_the_captured_feed(tmp_path, monkeypatch):
     out = json.loads(result.output[result.output.index("{") :])
     assert out["us"] == "t01" and out["tick"] == 180
     assert {lr["subject"] for lr in out["learnings"]} == {"chato", "abuela"}
-    # the hour ends at T280: the newest timed event is tick 175 at t 4.125, and the clock went to 30 s ticks
+    # the hour ends at T280 (tick 175 at t 4.125, 30 s ticks), but an hourly blocker is retried after 60 ticks
     assert out["blockers"] == [
         "chato cooloff with us until T193",
-        "chato sold out with us for LAV-09 until T280",
-        "abuela persona quota with us for sobre_barrio until T280",
+        "chato sold out with us for LAV-09 until T231",
+        "abuela persona quota with us for sobre_barrio until T232",
     ]
     table = CliRunner().invoke(cli.app, ["learnings", "--all", "--subject", "v04"])
     assert table.exit_code == 0 and "every learning" in table.output
     fees = CliRunner().invoke(cli.app, ["learnings", "--all", "--subject", "v04", "--json"])
     texts = [lr["text"] for lr in json.loads(fees.output[fees.output.index("{") :])["learnings"]]
     assert texts == ["v04 will charge 0% + 0 P/card from T161", "t02 opened v04 “Team 2 · El Rastro Express” at 0%"]
+
+
+@pytest.mark.integration
+def test_a_nul_or_lone_surrogate_never_fails_the_archive(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    bad = [
+        {"id": 1, "tick": 1, "type": "thread.opened", "actor": "", "payload": {"topic": {"x": "a\u0000b"}}},
+        {"id": 2, "tick": 1, "type": "announcement", "actor": "\ud800", "payload": {"text": "lone \ud800 here"}},
+        {"id": 3, "tick": 2, "type": "announcement", "actor": "", "payload": {"text": "fine"}},
+    ]
+    feed = MarketFeed(lambda n: list(bad), connect=lambda: open_in(database_url, schema), archive=True)
+    feed.events()
+    with open_in(database_url, schema) as conn:
+        rows = conn.execute("select id, payload from feed_events order by id").fetchall()
+    assert [r[0] for r in rows] == [1, 2, 3] and rows[0][1] == {"topic": {"x": "ab"}}
+
+
+def test_jsonb_safe_cleans_strings_only():
+    from bazaar_agent.db import jsonb_safe
+
+    assert jsonb_safe({"a\u0000": ["x\ud800", 3, None, {"k": "ok"}]}) == {"a": ["x?", 3, None, {"k": "ok"}]}
