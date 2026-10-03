@@ -18,9 +18,11 @@ one (the requested card, a dearer card, or a higher rarity). Any structural mism
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 RARITY_RANK = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
@@ -338,10 +340,24 @@ class FlagBook:
     trusted: frozenset[str] = TRUSTED_DEALERS
     seen: set[int] = field(default_factory=set)
     sent: dict[int, str] = field(default_factory=dict)
+    path: Path | None = None  # sent flags survive a restart here: a message is never flagged twice
 
     @classmethod
-    def from_rules(cls, rules: Any) -> FlagBook:
-        return cls(int(rules.max_flags_per_process), frozenset(rules.trusted_dealers))
+    def from_rules(cls, rules: Any, path: Path | None = None) -> FlagBook:
+        book = cls(int(rules.max_flags_per_process), frozenset(rules.trusted_dealers), path=path)
+        for line in path.read_text(encoding="utf-8").splitlines() if path is not None and path.is_file() else []:
+            row = json.loads(line) if line.strip().startswith("{") else {}
+            if isinstance(row.get("message_id"), int):
+                book.sent[row["message_id"]] = str(row.get("reason") or "")
+        return book
+
+    def remember(self, message_id: int, reason: str) -> None:
+        """A flag that was sent (or may have landed): never again, in this process or the next one."""
+        self.sent[message_id] = reason
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"message_id": message_id, "reason": reason[:FLAG_REASON_CHARS]}) + "\n")
 
     def candidate(self, inspection: Inspection) -> bool:
         """A certain trickster message from an untrusted dealer that we have not flagged yet."""
@@ -380,6 +396,7 @@ def summarise(inspections: Iterable[Inspection]) -> dict[str, int]:
 
 Guard = Callable[[Inspection], str | None]  # a deny reason (GUARDRAILS.md allow_flags, kill switch), or None
 Send = Callable[[int, str], Any]  # POST /api/flags (message_id, reason)
+Record = Callable[[Inspection, str | None], Any]  # the decision row: why it is not sent, or None when it is
 
 FLAG_REASON_CHARS = 300  # the reason is ours to write: keep it short and structural
 
@@ -394,11 +411,13 @@ def flag_step(
     send: Send | None,
     log: Callable[[str], None],
     topic: Mapping[str, Any] | None = None,
+    record: Record | None = None,
 ) -> Inspection | None:
     """Inspect the dealer's newest offer in a thread payload and flag it when it is a certain trickster,
     the flag book has room and `guard` allows it. A flag is decided once per message, sent or not: a
-    denied one (allow_flags = false) is logged as `would flag`. `send` None is a dry run. Returns the
-    inspection (None when the dealer has no standing offer)."""
+    denied one (allow_flags = false) is logged as `would flag`. `send` None is a dry run. `record` writes
+    the decision row (the evidence) once per decision, before any send. Returns the inspection (None when
+    the dealer has no standing offer)."""
     from bazaar_agent.agents.dealer import newest_dealer_offer
 
     newest = newest_dealer_offer(dict(thread), dealer)  # the standing offer, else the newest one it sent
@@ -421,16 +440,20 @@ def flag_step(
         if first:  # logged once per message
             why = denied or ("dry run" if send is None else f"flag limit {book.limit} reached")
             log(f"would flag message {mid} from {dealer} ({why}): {reason}")
+            if record is not None:
+                record(inspection, why)
         return inspection
+    if record is not None:
+        record(inspection, None)
     try:
         send(mid, reason)
-        book.sent[mid] = reason
+        book.remember(mid, reason)
         log(f"flagged message {mid} from {dealer}: {reason}")
     except Exception as e:  # a refused flag never breaks the negotiation
         status = int(getattr(e, "status", 0) or 0)
         if status >= 500:  # the server failed: try again on the next read
             log(f"flag of message {mid} failed ({status}); retrying next read")
         else:  # refused (4xx: never re-POST) or ambiguous (no response: it may have landed): count it as sent
-            book.sent[mid] = f"not retried after {type(e).__name__} {status or 'no response'}: {reason}"
+            book.remember(mid, f"not retried after {type(e).__name__} {status or 'no response'}: {reason}")
             log(f"flag of message {mid} not retried ({type(e).__name__}: {str(e)[:80]})")
     return inspection

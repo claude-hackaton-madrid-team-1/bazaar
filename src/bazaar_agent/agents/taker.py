@@ -67,6 +67,9 @@ class TakerConfig:
     duel_grace_s: float = 2.0  # duels own the first seconds of a tick (capped at 15 % of the tick)
 
 
+FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
+
+
 # ---------------------------------------------------------------- (a) standing asks on the boards
 
 
@@ -297,7 +300,7 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
-        self.flags = FlagBook.from_rules(rules)  # the offer inspector's would-flag log (S1: nothing is sent)
+        self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -455,9 +458,11 @@ class Taker:
         return run.cards
 
     def _inspect(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
-        """The offer inspector on the dealer's newest offer: a certain trickster is logged as `would flag`
-        (S1 part A sends no flag; GUARDRAILS.md allow_flags is checked too)."""
+        """The offer inspector on the dealer's newest offer. A certain trickster becomes a `flag` decision
+        row with its structural evidence; it is SENT only by a live taker with GUARDRAILS.md allow_flags on
+        (default off: the row says `would flag`), at most max_flags_per_process, never to a trusted dealer."""
         tick = run.snap.clock.tick
+        rows: dict[int, int] = {}
 
         def guard(i: Inspection) -> str | None:
             verdict = check(Action("flag", str(i.message_id)), self._ctx(run), self.rules)
@@ -466,11 +471,76 @@ class Taker:
         def log(line: str) -> None:
             self.log(f"tick {tick} taker: {line}")
 
+        def record(i: Inspection, why: str | None) -> None:
+            if i.message_id is not None:
+                rows[i.message_id] = self._flag_row(run, conv, thread, i, why)
+
+        def send(message_id: int, reason: str) -> Any:
+            return self._send_flag(tick, rows.get(message_id), message_id, reason)
+
         try:
             cards = self._card_index(run)
-            flag_step(thread, conv.dealer, cards, self.flags, guard=guard, send=None, log=log, topic=conv.topic)
+            flag_step(
+                thread,
+                conv.dealer,
+                cards,
+                self.flags,
+                guard=guard,
+                send=send if self.live else None,
+                log=log,
+                topic=conv.topic,
+                record=record,
+            )
         except Exception as e:  # inspection must never break the desk
             self.log(f"tick {tick} taker: offer inspection failed ({type(e).__name__}); desk continues")
+
+    def _flag_row(
+        self, run: _TickRun, conv: Conversation, thread: dict[str, Any], i: Inspection, why: str | None
+    ) -> int:
+        """The decision row that proves a flag: what the thread asked, what the structure binds, and how the
+        words contradict it (catalog refs and names only, never the counterparty's raw text)."""
+        offer = next((o for o in thread.get("standing_offers") or [] if o.get("id") == i.offer_id), None) or {}
+        inputs = {
+            "dealer": conv.dealer,
+            "thread": conv.thread_id,
+            "message_id": i.message_id,
+            "offer_id": i.offer_id,
+            "asked": i.asked,
+            "bound": list(i.bound),
+            "verdict": i.verdict,
+            "findings": list(i.findings),
+            "structure": {"give": offer.get("give"), "want": offer.get("want")},
+        }
+        what = f"flag message {i.message_id} from {conv.dealer}" + (f" ({why})" if why else "")
+        return self.rec.decide(
+            run.snap.clock.tick,
+            "flag",
+            f"{what}: {i.reason}",
+            inputs=inputs,
+            reason=i.reason,
+            guardrail=why if why and why.startswith("denied") else "allowed",
+            chosen=why is None,
+            status="approved" if why is None else "rejected",
+            thread_id=conv.thread_id,
+            move={"flag": i.message_id},
+        )
+
+    def _send_flag(self, tick: int, did: int | None, message_id: int, reason: str) -> Any:
+        """POST /api/flags, booked on its decision row. A refusal is re-raised: flag_step decides whether the
+        flag may be tried again (5xx) or never (4xx, no response)."""
+        request = {"message_id": message_id, "reason": reason}
+        try:
+            body = self.team.flag(message_id, reason)
+        except BazaarError as e:
+            if did is not None:
+                self.rec.decisions.executed(did, tick, "flag", request, None, e.code)
+                self.rec.decisions.settle(did, "failed")
+            raise
+        body = body if isinstance(body, dict) else {"result": body}
+        if did is not None:
+            self.rec.decisions.executed(did, tick, "flag", request, body, None)
+            self.rec.decisions.settle(did, "done")
+        return body
 
     def _gate(self, run: _TickRun, p: AcceptProposal) -> Gate | None:
         """The accept gate on the exact offer this accept binds (None: `inspect_accepts` is off). A payload the
