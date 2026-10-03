@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.intel import TEAM_ID
+from bazaar_agent.official_values import OfficialValues, cap_violations
 
 GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
@@ -64,6 +65,7 @@ class Guardrails(BaseModel):
     max_price_rare: int = 80
     max_price_pack: int = 20
     dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
+    official_value_margin: float = Field(default=0.0, ge=0)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     block_buying_held_cards: bool = True
@@ -167,6 +169,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
     "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
+    "official_value_margin": "guardrails.check (every card buy, official_values.OfficialValues: GET /api/me/value)",
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
@@ -522,6 +525,7 @@ class Action:
     role: str | None = None  # duels: "seller" | "buyer"
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
     days_weight: float | None = None  # two-issue duels: `your_days_weight`
+    gives_value: float = 0.0  # a swap: our copy given, net of their cash; the official value cap adds it to `price`
 
 
 @dataclass(frozen=True)
@@ -596,6 +600,8 @@ class Context:
     sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
     # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
     trades: TradeBook | None = None
+    values: OfficialValues | None = None  # GET /api/me/value reads: every card buy capped; None refuses them all
+    ranking: bool = False  # a ranking or plan check: no official value read; the send's own check caps the buy
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -635,7 +641,14 @@ def floor_text(rules: Guardrails, ctx: Context) -> str:
     return f"cash_floor {rules.cash_floor} + venue_bond_reserve {rules.venue_bond_reserve}"
 
 
-def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
+def context_from(
+    me: dict[str, Any],
+    tick: int,
+    t_hours: float,
+    ledger: LedgerStore,
+    rules: Guardrails,
+    values: OfficialValues | None = None,
+) -> Context:
     held: dict[str, int] = {}
     for a in me.get("assets") or []:
         if a.get("kind") == "card":
@@ -651,6 +664,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
         has_venue=runs_venue(me),
         stops=kill_switch(rules),
+        values=values,
     )
 
 
@@ -708,7 +722,17 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
+    if buying and not v and not ctx.ranking:  # last, so /api/me/value is read only for a buy every rule allows
+        v.extend(_official_value_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
+
+
+def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """Day-2 hint 1 (`official_values.cap_violations`). A pack has no official value (its rarity cap applies)."""
+    if action.price is None or action.rarity == "pack" or is_pack(action.item):
+        return []
+    held = ctx.held.get(action.item, 0)
+    return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules)
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.

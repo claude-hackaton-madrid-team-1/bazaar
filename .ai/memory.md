@@ -846,3 +846,10 @@ A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed 
 flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
 a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
 emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
+
+### [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
+Day-2 hint 1: `GET /api/me/value?card=` = our value of ONE more copy (book × affinity × copy marginal), the value the
+score counts trades at. Our model adds a page-bonus share and lands higher (MAL-06 official 27.5 vs ours 36, SAL-07
+32.5 vs 50.4). `guardrails.check()` now refuses a card buy above it (`official_value_margin`, read last, once per card
+per tick, a failed read refuses). First proof, the sim smoke: `dealer buy LAV-01` walked at "price 8 > official
+value 7" (LAV affinity 0.7). Tests run the cap only when marked `official_values` (tests/conftest.py).

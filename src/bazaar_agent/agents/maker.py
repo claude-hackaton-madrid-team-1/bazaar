@@ -90,6 +90,7 @@ from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, settled_volume
 from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
@@ -254,6 +255,7 @@ class Maker:
         self._bids: dict[int, _Bid] = {}  # our board bids seen open (or posted) last tick
         self._lapsing: dict[int, _Bid] = {}  # gone at or after expiry without the card: refunded next tick
         self._spent_at: dict[int, tuple[int, float]] = {}  # bid id -> (tick, t_hours) of the spend we booked
+        self.values = OfficialValues.of(team)  # GET /api/me/value: every bid capped at it (Day-2 hint 1)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
@@ -304,7 +306,7 @@ class Maker:
             snap,
             window,
             committed_context(  # an accept of the last ticks /api/me does not show yet counts (bite X18)
-                context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+                context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules, self.values),
                 unsettled_accepts(snap.me, self.ledger, clock.tick),
             ),
             offers_in(snap.offers),

@@ -27,6 +27,7 @@ from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -744,13 +745,14 @@ def dealer_buy(
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("dealer-buy", live=True)
+    values = OfficialValues.of(client)  # every bid and accept capped at GET /api/me/value (Day-2 hint 1)
 
     def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
         """/me + the shared ledger + every open offer of ours (the maker's bids, the taker's dealer threads),
         except this command's own thread, whose bid the next move replaces."""
         me = client.me()
         offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
-        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules)
+        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules, values)
         return committed_context(base, open_commitments(offers, str(me.get("id") or "")))
 
     clock_now = Clock.model_validate(client.clock())
@@ -1475,7 +1477,7 @@ def rules_check(
     settings = load_settings()
     client = team_client(settings)
     c = Clock.model_validate(client.clock())
-    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
+    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules, OfficialValues.of(client))
     try:
         action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
     except ValueError as e:
@@ -1949,7 +1951,7 @@ def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any
     ledger = _ledger("sell", live=live)
     now = Clock.model_validate(client.clock())
     try:
-        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules, OfficialValues.of(client))
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
     offers = _my_offers(client)

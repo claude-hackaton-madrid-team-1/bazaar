@@ -807,7 +807,9 @@ def build_playbook(
 
 def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[int] = frozenset()) -> Playbook:
     """Every move with the verdict GUARDRAILS.md would give it now (strategy proposes, guardrails dispose).
-    `listed` holds assets already in our open offers: listing one again is refused."""
+    `listed` holds assets already in our open offers: listing one again is refused. A ranking check: the
+    official value cap is read by the send's own check, not per move."""
+    ranked = replace(ctx, ranking=True)
 
     def verdict(mv: Move) -> Move:
         if not mv.command:
@@ -816,7 +818,7 @@ def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[i
             return replace(mv, guardrail=f"denied: asset {mv.asset_id} is already in one of our open offers")
         your_value = mv.value if mv.side == "sell" else None
         action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value)
-        return replace(mv, guardrail=str(check(action, ctx, rules)))
+        return replace(mv, guardrail=str(check(action, ranked, rules)))
 
     return replace(
         book,

@@ -110,6 +110,7 @@ from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -454,6 +455,7 @@ class Taker:
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
+        self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -594,7 +596,7 @@ class Taker:
             if (skip_thread is None or o.get("thread") != skip_thread)
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
-        ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
+        ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us), self.values)
         if unsettled:  # an accept of the last ticks /api/me does not show yet
             ctx = committed_context(ctx, self._unsettled)
         book = book_values(run.snap.catalog)
