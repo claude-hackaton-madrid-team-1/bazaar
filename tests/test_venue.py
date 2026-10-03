@@ -322,3 +322,21 @@ def test_cli_venue_fee_rejects_a_fee_above_the_cap_before_anything_is_sent(tmp_p
     monkeypatch.setattr(cli, "_team_client", lambda: team)
     result = CliRunner().invoke(cli.app, ["venue", "fee", "1500", "--live"])
     assert result.exit_code == 1 and "invalid" in result.output and team.sent == []
+
+
+def test_a_venue_write_reads_the_kill_switch_live(tmp_path, monkeypatch):
+    # #68 x #71: the keeper opens the venue inside a long-running maker, before the maker's own hold check.
+    # A trading_enabled = false edit must stop it on the next call, whatever the rules loaded at start say.
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.venue import venue_context
+
+    live_file = tmp_path / "GUARDRAILS.md"
+    text = gr.GUARDRAILS_FILE.read_text(encoding="utf-8")
+    monkeypatch.setattr(gr, "GUARDRAILS_FILE", live_file)
+    rules = gr.Guardrails(allow_venue_open=True, cash_floor=100, pause_file=str(tmp_path / "PAUSE"))
+    clock = {"tick": 400, "t_hours": 7.0}
+    live_file.write_text(text.replace("- `trading_enabled` = true", "- `trading_enabled` = false"), encoding="utf-8")
+    held = gr.check(gr.Action("venue_open"), venue_context(rules, clock, cash=600), rules)
+    assert held.halted and "trading_enabled = false" in str(held)
+    live_file.write_text(text.replace("- `trading_enabled` = false", "- `trading_enabled` = true"), encoding="utf-8")
+    assert gr.check(gr.Action("venue_open"), venue_context(rules, clock, cash=600), rules).allowed

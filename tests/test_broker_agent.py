@@ -109,13 +109,24 @@ def test_allow_venue_open_false_refuses_every_match_even_live(tmp_path):
     assert all("allow_venue_open = false" in d["guardrail"] for d in decisions)
 
 
-def test_the_kill_switch_and_the_pause_file_block_broker_matches(tmp_path):
+def test_the_kill_switch_and_the_pause_file_block_broker_matches(tmp_path, monkeypatch):
+    from bazaar_agent import guardrails as gr
+
+    # The kill switch is read live (#68): GUARDRAILS.md as it is now wins over the rules loaded at start,
+    # so a broker started with trading enabled stops on the next tick after the edit, with no restart.
+    live_file = tmp_path / "GUARDRAILS.md"
+    text = gr.GUARDRAILS_FILE.read_text(encoding="utf-8")
+    live_file.write_text(text.replace("- `trading_enabled` = true", "- `trading_enabled` = false"), encoding="utf-8")
+    monkeypatch.setattr(gr, "GUARDRAILS_FILE", live_file)
     broker = crossing_book()
-    agent(tmp_path, broker, live=True, allow_venue_open=True, trading_enabled=False).on_tick(clock())
+    a = agent(tmp_path, broker, live=True, allow_venue_open=True)
+    a.on_tick(clock())
+    live_file.write_text(text, encoding="utf-8")
     (tmp_path / "PAUSE").touch()
-    agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock())
+    a.on_tick(clock(tick=101))
     assert broker.sent == []
     guardrails = [d["guardrail"] for d in rows(tmp_path)]
+    assert len(guardrails) == 6
     assert all("trading_enabled = false" in g for g in guardrails[:3])
     assert all("pause file" in g for g in guardrails[3:])
 
