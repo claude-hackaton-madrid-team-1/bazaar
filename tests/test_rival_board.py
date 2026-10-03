@@ -76,6 +76,7 @@ def seed(conn):
                 [(tick, *r) for r in rows],
             )
         cur.execute("insert into leaderboard_snapshots (world, tick, team, rank) values ('sim:x', 500, 't09', 1)")
+        cur.execute("insert into traders (id, kind, status) values ('t01', 'team', 'us'), ('t09', 'team', 'active')")
         cur.executemany(
             "insert into cards (id, set_code, rarity, book, page, released) values (%s, %s, %s, %s, true, true)",
             CATALOG,
@@ -160,17 +161,17 @@ def test_a_free_team_gets_our_best_move_a_swap_here(conn):
         "LAT-04",
         None,
     )
-    assert (float(t09["our_gain"]), float(t09["their_gain"])) == (31.5, 10.0)
-    assert t09["suggested_move"] == "offer our spare SAL-01 for their LAT-04 (+31.5 for us, +10.0 for them)"
+    assert (float(t09["our_gain"]), float(t09["their_gain"])) == (31.5, 16.0)  # theirs: book 10 × the top multiplier
+    assert t09["suggested_move"] == "offer our spare SAL-01 for their LAT-04 (+31.5 for us, +16.0 for them)"
 
 
 def test_a_guarded_team_gets_a_move_only_when_our_gain_is_twice_theirs(conn):
     seed(conn)
     rows = board(conn)
-    t02 = rows["t02"]  # podium: buying their MAL-09 at 60 (+10 for us, +60 for them) is refused; this swap is not
-    assert (t02["guarded"], t02["guard_reason"], t02["move_kind"]) == (True, "podium", "swap")
-    assert t02["suggested_move"] == "offer our spare LAT-02 for their MAL-09 (+69.0 for us, +10.0 for them)"
-    t07 = rows["t07"]  # 2 ranks below us: buying their MAL-09 at 50 (+20 for us, +50 for them) is refused
+    t02 = rows["t02"]  # top 5: buying their MAL-09 at 60 (+5 for us, +60 for them) is refused; this swap is not
+    assert (t02["guarded"], t02["guard_reason"], t02["move_kind"]) == (True, "top5", "swap")
+    assert t02["suggested_move"] == "offer our spare LAT-02 for their MAL-09 (+69.0 for us, +16.0 for them)"
+    t07 = rows["t07"]  # 2 ranks below us: buying their MAL-09 at 50 (+15 after the fee, +50 for them) is refused
     assert (t07["guarded"], t07["guard_reason"], t07["move_kind"], t07["move_give"], t07["move_get"]) == (
         True, "near", "hold", None, None)  # fmt: skip
     assert t07["suggested_move"] == "don't trade: within 3 ranks of us (rank 11, ours 9)"
@@ -183,15 +184,26 @@ def test_hostile_listings_and_filled_bids_never_reach_the_board(conn):
     assert (t11["move_kind"], t11["suggested_move"]) == ("watch", "nothing to trade yet: watch their bids")
 
 
-def test_no_snapshot_of_ours_means_no_move_and_no_comparison(conn):
+def test_without_our_snapshot_the_board_knows_us_from_traders_and_moves_nothing(conn):
     seed(conn)
     with conn.cursor() as cur:
         cur.execute("delete from me_snapshots")
     conn.commit()
     rows = board(conn)
-    assert "t01" in rows  # without our /me the board cannot tell which team is ours
-    assert all(r["our_rank"] is None and r["move_give"] is None for r in rows.values())
-    assert rows["t09"]["move_kind"] == "watch" and rows["t02"]["move_kind"] == "hold"
+    assert list(rows) == ["t02", "t07", "t09", "t11"]
+    assert all(r["our_team"] == "t01" and r["our_rank"] == 9 and r["move_give"] is None for r in rows.values())
+    assert [rows[t]["move_kind"] for t in rows] == ["hold", "hold", "watch", "watch"]
+
+
+def test_an_unknown_rank_of_ours_guards_every_team(conn):
+    seed(conn)
+    with conn.cursor() as cur:
+        cur.execute("delete from leaderboard_snapshots where team = 't01'")
+    conn.commit()
+    rows = board(conn)
+    # the swap (+31.5 vs 2 × 16) is refused now; the sale into their bid (+10.3 vs +4.0) is not
+    assert (rows["t09"]["guarded"], rows["t09"]["guard_reason"], rows["t09"]["move_kind"]) == (True, "near", "sell")
+    assert rows["t07"]["suggested_move"] == "don't trade: our rank is unknown (theirs 11)"
 
 
 def listing(conn, event_id, payload):
@@ -208,8 +220,8 @@ def test_a_bid_alone_is_a_sale_into_it_and_a_swap_beats_it(conn):
     listing(conn, 20, offer("t11", give_cash=8, want_types=["card:SAL-01"]))
     t11 = board(conn)["t11"]
     assert (t11["move_kind"], t11["move_give"], t11["move_price"]) == ("sell", "SAL-01", 8)
-    assert t11["suggested_move"] == "sell our spare SAL-01 into their bid of 8 (+7.5 for us)"
-    listing(conn, 21, offer("t11", give_assets=["LAT-04"], want_cash=10))  # a buy would make +22; the swap +31.5
+    assert t11["suggested_move"] == "sell our spare SAL-01 into their bid of 8 (+6.7 for us after the fee)"
+    listing(conn, 21, offer("t11", give_assets=["LAT-04"], want_cash=10))  # a buy would make +21; the swap +31.5
     t11 = board(conn)["t11"]
     assert (t11["move_kind"], t11["move_give"], t11["move_get"], float(t11["our_gain"])) == (
         "swap",
@@ -229,4 +241,77 @@ def test_a_copy_we_miss_at_a_low_ask_is_a_buy(conn):
         10,
         10.0,
     )
-    assert t11["suggested_move"] == "buy their LAT-04 at their ask of 10 (+22.0 for us)"
+    assert t11["suggested_move"] == "buy their LAT-04 at their ask of 10 (+21.0 for us after the fee)"
+
+
+def test_a_lapsed_cancelled_or_addressed_listing_signals_but_never_prices_a_move(conn):
+    seed(conn)
+    lapsed = offer("t11", give_cash=8, want_types=["card:SAL-01"])
+    lapsed["offer"]["expires_tick"] = 99  # the feed is at tick 100
+    listing(conn, 20, lapsed)
+    elsewhere = offer("t11", give_assets=["MAL-09"], want_cash=10)
+    elsewhere["offer"]["to"] = "t05"
+    listing(conn, 21, elsewhere)
+    t11 = board(conn)["t11"]
+    assert t11["they_want"] == [{"ref": "SAL-01", "price": None, "tick": 99}]
+    assert t11["they_have"] == [{"ref": "MAL-09", "price": None, "tick": 99}]
+    assert (t11["move_kind"], t11["move_give"], t11["move_get"]) == (
+        "swap",
+        "SAL-01",
+        "MAL-09",
+    )  # a swap needs no price
+    cancelled = offer("t09", give_assets=["MAL-09"], want_cash=10)
+    cancelled["offer"]["id"] = 777
+    listing(conn, 22, cancelled)
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into feed_events (id, tick, type, actor, payload) values (23, 100, 'offer.cancelled', 't09', %s)",
+            (json.dumps({"offer": 777, "venue": "rastro"}),),
+        )
+    conn.commit()
+    t09 = board(conn)["t09"]
+    assert {"ref": "MAL-09", "their_price": None, "value_to_us": 70.0} in t09["they_have_for_us"]
+
+
+def test_the_view_is_replaced_only_by_a_newer_version_and_never_fails_the_schema(conn):
+    from bazaar_agent import db
+
+    def comment():
+        return conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
+
+    assert comment() == "rival_board v1"
+    # a newer checkout appended a column: this older file cannot drop it, so it warns and init_schema goes on
+    body = conn.execute("select pg_get_viewdef(to_regclass('rival_board'))").fetchone()[0].rstrip().rstrip(";")
+    conn.execute(f"create or replace view rival_board as select v.*, 1 as newer_column from ({body}) v")
+    conn.execute("comment on view rival_board is 'rival_board v0'")
+    conn.commit()
+    db.init_schema(conn)
+    assert comment() == "rival_board v0"
+    assert "newer_column" in [d.name for d in conn.execute("select * from rival_board limit 0").description]
+    conn.execute("comment on view rival_board is 'rival_board v9'")
+    conn.commit()
+    db.init_schema(conn)  # stored v9 >= v1: nothing to replace, no lock taken
+    assert comment() == "rival_board v9"
+
+
+def test_a_reader_holding_the_view_delays_the_replacement_2_s_at_most(conn, database_url, schema):
+    import time
+
+    from bazaar_agent import db
+
+    conn.execute("comment on view rival_board is 'rival_board v0'")
+    conn.commit()
+    reader = test_db.open_in(database_url, schema)
+    try:
+        reader.execute("select * from rival_board limit 0")  # an open transaction keeps its lock on the view
+        started = time.monotonic()
+        db.init_schema(conn)
+        assert time.monotonic() - started < 10
+        stored = conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
+        assert stored == "rival_board v0"  # not replaced this time; the next start tries again
+    finally:
+        reader.close()
+    db.init_schema(conn)
+    assert (
+        conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0] == "rival_board v1"
+    )
