@@ -15,6 +15,7 @@ game, a simulator key (`simbk-...`, PR #55's `bazaar-sim`) only to another host.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,13 +88,16 @@ def save_broker_key(data_dir: Path, venue: str, key: str) -> Path:
     """Write `<data_dir>/broker.env` (0600, replaced atomically): the key a live open returned, once."""
     data_dir.mkdir(parents=True, exist_ok=True)
     path = data_dir / BROKER_ENV_FILE
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write("# Written by `bazaar venue open --live`. Secret: never commit, print or share.\n")
-        handle.write(f"BAZAAR_VENUE={venue}\nBAZAAR_BROKER_KEY={key}\n")
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    # mkstemp: a new, uniquely named 0600 file (O_EXCL), so no symlink planted in a shared dir is followed
+    fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=f".{BROKER_ENV_FILE}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("# Written by `bazaar venue open --live`. Secret: never commit, print or share.\n")
+            handle.write(f"BAZAAR_VENUE={venue}\nBAZAAR_BROKER_KEY={key}\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return path
 
 
@@ -101,9 +105,9 @@ def check_key_file_writable(data_dir: Path) -> None:
     """Before a live open: the key comes back only once, so prove it can be saved before asking for it."""
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
-        probe = data_dir / f".{BROKER_ENV_FILE}.probe"
-        os.close(os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
-        probe.unlink()
+        fd, probe = tempfile.mkstemp(dir=data_dir, prefix=f".{BROKER_ENV_FILE}.probe.")  # unique: follows no link
+        os.close(fd)
+        os.unlink(probe)
     except OSError as e:
         raise ConfigError(f"{data_dir} is not writable ({type(e).__name__}): the broker key could not be saved") from e
 

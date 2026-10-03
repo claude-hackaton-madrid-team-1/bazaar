@@ -122,6 +122,21 @@ def test_nothing_is_opened_when_the_broker_key_could_not_be_saved(tmp_path):
     assert team.sent == []
 
 
+def test_saving_the_key_follows_no_symlink_planted_in_the_data_dir(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    data = tmp_path / "shared"
+    data.mkdir()
+    for name in (f".{BROKER_ENV_FILE}.probe", "broker.tmp", BROKER_ENV_FILE):
+        (data / name).symlink_to(victim)
+    outcome, saved = vn.open_venue(
+        FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=data)
+    )
+    assert outcome.sent and victim.read_text() == "keep me"
+    assert saved is not None and not saved.is_symlink() and stat.S_IMODE(saved.stat().st_mode) == 0o600
+    assert SIM_KEY in saved.read_text()
+
+
 def test_a_save_that_still_fails_after_the_open_says_so_without_the_key(tmp_path, monkeypatch):
     def broken(*args):
         raise PermissionError("disk went read-only")
