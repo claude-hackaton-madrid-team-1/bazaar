@@ -96,7 +96,8 @@ A decision, as published:
 ```
 
 - `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
-  default, `--accept-bids`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+  default, `--accept-bids`), `team_open` / `team_offer` / `team_walk` / `team_accept` (the taker's swap
+  threads with other teams, N17: off by default, `team_threads_enabled`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict).
 - `status` is `approved`, `rejected` or `expired`. `sent` and `dry_run` are only on a **sent** row (see below),

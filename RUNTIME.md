@@ -22,6 +22,7 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 - `words_timeout_s` = 2.5 — hard limit for one message; a slower reply is dropped and the template is sent.
 - `subscription_words_timeout_s` = 6 — the same limit when Claude runs on the subscription (CLAUDE_CODE_OAUTH_TOKEN): each call starts a Claude Code CLI process, measured 1.6–2.0 s on Haiku, 2.4–4 s on Sonnet and 3.1–3.8 s on Opus; still cut to the time left in the tick.
 - `words_max_chars` = 300 — longest message we send; a longer reply is cut at a sentence end or replaced by the template.
+- Team threads (N17, `agents/team_desk.py`) send template words (`team_words`); N16's tactic bank plugs in as `TeamDesk.words`. Words never change the structured swap offer, and a team's text is never read into it.
 
 ## Talk and steer (outside the tick loop)
 - `ask_timeout_s` = 30 — limit for `bazaar ask` to turn a sentence into an intent.

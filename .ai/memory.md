@@ -532,3 +532,20 @@ answers → fix: `Reserve` returns `None` when the slot cannot be read, and the 
 2. `market.parse_offer`'s bid branch never checked `want.assets`: a bid for `card:X` that also wants the id
    of our rare read as plain → any side key outside cash/assets/types/cards with a value is not plain.
 Also: the sell path must re-read the kill switch after the duel grace wait, as the buy path does.
+
+### [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
+`trade_desk.build_plan` refuses any plan where one team passes `max_share` (0.25) of the PLANNED volume, so a
+swaps-only plan of fewer than four teams is empty (fixtures: 0 swaps at 0.25 and 0.5, 2 at 1.0). The team
+desk (N17) plans with `max_share = 1.0` and keeps fairness per deal (`swaps.judge`: our gain >= 3 P, their
+share <= 0.6) plus the cumulative `max_counterparty_share` guardrail.
+
+### [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
+symptom: the desk's end-to-end run settled LAV-09 (held 1) for LAT-02 + 62 P → root cause: the trade desk's
+`our_copies` offers one copy of EVERY card we hold (its loss includes the page bonus) → fix: the desk gives a
+card only while we hold two free copies (`team_desk.spare`), at opening, adoption and accept.
+
+### [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
+After a rival accepted our swap offer, the desk read its message as a reply and tried to concede: the cancel
+was refused `offer_accepted`. An offer of ours reading `accepted` in the thread's `standing_offers` now marks
+the thread as waiting for its deal. The simulator's rivals also stack one counter per tick (old ones stay
+open): read every standing offer, judge each, log a refusal once.
