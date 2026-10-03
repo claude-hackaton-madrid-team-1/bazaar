@@ -1050,6 +1050,15 @@ duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not
 human-approval board's first fail-closed note ("… is refused (fail closed)") failed `agent taker --live`. Word new
 WARN lines without " refused " (HA1 says "no trade at or above … goes out").
 
+### [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
+`questions/guardrail_review.json` on the live state: cash_floor keep_50 0.86, max_price_uncommon keep_26 0.78,
+dealer_final_lift keep_0 0.96; dealer_sell_enabled, jev_accept_min_share, human_approval_above and
+team_swap_max_cash_per_hour undecided (kept). Why ladder points are ~0: Abuela's common fills in the last 500 feed
+events are 10-12 while our official value of a missing RET common is 7 (LAT 5), so no honest buy reaches her
+range; the SG1 ladder probe plans nothing until fills drop or a card's official value rises. Strategy gates on the
+same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
+RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
+
 ### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
 7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape

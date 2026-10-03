@@ -10,7 +10,7 @@ from bazaar_agent.agents.accept_gate import dealer_gate
 from bazaar_agent.agents.dealer_sell import ask_schedule, latest_dealer_bid, sell_topic
 from bazaar_agent.agents.inspector import CardIndex
 from bazaar_agent.agents.maker import Maker
-from bazaar_agent.agents.runtime import Recorder
+from bazaar_agent.agents.runtime import JevAdvice, Recorder
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check
 from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
@@ -211,7 +211,11 @@ def test_a_protected_only_copy_is_never_a_candidate():
 # ---------------------------------------------------------------- the maker's switch
 
 
-def maker(tmp_path, team, *, live, **rules):
+def jev_yes(name, state):
+    return JevAdvice("yes", 0.9)
+
+
+def maker(tmp_path, team, *, live, strategy_jev=jev_yes, **rules):
     lines: list[str] = []
     public = FakePublic(dealers=DEALERS)
     m = Maker(
@@ -221,6 +225,7 @@ def maker(tmp_path, team, *, live, **rules):
         log=lines.append,
         now=lambda: 1000.0,
         sell_market=lambda snap: MARKET,
+        strategy_jev=strategy_jev,
         **parts(tmp_path, **rules),
     )
     return m, lines

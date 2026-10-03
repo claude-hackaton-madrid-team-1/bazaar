@@ -56,6 +56,7 @@ from bazaar_agent.agents.desk import (
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
+from bazaar_agent.agents.ladder_probe import opening_asks, our_dealer_deals, plan_probes, probe_state
 from bazaar_agent.agents.market import (
     BoardOffer,
     OpenOffer,
@@ -92,6 +93,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
+from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.words import WordsRequest
@@ -487,6 +489,8 @@ class Taker:
         cards: CardsHeartbeat | None = None,
         news: NewsSentinel | None = None,
         personas: PersonaBook | None = None,
+        strategy_gate: StrategyGate | None = None,
+        strategy_jev: AskFn | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.swap_jev = swap_jev  # Jev `team_swap_worth_it`: the team desk sends a swap only on its decided yes
@@ -508,8 +512,15 @@ class Taker:
         # The dealers' published traits and menus (the /api/dealers read of every tick), stored when they change.
         self.personas = personas or PersonaBook(None, log)
         self._tones: dict[str, str] = {}  # dealer -> the words' tone its traits ask for (persona model)
+        # Jev's cached yes per strategy (SG1): the ladder probe runs only while it says yes. None: never probes.
+        self.strategy_gate = strategy_gate
+        # (dealer, game hour) probed: at most one probe per dealer per hour. Memory only, so a restart in the
+        # middle of an hour may give a dealer one more probe that hour.
+        self._probed: set[tuple[str, int]] = set()
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
+        if strategy_gate is None and strategy_jev is not None:  # the CLI hands Jev; the gate logs to our rows
+            self.strategy_gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._skips: dict[str, str] = {}  # dealer -> the blocker last recorded as a `dealer_skip` (once each)
@@ -654,7 +665,7 @@ class Taker:
         book = build_playbook(
             snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=run.boost
         )
-        self._open(run, book, threads)
+        self._open(run, book, threads, market)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]
         board, board_venues = self._board_offers(run)
@@ -927,7 +938,7 @@ class Taker:
 
     # ------------------------------------------------------------ (b) the dealer desk
 
-    def _open(self, run: _TickRun, book: Playbook, threads: list[dict[str, Any]]) -> None:
+    def _open(self, run: _TickRun, book: Playbook, threads: list[dict[str, Any]], market: Market | None = None) -> None:
         clock = run.snap.clock
         room = min(
             self.config.max_dealer_threads - len(self.convs),
@@ -943,6 +954,8 @@ class Taker:
             book = gate_packs(book, self.pack_judge, slots, used, self.rules, clock.t_hours)
         else:  # no Jev (or no time to ask it): a pack slot is never spent without its yes
             book = replace(book, packs=())
+        if market is not None:  # the ladder probe's moves are guarded with the rest
+            book = self._with_probes(run, book, ctx, threads, market)
         book = guarded_playbook(book, ctx, self.rules)
         moves = sorted(
             [
@@ -973,6 +986,58 @@ class Taker:
             self._all_denied(run, moves)
         for op in chosen:
             self._open_one(run, op, ctx)
+
+    def _with_probes(
+        self, run: _TickRun, book: Playbook, ctx: Context, threads: list[dict[str, Any]], market: Market
+    ) -> Playbook:
+        """The ladder probe (SG1, `agents/ladder_probe.py`): on Jev's decided yes, one small dealer buy per free
+        dealer not probed this game hour joins the buys. Jev is asked only when a probe can be planned at all
+        (no official value read before), and with `jev_min_budget_s` of the tick left; the official value is
+        read once per planned card. Every probe is guarded and checked per send like any dealer buy."""
+        gate, clock = self.strategy_gate, run.snap.clock
+        if gate is None:
+            return book
+        hour = int(clock.t_hours)
+        self._probed = {k for k in self._probed if k[1] == hour}
+        busy = {str(t.get("with")) for t in threads} | set(self.convs)
+        skip = busy | {d for d, _ in self._probed}
+        floor = effective_cash_floor(self.rules, ctx)
+        room = max(0, min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour))
+        opens = opening_asks(market, run.snap.events, run.snap.dealers)
+        if not plan_probes(market, opens, self.rules, room, skip):
+            return book
+        if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < needed_budget_s(self.config.jev_min_budget_s):
+            return book
+        values = ctx.values
+
+        def value_of(ref: str) -> float | None:
+            return values.value(ref, clock.tick, held=0) if values is not None else None
+
+        def state() -> dict[str, Any]:
+            planned = plan_probes(market, opens, self.rules, room, skip, value_of)
+            deals = our_dealer_deals(run.snap.events, run.snap.us)
+            return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals)
+
+        if not gate.allows(LADDER_PROBE, clock.tick, state):
+            return book
+        probes = plan_probes(market, opens, self.rules, room, skip, value_of)  # values cached for the tick
+        # A dealer whose card fails once its official value is read rests for the hour too: no GET
+        # /api/me/value every tick on the shared key while the gate stays yes (#212 review).
+        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip)}
+        moves = [p.move() for p in probes]
+        for p, mv in zip(probes, moves, strict=True):
+            self._probed.add((p.dealer, hour))
+            self.rec.decide(
+                clock.tick,
+                "ladder_probe",
+                f"ladder probe with {p.dealer} for {p.ref} (ladder {p.start}→{p.top}, share {p.share:.2f})",
+                inputs=p.facts(),
+                reason=mv.reason,
+                guardrail="-",
+                chosen=True,
+                status="approved",
+            )
+        return replace(book, buys=(*book.buys, *moves))
 
     def _all_denied(self, run: _TickRun, moves: list[StrategyMove]) -> None:
         """No dealer thread opens and every dealer buy the strategy ranked is denied by the guardrails (cash above
