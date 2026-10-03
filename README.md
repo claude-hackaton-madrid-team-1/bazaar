@@ -1217,7 +1217,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
 | N3 (new) | **P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder `recall()`, learned ladder parameters inside GUARDRAILS | 1 | 🔵 PR A #96 (stacked on #89): lessons + `trader_behaviors` + embeddings + hybrid `recall()` in the taker · PR B (stacked on #96): auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (`offer_is_worth_accepting`, `duel_move`, `list_price_choice`) + words, `Query.where` + `record_lesson` for N14, MCP `learnings`, `bazaar learnings --policy` |
 | N5 · was #1 | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
-| [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check (#30, #31); `untrusted_text` (#59); public `/state` leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60) |
+| [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | ✅ offer inspector before every accept: dealer, board, duel (#146, takes over Marius #93); bad-faith flags as proven decision rows, off and opt-in per dealer, injection tagging + hostile-text tests (#152); forge-proof flags report (#176). Open (98-nice-to-haves): per-message human confirmation of a flag, team-wide flag cap |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
 | N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ later |
@@ -1236,11 +1236,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
-| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
+| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 Marius's duel PRs merged as #150 (Sat 06:50): two-issue offers strictly inside the limit, v2 + B11 + days latch behind flags; `duel_policy` = v2 LIVE since #170 (Omar, Sat ~10:00; Jev had been undecided at 0.76) and B11 (min share 0.3, endgame 1) since #174; `duel_days_auto` OFF; sim harness #151 merged (Sat 10:42); pre-flip latch hardening #165 for the 23:00 window; duel-log surrogate fix #173 merged (Sat 11:08, emergency); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
+| [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1279,6 +1280,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar db check` | Reach DATABASE_URL: host (never the password), version, latency, ssl, pgvector, row counts. |
 | `uv run bazaar db init` | Create every table (idempotent, safe while other processes are connected). |
 | `uv run bazaar db load` | Load the captured feed into feed_events, tape and dealer_curves (idempotent). |
+| `uv run bazaar db readonly-user` | Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL. |
 | `uv run bazaar db tables` | Every table with its row count. |
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
@@ -1299,14 +1301,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+- [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
+- [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
+- [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
+- [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 - [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
 - [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 - [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
-- [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates
-- [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
-- [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
-- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
-- [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
 
 <!-- BAZAAR:STATUS:END -->
 

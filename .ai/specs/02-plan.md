@@ -100,7 +100,7 @@ negotiates well.
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
 | N3 (new) | **P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder `recall()`, learned ladder parameters inside GUARDRAILS | 1 | 🔵 PR A #96 (stacked on #89): lessons + `trader_behaviors` + embeddings + hybrid `recall()` in the taker · PR B (stacked on #96): auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (`offer_is_worth_accepting`, `duel_move`, `list_price_choice`) + words, `Query.where` + `record_lesson` for N14, MCP `learnings`, `bazaar learnings --policy` |
 | N5 · was #1 | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
-| [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check (#30, #31); `untrusted_text` (#59); public `/state` leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60) |
+| [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | ✅ offer inspector before every accept: dealer, board, duel (#146, takes over Marius #93); bad-faith flags as proven decision rows, off and opt-in per dealer, injection tagging + hostile-text tests (#152); forge-proof flags report (#176). Open (98-nice-to-haves): per-message human confirmation of a flag, team-wide flag cap |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
 | N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ later |
@@ -119,11 +119,12 @@ negotiates well.
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
-| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
+| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 Marius's duel PRs merged as #150 (Sat 06:50): two-issue offers strictly inside the limit, v2 + B11 + days latch behind flags; `duel_policy` = v2 LIVE since #170 (Omar, Sat ~10:00; Jev had been undecided at 0.76) and B11 (min share 0.3, endgame 1) since #174; `duel_days_auto` OFF; sim harness #151 merged (Sat 10:42); pre-flip latch hardening #165 for the 23:00 window; duel-log surrogate fix #173 merged (Sat 11:08, emergency); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
+| [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -354,6 +355,9 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
 - Step 6 (emergency, #173) — a rival's lone surrogate never freezes the duel loop: the per-tick duel log is ASCII-escaped
   JSON and the duels table stores `db.jsonb_safe` payloads. · **Acceptance:** a `--play` tick with such a rival text
   still sends the endgame accept (failed on main); the stored payload holds no lone surrogate.
+- Step 7 — the simulator after #151 (merged Sat 10:42): #178 holds a rival that raises (the shared sim clock stopped
+  for good), caps exploiter asks at the game's price cap, and the clock loop logs a failed tick or save and goes on.
+  · **Acceptance:** each test fails without its fix; seeded worlds are byte-identical when no rival raises.
 - Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
 
@@ -413,6 +417,24 @@ per PR (his history carried our private numbers), authored by him; the fixes fol
   page bonus from FREE copies (P1) · the bid parser refuses `want.assets` and unknown keys, main's
   `market.parse_offer` too (P1) · the sell path re-reads the kill switch after the duel-grace wait (P1) · the
   `taker.py` import conflict (P1) · `accept_bids` stays off. · **Acceptance:** as above.
+
+### SP1 — Speed: every agent inside Sunday's 15 s tick ([spec](SP1-spec.md))
+Files: `scripts/tick_profile.py`, `src/bazaar_agent/agents/{jev_cache,runtime,taker}.py`, `src/bazaar_agent/pack_gate.py`,
+`src/bazaar_agent/guardrails.py`, `GUARDRAILS.md`, `tests/test_speed.py`.
+- Step 1 — Profiler: run one agent against a local simulator with per-tick and per-request JSONL; `report`
+  aggregates wall p50/p95/max, over-budget and dropped ticks, stages and the key's busiest second.
+  · **Acceptance:** report pasted for taker + maker + duels at 15 s ticks.
+- Step 2 — Measure on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) at 0, 100 and
+  250 ms per request. · **Acceptance:** numbers in the PR body; hot spots named.
+- Step 3 — Jev answer cache (`jev_cache_ticks`): the taker's offer Jev and the pack gate reuse an answer for an
+  unchanged state. · **Acceptance:** `tests/test_speed.py` identical decisions, fewer calls.
+- Step 4 — Concurrent reads (`parallel_reads`): snapshot + open threads, venue boards, dealer threads.
+  · **Acceptance:** identical writes with the rule off and on; reads in flight together (barrier test).
+- Step 5 — Re-measure the scratch merge with the fixes; request budget across the three agents under 5 req/s.
+  · **Acceptance:** before/after table in the PR body.
+- Step 6 — Rebase onto main as the Sunday PRs land (#105 /me snapshot first in the keyed lane, #91, #108, #72 kill
+  switch, #145, #89, #148, #96 lessons behind the cache, #112, #150, #162 ledger, #111); re-run the gate.
+  · **Acceptance:** gate green on the rebased branch (done Sat 07:10).
 
 ---
 
@@ -479,6 +501,13 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
   within 20 ticks gets a `rival_move` learning explaining it from the leaderboard components, its dealer deals and
   team trades in the feed window and the trades between other teams on its venue. · **Acceptance:**
   `tests/test_rank_watch.py`, sentinel wiring in `tests/test_news.py`.
+
+### RO1 — Read-only Postgres login for teammates (PR #184)
+- Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
+  revoked. · **Acceptance:** integration tests on local docker (throwaway role + schema).
+- Step 2 — CLI `bazaar db readonly-user`: password generated or read (prompt / pipe), SCRAM verifier only, URL
+  printed once. · **Acceptance:** CLI test + manual run on local docker.
+- Step 3 — docs (`docs/services.md`). The coordinator runs it on Railway after the merge.
 
 ## Parallel-work notes
 

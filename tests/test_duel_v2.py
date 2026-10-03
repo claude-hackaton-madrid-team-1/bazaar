@@ -378,3 +378,10 @@ def test_a_non_integer_rival_price_is_never_planned_as_an_accept():
     d = duel(rival=[(100, 101.7)], ours=[(100, 160)])
     assert duel_plan(d, 110, 100).move.kind != "accept"
     assert duel_plan(duel(rival=[(100, 102)], ours=[(100, 160)]), 110, 100).move.kind == "accept"
+
+
+def test_an_int_too_large_for_a_float_is_not_a_number():
+    # PR #165 security P3-3: math.isfinite(10**400) raises OverflowError (int too large to convert to float).
+    from bazaar_agent.agents.duel_v2 import _number
+
+    assert _number(10**400) is None and _number(-(10**400)) is None and _number(10**300) == 1e300
