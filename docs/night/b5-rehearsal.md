@@ -53,36 +53,82 @@ separate commit on this branch (`git log --first-parent`), so it can be cherry-p
 | — | #71 × #72/#87, #62 × #78 | test-only | tests that read the committed `cash_floor` 270 (#72, #87), or run `duel run --play` without a shared ledger (#78) | in the merges |
 | low | #71 × #79 | low | `trade-plan`'s `Context` has no `has_venue`: after the venue opens it still plans against 370, not 100 (conservative) | not fixed |
 
-## Rehearsal on a local simulator (interim: the usage limit cut the session at ~04:35)
-Harness: `bazaar_sim` on a free `[::1]` port (127.0.0.1's ephemeral ports were exhausted by other sessions:
-~14.8k TIME_WAIT). Taker `--live`, maker `--live` (venue keeper + broker inside) and `duel run --play` ran as
-separate processes with `scripts/sim_guard` (loopback-only sockets), an empty env file and dead proxies.
-The shared ledger, decisions and broker-key vault went to a throwaway `pgvector` container on [::1]:55491.
-The only change to the committed files was `venue_open_after_game_hours`, lowered in a scratch copy of
-GUARDRAILS.md so that the venue opens within the run.
+## Rehearsal on a local simulator
+**Harness** (`scripts/rehearsal/`: `rehearse.py`, `run_agent.py`, `analyze.py`).
+- `bazaar_sim` serves on a free `[::1]` port. 127.0.0.1's ephemeral ports were exhausted by other sessions'
+  local servers (~14.8k connections in TIME_WAIT), so new connections failed with "Can't assign requested address".
+- The taker (`--live`), the maker (`--live`, with #71's venue keeper and broker inside it, as on Railway) and
+  `duel run --play` run as separate processes.
+- Every process gets `scripts/sim_guard` (loopback-only sockets), an empty env file, dead proxies and an
+  allow-listed environment.
+- The shared ledger, decisions and broker-key vault go to a throwaway `pgvector` container on [::1]:55491.
+- Only scratch copies of GUARDRAILS.md differ from the committed one: `venue_open_after_game_hours` is lowered
+  so that the venue opens within the run. In run C, `duel_policy` = v2 as well.
 
-| run | ticks | crashes (`Traceback`/`tick loop:`) | venue | Market Tests | notes |
-|---|---|---|---|---|---|
-| shakedown (3 s ticks) | 12 | 0 | opened tick 8 (400 → 130) | bench efficiency 0.985 | 2 duel deals (shares 0.51 / 0.84); 3 broker matches DROPPED (tick window closed) |
-| A (4 s ticks, interim at tick ~130 of 300) | 130 | 0 | opened tick ~54 (372 → 102) | b1: 5 pairs, quoted 146, 0 refused; b2: 4 pairs, 137, 0 refused | the 370 effective floor held: taker buys stopped at 372 |
-| B (30 s Saturday pace, interim) | ~20 of 40 | 0 | opened tick 5 | b1: 2 pairs, quoted 32, 0 refused | |
+| | A: accelerated (4 s ticks) | B: Saturday pace (30 s ticks) | C: night switches on (4 s, v2 + edge) |
+|---|---|---|---|
+| ticks handled per agent | 300 / 300 / 300 | 40 / 40 / 40 | RUN_C_TICKS |
+| crashes (`Traceback`, `tick loop:`), exits | 0, all exit 0 | 0, all exit 0 | RUN_C_CRASH |
+| venue | opened at tick 54: cash 372 → 102 | opened at tick 5 | RUN_C_VENUE |
+| Market Tests | 5 sessions, 22 matches, 0 refused, efficiency 1.0 | 2 sessions, 5 matches, 0 refused, 0.971 | RUN_C_MT |
+| cash vs effective floor (370 before the venue, 100 after) | 0 breaches in 101 samples (min 102) | 0 breaches in 19 samples (min 105) | RUN_C_CASH |
+| ticks with more than 1 accept booked (all processes) | 0 (9 accepts) | 0 (3 accepts) | RUN_C_ACC |
+| duels | 10/10 deals, 8.3 rounds per deal, mean share 0.48 | 4 deals + 2 live at end, 8.3 rounds | RUN_C_DUELS |
+| guardrail denials | 148 venue reserve, 18 rarity cap, 9 spend cap | 16 rarity cap, 12 cash floor, 12 venue reserve | RUN_C_DEN |
+| server refusals | 6 `duel_closed`, 2 `asset_locked` | 3 `duel_closed`, 2 `asset_locked` | RUN_C_REF |
+| sim score (rank) | 80.4 (1st of 8) | 32.9 (1st) | RUN_C_SCORE |
 
-Findings from the runs so far:
-- The guardrails compose across processes: the effective floor (100 + 270 until the venue opens) held in
-  every `/me` sample, and no tick booked more than one accept.
-- **Duel after the rival accepted our offer** (low): the payload still says `live`, so `duel run` sent an accept
-  on a duel the rival had already accepted (refused `duel_closed`). That accept still booked the team's one
-  accept slot for the tick.
-- **Broker matches dropped at the tick edge** at 3–4 s ticks: the keeper's paced matches (0.2 s each) run before
-  the maker's offers. Check with B's 30 s ticks before trusting it at 15 s on Sunday.
+**Findings from the runs.**
+- **The guardrails compose across the three processes.**
+  - The effective floor held in every `/me` sample. Before the venue opened, taker buys stopped at 372 against
+    the 370 floor; the opening then left 102 (≥ 100).
+  - No tick ever booked two accepts.
+  - No hold, kill-switch or ledger error occurred.
+- **`duel_closed` (low, `duel run`, any policy).** When the rival accepts our offer, the payload still reads `live`
+  until the next tick. On that tick our endgame accept is refused (6 in A, 3 in B), and that accept still books
+  the team's one accept slot. Each one cost nothing here: the deal had closed at our better price.
+- **`asset_locked` (low, maker).** The maker re-lists a card whose sale is still settling (2 per run), and each
+  refused post uses one of the 12 listings for that tick.
+- **v1 duels spend ~8 rounds per deal** (mean share 0.48 at decay 0.06), matching PLAN fact 1; run C is the v2
+  comparison.
+- **Tick window.** At 3 s ticks the keeper's paced matches (0.2 s each, before the maker's offers) dropped 3 of 5
+  matches at the tick edge. At 4 s ticks, 0 were dropped; at 30 s ticks, 0. Watch Sunday's 15 s ticks with many
+  bench pairs.
+- **r2's X15 (expired maker bids counted twice) was not exercised.** After the venue opened (cash ~100), the
+  maker could not afford a bid, so none expired. Its bite is still open (below).
 
-Not done (usage limit): the final numbers of runs A and B, run C with `duel_policy` v2 + `BAZAAR_BENCH_POLICY=edge`,
-and r2's bite suite on this tree. The harness is reproducible: `_night/` notes in STATUS.md, scripts in this
-session's scratchpad (`rehearse.py`, `run_agent.py`, `analyze.py`).
+**r2's bite suite** on this tree (`tests/bites` from `night/r2-bite-hunter` @ d40426a):
+- 41 passed, 36 xfailed (still open), 31 xpassed (fixed by the integrated PRs), 0 failed.
+- On pass 1 (old heads) r2 counted 43 open and 22 fixed, so the current heads fix 9 more.
+- Still open:
+  - B3 accept slot (3);
+  - B4 skipped ticks (4);
+  - B6 restart mid-duel (3);
+  - X15 expired-bid spend (2);
+  - doors-open wake-up (2);
+  - C1 request budget (4);
+  - C2 fee at settlement (4);
+  - A1–A3 restart orphans and lost replies (5);
+  - sealed packs, silent failure, unsettled duplicate (1 each).
+- The duel bites B2b and B3 fail identically on #86 alone (f6f4435), so the integration did not cause them.
+
+## Moved after the freeze (checked 05:55)
+| PR | frozen → now | what changed | effect on the fix-ups |
+|---|---|---|---|
+| #86 | f6f4435 → 9239070 | "a ledger outage holds every v2 duel instead of killing the duel tick (b5 rehearsal with #62)" | adopts **F5** on the PR |
+| #79 | 9e99763 → 552490f | `_json_file` renamed `_payload_file`; "merge-proof sell context and dealer accept hold (for the #62 merge)" | covers **F8** and the `_sell_context(live)` resolution; F7 (`hands_off_ids` on #62's ledgers, `KW_ONLY`) still to check |
+| #87 | 5b9deaf → 77f0777 | helper renamed `_plan_input` | F8 now cannot recur |
+| #71 | ffb0877 → 1696789 | "no Postgres answer never ends the opening; mark only a listed venue; time-based backoff" | F2 (`stops=` in broker/venue contexts) still needed |
+| #72 | e4efc82 → 30d005d | five dealer fixes (timeout close, lost answers, reopen) | F1 still needed (the `reserve` hook) |
+| #84 | 50eb905 → 84ebb29 | rebased on #71 @ 1696789; unknown `BAZAAR_BENCH_*` ignored loudly | |
+
+Re-run the rehearsal on the new heads before merging: `scripts/rehearsal/rehearse.py` then `analyze.py`
+(about 20 minutes per run; the commands are in rehearse.py's docstring).
 
 ## Not integrated
-Wave-2 PRs #89, #91–#119, #121–#130 (B-items, r1/r2, teammates' feed reader, holdings DB, etc.): outside this
-rehearsal's frozen scope. Heads that moved after the freeze: #71 (ffb0877 applied as a delta). Pass 1 (old #71/#72
+Wave-2 PRs #89, #91–#119, #121–#130 (B-items, r1/r2, the teammates' feed reader, the holdings DB, and so on):
+outside this rehearsal's frozen scope. For #100 (B12, on #81), its author's re-apply notes after #72: `may_close` →
+`may_take`; `counter_below` targets `ask - neg.base_step`; `reopen_start` reads a jittered `bids[0]`. Heads that moved after the freeze: #71 (ffb0877 applied as a delta). Pass 1 (old #71/#72
 heads, 4 fix-ups) is kept as `night/b5-rehearsal-pass1`.
 
 ## What Marius must decide
