@@ -231,18 +231,14 @@ def _print_choices(rows: list[dict[str, Any]]) -> None:
     t = Table(title=f"Last {len(rows)} model choices: runtime moves and desk roles (full Jev float map)")
     for col in ("tick", "kind", "bucket", "model", "source", "conf", "floats", "reason"):
         t.add_column(col)
-    for r in rows:
-        conf = r.get("confidence")
-        t.add_row(
-            str(r.get("tick")),
-            str(r.get("kind")),
-            str(r.get("bucket")),
-            str(r.get("model")),
-            str(r.get("source")),
-            "-" if conf is None else f"{float(conf):.3f}",
-            _floats(r.get("probabilities")),
-            escape(str(r.get("reason"))),
-        )
+    for r in rows:  # the log is shared by several processes: every cell is escaped, every float guarded
+        cells = (escape(str(r.get(k))) for k in ("tick", "kind", "bucket", "model", "source"))
+        try:
+            conf = "-" if r.get("confidence") is None else f"{float(r['confidence']):.3f}"
+            floats = _floats(r.get("probabilities"))
+        except (TypeError, ValueError, ArithmeticError, AttributeError):
+            conf, floats = "?", "unreadable"
+        t.add_row(*cells, conf, escape(floats), escape(str(r.get("reason"))))
     console.print(t)
 
 

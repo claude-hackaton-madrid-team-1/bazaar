@@ -7,6 +7,7 @@ one call per request, cache reuse), the picker, the SDK options per subagent, an
 
 import asyncio
 import functools
+import json
 import time
 
 import httpx
@@ -26,6 +27,8 @@ from bazaar_agent.runtime.desk_models import (
     ROLES,
     DeskModelPicker,
     desk_pin,
+    family_env,
+    family_of,
     request_situation,
     value_at_risk,
 )
@@ -35,6 +38,7 @@ from tests.test_runtime_desk import BUY_SCRIPT, ScriptedClient, desk_env, use_sc
 
 runner = CliRunner()
 CLAUDE = ("haiku-4-5", "sonnet-5-5", "opus-5-5")
+CLAUDE_IDS = ("claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5")
 DEFAULTS = {
     "desk": "sonnet-5-5",
     "strategist": "opus-5-5",
@@ -206,7 +210,9 @@ def test_value_at_risk_reads_prices_not_card_codes():
     assert value_at_risk("buy LAV-09 under 90") == 90
     assert value_at_risk("sell my spare SAL-03 for at least 8P") == 8
     assert value_at_risk("what is our status?") == 0 and value_at_risk("LAV-09 or lav-10") == 0
-    assert value_at_risk("bid 99999999999") == 10_000_000
+    assert value_at_risk("bid 99999999999") == 10_000  # a long digit run (a pasted key?) is clamped
+    assert value_at_risk("status of thread 1234") == 0 and value_at_risk("team t07 at tick 155 offered 40") == 40
+    assert value_at_risk("sell #7/30 for 12P") == 12 and value_at_risk("duel 12 round 3 price 55") == 55
 
 
 def test_desk_pin_precedence_and_claude_only():
@@ -256,6 +262,7 @@ def test_the_picker_never_raises_it_falls_back_to_the_defaults(tmp_path, monkeyp
 
 class Recorder(ScriptedClient):
     made: list["Recorder"] = []
+    fail_switch = False
 
     def __init__(self, options):
         super().__init__(options, [("say", "ok")], None)
@@ -263,15 +270,18 @@ class Recorder(ScriptedClient):
         Recorder.made.append(self)
 
     async def set_model(self, model=None):
+        if Recorder.fail_switch:
+            raise RuntimeError("control request failed")
         self.models_set.append(model)
 
 
-def run_desk(plans):
-    """A desk whose planner returns `plans` in order; one request per plan."""
-    Recorder.made = []
+def run_desk(plans, families=None, fail_switch=False):
+    """A desk whose planner returns `plans` in order; one request per plan. Returns the clients made, the
+    `models` lines, and the per-call aliases handed to the hook before each request."""
+    Recorder.made, Recorder.fail_switch = [], fail_switch
     order = iter(plans)
     options = dk.ClaudeAgentOptions(model=plans[0].orchestrator.model_id, agents=ag.agent_definitions())
-    events = []
+    events, aliases = [], []
     desk = dk.Desk(
         options,
         timeout_s=5.0,
@@ -279,6 +289,8 @@ def run_desk(plans):
         emit=events.append,
         plan=lambda text: next(order),
         models=plans[0],
+        families=family_env(CLAUDE_IDS) if families is None else families,
+        on_aliases=aliases.append,
     )
 
     async def go():
@@ -288,7 +300,7 @@ def run_desk(plans):
         await desk.close()
 
     asyncio.run(go())
-    return Recorder.made, [e.detail for e in events if e.kind == "models"]
+    return Recorder.made, [e.detail for e in events if e.kind == "models"], aliases
 
 
 def plan_of(tmp_path, desk="sonnet-5-5", **subagents):
@@ -297,22 +309,56 @@ def plan_of(tmp_path, desk="sonnet-5-5", **subagents):
     return picker.pick("x")
 
 
-def test_each_subagent_runs_its_model_and_a_changed_one_starts_a_new_session(tmp_path):
+def test_one_conversation_keeps_its_session_while_each_request_gets_its_own_models(tmp_path):
     a = plan_of(tmp_path / "a", desk="sonnet-5-5", buyer="opus-5-5")
-    b = plan_of(tmp_path / "b", desk="opus-5-5", buyer="opus-5-5")  # only the orchestrator changes: set_model
-    c = plan_of(tmp_path / "c", desk="opus-5-5", buyer="haiku-4-5")  # a subagent changes: a new session
-    made, lines = run_desk([a, b, c])
-    assert len(made) == 2
-    assert made[0].options.model == "claude-sonnet-5-5"
-    assert made[0].options.agents["buyer"].model == "claude-opus-5-5"
-    assert made[0].options.agents["seller"].model == "claude-sonnet-5-5"
-    assert made[0].models_set == ["claude-opus-5-5"] and made[0].queries == ["hola", "hola"]
-    assert (
-        made[1].options.model == "claude-opus-5-5"
-        and made[1].options.agents["buyer"].model == "claude-haiku-4-5-20251001"
-    )
-    assert "subagent models changed: new desk session" in lines
+    b = plan_of(tmp_path / "b", desk="opus-5-5", buyer="haiku-4-5", duelist="haiku-4-5")
+    made, lines, aliases = run_desk([a, b])
+    (client,) = made  # ONE session: the second request still sees the first (P1 of the #108 review)
+    assert client.queries == ["hola", "hola"] and client.models_set == ["claude-opus-5-5"]
+    assert client.options.model == "claude-sonnet-5-5" and client.options.agents["buyer"].model == "claude-opus-5-5"
+    assert aliases[0]["buyer"] == "opus" and aliases[0]["seller"] == "sonnet"
+    assert aliases[1] == {"strategist": "sonnet", "buyer": "haiku", "seller": "sonnet", "duelist": "haiku"}
     assert lines[0].startswith("desk sonnet-5-5 (jev 0.90) · strategist sonnet-5-5 (jev 0.90) · buyer opus-5-5")
+    assert not any("keep this conversation" in line or "new desk session" in line for line in lines)
+
+
+def test_a_failed_switch_or_an_unnamed_model_keeps_the_session_and_says_so(tmp_path):
+    a = plan_of(tmp_path / "a", desk="sonnet-5-5")
+    b = plan_of(tmp_path / "b", desk="opus-5-5", buyer="opus-5-5")
+    made, lines, aliases = run_desk([a, b], families={}, fail_switch=True)  # no family pins: no alias
+    (client,) = made
+    assert client.queries == ["hola", "hola"] and aliases == [{}, {}]
+    assert "buyer keep this conversation's model (no family alias names the new one)" in lines
+    assert "desk stays on sonnet-5-5 (switch failed: RuntimeError)" in lines
+
+
+def test_family_pins_name_one_model_per_family_and_the_env_blanks_overrides():
+    assert family_env(CLAUDE_IDS) == {
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
+    }
+    assert "ANTHROPIC_DEFAULT_SONNET_MODEL" not in family_env([*CLAUDE_IDS, "claude-sonnet-5"])  # ambiguous
+    assert family_of("gpt-6.1-sol") is None and family_of("claude-fable-5-1") == "fable"
+    env = dk.desk_env(None, 30.0, family_env(CLAUDE_IDS))
+    assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"
+    assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "" and env["CLAUDE_CODE_SUBAGENT_MODEL_FORCE"] == ""
+
+
+def test_a_torn_or_hostile_choice_log_never_stops_the_desk(tmp_path):
+    log = tmp_path / "choices.jsonl"
+    good = {"tick": 40, "question": DESK_QUESTION_ID, "kind": "buyer", "bucket": "medium", "flagged": False}
+    good |= {"stakes": "high", "model": "opus-5-5", "source": "jev", "confidence": 0.9, "probabilities": {}}
+    other = {**good, "kind": "seller", "question": "model_for_move", "model": "haiku-4-5"}  # another question
+    huge = {**good, "kind": "seller", "confidence": int("9" * 400)}
+    log.write_bytes(
+        b"\xe2\x89\n" + (json.dumps(huge) + "\n" + json.dumps(other) + "\n" + json.dumps(good) + "\n").encode()
+    )
+    jev = decided_judge(seller="sonnet-5-5")
+    chosen = desk_chooser(tmp_path, jev).choose_roles(SITUATION, ("buyer", "seller"), tick=41)
+    assert chosen["buyer"].cached and chosen["buyer"].alias == "opus-5-5"  # the good line, warmed
+    assert chosen["seller"].alias == "sonnet-5-5" and not chosen["seller"].cached  # torn, huge, foreign: skipped
+    assert [r["kind"] for r in read_choices(log, 10)] == ["seller", "seller", "buyer", "seller"]  # torn line skipped
 
 
 # ---------------------------------------------------------------- the CLI: chat, ask, bazaar llm
@@ -329,6 +375,7 @@ def test_chat_shows_jevs_models_and_wires_them_into_the_sdk_options(desk_env, mo
     options = clients[0].options
     assert options.model == "claude-sonnet-5-5" and options.agents["buyer"].model == "claude-opus-5-5"
     assert options.agents["duelist"].model == "claude-haiku-4-5-20251001"
+    assert options.env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"  # `opus` on a call = our exact id
     assert len(jev.calls) == 1 and jev.calls[0]["state"]["value_at_risk_primas"] == 90
     assert "ran on: desk claude-sonnet-5-5 · buyer claude-sonnet-5-5" in out.output  # the scripted replies' model
     logged = read_choices(tmp_path / "llm" / "model-choices.jsonl", 10)
@@ -375,3 +422,31 @@ def test_llm_flags_a_desk_question_without_criteria_for_a_candidate(monkeypatch,
     out = runner.invoke(app, ["llm"])
     assert "Question pack: runtime_models lists haiku-4-5, sonnet-5-5, opus-5-5" in out.output
     assert "(`model_for_desk_role`)" in out.output
+
+
+def test_a_broken_picker_falls_back_to_the_role_defaults_and_the_desk_still_runs(desk_env, monkeypatch):  # noqa: F811
+    from bazaar_agent.runtime import desk_models
+
+    real, calls = desk_models.build_picker, []
+
+    def flaky(*args, **kw):
+        calls.append(kw.get("log_path", "default"))
+        if len(calls) == 1:
+            raise OSError("choice log unreadable")
+        return real(*args, **kw)
+
+    monkeypatch.setattr(desk_models, "build_picker", flaky)
+    clients = use_script(monkeypatch, desk_env, BUY_SCRIPT)
+    out = runner.invoke(app, ["agent", "chat", "--once", "buy LAV-09 under 90"])
+    assert out.exit_code == 0, out.output
+    assert "desk models: Jev off (OSError), role defaults" in out.output and calls == ["default", None]
+    assert {d.model for d in clients[0].options.agents.values()} == {"claude-sonnet-5-5"}
+
+
+def test_llm_prints_a_hostile_choice_log_without_markup_or_a_crash(desk_env, tmp_path):  # noqa: F811
+    hostile = {"tick": 1, "kind": "[red]buyer", "model": "[/bold]x", "source": "jev", "confidence": "nan?"}
+    (tmp_path / "llm").mkdir(exist_ok=True)
+    (tmp_path / "llm" / "model-choices.jsonl").write_text(json.dumps(hostile) + "\n", encoding="utf-8")
+    out = runner.invoke(app, ["llm"])
+    assert out.exit_code == 0, out.output
+    assert "[red]buyer" in out.output and "unreadable" in out.output

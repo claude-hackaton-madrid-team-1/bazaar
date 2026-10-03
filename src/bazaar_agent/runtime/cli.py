@@ -97,7 +97,7 @@ def build_desk(
     per role on the game tick, or the pin); the session starts on the pin or the role defaults."""
     from bazaar_agent.runtime.agents import allow_lists
     from bazaar_agent.runtime.desk import Desk, DeskConfig, desk_options, scratch_dir
-    from bazaar_agent.runtime.desk_models import build_picker
+    from bazaar_agent.runtime.desk_models import build_picker, family_env
     from bazaar_agent.runtime.hooks import Guard
     from bazaar_agent.runtime.tools import sdk_server
 
@@ -110,16 +110,29 @@ def build_desk(
         secrets,
         log=lambda line: console.print(f"[red]{escape(safe_text(line, secrets))}[/red]"),
     )
-    picker = build_picker(
-        settings, config, rules, cli_pin=cli_pin, override=model, clock=backend.clock, log=say, judge_fn=JUDGE
-    )
+    try:
+        picker = build_picker(
+            settings, config, rules, cli_pin=cli_pin, override=model, clock=backend.clock, log=say, judge_fn=JUDGE
+        )
+    except UnknownModelError:
+        raise
+    except Exception as e:  # the choice log or the question pack is unreadable: never stop the desk for it
+        say(f"desk models: Jev off ({type(e).__name__}), role defaults")
+        picker = build_picker(settings, config, rules, cli_pin=cli_pin, override=model, log=say, log_path=None)
     desk_config = DeskConfig(config.desk_max_turns, config.desk_timeout_s)
     token = settings.claude_code_oauth_token.get_secret_value() if settings.claude_code_oauth_token else None
-    models = picker.initial()
-    options = desk_options(guard, sdk_server(backend, secrets), token, desk_config, scratch_dir(), models)
+    models, families = picker.initial(), family_env(picker.model_ids())
+    options = desk_options(guard, sdk_server(backend, secrets), token, desk_config, scratch_dir(), models, families)
     factory = {"client_factory": CLIENT_FACTORY} if CLIENT_FACTORY is not None else {}
     desk = Desk(
-        options, timeout_s=desk_config.timeout_s, emit=_show_event(say), plan=picker.pick, models=models, **factory
+        options,
+        timeout_s=desk_config.timeout_s,
+        emit=_show_event(say),
+        plan=picker.pick,
+        models=models,
+        families=families,
+        on_aliases=guard.use_aliases,
+        **factory,
     )
     return desk, backend, picker, secrets
 

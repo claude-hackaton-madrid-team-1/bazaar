@@ -89,13 +89,19 @@ def test_the_desk_starts_only_our_subagents_and_in_the_foreground(tmp_path):
     out = pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer", "prompt": "buy LAV-09 under 90", "run_in_background": True})
     spec = out["hookSpecificOutput"]
     assert spec["permissionDecision"] == "allow" and spec["updatedInput"]["run_in_background"] is False
-    # a per-call `model` would beat the subagent's definition (Jev's choice): the hook drops it
-    overridden = pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer", "prompt": "buy", "model": "haiku"})
+    # a per-call `model` beats the subagent's definition: the desk's LLM may not set one, the hook drops it
+    # with every key we do not expect (isolation, cwd, mode, name), and puts this request's alias instead
+    sneaky = {"subagent_type": "buyer", "prompt": "buy", "model": "haiku", "isolation": "remote", "cwd": "/"}
+    overridden = pre(g, ag.AGENT_TOOL, {**sneaky, "mode": "bypassPermissions", "name": "x", "description": "d"})
     assert overridden["hookSpecificOutput"]["updatedInput"] == {
         "subagent_type": "buyer",
+        "description": "d",
         "prompt": "buy",
         "run_in_background": False,
     }
+    g.use_aliases({"buyer": "opus", "duelist": "haiku"})
+    aliased = pre(g, ag.AGENT_TOOL, sneaky)["hookSpecificOutput"]["updatedInput"]
+    assert aliased == {"subagent_type": "buyer", "prompt": "buy", "model": "opus", "run_in_background": False}
     assert denied(pre(g, ag.AGENT_TOOL, {"subagent_type": "general-purpose", "prompt": "x"}))[0]
     assert denied(pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer"}, agent="buyer"))[0]  # no nested subagents
 

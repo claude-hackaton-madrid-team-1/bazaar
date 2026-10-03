@@ -556,7 +556,7 @@ capabilities as typed MCP tools, and every write meets the guardrails twice. Cod
    PostToolUse hook ── decisions row per write, executions row per send, OTel span  ──► game
 
    models: before each request, Jev (model_for_desk_role, ONE call for every uncached role) picks a
-   Claude model for the desk and for each subagent (AgentDefinition.model); the hook drops a per-call model
+   Claude model for the desk (set_model) and for each subagent (the hook sets its Agent call's model)
 ```
 
 ```sh
@@ -591,14 +591,16 @@ uv run bazaar agent tools                # every tool, read or write, which agen
 - **Jev picks every model, per request.** Before each request, one Jev call (`model_for_desk_role`, one
   question per role about the same request: its length, the largest price in it, injection shapes in it)
   picks the orchestrator's model and each subagent's; a role cached within `model_choice_cache_ticks`
-  costs nothing. The subagents run their model through `AgentDefinition.model` (a full model id), and
-  the PreToolUse hook drops any `model` the desk's LLM puts on an `Agent` call, so it cannot override
-  Jev. Undecided, slow (`jev_timeout_s`) or keyless Jev → RUNTIME.md `desk_role_defaults` (Sonnet for
+  costs nothing. A conversation keeps one session: the orchestrator switches in place
+  (`set_model`), and the PreToolUse hook replaces whatever `model` the desk's LLM puts on an `Agent` call
+  with the family alias of this request's choice for that subagent (`opus`, `sonnet`, `haiku`), which
+  the session pins to our exact ids (ANTHROPIC_DEFAULT_<FAMILY>_MODEL); the `AgentDefinition`s carry the
+  first request's models. Undecided, slow (`jev_timeout_s`) or keyless Jev → RUNTIME.md `desk_role_defaults` (Sonnet for
   every role, what ran before). A pin wins: `agent chat --model` > a Claude `--llm-runtime` /
   `BAZAAR_LLM_RUNTIME` / `llm_runtime` > RUNTIME.md `desk_model` (default `auto`). Claude models only.
-  The transcript prints the choice (`models: desk sonnet-5-5 (jev 0.91) · buyer opus-5-5 (jev 0.88) · …`);
-  in `agent chat`, a request whose subagent models differ starts a new session (the definitions are
-  fixed when the CLI starts), while an orchestrator-only change switches in place.
+  The transcript prints the choice (`models: desk sonnet-5-5 (jev 0.91) · buyer opus-5-5 (jev 0.88) · …`)
+  and, after the answer, the model each agent really ran on (`ran on: desk claude-sonnet-5-5 · buyer
+  claude-opus-5-5`). A failed switch keeps the session's model and says so.
 - **Never in the hot path.** The taker, maker, duel and monitor loops stay deterministic; the desk
   advises, proposes, parses and steers. RUNTIME.md `desk_model`, `desk_role_defaults`, `desk_max_turns`,
   `desk_timeout_s`. A missing CLI, a rejected token, a used-up subscription window, a rate limit or a

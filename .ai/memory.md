@@ -331,9 +331,10 @@ tests/test_railway_iac.py fails on a service without a source.
 ### [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
 code.claude.com/docs/en/sub-agents#choose-a-model: a per-invocation `model` on the Agent call wins over
 `AgentDefinition.model`; the bundled CLI (claude-agent-sdk 0.2.163) types it as `sonnet|opus|haiku|fable`
-only, so it cannot carry a full id. The desk's hook drops it (`updatedInput` replaces the whole input), and
-each subagent's model is a full id in its `AgentDefinition`, fixed when the CLI session starts: a request
-whose subagent models change starts a new session; `set_model()` switches only the orchestrator in place.
+only. Definitions are fixed when the CLI session starts, and a new session forgets the chat (#108 review
+P1), so the desk pins each family to our exact id (ANTHROPIC_DEFAULT_<FAMILY>_MODEL in the CLI env) and its
+hook replaces the call's `model` with the alias of this request's choice (`updatedInput` replaces the whole
+input); `set_model()` switches the orchestrator. One conversation, one session, a model per request.
 
 ### [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 `bazaar agent chat --once` (N15): "buy LAV-09 under 90" → strategist/buyer/seller opus-5-5 0.99, duelist

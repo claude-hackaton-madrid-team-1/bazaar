@@ -5,8 +5,10 @@ PreToolUse (code.claude.com/docs/en/agent-sdk/hooks), for every call from the de
    the desk's own thread. A tool outside the caller's list is denied, whatever the permission rules say.
 2. `Agent` may only start one of our subagents, and in the foreground (`run_in_background: false`
    through `updatedInput`), so the desk reports an answer instead of a task id. A `model` the desk's LLM
-   puts on the call is dropped: it would win over the subagent's definition, which carries Jev's choice
-   (code.claude.com/docs/en/sub-agents#choose-a-model).
+   puts on the call is replaced by the family alias of the model chosen for that subagent this request
+   (`use_aliases`), or dropped: a per-call model wins over the subagent's definition
+   (code.claude.com/docs/en/sub-agents#choose-a-model), so only ours may be there. Every other key the
+   call carries beyond `subagent_type`, `description` and `prompt` is dropped too.
 3. every write tool runs `actions.check_write()` with the live /me, clock, open offers and shared
    ledger, and is denied with the violated rules. A read failure denies too: never trade blind.
 A hook deny wins over every allow rule and permission mode (code.claude.com/docs/en/agent-sdk/permissions).
@@ -33,6 +35,7 @@ from bazaar_agent.runtime.journal import record_denial, record_write
 from bazaar_agent.runtime.tools import BY_MCP_NAME, ToolSpec, answer
 
 PRE, POST = "PreToolUse", "PostToolUse"
+AGENT_KEYS = ("subagent_type", "description", "prompt")  # what an `Agent` call keeps through the hook
 
 
 def caller(input_data: Mapping[str, Any]) -> str:
@@ -59,7 +62,12 @@ class Guard:
         self.b, self.allow, self.log = backend, dict(allow), log
         self.secrets = tuple(secrets)
         self.subagents = frozenset(name for name in self.allow if name != DESK)
+        self.aliases: dict[str, str] = {}  # subagent -> the family alias of this request's chosen model
         self._verdicts: dict[str, str] = {}  # tool_use_id -> the PreToolUse verdict, read by PostToolUse
+
+    def use_aliases(self, aliases: Mapping[str, str]) -> None:
+        """The per-call model of each subagent for the coming request (`DeskModels.invocation_aliases`)."""
+        self.aliases = dict(aliases)
 
     def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         """`ClaudeAgentOptions(hooks=...)`: both callbacks on every tool (no matcher)."""
@@ -104,7 +112,11 @@ class Guard:
         kind = tool_input.get("subagent_type")
         if kind not in self.subagents:
             return deny(f"subagent {kind!r} is not one of ours: {', '.join(sorted(self.subagents))}")
-        updated = {**{k: v for k, v in tool_input.items() if k != "model"}, "run_in_background": False}
+        # Only the keys we expect: no `isolation`, `cwd`, `mode` or `name` an injected desk could add.
+        updated = {k: tool_input[k] for k in AGENT_KEYS if k in tool_input}
+        if kind in self.aliases:
+            updated["model"] = self.aliases[kind]
+        updated["run_in_background"] = False
         return {"hookSpecificOutput": {"hookEventName": PRE, "permissionDecision": "allow", "updatedInput": updated}}
 
     def _check(self, spec: ToolSpec, tool_input: dict[str, Any]) -> tuple[bool, str, int]:

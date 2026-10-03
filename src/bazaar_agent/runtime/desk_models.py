@@ -6,14 +6,23 @@ role in ONE call, cached per role for `model_choice_cache_ticks`) > RUNTIME.md `
 Only Claude models are candidates: the desk runs on the Claude Code CLI (the Claude subscription).
 
 The request's situation comes from the operator's text: its length, the injection shapes in it, and the
-largest price-like number (card codes such as LAV-09 left out) as the value at risk. It only informs Jev
-and buckets the cache; it never sets a price.
+largest price-like number as the value at risk (card codes such as LAV-09, copy numbers such as #7/30,
+team ids such as t07, and the number after "thread", "tick", "duel", "offer" and the like left out). It
+only informs Jev and buckets the cache; it never sets a price.
+
+A subagent's model can change between two requests of one `agent chat` conversation without a new
+session: the CLI resolves a family alias (`opus`, `sonnet`, `haiku`, `fable`) through
+ANTHROPIC_DEFAULT_<FAMILY>_MODEL (code.claude.com/docs/en/model-config), so the desk's session pins each
+family to our exact model id (`family_env`) and the PreToolUse hook puts the chosen subagent's alias on
+every `Agent` call (`DeskModels.invocation_aliases`), which wins over the definition
+(code.claude.com/docs/en/sub-agents#choose-a-model). A model whose family is ambiguous among the desk's
+models keeps the definition the session started with.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,15 +37,42 @@ from bazaar_agent.ticks import Clock
 
 ROLES: tuple[DeskRole, ...] = DESK_ROLES
 SUBAGENT_ROLES: tuple[DeskRole, ...] = tuple(role for role in ROLES if role != "desk")
-_CARD_CODE = re.compile(r"\b[A-Za-z]{3}-\d{1,3}\b")
-_NUMBER = re.compile(r"\d{1,8}")
-MAX_PRICE = 10_000_000  # the game's largest price (RULES.md)
+_NOT_PRICES = re.compile(
+    r"\b[A-Za-z]{3}-\d{1,3}\b"  # card codes: LAV-09
+    r"|#\d+(?:/\d+)?"  # copy numbers and ids: #7/30, #12
+    r"|\b(?:threads?|ticks?|duels?|offers?|assets?|ids?|teams?|levels?|pages?|rounds?|days?)\s*#?\s*\d+",
+    re.IGNORECASE,
+)
+_PRICE = re.compile(r"\b(\d+)(?:p|primas)?\b", re.IGNORECASE)  # whole numbers only: t07 or 1.5e3 do not count
+MAX_RISK = 10_000  # far above any card or our cash: a longer digit run (a pasted key?) never reaches Jev
+FAMILY_ENV: Mapping[str, str] = {
+    "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "fable": "ANTHROPIC_DEFAULT_FABLE_MODEL",
+}
 
 
 def value_at_risk(text: str) -> int:
-    """The largest price-like number in the request (`buy LAV-09 under 90` → 90)."""
-    numbers = [int(n) for n in _NUMBER.findall(_CARD_CODE.sub(" ", text))]
-    return min(max(numbers, default=0), MAX_PRICE)
+    """The largest price-like number in the request (`buy LAV-09 under 90` → 90, `thread 1234` → 0)."""
+    numbers = [int(n) for n in _PRICE.findall(_NOT_PRICES.sub(" ", text))]
+    return min(max(numbers, default=0), MAX_RISK)
+
+
+def family_of(model_id: str) -> str | None:
+    """`claude-opus-5-5` → `opus`; None for an id outside the four Claude families."""
+    parts = model_id.split("-")
+    return parts[1] if len(parts) > 2 and parts[0] == "claude" and parts[1] in FAMILY_ENV else None
+
+
+def family_env(model_ids: Iterable[str]) -> dict[str, str]:
+    """ANTHROPIC_DEFAULT_<FAMILY>_MODEL for each family that has exactly ONE of the desk's models, so its
+    alias names that model and nothing else. A family with two of our models is left out (ambiguous)."""
+    by_family: dict[str, set[str]] = {}
+    for model_id in model_ids:
+        if (family := family_of(model_id)) is not None:
+            by_family.setdefault(family, set()).add(model_id)
+    return {FAMILY_ENV[f]: next(iter(ids)) for f, ids in by_family.items() if len(ids) == 1}
 
 
 def request_situation(text: str, tick_seconds: float, timeout_s: float) -> MoveSituation:
@@ -66,6 +102,16 @@ class DeskModels:
     def subagent_ids(self) -> dict[str, str]:
         """subagent name -> the model id its `AgentDefinition` runs."""
         return {role: self.ref(role).model_id for role in SUBAGENT_ROLES}
+
+    def invocation_aliases(self, pinned: Mapping[str, str]) -> dict[str, str]:
+        """subagent name -> the family alias the hook puts on its `Agent` call, for the subagents whose
+        model is the one its family is pinned to in the session (`pinned`: `family_env()`)."""
+        aliases: dict[str, str] = {}
+        for role, model_id in self.subagent_ids().items():
+            family = family_of(model_id)
+            if family is not None and pinned.get(FAMILY_ENV[family]) == model_id:
+                aliases[role] = family
+        return aliases
 
     def summary(self) -> str:
         return " · ".join(f"{role} {_label(choice)}" for role, choice in self.choices.items())
@@ -122,6 +168,14 @@ class DeskModelPicker:
                 for role in ROLES
             }
         )
+
+    def model_ids(self) -> tuple[str, ...]:
+        """Every model this picker can hand a role: the pin, else the candidates and the role defaults."""
+        pin = self.chooser.pin
+        if pin is not None:
+            return (pin.model.model_id,)
+        names = (*self.chooser.candidates, *(self.chooser.default_for(role) for role in ROLES))
+        return tuple(dict.fromkeys(resolve(name).model_id for name in names))
 
     def describe(self) -> str:
         pin = self.chooser.pin

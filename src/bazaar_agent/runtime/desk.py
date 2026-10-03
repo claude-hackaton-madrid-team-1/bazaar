@@ -11,9 +11,10 @@ failure as an `LLMError`: no CLI, a rejected token, the plan's usage limit, a ra
 `bazaar ask` then falls back to its intent parser, and `bazaar agent chat` says the desk is offline.
 
 Before each turn the desk asks its planner (`runtime.desk_models`: Jev, cached, or the pin) which model
-runs the orchestrator and each subagent. Subagent models live in the session's `AgentDefinition`s, sent
-when the CLI starts, so a turn whose subagent choices differ starts a new session; a turn where only the
-orchestrator's model changes switches it in place (`ClaudeSDKClient.set_model`).
+runs the orchestrator and each subagent, in the same session (the conversation is kept): the orchestrator
+switches in place (`ClaudeSDKClient.set_model`), and each subagent's family alias goes on its `Agent`
+calls through the hook (`Guard.use_aliases`), resolved to our exact id by the session's
+ANTHROPIC_DEFAULT_<FAMILY>_MODEL pins. The `AgentDefinition`s carry the models the session started with.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import contextlib
 import dataclasses
 import json
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -65,9 +66,14 @@ class DeskConfig:
     timeout_s: float
 
 
-def desk_env(token: str | None, timeout_s: float) -> RedactedEnv:
-    """The locked CLI environment, plus the subagent caps (code.claude.com/docs/en/env-vars)."""
+def desk_env(token: str | None, timeout_s: float, families: Mapping[str, str] | None = None) -> RedactedEnv:
+    """The locked CLI environment, plus the subagent caps (code.claude.com/docs/en/env-vars) and the family
+    alias pins (`desk_models.family_env`). A stray CLAUDE_CODE_SUBAGENT_MODEL(_FORCE) in the shell is blanked:
+    it would put every subagent on one model."""
     env = RedactedEnv(LOCKED_ENV)
+    env.update(families or {})
+    env["CLAUDE_CODE_SUBAGENT_MODEL"] = ""
+    env["CLAUDE_CODE_SUBAGENT_MODEL_FORCE"] = ""
     env["API_TIMEOUT_MS"] = str(round(min(timeout_s, API_ATTEMPT_CAP_S) * 1000))
     env["CLAUDE_CODE_MAX_RETRIES"] = "1"
     env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] = "1"  # the desk's subagents spawn nothing of their own
@@ -79,7 +85,13 @@ def desk_env(token: str | None, timeout_s: float) -> RedactedEnv:
 
 
 def desk_options(
-    guard: Guard, server: Any, token: str | None, config: DeskConfig, cwd: Path, models: DeskModels
+    guard: Guard,
+    server: Any,
+    token: str | None,
+    config: DeskConfig,
+    cwd: Path,
+    models: DeskModels,
+    families: Mapping[str, str] | None = None,
 ) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=DESK_SPEC.prompt,
@@ -95,7 +107,7 @@ def desk_options(
         strict_mcp_config=True,
         max_turns=config.max_turns,
         cwd=cwd,
-        env=desk_env(token, config.timeout_s),
+        env=desk_env(token, config.timeout_s, families),
         stderr=_drop,
         extra_args={"no-session-persistence": None},
     )
@@ -213,18 +225,24 @@ class Desk:
         emit: Callable[[DeskEvent], None] = lambda event: None,
         plan: Planner | None = None,
         models: DeskModels | None = None,
+        families: Mapping[str, str] | None = None,
+        on_aliases: Callable[[Mapping[str, str]], None] = lambda aliases: None,
     ) -> None:
         self.options, self.timeout_s, self.emit = options, timeout_s, emit
         self._factory = client_factory
         self._client: Any = None
         self._plan = plan
         self.models = models
+        self.families = dict(families or {})  # the ANTHROPIC_DEFAULT_<FAMILY>_MODEL pins in the session's env
+        self._on_aliases = on_aliases
+        self._session: dict[str, str] = {}  # subagent -> the definition's model in the running session
 
     async def _connected(self) -> Any:
         if self._client is None:
             client = self._factory(self.options)
             await client.connect()
             self._client = client
+            self._session = self.models.subagent_ids() if self.models is not None else {}
         return self._client
 
     async def ask(self, text: str) -> DeskReply:
@@ -252,18 +270,28 @@ class Desk:
             transcript.take(message)
 
     async def _use(self, models: DeskModels, transcript: _Transcript) -> None:
-        """Run this turn on `models`: same subagents → keep the session (switch the orchestrator in place
-        if it changed); other subagent models → a new session, since its definitions are fixed at start."""
+        """Run this turn on `models` in the same session: the hook carries each subagent's alias, and the
+        orchestrator switches in place. A switch that fails, or a subagent model no alias names, keeps the
+        session's model and says so (a new session would forget the conversation)."""
         previous, self.models = self.models, models
-        self.options = with_models(self.options, models)
+        self.options = with_models(self.options, models)  # the definitions of the next NEW session
+        aliases = models.invocation_aliases(self.families)
+        self._on_aliases(aliases)
         transcript.event(DeskEvent("models", DESK, "", models.summary()))
         if self._client is None or previous is None:
             return
-        if models.subagent_ids() != previous.subagent_ids():
-            transcript.event(DeskEvent("models", DESK, "", "subagent models changed: new desk session"))
-            await self.close()
-        elif models.orchestrator != previous.orchestrator:
+        kept = [r for r, mid in models.subagent_ids().items() if r not in aliases and mid != self._session.get(r)]
+        if kept:
+            note = f"{', '.join(kept)} keep this conversation's model (no family alias names the new one)"
+            transcript.event(DeskEvent("models", DESK, "", note))
+        if models.orchestrator == previous.orchestrator:
+            return
+        try:
             await self._client.set_model(models.orchestrator.model_id)
+        except Exception as e:  # the session goes on with the model it had
+            self.models = DeskModels({**models.choices, DESK: previous.choices[DESK]})
+            note = f"desk stays on {previous.orchestrator.alias} (switch failed: {type(e).__name__})"
+            transcript.event(DeskEvent("models", DESK, "", note))
 
     async def close(self) -> None:
         client, self._client = self._client, None

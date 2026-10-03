@@ -36,7 +36,8 @@ per role, and a pinned model still wins.
 5. Only Claude candidates are offered for the desk; a role default or pinned `desk_model` that is not a
    Claude model fails RUNTIME.md validation.
 6. Every choice (role, model, source, floats) lands in `.local/llm/model-choices.jsonl` and `bazaar llm`.
-7. The PreToolUse hook removes a `model` the desk's LLM puts on an `Agent` call.
+7. The PreToolUse hook removes a `model` (and any unexpected key) the desk's LLM puts on an `Agent` call and
+   sets this request's choice for that subagent; one `agent chat` conversation keeps one session.
 8. Docs: RUNTIME.md, README "Runtime LLM" + "Agent runtime", architecture boxes `llm_proposer` /
    `llm_runtime` ("LLM → Jev picks per move"), regenerated `docs/architecture.html`.
 9. Gate green (black, ruff, format, mypy, pytest) + `scripts/sim_smoke.py`; a dry desk run on the
@@ -48,10 +49,11 @@ per role, and a pinned model still wins.
 tests `tests/test_desk_models.py` + updates to the desk/hook/llm tests.
 
 ## Risks & assumptions
-- Subagent models are fixed when the SDK session starts (definitions go in the initialize request). In
-  `agent chat`, a request whose subagent choices differ from the session's starts a new session (the
-  transcript says so); an orchestrator-only change uses `ClaudeSDKClient.set_model()` in place.
+- Subagent definitions are fixed when the SDK session starts, and a new session would forget the
+  conversation (the #108 review's P1), so `agent chat` keeps ONE session: the orchestrator switches with
+  `ClaudeSDKClient.set_model()`, and the hook puts each subagent's family alias on its `Agent` call, which
+  the session pins to our exact id with ANTHROPIC_DEFAULT_<FAMILY>_MODEL (code.claude.com/docs/en/model-config).
 - The Agent tool's own `model` input only takes family aliases (sonnet/opus/haiku/fable, read from the
-  bundled CLI 0.2.163 schema), so we never set it; we strip it instead.
+  bundled CLI 0.2.163 schema): a family with two of our models cannot be named, and keeps the session's model.
 - Value at risk for a desk request is read from the operator's text (the largest price-like number,
   card codes excluded); it only buckets the cache and informs Jev, it never sets a price.

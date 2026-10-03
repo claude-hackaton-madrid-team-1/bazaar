@@ -314,6 +314,7 @@ class ModelChooser:
         record = {
             "ts": self._clock(),
             "tick": choice.tick,
+            "question": self.question_id,
             "kind": situation.kind,
             "bucket": tick_bucket(situation.tick_seconds),
             "flagged": bool(situation.flags),
@@ -330,11 +331,14 @@ class ModelChooser:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _warm(self) -> None:
-        """Reuse fresh Jev decisions logged by another process (one `bazaar ask` per process)."""
+        """Reuse fresh Jev decisions logged by another process (one `bazaar ask` per process), for this
+        chooser's question only (a line without one is from before N15: `model_for_move`)."""
         for record in read_choices(self.log_path, WARM_LINES):
+            if record.get("question", QUESTION_ID) != self.question_id:
+                continue
             try:
                 key, choice = _cached_record(record)
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, ArithmeticError):
                 continue  # a malformed log line is skipped, never fatal at startup
             if choice.source in ("jev", "default") and choice.alias in (*self.candidates, self.default_for(key[0])):
                 self._cache[key] = choice
@@ -359,11 +363,16 @@ def _cached_record(record: Mapping[str, Any]) -> tuple[CacheKey, ModelChoice]:
 
 
 def read_choices(path: Path | None, limit: int) -> list[dict[str, Any]]:
-    """The last `limit` logged model choices, oldest first; unreadable lines are skipped."""
+    """The last `limit` logged model choices, oldest first. Unreadable lines are skipped and an unreadable
+    file reads as empty: several processes append to it, and a torn line must never stop a start."""
     if path is None or not path.is_file():
         return []
+    try:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return []
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
+    for line in text.splitlines()[-limit:]:
         try:
             row = json.loads(line)
         except ValueError:
