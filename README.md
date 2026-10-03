@@ -950,6 +950,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | Sat 04:57 | `a8da058` |
 | [#124](../../pull/124) | docs: backlog in repo specs (issues migrated), Saturday deadlines, status 05:00 | Sat 04:54 | `c6f7ad9` |
 | [#121](../../pull/121) | fix: public /state and /events must not reveal our limits (#69 follow-up) | Sat 04:30 | `6547531` |
 | [#104](../../pull/104) | docs: Bazaar Live deployed, URL on the status page and services guide | Sat 03:41 | `e7434a6` |
@@ -961,7 +962,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#90](../../pull/90) | docs: learner / auto-evolve (P0) and real-time holdings in the plan and roadmap | Sat 03:02 | `a79f601` |
 | [#88](../../pull/88) | feat: Linear-style roadmap timeline (Fri 2 → Sun 4, freeze Sun 06:00, deadline Sun 14:00) | Sat 02:57 | `90b15c2` |
 | [#82](../../pull/82) | feat: timed roadmap on the architecture page | Sat 02:37 | `16552b7` |
-| [#83](../../pull/83) | chore: make the agent harness Claude-only and remove unused files | Sat 02:34 | `e91a8de` |
 
 ### Open pull requests
 
@@ -970,7 +970,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 | [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
-| [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | `chore/iac-live-show-db` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday (PARTIAL: story, Q&A, demo; decisions log + charts pending) | `night/b29-pitch-kit` |
 | [#134](../../pull/134) | B28: taker go-live counterfactual (Friday replayed through the current taker), stacked on #125 | `night/b28-taker-counterfactual` |
 | [#133](../../pull/133) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (B16, bite X18) | `night/b16-unsettled-accepts` |
@@ -987,5 +986,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
 | [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
 | [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
+| [#117](../../pull/117) | Night B8: Duels II days readiness: sign latch on real evidence, rival days, zoo numbers | `night/b8-days` |
 
 <!-- BAZAAR:ACTIVITY:END -->
