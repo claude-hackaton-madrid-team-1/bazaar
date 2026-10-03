@@ -507,3 +507,20 @@ The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every t
 from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
 maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
 value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.
+
+### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
+From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
+1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
+counterparty cap; the live maker cancelled hand-posted offers (now `hands-off:<id>` ledger rows it never
+touches); Friday's addressed vs public fill rates were first miscounted (34 % / 7 %, really 20 % / 6 %).
+
+### [2026-10-03] gotcha — CliRunner's `.output` includes stderr: parse `.stdout` in JSON CLI tests
+The CLI prints its target banner (`target: real game …`) to stderr, and click 8.2's `Result.output` mixes
+stderr in, so `json.loads(out.output)` fails once a branch meets main (#79's `test_affinity`, #98's
+`test_rivals`). Parse `out.stdout`, and keep every CLI note on `err_console` so `--json` stays pure.
+
+### [2026-10-03] build-error — a ledger outage made the dealer bid her ask instead of holding (#79 review)
+symptom: `_reserve_accept` caught `LedgerUnavailable` and returned False ("slot taken"), so `negotiate` sent
+`meet_ask` (a bid at her ask) whose spend the dead ledger could not book → root cause: one bool for two
+answers → fix: `Reserve` returns `None` when the slot cannot be read, and the dealer holds the tick
+(`test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask`).

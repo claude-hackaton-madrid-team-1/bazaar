@@ -229,6 +229,22 @@ PR 2 (supply + packs, 09:30 window or next).
 - Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
   packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
 
+### PR79 / PR98 — takeover of Marius's W4 trade desk and B4 rival scanner (2026-10-03, coordinator task `task_a3927baba1ba`)
+Spec (external, no local spec file): the `/pr-review` verdicts on #79 and #98 (pr-reviewer + security-auditor,
+2026-10-03 04:30), Jev's triage (#79 keep_with_fixes 0.97, #98 keep_with_fixes 0.98, #101 closed with a
+salvage path), RULES.md "Trading with other teams" and "Fair play". Marius's work is squashed into one commit
+per PR (his history carried our private numbers), authored by him; the fixes follow, one concern per commit.
+- PR79 takeover (base #72's head, rebased on `main` once #72 merges). Steps: squash #79 onto #72's head (keep
+  both `one_per_thread` and `trade_book` in `seller.py`) · `test_affinity` reads stdout only (P0) · an
+  unreadable accept slot (ledger down) holds the dealer's tick instead of bidding her ask (P2) · team ids
+  without a trailing newline (P3) · feed notes to stderr so `--json` stays JSON (P2) · `_night/` git-ignored ·
+  GUARDRAILS text matches the code; the cap stays off. · **Acceptance:** each fix has a test that fails on
+  the old code; gate + `scripts/sim_smoke.py` green; `/pr-review` APPROVE; Honest Implementation Report.
+- PR98 takeover (stacked on the PR79 takeover). Steps: squash #98 · `test_rivals` reads stdout (P0) · the
+  page bonus from FREE copies (P1) · the bid parser refuses `want.assets` and unknown keys, main's
+  `market.parse_offer` too (P1) · the sell path re-reads the kill switch after the duel-grace wait (P1) · the
+  `taker.py` import conflict (P1) · `accept_bids` stays off. · **Acceptance:** as above.
+
 ---
 
 ### N15 — Jev picks the desk's model per request
