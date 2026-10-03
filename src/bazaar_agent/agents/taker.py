@@ -310,9 +310,17 @@ class Taker:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
             self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
-        finally:
-            if self.learner is not None:  # after every send of the tick, whatever happened in it
-                self.learner.flush()
+        except Exception:
+            self._after_sends()
+            raise
+        self._after_sends()
+
+    def _after_sends(self) -> None:
+        """After every send of the tick (an error included, never Ctrl-C): the learner's writes and the feed
+        archive. No database write ever runs before a send."""
+        if self.learner is not None:
+            self.learner.flush()
+        self.feed.archive_pending()
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock

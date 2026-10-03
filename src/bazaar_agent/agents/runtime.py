@@ -102,6 +102,7 @@ class MarketFeed:
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
         self._archive, self._archive_failed = archive, False
+        self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
         self._events: dict[int, Event] = {}
         self._newest_db = 0
@@ -149,15 +150,16 @@ class MarketFeed:
         except Exception as e:
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         if self._archive and from_db:
-            self._archive_window(window)
+            self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
 
-    def _archive_window(self, window: list[Event]) -> None:
-        """Write the window's events Postgres does not hold yet (bounded; a failure only logs)."""
+    def archive_pending(self) -> None:
+        """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
+        archive never delays one (bounded by a statement timeout; a failure only logs)."""
         from bazaar_agent.db import insert_events
 
-        fresh = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
-        if not fresh or self._conn is None:
+        fresh, self._unarchived = self._unarchived, []
+        if not fresh or self._conn is None or self._conn.closed:
             return
         try:
             with self._conn.transaction():

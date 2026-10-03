@@ -5,7 +5,7 @@ import contextlib
 import psycopg
 import pytest
 
-from bazaar_agent.learn.live import LiveLearner
+from bazaar_agent.learn.live import BLOCKER_RECALL_KINDS, LiveLearner
 from bazaar_agent.learn.reader import FeedReader, GameHour, from_refusal
 from bazaar_agent.learn.store import LearningStore
 from bazaar_agent.sdk import BazaarError
@@ -30,7 +30,8 @@ def test_recall_filters_by_subject_kind_tick_and_team():
     assert store.recall("chato", {"cooloff"}, 193, team=US) == []  # expired AT until_tick
     assert {lr.team for lr in store.recall(kinds={"cooloff"}, tick=180, team=US)} == {US}  # t05's is not ours
     fees = store.recall(kinds={"fee_change"}, subject_kind="venue")
-    assert [lr.tick for lr in fees] == sorted((lr.tick for lr in fees), reverse=True) and len(fees) >= 3
+    # one row per venue and effective tick: v03's notice and its change at T136 are one fact
+    assert [lr.tick for lr in fees] == sorted((lr.tick for lr in fees), reverse=True) and len(fees) == 2
     assert len(store.recall(limit=2)) == 2 and store.where == "memory only"
 
 
@@ -214,3 +215,34 @@ def test_the_live_learner_reads_memory_before_sends_and_pulls_postgres_after():
     assert calls == [False]  # before the sends: memory only
     learner.flush()
     assert calls == [False, True]  # after the sends: Postgres, for the next tick
+
+
+def test_the_blocker_recall_asks_for_blocker_kinds_only():
+    seen: list[object] = []
+
+    class Spy(LearningStore):
+        def recall(self, subject=None, kinds=None, *args, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(kinds)
+            return super().recall(subject, kinds, *args, **kwargs)
+
+    learner = LiveLearner(Spy())
+    learner.blocks(FEED, US, CLOCK)
+    learner.flush()
+    assert seen == [BLOCKER_RECALL_KINDS, BLOCKER_RECALL_KINDS]
+    assert "lesson" not in BLOCKER_RECALL_KINDS and "cooloff" in BLOCKER_RECALL_KINDS
+
+
+@pytest.mark.integration
+def test_a_value_jsonb_refuses_skips_the_batch_never_raises(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from tests.test_db import open_in
+
+    lines: list[str] = []
+    store = LearningStore(lambda: open_in(database_url, schema), lines.append, init_schema=db.init_schema)
+    good = from_refusal("abuela", "cooloff", "", {"until_tick": 190}, US, HOUR, None)
+    nan = good.model_copy(update={"detail": {**good.detail, "x": float("nan")}})
+    nul = good.model_copy(update={"until_tick": 191, "detail": {**good.detail, "reopens": "a\x00b"}})
+    assert store.record([good, nul]) == 2  # NUL is cleaned and stored
+    assert store.record([nan]) == 1 and lines == ["learnings: upsert skipped a batch (ValueError); memory keeps it"]
+    assert store.recall("abuela", {"cooloff"}, 180, team=US)  # the connection still answers
+    store.close()

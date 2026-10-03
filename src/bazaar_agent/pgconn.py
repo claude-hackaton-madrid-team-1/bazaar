@@ -91,10 +91,16 @@ def connection_params(url: str, app: str = DEFAULT_APP) -> dict[str, str]:
     return {**CONNECT_DEFAULTS, "application_name": app, **_parse(url)}
 
 
-def connect(database_url: str | None = None, *, app: str = DEFAULT_APP) -> psycopg.Connection:
-    """Open Postgres at `database_url`, or DATABASE_URL (env, then `.env`, then the local default)."""
+def connect(
+    database_url: str | None = None, *, app: str = DEFAULT_APP, timeout_s: int | None = None
+) -> psycopg.Connection:
+    """Open Postgres at `database_url`, or DATABASE_URL (env, then `.env`, then the local default).
+    `timeout_s` overrides the connect timeout (a background writer that must not stall a loop)."""
     url = load_settings().require_database_url(database_url)
-    return psycopg.connect(make_conninfo(**connection_params(url, app)))
+    params = connection_params(url, app)
+    if timeout_s is not None:
+        params = {**params, "connect_timeout": str(timeout_s)}
+    return psycopg.connect(make_conninfo(**params))
 
 
 class Reconnector:
