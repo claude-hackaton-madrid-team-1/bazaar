@@ -117,10 +117,11 @@ negotiates well.
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
-| [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved: the maker opens our 0 bps board venue at game hour 6.5 (~11:30, Jev open_noon) and brokers it; 370 P reserve until then; merges before 06:00 after #72 |
+| [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
+| TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -272,6 +273,46 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
 - Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
 
+### S1 — Safety: offer inspector on every accept, bad-faith flags, injection hardening
+Spec: [`S1-spec.md`](S1-spec.md). Takes over Marius's #93 inspector (credit kept, squashed; #81/#61 under it
+are not part of S1). Three PRs: A (inspector, target 10:30 Sat), B (flags), C (injection hardening).
+- Step A1 — Port `agents/inspector.py` + tests + Friday fixture from #93 onto main. · **Acceptance:** its
+  tests green on main; precision on Friday's 1,022 dealer offers: 0 flags.
+- Step A2 — `agents/accept_gate.py`: one gate per accept kind (dealer thread offer by id, board ask, duel
+  re-read); a block never spends the accept slot. · **Acceptance:** bait tests per kind (lesser card, lesser
+  rarity, changed duel offer) refused; consistent offers pass.
+- Step A3 — Wire the gate into every accept: taker `_accept_one` (dealer + board), `dealer buy`
+  (`negotiate`), `duel run --play`, runtime `duel_move`; the inspection lands in the decision row's inputs.
+  Kill flag `inspect_accepts` (GUARDRAILS.md, true). · **Acceptance:** taker/dealer/duel tests + sim smoke.
+- Step A4 — Would-flag log on every dealer thread read (desk + `dealer buy`), `allow_flags` stays false.
+- Step B1 — Flags as decision rows (`kind=flag`, evidence = the inspection), sent through the Recorder only
+  when `allow_flags` is true; one flag per message, a 4xx never re-sent. · **Acceptance:** tests.
+- Step B2 — `bazaar inspect feed`: precision of the flag rule over the captured feed (the evidence Jev reads
+  before `allow_flags` goes on). · **Acceptance:** report on the real capture.
+- Step C1 — Hostile-text tests on every counterparty-text path (words LLM, runtime tools, duel text, dealer
+  words): injection, fake offer JSON, fake limits, markup, odd Unicode, long input; none changes a binding
+  field. · **Acceptance:** tests green; injection attempts tagged whether or not `llm_words` is on.
+
+### #71 (#11 / #12) — Market Test at 12:00: our board venue inside the maker (Jev `open_noon`, 0.82)
+Spec (citations, no separate file): the coordinator's brief (items 1–6); RULES.md "Your own market" (level 2,
+bond 250 + 20, broker key, `board` vs `auto`, "You cannot trade on your own venue") and "The Market Test"
+(the best venue open during a session counts; the stall earns half); #71's Greptile P1s (pause per send,
+exact cap, key never lost, no late send, symlink-safe writes), all kept.
+Files: `agents/venue_keeper.py`, `venue.py`, `agents/broker.py`, `agents/matcher.py`, `guardrails.py`,
+`agents/maker.py`, `agents/status.py`, `GUARDRAILS.md`, `sql/schema.sql`.
+- Step 1 — Effective floor: `cash_floor` 100 + `venue_bond_reserve` 270 until `/me` shows our venue; venue
+  open refused before `venue_open_after_game_hours`, twice, or below the floor. · **Acceptance:**
+  `tests/test_guardrails.py` venue tests.
+- Step 2 — Key vault: Postgres `venue_broker_keys` (target, venue) + 0600 file, never shown; durable check before the open.
+  · **Acceptance:** `tests/test_venue.py` vault tests.
+- Step 3 — Keeper in the maker's tick: open once at h6.5 (board, 0 bps), then broker every tick in the
+  window, paced. · **Acceptance:** `tests/test_venue_keeper.py`.
+- Step 4 — Matcher ties in book order; properties (no bid < ask, no order twice, ≥ auto). · **Acceptance:**
+  `tests/test_matcher.py` property tests.
+- Step 5 — Public status allow-list for broker/venue rows. · **Acceptance:** keeper status test.
+- Step 6 — Simulator proof. · **Acceptance:** `tests/test_sim_venue.py`, `scripts/sim_market_test.py` output
+  in the PR.
+
 ---
 
 ### N15 — Jev picks the desk's model per request
@@ -287,6 +328,18 @@ Spec: [`N15-spec.md`](./N15-spec.md). Files: `llm/{config,chooser,cli}.py`, `run
   conversation keeps one session while each request runs its own models.
 - Step 4 — `bazaar llm` desk section, README, RUNTIME.md, architecture boxes. · **Acceptance:** CLI test +
   regenerated html; dry desk run on `BAZAAR_SIM=local` shows the chosen models.
+
+### N18 — Lean agent-behaviour tracing in Phoenix
+Spec: [`N18-spec.md`](./N18-spec.md) over ADR 0001 (`docs/adr/0001-agent-behavior-tracing.md`, PR #46). The backlog
+table row for N18 is on PR #124. Files: `telemetry.py`, `traces.py`, `llm/traced.py`, `agents/{dealer,runtime,duel_jev}.py`,
+`cli.py`, `docs/observability.md`, `tests/test_tracing_n18.py`.
+- Step 1 — `session.id` (contextvar + explicit) on dealer, duel and loop spans. · **Acceptance:** session tests.
+- Step 2 — Jev calls as EVALUATOR spans (`record_jev`), no state. · **Acceptance:** evaluator test.
+- Step 3 — AGENT span per agent tick, TOOL span per request sent. · **Acceptance:** tool and recorder tests.
+- Step 4 — LLM spans (`TracedProvider`), text only for `words`. · **Acceptance:** llm span tests.
+- Step 5 — evals (#91) as annotations: not done (list in `docs/observability.md`).
+- Step 6 — `docs/observability.md` pitch replay. · **Invariants:** on/off parity (fake client + `sim_smoke`), dead
+  exporter, no private number in any span (8 seeds).
 
 ## Parallel-work notes
 

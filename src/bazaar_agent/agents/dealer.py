@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -318,16 +319,18 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
         return "the offer gives cash on a buy"
     if item is None:
         return None
-    refs = [str(t).split(":", 1)[-1] for t in give.get("types") or []]
-    refs += [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
-    if refs != [item]:
-        return f"the offer gives {refs or 'nothing'} instead of exactly [{item}]"
+    kinds = [str(t) for t in give.get("types") or []]  # 'card:LAV-08' / 'pack:sobre_barrio': the kind binds too
+    kinds += [f"{a.get('kind') or 'card'}:{a.get('ref')}" for a in give.get("assets") or [] if isinstance(a, dict)]
+    expected = f"{'card' if '-' in item else 'pack'}:{item}"
+    if kinds != [expected] or len(give.get("assets") or []) + len(give.get("types") or []) != 1:
+        return f"the offer gives {kinds or 'nothing'} instead of exactly [{expected}]"
     return None
 
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move, int], str | None]  # (move, our thread id) → a deny reason, or None when allowed
 Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
+Inspect = Callable[[dict[str, Any], Move], str | None]  # the accept gate on this tick's thread: a refusal, or None
 
 
 class Hold(Exception):
@@ -394,6 +397,10 @@ class Observer:
     def finished(self, outcome: Outcome) -> None:
         """The negotiation ended."""
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        """Wraps one request to the game (`say`, `accept`, `close_thread`)."""
+        return nullcontext()
+
 
 class _SafeObserver(Observer):
     """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
@@ -433,6 +440,12 @@ class _SafeObserver(Observer):
     def finished(self, outcome: Outcome) -> None:
         self._call("finished", outcome)
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        try:
+            return self._inner.tool(name)
+        except Exception:
+            return nullcontext()
+
 
 def negotiate(
     client: Any,
@@ -450,6 +463,8 @@ def negotiate(
     words_fn: WordsFn = template_words,
     reserve: Reserve | None = None,
     kill_switch: KillSwitch | None = None,
+    on_thread: Callable[[dict[str, Any]], None] | None = None,
+    inspect: Inspect | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
@@ -462,6 +477,11 @@ def negotiate(
     stays open, and a held tick does not count toward `max_ticks`, so the negotiation resumes where it
     was when the switch goes off. It is read again just before every send. Any other guard denial still
     turns the move into a walk. A walk because she held her opening ask returns `Outcome.reopen_start`.
+
+    `on_thread` sees each tick's thread payload first (the offer inspector's would-flag log); it never
+    changes the move, and its failures are logged, not raised. `inspect` is the accept gate (S1): it runs
+    before `guard` and before the team's accept slot is claimed; a refusal means no accept this tick, never
+    a walk.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -531,7 +551,8 @@ def negotiate(
         simulator answers 200 {"status": "deal"}), may hide a "Deal!" that landed since our last read: read
         the thread again and book it. A rate limit sends nothing more now: the thread stays open."""
         try:
-            answer = client.close_thread(tid)
+            with obs.tool("close_thread"):
+                answer = client.close_thread(tid)
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
@@ -578,6 +599,11 @@ def negotiate(
         state["ticks"] += 1
         thread = client.thread(tid)
         obs.thread_read(thread)
+        if on_thread is not None:
+            try:
+                on_thread(thread)
+            except Exception as e:  # inspection must never change or break the negotiation
+                log(f"tick {clock.tick}: offer inspection failed ({type(e).__name__}); negotiation continues")
         if ended(thread, clock):
             return
         if hold(f"tick {clock.tick}"):  # a held tick does not count toward max_ticks
@@ -602,6 +628,12 @@ def negotiate(
             f"tick {clock.tick}: her ask {ask}{' FINAL' if final else ''} → {move.kind} {move.price or ''} "
             f"({move.reason})"
         )
+        if inspect is not None and move.kind == "accept":
+            refused = inspect(thread, move)
+            if refused:
+                log(f"tick {clock.tick}: INSPECTOR refused the accept of offer {move.offer_id}: {refused}")
+                obs.guardrail(move, f"inspector: {refused}")
+                return
         if guard is not None and move.kind in ("accept", "bid"):
             try:
                 denied = guard(move, tid)
@@ -646,10 +678,12 @@ def negotiate(
         obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:
-                client.accept(move.offer_id)
+                with obs.tool("accept"):
+                    client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None and text is not None:
-                client.say(tid, text, price=move.price)
+                with obs.tool("say"):
+                    client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 state["status"] = close("walked", clock)

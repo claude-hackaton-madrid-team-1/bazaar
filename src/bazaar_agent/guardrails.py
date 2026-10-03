@@ -91,6 +91,27 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    allow_venue_open: bool = False
+    venue_bond_reserve: int = Field(default=270, ge=0)
+    venue_open_after_game_hours: float = Field(default=6.5, ge=0)
+    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
+    inspect_accepts: bool = True
+
+    @field_validator("flag_trusted_dealers")
+    @classmethod
+    def _trusted_parse(cls, value: str) -> str:
+        if value.strip().lower() == "none":
+            return value
+        ids = [d.strip() for d in value.split(",")]
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
+            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+        return value
+
+    @property
+    def trusted_dealers(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
+
     protect_page_sets: str = "none"
 
     @field_validator("protect_page_sets")
@@ -162,6 +183,12 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches); agents.venue_keeper opens it",
+    "venue_bond_reserve": "guardrails.check (effective_cash_floor while a planned venue is not open yet)",
+    "venue_open_after_game_hours": "guardrails.check (venue_open) + agents.venue_keeper (first tick past it)",
+    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
 }
 
@@ -388,7 +415,21 @@ def duel_days_ok(days: float) -> bool:
 # `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
 # kill switch applies to them.
 ActionKind = Literal[
-    "buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag", "cancel", "close_thread"
+    "buy",
+    "sell",
+    "accept_buy",
+    "accept_sell",
+    "bid",
+    "duel_offer",
+    "duel_accept",
+    "flag",
+    "cancel",
+    "close_thread",
+    "venue_open",
+    "venue_close",
+    "venue_fee",
+    "venue_announce",
+    "broker_match",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 
@@ -427,10 +468,48 @@ class Context:
     accepts_this_tick: int = 0
     paused: bool = False
     packs_last_hour: int = 0
+    has_venue: bool = False  # we run a venue we opened (open or closing), from /api/me `venue`
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
     sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
+
+
+# What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
+STARTER_STALL_MARKER = "has_starter_stall"
+
+
+def runs_venue(me: dict[str, Any]) -> bool:
+    """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one:
+    /me carries `starter_broker_key` while we have the stall (the kit's `Bazaar.me`), and opening our own
+    venue replaces the stall (RULES.md), so a venue named next to that key is the stall. The same answer
+    drives the bond reserve and the refusal of a second opening."""
+    venue = me.get("venue")
+    if not venue:
+        return False
+    if isinstance(venue, dict) and venue.get("starter") is False:  # said outright: ours, whatever the key says
+        return str(venue.get("status") or "open") in ("open", "closing")
+    if me.get("starter_broker_key") or me.get(STARTER_STALL_MARKER):  # live /me, or one without its secrets
+        return False
+    if isinstance(venue, str):
+        return True
+    if not isinstance(venue, dict) or venue.get("starter") is True:
+        return False
+    return str(venue.get("status") or "open") in ("open", "closing")
+
+
+def effective_cash_floor(rules: Guardrails, ctx: Context) -> int:
+    """`cash_floor`, plus `venue_bond_reserve` while a planned venue (`allow_venue_open`) is not open yet:
+    every purchase leaves the bond and opening fee in cash until the venue opens. The same for every writer."""
+    # Zero unless a venue is planned: with allow_venue_open = false no bond reserve is ever held.
+    reserve = rules.venue_bond_reserve if rules.allow_venue_open and not ctx.has_venue else 0
+    return rules.cash_floor + reserve
+
+
+def floor_text(rules: Guardrails, ctx: Context) -> str:
+    if effective_cash_floor(rules, ctx) == rules.cash_floor:
+        return f"cash_floor {rules.cash_floor}"
+    return f"cash_floor {rules.cash_floor} + venue_bond_reserve {rules.venue_bond_reserve}"
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -447,6 +526,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         accepts_this_tick=ledger.accepts_in_tick(tick),
         paused=(REPO_ROOT / rules.pause_file).exists(),
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
+        has_venue=runs_venue(me),
         stops=kill_switch(rules),
     )
 
@@ -471,8 +551,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         elif action.price > top:
             lifted = f"dealer final cap {top} (max_price_{action.rarity} {cap} lifted)" if top > cap else ""
             v.append(f"price {action.price} > {lifted or f'max_price_{action.rarity} {cap}'}")
-        if ctx.cash - action.price < rules.cash_floor:
-            v.append(f"cash {ctx.cash} - {action.price} < cash_floor {rules.cash_floor}")
+        if ctx.cash - action.price < effective_cash_floor(rules, ctx):
+            v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
         if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
             v.append(
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
@@ -500,7 +580,38 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
+    v.extend(_venue_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
+
+
+# Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
+VENUE_BOND = 250
+VENUE_OPENING_FEE = 20
+VENUE_COST = VENUE_BOND + VENUE_OPENING_FEE
+# Writes that only make sense while we run a venue: all of them wait for `allow_venue_open`. Closing does not,
+# so a venue opened by hand can still be closed from the CLI (the kill switch still stops it).
+VENUE_SWITCHED: frozenset[str] = frozenset({"venue_open", "venue_fee", "venue_announce", "broker_match"})
+
+
+def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """Venue writes: the switch, opening once and not before `venue_open_after_game_hours`, and the bond +
+    opening fee never taking cash below `cash_floor` (the reserve is what the opening spends, so it is not
+    added on top here).
+
+    The bond is not a purchase: it is never counted against `max_spend_per_game_hour` or a rarity cap
+    (`action.price` is the cash the open takes, `VENUE_COST` when the caller leaves it out)."""
+    v: list[str] = []
+    if action.kind in VENUE_SWITCHED and not rules.allow_venue_open:
+        v.append("allow_venue_open = false (build only: flip it in GUARDRAILS.md to run our venue)")
+    if action.kind == "venue_open":
+        cost = VENUE_COST if action.price is None else action.price
+        if ctx.cash - cost < rules.cash_floor:
+            v.append(f"cash {ctx.cash} - venue bond and fee {cost} < cash_floor {rules.cash_floor}")
+        if ctx.has_venue:
+            v.append("we already run a venue: never open a second one")
+        if ctx.t_hours < rules.venue_open_after_game_hours:
+            v.append(f"game hour {ctx.t_hours:g} < venue_open_after_game_hours {rules.venue_open_after_game_hours:g}")
+    return v
 
 
 def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
