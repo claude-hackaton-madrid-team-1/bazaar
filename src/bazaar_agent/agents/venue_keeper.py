@@ -31,7 +31,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_from_env
+from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_from_env, bench_text
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
@@ -142,8 +142,11 @@ class VenueKeeper:
         self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.quiet_rec = Recorder("broker", decisions, live, log)  # rows the public status never shows
-        # BAZAAR_BENCH_POLICY (Railway, set by hand; default exact) picks how the broker matches the Market Test
+        # BAZAAR_BENCH_POLICY / BAZAAR_BENCH_GUARD_MARGIN (Railway, set by hand; default exact) pick how the broker
+        # matches the Market Test; the edge says so at start (the venue runbooks look for this line)
         self.broker_config = bench_config_from_env(broker_config or BrokerConfig(pace_s=0.2), log=log)
+        if self.broker_config.bench_policy == "edge":
+            log(f"venue keeper: broker bench {bench_text(self.broker_config)}")
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
         self.opened: Opened | None = None  # the venue this process opened, its key kept in memory too
@@ -339,7 +342,7 @@ class VenueKeeper:
             self._broker = (venue, agent)
             self.log(
                 f"tick {clock.tick} venue: broker on for {venue} ({'LIVE' if self.live else 'dry run'}), "
-                f"bench policy {self.broker_config.bench_policy}"
+                f"bench {bench_text(self.broker_config)}"
             )
         agent = self._broker[1]
         if snap is not None:

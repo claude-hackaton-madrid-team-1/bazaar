@@ -1080,3 +1080,12 @@ session, start_tick}` and NO run id, so `BenchSessions` opens sessions from the 
 `{"queued": true, "settles_at_tick": tick + 1}`. Matched ids: buyers b35-4..9, b52-0..5; sellers b35-13..17,
 b52-13..19 (ten a side?). On `bazaar_sim.bench`, exact equals the stall on every book; #84's edge without a guard
 realises less than the stall on 2-26 % of books (mean below it with 20 traders); `scripts/bench_edge_proof.py`.
+
+### [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
+`scripts/bench_edge_proof.py --seeds 2000` (14 regimes × 6 policies; points under 4 readings of the unpublished curve):
+on #77's reading (field at the stall, 0.5 × eff/stall below) the unguarded edge earns the most points in every regime
+(normal ×20 traders: 0.604 vs guard 10 0.544 vs exact 0.500), even when its mean efficiency is below the stall; only a
+harsh reading (rivals +0.10, 0 points at −0.05) with wrong priors makes exact best. Worst regret: margin 5 0.045,
+unguarded 0.072, margin 10 0.110, exact 0.252. Per book, any deviation from the stall can lose: a guard that deviates
+only when the edge wins at the worst corner of every limit band still loses 0.4-8.7 % of books, because the trader the
+edge pairs now is the one the stall would have matched to a better late arrival (path effect, not estimate error).

@@ -37,6 +37,8 @@ from bazaar_agent.agents.matcher import (
     plan_matches,
 )
 
+DEFAULT_GUARD_MARGIN = 10.0  # estimated primas (`EdgeConfig.guard_margin`); BAZAAR_BENCH_GUARD_MARGIN on the maker
+
 
 @dataclass(frozen=True)
 class EdgeConfig:
@@ -57,9 +59,9 @@ class EdgeConfig:
     give_up_after: int = 8  # ... and never before this many refusals
     # `edge_plan`'s safety: the edge's pairs go out only when their estimated true surplus beats the exact (stall-equal)
     # plan's by at least this many primas, and never with fewer pairs; otherwise the exact plan goes out. Without it
-    # the edge realises less than the stall on 2-26 % of simulated books; with 10 its mean is at or above the stall's
-    # in every modelled regime (scripts/bench_edge_proof.py).
-    guard_margin: float = 10.0
+    # (-inf, #84 as it was) the edge realises less than the stall on 2-26 % of simulated books; with 10 its mean is at
+    # or above the stall's in every modelled regime (scripts/bench_edge_proof.py).
+    guard_margin: float = DEFAULT_GUARD_MARGIN
 
 
 @dataclass(frozen=True)
@@ -319,14 +321,17 @@ def edge_plan(
     tick: int,
     limit: int | None = None,
     expiries: Mapping[str, int] | None = None,
+    margin: float | None = None,
 ) -> EdgePlan:
     """One read of the bench as the broker runs it with `bench_policy = "edge"`: observe every quote, plan, and keep
-    the exact plan unless the edge's pairs beat it by `guard_margin` estimated primas with at least as many pairs.
-    A gain that is not a finite number (absurd quotes) keeps the exact plan too."""
+    the exact plan unless the edge's pairs beat it by `margin` (default `edge.config.guard_margin`) estimated primas
+    with at least as many pairs. A gain that is not a finite number (absurd quotes) keeps the exact plan too; a
+    margin of -inf sends the edge's pairs whenever they are at least as many (#84 as it was)."""
     edge.observe(bench, tick, expiries)
     mine = edge.plan(bench, fee, tick, limit=limit)
     exact = plan_matches([q for q in bench if q.bench], fee, limit)
     gain = estimated_surplus(edge, mine) - estimated_surplus(edge, exact)
-    if len(mine) < len(exact) or not math.isfinite(gain) or gain < edge.config.guard_margin:
+    need = edge.config.guard_margin if margin is None else margin
+    if len(mine) < len(exact) or not math.isfinite(gain) or gain < need:
         return EdgePlan(exact, False, gain)
     return EdgePlan(mine, True, gain)

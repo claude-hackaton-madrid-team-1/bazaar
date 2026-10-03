@@ -147,8 +147,10 @@ def test_the_show_holds_no_team_key_and_no_database(services: dict[str, dict[str
 def test_the_bench_policy_is_hand_set_on_the_maker_only_and_never_valued_here(
     services: dict[str, dict[str, Any]],
 ) -> None:
-    """BAZAAR_BENCH_POLICY=edge switches the maker's venue broker to the bench edge without a deploy: declared
-    preserve() on the maker (the venue keeper runs there), never a value in this file, nowhere else."""
-    policy = {name: (s.get("variables") or {}).get("BAZAAR_BENCH_POLICY") for name, s in services.items()}
-    assert {n for n, v in policy.items() if v == {"type": "preserve"}} == {"bazaar-maker"}
-    assert all(v is None for n, v in policy.items() if n != "bazaar-maker"), policy
+    """BAZAAR_BENCH_POLICY=edge switches the maker's venue broker to the bench edge, and BAZAAR_BENCH_GUARD_MARGIN sets
+    its guard, without a code change: declared preserve() on the maker (the venue keeper runs there), never a value
+    in this file, nowhere else."""
+    for var in ("BAZAAR_BENCH_POLICY", "BAZAAR_BENCH_GUARD_MARGIN"):
+        policy = {name: (s.get("variables") or {}).get(var) for name, s in services.items()}
+        assert {n for n, v in policy.items() if v == {"type": "preserve"}} == {"bazaar-maker"}, var
+        assert all(v is None for n, v in policy.items() if n != "bazaar-maker"), policy

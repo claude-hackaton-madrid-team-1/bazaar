@@ -27,6 +27,7 @@ run ("b12"): it opens on `bench.started` or when its offers first show in the bo
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -37,7 +38,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
-from bazaar_agent.agents.bench_edge import BenchEdge, edge_plan, expiries_in
+from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge_plan, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
@@ -58,30 +59,72 @@ class BrokerConfig:
     pace_s: float = 0.0  # seconds between two sends (0.2 = 5 per second, the key's sustained rate)
     # How the Market Test bench is matched. "exact" (today): the maximum quoted-surplus matching, which pairs the
     # same traders as the free stall. "edge": `agents/bench_edge.py` (PR #84), the maximum *estimated true* surplus
-    # from per-trader limit bands, sent only when it beats the exact plan by `EdgeConfig.guard_margin`.
+    # from per-trader limit bands, sent only when it beats the exact plan by `bench_guard_margin` estimated primas
+    # (-inf: whenever it has at least as many pairs, #84 as it was).
     bench_policy: BenchPolicy = "exact"
+    bench_guard_margin: float = DEFAULT_GUARD_MARGIN
 
 
 BenchPolicy = Literal["exact", "edge"]
 BENCH_POLICIES: dict[str, BenchPolicy] = {"exact": "exact", "edge": "edge"}
 BENCH_POLICY_ENV = "BAZAAR_BENCH_POLICY"
+BENCH_MARGIN_ENV = "BAZAAR_BENCH_GUARD_MARGIN"
+UNGUARDED = ("none", "-inf", "-infinity")  # BAZAAR_BENCH_GUARD_MARGIN values for no guard at all
+NOT_WIRED = ("BAZAAR_BENCH_CROSS", "BAZAAR_BENCH_PRESET")  # #84's other switches: limit probes and presets stay off
+
+
+def bench_text(config: BrokerConfig) -> str:
+    """How the broker matches the bench, for the keeper's lines: `exact`, `edge (guard margin 10 P)` or
+    `edge (unguarded, as #84)`."""
+    if config.bench_policy != "edge":
+        return "exact"
+    margin = config.bench_guard_margin
+    return "edge (unguarded, as #84)" if margin == float("-inf") else f"edge (guard margin {margin:g} P)"
+
+
+def _margin(value: str) -> float | None:
+    """A guard margin from the environment: a number (inf: the edge never fires), or none / -inf (no guard)."""
+    if value in UNGUARDED:
+        return float("-inf")
+    try:
+        margin = float(value)
+    except ValueError:
+        return None
+    return None if math.isnan(margin) else margin
 
 
 def bench_config_from_env(
     base: BrokerConfig, environ: Mapping[str, str] | None = None, log: Callable[[str], None] | None = None
 ) -> BrokerConfig:
-    """The bench policy of a broker with no command line (the maker's venue keeper on Railway): BAZAAR_BENCH_POLICY,
-    `exact` or `edge`, case-insensitive. Unset or empty: `base` unchanged. Any other value is IGNORED, loudly, and
-    `base` stays: a typo must never stop the maker, which also posts our offers."""
-    value = ((os.environ if environ is None else environ).get(BENCH_POLICY_ENV) or "").strip().lower()
-    if not value:
-        return base
-    policy = BENCH_POLICIES.get(value)
-    if policy is None:
-        if log is not None:
-            log(f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact or edge); it stays {base.bench_policy}")
-        return base
-    return replace(base, bench_policy=policy)
+    """The bench options of a broker with no command line (the maker's venue keeper on Railway), case-insensitive:
+    BAZAAR_BENCH_POLICY (`exact` or `edge`) and BAZAAR_BENCH_GUARD_MARGIN (estimated primas; `none` or `-inf`: no
+    guard). Unset or empty: `base` unchanged. Any other value is IGNORED, loudly (its length only, never its text),
+    and `base` stays: a typo must never stop the maker, which also posts our offers. #84's BAZAAR_BENCH_CROSS and
+    BAZAAR_BENCH_PRESET are not wired here: set, they are reported as ignored."""
+    env = os.environ if environ is None else environ
+    say = log or (lambda line: None)
+    config = base
+    value = (env.get(BENCH_POLICY_ENV) or "").strip().lower()
+    if value:
+        policy = BENCH_POLICIES.get(value)
+        if policy is None:
+            say(f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact or edge); it stays {base.bench_policy}")
+        else:
+            config = replace(config, bench_policy=policy)
+    value = (env.get(BENCH_MARGIN_ENV) or "").strip().lower()
+    if value:
+        margin = _margin(value)
+        if margin is None:
+            say(
+                f"broker: IGNORED {BENCH_MARGIN_ENV} ({len(value)} chars; a number, none or -inf); it stays "
+                f"{base.bench_guard_margin:g}"
+            )
+        else:
+            config = replace(config, bench_guard_margin=margin)
+    for name in NOT_WIRED:
+        if (env.get(name) or "").strip():
+            say(f"broker: IGNORED {name}: not wired in this broker (quote-crossing pairs only, normal priors)")
+    return config
 
 
 def bench_run(value: object) -> str:
@@ -277,7 +320,8 @@ class BrokerAgent:
             return plan_matches(quotes.quotes, fee, cap)
         bench = [q for q in quotes.quotes if q.bench]
         try:
-            picked = edge_plan(self.edge, bench, fee, tick, cap, expiries_in(book.bench_offers, tick))
+            expiries = expiries_in(book.bench_offers, tick)
+            picked = edge_plan(self.edge, bench, fee, tick, cap, expiries, self.config.bench_guard_margin)
         except Exception as e:  # never lose the tick to the edge: today's matching instead, and the models restart
             self.log(f"tick {tick} broker: bench edge failed ({type(e).__name__}); exact matching this tick")
             self.edge = BenchEdge(PRIORS["normal"])

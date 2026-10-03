@@ -9,7 +9,7 @@ import pytest
 from bazaar_agent.agents import bench_edge as be
 from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, edge_plan
 from bazaar_agent.agents.bench_model import PRIORS
-from bazaar_agent.agents.broker import BrokerConfig, bench_config_from_env
+from bazaar_agent.agents.broker import BrokerConfig, bench_config_from_env, bench_text
 from bazaar_agent.agents.matcher import MAX_SIDE, BrokerBook, Fee, quotes_from
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.ticks import Clock
@@ -88,6 +88,54 @@ def test_an_unknown_bench_policy_is_ignored_loudly_and_today_stays():
     assert len(lines) == 1 and "IGNORED BAZAAR_BENCH_POLICY (54 chars" in lines[0] and "edgy" not in lines[0]
 
 
+@pytest.mark.parametrize(
+    ("value", "margin"),
+    [
+        (None, 10.0),
+        ("", 10.0),
+        ("5", 5.0),
+        (" 2.5 ", 2.5),
+        ("0", 0.0),
+        (" NONE ", float("-inf")),
+        ("-inf", float("-inf")),
+        ("-Infinity", float("-inf")),
+        ("inf", float("inf")),
+    ],
+)
+def test_the_guard_margin_comes_from_the_environment(value, margin):
+    env = {"BAZAAR_BENCH_POLICY": "edge"} | ({} if value is None else {"BAZAAR_BENCH_GUARD_MARGIN": value})
+    lines: list[str] = []
+    config = bench_config_from_env(BrokerConfig(), env, lines.append)
+    assert config.bench_policy == "edge" and config.bench_guard_margin == margin and lines == []
+
+
+@pytest.mark.parametrize("value", ["nan", "ten", "1e", "10 P", "tk-" + "s" * 40])
+def test_a_margin_that_is_not_a_number_is_ignored_by_its_length_and_ten_stays(value):
+    lines: list[str] = []
+    config = bench_config_from_env(BrokerConfig(), {"BAZAAR_BENCH_GUARD_MARGIN": value}, lines.append)
+    assert config.bench_guard_margin == 10.0
+    assert len(lines) == 1 and f"IGNORED BAZAAR_BENCH_GUARD_MARGIN ({len(value)} chars" in lines[0]
+    assert value.lower() not in lines[0]
+
+
+def test_84s_other_switches_are_reported_as_not_wired():
+    lines: list[str] = []
+    env = {"BAZAAR_BENCH_POLICY": "edge", "BAZAAR_BENCH_CROSS": "limit", "BAZAAR_BENCH_PRESET": "hard"}
+    config = bench_config_from_env(BrokerConfig(), env, lines.append)
+    assert config == BrokerConfig(bench_policy="edge")
+    assert [line.split(":")[1].strip() for line in lines] == [
+        "IGNORED BAZAAR_BENCH_CROSS",
+        "IGNORED BAZAAR_BENCH_PRESET",
+    ]
+
+
+def test_the_bench_text_names_the_policy_and_its_guard():
+    assert bench_text(BrokerConfig()) == "exact"
+    assert bench_text(BrokerConfig(bench_policy="edge")) == "edge (guard margin 10 P)"
+    assert bench_text(BrokerConfig(bench_policy="edge", bench_guard_margin=2.5)) == "edge (guard margin 2.5 P)"
+    assert bench_text(BrokerConfig(bench_policy="edge", bench_guard_margin=float("-inf"))) == "edge (unguarded, as #84)"
+
+
 def test_the_keeper_takes_the_policy_from_the_environment(tmp_path, monkeypatch):
     monkeypatch.delenv("BAZAAR_BENCH_POLICY", raising=False)
     assert keeper(tmp_path, Team()).broker_config.bench_policy == "exact"
@@ -102,10 +150,10 @@ def test_the_keeper_takes_the_policy_from_the_environment(tmp_path, monkeypatch)
 # ---------------------------------------------------------------- the broker
 
 
-def bench_broker(tmp_path, policy, lines=None):
-    broker = FakeBroker(bench=two_way_bench(45))
+def bench_broker(tmp_path, policy, lines=None, low_bid=45, margin=10.0):
+    broker = FakeBroker(bench=two_way_bench(low_bid))
     a = agent(tmp_path, broker, lines=lines, allow_venue_open=True)
-    a.config = BrokerConfig(bench_policy=policy)
+    a.config = BrokerConfig(bench_policy=policy, bench_guard_margin=margin)
     return a, broker
 
 
@@ -189,11 +237,34 @@ def test_the_keeper_says_which_bench_policy_its_broker_runs(tmp_path, monkeypatc
     from tests.test_venue_keeper import ours, snap, window
 
     monkeypatch.setenv("BAZAAR_BENCH_POLICY", "edge")
+    monkeypatch.delenv("BAZAAR_BENCH_GUARD_MARGIN", raising=False)
     lines: list[str] = []
     k = keeper(tmp_path, Team(), lines=lines)
+    assert lines == ["venue keeper: broker bench edge (guard margin 10 P)"]  # at start: what the runbooks look for
     k._key = lambda venue: "bk-test"  # type: ignore[method-assign]  # a venue listed as ours, its key in hand
     k.on_tick(Clock(tick=400, tick_seconds=60.0, next_tick_in=40.0, t_hours=6.6), snap(venues=(ours(),)), window())
-    assert any("broker on for" in line and "bench policy edge" in line for line in lines)
+    assert any("broker on for" in line and "bench edge (guard margin 10 P)" in line for line in lines)
+    monkeypatch.setenv("BAZAAR_BENCH_GUARD_MARGIN", "none")
+    unguarded: list[str] = []
+    keeper(tmp_path, Team(), lines=unguarded)
+    assert unguarded == ["venue keeper: broker bench edge (unguarded, as #84)"]
+    monkeypatch.delenv("BAZAAR_BENCH_POLICY")
+    quiet: list[str] = []
+    keeper(tmp_path, Team(), lines=quiet)
+    assert quiet == []  # exact (today) says nothing at start
+
+
+@pytest.mark.parametrize(("margin", "edge_sent"), [(10.0, False), (5.0, True), (float("-inf"), True)])
+def test_the_brokers_guard_margin_decides_a_close_call(tmp_path, margin, edge_sent):
+    a, broker = bench_broker(tmp_path, "edge", low_bid=44, margin=margin)  # the edge is 9.45 estimated P better
+    a.on_tick(clock())
+    decisions = rows(tmp_path)
+    if edge_sent:
+        assert [d["move"]["sell"] for d in decisions] == ["b7-11", "b7-10"] and {d["reason"] for d in decisions} == {
+            EDGE
+        }
+    else:
+        assert [d["move"] for d in decisions] == [{"sell": "b7-10", "buy": "b7-0", "price": 55}]
 
 
 def test_a_bench_run_that_leaves_the_book_is_forgotten_by_the_edge(tmp_path):
@@ -228,3 +299,21 @@ def map_pool():
             return [fn(i) for i in items]
 
     return Serial()
+
+
+def test_the_regret_table_names_the_policy_whose_worst_regret_is_smallest():
+    def row(policy, points, rivals, steep, harsh):
+        return proof.Row("normal", "x2", policy, 1, 0, 0, 0, 0, 0, 0, points, rivals, steep, harsh, 0)
+
+    rows_ = [
+        row("stall", 0.5, 0.5, 0.5, 0.5),
+        row("exact", 0.5, 0.5, 0.5, 0.5),
+        row("edge20", 0.5, 0.5, 0.5, 0.5),
+        row("edge", 0.55, 0.54, 0.53, 0.50),
+        row("edge5", 0.58, 0.56, 0.55, 0.49),
+        row("unguarded", 0.60, 0.58, 0.56, 0.45),
+    ]
+    table = proof.regrets(rows_)
+    assert table["unguarded"] == (0.05, 0.0125, 0.5475)  # best but for the harsh reading, where exact wins by 0.05
+    assert table["edge5"][0] == 0.02 and min(table.values())[0] == 0.02
+    assert proof.regret_markdown(rows_).splitlines()[2].startswith("| edge5 | 0.020 |")
