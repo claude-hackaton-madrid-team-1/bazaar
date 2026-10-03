@@ -40,9 +40,9 @@ The four arenas map onto invoice work:
 2. **Silence is free.** In the 12 practice duels we never answered, rivals conceded by themselves. Accepting their
    best offer would have earned 195 P, against 121.7 P for our v1 replayed on the same duels (W2a #80).
 3. **The scoreboard, reverse-engineered.**
-   - A score model fitted only on public data puts us at 8.26 at tick 159, against the official **8.34**.
-   - RMSE 0.34 over 38 snapshots; the tick-30 board is matched with MAE 0.47 over 18 teams. Fitted only on ticks
-     before 140, it predicts the later ones within 0.47 (7.87 vs 8.34): the honest headline.
+   - A score model fitted only on public data, and only on ticks before 140, predicts our later official score
+     within 0.47 (7.87 vs **8.34** at tick 159).
+   - In-sample, it fits 8.26 (RMSE 0.34 over 38 snapshots) and matches the tick-30 board with MAE 0.47 over 18 teams.
    - It explains why our score fell 10.76 → 8.34 while we did nothing: the other teams' Chato deals raised the
      top-3 mean (W5 #78).
 4. **The unlock rule.** Level 2 opened after 3 negotiated buys with the previous dealer; a deal at the opening
@@ -75,7 +75,7 @@ The four arenas map onto invoice work:
 - **How we built it overnight.**
   - About 15 builder sessions of Claude Code in parallel, each on its own branch and draft PR, plus an
     orchestrator.
-  - An **independent reviewer** session re-ran every claim (r1).
+  - An **independent reviewer** session (r1) reviewed the night's PRs and re-ran their key claims.
   - An **adversarial "bite hunter"** proved failure modes with tests (r2): 20+ findings, e.g. "the live maker
     cancels hand-posted offers", "PAUSE does not stop cancels".
   - An **integration rehearsal** merged 12 PRs at their heads: 2,746 tests green, 10 cross-PR fixes (B5 #120).
@@ -89,7 +89,7 @@ The four arenas map onto invoice work:
 | v2 replayed on the real duels we ignored | 178.4 vs 121.7 P (the oracle: 195) | W2a #80 |
 | **Not leaking our limit.** Against a rival that estimates it from our offers: | v1 gives its floor away within 6 % by tick 3 in 96 % of duels; v2 in 0 % by tick 3 (41 % by tick 6); against an oracle squeezer, v2 keeps 0.159 of the pie vs v1's 0.071 | B11 #97 |
 | **Ladder.** A floor table per dealer, built from every team's public threads | Abuela uncommons, share of range: 0.84 → **0.945** (model), 0.80 → **0.973** (real replay); 0 repeated prices | W3 #81 |
-| **Market making is mostly about being open.** | Even a clairvoyant broker beats the free stall by only +0.03–0.06 efficiency at p50, so a venue that is open every session matters more than a cleverer matcher | W1a #77, W1b #84 |
+| **A venue pays only if its broker beats the free stall in most sessions.** | The free stall already earns half the bench points. A broker that only matches as well as the stall adds nothing, and loses points when it is down. Even a clairvoyant broker beats the stall by only +0.03–0.06 efficiency at p50. Our edge broker is the one that adds value: about +0.17 final points simulated, more in thick books | W1a #77, W1b #84, B2 #92 |
 | **Honest negative results** | Cross-venue arbitrage on Friday: **0** crossings net of fees across 636 offers; packs: luck never scores | W8, W7 #87 |
 | **Rival models** | an affinity posterior over 720 permutations per team: log loss 1.14 vs 1.39 for a uniform guess | W4 #79 |
 

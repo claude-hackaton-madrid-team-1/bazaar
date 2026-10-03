@@ -30,7 +30,7 @@ given as policy totals only. Our own official score (chart 6) is used as allowed
 Two panels.
 
 ### 2a. Lift by rival style and by decay
-- **Claim:** v2 earns 1.42–1.55× v1's points per duel at every decay pair (one duel at a time), and still 1.33–1.45× when 6 duels share a deadline and the team gets one accept per tick.
+- **Claim:** v2 earns 1.42–1.55× v1's points per duel at the decay pairs the gate tests (0.06/0.08 and 0.08/0.10; at decay 0.08 alone W2b measured 1.37–1.385), one duel at a time, and still 1.33–1.45× when 6 duels share a deadline and the team gets one accept per tick.
 - **Type:** grouped bar chart (v1 vs v2 mean P per duel by rival style), plus a small dot/bar panel of the lift v2/v1 by decay pair with a dashed line at the 1.40 gate bar.
 - **x:** rival style (7) or decay pair. **y:** mean points (P) per duel; or lift (ratio, ×).
 - **Data:** `02a_duel_v1_v2_lift.csv` (`group` selects the panel: `by_rival_style`, `all_styles`, `by_decay_12_ticks`, `by_decay_16_ticks`, `gate_lift_one_duel_at_a_time`, `batch6_lift_one_accept_per_tick`).
@@ -65,7 +65,7 @@ Two panels.
 
 ## 5. Market Test: how much better than the free stall can a broker be?
 
-- **Claim:** in the default bench world no broker beats the free stall by much (stall 0.83, edge 0.83, even the clairvoyant oracle 0.91 p50), but our edge broker reaches 0.86–1.00 when the book is thick or wide, and with the limit probe it is worth up to +2.35 final points on Saturday.
+- **Claim:** in the default bench world no broker beats the free stall by much (stall 0.83, edge 0.83, even the clairvoyant oracle 0.91 p50; the CSV's oracle rows mix mean and p50, see its `stat` column), but our edge broker reaches 0.86–1.00 when the book is thick (wide shading alone gives 0.758 under the quote rule), and with the limit probe it is worth up to +2.35 final points on Saturday.
 - **Type:** two panels. (a) Dot plot / grouped bars: efficiency p50 by bench world (rows) for stall, greedy, exact, edge, edge_limit, oracle. (b) Bar chart: Saturday final-point gain over the free stall by bench world for exact keeper, edge, edge + limit probe.
 - **x (a):** bench world (preset × rule × arrivals/shade). **y (a):** efficiency = realised gain / possible gain at true limits (0–1). **x (b):** bench world. **y (b):** final game points vs the free stall's 3.00.
 - **Data:** `05_market_test.csv`, long format: `metric` ∈ {`efficiency`, `session_points`, `final_points_vs_free_stall_3.00`}, `stat` ∈ {`p50`, `mean`}. Filter on both.

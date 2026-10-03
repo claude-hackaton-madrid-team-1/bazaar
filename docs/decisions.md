@@ -179,7 +179,7 @@ album cards we are missing. Cash totals, public scores and aggregates are kept.
   Evidence: 0 flags on Friday's 1,022 honest dealer offers, but r1 found honest phrasings that still get flagged, so precision is unproven. Link: #93.
 
 - **04:16 · Dress rehearsal and merge order** · `proposed` · night b5, r1
-  Evidence: all 12 PRs integrated at frozen heads, with 10 cross-PR fix-ups; 2,746 tests green. Merge #72 with a merge commit (it bundles #61 + #68). Squash-merge #79, #98 and #101, because earlier commits held private numbers.
+  Evidence: all 12 PRs integrated at frozen heads, with 10 cross-PR fix-ups; 2,746 tests green. Merge #72 with a merge commit (it bundles #61 + #68). Squash-merge the trade desk and scanner (now takeovers #137, #138; #101 closed), because earlier commits held private numbers.
   Link: #120 (DO NOT MERGE), `docs/night/r1-reviewer.md`.
 
 - **04:28 · Sunday readiness: no agent crashes when a set is released mid-game; a guarded switch for dealer buys of a brand-new set** · `proposed` · night b26
