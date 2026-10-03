@@ -81,6 +81,7 @@ class Session:
     last_tick: int
     in_book: bool = False
     ticks: int | None = None  # the run's length, from its bench.started payload
+    from_event: bool = False  # its first tick is the bench.started tick, not a guess from the book
     pairs: int = 0
     surplus: int = 0
     refused: int = 0
@@ -140,6 +141,8 @@ class BenchSessions:
             if e["type"] == "bench.started":
                 session = self._start(bench_run(run), int(e.get("tick") or tick))
                 ticks = (e.get("payload") or {}).get("ticks")
+                if session is not None:
+                    session.first_tick, session.from_event = int(e.get("tick") or tick), True
                 if session is not None and isinstance(ticks, int) and not isinstance(ticks, bool):
                     session.ticks = ticks
             else:
@@ -246,12 +249,21 @@ class BrokerAgent:
     def _bench_shape(self, book: BrokerBook) -> None:
         """Log once per bench run the keys its offers carry: nobody has seen a real Market Test offer yet, and a key
         like an expiry would let the edge hold pairs safely (`bench_model.expiry_of`)."""
-        for o in book.bench_offers:
+
+        def names(value: object) -> set[str]:
+            return {str(k) for k in value} if isinstance(value, dict) else {f"<{type(value).__name__}>"}
+
+        shapes: dict[str, dict[str, set[str]]] = {}
+        for o in book.bench_offers:  # every offer of the read, sellers and buyers alike
             run = bench_run(str(o.get("id", "")).split("-")[0])
-            if run in self._shapes_logged:
-                continue
+            if run not in self._shapes_logged:
+                shape = shapes.setdefault(run, {"offer": set(), "give": set(), "want": set()})
+                shape["offer"] |= names(o)
+                shape["give"] |= names(o.get("give") or {})
+                shape["want"] |= names(o.get("want") or {})
+        for run, shape in shapes.items():
             self._shapes_logged.add(run)
-            keys = {"offer": sorted(o), "give": sorted(o.get("give") or {}), "want": sorted(o.get("want") or {})}
+            keys = {part: sorted(found) for part, found in shape.items()}
             tm.event("broker.bench_shape", {"run": run, **keys})
             self._append("broker_bench_shapes.jsonl", {"run": run, **keys})
             self.log(f"broker: bench {run} offers carry {keys}")
@@ -265,12 +277,10 @@ class BrokerAgent:
             return plan_matches(quotes.quotes, fee, cap)
         bench = [q for q in quotes.quotes if q.bench]
         self.edge.observe(bench, tick, expiries)
-        session_ticks = {}
-        for run, session in self.sessions.open.items():
-            self.edge.first_tick[run] = min(self.edge.first_tick.get(run, session.first_tick), session.first_tick)
-            if session.ticks:
-                session_ticks[run] = session.ticks
-        plan = self.edge.plan(bench, fee, tick, limit=cap, session_ticks=session_ticks)
+        open_runs = self.sessions.open.items()
+        session_ticks = {run: s.ticks for run, s in open_runs if s.ticks}
+        starts = {run: s.first_tick for run, s in open_runs if s.from_event}
+        plan = self.edge.plan(bench, fee, tick, limit=cap, session_ticks=session_ticks, session_starts=starts)
         public: list[Quote] = [q for q in quotes.quotes if not q.bench]
         return plan + plan_matches(public, fee, cap - len(plan))
 
@@ -365,15 +375,25 @@ class BrokerAgent:
             self.log(f"tick {tick} broker: DROPPED match {m.sell.id} × {m.buy.id}: tick window closed")
             stats.expired += 1
             return
-        refused = False
+        refused, errors = False, []
+
+        def call() -> Any:
+            try:
+                return self.broker.match(**request)
+            except BazaarError as e:
+                errors.append(e)
+                raise
+
         if self.live:
-            refused = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request)) is None
+            refused = self.rec.send(did, tick, "broker_match", request, call) is None
+        by_rules = refused and bool(errors) and errors[0].status == 400  # not a 429, an auth error or a 5xx
         if m.sell.bench:
             self.sessions.record(m, tick, refused)
-            if self.live:
+            if self.live and (by_rules or not refused):  # only the venue's verdict on the pair teaches the edge
                 self.edge.note_sent(m, accepted=not refused)
         if refused:
-            run.taken -= {str(m.sell.id), str(m.buy.id)}  # ...unless the server refused them: still in the book
+            if probe and by_rules:  # ...unless a probe was refused on its price: a later read may reprice it
+                run.taken -= {str(m.sell.id), str(m.buy.id)}
             stats.refused += 1
             return
         stats.sent += 1
@@ -403,6 +423,7 @@ class BrokerAgent:
         )
 
     def _session_closed(self, s: Session) -> None:
+        self.edge.forget(s.run)
         row = {"run": s.run, "first_tick": s.first_tick, "last_tick": s.last_tick, "pairs": s.pairs}
         row |= {"surplus": s.surplus, "refused": s.refused, "live": self.live}
         tm.event("broker.bench_session", row)

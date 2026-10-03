@@ -1,5 +1,7 @@
 """The broker loop with `bench_policy = "edge"` and extra bench reads per tick. In-process fakes, no network."""
 
+import json
+
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
@@ -160,4 +162,42 @@ def test_the_shape_of_a_bench_offer_is_logged_once_per_run(tmp_path):
     a.on_tick(clock(tick=101))
     shapes = (tmp_path / "agents" / "broker_bench_shapes.jsonl").read_text().splitlines()
     assert len(shapes) == 1 and '"expires_tick"' in shapes[0]
-    assert a.edge.models["b5-0"].expires == 120
+    assert a.edge.models["b5-0"].expires == 119  # one tick early (`EdgeConfig.expiry_margin`)
+
+
+def test_a_rate_limited_probe_teaches_nothing_and_is_not_retried_in_the_tick(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class RateLimited(FakeBroker):
+        def match(self, sell, buy, price):
+            self.sent.append((sell, buy, price))
+            raise BazaarError("rate_limited", "slow down", 429)
+
+    broker = RateLimited(bench=[bench_sell("b5-0", 62), bench_buy("b5-1", 58)])
+    a = agent(tmp_path, broker, live=True, bench_policy="edge", bench_cross="limit", bench_reads_per_tick=3)
+    a.on_tick(clock())
+    assert len(broker.sent) == 1 and a.edge.probes.sent == 0 and a.edge.refused == {}
+
+
+def test_a_probe_refused_on_its_price_is_repriced_by_a_later_read(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b5-0", 62), bench_buy("b5-1", 58)], refuse={"b5-0"})
+    a = agent(tmp_path, broker, live=True, bench_policy="edge", bench_cross="limit", bench_reads_per_tick=2)
+    a.on_tick(clock())
+    assert len(broker.sent) == 2 and broker.sent[0][2] != broker.sent[1][2]
+
+
+def test_the_shape_log_takes_every_offer_and_survives_odd_shapes(tmp_path):
+    odd = {"id": "b5-1", "give": [{"cash": 40}], "want": {"cash": 0}, "ticks_left": 3}
+    a = agent(tmp_path, FakeBroker(bench=[bench_sell("b5-0", 30), odd]), bench_policy="edge")
+    a.on_tick(clock())
+    (shape,) = [json.loads(x) for x in (tmp_path / "agents" / "broker_bench_shapes.jsonl").read_text().splitlines()]
+    assert "ticks_left" in shape["offer"] and "<list>" in shape["give"] and "assets" in shape["give"]
+
+
+def test_a_closed_session_is_forgotten_by_the_edge(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b5-0", 30)])
+    a = agent(tmp_path, broker, bench_policy="edge")
+    a.on_tick(clock())
+    broker.bench = []
+    a.on_tick(clock(tick=101))
+    assert a.edge.models == {}

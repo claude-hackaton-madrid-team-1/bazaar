@@ -40,7 +40,7 @@ def test_a_sellers_cost_band_comes_from_its_first_ask_and_never_exceeds_an_ask_i
     t.observe(11, 110)
     assert t.band() == pytest.approx((100.0, 110.0))
     assert t.limit() == pytest.approx(105.0)
-    assert t.relaxing and t.quote == 110
+    assert t.quote == 110
 
 
 def test_a_buyers_value_band_never_falls_below_a_bid_it_showed():
@@ -48,7 +48,6 @@ def test_a_buyers_value_band_never_falls_below_a_bid_it_showed():
     assert t.band() == pytest.approx((75 / 0.95, 100.0))
     t.observe(11, 90)
     assert t.band() == pytest.approx((90.0, 100.0))
-    assert t.relaxing
 
 
 def test_a_trader_that_breaks_its_prior_is_trusted_only_for_what_it_showed():
@@ -63,8 +62,8 @@ def test_a_second_read_in_one_tick_replaces_the_quote():
     assert t.quotes == [(10, 128)] and t.age(10) == 1 and t.age(12) == 3
 
 
-def test_a_firm_trader_does_not_look_relaxing():
-    assert not seller(50, 50, 50).relaxing and not buyer(40, 40).relaxing
+def test_a_firm_trader_keeps_the_band_its_first_quote_gave():
+    assert seller(50, 50, 50).band() == seller(50).band() and buyer(40, 40).band() == buyer(40).band()
 
 
 def test_acceptance_chances_are_probabilities_and_monotone():

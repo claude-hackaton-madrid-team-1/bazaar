@@ -141,5 +141,5 @@ def test_an_expiry_on_the_offers_lets_the_edge_beat_the_stall():
     rows = ev.tournament(300, scenarios=("expiry",), names=["stall", "edge", "prescient"])
     by = {(r.preset, r.policy): r.mean for r in rows}
     for preset in ("normal", "hard"):
-        assert by[(preset, "edge")] > by[(preset, "stall")] + 0.01
+        assert by[(preset, "edge")] > by[(preset, "stall")] + 0.005
         assert by[(preset, "edge")] <= by[(preset, "prescient")] + 0.005

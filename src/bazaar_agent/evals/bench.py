@@ -318,7 +318,8 @@ class Edge:
             quotes = quotes_from(book).quotes
             self.edge.observe(quotes, bench.tick, expiries_in(book.bench_offers, bench.tick))
             fee = Fee(book.fee_bps, book.fee_per_card)
-            plan = self.edge.plan(quotes, fee, bench.tick, limit=MAX_SENDS - sent)
+            starts = {q.item.removeprefix("bench:"): 0 for q in quotes if q.bench}  # every run here starts at tick 0
+            plan = self.edge.plan(quotes, fee, bench.tick, limit=MAX_SENDS - sent, session_starts=starts)
             if not plan:
                 return
             answer = partial(self._answered, plan)

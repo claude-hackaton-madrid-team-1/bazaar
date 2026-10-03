@@ -57,6 +57,7 @@ class BookPolicy:
     probes: ProbeStats | None = None  # shared across sessions, as one broker process keeps them
     edge: BenchEdge = field(init=False)
     pending: list[Match] = field(default_factory=list)
+    pending_tick: int = -1
 
     def __post_init__(self) -> None:
         config = self.config or EdgeConfig(cross="limit" if self.name == "edge_limit" else "quote")
@@ -75,18 +76,23 @@ class BookPolicy:
         if self.name == "exact":
             return [(str(m.sell.id), str(m.buy.id), m.price) for m in plan_matches(quotes, fee, MAX_SENDS)]
         tick = int(book.get("tick") or 0)
-        self._answers({str(q.id) for q in quotes})
+        self._answers({str(q.id) for q in quotes}, tick)
         self.edge.observe(quotes, tick, expiries_in(parsed.bench_offers, tick))
-        self.pending = self.edge.plan(quotes, fee, tick, limit=MAX_SENDS)
+        starts = {q.item.removeprefix("bench:"): 0 for q in quotes if q.bench}  # W1a's book ticks count from the run
+        self.pending, self.pending_tick = (
+            self.edge.plan(quotes, fee, tick, limit=MAX_SENDS, session_starts=starts),
+            tick,
+        )
         return [(str(m.sell.id), str(m.buy.id), m.price) for m in self.pending]
 
-    def _answers(self, in_book: set[str]) -> None:
-        """What became of the last plan: both offers still here = refused, both gone = matched, else unknown."""
+    def _answers(self, in_book: set[str], tick: int) -> None:
+        """What became of the last plan: both offers still here = refused; both gone within the same tick = matched
+        (across a tick they may just have left); anything else is unknown and teaches nothing."""
         for m in self.pending:
             here = (str(m.sell.id) in in_book, str(m.buy.id) in in_book)
             if all(here):
                 self.edge.note_sent(m, accepted=False)
-            elif not any(here):
+            elif not any(here) and tick == self.pending_tick:
                 self.edge.note_sent(m, accepted=True)
         self.pending = []
 

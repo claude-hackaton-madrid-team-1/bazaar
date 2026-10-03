@@ -180,11 +180,28 @@ def test_a_pair_whose_offers_say_when_they_leave_is_held_until_the_first_of_them
     quotes = [ask(0, 30), bid(1, 60)]
     offers = [{"id": "b3-0", "expires_tick": 2}, {"id": "b3-1", "expires_tick": 5}, {"id": "b3-9"}]
     assert expiries_in(offers, 0) == {"b3-0": 2, "b3-1": 5}
-    for tick in (0, 1):
-        edge.observe(quotes, tick, expiries_in(offers, tick))
-        assert edge.plan(quotes, NO_FEE, tick) == []
-    edge.observe(quotes, 2, expiries_in(offers, 2))
-    assert [(m.sell.id, m.buy.id) for m in edge.plan(quotes, NO_FEE, 2)] == [("b3-0", "b3-1")]
+    starts = {"b3": 0}
+    edge.observe(quotes, 0, expiries_in(offers, 0))
+    assert edge.plan(quotes, NO_FEE, 0, session_starts=starts) == []  # held: b3-0 stays until tick 2
+    assert edge.plan(quotes, NO_FEE, 0) != []  # but never when the run's start is a guess
+    edge.observe(quotes, 1, expiries_in(offers, 1))  # one tick early: the expiry's meaning is a guess
+    assert [(m.sell.id, m.buy.id) for m in edge.plan(quotes, NO_FEE, 1, session_starts=starts)] == [("b3-0", "b3-1")]
+
+
+def test_a_crossing_pair_in_one_run_is_never_displaced_by_a_probe_in_another():
+    edge = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit"))
+    edge.observe([ask(0, 30, "b4"), bid(1, 60, "b4")], 0)  # older: b4's pair is the more urgent one
+    quotes = [ask(0, 62), bid(1, 58), ask(0, 30, "b4"), bid(1, 60, "b4")]
+    (m,) = plan(edge, quotes, tick=3, limit=1)
+    assert m.sell.id == "b4-0"
+
+
+def test_a_finished_run_is_forgotten():
+    edge = BenchEdge(PRIORS["normal"], EdgeConfig(cross="limit"))
+    (m,) = plan(edge, [ask(0, 62), bid(1, 58), ask(0, 30, "b4")])
+    edge.note_sent(m, accepted=False)
+    edge.forget("b3")
+    assert set(edge.models) == {"b4-0"} and edge.refused == {} and "b3" not in edge.first_tick
 
 
 def test_with_hold_known_off_a_known_expiry_does_not_delay_a_match():

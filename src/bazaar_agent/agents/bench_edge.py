@@ -35,6 +35,9 @@ class EdgeConfig:
     # When both traders' bench offers say when they leave, hold their pair until one of them is on its last tick
     # (the prescient bound in the tournament: a pair held is never lost, and a later trader may need one of them).
     hold_known: bool = True
+    # Ticks taken off a stated expiry: the field's meaning is a guess (`bench_model.expiry_of`), and a pair held one
+    # tick too long is lost, so the edge crosses one tick early.
+    expiry_margin: int = 1
     cross: Literal["quote", "limit"] = "quote"  # "limit": also propose non-crossing pairs (a probe, see above)
     min_accept: float = 0.2  # "limit": propose a non-crossing pair only with at least this chance of acceptance
     tries_per_pair: int = 3  # "limit": refused prices remembered per pair; a pair refused this often is dropped
@@ -131,10 +134,17 @@ class BenchEdge:
                 model = self.models[str(q.id)] = TraderModel(str(q.id), q.side, tick, self.prior)
             model.observe(tick, q.price)
             if expiries and str(q.id) in expiries:
-                model.expires = expiries[str(q.id)]
+                model.expires = expiries[str(q.id)] - self.config.expiry_margin
 
     def last_tick(self, run: str, session_ticks: int | None = None) -> int:
         return self.first_tick.get(run, 0) + (session_ticks or self.prior.session_ticks) - 1
+
+    def forget(self, run: str) -> None:
+        """A bench run is over: drop its traders, its start and its refused pairs."""
+        prefix = f"{run}-"
+        self.models = {k: v for k, v in self.models.items() if not k.startswith(prefix)}
+        self.refused = {k: v for k, v in self.refused.items() if not k[0].startswith(prefix)}
+        self.first_tick.pop(run, None)
 
     def note_sent(self, m: Match, accepted: bool) -> None:
         """The server's answer to a match. A refused non-crossing pair remembers its price: the next try for that
@@ -152,9 +162,16 @@ class BenchEdge:
         tick: int,
         *,
         limit: int | None = None,
-        session_ticks: dict[str, int] | None = None,
+        session_ticks: Mapping[str, int] | None = None,
+        session_starts: Mapping[str, int] | None = None,
     ) -> list[Match]:
-        """The bench matches to send now (the read's quotes must have been `observe`d first), most urgent first."""
+        """The bench matches to send now (the read's quotes must have been `observe`d first): crossing pairs before
+        probes, each most urgent first. `session_starts` (run -> its first tick, from `bench.started`) fixes the
+        session's last tick; a pair is held for a known expiry only in a run whose start is known, so a late
+        guess of the last tick never strands a held pair."""
+        self.chances.clear()  # what the last plan's probes predicted is only needed until they are answered
+        for run, start in (session_starts or {}).items():
+            self.first_tick[run] = start
         by_run: dict[str, tuple[list[Quote], list[Quote]]] = defaultdict(lambda: ([], []))
         for q in quotes:
             if q.bench and str(q.id) in self.models:
@@ -163,14 +180,15 @@ class BenchEdge:
         now: list[tuple[float, Match]] = []
         for run, (sells, buys) in sorted(by_run.items()):
             endgame = tick > self.last_tick(run, (session_ticks or {}).get(run)) - self.config.endgame_ticks
-            for urgency, m in self._plan_run(sells, buys, fee, tick, endgame):
+            may_hold = run in (session_starts or {})
+            for urgency, m in self._plan_run(sells, buys, fee, tick, endgame, may_hold):
                 now.append((urgency, m))
-        now.sort(key=lambda e: (-e[0], -e[1].surplus, str(e[1].sell.id)))
+        now.sort(key=lambda e: (is_probe(e[1]), -e[0], -e[1].surplus, str(e[1].sell.id)))
         picked = [m for _, m in now]
         return picked if limit is None else picked[:limit]
 
     def _plan_run(
-        self, sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, tick: int, endgame: bool
+        self, sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, tick: int, endgame: bool, may_hold: bool
     ) -> list[tuple[float, Match]]:
         """Crossing pairs first (a sure match is never displaced by a probe), then probes among who is left."""
         table = [[self._candidate(s, b, fee) for b in buys] for s in sells]
@@ -190,7 +208,7 @@ class BenchEdge:
             assert cand is not None
             urgency = max(cand.sell.hazard(tick), cand.buy.hazard(tick))
             known = cand.sell.expires is not None and cand.buy.expires is not None
-            hold = urgency < self.config.hold_below or (known and urgency < 1.0 and self.config.hold_known)
+            hold = urgency < self.config.hold_below or (known and may_hold and urgency < 1.0 and self.config.hold_known)
             if endgame or not hold or not cand.crossing:  # a probe is never held
                 out.append((1.0 if endgame else urgency, Match(sells[r], buys[c], cand.price, fee.of(cand.price))))
                 if not cand.crossing:

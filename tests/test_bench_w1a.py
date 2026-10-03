@@ -29,8 +29,16 @@ def test_a_probe_still_in_the_next_book_was_refused_and_a_gone_one_matched():
     (probe,) = policy(book(0, sell("b1-0", 62), buy("b1-1", 58)))
     policy(book(0, sell("b1-0", 62), buy("b1-1", 58)))  # still both there: refused
     assert policy.edge.refused == {("b1-0", "b1-1"): [probe[2]]}
-    policy(book(1))  # gone: matched
+    (again,) = policy.pending
+    policy(book(0))  # both gone within the tick: matched
     assert (policy.edge.probes.sent, policy.edge.probes.refused, policy.edge.probes.accepted) == (2, 1, 1)
+
+
+def test_a_probe_gone_after_the_tick_teaches_nothing():
+    policy = w1a.BookPolicy("edge_limit", "normal")
+    policy(book(0, sell("b1-0", 62), buy("b1-1", 58)))
+    policy(book(1))  # they may simply have left
+    assert policy.edge.probes.sent == 0
 
 
 def test_greedy_and_exact_need_no_simulator():

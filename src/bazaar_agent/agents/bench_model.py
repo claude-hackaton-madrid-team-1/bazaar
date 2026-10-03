@@ -10,8 +10,8 @@ that estimates those limits, and who is about to leave, can beat the stall that 
     an ask it has shown; a buyer's value lies in `[q0 / shade_hi, q0 / shade_lo]` and never below a bid it has shown.
     The estimate is the band's midpoint;
   - its leave hazard: the chance it leaves after this tick given how many ticks it has been in the book, from the
-    preset's patience prior (impatient traders stay 1–2 ticks, patient ones 3–6, #12);
-  - whether it relaxes (its quote moved toward its limit) or looks firm (never moved).
+    preset's patience prior (impatient traders stay 1–2 ticks, patient ones 3–6, #12). Firm traders need no model
+    of their own: a quote that never moves keeps the band where its first quote put it.
 
 The priors (`BenchPrior`) are the simulator's (#55 `_start_bench`) and #12's presets. They are guesses until a real
 Market Test is seen: every one is a parameter, and a trader that breaks its prior (older than any patience, a quote
@@ -34,7 +34,6 @@ class BenchPrior:
     impatient_share: float = 0.25
     impatient_ticks: tuple[int, int] = (1, 2)
     patient_ticks: tuple[int, int] = (3, 6)
-    firm_share: float = 0.2
     session_ticks: int = 16
 
     def patience_pmf(self, ticks: int) -> float:
@@ -66,7 +65,7 @@ class BenchPrior:
 
 PRIORS: dict[str, BenchPrior] = {
     "normal": BenchPrior(),
-    "hard": BenchPrior(impatient_share=0.35, firm_share=0.35),
+    "hard": BenchPrior(impatient_share=0.35),
 }
 
 
@@ -118,12 +117,6 @@ class TraderModel:
         if self.expires is not None:
             return 1.0 if tick >= self.expires else 0.0
         return self.prior.hazard(self.age(tick))
-
-    @property
-    def relaxing(self) -> bool:
-        """Its quote moved toward its limit at least once (a firm trader never does)."""
-        first = self.quotes[0][1]
-        return any((q < first) if self.side == "sell" else (q > first) for _, q in self.quotes)
 
     def band(self, prior: BenchPrior | None = None) -> tuple[float, float]:
         """Where its hidden limit lies: (low, high), under its own prior or the one given."""
