@@ -116,6 +116,7 @@ def counter_below(neg: Negotiation, ask: int) -> Move:
 
 
 MAX_WAITS = 2  # the feed: every answered bid was answered within 0-1 tick; ~2 % of first bids never were
+MAX_TICK_WAIT_S = 61.0  # RULES.md: the pace is 5-60 s; a longer wait for one tick is never trusted
 
 
 def patient(neg: Negotiation, waiting: bool, reason: str) -> Move | None:
@@ -526,7 +527,7 @@ def negotiate(
             for _ in range(5):
                 if not now.is_live or now.tick > first.tick:
                     break
-                sleep(min(seconds_until_next_tick(now), now.max_tick_seconds + 1))  # never trust a huge next_tick_in
+                sleep(min(seconds_until_next_tick(now), MAX_TICK_WAIT_S))  # never trust a huge next_tick_in
                 now = Clock.model_validate(client.clock())
         except Exception as e:  # like run_per_tick's clock read: an empty body or a cut connection never crashes
             log(f"thread {tid}: clock unreadable ({type(e).__name__}), no second close")
@@ -655,6 +656,8 @@ def negotiate(
             retry_close_next_tick()
         if state["status"] in ("timeout", "closed") and state["walk_reopen"]:
             state["reopen"] = reopen_start(neg)  # the held-opening walk closed late: still reopen lower
+        if state["status"] == "open":
+            reread(last)  # the retry gave up too: a "Deal!" that landed is still booked
         if state["status"] == "open":
             standing = neg.bids[-1] if neg.bids else "-"
             log(f"thread {tid} is still open with our bid {standing} standing: close it by hand")
