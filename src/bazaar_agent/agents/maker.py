@@ -55,10 +55,12 @@ from bazaar_agent.agents.seller import (
     Listing,
     OfferError,
     bid_listing,
+    committed_context,
     offers_in,
     open_commitments,
     post,
     sell_listing,
+    unsettled_accepts,
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
@@ -254,7 +256,10 @@ class Maker:
         run = _MakerRun(
             snap,
             window,
-            context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+            committed_context(  # an accept of the last ticks /api/me does not show yet counts (bite X18)
+                context_from(snap.me, clock.tick, clock.t_hours, self.ledger, self.rules),
+                unsettled_accepts(snap.me, self.ledger, clock.tick),
+            ),
             offers_in(snap.offers),
             total,
             max(0, clock.limits.offers_per_team_per_tick - listed),
