@@ -32,6 +32,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **How the 30-point blocks split** *[audit, fitted]*:
   - Market-making per round = **22.5 × `bench_points` + 7.5 × organic**, where organic is value created between other teams on our venue, capped at the top-3 mean. The free stall alone is `bench_points` 0.5 = 11.25 of 30; nine teams sat at exactly that level and two at the organic cap.
   - Negotiating per round ≈ ladder 7.5 + duels 7.5 + team trades 15 (estimate). Each part is capped at the top-3 mean: once we are at the cap, more of it adds nothing that round.
+- **Separate scoring models** *[Omar, Sat 3 Oct]*: RULES.md counts duels inside the Negotiating 30, but each mechanism has its own formula (duels: pie share × (1 − decay)^rounds, no cash or card moves; ladder: share of a dealer's range; team trades: price − `your_value`; market: 22.5 × bench + 7.5 × organic). Never mix their numbers or lessons; see `.ai/context.md`.
 - **What moves which part** *[audit]*:
   - `neg_points` moves only on settlements with other teams, by price − our `your_value` of that copy.
   - Dealer deals score only through the ladder.
@@ -53,7 +54,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **Page** = the commons, uncommons and rares of a set (10 cards). A complete page gives a bonus; the epic and the legendary on top give a bit more.
 - Everyone starts the same: 400 P, 11 commons, 3 uncommons and 1 rare.
 - **Private values:** every team has the same six set multipliers, shuffled.
-- Value verified against the API: `book × affinity × [1, 0.25, 0.1][copy]` (#23). The `your_value` of a card in hand is the value of the last copy.
+- Value verified against the API: `book × affinity × [1, 0.25, 0.1][copy]` (#23). The `your_value` of a card in hand is the collection value lost by removing that copy *[audit, 41 of 41 assets]*: its copy marginal, and for our only copy of a page card on a complete page, the whole page bonus. Selling that copy cost points on Sat 3 Oct (tick 948: `neg_points` 134.7 → 44.6) whatever "holdings never score" suggests (sold at 29 with `your_value` 118.6: price − `your_value` = −89.6; `.ai/memory.md`, tick 947).
 - **The example from the slides:** A has a duplicate copy worth 6 P to them, and B is missing it for their page and it is worth 24 P to them. They close at 14 P: A gains +8 and B gains +10, so **+18 P** is created. That is what scores.
 - **In circulation at tick 0:** 0 epics and 0 legendaries. LAV-09, MAL-09 and MAL-07 have a single copy (#22).
 

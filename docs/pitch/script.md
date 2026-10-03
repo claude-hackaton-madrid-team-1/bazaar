@@ -76,8 +76,9 @@ decision row.}}
 
 ## 5 · Prueba 3: una mejora medida / Proof 3: a measured improvement (1:10)
 
-**ES:** Tercera prueba: una mejora medida contra una línea base. En los duelos cada contraoferta cuesta un 6 % del pastel: el resultado es
-la ganancia por 0,94 elevado al número de rondas. Lo comprobamos en nuestros propios tratos: exacto en 8 de 8. [C6]
+**ES:** Tercera prueba: una mejora medida contra una línea base. En los duelos cada ronda de conversación encoge el pastel (un 6 % por ronda en la
+sesión de práctica, un 8 % y un 10 % en las siguientes): el resultado es la ganancia por 0,94 elevado al número de rondas. Lo comprobamos
+en nuestros propios tratos de práctica: exacto en 8 de 8. [C6]
 La línea base es real: el viernes, nuestros duelos de práctica sacaron de media 0,279, con unas seis rondas por trato. [C30] Nuestra
 política nueva habla una vez y espera. **En simulación**, con nuestro cliente real contra rivales modelados, sube de 0,27 a entre 0,36 y
 0,40, sin ningún cierre fuera de nuestro límite. [C31] Y repetida sobre los doce duelos que no contestamos el viernes, con los mensajes
@@ -88,8 +89,9 @@ a las diez, después de la prueba en simulación: fue una decisión humana. Su r
 La ganancia viene de hablar menos, no de cerrar más tratos. [C32]
 {{Si hay datos del sábado: «y el sábado, los duelos reales sacan X frente a 0,279; no es una comparación controlada». [C41]}}
 
-**EN:** Third proof: an improvement measured against a baseline. In duels every counter-offer costs 6% of the pie: the result is the gain
-times 0.94 to the power of the rounds. We checked it on our own deals: exact on 8 of 8. [C6]
+**EN:** Third proof: an improvement measured against a baseline. In duels every round of talk shrinks the pie (6% a round in the practice
+session, 8% and 10% in the later ones): the result is the gain times 0.94 to the power of the rounds. We checked it on our own practice
+deals: exact on 8 of 8. [C6]
 The baseline is real: on Friday our practice duels averaged 0.279, with about six rounds per deal. [C30] Our new policy talks once and
 waits. **In simulation**, with our real client against modelled rivals, it goes from 0.27 to between 0.36 and 0.40, with no close outside
 our limit. [C31] And replayed on the twelve duels we never answered on Friday, with the rivals' real messages, it earns 178 primas

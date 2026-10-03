@@ -1,7 +1,7 @@
 # Sunday pitch outline (7 minutes, with a 5-minute cut)
 
 Presenter: **Omar**. Backup: **Marius** (takes over the demo laptop and Q&A if Omar's connection or voice fails).
-Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
+Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges; the rules and venue lines were synced Sat 3 Oct evening with `docs/briefing.md`. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
 
 **The one story:** our agents *negotiate through language*, *execute verifiable agreements* (structured offers, guardrails, one
 shared ledger), and *learn from outcomes* (evals → lessons → recall → the next negotiation), with **Jev deciding when to act**.
@@ -38,8 +38,8 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 
 ## Slide 2 · One story, four verbs (0:55)
 
-- **On screen:** the architecture artifact (https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39), with four boxes highlighted in this order:
-  1. **Language**: the LLM writes the words. It decides nothing binding.
+- **On screen:** the architecture artifact (https://claude.ai/artifact/SDYmzHVWNbUpUb6UyGnVkR), with four boxes highlighted in this order:
+  1. **Language**: words only: the LLM may write them (`llm_words` is off in `RUNTIME.md`, so today's live messages are templates). It decides nothing binding.
   2. **Structure**: the structured offer, `GUARDRAILS.md`, the hook, one shared Postgres ledger. [C1][C2][C3]
   3. **Learning**: outcomes are scored (`bazaar evals`), turned into lessons, recalled by hybrid search before the next negotiation. [C38]
   4. **Jev**: decides when to act; below its bar it says "undecided" and the safe default runs. [C4]
@@ -92,10 +92,11 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   1. **Baseline, REAL:** Friday practice duels, mean 0.279 (20 scored), about 6 rounds per deal. [C30]
   2. **In simulation:** v1 0.27 → v2 0.36–0.40 in our real client against modelled rivals, 0 closes outside the limit. [C31]
   3. **Replay on real inputs:** the 12 Friday duels we never answered: 178 P with v2 vs 122 P with v1 (n = 12). [C33]
-- **The mechanism in one line:** every counter-offer costs 6% of the pie (0.94^rounds), so the best move is often to say less.
-  v1 talked six times a deal; v2 talks about once. The gain is rounds, not more deals. [C6][C32]
+- **The mechanism in one line:** every round of talk (one priced message from each side) shrinks the pie: the practice session kept 0.94
+  per round, Duels II keeps 0.92 and Duels III 0.90, so the best move is often to say less. v1 talked six times a deal; v2 talks about
+  once. The gain is rounds, not more deals. [C6][C32]
 - **Say the limits, unprompted:** simulated rivals, tuned on the same zoo, n = 12 for the replay. v2 went live on Saturday at about 10:00
-  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and its real result is not in until Duels I. [C35][C51]
+  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and whether it beat v1 in real duels is not known: Duels I scored 27 deals, 15.02 points, and Friday's 0.279 is only a practice estimate. [C35][C51]
 - **If asked** "does it beat just accepting the best offer at the end?": "In the zoo it ties (21.93 vs 22.06); it wins where the accept
   cap binds, as in the replay." [C34]
 - **If Saturday's data lets us:** add a fourth bar, REAL, "Saturday duels / ladder vs Friday's 0.279 / 0.464" [C41]. Only the evals
@@ -139,7 +140,7 @@ and any number in an answer must exist in `claims.md`. Add five likely questions
 | "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; the real Duels result is {{C41, or 'not in yet'}}." | C35, C41 |
 | "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54, C56 |
 | "Does your agent lie?" | "Only in the words, never in the structured offer, and never with our real limit. It is switched on since Saturday morning; we have no live example to show yet." | C64 |
-| "Did you make a market?" | "Our own venue was switched on on Saturday morning; {{it opened at tick N / it has not opened yet}}. At tick 160 our market score was 0." | C70 |
+| "Did you make a market?" | "Yes. Our own board venue opened on Saturday, around game hour 3.6, and replaced the free starter stall. So far it scores what the stall scores, half the Market Test points, and, as of Saturday evening, no other team has traded on it. Friday had no market making for anyone." | C70 |
 
 ## Rehearsal and logistics
 

@@ -1,7 +1,7 @@
 # SP1 — Speed: every agent finishes its tick inside Sunday's 15 s  (per-task spec)
 
 - Task id: SP1 (local backlog; coordinator task `task_d75f80cadcbc`)
-- Status: **in review** (PR #157) — measured Sat 05:20-06:20; rebased onto main through #162 and #111 (step 6 done); review rounds 1-4 fixed
+- Status: **merged** (PR #157) — measured Sat 05:20-06:20; rebased onto main through #162 and #111 (step 6 done); review rounds 1-4 fixed
 - Backlog source: local (`.ai/specs`). Traces up to: [`01-spec.md`](./01-spec.md) · Indexed in: [`02-plan.md`](./02-plan.md)
 
 ## Goal
