@@ -316,10 +316,10 @@ def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: 
     """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
     from bazaar_agent.agents.market import venues_from
 
-    me = _json_file(me_file) if me_file else _team_me()[1]
+    me = _payload_file(me_file) if me_file else _team_me()[1]
     public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _json_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_json_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
     return me, catalog, venues
 
 
@@ -337,8 +337,8 @@ def rivals(
     from bazaar_agent import affinity as af
     from bazaar_agent import rivals as rv
 
-    me = _json_file(me_file) if me_file else _team_me()[1]
-    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
     events = _history(events_file, live)
     us = str(me.get("id") or "")
     amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
