@@ -26,28 +26,30 @@ unas reglas ejecutables, un único libro de cuentas compartido. *Aprenden de los
 una lección y la recuperamos antes de la siguiente. Y Jev decide cuándo actuar. [C1][C3][C4] Del aprendizaje, hoy solo diré lo que está probado: el bucle está construido y reproducido sobre los datos reales del viernes. [C38]
 Lo importante es que cada pieza limita a las otras. El lenguaje puede equivocarse, así que la estructura obliga. La estructura puede ser
 demasiado rígida, así que los resultados la enseñan. Y cuando Jev no supera su umbral, dice «indeciso» y se ejecuta lo seguro.
-{{Si el aprendizaje no está desplegado el sábado: «el bucle de aprendizaje está construido y probado sobre los datos reales del viernes;
-lo que enseñamos hoy de él es esa reproducción». [C38]}}
 
 **EN:** Our story is one story. Our agents *negotiate through language*. They *execute verifiable agreements*: a structured offer,
 executable rules, one shared ledger. They *learn from outcomes*: we score every negotiation, turn it into a lesson and recall it before
 the next one. And Jev decides when to act. On learning, today I will only say what is proven: the loop is built and reproduced on Friday's real data. [C38]
 What matters is that each piece limits the others. Language can be wrong, so structure binds. Structure can be too rigid, so outcomes
 teach it. And when Jev does not clear its bar, it says "undecided" and the safe default runs.
-{{If the learner is not deployed on Saturday: "the learning loop is built and tested on Friday's real data; what we show today is that
-reproduction." [C38]}}
 
 ## 3 · Prueba 1: un trato real / Proof 1: a real deal (1:00)
 
-**ES:** Primera prueba: un trato real, no una simulación. {{Sábado, tick N: compramos CARTA a DEALER por X primas, hilo T, liquidación S.}}
+**ES:** Primera prueba: un trato real, no una simulación. El sábado por la mañana compramos a la Abuela la carta LAV-08, el Teatro
+Valle-Inclán, en el hilo 316. Pujamos 17; ella abrió en 29; subimos a 18; bajó a 25 y aceptamos. Se liquidó en el tick 162, a 25 primas,
+sin comisión. [C13]
 *(Respaldo, viernes: tick 55, Abuela, la carta LAV-03. Nuestra puja fue 6, su precio 7, y cerramos en 3 ticks.* [C10]*)*
 Mirad las cinco líneas. La oferta que vimos. Nuestra puja y su respuesta, en el hilo. El visto bueno de las reglas, que fijó el número
-dentro de un límite. La liquidación, que es una fila pública que cualquiera puede buscar. Y el efecto en la puntuación. El precio lo puso el código dentro de un límite; el trato se cerró sobre una oferta estructurada que las dos partes aceptaron. {{Si es un trato del sábado con la capa de lenguaje: «las palabras las escribió el modelo». El trato de respaldo del viernes lo hizo el ejecutor determinista, sin LLM: no digas que el modelo escribió nada.}}
+dentro de un límite. La liquidación, que es una fila pública que cualquiera puede buscar. Y el efecto en la puntuación. El precio lo puso el código dentro de un límite; el trato se cerró sobre una oferta estructurada que las dos partes aceptaron. Nuestros mensajes salieron de una plantilla fija, no del modelo. [C13]
+*(No digas que el modelo escribió nada en este trato ni en el del viernes.)*
 
-**EN:** First proof: a real deal, not a simulation. {{Saturday, tick N: we bought CARD from DEALER for X primas, thread T, settlement S.}}
+**EN:** First proof: a real deal, not a simulation. On Saturday morning we bought LAV-08, the Teatro Valle-Inclán, from Abuela, in
+thread 316. We bid 17; she opened at 29; we went to 18; she came down to 25 and we accepted. It settled at tick 162, at 25 primas, no
+fee. [C13]
 *(Fallback, Friday: tick 55, Abuela, card LAV-03. Our bid was 6, her ask 7, and we closed in 3 ticks.* [C10]*)*
 Look at the five lines. The offer we saw. Our bid and her reply, in the thread. The guardrail verdict, which let a number through inside
-a limit. The settlement, which is a public row anyone can look up. And the effect on the score. Code set the price inside a limit; the deal closed on a structured offer both sides agreed. {{If it is a Saturday deal with the words layer: "the model wrote the words". The Friday fallback deal ran on the deterministic runner, no LLM: do not say the model wrote anything.}}
+a limit. The settlement, which is a public row anyone can look up. And the effect on the score. Code set the price inside a limit; the deal closed on a structured offer both sides agreed. Our messages came from a fixed template, not from the model. [C13]
+*(Do not say the model wrote anything in this deal or the Friday one.)*
 
 ## 4 · Prueba 2: una oferta engañosa / Proof 2: a deceptive offer (1:00)
 
@@ -55,7 +57,8 @@ a limit. The settlement, which is a public row anyone can look up. And the effec
 inyección en 3.436 eventos públicos. [C20] Así que esto es una oferta fabricada, y lo digo antes de enseñarla.
 El texto dice: «La Dama de Serrano, la legendaria. Solo 120». La oferta estructurada, la que obliga, enlaza una carta común. El inspector
 compara las dos antes de aceptar. Resultado: rechazada, y no gastamos el único accept del tick. [C21]
-Alrededor: 168 casos hostiles por todos los caminos que leen texto de la contraparte, cero campos vinculantes cambiados. [C24] El
+Alrededor: {{solo si #78 está fusionada: «168 casos hostiles por todos los caminos que leen texto de la contraparte, cero campos
+vinculantes cambiados»; si no: «un red team de 168 casos, en una PR abierta»}}. [C24] El
 inspector no marcó ninguna de las 1.022 ofertas honestas del viernes. [C22] Y el cortafuegos que bloquea una escritura fuera de política
 ya está integrado en main; en una prueba con el Claude Code real bloqueó una compra por encima del tope. [C2][C26]
 {{Si hay un Trickster real el sábado y el inspector lo rechazó: sustituir todo el párrafo por ese caso, con su hilo y la fila de decisión.}}
@@ -64,7 +67,8 @@ ya está integrado en main; en una prueba con el Claude Code real bloqueó una c
 3,436 public events. [C20] So this is a crafted offer, and I say so before I show it.
 The text says: "La Dama de Serrano, the legendary. Only 120." The structured offer, the part that binds, links a common card. The
 inspector compares the two before accepting. Result: refused, and we do not spend the tick's single accept. [C21]
-Around it: 168 hostile cases through every path that reads counterparty text, zero binding fields changed. [C24] The inspector flagged
+Around it: {{only if #78 is merged: "168 hostile cases through every path that reads counterparty text, zero binding fields changed";
+otherwise: "a 168-case red team, on an open PR"}}. [C24] The inspector flagged
 none of Friday's 1,022 honest offers. [C22] And the guard that blocks an out-of-policy write is merged on main; in a test with the
 real Claude Code it blocked a buy above our cap. [C2][C26]
 {{If a real Trickster appears on Saturday and the inspector refused it: replace this whole paragraph with that case, its thread and the
@@ -79,8 +83,9 @@ política nueva habla una vez y espera. **En simulación**, con nuestro cliente 
 0,40, sin ningún cierre fuera de nuestro límite. [C31] Y repetida sobre los doce duelos que no contestamos el viernes, con los mensajes
 reales de los rivales, saca 178 primas frente a 122. [C33]
 Os digo los límites sin que me los pidáis. Son rivales simulados; ajustamos la política con esos mismos rivales; la repetición son doce
-duelos; y la política nueva está detrás de un interruptor: le preguntamos a Jev si activarla y dijo «indeciso», 0,72 frente a un umbral de
-0,90. [C35][C51] La ganancia viene de hablar menos, no de cerrar más tratos. [C32]
+duelos. Le preguntamos a Jev si activar la política nueva y dijo «indeciso», 0,72 frente a un umbral de 0,90; la activó Omar el sábado
+a las diez, después de la prueba en simulación: fue una decisión humana. Su resultado real llega con los duelos del sábado. [C35][C51]
+La ganancia viene de hablar menos, no de cerrar más tratos. [C32]
 {{Si hay datos del sábado: «y el sábado, los duelos reales sacan X frente a 0,279; no es una comparación controlada». [C41]}}
 
 **EN:** Third proof: an improvement measured against a baseline. In duels every counter-offer costs 6% of the pie: the result is the gain
@@ -90,8 +95,9 @@ waits. **In simulation**, with our real client against modelled rivals, it goes 
 our limit. [C31] And replayed on the twelve duels we never answered on Friday, with the rivals' real messages, it earns 178 primas
 against 122. [C33]
 I will give you the limits before you ask. The rivals are simulated; we tuned the policy on those same rivals; the replay is twelve
-duels; and the new policy is behind a switch: we asked Jev whether to turn it on and it said "undecided", 0.72 against a 0.90 bar.
-[C35][C51] The gain comes from talking less, not from closing more deals. [C32]
+duels. We asked Jev whether to turn the new policy on and it said "undecided", 0.72 against a 0.90 bar; Omar turned it on on Saturday
+at ten, after the simulation proof: a human call. Its real result comes with Saturday's duels. [C35][C51] The gain comes from talking
+less, not from closing more deals. [C32]
 {{If Saturday data exists: "and on Saturday, real duels average X against 0.279; it is not a controlled comparison". [C41]}}
 
 ## 6 · Demo en directo / Live demo (1:30)
@@ -137,6 +143,6 @@ I close with the line: language negotiates, structure binds, outcomes teach, and
 | Demo fails | «Lo tengo grabado del sábado; lo ponemos.» | "I recorded it Saturday; here it is." |
 | Asked about a real attack | «Ninguno todavía; por eso lo enseñamos fabricado.» | "None yet, which is why we show a crafted one." |
 | Asked if Jev is accurate | «Da una confianza, no una precisión; con tan pocos resultados no afirmamos más.» | "It gives a confidence, not an accuracy; with so few outcomes we claim nothing more." |
-| Asked if it ran in the tournament | «No: simulación y repetición, la política está tras un interruptor.» | "No: simulation and replay; the policy is behind a switch." |
+| Asked if it ran in the tournament | «Desde el sábado a las diez sí, por decisión de Omar; los números de la diapositiva son simulación y repetición.» | "Since Saturday at ten, yes, Omar's call; the numbers on the slide are simulation and replay." |
 | Asked something not in the ledger | «Eso está en nuestra lista de lo no cubierto.» | "That is on our not-covered list." |
 | Time runs short | Cut slide 7 to the closing line; keep slides 3 to 5. | Same. |

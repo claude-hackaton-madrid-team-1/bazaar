@@ -15,6 +15,14 @@ tables actually have rows.
 5. The target is the real game unless `BAZAAR_SIM` is set. **Never capture evidence with `BAZAAR_SIM=1`**; check that each command prints
    `target: real game`.
 
+## 0. Captured so far
+
+- **Sat 09:30 Madrid, ticks 159–163** (`.local/evidence/20261003T073058Z-first-ticks/`, coordinator's laptop): clock, leaderboard,
+  status, evals report, tape, our threads, `bazaar thread 316` (text and JSON), the shared-ledger tick check, Bazaar Live health. It
+  fills C3 (live part), C13, C14, C15, C56 and part of C67. Still missing for C13: the `decisions` row of the tick-161 accept and the
+  settlement event id. No recording yet (R1, R2).
+- **Sat 06:46 Madrid** (`...T044643Z-preopen-baseline/`): the pre-open baseline.
+
 ## 1. When to capture
 
 | When | Why | Sets |
@@ -144,11 +152,11 @@ select type, count(*) from feed_events group by 1 order by 2 desc;
 
 | Evidence | Command | Needs | Notes |
 |---|---|---|---|
-| The bait test, recorded | `uv run pytest tests/test_accept_gate.py tests/test_inspector.py -v` | #146 merged | SIMULATED. Record it (`demo.md` R2) |
+| The bait test, recorded | `uv run pytest tests/test_accept_gate.py tests/test_inspector.py -v` | on main (#146 merged) | SIMULATED. Record it (`demo.md` R2) |
 | Hostile text suite | `uv run pytest tests/test_hostile_text.py -q` | #152 merged | SIMULATED |
 | Red team | `uv run pytest tests/test_redteam_injection.py -q`; report `docs/night/w5w6-score-redteam-morning.md` §2 | #78 merged | 168 cases. Not 129 |
 | The hook | `uv run pytest tests/test_runtime_hooks.py -v` | on main | |
-| 0 false flags on real offers | `uv run bazaar flags precision --json` on the Friday capture | #146/#152 | REAL data through new code |
+| 0 false flags on real offers | `uv run bazaar flags precision --json` on the Friday capture | #152 (OPEN; the test `tests/test_inspector.py:111` is on main) | REAL data through new code |
 | **A real one, if it happens** | In the taker log and `decisions` (query B): a `refused` row with the inspector's finding; then `bazaar thread <id> --json` for the offending thread | #146 live | **Capture the instant it happens**: thread, decision row, the dealer's text, the structured offer. This turns C21 REAL |
 
 Do **not** capture `decisions.jev` for a hypothetical input as if it were observed (the 0.83 flag-enable answer was computed on an
@@ -159,10 +167,10 @@ invented Level 4 case).
 | Evidence | Command | Needs | Notes |
 |---|---|---|---|
 | Baseline, Friday duels | `uv run bazaar evals report --json` → `eval_scorecard` target `duel`, day `fri` | DB | C30 |
-| Simulator v1 vs v2 table | `uv run python scripts/duel_sim_proof.py run --label v2 --decay 0.08 --sessions 16 --out .local/duel-proof`, then `... table .local/duel-proof` | #150 + #151 merged; a free port (patch `LOCAL_SIM_URL`) | SIMULATED. Another worker's simulator may own 8765; never kill it |
+| Simulator v1 vs v2 table | `uv run python scripts/duel_sim_proof.py run --label v2 --decay 0.08 --sessions 16 --out .local/duel-proof`, then `... table .local/duel-proof` | #150 merged, #151 OPEN; a free port (patch `LOCAL_SIM_URL`) | SIMULATED. Another worker's simulator may own 8765; never kill it |
 | 16,800-duel tournament + 12-duel replay | `uv run python scripts/duel_zoo.py` | #151 | Offline, no network. SIMULATED |
 | Ladder replay (W3) | `uv run bazaar ladder floors --source feed` | the W3 branch (#81 is closed, not merged) | Not shipped; chart only |
-| The learner on real data | `uv run bazaar learnings --lessons --save`, `--query "..."`, `--policy` | #89 → #96 → #112 | C38, C39 |
+| The learner on real data | `uv run bazaar learnings --lessons --save`, `--query "..."`, `--policy` | on main (#89, #96, #112 merged) | C38, C39 |
 | Real-game delta | `evals report --json`, `sat`/`sun` rows vs `fri` | DB | C41; only the evals may fill it |
 
 ## 7. Capture checklist (copy into the day's notes)

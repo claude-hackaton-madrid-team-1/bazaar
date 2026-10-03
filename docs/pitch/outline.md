@@ -1,7 +1,7 @@
 # Sunday pitch outline (7 minutes, with a 5-minute cut)
 
 Presenter: **Omar**. Backup: **Marius** (takes over the demo laptop and Q&A if Omar's connection or voice fails).
-Draft as of Sat 3 Oct, ~06:00 Madrid. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
+Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
 
 **The one story:** our agents *negotiate through language*, *execute verifiable agreements* (structured offers, guardrails, one
 shared ledger), and *learn from outcomes* (evals → lessons → recall → the next negotiation), with **Jev deciding when to act**.
@@ -45,8 +45,8 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   4. **Jev**: decides when to act; below its bar it says "undecided" and the safe default runs. [C4]
 - **Say:** the point is not four tools; it is that each one limits the others. Language can be wrong, so structure binds. Structure can be
   too rigid, so outcomes teach it. Learning can drift, so Jev gates acting and guardrails bound it.
-- **Say only** that the learning loop is built and reproduced on Friday's real data. **Do not claim** the learner is running live unless C38's PENDING row has become REAL (see `claims.md` §G).
-- **Badge:** REAL (architecture), PENDING (learning loop) until verified.
+- **Say only** that the learning loop is built, merged, and reproduced on Friday's real data. Its code is on main since Saturday morning, but no live deal shows a learned step yet: **do not claim** it changed a live deal (C38, C42).
+- **Badge:** REAL (architecture), SIMULATED (learning loop, replayed on real data).
 
 ## Slide 3 · Proof 1: a real deal and its settlement (1:00)
 
@@ -56,10 +56,16 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   3. the guardrail verdict that let the write through (`decisions` row, no limits shown),
   4. the **settlement** (`tape` row: tick, price, fee, parties),
   5. the score effect (`/api/me` before and after, no private values).
-- **Today's placeholder (REAL, Friday):** LAV-03 from Abuela at 7 P, thread 99, tick 55; bid 6, ask 7, accepted in 3 ticks. [C10]
-- **Saturday replacement [C13, PENDING]:** the best clean deal of the afternoon (a dealer deal where the learned ladder or the inspector
-  mattered). Chosen using `evidence.md` §3; replace the placeholder text and the screenshot.
-- **Say:** this is not a simulation. It is a thread id and a settlement id you can look up on the board. Code set the number inside a limit (say "the model wrote the words" only for a Saturday deal that used the words layer; the Friday fallback ran on the deterministic runner); the deal closed on a structured offer both sides agreed.
+- **The deal (REAL, Saturday):** LAV-08 from Abuela, thread 316. Our bid 17, her opening ask 29, our 18, her 25, our taker accepted;
+  settled at the tick-162 boundary at 25 P, fee 0. Four ticks, below her opening, so it counts as a negotiated buy. [C13][C7]
+- **Backup line (REAL, Friday):** LAV-03 from Abuela at 7 P, thread 99, tick 55; bid 6, ask 7, accepted in 3 ticks. [C10]
+- **Still to fill before the deck:** the guardrail `decisions` row for the accept and the settlement event id (C13 PENDING parts).
+  If a later Saturday deal is cleaner (one where the inspector or a learned step mattered), it may replace thread 316; capture it with
+  `evidence.md` §3 first.
+- **Say:** this is not a simulation. It is a thread id and a settlement you can look up on the board. Code set the number inside a limit;
+  the deal closed on a structured offer both sides agreed. Our messages came from a fixed template, **not** from the model (C13): never
+  say "the model wrote the words" for this deal or the Friday one.
+- **If asked whether 25 was a good price:** "No better than the market: on Friday another team paid her 21 for the same card." [C13]
 - **Badge:** REAL.
 
 ## Slide 4 · Proof 2: a deceptive offer, stopped (1:00)
@@ -68,12 +74,14 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   common card. **(right):** the result, "REFUSED, accept slot not spent", and a green pytest line. [C21]
 - **Under it, three lines of context:**
   - "Friday: 0 injection attempts in 3,436 public events; 0 of 1,022 honest dealer offers flagged." [C20][C22]
-  - "168 hostile cases through every path that reads counterparty text: 0 binding fields changed." [C24]
+  - "168 hostile cases through every path that reads counterparty text: 0 binding fields changed." [C24] Only if #78 is merged by
+    Sunday 08:30; otherwise "a 168-case red team on an open PR".
   - "The deny hook is on main; the real Claude Code CLI enforced it in a dry run." [C2][C26]
 - **Say, first sentence, always:** "No one has attacked us for real yet, so this is a crafted offer, and I will tell you what is simulated."
   Then show the refusal. The honesty is the point: we built the control before the attack, and we tell you where the evidence ends.
 - **Do not say** "we stopped a real trickster", "injection-proof", or that we flagged anyone. [C27]
-- **If #146 is not merged on Sunday:** show the hook (C2) and the red-team report, and say the inspector is on a reviewed open PR.
+- **#146 is merged** (Sat 07:08 UTC): the inspector's code is on main and gates every accept. That does not make the bait real: no real
+  deceptive offer was refused up to the Saturday capture. [C21]
 - **If a real Level 4 Trickster appears on Saturday or Sunday and the inspector refuses it:** that becomes the slide. Capture it
   (`evidence.md` §3) and change C21 to REAL.
 - **Badge:** SIMULATED (and REAL for the hook).
@@ -86,20 +94,21 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   3. **Replay on real inputs:** the 12 Friday duels we never answered: 178 P with v2 vs 122 P with v1 (n = 12). [C33]
 - **The mechanism in one line:** every counter-offer costs 6% of the pie (0.94^rounds), so the best move is often to say less.
   v1 talked six times a deal; v2 talks about once. The gain is rounds, not more deals. [C6][C32]
-- **Say the limits, unprompted:** simulated rivals, tuned on the same zoo, n = 12 for the replay, v2 is behind a flag and Jev would not
-  flip it (undecided 0.72 against a 0.90 bar). [C35][C51]
+- **Say the limits, unprompted:** simulated rivals, tuned on the same zoo, n = 12 for the replay. v2 went live on Saturday at about 10:00
+  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and its real result is not in until Duels I. [C35][C51]
 - **If asked** "does it beat just accepting the best offer at the end?": "In the zoo it ties (21.93 vs 22.06); it wins where the accept
   cap binds, as in the replay." [C34]
 - **If Saturday's data lets us:** add a fourth bar, REAL, "Saturday duels / ladder vs Friday's 0.279 / 0.464" [C41]. Only the evals
   report may fill it. Not a controlled comparison; say so.
-- **Optional second panel, only if #112/#158 are merged and deployed:** the Abuela ladder, real Friday 0.733 vs replay 0.945–0.973,
+- **Optional second panel (#112/#158 are merged; the live effect is unverified, so the panel is SIMULATED only):** the Abuela ladder, real Friday 0.733 vs replay 0.945–0.973,
   labelled SIMULATED, plus "the learner confirmed our Abuela ladder and would have skipped a class we could not afford". [C36][C37][C39]
 - **Badge:** each bar carries its own.
 
 ## Slide 6 · Live demo (1:30; script in `demo.md`)
 
 - 0:00–0:30 **Bazaar Live**: the buyer and seller acting out the agents' real, public moves. 
-- 0:30–1:00 **One Phoenix replay**: the same thread, tick by tick: message, dealer offer, Jev floats, guardrail, our move. 
+- 0:30–1:00 **One Phoenix replay**: the same thread, tick by tick: message, dealer offer, Jev floats, guardrail, our move. Filter by
+  session `dealer:abuela:thread:316` (or the deal chosen for slide 3). [C67]
 - 1:00–1:30 **One `/state` view**: the taker's public state: what we did, never why in numbers.
 - **Backup:** a screen recording of exactly this, recorded during a real deal on Saturday afternoon, on the desktop, one keystroke away.
 - **Badge:** REAL (or "RECORDED Sat 15:xx" if the backup runs).
@@ -127,7 +136,7 @@ and any number in an answer must exist in `claims.md`. Add three likely question
 | Question | Short answer | Claim |
 |---|---|---|
 | "Did you test the hostile case on a real LLM?" | "Not live. The hook is tested against a desk that obeys the injection, with a fake backend; a live LLM obeying hostile text is on our not-covered list." | C25 |
-| "Is v2 what you ran in the tournament?" | "No. v2 is behind a flag; Jev did not clear its bar to flip it. The numbers are simulation and replay." | C35 |
+| "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; the real Duels result is {{C41, or 'not in yet'}}." | C35, C41 |
 | "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54 |
 
 ## Rehearsal and logistics
@@ -142,4 +151,4 @@ and any number in an answer must exist in `claims.md`. Add three likely question
 - **Deck tool:** a Slides artifact built from this outline, or Google Slides. The deck is built **after** Saturday's evidence; this file is
   its source of truth.
 - **Open questions for Omar:** (1) the real presentation slot and length; (2) whether to show the explainer site (Marius's
-  `game-explainer-site`, unpushed at 04:30); (3) whether Omar decides the v2 flag before the open (changes slide 5's wording).
+  `game-explainer-site`, unpushed at 04:30). Answered: Omar switched `duel_policy` to v2 on Saturday at about 10:00 (C35); slide 5 says so.
