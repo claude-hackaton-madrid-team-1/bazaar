@@ -19,6 +19,7 @@ from rich.console import Console
 
 from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
+from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.evals.model import EVERY_TICKS
@@ -48,6 +49,13 @@ agent_app = typer.Typer(
     help="Autonomous agents: taker and maker every tick; the desk (chat) on the Claude Agent SDK. Dry run by default",
 )
 app.add_typer(agent_app, name="agent")
+venue_app = typer.Typer(
+    no_args_is_help=True,
+    help="Our own market: open, close, re-fee, announce, status. Dry run; build only (GUARDRAILS.md)",
+)
+app.add_typer(venue_app, name="venue")
+broker_app = typer.Typer(no_args_is_help=True, help="Our venue's broker: match crossing offers every tick. Dry run")
+app.add_typer(broker_app, name="broker")
 console = Console()
 err_console = Console(stderr=True)
 
@@ -612,7 +620,8 @@ def duel_run(
         said: str | None = None
         try:
             if move.kind == "accept":
-                client.duel_accept(did)
+                with duel_traces.tool(did, "duel_accept"):
+                    client.duel_accept(did)
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
@@ -622,7 +631,8 @@ def duel_run(
                 if time.monotonic() > send_by:
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
                     return "expired"
-                client.duel_say(did, said, price=move.price, days=move.days)
+                with duel_traces.tool(did, "duel_say"):
+                    client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
             duel_traces.sent(did, move, said)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
@@ -893,7 +903,7 @@ def duel_run(
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
     console.print(f"duels → {log_path} + Postgres duels ({mode}) · evals every {every or '-'} ticks")
     try:
-        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
+        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick, agent=True), max_ticks=max_ticks or None)
     finally:
         duel_traces.close("stopped")
         decisions.close()
@@ -1430,12 +1440,15 @@ def _pack_judge(settings: Any, timeout_s: float) -> Any:
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
+    from bazaar_agent import guardrails as gr
+
     slots = book.pack_slots
     quotas = ", ".join(f"{pack} dealer quota {n}" for pack, n in book.pack_quotas.items()) or "no dealer quota"
     console.print(
         f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
-        f"{max(0, ctx.cash - rules.cash_floor)} above cash_floor {rules.cash_floor} · spent last game hour "
-        f"{ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · pack slots this game hour: used {slots.used}, "
+        f"{max(0, ctx.cash - gr.effective_cash_floor(rules, ctx))} above {gr.floor_text(rules, ctx)} · "
+        f"spent last game hour {ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · "
+        f"pack slots this game hour: used {slots.used}, "
         f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
     )
     console.print(render.scarce_supply_table(list(book.supply)))
@@ -1816,7 +1829,7 @@ def _run_agent(
 
     try:
         read_clock = watched_clock(team.clock, name, log, hub)
-        run_per_tick(read_clock, traces.per_tick(f"{name} tick", on_tick), max_ticks=max_ticks or None)
+        run_per_tick(read_clock, traces.per_tick(f"{name} tick", on_tick, agent=True), max_ticks=max_ticks or None)
     finally:
         decisions.close()
 
@@ -1869,6 +1882,7 @@ def agent_maker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
+    venue: bool = typer.Option(True, help="Run our venue: open it once (GUARDRAILS.md), then broker its book"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
@@ -1878,15 +1892,258 @@ def agent_maker(
         help="Score venues at fees announced in the feed for later in a listing's life (BAZAAR_LEARN=0: off)",
     ),
 ) -> None:
-    """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
+    """Every tick: our venue's broker (and its one opening), then asks for sell candidates and bids for missing
+    cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
     from bazaar_agent.learn.venues import VenueNotices
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
+        market = _venue_keeper(team, settings, kw) if venue else None
         notices = VenueNotices(kw["log"]) if learn else None
-        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, notices=notices, **kw)
+        jev_ = _maker_jev(settings, kw["rules"]) if jev else None
+        return Maker(team, public, jev=jev_, market=market, notices=notices, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host, evals_every)
+
+
+# ---------------------------------------------------------------- our venue and its broker (#11, #12)
+
+
+def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
+    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
+    from bazaar_agent import db
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.venue_keeper import VenueKeeper
+
+    return VenueKeeper(
+        team,
+        settings=settings,
+        rules=kw["rules"],
+        # 3 s, not 10: the vault runs before the maker's own offers, inside its tick window
+        vault=vn.KeyVault.from_settings(settings, lambda: db.connect(app="bazaar-maker-venue", connect_timeout_s=3)),
+        decisions=kw["decisions"],
+        live=kw["live"],
+        log=kw["log"],
+        hub=kw.get("hub"),
+        stats_dir=settings.data_dir / "agents",
+    )
+
+
+VENUE_LIVE_HELP = "Actually send it. Without it: dry run. Live also needs allow_venue_open = true in GUARDRAILS.md"
+
+
+def _venue_outcome(outcome: Any) -> None:
+    colour = "green" if outcome.sent else "yellow" if outcome.verdict.allowed else "red"
+    console.print(f"[{colour}]{outcome.message}[/{colour}]")
+    if not outcome.verdict.allowed:
+        raise typer.Exit(1)
+
+
+def _our_venue_id(venue: str | None) -> str:
+    """The argument, else BAZAAR_VENUE (env, .env, or what a live open saved)."""
+    found = venue or load_settings().venue_id
+    if not found:
+        _fail("which venue? pass it, or set BAZAAR_VENUE (a live `bazaar venue open` saves it)")
+    return str(found)
+
+
+def _venue_write(write: Callable[[], Any]) -> None:
+    """Validate, check the guardrails, send only when live: one coloured line, exit 1 when refused."""
+    from pydantic import ValidationError
+
+    try:
+        _venue_outcome(write())
+    except ValidationError as e:
+        _fail(f"invalid: {'; '.join(str(err['msg']) for err in e.errors())}")
+    except BazaarError as e:
+        _fail(f"refused: {e.code} ({e.message[:80]})")
+    except ConfigError as e:
+        _fail(str(e))
+
+
+@venue_app.command("open")
+def venue_open(
+    name: str = typer.Option("Team 1 market", help="Venue name (at most 40 characters)"),
+    fee_bps: int = typer.Option(0, help="Fee in basis points (0-1000, i.e. at most 10 %)"),
+    fee_per_card: int = typer.Option(0, help="Fee per card in P (0-5)"),
+    mechanism: str = typer.Option("board", help="board (our broker matches) or auto (the engine crosses first)"),
+    description: str = typer.Option("", help="Public description (at most 280 characters)"),
+    live: bool = typer.Option(False, help=VENUE_LIVE_HELP),
+) -> None:
+    """Open our venue: 250 P bond + 20 P; saves the broker key (Postgres + 0600 file), never prints it.
+    On Railway the maker opens it on its own (GUARDRAILS.md `venue_open_after_game_hours`)."""
+    from bazaar_agent import venue as vn
+
+    settings = load_settings()
+    rules = _rules().rules
+
+    def write() -> Any:
+        spec = vn.VenueSpec.model_validate(
+            {
+                "name": name,
+                "fee_bps": fee_bps,
+                "fee_per_card": fee_per_card,
+                "mechanism": mechanism,
+                "description": description,
+            }
+        )
+        vault = vn.KeyVault.from_settings(settings, _db_connect("bazaar-venue"))
+        client = _team_client()
+        me = client.me()  # the bond is judged like a purchase: on the cash our open offers do not already promise
+        me = {**me, "cash": int(me.get("cash") or 0) - _open_commitments(client, me).cash}
+        outcome, opened = vn.open_venue(client, spec, rules, live=live, vault=vault, me=me)
+        if opened is not None and not opened.saved:  # the key exists only in this process, which now ends
+            raise ConfigError(
+                f"venue {opened.venue} is OPEN but its broker key could not be saved. "
+                f"Close it (`bazaar venue close {opened.venue} --live`, the bond comes back) and open it again."
+            )
+        return outcome
+
+    _venue_write(write)
+
+
+@venue_app.command("close")
+def venue_close(
+    venue: str | None = typer.Argument(None, help="Venue id (default BAZAAR_VENUE)"),
+    live: bool = typer.Option(False, help="Actually close it. Without it: dry run"),
+) -> None:
+    """Close our venue; the bond comes back after a cooldown (a session counts the best venue open in it)."""
+    from bazaar_agent import venue as vn
+
+    vid = _our_venue_id(venue)
+    _venue_write(lambda: vn.close_venue(_team_client(), vid, _rules().rules, live=live))
+
+
+@venue_app.command("fee")
+def venue_fee(
+    fee_bps: int = typer.Argument(help="New fee in basis points (0-1000)"),
+    fee_per_card: int | None = typer.Option(None, help="New fee per card in P (0-5); unchanged if left out"),
+    venue: str | None = typer.Option(None, help="Venue id (default BAZAAR_VENUE)"),
+    live: bool = typer.Option(False, help=VENUE_LIVE_HELP),
+) -> None:
+    """Announce new fees on our venue; they take effect after the public notice."""
+    from bazaar_agent import venue as vn
+
+    vid = _our_venue_id(venue)
+
+    def write() -> Any:
+        fee = vn.FeeSpec(fee_bps=fee_bps, fee_per_card=fee_per_card)
+        return vn.set_fee(_team_client(), vid, fee, _rules().rules, live=live)
+
+    _venue_write(write)
+
+
+@venue_app.command("announce")
+def venue_announce(
+    text: str = typer.Argument(help="The notice (at most 280 characters)"),
+    live: bool = typer.Option(False, help=VENUE_LIVE_HELP),
+) -> None:
+    """Post a notice on our venue with the broker key."""
+    from bazaar_agent import venue as vn
+
+    def write() -> Any:
+        note = vn.Announcement(text=text)
+        broker = vn.broker_client(load_settings())
+        return vn.announce(broker, broker.clock(), note, _rules().rules, live=live)
+
+    _venue_write(write)
+
+
+@venue_app.command("status")
+def venue_status() -> None:
+    """Read only: the build-only switch, our venue on the public list, what the broker would match now."""
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.matcher import BrokerBook, Fee, plan_matches, quotes_from
+
+    settings, rules = load_settings(), _rules().rules
+    switch = "[green]true[/green]" if rules.allow_venue_open else "[yellow]false (build only)[/yellow]"
+    console.print(f"allow_venue_open = {switch} · trading_enabled = {rules.trading_enabled}")
+    key = "set" if settings.broker_key else "not set"
+    console.print(f"venue id: {settings.venue_id or '-'} · broker key: {key} (never shown)")
+    us = _our_team(settings)
+    try:
+        venues = public_client(settings).venues().get("venues") or []
+    except BazaarError as e:
+        _fail(f"/api/venues refused: {e.code}")
+        return
+    ours = [v for v in venues if isinstance(v, dict) and (v.get("owner") == us or v.get("venue") == settings.venue_id)]
+    for v in ours:
+        mechanism = (v.get("rules") or {}).get("mechanism", "?")
+        console.print(
+            f"{v.get('venue')} {v.get('name')!r} · {v.get('status')} · {mechanism} · "
+            f"{v.get('fee_bps')} bps + {v.get('fee_per_card')} P/card · {v.get('trades')} trades, "
+            f"{v.get('pairs')} pairs, {v.get('traders')} traders · pending fee {v.get('pending_fee')}"
+        )
+    if not ours:
+        console.print("we run no venue (the free starter stall is `auto`: a broker cannot act there)")
+    if not settings.broker_key:
+        return
+    try:
+        book = BrokerBook.model_validate(vn.broker_client(settings).book())
+    except BazaarError as e:
+        _fail(f"broker book refused: {e.code}")
+        return
+    except ConfigError as e:
+        _fail(str(e))
+        return
+    plan = plan_matches(quotes_from(book).quotes, Fee(book.fee_bps, book.fee_per_card))
+    console.print(
+        f"book: {len(book.offers)} offer(s), {len(book.bench_offers)} bench offer(s) · would match {len(plan)} "
+        f"pair(s), quoted surplus {sum(m.surplus for m in plan)} (our own offers not yet excluded)"
+    )
+
+
+@broker_app.command("run")
+def broker_run(
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    feed: bool = typer.Option(True, help="Read bench.started / bench.finished from the public feed"),
+) -> None:
+    """Every tick: read our venue's book and send the maximum-surplus matches (bench first)."""
+    from rich.markup import escape
+
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.broker import BrokerAgent
+    from bazaar_agent.agents.runtime import live_mode, watched_clock
+    from bazaar_agent.decisions import DecisionLog
+
+    settings, rules = load_settings(), _rules().rules
+    is_live = live_mode(live)
+
+    def log(line: str) -> None:
+        console.print(escape(line), soft_wrap=True, highlight=False)
+
+    try:
+        broker = vn.broker_client(settings)
+    except ConfigError as e:
+        _fail(str(e))
+        return
+    team = team_client(settings) if settings.bazaar_key else None
+    if team is None:
+        log("broker: BAZAAR_KEY is not set, our own offers cannot be read: bench offers only")
+    mode = "LIVE: matches are sent" if is_live else "DRY RUN: nothing is sent (add --live, or BAZAAR_LIVE=1)"
+    if is_live and not rules.allow_venue_open:
+        mode = "LIVE requested, but allow_venue_open = false: every match is refused (build only)"
+    console.print(f"[bold]broker[/bold] · {mode}")
+    public = public_client(settings)
+    decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log)
+    agent = BrokerAgent(
+        broker,
+        team,
+        us=_our_team(settings),
+        rules=rules,
+        decisions=decisions,
+        live=is_live,
+        log=log,
+        events=(lambda: public.feed_window(DEFAULT_WINDOW)) if feed else None,
+        stats_dir=settings.data_dir / "agents",
+    )
+    log(f"broker: decisions {decisions.where} · stats {settings.data_dir / 'agents'}/broker_*.jsonl")
+    try:
+        read_clock = watched_clock(broker.clock, "broker", log)
+        run_per_tick(read_clock, traces.per_tick("broker tick", agent.on_tick, agent=True), max_ticks=max_ticks or None)
+    finally:
+        decisions.close()
 
 
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
@@ -1895,6 +2152,7 @@ def agent_maker(
 llm_cli.register(app)
 evals_cli.register(app)
 learn_cli.register(app)
+dealer_finals.register(dealer_app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.

@@ -30,6 +30,7 @@ class Venue:
     trades: int
     house: bool
     pending_fee: tuple[int, int] | None = None  # announced (fee_bps, fee_per_card), in force by settlement
+    starter: bool = False  # a free starter stall (`auto`, given to a team without its own venue)
 
     def fee(self, price: int, cards: int = 1) -> int:
         fee = _fee(self.fee_bps, self.fee_per_card, price, cards)
@@ -93,6 +94,7 @@ def venues_from(payload: dict[str, Any], tick: int | None = None) -> list[Venue]
                     trades=int(v.get("trades") or 0),
                     house=bool(v.get("house")),
                     pending_fee=_pending_fee(v.get("pending_fee"), tick, per_card),
+                    starter=v.get("starter") is True,
                 )
             )
         except (TypeError, ValueError, OverflowError, AttributeError):  # a row we cannot read: skip that venue

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -35,15 +36,31 @@ KIND_WORDS = (
 
 @dataclass(frozen=True)
 class BidPlan:
-    """Our side of one conversation. `max_price` is the hard limit: never pay above it."""
+    """Our side of one conversation. `max_price` is the hard limit on our bids and on a plain ask.
+    `final_max` (N14a): the most we take for the dealer's FINAL offer (its limit, take it or it walks);
+    None = `max_price`, as before. It is set only from `guardrails.final_cap_for` and our value."""
 
     start: int
     step: int
     max_price: int
+    final_max: int | None = None
+    lift_after: int = 0  # a final above `max_price` is taken only after this many of our bids (N14a)
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
             raise ValueError(f"bad plan: start={self.start} step={self.step} max={self.max_price}")
+        if self.final_max is not None and self.final_max < self.max_price:
+            raise ValueError(f"bad plan: final_max={self.final_max} below max={self.max_price}")
+
+    @property
+    def final_cap(self) -> int:
+        return self.max_price if self.final_max is None else self.final_max
+
+    def takes_final(self, ask: int, bids: int) -> bool:
+        """A final we take: inside our top, or inside `final_max` once we have bid `lift_after` times (a dealer
+        that names a high "final" before haggling is not given the lifted cap: Friday's earliest real one came
+        after 4 bids)."""
+        return ask <= self.max_price or (ask <= self.final_cap and bids >= self.lift_after)
 
 
 @dataclass(frozen=True)
@@ -147,13 +164,16 @@ def reopen_start(neg: Negotiation) -> int | None:
     return lower if lower < first else None
 
 
-def meet_ask(neg: Negotiation, ask: int | None) -> Move:
+def meet_ask(neg: Negotiation, ask: int | None, final: bool = False) -> Move:
     """Our accept slot went elsewhere this tick: bid exactly her ask instead (a new, higher price inside our
-    max), so the dealer can accept OUR offer; going silent would freeze the thread. Only for an ask we may
-    take (`may_take`): her opening price never. Otherwise wait."""
+    max, or her final inside `final_max` once we bid `lift_after` times: N14a), so the dealer can accept OUR
+    offer; going silent would freeze the thread. Only for an ask we may take (`may_take`): her opening price
+    never. Otherwise wait."""
     last = neg.bids[-1] if neg.bids else 0
-    if ask is not None and neg.may_take(ask) and last < ask <= neg.plan.max_price:
-        return Move("bid", ask, reason="accept slot used: meet her ask")
+    inside = ask is not None and (neg.plan.takes_final(ask, len(neg.bids)) if final else ask <= neg.plan.max_price)
+    if ask is not None and inside and neg.may_take(ask) and last < ask:
+        what = "final" if ask > neg.plan.max_price else "ask"
+        return Move("bid", ask, reason=f"accept slot used: meet her {what}")
     return Move("wait", reason="accept slot used this tick")
 
 
@@ -171,8 +191,15 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             if final:
                 return Move("walk", reason=f"her final {ask} is her opening price: it scores nothing", reopen=True)
             return counter_below(neg, ask)
+        if final and ask <= neg.plan.final_cap:  # above our top: a lifted final (N14a, `dealer_final_lift`)
+            if not neg.plan.takes_final(ask, len(neg.bids)):
+                early = f"final {ask} above our top {neg.plan.max_price} after {len(neg.bids)} bid(s)"
+                return Move("walk", reason=f"{early}: a lifted final needs {neg.plan.lift_after}")
+            if neg.may_take(ask):
+                return Move("accept", ask, offer_id, "final within limit")
+            return Move("walk", reason=f"her final {ask} is her opening price: it scores nothing", reopen=True)
         if final:
-            return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
+            return Move("walk", reason=f"final {ask} above our limit {neg.plan.final_cap}")
     if nxt is None:  # our max is bid: her answer to it may still be a "Deal!"
         wait = patient(neg, neg.awaiting_reply, "her answer to our max bid is not in yet")
         return wait or Move("walk", reason="no higher bid left inside our limit")
@@ -370,6 +397,10 @@ class Observer:
     def finished(self, outcome: Outcome) -> None:
         """The negotiation ended."""
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        """Wraps one request to the game (`say`, `accept`, `close_thread`)."""
+        return nullcontext()
+
 
 class _SafeObserver(Observer):
     """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
@@ -408,6 +439,12 @@ class _SafeObserver(Observer):
 
     def finished(self, outcome: Outcome) -> None:
         self._call("finished", outcome)
+
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        try:
+            return self._inner.tool(name)
+        except Exception:
+            return nullcontext()
 
 
 def negotiate(
@@ -514,7 +551,8 @@ def negotiate(
         simulator answers 200 {"status": "deal"}), may hide a "Deal!" that landed since our last read: read
         the thread again and book it. A rate limit sends nothing more now: the thread stays open."""
         try:
-            answer = client.close_thread(tid)
+            with obs.tool("close_thread"):
+                answer = client.close_thread(tid)
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
@@ -640,10 +678,12 @@ def negotiate(
         obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:
-                client.accept(move.offer_id)
+                with obs.tool("accept"):
+                    client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None and text is not None:
-                client.say(tid, text, price=move.price)
+                with obs.tool("say"):
+                    client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
                 state["status"] = close("walked", clock)
