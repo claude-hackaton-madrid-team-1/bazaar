@@ -22,7 +22,7 @@ The four arenas map onto invoice work:
 
 | Arena | What scores | The invoice analogue |
 |---|---|---|
-| Dealers | the share of each dealer's price range we capture | negotiating with a supplier persona |
+| Dealers | the share of each dealer's price range we capture (best three deals per level, buying or selling) | negotiating with a supplier persona |
 | Team trades | value at our private valuations | swaps where each side values things differently |
 | Duels | the share of the pie, shrinking every round of talk | the time cost of haggling an invoice |
 | Duels II/III: price + delivery day | a pie that grows when both sides trade on what each cares about | **amount vs payment terms** |
@@ -33,7 +33,7 @@ The four arenas map onto invoice work:
 1. **The duel decay rule, verified on all our real deals.**
    - `result = |price − limit| × 0.94^rounds`, exactly, on 8 of 8 practice deals.
    - `rounds = min(our priced messages, the rival's)`, on 26 of 26 payloads.
-   - So every counter-offer we send costs 6 % of the pie (8 % on Duels II, 10 % on Sunday).
+   - So every round of talk costs 6 % of the pie (8 % on Duels II, 10 % on Duels III); a round is one priced message from each side.
    - On Friday our v1 player countered every tick: 6.85 rounds per deal.
    - Sources: PLAN.md "Facts", W2a #80.
 2. **Silence is free.** In the 12 practice duels we never answered, rivals conceded by themselves. Accepting their
@@ -58,7 +58,7 @@ The four arenas map onto invoice work:
   - spend per game hour;
   - one accept per tick;
   - a kill switch read every tick.
-- **The LLM writes words only.** A red team ran **129 hostile cases** through every path that reads counterparty
+- **The LLM writes words only.** A red team ran **168 hostile cases** through every path that reads counterparty
   text: duel messages, dealer threads, venue names, feed payloads, broker notices. Result: **0 binding fields
   changed** (W5 #78). Planting a bug that reads a number from the rival's text fails 34 of 48 cases, so the tests
   bite.
@@ -87,6 +87,9 @@ The four arenas map onto invoice work:
 | **Market making is mostly about being open.** | Even a clairvoyant broker beats the free stall by only +0.03–0.06 efficiency at p50, so a venue that is open every session matters more than a cleverer matcher | W1a #77, W1b #84 |
 | **Honest negative results** | Cross-venue arbitrage on Friday: **0** crossings net of fees across 636 offers; packs: luck never scores | W8, W7 #87 |
 | **Rival models** | an affinity posterior over 720 permutations per team: log loss 1.14 vs 1.39 for a uniform guess | W4 #79 |
+
+*Update, Sat 3 Oct evening:* our board venue v19 opened around game hour 3.6 with the exact broker and scores exactly the free stall's
+0.5 bench; no other team has traded on it yet (`docs/briefing.md`, "Our own market").
 
 ## Act 5: what's next, for agent-to-agent finance (30 s)
 

@@ -124,7 +124,7 @@ A decision, as published:
 
 - `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
   default, `--accept-bids`), `team_open` / `team_offer` / `team_walk` / `team_accept` (the taker's swap
-  threads with other teams, N17: off by default, `team_threads_enabled`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+  threads with other teams, N17: on since Sat 3 Oct by team decision with a Jev gate, `team_threads_enabled` in GUARDRAILS.md), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict), and `broker_match` / `venue_open` from our venue's broker (`agent:
   "broker"`, inside the maker's tick loop): a sent one shows only its kind and status, no inputs or move.
@@ -247,7 +247,7 @@ simulator in its own database).
 words (`team_affinity.parse`; confidence 0.5, 0.25 with an injection shape); `quote` is their message, scrubbed and
 cut to 200 characters. Words may lie: nothing reads these rows back into a decision. **inferred**: one consistent
 assignment per team from the rival affinity map, with each set's probability, every 10 ticks (teams with no signal
-have no rows). The taker's team desk writes both off the tick, and asks each team once per game day (`round`) in its
+have no rows). The taker's team desk writes both off the tick, and asks each team once per round (`/api/clock` `round`) in its
 first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / By the way, which set is your ×1.6?".
 `team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
 through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
@@ -342,14 +342,15 @@ Railway-generated domain of service `bazaar-live` (generated once by hand; liste
   `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
   (`Origin`), under per-address and global rate limits and a daily character budget.
 
-## Our venue: opened by the maker at game hour 6.5 (OFF for now)
+## Our venue: ON, opened by the maker (v19)
 
-**Switched off by team decision (Sat 06:08):** `allow_venue_open = false` in `GUARDRAILS.md`. Opening our
-venue replaces the free stall on the spot (RULES.md), and a broker that only matches as well as the stall
-earns the same half of the bench points; ours equals the stall in every simulation and cannot be verified
-live before opening. While off: nothing below opens or matches, and NO bond reserve is held (the floor is
-`cash_floor` alone). Turning it on is a closed-door decision with Omar once the broker has an edge or
-organic trades to serve. What follows is what happens when it is on.
+**On by team decision (Sat 3 Oct):** `allow_venue_open = true` in `GUARDRAILS.md`. Our `board` venue v19 opened
+around game hour 3.6 and replaced the free starter stall (RULES.md: opening your own venue replaces the stall on
+the spot). The maker runs the exact broker by default; the edge broker (BE1, #218) sits behind
+`BAZAAR_BENCH_POLICY` on the maker (`exact`, the default, or `edge`, set by hand) and is guarded by the exact
+plan. So far v19 scores exactly the free stall's 0.5 bench and has had no organic trade. Market making counts
+about 22.5 x bench points + 7.5 x organic value per round (docs/briefing.md, "Scoring" and "Our own market").
+Below: what the maker does while the switch is on.
 
 Our board venue runs inside the **maker** on Railway (`bazaar-maker`, no new service). Every maker tick,
 before its own offers, `agents/venue_keeper.py`:
@@ -357,9 +358,9 @@ before its own offers, `agents/venue_keeper.py`:
 1. **Finds the venue we run**: `/api/me` `venue` and the public `/api/venues` (owner `t01`, not the house,
    not a starter stall, `open` or `closing`).
 2. **Opens it once** when we run none, `allow_venue_open = true` and `/api/clock` `t_hours` has reached
-   `venue_open_after_game_hours` (6.5, about 11:30 Madrid, before the h7.0 Market Test at 12:00): a
+   `venue_open_after_game_hours` (GUARDRAILS.md; the hour team venues start trading): a
    `board` venue, 0 bps + 0 P per card, named "Team 1 market". It is tick-driven: no wall clock. The opening
-   goes through `guardrails.check()`: cash must stay at or above `cash_floor` (100) after the 250 P bond +
+   goes through `guardrails.check()`: cash must stay at or above `cash_floor` after the 250 P bond +
    20 P fee (on the cash our open offers do not already promise), never a second venue, never before that
    game hour. Before the request goes out, the shared Postgres must be able to hold the broker key, must
    show that no venue was ever opened on this target (a venue closed or suspended since is never reopened
@@ -376,9 +377,11 @@ before its own offers, `agents/venue_keeper.py`:
    first, ties in book order like the stall, never two offers of one maker, never ours, never an order
    already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.
 
-**The bond reserve.** Until we run a venue, every purchase by every writer (taker, maker, duels, dealer,
-MCP/runtime: all through `guardrails.check()`) keeps `cash_floor + venue_bond_reserve` = 370 P in cash;
-once `/api/me` shows our venue the floor is 100.
+**The bond reserve.** While `allow_venue_open` is true and we run no venue yet, every purchase by every writer
+(taker, maker, duels, dealer, MCP/runtime: all through `guardrails.check()`) keeps `cash_floor +
+venue_bond_reserve` (GUARDRAILS.md; bond 250 + opening fee 20) in cash. v19 is open, so today the floor is
+`cash_floor` alone; the other limits still bind every buy (`max_spend_per_game_hour`, the official-value cap
+`official_value_margin`, human approval above `human_approval_above`).
 
 **The broker key** comes back once, in the opening's answer. It is saved at once to the shared Postgres
 table `venue_broker_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
@@ -393,11 +396,12 @@ later (by hand, by the organisers, or between days) is reopened only by hand (`b
 The once-only claim lives in the database the maker writes to, so run the LIVE maker only on Railway (a
 laptop maker on the local default database does not share it). If the maker logs "we run a venue but
 /api/me does not show it as ours", `/me` still carries `starter_broker_key` after our opening: set
-`venue_bond_reserve = 0` so purchases stop keeping the 270 P reserve.
+`venue_bond_reserve = 0` so purchases stop keeping the reserve.
 
 **Turn it off**: `allow_venue_open = false` in `GUARDRAILS.md` (redeploy) stops the opening and every
 broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes back after a cooldown; a
-Market Test session counts the best venue open during it). The kill switch stops all of it.
+Market Test session counts the best venue open during it, and a session with no venue open counts 0, per
+RULES.md). The kill switch stops all of it.
 
 **By hand** (laptop, dry run unless `--live`): `uv run bazaar venue status | open | close | fee | announce`
 and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`

@@ -18,6 +18,8 @@ call a write endpoint of the game, or run `railway` commands that change anythin
 
 - `AGENTS.md` (hard rules, Definition of Done), `vendor/bazaar-kit/RULES.md` and `vendor/bazaar-kit/README.md`.
 - `GUARDRAILS.md` (the runtime limits), `docs/services.md` (the public contract: `/health`, `/state`, `/events`).
+- `docs/briefing.md` and `STRATEGY.md` ("What scores"): a diff or doc that states how scoring, rounds, dealers or duels work
+  must match them (RULES.md wins on a clash).
 - The PR description: `gh pr view <n>`. Its claims are hypotheses to check, not facts.
 
 ## Steps
@@ -39,6 +41,10 @@ call a write endpoint of the game, or run `railway` commands that change anythin
    - Live trading safety: cash floor, hourly spend cap, price caps, 1 accept per tick through the shared
      Postgres ledger, the kill switch (`trading_enabled`, `.local/PAUSE`), dry run unless `BAZAAR_LIVE=1`.
      Nothing may SET `BAZAAR_LIVE` in code or in `.railway/railway.py` (only `preserve()`).
+   - Omar's HARD RULES (Sat 3 Oct incident: our only SAL-07 was sold, score 28.25 to 23.98): any diff that sells or swaps
+     away a page's last copy (`protect_page_sets`), sells below the floor (`sell_min_value_ratio` x `your_value`), skips
+     human approval at 60 P or more (`human_approval_above`), or adds an override flag, breaker reset or kill-switch
+     bypass path is a P0.
    - Tick discipline and budget: loops driven by `/api/clock`; at most 5 req/s (bursts 20) and 6 live
      streams for ALL our processes together; a `429` waits for the named tick, never a retry loop.
    - Secrets: no key, token, password or URL with credentials printed, logged, committed, sent to a span,
@@ -60,7 +66,7 @@ call a write endpoint of the game, or run `railway` commands that change anythin
 
 ## Severity
 
-- **P0**: merging it loses in-game cash, leaks a secret, breaks the live agents, or breaks `main` / CI.
+- **P0**: merging it loses in-game cash, leaks a secret, breaks the live agents, breaks `main` / CI, or breaks one of Omar's HARD RULES above.
 - **P1**: a real defect with a concrete failure scenario, or a broken hard rule (including a merge conflict).
 - **P2**: worth fixing, low impact or unlikely.
 - **P3**: style, naming, docs nits.

@@ -14,7 +14,9 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Teams trade rares at 53–80 P (tape, Friday); our ×1.6 set (LAV) is chased by at least one other team.
 
 ## What scores (rules audit, Sat 3 Oct; fitted on `/me` snapshots, private values left out)
-- Holding cards, the album and `collection_value` never score in themselves. A card scores only when it moves:
+- Separate models (details in `.ai/context.md`): duels score the pie share × (1 − decay)^rounds and move no cash or card, so `your_value`, the sell floor and the album never apply to a duel; the ladder scores the share of a dealer's range; team trades score price − `your_value`; market-making is 22.5 × bench + 7.5 × organic. Never mix their numbers or lessons.
+- Top lever (a game founder, via Omar): trading with teams at private values, then dealer deals near their final, then duels and market. Completing a page by buying SAL-07 back raised collection value by about 88 and the score did not move.
+- Holding cards, the album and `collection_value` never score in themselves, but that is no licence to break a page: selling the only copy of a page card on Sat 3 Oct (tick 948) dropped `neg_points` 134.7 → 44.6 *[inferred by the coordinator: the page cards bought from teams were revalued]*. A card scores only when it moves:
   - sold to or bought from another team, at price minus our `your_value` (`neg_points`);
   - or as a dealer deal on the ladder: the share of that dealer's own range, buying or selling. A deal at the opening price scores 0 and a deal at its final scores the whole range. Best 3 per level, restarted every round.
 - Market-making per round ≈ 22.5 × Market Test bench points + 7.5 × value other teams create on our venue. The free stall's level is 0.5 bench.
@@ -39,7 +41,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Expected price: median tape price for the card, else for its rarity, else the dealer list price, else `rare_fallback_price` (rares) or book; dealer buys use that dealer's fills, rare bids use team-to-team prints.
 - Urgency: the mean of scarcity (1 at or below `scarce_minted_max` copies, then falling) and demand (teams whose top set is the card's set).
 - Score: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
-- Sell ask: the highest of what we lose × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price. What we lose is our `your_value`, plus the page bonus when we sell our only copy of a page card (all of it on a complete page, else its weighted share). A copy without `your_value` is never offered.
+- Sell ask: the highest of what we lose × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price. What we lose is our `your_value`, plus the page bonus when we sell our only copy of a page card (all of it on a complete page, else its weighted share). That is today's code; on a complete page it counts the bonus twice (see "The economics"). Our only copy of a page card is never sold anyway (`protect_page_sets`, every set). A copy without `your_value` is never offered.
 - A buy whose guardrail price cap sits below the market price is not proposed ("cap below market"): that ladder cannot fill.
 - Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`.
 - Pack EV: per slot, rarity odds × the mean value to us of one more copy of a released card of that rarity (copy marginals applied); a printed-out rarity gives the next one down.
