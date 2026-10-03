@@ -385,6 +385,9 @@ def test_a_claim_is_kept_when_the_opening_may_have_landed(tmp_path, error, kept)
 def test_a_venue_we_run_without_its_key_counts_as_opened_and_is_never_followed_by_another(tmp_path):
     store, lines = {}, []
     k = keeper(tmp_path, Team(), store=store, lines=lines)
+    early = snap(t_hours=6.0, venue={"venue": "s07", "status": "open"})  # /me alone names it: maybe the stall
+    k.on_tick(early.clock, early, window())
+    assert store == {}  # never marked: a wrong mark would stop every future opening
     s = snap(venues=(RASTRO, ours()))  # an opening whose answer was lost: the venue is there, no key
     k.on_tick(s.clock, s, window())
     assert store == {("", "v09"): ("", 400)} and k.made == []
@@ -418,3 +421,15 @@ def test_we_run_a_venue_but_me_still_shows_the_stall_key_says_so(tmp_path):
     s = Snapshot(s.clock, {**s.me, "starter_broker_key": "bk_" + "Stale0ne"}, s.offers, {}, [], s.venues, [])
     k.on_tick(s.clock, s, window())
     assert any("set venue_bond_reserve = 0" in line for line in lines)
+
+
+def test_no_answer_on_the_second_check_gives_the_claim_back_and_tries_again(tmp_path, monkeypatch):
+    store, team = {}, Team()
+    k = keeper(tmp_path, team, store=store)
+    answers = iter([False, None, False, False])  # Postgres blinks right after our claim, then answers
+    monkeypatch.setattr(vn.KeyVault, "opened_before", lambda self: next(answers))
+    k.on_tick(snap().clock, snap(), window())
+    assert team.opened == [] and k.final is None and ("", "_claim") not in store
+    later = snap(tick=410)
+    k.on_tick(later.clock, later, window())
+    assert len(team.opened) == 1

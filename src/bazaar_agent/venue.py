@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,7 +129,7 @@ VENUE_KEYS_DDL = (
 )
 CLAIM = "_claim"  # the venue column of the row that reserves an opening for one process
 CLAIM_STALE_TICKS = 20  # a claim older than this, with no venue to show for it, was a process that died
-DB_RETRY_CALLS = 5  # calls that skip Postgres after a failure (a connect may take 10 s of the tick)
+DB_RETRY_S = 20.0  # seconds Postgres is skipped after a failure (a connect may take 10 s of the tick)
 
 
 @dataclass(frozen=True)
@@ -165,7 +166,8 @@ class KeyVault:
         self.data_dir, self._connect, self.target = data_dir, connect, target
         self._env = (env_key, env_venue)
         self._conn: Any = None
-        self._skip = 0
+        self._skip_until = 0.0
+        self.now: Callable[[], float] = time.monotonic
 
     @classmethod
     def from_settings(cls, settings: Settings, connect: Callable[[], Any] | None = None) -> KeyVault:
@@ -174,8 +176,7 @@ class KeyVault:
     def _db(self) -> Any:
         if self._connect is None:
             raise ConfigError("no database configured for the broker key")
-        if self._skip > 0:
-            self._skip -= 1
+        if self.now() < self._skip_until:
             raise _Skipped("Postgres was unreachable a moment ago")
         if self._conn is None or self._conn.closed:
             try:
@@ -192,7 +193,7 @@ class KeyVault:
         by that backoff is not a new failure (else one blip would lock Postgres out for good)."""
         if isinstance(e, _Skipped):
             return
-        conn, self._conn, self._skip = self._conn, None, DB_RETRY_CALLS
+        conn, self._conn, self._skip_until = self._conn, None, self.now() + DB_RETRY_S
         if conn is not None:
             with contextlib.suppress(Exception):  # already gone
                 conn.close()
@@ -423,8 +424,11 @@ def open_venue(
                 raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
             if not vault.claim(ctx.tick):
                 raise ConfigError("another process holds the opening claim: not opening")
-            if vault.opened_before() is not False:  # another process saved its venue between our two reads
+            again = vault.opened_before()  # another process may have saved its venue between our two reads
+            if again is not False:
                 vault.release()
+                if again is None:  # no answer is not a yes: give the claim back and try again later
+                    raise ConfigError("Postgres cannot say whether we opened a venue before: not opening")
                 raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
         mechanism = {"mechanism": spec.mechanism}
         try:

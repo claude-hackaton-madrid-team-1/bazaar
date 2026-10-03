@@ -175,7 +175,7 @@ Files: `agents/venue_keeper.py`, `venue.py`, `agents/broker.py`, `agents/matcher
 - Step 1 — Effective floor: `cash_floor` 100 + `venue_bond_reserve` 270 until `/me` shows our venue; venue
   open refused before `venue_open_after_game_hours`, twice, or below the floor. · **Acceptance:**
   `tests/test_guardrails.py` venue tests.
-- Step 2 — Key vault: Postgres `venue_keys` + 0600 file, never shown; durable check before the open.
+- Step 2 — Key vault: Postgres `venue_broker_keys` (target, venue) + 0600 file, never shown; durable check before the open.
   · **Acceptance:** `tests/test_venue.py` vault tests.
 - Step 3 — Keeper in the maker's tick: open once at h6.5 (board, 0 bps), then broker every tick in the
   window, paced. · **Acceptance:** `tests/test_venue_keeper.py`.

@@ -336,7 +336,11 @@ def test_one_postgres_blip_never_locks_the_vault_out_for_good(tmp_path):
         return FakeConn(store, fail=len(attempts) == 1)  # only the first connect's statement fails
 
     v = vault(tmp_path, flaky)
-    answers = [v.ready(durable=True) for _ in range(vn.DB_RETRY_CALLS + 2)]
-    assert answers[0] is not None and answers[-1] is None  # down once, back after the backoff
-    assert len(attempts) == 2
+    clock = [0.0]
+    v.now = lambda: clock[0]
+    assert v.ready(durable=True) is not None  # down once
+    clock[0] = vn.DB_RETRY_S - 1
+    assert v.ready(durable=True) is not None and len(attempts) == 1  # skipped: no new connect, no re-arm
+    clock[0] = vn.DB_RETRY_S + 1
+    assert v.ready(durable=True) is None and len(attempts) == 2  # back after the backoff
     assert v.claim(400) and v.opened_before() is False

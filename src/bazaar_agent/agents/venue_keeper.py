@@ -148,6 +148,8 @@ class VenueKeeper:
         the 270 P bond reserve on top of the floor. Say so, so a human sets `venue_bond_reserve` = 0."""
         if runs_venue(snap.me) or not self.rules.allow_venue_open or not self.rules.venue_bond_reserve:
             return
+        if self.opened is not None and clock.tick - self.opened_tick <= LIST_LAG_TICKS:
+            return  # /me may lag our own opening by a tick or two
         if clock.tick - self._warned >= REMIND_TICKS:
             self._warned = clock.tick
             self.log(
@@ -258,11 +260,18 @@ class VenueKeeper:
         stored = self.vault.load(venue)
         return stored.key if stored is not None else None
 
+    def _may_mark(self, venue: str, clock: Clock, snap: Snapshot | None) -> bool:
+        """Only a venue the public list shows as ours (never one /me alone names: it may be the free stall),
+        live, and from the opening hour on: a wrong mark would stop every future opening on this target."""
+        if not self.live or snap is None or clock.t_hours < self.rules.venue_open_after_game_hours:
+            return False
+        return any(v.id == venue and v.owner == snap.us and not v.starter and not v.house for v in snap.venues)
+
     def _broker_tick(self, venue: str, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
             if key is None:
-                if venue not in self._marked:  # it counts as opened: never another after it closes
+                if venue not in self._marked and self._may_mark(venue, clock, snap):  # counts as opened from now
                     self.vault.mark(venue, clock.tick)
                     self._marked.add(venue)
                 if clock.tick - self.reminded >= REMIND_TICKS:
