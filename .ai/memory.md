@@ -1059,11 +1059,24 @@ range; the SG1 ladder probe plans nothing until fills drop or a card's official 
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
 
+### [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
+Same questions plus `risk_posture: aggressive`: decided keep_50 (0.79), keep_0 lift (0.93) and keep_v19 (0.75,
+v19 stays open for the benches). Undecided, so kept: dealer_sell_enabled (0.41), max_price_uncommon (0.51),
+duplicates_reserve (list_duplicates 0.60, was 0.87 in a looser earlier ask), podium_venue_rule (avoid_unless_2x
+0.74, one hundredth under the bar). Strategy gates: ladder_probe 0.36, dealer_sell 0.70 (leaning yes). A verdict is
+asked once and applied as given; re-asking until it says yes would launder the bar.
+
 ### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
 7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
 and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
 third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
+### [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
+Each `TacticBook` in `duel run` draws `secrets.randbits(64)` as its tie-break seed, and 25 of 400 seeds give that test's
+rival the `plain` arm, whose duel words carry no number, so `price in numbers_in(text)` fails (seeds 14 and 23 fail on
+an untouched export of HEAD as well; the 400 picks hash the same with and without the #212 r2 fixes). Rerun it, or pin
+`BAZAAR_BLUFF_SEED` in that test.
 
 ### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
 Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read

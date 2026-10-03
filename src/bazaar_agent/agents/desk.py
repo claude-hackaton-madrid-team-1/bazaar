@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from bazaar_agent.agents.dealer import (
     BidPlan,
@@ -47,6 +48,12 @@ class Conversation:
     reopened: bool = False  # this thread already is the lower reopen after she held her opening ask
     notes: tuple[str, ...] = ()  # which learnings changed this plan (N14a `changed_by`), logged on every move
     recalled: tuple[str, ...] = ()  # the lessons recalled for this dealer when the thread opened (quoted data)
+    # The dealer's memory when the thread opened (`dealer_memory`): its structure-only facts for Jev (never its
+    # words), the address and the forbidden words for our words, its lines for the LLM words (quoted data).
+    memory: dict[str, Any] = field(default_factory=dict)
+    address: str | None = None  # None: not computed (an adopted thread), the templates' DEALER_NAMES; "": none
+    never_address: tuple[str, ...] = ()
+    memory_lines: tuple[str, ...] = ()
 
     @property
     def topic(self) -> dict[str, dict[str, str]]:

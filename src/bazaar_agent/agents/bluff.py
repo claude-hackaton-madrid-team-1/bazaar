@@ -35,6 +35,7 @@ from typing import Any
 from bazaar_agent.agents.tactics import BY_ID, CounterpartyKind, Side, eligible, leaks, render
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.learn.etiquette import NEVER_ADDRESS, uses_forbidden
 from bazaar_agent.learn.model import SUBJECT_PATTERN, Learning
 
 ENV = "BAZAAR_BLUFF"
@@ -143,17 +144,21 @@ class Choice:
 
     def words(self, base: WordsFn) -> WordsFn:
         """`base` with this tactic's text. Any mismatch (another price, a tactic that cannot render, a private
-        number in the text) gives `base`'s words: the tactic never blocks or changes a message. The `plain`
-        control arm is `base` itself."""
+        number in the text, an address the dealer forbade) gives `base`'s words: the tactic never blocks or
+        changes a message. A dealer is addressed as the request says (`WordsRequest.address`, None: `NAMES`).
+        The `plain` control arm is `base` itself."""
         if self.tactic is None or self.tactic == PLAIN:
             return base
         tactic = self.tactic
+        dealer = self.counterparty.kind == "dealer"
 
         def say(request: WordsRequest) -> str:
             if request.price != self.price:
                 return base(request)
-            text = _text(tactic, self, request.language)
-            return text if text is not None else base(request)
+            text = _text(tactic, self, request.language, request.address if dealer else None)
+            if text is None or (dealer and uses_forbidden(text, (*NEVER_ADDRESS, *request.never_address))):
+                return base(request)
+            return text
 
         return say
 
@@ -199,8 +204,9 @@ class _Agg:
     penalties: int = 0
 
 
-def _text(tactic: str, c: Choice, language: str) -> str | None:
-    """The tactic's words for this choice; None when it does not render or would show a private number."""
+def _text(tactic: str, c: Choice, language: str, name: str | None = None) -> str | None:
+    """The tactic's words for this choice; None when it does not render or would show a private number.
+    `name`: how a dealer is addressed (None: `tactics.NAMES`)."""
     cp = c.counterparty
     text = render(
         tactic,
@@ -212,6 +218,7 @@ def _text(tactic: str, c: Choice, language: str) -> str | None:
         avoid=c.avoid,
         step=c.step,
         their=c.their,
+        name=name,
     )
     return text if text is not None and not leaks(text, c.avoid, c.price) else None
 
