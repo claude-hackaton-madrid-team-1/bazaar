@@ -134,6 +134,11 @@ to validate. `touch .local/PAUSE` stops every write of the processes that share 
 laptop checkout, or one Railway service's volume: pause each, README "Pause writes").
 
 ## Task identity & spec source (the pipeline runs PER TASK)
+**This repo (decided 2026-10-03): the backlog is LOCAL.** Tasks live in `.ai/specs/02-plan.md` with a
+`.ai/specs/<id>-spec.md` each (N-ids, S1, M1, D1, P1, K1, T1, ...). The GitHub issues were migrated into those
+specs (closed ones archived in `docs/issues-archive.md`) and closed; never open a GitHub issue for a task, and
+ignore any GitHub Project. The generic rule below stays for reuse in other repos.
+
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through
 `/spec → /plan → /build → /test → /review`. Before starting a task, fix its identity and decide
 where its spec lives. The rule, by backlog source:

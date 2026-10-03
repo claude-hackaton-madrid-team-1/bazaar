@@ -352,13 +352,13 @@
     {
       "status": "todo",
       "label": "Sunday P0",
-      "title": "Presentation + decision log (#16)",
+      "title": "Presentation + decision log (P1)",
       "body": "40% of judging. Material accumulating: Jev decision logs, evals, pitch notes."
     },
     {
       "status": "part",
       "label": "gap",
-      "title": "Prompt-injection hardening (#24 #10)",
+      "title": "Prompt-injection hardening (S1)",
       "body": "Counterparty text is capped and escaped; bait inspector and auto-flagging still open (Marius #93 off by default)."
     }
   ],
@@ -629,7 +629,7 @@
             "owner": "agents"
           },
           {
-            "title": "Dealer ladder: walk, not the opening ask (#8 #9)",
+            "title": "Dealer ladder: walk, not the opening ask (N14)",
             "start": "2026-10-03T09:00",
             "end": "2026-10-03T13:00",
             "status": "todo",
@@ -637,7 +637,7 @@
             "owner": "Marius"
           },
           {
-            "title": "Duels II/III policy + days (#5 #7)",
+            "title": "Duels II/III policy + days (D1)",
             "start": "2026-10-03T12:00",
             "end": "2026-10-03T17:30",
             "status": "todo",
@@ -680,7 +680,7 @@
             "owner": "worker"
           },
           {
-            "title": "Organic market making (#13)",
+            "title": "Organic market making (M1)",
             "start": "2026-10-03T13:00",
             "end": "2026-10-03T20:00",
             "status": "todo",
@@ -724,7 +724,7 @@
             "owner": "worker"
           },
           {
-            "title": "Trade scanner + scarcity (#14 #22)",
+            "title": "Trade scanner + scarcity (T1, N14)",
             "start": "2026-10-03T14:00",
             "end": "2026-10-03T22:00",
             "status": "todo",
@@ -815,7 +815,7 @@
             "owner": "worker"
           },
           {
-            "title": "Counterparty text hardening (#24 #10)",
+            "title": "Counterparty text hardening (S1)",
             "start": "2026-10-03T10:00",
             "end": "2026-10-03T16:00",
             "status": "todo",
@@ -836,7 +836,7 @@
             "owner": "worker"
           },
           {
-            "title": "Score tracker (#15 #17)",
+            "title": "Score tracker (K1)",
             "start": "2026-10-03T14:00",
             "end": "2026-10-03T20:00",
             "status": "todo",
@@ -851,7 +851,7 @@
             "owner": "Marius"
           },
           {
-            "title": "Presentation + decision log (#16)",
+            "title": "Presentation + decision log (P1)",
             "start": "2026-10-03T22:00",
             "end": "2026-10-04T13:30",
             "status": "todo",
