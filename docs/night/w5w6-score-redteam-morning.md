@@ -65,7 +65,7 @@ and whether the ladder restarts each round (if it does, Saturday's best three de
 Friday's Market Test at h3 (tick 180) is after our last capture, so the bench part has no real data yet.
 
 **Use it:** `uv run bazaar evals score-sim` (tables) or `--json`; `--feed capture.jsonl` rebuilds the deals from a
-monitor capture; `--fit` refits the level-2 weight. 19 tests in `tests/evals/test_score_sim.py` pin the
+monitor capture; `--fit` refits the level-2 weight. 20 tests in `tests/evals/test_score_sim.py` pin the
 calibration (8.34 ± 0.5, RMSE < 0.4, board MAE < 0.6, the holdout).
 
 **Saturday morning check:** `uv run bazaar evals score-check` (Postgres, read-only, no game call) puts the model next
@@ -165,3 +165,11 @@ refused, 0.05 s: 10, none lost). `bazaar budget --ceiling --stagger --tick-secon
 `flatten` count only when passed).
 (2) Cap the maker's writes per tick: not built (new parameter, default uncapped; overlaps BACKLOG B10/B18). (3) Never
 run taker + maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).
+
+## 4. Morning summary
+
+`docs/night/MORNING.md` (and `_night/MORNING.md` outside the repo, with our cash figures): every night PR with its
+verdict and what it needs from Marius, the takeover map after the coordinator's triage, the decisions, and the
+08:30–11:30 checklist. The planned merge order (#60, #62, #69, #61 → #68 → #72, #71) was overtaken during the night:
+#69 and #72 (with #61 and #68's content) are merged, #60 and #62 continue as #150 and #162, and #71 must not merge
+without an explicit go-live.
