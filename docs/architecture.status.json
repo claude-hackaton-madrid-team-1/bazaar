@@ -346,6 +346,12 @@
       "label": "worker",
       "title": "Our cards in the DB, real time",
       "body": "Per-tick `/api/me` snapshot and the card catalog in Postgres; agents and bazaar-mcp read the latest holdings, refreshed after every deal."
+    },
+    {
+      "status": "todo",
+      "label": "next",
+      "title": "RAG-driven strategies (N14)",
+      "body": "Every mechanic (hard dealers, packs, supply, custom markets, duels, new pages) reads the learner's lessons and writes its outcome back: the auto-evolve loop applied to the whole game."
     }
   ],
   "not_started": [
@@ -698,6 +704,61 @@
             "status": "todo",
             "priority": "P0",
             "owner": "worker"
+          }
+        ]
+      },
+      {
+        "name": "Strategy (RAG)",
+        "bars": [
+          {
+            "title": "Hard dealers: learned curves + blockers + walk (N14)",
+            "start": "2026-10-03T12:00",
+            "end": "2026-10-03T18:00",
+            "status": "todo",
+            "priority": "P1",
+            "owner": "worker"
+          },
+          {
+            "title": "Packs: EV with supply, 3/hour (N14)",
+            "start": "2026-10-03T13:00",
+            "end": "2026-10-03T17:00",
+            "status": "todo",
+            "priority": "P1"
+          },
+          {
+            "title": "Supply + scarcity: print runs, holders (N14)",
+            "start": "2026-10-03T14:00",
+            "end": "2026-10-03T20:00",
+            "status": "todo",
+            "priority": "P1"
+          },
+          {
+            "title": "Custom markets: venue choice, our fee, rivals (N14)",
+            "start": "2026-10-03T12:00",
+            "end": "2026-10-03T19:00",
+            "status": "todo",
+            "priority": "P1"
+          },
+          {
+            "title": "Duels: rival profiles + delivery days (N14)",
+            "start": "2026-10-03T15:00",
+            "end": "2026-10-03T21:00",
+            "status": "todo",
+            "priority": "P1"
+          },
+          {
+            "title": "New pages + grants: El Retiro, Chamberí (N14)",
+            "start": "2026-10-03T09:00",
+            "end": "2026-10-03T12:00",
+            "status": "todo",
+            "priority": "P2"
+          },
+          {
+            "title": "Speed: Sunday 15 s ticks, all strategies in budget",
+            "start": "2026-10-03T21:00",
+            "end": "2026-10-04T05:00",
+            "status": "todo",
+            "priority": "P1"
           }
         ]
       },
