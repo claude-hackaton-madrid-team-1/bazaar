@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from bazaar_agent.agents.dealer import Move, settled_price
+from bazaar_agent.agents.dealer import Move, settled_price, with_name
 from bazaar_agent.agents.dealer_sell import (
     SELL_WORDS,
     AskPlan,
@@ -76,7 +76,7 @@ def sell_floor(value: float, your_value: float, min_surplus: float, rules: Guard
 
 def words(step: int, price: int, name: str) -> str:
     """#179's kind templates, addressed by the dealer's own name (`traders.name`)."""
-    return SELL_WORDS[step % len(SELL_WORDS)].format(p=price, n=name or "amigo")
+    return with_name(SELL_WORDS[step % len(SELL_WORDS)], price, name or "")
 
 
 @dataclass(frozen=True)
@@ -386,10 +386,10 @@ class SellTalk:
 
     def _walk(self, clock: Any, why: str) -> None:
         c, tid = self.cand, self.tid
-        name = c.name or "amigo"
+        name = c.name or ""
         did = self._decide(clock, "close_thread", f"walk from {c.dealer} on {c.ref}", why)
         # A kind last word first (dealers remember kindness), then the close: the walk itself.
-        bye = WALK_WORDS.format(n=name)
+        bye = with_name(WALK_WORDS, 0, name)
         self.hooks.rec.send(did, clock.tick, "say", {"thread": tid}, lambda: self.client.say(tid, bye))
         answer = self.hooks.rec.send(
             did, clock.tick, "close_thread", {"thread": tid}, lambda: self.client.close_thread(tid)

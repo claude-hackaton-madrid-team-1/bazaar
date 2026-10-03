@@ -30,7 +30,7 @@ CounterpartyKind = Literal["dealer", "rival", "team"]
 Family = Literal["kindness", "psychology", "bluff"]
 LANGUAGES = ("es", "en")
 ABUELA = frozenset({"abuela"})  # RULES.md: "Abuela likes kindness": her own allow-list (`Tactic.abuela`)
-NAMES = {"abuela": "Carmen", "chato": "Chato"}  # how we address a dealer
+NAMES = {"abuela": "Carmen", "chato": "Chato", "pilar": "Doña Pilar"}  # how we address a dealer
 NEUTRAL_NAME = {"es": "amigo", "en": "friend"}
 PLACE = {"dealer": {"es": "el puesto", "en": "the stall"}, "other": {"es": "el mercado", "en": "the market"}}
 ALT_DEALER = {"chato": "Abuela Carmen"}  # where a walk threat to this dealer says we go; default below
@@ -356,7 +356,11 @@ def render(
     lang = language_of(language)
     fields = {
         "p": str(price),
-        "n": NAMES.get(counterparty.strip().lower(), NEUTRAL_NAME[lang]) if kind == "dealer" else NEUTRAL_NAME[lang],
+        "n": (
+            NAMES.get(counterparty.strip().lower(), counterparty.strip().title() or NEUTRAL_NAME[lang])
+            if kind == "dealer"
+            else NEUTRAL_NAME[lang]
+        ),
         "place": PLACE["dealer" if kind == "dealer" else "other"][lang],
         "elsewhere": _elsewhere(kind, counterparty, lang),
         "their": str(their) if tactic.quotes_their else "",

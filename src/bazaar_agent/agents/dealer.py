@@ -14,6 +14,7 @@ Words persuade, structure binds: we read only the structured offers, never the d
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -234,15 +235,25 @@ def bid_schedule(plan: BidPlan) -> list[int]:
 
 
 # How we address each dealer. An unknown dealer gets a neutral greeting, never another dealer's name.
-DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato"}
+DEALER_NAMES = {"abuela": "Carmen", "chato": "Chato", "pilar": "Doña Pilar"}
+
+
+def with_name(template: str, price: int, name: str) -> str:
+    """A word template with the dealer's name; with no known name the address is left out, never "amigo"
+    (Doña Pilar answered "no me llame amigo" three times on Sat 3 Oct, threads 880-914)."""
+    text = template.format(p=price, n=name)
+    if not name:
+        text = re.sub(r",\s*([!?.,])", r"\1", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
 
 
 def words(step: int, price: int, dealer: str = "", tone: str = "") -> str:
     """Kind, varied words for a bid (terse ones for a `terse` dealer). The structured price is what binds; the
     text never changes it."""
-    name = DEALER_NAMES.get(dealer, "amigo")
+    name = DEALER_NAMES.get(dealer, "")
     pool = TERSE_WORDS if tone == "terse" else KIND_WORDS
-    return pool[step % len(pool)].format(p=price, n=name)
+    return with_name(pool[step % len(pool)], price, name)
 
 
 def template_words(request: WordsRequest) -> str:
