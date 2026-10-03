@@ -66,6 +66,10 @@ class BrokerConfig:
     # Book reads per tick while a bench run is in the book (the first included), spread over the tick window: a
     # later read sees what the earlier matches and refusals changed. 1 = today.
     bench_reads_per_tick: int = 1
+    # Seconds to wait after the tick before the first read (W5's stagger, #78: broker 0.5 s), so the broker's one
+    # team-key call (`/api/me/offers`) does not join every loop's burst right after the tick. Capped at 40 % of the
+    # tick. 0 = today. Use this or #78's BAZAAR_TICK_OFFSET_S for the broker service, never both.
+    read_offset_s: float = 0.0
 
 
 BENCH_ENV: dict[str, tuple[str, ...]] = {
@@ -261,6 +265,9 @@ class BrokerAgent:
         """One pass. Inside the maker: its tick `window`, its read of `/api/me/offers` and of the feed."""
         window = window or window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
+        offset = min(max(0.0, self.config.read_offset_s), clock.tick_seconds * 0.4)
+        if offset > 0:
+            self.sleep(min(offset, window.left()))
         if not window.open():  # nothing could be sent in time: not even the read
             return
         book = self._read_book(clock.tick)

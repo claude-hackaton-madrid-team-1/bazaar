@@ -236,6 +236,50 @@ def test_cli_broker_probe_live_prints_the_venues_verdict(tmp_path, monkeypatch):
     assert broker.sent == [(7, 8, 60)] and "ACCEPTED" in result.output
 
 
+def test_the_read_offset_waits_before_the_first_read_and_is_capped(tmp_path):
+    sleeps = []
+    broker = FakeBroker(bench=[bench_sell("b5-0", 30), bench_buy("b5-1", 40)])
+    agent(tmp_path, broker, live=True, sleeps=sleeps, read_offset_s=0.5).on_tick(clock())
+    assert sleeps == [0.5] and broker.sent == [("b5-0", "b5-1", 35)]
+    sleeps.clear()
+    agent(tmp_path, FakeBroker(), sleeps=sleeps, read_offset_s=60).on_tick(clock(tick_seconds=30.0))
+    assert sleeps == [12.0]  # 40 % of a 30 s tick
+
+
+def test_cli_broker_probe_auto_picks_the_likeliest_non_crossing_pair(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "--auto", allow=True)
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "picked sell b5-0 (ask 62) × buy b5-1 (bid 58)" in text and "DRY RUN" in text
+
+
+def test_cli_broker_probe_needs_a_pair_or_auto(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "b5-0")
+    assert result.exit_code == 1 and "give SELL BUY PRICE, or --auto" in result.output
+
+
+def test_best_probe_leaves_alone_what_the_broker_would_cross_and_what_it_is_told_to_avoid():
+    from bazaar_agent.agents.bench_edge import best_probe
+    from bazaar_agent.agents.bench_model import PRIORS
+    from bazaar_agent.agents.matcher import Fee, Quote
+
+    def q(i, side, price):
+        return Quote(f"b1-{i}", side, "bench:b1", price, f"b1-{i}")
+
+    assert best_probe([q(0, "sell", 30), q(1, "buy", 40)], Fee(), PRIORS["normal"]) is None  # all crossing
+    book = [q(0, "sell", 30), q(1, "buy", 40), q(2, "sell", 50), q(3, "buy", 45)]
+    m, chance = best_probe(book, Fee(), PRIORS["normal"])
+    assert m.sell.id == "b1-2" and m.buy.id in {"b1-1", "b1-3"} and 0 < chance <= 1
+    assert m.sell.id not in {"b1-0"}  # b1-0 crosses by quote: a running broker may take it
+    assert best_probe(book, Fee(), PRIORS["normal"], avoid=["b1-2"]) is None
+    assert best_probe([q(0, "sell", 90), q(1, "buy", 30)], Fee(), PRIORS["normal"]) is None  # no chance at all
+
+
+def test_cli_broker_probe_refuses_a_pair_and_auto_together(tmp_path, monkeypatch):
+    broker, result = _probe(tmp_path, monkeypatch, "b5-0", "b5-1", "60", "--auto", allow=True)
+    assert result.exit_code == 1 and "not both" in result.output and broker.sent == []
+
+
 def test_cli_broker_probe_never_sends_on_bazaar_live_alone(tmp_path, monkeypatch):
     monkeypatch.setenv("BAZAAR_LIVE", "1")
     broker, result = _probe(tmp_path, monkeypatch, "b5-0", "b5-1", "60", allow=True)

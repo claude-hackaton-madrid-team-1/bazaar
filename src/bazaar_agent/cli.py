@@ -1587,9 +1587,11 @@ def venue_status() -> None:
 
 @broker_app.command("probe")
 def broker_probe(
-    sell: str = typer.Argument(..., help="The sell offer: a bench id (b12-3) or a public offer id"),
-    buy: str = typer.Argument(..., help="The buy offer: a bench id or a public offer id"),
-    price: int = typer.Argument(..., min=0, help="The match price"),
+    sell: str | None = typer.Argument(None, help="The sell offer: a bench id (b12-3) or a public offer id"),
+    buy: str | None = typer.Argument(None, help="The buy offer: a bench id or a public offer id"),
+    price: int | None = typer.Argument(None, min=0, help="The match price"),
+    auto: bool = typer.Option(False, help="Pick the bench pair and price from the book (during a Market Test)"),
+    avoid: str = typer.Option("", help="--auto: comma-separated offer ids to skip (an earlier probe's pair)"),
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
 ) -> None:
     """Send ONE match, crossing or not, and print the venue's verdict: the morning probe of the match rule.
@@ -1598,7 +1600,9 @@ def broker_probe(
 
     A bench pair whose quotes do not cross, priced between them, shows whether `POST /api/broker/matches`
     checks the quotes (refused, 400) or the hidden limits (accepted, or refused only outside them). Dry run
-    unless --live; live still goes through the guardrails (kill switch, pause file, allow_venue_open)."""
+    unless --live; live still goes through the guardrails (kill switch, pause file, allow_venue_open).
+    `--auto` picks the non-crossing bench pair and price most likely to be accepted if limits are checked, and
+    prints that chance: a refusal at a high chance is strong evidence that the server checks quotes."""
     from rich.markup import escape
 
     from bazaar_agent import venue as vn
@@ -1621,6 +1625,31 @@ def broker_probe(
         _fail(str(e))
         return
     clock = Clock.model_validate(broker.clock())
+    if auto and (sell is not None or buy is not None or price is not None):
+        _fail("probe: give SELL BUY PRICE or --auto, not both")
+        return
+    if auto:
+        from bazaar_agent.agents.bench_edge import best_probe
+        from bazaar_agent.agents.bench_model import PRIORS
+        from bazaar_agent.agents.matcher import BrokerBook, Fee, quotes_from
+
+        book = BrokerBook.model_validate(broker.book())
+        skip = [x.strip() for x in avoid.split(",") if x.strip()]
+        fee = Fee(book.fee_bps, book.fee_per_card)
+        found = best_probe(quotes_from(book, public=False).quotes, fee, PRIORS["normal"], skip)
+        if found is None:
+            _fail("probe: no usable non-crossing bench pair in the book (is a Market Test running?)")
+            return
+        m, chance = found
+        sell, buy, price = str(m.sell.id), str(m.buy.id), m.price
+        log(
+            f"probe: picked sell {sell} (ask {m.sell.price}) × buy {buy} (bid {m.buy.price}) at {price}: "
+            f"accepted with chance {chance:.2f} if the server checks hidden limits, refused if it checks quotes. "
+            f"A refusal saying an offer is gone or not open is no evidence: probe again with --avoid {sell},{buy}"
+        )
+    if sell is None or buy is None or price is None:
+        _fail("probe: give SELL BUY PRICE, or --auto")
+        return
     request = {"sell": int(sell) if sell.isdigit() else sell, "buy": int(buy) if buy.isdigit() else buy, "price": price}
     verdict = check(Action("broker_match"), broker_context(rules, clock), rules)
     decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log)
@@ -1671,6 +1700,7 @@ def broker_run(
     bench_preset: str = typer.Option("normal", help="The edge's bench priors: normal or hard"),
     bench_cross: str = typer.Option("quote", help="limit = also probe non-crossing bench pairs (unverified)"),
     bench_reads: int = typer.Option(1, min=1, max=3, help="Book reads per tick while a Market Test runs"),
+    read_offset: float = typer.Option(0.0, min=0.0, help="Seconds after the tick before the first read (stagger)"),
 ) -> None:
     """Every tick: read our venue's book and send the maximum-surplus matches (bench first)."""
     from rich.markup import escape
@@ -1697,6 +1727,7 @@ def broker_run(
         bench_preset=bench_preset,  # type: ignore[arg-type]
         bench_cross=bench_cross,  # type: ignore[arg-type]
         bench_reads_per_tick=bench_reads,
+        read_offset_s=read_offset,
     )
     try:
         broker = vn.broker_client(settings)

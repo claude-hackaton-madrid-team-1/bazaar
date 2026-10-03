@@ -98,6 +98,32 @@ def expiries_in(bench_offers: Iterable[Mapping[str, Any]], tick: int) -> dict[st
     return out
 
 
+def best_probe(
+    quotes: Sequence[Quote], fee: Fee, prior: BenchPrior, avoid: Iterable[str] = ()
+) -> tuple[Match, float] | None:
+    """The non-crossing bench pair and price most likely to be accepted if the server checks hidden limits, with
+    that chance: what `bazaar broker probe --auto` sends to learn the match rule. It skips the offers in `avoid`
+    (an earlier probe's pair, so a second probe is fresh evidence) and every offer the broker would cross by quote
+    now (a running broker could take it, and the probe would be refused for a reason unrelated to the rule).
+    None when no such pair has any chance."""
+    bench = [q for q in quotes if q.bench]
+    crossing = BenchEdge(prior)
+    crossing.observe(bench, 0)
+    busy = {str(q.id) for m in crossing.plan(bench, fee, 0) for q in (m.sell, m.buy)} | set(avoid)
+    free = [q for q in bench if str(q.id) not in busy]
+    edge = BenchEdge(prior, EdgeConfig(cross="limit", min_accept=0.0))
+    edge.observe(free, 0)
+    best: tuple[Match, float] | None = None
+    for s in (q for q in free if q.side == "sell"):
+        for b in (q for q in free if q.side == "buy"):
+            cand = edge._candidate(s, b, fee)
+            if cand is None or cand.crossing or cand.chance <= 0:
+                continue
+            if best is None or cand.chance > best[1]:
+                best = (Match(s, b, cand.price, fee.of(cand.price)), cand.chance)
+    return best
+
+
 def _assign(table: Sequence[Sequence[Candidate | None]]) -> list[tuple[int, int]]:
     """The maximum-weight matching of the candidates (more pairs among equal weights)."""
     return max_weight_assignment([[0 if c is None else int(c.weight * 100) + 1 for c in row] for row in table])
