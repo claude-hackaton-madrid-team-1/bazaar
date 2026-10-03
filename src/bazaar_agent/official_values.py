@@ -62,6 +62,10 @@ class OfficialValues:
         """The value book of a team client (the SDK's `value(card)`)."""
         return cls(lambda card: client.value(card))  # looked up at read time: a client without it fails closed
 
+    def cached(self, ref: str, tick: int, held: int) -> float | None:
+        """The value already read this tick, or None: never sends a request."""
+        return self._cache.get((ref, tick, held))
+
     def value(self, ref: str, tick: int, held: int) -> float | None:
         """Our official value of one more `ref` this tick, or None when it could not be read (refuse the buy)."""
         key = (ref, tick, held)
@@ -112,8 +116,11 @@ UNREAD = "(GET /api/me/value): buying it is not allowed"  # ends every not-read 
 
 
 def unread_only(violations: tuple[str, ...]) -> bool:
-    """Refused only because the official value could not be read: hold for the tick, never walk on it."""
-    return bool(violations) and all(v.endswith(UNREAD) for v in violations)
+    """Refused only because the official value or the human approvals could not be read: hold for the tick, never
+    walk on it."""
+    from bazaar_agent.approvals import UNREAD as APPROVALS_UNREAD
+
+    return bool(violations) and all(v.endswith((UNREAD, APPROVALS_UNREAD)) for v in violations)
 
 
 def over_cap(price: int, ref: str, values: OfficialValues, tick: int, held: int, margin: float) -> str | None:

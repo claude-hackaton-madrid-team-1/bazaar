@@ -90,3 +90,15 @@ def no_shared_breakers():
         breakers._BOARD.pop("board", None)
     else:
         breakers.install(old)
+
+
+@pytest.fixture(autouse=True)
+def human_approval_off(request, monkeypatch):
+    """`human_approval_above` (GUARDRAILS.md) refuses every big card trade without an approval in Postgres, and a
+    missing database fails closed: the tests that predate it trade at their own prices. A test marked
+    `human_approval` runs the real rule (tests/test_approvals.py)."""
+    if request.node.get_closest_marker("human_approval") is not None:
+        return
+    from bazaar_agent import guardrails as gr
+
+    monkeypatch.setattr(gr, "_approval_violations", lambda action, ctx, rules: [])
