@@ -858,8 +858,11 @@ def budget(
     for row in rb.describe(rb.budget_table(tick_seconds, plan)):
         t.add_row(*row)
     console.print(t)
-    edge = rb.burst(plan, offsets=offsets)
-    console.print(f"tick boundary: {edge.calls} team-key calls, {edge.refused} refused 429 (over {edge.seconds:.1f} s)")
+    edge = rb.burst(plan, offsets=offsets, retries=rb.SDK_RETRIES)
+    console.print(
+        f"tick boundary: {edge.calls} team-key calls → {edge.sent} requests with the SDK's retries, "
+        f"{edge.refused} refused 429, {edge.failed} lost (over {edge.seconds:.1f} s)"
+    )
     verdict = rb.check(plan, tick_seconds, offsets=offsets)
     problems = "\n".join(f"[red]{p}[/red]" for p in verdict.problems)
     console.print("[green]fits the key[/green]" if verdict.ok else problems)

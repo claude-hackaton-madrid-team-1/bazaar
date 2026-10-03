@@ -23,6 +23,7 @@ calls through a token bucket to count the `429 rate_limited` refusals the bounda
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -36,6 +37,8 @@ BURST_PER_KEY = 20  # ... bursts of 20
 PUBLIC_RATE_PER_ADDRESS = 60.0  # reads without a key, per address
 SATURDAY_TICK_S = 30.0
 SUNDAY_TICK_S = 15.0
+SDK_RETRIES = 2  # sdk.team_client(): Bazaar(..., retries=2): a 429 is re-sent up to twice (3 sends)
+SDK_BACKOFF_S = 0.25  # bazaar_sdk._Http: sleep 0.25 s × attempt before re-sending a rate_limited call
 DEFAULT_LATENCY_S = 0.15  # one synchronous SDK call (urllib, no pipelining): ~6-7 calls/s per process
 VENUES_READ = 19  # boards the taker may read per tick: El Rastro + a stall or venue for each of 18 teams
 
@@ -71,7 +74,8 @@ def monitor(stream_retry: bool = True) -> LoopBudget:
 def taker(dealer_threads: int = 3, venues: int = VENUES_READ) -> LoopBudget:
     reads = 1 + 3  # loop clock (team key) + me, my_offers, my_threads
     per_thread = 3  # open_thread, thread read, say/close: one move per conversation per tick
-    accept = 1 + 1 + 1  # fresh clock before the accept, the accept, the replaced bid's cancel
+    accept = 1 + 1 + 1 + 1  # fresh clock before the accept, the accept, the replaced bid's cancel, and a clock
+    # re-read after losing the shared accept reservation to another process (r2 bite X6)
     return LoopBudget(
         "taker",
         team=reads + per_thread * dealer_threads + accept,
@@ -237,8 +241,10 @@ def budget_table(tick_seconds: float, loops: Iterable[LoopBudget]) -> BudgetTabl
 @dataclass(frozen=True)
 class BurstResult:
     calls: int
-    refused: int  # calls the token bucket would answer with 429 rate_limited
-    seconds: float  # when the last boundary call goes out
+    refused: int  # requests the token bucket answers with 429 rate_limited (retries included)
+    seconds: float  # when the last boundary request goes out
+    sent: int = 0  # requests on the wire: calls + the SDK's re-sends of refused ones
+    failed: int = 0  # calls still refused after the last retry: the write (or read) is lost
 
 
 def burst(
@@ -249,27 +255,45 @@ def burst(
     rate: float = RATE_PER_KEY,
     capacity: int = BURST_PER_KEY,
     offsets: Mapping[str, float] | None = None,
+    retries: int = 0,
+    backoff_s: float = SDK_BACKOFF_S,
 ) -> BurstResult:
     """Every copy of every loop wakes at the same instant (plus its `offsets` entry, 0 by default: today
     every loop wakes `AFTER_TICK_S` after the tick) and sends its boundary calls one after another, one
     per `latency_s` (the SDK is synchronous). A token bucket (full at `capacity`, refilled at `rate`)
-    answers them; a refused call is counted once (the SDK's retry is not modelled: it only adds calls)."""
-    times: list[float] = []
+    answers them. With `retries`, a refused call is re-sent like the SDK does (`bazaar_sdk._Http`:
+    sleep `backoff_s` × attempt, then again, GETs and POSTs alike) before the process moves on."""
+    procs: list[list[int]] = []  # per process: [calls left, attempts on the current call]
+    queue: list[tuple[float, int, int]] = []  # (send time, order, process)
     for loop in loops:
         n = loop.team_at_boundary if bucket == "team" else loop.broker_at_boundary
         start = (offsets or {}).get(loop.name, 0.0)
-        for _ in range(loop.copies):
-            times += [start + k * latency_s for k in range(n)]
-    times.sort()
-    tokens, last, refused = float(capacity), 0.0, 0
-    for t in times:
-        tokens = min(float(capacity), tokens + (t - last) * rate)
-        last = t
+        for _ in range(loop.copies if n else 0):
+            procs.append([n, 0])
+            heapq.heappush(queue, (start, len(procs), len(procs) - 1))
+    calls = sum(p[0] for p in procs)
+    tokens, last, refused, sent, failed, order = float(capacity), 0.0, 0, 0, 0, len(procs)
+    while queue:
+        t, _, i = heapq.heappop(queue)
+        tokens = min(float(capacity), tokens + round((t - last) * rate, 9))  # no float drift at the edge
+        last, sent = t, sent + 1
+        proc = procs[i]
+        nxt = round(t + latency_s, 9)
         if tokens >= 1.0:
             tokens -= 1.0
+            proc[0], proc[1] = proc[0] - 1, 0
         else:
             refused += 1
-    return BurstResult(len(times), refused, times[-1] if times else 0.0)
+            if proc[1] < retries:
+                proc[1] += 1
+                nxt = round(nxt + backoff_s * proc[1], 9)
+            else:
+                failed += 1
+                proc[0], proc[1] = proc[0] - 1, 0
+        if proc[0] > 0:
+            order += 1
+            heapq.heappush(queue, (nxt, order, i))
+    return BurstResult(calls, refused, last, sent, failed)
 
 
 @dataclass(frozen=True)
@@ -283,6 +307,7 @@ def check(
     tick_seconds: float,
     *,
     latency_s: float = DEFAULT_LATENCY_S,
+    retries: int = SDK_RETRIES,
     broker_shares_team_bucket: bool = False,
     offsets: Mapping[str, float] | None = None,
 ) -> Verdict:
@@ -300,17 +325,18 @@ def check(
     if broker_shares_team_bucket:
         merged = [replace(b, team_at_boundary=b.team_at_boundary + b.broker_at_boundary) for b in loops]
         buckets: list[tuple[str, BurstResult]] = [
-            ("team+broker", burst(merged, "team", latency_s=latency_s, offsets=offsets))
+            ("team+broker", burst(merged, "team", latency_s=latency_s, offsets=offsets, retries=retries))
         ]
     else:
         buckets = [
-            ("team", burst(loops, "team", latency_s=latency_s, offsets=offsets)),
-            ("broker", burst(loops, "broker", latency_s=latency_s, offsets=offsets)),
+            ("team", burst(loops, "team", latency_s=latency_s, offsets=offsets, retries=retries)),
+            ("broker", burst(loops, "broker", latency_s=latency_s, offsets=offsets, retries=retries)),
         ]
     for name, b in buckets:
         if b.refused:
             problems.append(
-                f"{name} key: {b.calls} calls at the tick boundary, {b.refused} refused 429 "
+                f"{name} key: {b.calls} calls at the tick boundary → {b.sent} requests with the SDK's retries, "
+                f"{b.refused} refused 429, {b.failed} lost after the last retry "
                 f"(bucket {BURST_PER_KEY} + {RATE_PER_KEY:g}/s, {latency_s:g} s per call)"
             )
     return Verdict(not problems, problems)

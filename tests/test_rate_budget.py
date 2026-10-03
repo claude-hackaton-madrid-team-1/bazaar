@@ -40,7 +40,7 @@ def test_a_steady_tick_of_every_service_fits_the_key_today(tick_seconds):
 def test_every_loop_at_its_ceiling_stays_under_5_per_second_but_bursts_past_20(tick_seconds):
     plan = rb.saturday_plan()
     table = rb.budget_table(tick_seconds, plan)
-    assert table.total("team") == 70 and table.rps("team") <= rb.RATE_PER_KEY
+    assert table.total("team") == 71 and table.rps("team") <= rb.RATE_PER_KEY
     verdict = rb.check(plan, tick_seconds)
     assert not verdict.ok and all("tick boundary" in p for p in verdict.problems)  # sustained is fine
     assert rb.check(plan, tick_seconds, offsets=rb.PROPOSED_STAGGER).ok  # a stagger absorbs it
@@ -50,7 +50,7 @@ def test_sunday_has_no_room_for_extra_dealer_processes_on_top_of_the_ceiling():
     plan = rb.saturday_plan(dealer_children=3)
     assert rb.budget_table(rb.SATURDAY_TICK_S, plan).rps("team") <= rb.RATE_PER_KEY
     problems = rb.check(plan, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).problems
-    assert any("sustained 5.67 req/s" in p for p in problems)
+    assert any("sustained 5.73 req/s" in p for p in problems)
 
 
 def test_a_second_laptop_running_taker_and_maker_breaks_the_boundary_burst():
@@ -68,7 +68,7 @@ def test_the_broker_key_is_its_own_bucket_unless_it_shares_the_teams():
 
 def test_the_token_bucket_refuses_only_what_the_refill_cannot_cover():
     one = [rb.LoopBudget("x", team=30, team_at_boundary=30)]
-    assert rb.burst(one, latency_s=0.0) == rb.BurstResult(30, 10, 0.0)  # 20 tokens, no time to refill
+    assert rb.burst(one, latency_s=0.0) == rb.BurstResult(30, 10, 0.0, 30, 10)  # 20 tokens, no refill time
     assert rb.burst(one, latency_s=0.2).refused == 0  # 5/s refill matches one call per 0.2 s
     later = rb.burst(one + [rb.LoopBudget("y", team=20, team_at_boundary=20)], latency_s=0.0, offsets={"y": 4.0})
     assert later.refused == 10  # y starts once the bucket refilled to 20
@@ -108,7 +108,7 @@ def test_the_taker_stays_inside_its_budget_on_a_busy_tick(tmp_path):
     counted_loop(tally.wrap(team, "team").clock, taker.on_tick)
     assert [s[0] for s in team.sent] == ["open_thread", "accept", "cancel", "say"]  # one dealer to talk to
     budget = rb.taker(dealer_threads=1, venues=2)
-    assert tally.total("team") == budget.team == 10
+    assert tally.total("team") == 10 and budget.team == 11  # + a clock re-read after a lost reservation
     assert tally.total("public") <= budget.public
     assert tally.total("team") <= rb.taker().team
 
@@ -211,7 +211,7 @@ def test_the_budget_command_prints_the_table_and_the_verdict_offline():
 
     out = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15"])
     assert out.exit_code == 0, out.output
-    assert "64 team-key calls, 12 refused 429" in out.output
+    assert "64 team-key calls → 71 requests" in out.output
     staggered = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15", "--stagger"])
     assert "fits the key" in staggered.output
 
@@ -220,7 +220,7 @@ def test_operator_tools_on_top_of_a_sunday_ceiling_break_the_key_but_not_on_satu
     from bazaar_agent import rate_budget as rb
 
     sunday = rb.saturday_plan() + [rb.operator(0.5, rb.SUNDAY_TICK_S)]
-    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(78 / 15)
+    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(79 / 15)
     assert not rb.check(sunday, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
     saturday = rb.saturday_plan() + [rb.operator(1.0, rb.SATURDAY_TICK_S)]
     assert rb.check(saturday, rb.SATURDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
@@ -230,8 +230,21 @@ def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday()
     from bazaar_agent import rate_budget as rb
 
     plan = rb.saturday_plan()
-    refused = {lat: rb.burst(plan, offsets=rb.PROPOSED_STAGGER, latency_s=lat).refused for lat in (0.15, 0.10, 0.05)}
-    assert refused == {0.15: 0, 0.10: 3, 0.05: 14}
+    runs = {lat: rb.burst(plan, offsets=rb.PROPOSED_STAGGER, latency_s=lat, retries=2) for lat in (0.15, 0.10, 0.05)}
+    assert {lat: (r.refused, r.failed) for lat, r in runs.items()} == {0.15: (0, 0), 0.10: (2, 0), 0.05: (10, 0)}
     shared = rb.check(plan, rb.SUNDAY_TICK_S, broker_shares_team_bucket=True)
-    assert not shared.ok and "5.80 req/s" in shared.problems[0]
+    assert not shared.ok and "5.87 req/s" in shared.problems[0]
     assert rb.flatten().team == 32
+
+
+def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lose_it():
+    """r2 bite X6: `team_client()` re-sends a 429 twice (0.25 s × attempt), GETs and POSTs alike. A call
+    lost after its last retry may be the tick's one accept (r2 X20: the reserved slot is then wasted)."""
+    ceiling = rb.burst(rb.saturday_plan(), retries=rb.SDK_RETRIES)
+    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 71, 7, 0)
+    crowded = rb.burst(rb.saturday_plan(dealer_children=3), retries=rb.SDK_RETRIES)
+    assert (crowded.calls, crowded.sent, crowded.failed) == (79, 110, 2)
+    two = rb.burst(rb.with_copies(rb.steady_plan(), {"taker": 2, "maker": 2}), retries=rb.SDK_RETRIES)
+    assert two.failed == 1
+    staggered = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.SDK_RETRIES)
+    assert staggered.failed == 0

@@ -118,44 +118,48 @@ cannot do harm when it does, since the guard hook checks every call against GUAR
 any offer id passes the hook (the server only cancels our own offers, and a cancel moves no value); the `duel run` CLI loop
 (built from the covered pieces); our own broker announcements (code in PR #71, not on `main`).
 
-## 3. Per-tick request budget (`bazaar budget`): sustained GO, tick-edge burst NO-GO at the ceiling
+## 3. Per-tick request budget (`bazaar budget`): sustained GO (Sunday conditional), tick-edge burst NO-GO at the ceiling
 
 `src/bazaar_agent/rate_budget.py` declares each loop's ceiling of calls per tick, by bucket; `tests/test_rate_budget.py`
-(16 tests) runs each loop one tick on the fakes behind a counting proxy and fails when a loop makes more calls than
+(19 tests) runs each loop one tick on the fakes behind a counting proxy and fails when a loop makes more calls than
 it declares. `team_client()` sends the key on every call, its `clock()` included; the monitor's clock/feed, boards
 and evals are keyless (60/s per address); the broker (PR #71) has its own key, assumed a separate bucket (the
-stricter reading is computed too).
+stricter reading is computed too). The burst model replays every loop as a sequential process through a token bucket
+(20 + 5/s) **with the SDK's re-sends**: `team_client()` re-sends a refused call twice, sleeping 0.25 s × attempt, GETs
+and POSTs alike (r2 bite X6, `tests/bites/test_c1_request_budget.py` on `night/r2-bite-hunter`).
 
 | Loop | Team-key calls/tick, steady | Ceiling | Where the ceiling comes from |
 |---|---|---|---|
 | monitor | 2 | 2 | `/me` + one stream retry |
-| taker | 10 (measured) | 16 | 4 reads + 3 per dealer thread (max 3) + fresh clock, accept, cancel |
+| taker | 10 (measured) | 17 | 4 reads + 3 per dealer thread (max 3) + fresh clock, accept, cancel + a clock re-read after losing the accept reservation (X6) |
 | maker | 7 | **45** | 3 reads + **cancels uncapped** (28 measured in one tick) + 12 posts |
-| duels (3 live) | 6 (measured) | 6 (9 with 6 live) | clock, `/duels`, `?done=true`, one move per duel |
+| duels (3 live) | 6 (measured) | 6 (9 with 6 live, Duels II) | clock, `/duels`, `?done=true`, one move per duel |
 | broker (PR #71) | 1 (+17 broker key) | 1 | clock + book + ≤ 15 matches (counted from the branch) |
-| operator tools (MCP, desk, `bazaar ask`/`status`) | on demand | ~0.5–1 req/s while used | `/me` per read tool; clock + `/me` + offers per write check, dry runs included |
+| operator tools (bazaar-mcp, desk, `bazaar ask`/`status`, `bazaar llm`) | on demand | ~0.5–1 req/s while used | `/me` per read tool; clock + `/me` + offers per write check, dry runs included |
 | `bazaar flatten` (PR #68) | once | 32 | reads + one cancel per open offer, back to back |
-| **total** | **26** | **70** | |
+| **total of the loops** | **27** | **71** | |
 
-| Setup | 30 s tick | 15 s tick | Burst right after the tick (bucket 20 + 5/s) |
-|---|---|---|---|
-| steady | 0.87 req/s | 1.73 req/s | 22 calls, 0 refused |
-| every loop at its ceiling | 2.33 | 4.67 | 64 calls, **12 refused (429)** |
-| ceiling + 3 `dealer buy` | 2.83 | **5.67 (> 5)** | 79 calls, 27 refused |
-| steady, taker + maker on 2 laptops | 1.43 | 2.87 | 35 calls, **11 refused** |
+| Setup | 30 s tick | 15 s tick | Tick edge, no retries | Tick edge with the SDK's re-sends |
+|---|---|---|---|---|
+| steady | 0.90 req/s | 1.80 req/s | 22 calls, 0 refused | 22 requests, 0 lost |
+| every loop at its ceiling | 2.37 | 4.73 | 64 calls, **11 refused** | 71 requests, 7 refused, 0 lost |
+| ceiling + 1 req/s operator tools | 3.37 | 6.73 | | |
+| ceiling + 0.5 req/s operator tools | | **5.27** | | |
+| ceiling + 3 `dealer buy` | 2.87 | **5.73** | 79 calls, 26 refused | 110 requests, 33 refused, **2 lost** |
+| steady, taker + maker on 2 laptops | 1.50 | 3.00 | 35 calls, 11 refused | 52 requests, 18 refused, **1 lost** |
 
-**Verdict.** Sustained ≤ 5 req/s: GO on Saturday in every setup modelled (ceiling + 1 req/s of operator tools =
-3.33 req/s). **Sunday is conditional:** the loops alone at the ceiling make 4.67 req/s (7 % headroom), and 0.5 req/s of
-MCP/desk use on top makes 5.2 (NO-GO); so no MCP/desk/`bazaar status` loops during 15 s ticks, and no extra
-`dealer buy` processes (3 of them: 5.67). If the broker key turns out to share the team's bucket: 5.80 req/s and 29
-refused on Sunday, NO-GO. Burst ≤ 20: GO on a steady tick, NO-GO at the ceiling or with
-a second laptop: every loop wakes at the same instant after the tick and the maker fires up to 45 calls back to
-back. A 429 costs nothing by itself, but the SDK retries (adds calls) and a refused accept is a missed deal.
+**Verdict.** Sustained ≤ 5 req/s: GO on Saturday in every setup modelled (3.37 with 1 req/s of operator tools on
+top). **Sunday is conditional:** the loops alone at the ceiling make 4.73 req/s (5 % headroom); 0.5 req/s of MCP/desk use
+makes 5.27 and 3 extra `dealer buy` processes 5.73 (both NO-GO), and 6 live duels in Duels II add 0.2 more. So: no
+MCP/desk/`bazaar status` loops and no extra `dealer buy` during 15 s ticks. If the broker key shares the team's bucket:
+5.87 req/s, NO-GO. Burst: the SDK's re-sends spread the edge, so one copy of each loop at the ceiling loses nothing,
+but a crowded edge (extra dealer processes, a second laptop) loses calls after the last retry; when the lost call is
+the tick's accept, the reserved accept slot is wasted for the whole team (r2 X20, BACKLOG B18).
 
 **For Marius (nothing changes today's behaviour):** (1) the stagger is built, opt-in per service: set
 `BAZAAR_TICK_OFFSET_S` (duels 0, monitor/broker 0.5, dealer 1, taker 2, maker 4; capped at 40 % of the tick; unset =
-today). The model drops the ceiling burst from 12 refused to 0, last call at 10.6 s inside a 15 s tick, **if a call takes
-0.15 s**; faster calls bunch up again (0.10 s: 3 refused; 0.05 s: 14).
-`bazaar budget --ceiling --stagger --tick-seconds 15` shows it. (2) Cap the maker's writes per tick: not built (new
-parameter, default uncapped; Marius's call). (3) Never run taker + maker on two laptops at once (the ledger shares
-accept/listing quotas, not the request rate).
+today; read from the environment or `.env`). With it, every modelled setup loses 0 calls and the ceiling needs no
+re-send, last call at 10.6 s inside a 15 s tick, **if a call takes 0.15 s**; faster calls bunch up again (0.10 s: 2
+refused, 0.05 s: 10, none lost). `bazaar budget --ceiling --stagger --tick-seconds 15 --operator-rps 0.5` shows it.
+(2) Cap the maker's writes per tick: not built (new parameter, default uncapped; overlaps BACKLOG B10/B18). (3) Never
+run taker + maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).
