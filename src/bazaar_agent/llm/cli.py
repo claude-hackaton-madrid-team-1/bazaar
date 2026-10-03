@@ -139,7 +139,7 @@ def claude_auth(settings: Settings) -> str:
 
 def _floats(probabilities: Any) -> str:
     ordered = sorted(dict(probabilities or {}).items(), key=lambda kv: -float(kv[1]))
-    return " · ".join(f"{name} {float(p):.3f}" for name, p in ordered) or "-"
+    return " · ".join(f"{escape(str(name))} {float(p):.3f}" for name, p in ordered) or "-"
 
 
 def _print_choice(choice: ModelChoice | None, model: str | None) -> None:

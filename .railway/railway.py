@@ -60,9 +60,13 @@ def runtime_env() -> dict:
         "COLUMNS": "200",  # rich wraps at 80 columns without a terminal: one log line per tick
         "BAZAAR_KEY": preserve(),
         "TYPESAFE_API_KEY": preserve(),
-        # jev (unset) or llm: who answers every judge() verdict (src/bazaar_agent/jev/decider.py). Set by
-        # hand; preserve() so an apply never deletes it.
+        # jev (unset) or llm: who answers every judge() verdict (src/bazaar_agent/jev/decider.py), and its
+        # model and budget per service (README "Decider switch"). Set by hand; preserve() so an apply keeps them.
         "BAZAAR_DECIDER": preserve(),
+        "BAZAAR_DECIDER_MODEL": preserve(),
+        "BAZAAR_DECIDER_TIMEOUT_S": preserve(),
+        "BAZAAR_DECIDER_MAX_CALLS": preserve(),
+        "BAZAAR_DECIDER_MAX_CONCURRENT": preserve(),
     }
 
 

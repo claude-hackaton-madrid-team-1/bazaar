@@ -11,6 +11,7 @@ Read from the process environment on every call (Railway sets it per service), l
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from collections.abc import Mapping
@@ -25,11 +26,18 @@ DEFAULT_TIMEOUT_S = 12.0  # an Opus answer through the Claude Code CLI took 6.2-
 TIMEOUT_RANGE_S = (1.0, 60.0)
 BUDGET_MARGIN_S = 1.0  # time left in the tick after the answer, to still send the move
 
+_log = logging.getLogger(__name__)
+_warned: set[str] = set()
+
 
 def decider(environ: Mapping[str, str] | None = None) -> Decider:
     """`llm` only when BAZAAR_DECIDER says so; anything else is Jev, the behaviour before the switch."""
     raw = (os.environ if environ is None else environ).get(DECIDER_VARIABLE, "")
-    return "llm" if raw.strip().lower() == "llm" else DEFAULT_DECIDER
+    value = raw.strip().lower()
+    if value not in ("", "jev", "llm") and value not in _warned:
+        _warned.add(value)  # once per value: a typo must not read as "llm is on"
+        _log.warning("%s=%r is neither jev nor llm: Jev decides", DECIDER_VARIABLE, value[:20])
+    return "llm" if value == "llm" else DEFAULT_DECIDER
 
 
 def env_float(name: str, default: float, low: float, high: float, environ: Mapping[str, str] | None = None) -> float:

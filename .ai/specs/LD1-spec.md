@@ -20,8 +20,10 @@ One env var picks who answers every `judge()` verdict: Jev (TypeSafe, the defaul
   unless the options are genuinely equal; guardrails run after; the state is untrusted data.
 - Budget: `BAZAAR_DECIDER_TIMEOUT_S` (12 s, clamped 1-60; live Opus calls took 6.2-9.1 s) per call, then `undecided request_timeout`; a cache
   per (model, questions, bars, state) for `BAZAAR_DECIDER_CACHE_S` (30 s); at most `BAZAAR_DECIDER_MAX_CALLS`
-  (12) starts per `BAZAAR_DECIDER_WINDOW_S` (30 s) and `BAZAAR_DECIDER_MAX_CONCURRENT` (3) at once per process.
-  Duel and maker gates ask only with `needed_budget_s` left (the LLM timeout + 1 s in llm mode).
+  (8) starts per `BAZAAR_DECIDER_WINDOW_S` (30 s) and `BAZAAR_DECIDER_MAX_CONCURRENT` (4) at once per process.
+  Every Jev gate (duels, maker, taker offer/swap/pack, dealer advisor, model chooser) asks only with
+  `needed_budget_s` left (the LLM timeout + 1 s in llm mode). Probability keys outside a choice's options are
+  dropped. Claude models only. Rollout: one service first (the caps are per process, the token is shared).
 - Safety unchanged: guardrails.check(), the official value cap, the cash floor, human approval, breakers and the
   ledger still gate every send; the LLM can only pick an option the question lists (else schema mismatch).
 - `.railway/railway.py` declares `BAZAAR_DECIDER: preserve()` on every runtime service.

@@ -91,18 +91,18 @@ class LLMOutcome:
 class DeciderLimits:
     timeout_s: float = DEFAULT_TIMEOUT_S
     cache_s: float = 30.0
-    max_calls: int = 12
+    max_calls: int = 8
     window_s: float = 30.0
-    max_concurrent: int = 3
+    max_concurrent: int = 4
 
     @classmethod
     def from_env(cls) -> DeciderLimits:
         return cls(
             timeout_s=llm_timeout_s(),
             cache_s=env_float("BAZAAR_DECIDER_CACHE_S", 30.0, 0.0, 300.0),
-            max_calls=int(env_float("BAZAAR_DECIDER_MAX_CALLS", 12, 0, 120)),
+            max_calls=int(env_float("BAZAAR_DECIDER_MAX_CALLS", 8, 0, 120)),
             window_s=env_float("BAZAAR_DECIDER_WINDOW_S", 30.0, 1.0, 600.0),
-            max_concurrent=int(env_float("BAZAAR_DECIDER_MAX_CONCURRENT", 3, 1, 16)),
+            max_concurrent=int(env_float("BAZAAR_DECIDER_MAX_CONCURRENT", 4, 1, 16)),
         )
 
 
@@ -175,6 +175,8 @@ class LLMDecider:
             ref = resolve(self.model)
         except UnknownModelError:
             return LLMOutcome(MODEL_PREFIX + self.model, 0, reason="llm_unavailable")
+        if ref.provider != "anthropic":  # our masked limits go to Claude only, never to another vendor
+            return LLMOutcome(MODEL_PREFIX + ref.model_id, 0, reason="llm_unavailable")
         label = MODEL_PREFIX + ref.model_id
         key = hashlib.sha256(js_json_dumps([ref.model_id, questions, thresholds, written_state]).encode()).hexdigest()
         cached = self._cached(key)

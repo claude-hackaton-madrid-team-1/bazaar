@@ -582,10 +582,28 @@ def _llm_result(request: MaskedRequest) -> JudgeResult:
             outcome.model, outcome.latency_ms, _all_undecided(request, outcome.reason or "llm_unavailable")
         )
     verdicts = {
-        question_id: _verdict_for(question, request.thresholds[question_id], outcome.answers.get(question_id))
+        question_id: _verdict_for(
+            question, request.thresholds[question_id], _own_options(question, outcome.answers.get(question_id))
+        )
         for question_id, question in request.questions.items()
     }
     return JudgeResult(outcome.model, outcome.latency_ms, MappingProxyType(verdicts))
+
+
+def _own_options(question: Mapping[str, object], answer: object) -> object:
+    """An LLM names its probability keys itself: keep only the question's choice options, never free text
+    that would reach logs, spans and a terminal (a `[/red]` key once crashed `bazaar llm`)."""
+    if not isinstance(answer, Mapping) or "probabilities" not in answer:
+        return answer
+    criteria = question.get("criteria")
+    raw = answer["probabilities"]
+    kept = (
+        {option: p for option, p in raw.items() if option in criteria}
+        if question.get("type") == "choice" and isinstance(criteria, Mapping) and isinstance(raw, Mapping)
+        else {}
+    )
+    trimmed = {key: value for key, value in answer.items() if key != "probabilities"}
+    return {**trimmed, "probabilities": kept} if kept else trimmed
 
 
 def questions_from_text(text: str, source: str = "questions") -> dict[str, dict[str, object]]:

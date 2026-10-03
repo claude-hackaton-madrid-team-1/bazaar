@@ -459,10 +459,16 @@ official value cap, the cash floor, human approval, breakers and the ledger stil
 | `BAZAAR_DECIDER_MODEL` | `opus-5-5` | alias or Claude id (API key first, else the subscription token) |
 | `BAZAAR_DECIDER_TIMEOUT_S` | `12` | whole-call budget (1-60), then `undecided request_timeout` |
 | `BAZAAR_DECIDER_CACHE_S` | `30` | reuse an answer for the same questions, bars and state |
-| `BAZAAR_DECIDER_MAX_CALLS` / `_WINDOW_S` | `12` / `30` | call starts per window per process, then `decider_call_cap` |
-| `BAZAAR_DECIDER_MAX_CONCURRENT` | `3` | calls in flight per process |
+| `BAZAAR_DECIDER_MAX_CALLS` / `_WINDOW_S` | `8` / `30` | call starts per window per process, then `decider_call_cap` |
+| `BAZAAR_DECIDER_MAX_CONCURRENT` | `4` | calls in flight per process |
 
 Read from the process environment (not `.env`): export it on a laptop, set it per service on Railway.
+The caps are per process, and taker, maker and duels share ONE subscription token: turn `llm` on one service
+first (duels), watch `request_timeout` / `rate_limited` / `decider_call_cap` in the decision logs, then the
+others. A usage-limit answer pauses that process's Claude calls until the window resets (every verdict is then
+`undecided`, the words fall back to templates). Gates ask only with timeout + 1 s of the tick left. The prompt
+tells Claude to commit at or above the bar unless the options are equal, so gates that used to stay closed on
+an undecided Jev (pack slot, team swap) will decide far more often: still inside every guardrail.
 
 ## Runtime LLM (talk to it, let it write the words, steer it)
 

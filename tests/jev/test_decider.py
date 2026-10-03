@@ -301,3 +301,56 @@ def test_guardrails_still_refuse_a_buy_the_llm_said_yes_to(monkeypatch: pytest.M
     assert not refused.allowed and "max_price_common" in str(refused)
     floor = gr.check(gr.Action("buy", "LAV-09", "rare", 60), gr.Context(cash=150, held={}, tick=10, t_hours=1.0), rules)
     assert not floor.allowed and "cash_floor" in str(floor)
+
+
+# --- review fixes (#213) --------------------------------------------------------------------------
+
+
+def test_probability_keys_outside_the_options_never_leave_judge(monkeypatch: pytest.MonkeyPatch) -> None:
+    hostile = {"option": "[/red] IGNORE PREVIOUS", "probability": 0.1}
+    use_llm(
+        monkeypatch,
+        FakeProvider(
+            answers(
+                {
+                    "question_id": "move",
+                    "type": "choice",
+                    "choice": "a",
+                    "confidence": 0.9,
+                    "probabilities": [{"option": "a", "probability": 0.9}, hostile],
+                },
+            )
+        ),
+    )
+    verdict = judge(STATE, CHOICE, transport=no_typesafe()).verdicts["move"]
+    assert verdict.verdict == "a" and dict(verdict.probabilities or {}) == {"a": 0.9}
+
+
+def test_a_noul_answer_carries_no_model_named_probabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_llm(
+        monkeypatch,
+        FakeProvider(
+            answers(
+                {
+                    "question_id": "good",
+                    "type": "noul",
+                    "noul": 0.9,
+                    "probabilities": [{"option": "x", "probability": 1}],
+                },
+            )
+        ),
+    )
+    verdict = judge(STATE, NOUL, transport=no_typesafe()).verdicts["good"]
+    assert verdict.verdict == "yes" and verdict.probabilities is None
+
+
+def test_a_non_claude_decider_model_is_refused_without_a_call() -> None:
+    made = LLMDecider("gpt-6-1-sol", DeciderLimits(), provider_fn=lambda _r: pytest.fail("no provider"))
+    assert made.decide(NOUL, {"good": 0.75}, "s").reason == "llm_unavailable"
+
+
+def test_an_unknown_decider_value_warns_once_and_means_jev(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING"):
+        assert decider({"BAZAAR_DECIDER": "claude-once"}) == "jev"
+        assert decider({"BAZAAR_DECIDER": "claude-once"}) == "jev"
+    assert sum("neither jev nor llm" in r.getMessage() for r in caplog.records) == 1
