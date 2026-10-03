@@ -48,7 +48,9 @@ How the plan is built:
 - **Bids:** a bid never beats a dealer's median fill or a guardrail cap.
 - **Swaps:** a cash leg splits the pie.
 - **Selection:** an exact branch and bound (it finished, so the result is proven best) picks the plan with the best expected surplus in which no counterparty passes 25 % of the planned volume.
-- **Posting:** every listing is posted through `guardrails.check()` as the cap would enforce it live (0.25, base 400).
+- **Selection pool:** the search sees at most 120 candidates (4 per copy or wanted card). It runs in 0.3 s on Friday's data.
+- **Posting:** every trade is posted through `guardrails.check()` with GUARDRAILS.md as it is, on top of our open offers and this game hour's spend. A trade it refuses is replaced by the next best plan.
+- **What-if:** while the cap is off, the plan also reports how it would post at cap bases 200 and 400. Today's 7 trades pass at both.
 
 To regenerate the plan (reads only, writes `.local/night/trade-plan.{json,md}`):
 
@@ -73,6 +75,13 @@ The plan:
 - **Counterparty shares:** t08 22 %, t17 22 %, t03 16 %, t04 16 %, t06 12 %, t12 12 %.
 - **Cash:** bids and cash legs promise 82 of the 83 P above `cash_floor`.
 - **Checks:** every trade has surplus for both sides; 0 checks fail.
+
+**Robustness:** I re-scored the same 7 trades under other maps. Expected surplus stays between +73.4 and +81.2 P:
+- β 0.25 or 1.0, or undamped evidence;
+- a map fitted on ticks < 80 only;
+- no information at all (the uniform prior).
+
+Most trades clear for any multiplier (duplicates, swaps with a cash leg). So the map earns its keep in choosing counterparties and prices, not in the fill estimate.
 
 **Why 4 listings + 3 proposals, not 12 + 3:**
 - **Cash:** only 83 P sits above `cash_floor`.
@@ -105,7 +114,7 @@ So listings go public wherever the cap allows. Direct proposals use a team threa
 |---|---|
 | Affinity map | **GO** (beats uniform on every metric). Confidence is moderate (top P 0.35–0.78). |
 | Cap | **GO** as code. It is off by default, so nothing changes until enabled. |
-| Enabling the cap at base 200 | **NO-GO.** No single trade above 50 P could ever pass, so no rare would ever trade. |
+| Enabling the cap at base 200 | **NO-GO.** Today's plan posts, but no single trade above 50 P (any rare, for example our LAT-09 at 70) passes until our team-to-team volume tops 200 P. |
 | 09:00 plan | **GO as a dry run.** Fair by construction and proven best. Expected surplus is a model value, not a fill rate. |
 
 ## Risks
@@ -123,6 +132,15 @@ So listings go public wherever the cap allows. Direct proposals use a team threa
 3. Swap cash legs route around the price caps. The caps apply to cash only, so "LAT-09 + 59 P for a rare" passes. Decide whether to cap swaps by value.
 4. Split the 83 P above the floor between the trade desk (bids) and W3's ladder (`--cash-budget`).
 5. Run `uv run bazaar trade-plan` at 09:00 to read fresh inputs, then post the plan (in `sell bid` / `sell list --to` order) or hand it to the maker.
+
+Code review (`/code-review high`, 10 findings, all fixed in ec28ab1):
+- the search crashed on pools of 1,100+ candidates (RecursionError);
+- swaps counted 0 volume toward the cap;
+- trades the guardrails refused stayed in the plan;
+- the plan ignored our open offers and this hour's spend;
+- the cap values were hard-coded;
+- the taker counted the fee as volume;
+- the CLI and runtime made repeated reads.
 
 Not done:
 - #14's `/api/me/value` validation, which needs live calls.
