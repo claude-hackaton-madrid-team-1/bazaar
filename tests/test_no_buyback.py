@@ -66,7 +66,8 @@ def test_zero_turns_it_off():
     assert gr.check(REBUY, ctx(), RULES.model_copy(update={"no_buyback_ticks": 0})).allowed
 
 
-def test_unread_sales_hold_a_send_and_skip_a_ranking():
+def test_unread_sales_hold_a_send_and_skip_a_ranking(monkeypatch):
+    monkeypatch.setattr(gr, "simulator_target", lambda: False)
     assert impact_board.board().read(958) is None  # the suite's empty board
     verdict = gr.check(REBUY, ctx(facts=None), RULES)
     assert not verdict.allowed and unread_only(verdict.violations)  # a dealer thread holds, never walks
@@ -85,3 +86,27 @@ def test_read_facts_carries_our_sales():
 
     facts = impact_board.read_facts(Sold(), 960)  # type: ignore[arg-type]
     assert facts is not None and facts.sold == {"SAL-07": 948} and 438 not in facts.origins
+
+
+def test_a_lagging_tape_is_unread_for_the_real_game(monkeypatch):
+    monkeypatch.setattr(gr, "simulator_target", lambda: False)
+    stale = mi.Facts("t01", {}, (), tick=958, tape_tick=950, sold={})
+    assert unread_only(gr.check(REBUY, ctx(facts=stale), RULES).violations)  # a sale at 951+ could be missing
+    current = mi.Facts("t01", {}, (), tick=958, tape_tick=957, sold={})
+    assert gr.check(REBUY, ctx(facts=current), RULES).allowed
+
+
+def test_a_simulator_target_without_a_database_still_buys(monkeypatch):
+    monkeypatch.setattr(gr, "simulator_target", lambda: True)
+    assert gr.check(REBUY, ctx(facts=None), RULES).allowed  # sim_smoke: no Postgres by design
+    assert not gr.check(REBUY, ctx(), RULES).allowed  # a readable sale still refuses the buy-back
+
+
+def test_the_target_is_read_from_the_settings(monkeypatch):
+    monkeypatch.setattr(gr, "_TARGET", {})
+    monkeypatch.setenv("BAZAAR_SIM", "1")
+    assert gr.simulator_target() is True
+    monkeypatch.setattr(gr, "_TARGET", {})
+    monkeypatch.setenv("BAZAAR_SIM", "0")
+    monkeypatch.delenv("BAZAAR_URL", raising=False)
+    assert gr.simulator_target() is False
