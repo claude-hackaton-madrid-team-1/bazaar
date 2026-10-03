@@ -719,3 +719,19 @@ def test_a_forced_or_planned_early_accept_is_refused_when_the_re_read_shows_a_mo
     assert (
         rows and rows[0]["status"] == "rejected" and "moved against us" in rows[0]["inputs"]["inspector"]["findings"][0]
     )
+
+
+def test_a_lone_surrogate_in_a_rivals_text_never_stops_the_duel_tick(duel_cli, tmp_path):
+    """`duel run` logs the raw /api/duels response before it plans: a rival's text with a lone surrogate (an emoji cut
+    in half by a JS slice, or on purpose) raised UnicodeEncodeError there on every tick, so no duel moved."""
+    from bazaar_agent.agents.duelist import append_jsonl
+
+    path = tmp_path / "x.jsonl"
+    append_jsonl(path, {"text": "hola \ud83d"})
+    assert json.loads(path.read_text())["text"] == "hola \ud83d"  # ASCII-escaped, same text read back
+    cli, client, _, _ = duel_cli
+    rival = {"id": 702, "price": 110, "tick": 133, "days": 0, "text": "deal \ud83d"}
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": rival}]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)]

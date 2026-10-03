@@ -63,7 +63,7 @@ def _row(duel: Mapping[str, Any], tick: int | None) -> tuple[Any, ...] | None:
         _int(duel.get("price")),
         _int(duel.get("days")),
         result if isinstance(result, int | float) and not isinstance(result, bool) else None,
-        json.dumps(scrubbed(dict(duel)), default=str, ensure_ascii=False),
+        json.dumps(scrubbed(dict(duel)), default=str),  # ASCII-escaped: a rival's lone surrogate stays storable
     )
 
 
