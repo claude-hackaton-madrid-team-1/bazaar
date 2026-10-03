@@ -1232,3 +1232,16 @@ Both affected tests passed alone (`2 passed in 2.89s`); the final full gate with
 ### [2026-10-04] build-error: PR #263 merge verification separator
 The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
 The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.
+
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it. Existing sell guards remain binding. Two replay tests pin their historical cap to 26.
+PR #265 is limited to these three guardrail changes; duel sending and request budgets match origin/main.
+
+### [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
+The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
+showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.

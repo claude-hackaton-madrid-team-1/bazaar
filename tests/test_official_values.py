@@ -194,3 +194,16 @@ def test_the_team_client_reads_a_value_once_with_no_retry(monkeypatch):
     with pytest.raises(sdk.BazaarError):
         client.value("LAV-03")
     assert calls == [("GET", "/api/me/value", {"card": "LAV-03"})]
+
+
+def test_raising_the_card_caps_never_lifts_the_official_value_cap():
+    """Sun 4 Oct: max_price_uncommon 30 and max_price_rare 105 are only ceilings; the server's value still binds."""
+    loaded = gr.load_guardrails().rules
+    assert (loaded.max_price_uncommon, loaded.max_price_rare) == (30, 105)
+    rules = loaded.model_copy(update={"cash_floor": 0, "venue_bond_reserve": 0, "max_spend_per_game_hour": 1000})
+    values = OfficialValues(Reader({"MAL-06": 27.5, "LAV-09": 90.0}))
+    ask = gr.check(gr.Action("accept_buy", "MAL-06", "uncommon", 30), ctx(values), rules)
+    assert not ask.allowed and ask.violations == ("price 30 > official value 27.5 of MAL-06 (GET /api/me/value)",)
+    rare = gr.check(gr.Action("accept_buy", "LAV-09", "rare", 105), ctx(values), rules)
+    assert not rare.allowed and "official value 90 of LAV-09" in str(rare)
+    assert gr.check(gr.Action("accept_buy", "LAV-09", "rare", 90), ctx(values), rules).allowed
