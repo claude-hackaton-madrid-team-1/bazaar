@@ -6,16 +6,16 @@ names the 3-4 page cards that the most other teams miss for a page close to comp
 missing_for_page`, the matrix the taker stores and the maker reads), with our fee and what the broker does.
 
 Only public facts go out: card ids that match the catalog's shape, our venue's id, name and fee, and the house
-market's live fee. Never a team (not even a rival), a value, a multiplier or our cash, and a card that only podium
-rivals miss (`Summary.rival`) is not advertised. No matrix, a stale one (`LatestMatrix.current`) or no card that
-fits: None, and the keeper sends its generic notice instead.
+market's live fee. Never a team (not even a rival), a value, a multiplier or our cash; only cards we hold a copy of
+(never one we miss), and a card that only podium rivals miss (`Summary.rival`) is not advertised. No matrix, a
+stale one (`LatestMatrix.current`) or no card that fits: None, and the keeper sends its generic notice instead.
 """
 
 from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.team_matrix import TeamMatrix
@@ -23,7 +23,7 @@ from bazaar_agent.venue import Announcement, VenueSpec
 
 NOTICE_MAX_CHARS = 240  # the feed clips a notice here (venue.ANNOUNCE_MAX_CHARS is the server's 280)
 WANTED_MAX = 4  # cards named in one notice
-CARD_REF = re.compile(r"[A-Z]{2,4}-\d{2}")  # LAV-03, RET-10: anything else is never echoed
+CARD_REF = re.compile(r"[A-Z]{2,4}-[0-9]{2}")  # LAV-03, RET-10: anything else is never echoed
 EXAMPLE_PRICE = 20  # "dearer" is judged on one sale at this price, as the generic notice's example
 
 
@@ -31,16 +31,21 @@ def fee_text(fee_bps: int, fee_per_card: int) -> str:
     return f"{fee_bps / 100:g} %" + (f" + {fee_per_card} P/card" if fee_per_card else "")
 
 
-def wanted_cards(matrix: TeamMatrix | None, us: str, limit: int = WANTED_MAX) -> list[str]:
+def wanted_cards(
+    matrix: TeamMatrix | None, us: str, limit: int = WANTED_MAX, only: Collection[str] | None = None
+) -> list[str]:
     """The page cards the most other teams miss for a page close to complete, most teams first, then by id.
-    Never our own wants, never a podium rival's: a card only rivals miss is left out."""
+    Never a podium rival's alone (a card only rivals miss is left out), and with `only` (the cards we hold a copy
+    of) never one we miss ourselves: a public "wanted" would raise its asks to us and send its sellers to a venue
+    our key cannot trade on."""
     if matrix is None:
         return []
     teams: dict[str, set[str]] = defaultdict(set)
     for c in matrix.cells:
         summary = matrix.teams.get(c.team)
         rival = summary is not None and summary.rival is not None
-        if c.missing_for_page and c.team not in (us, matrix.us) and not rival and CARD_REF.fullmatch(c.card):
+        ours = only is None or c.card in only
+        if c.missing_for_page and c.team not in (us, matrix.us) and not rival and ours and CARD_REF.fullmatch(c.card):
             teams[c.card].add(c.team)
     return sorted(teams, key=lambda card: (-len(teams[card]), card))[:limit]
 

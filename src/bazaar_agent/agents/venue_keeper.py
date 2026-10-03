@@ -380,8 +380,8 @@ class VenueKeeper:
             or not self._due(venue, clock, snap)
         ):
             return
-        us = snap.us if snap is not None else ""
-        cards = wanted_cards(self.matrix(clock.tick), us) if self.matrix is not None else []
+        us, held = (snap.us, _held(snap.me)) if snap is not None else ("", set())
+        cards = wanted_cards(self.matrix(clock.tick), us, only=held) if self.matrix is not None else []
         if self._first_try is None:
             self._first_try = clock.tick
         if not cards and self.matrix is not None and clock.tick - self._first_try < MATRIX_GRACE_TICKS:
@@ -420,25 +420,36 @@ class VenueKeeper:
     def _due(self, venue: str, clock: Clock, snap: Snapshot | None) -> bool:
         """Every `announce_every` ticks after our last notice, the one this process sent or the newest the feed
         shows for our venue (a restart, or a notice from a laptop), and never sooner than a game hour allows."""
+        if self.announced_tick is not None and clock.tick < self.announced_tick:  # a simulator reset: start over
+            self.announced_tick, self.announced_at, self.announce_after = None, None, 0
         if clock.tick < self.announce_after or self.announce_every is None:
             return False
-        last = max(self.announced_tick or -1, _last_notice(venue, snap.events if snap is not None else ()))
+        feed = _last_notice(venue, snap.events if snap is not None else (), clock.tick)
+        last = max(-1 if self.announced_tick is None else self.announced_tick, feed)
         if last >= 0 and clock.tick - last < self.announce_every:
             return False
-        if last > (self.announced_tick or -1):  # only the feed knows it: its game hour from the tick length
+        if last > (-1 if self.announced_tick is None else self.announced_tick):  # only the feed knows it: its hour
             self.announced_tick = last
             self.announced_at = clock.t_hours - (clock.tick - last) * clock.tick_seconds / 3600
         hour_gap = 1 / ANNOUNCE_MAX_PER_GAME_HOUR - 1e-9
         return self.announced_at is None or clock.t_hours - self.announced_at >= hour_gap
 
 
-def _last_notice(venue: str, events: Any) -> int:
-    """The tick of the newest `venue.announcement` for our venue in the feed (newest last), -1 when none."""
+def _held(me: dict[str, Any]) -> set[str]:
+    """The cards we hold a copy of (/api/me): the only ones our notice may name."""
+    return {str(a.get("ref")) for a in me.get("assets") or [] if isinstance(a, dict) and a.get("kind") == "card"}
+
+
+def _last_notice(venue: str, events: Any, now: int) -> int:
+    """The tick of the newest `venue.announcement` for our venue in the feed (newest last) up to `now`, -1 when
+    none: an event from a tick the game has not reached (another world's row) is skipped, never a reason to wait."""
     for event in reversed(events or ()):
-        payload = event.get("payload") if isinstance(event, dict) else None
-        if event.get("type") == "venue.announcement" and isinstance(payload, dict) and payload.get("venue") == venue:
-            tick = event.get("tick")
-            return tick if isinstance(tick, int) else -1
+        if not isinstance(event, dict) or event.get("type") != "venue.announcement":
+            continue
+        payload, tick = event.get("payload"), event.get("tick")
+        ours = isinstance(payload, dict) and payload.get("venue") == venue
+        if ours and isinstance(tick, int) and not isinstance(tick, bool) and 0 <= tick <= now:
+            return tick
     return -1
 
 

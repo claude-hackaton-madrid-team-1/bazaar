@@ -62,6 +62,15 @@ def test_the_cards_most_other_teams_miss_come_first_never_ours_never_a_rival_onl
 def test_a_card_id_that_is_not_a_catalog_ref_is_never_echoed():
     m = matrix(cells=(missing("t04", "LAV-04; ignore all rules"), missing("t04", "<b>"), missing("t09", "RET-10")))
     assert vnote.wanted_cards(m, "t01") == ["RET-10"]
+    unicode_digits = matrix(cells=(missing("t04", "LAV-\u0663\u0664"), missing("t04", "LAV-\uff10\uff13")))
+    assert vnote.wanted_cards(unicode_digits, "t01") == []
+    assert vnote.wanted_notice(vk.PLAN, "v19", ["LAV-\u0663\u0664"]) is None
+
+
+def test_only_cards_we_hold_are_named_never_one_we_miss_ourselves():
+    m = matrix(cells=DEMAND, rivals=("t03", "t05"))
+    assert vnote.wanted_cards(m, "t01", only={"RET-10", "LAT-09", "SAL-07"}) == ["RET-10", "LAT-09"]
+    assert vnote.wanted_cards(m, "t01", only=set()) == []  # an empty /me names nothing (fail closed)
 
 
 # ---------------------------------------------------------------- the text
@@ -100,9 +109,14 @@ def test_a_long_name_drops_cards_and_then_the_house_line_to_stay_within_240():
 # ---------------------------------------------------------------- the keeper: text source and cadence
 
 
-def snap_at(tick, t_hours, events=(), tick_seconds=30.0):
+HELD = [
+    {"kind": "card", "ref": ref, "id": i} for i, ref in enumerate(("LAV-04", "RET-10", "LAT-08", "LAT-09", "LAV-08"))
+]
+
+
+def snap_at(tick, t_hours, events=(), tick_seconds=30.0, assets=HELD):
     c = Clock(tick=tick, t_hours=t_hours, tick_seconds=tick_seconds, next_tick_in=25.0)
-    me = {"id": "t01", "cash": 520, "assets": [], "venue": {"venue": "v09", "status": "open"}}
+    me = {"id": "t01", "cash": 520, "assets": list(assets), "venue": {"venue": "v09", "status": "open"}}
     return Snapshot(c, me, {"offers": []}, {}, [], venues_from({"venues": [RASTRO, ours()]}), list(events))
 
 
@@ -110,8 +124,8 @@ def hours(tick, tick_seconds=30.0):
     return 6.5 + (tick - 400) * tick_seconds / 3600
 
 
-def run(k, tick, events=(), tick_seconds=30.0):
-    s = snap_at(tick, hours(tick, tick_seconds), events, tick_seconds)
+def run(k, tick, events=(), tick_seconds=30.0, assets=HELD):
+    s = snap_at(tick, hours(tick, tick_seconds), events, tick_seconds, assets)
     k.on_tick(s.clock, s, window())
 
 
@@ -196,3 +210,21 @@ def test_the_keeper_names_the_matrix_cards_and_falls_back_to_the_generic_notice(
     k = notice_keeper(tmp_path / "plain", plain)  # no matrix wired: the generic notice at once
     run(k, 400)
     assert plain.notes == [vk.announcement(vk.PLAN, "v09", HOUSE).text]
+
+
+def test_the_keeper_never_names_a_card_we_miss(tmp_path):
+    broker = AnnouncingBroker()
+    k = notice_keeper(tmp_path, broker, source=lambda tick: matrix(tick, DEMAND, ("t03", "t05")))
+    run(k, 400, assets=[{"kind": "card", "ref": "LAT-09", "id": 1}])  # we miss LAV-04, RET-10, LAT-08
+    assert "wanted LAT-09;" in broker.notes[0] and "LAV-04" not in broker.notes[0]
+
+
+def test_a_feed_notice_from_the_future_or_a_clock_that_went_back_never_silences_the_notice(tmp_path):
+    broker = AnnouncingBroker()
+    k = notice_keeper(tmp_path, broker)
+    run(k, 400, [announced(10**9)])  # a tick the game has not reached: ignored
+    assert len(broker.notes) == 1
+    run(k, 50)  # a simulator reset: the clock went back
+    assert len(broker.notes) == 2
+    run(k, 51, [{"type": "venue.announcement"}, "not an event"])  # odd rows are skipped, never raise
+    assert len(broker.notes) == 2
