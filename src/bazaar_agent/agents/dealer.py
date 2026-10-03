@@ -24,6 +24,7 @@ from typing import Any, Literal
 from bazaar_agent.agents.bluff import Counterparty, TacticBook, message_id
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.words import WordsFn, WordsRequest
+from bazaar_agent.jev.decider import needed_budget_s
 
 MoveKind = Literal["accept", "bid", "walk", "wait"]
 
@@ -686,7 +687,7 @@ def negotiate(
             bluff.read_events(events, clock.tick)  # before this tick's message: a strike is about the last one
             bluff.observe(conversation, their_price=ask, their_offer=offer_id, tick=clock.tick)
         move = decide(neg, ask, offer_id, final)
-        if advisor is not None and action_budget_s(clock) > 4.0:
+        if advisor is not None and action_budget_s(clock) > needed_budget_s(4.0):
             move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id, jev_min_share)
         if action_budget_s(clock) <= 0:
             log(f"tick {clock.tick}: no budget left in this tick, deciding next tick")

@@ -28,6 +28,7 @@ from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.market import OpenOffer
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
 from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.strategy import StrategyParams
 
 if TYPE_CHECKING:
@@ -259,7 +260,7 @@ class MakerJev:
         cached = self._cache.get(key)
         if cached is not None:  # one call, one outcome: a reused verdict carries no digest
             return replace(cached, digest=None, reason=cached.reason or "cached")
-        if self._calls >= self.config.max_calls_per_tick or left() < self.config.min_budget_s:
+        if self._calls >= self.config.max_calls_per_tick or left() < needed_budget_s(self.config.min_budget_s):
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         self._calls += 1
         advice = fn(state)

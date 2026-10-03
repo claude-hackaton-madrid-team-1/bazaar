@@ -102,3 +102,15 @@ def human_approval_off(request, monkeypatch):
     from bazaar_agent import guardrails as gr
 
     monkeypatch.setattr(gr, "_approval_violations", lambda action, ctx, rules: [])
+
+
+@pytest.fixture(autouse=True)
+def jev_decider_by_default(monkeypatch):
+    """A BAZAAR_DECIDER=llm exported on a laptop or service must never send the suite's judge() calls to
+    Claude: every test starts on Jev with a fresh per-process LLM decider."""
+    from bazaar_agent.llm import decider as llm_decider
+
+    monkeypatch.delenv("BAZAAR_DECIDER", raising=False)
+    llm_decider.reset_process_decider()
+    yield
+    llm_decider.reset_process_decider()

@@ -353,6 +353,26 @@ def test_a_cached_answer_is_served_on_a_tick_with_no_time_to_ask_jev(tmp_path):
     assert answers == {"off": ("yes", "undecided", "no tick budget for jev", 1), "on": ("yes", "yes", "cached", 1)}
 
 
+def test_an_llm_decider_is_asked_only_with_its_timeout_of_the_tick_left(tmp_path, monkeypatch):
+    """BAZAAR_DECIDER=llm (LD1): Opus may take the whole BAZAAR_DECIDER_TIMEOUT_S, so 10 s left (enough for Jev's
+    4 s) is no budget, and Jev's own gate is unchanged."""
+    from bazaar_agent.agents.runtime import TickWindow
+
+    state = {"offer": {"item": "LAV-08", "total_cost": 12}, "cash": 300, "tick": TICK}
+    asked = {}
+    for decider in ("jev", "llm"):
+        monkeypatch.setenv("BAZAAR_DECIDER", decider)
+        jev = CountingJev()
+        t = run_taker(tmp_path / decider, SPEED_OFF, 0, live=False, jev=jev).taker
+        run = SimpleNamespace(
+            snap=SimpleNamespace(clock=clock(tick=TICK)), jev_calls=0, window=TickWindow(TICK, 1010.0, lambda: 1000.0)
+        )
+        advice = t._ask_jev(run, state)
+        asked[decider] = (advice.verdict, advice.reason, jev.calls)
+    assert asked["jev"] == ("yes", None, 1)
+    assert asked["llm"] == ("undecided", "no tick budget for jev", 0)
+
+
 def test_keyed_reads_go_one_at_a_time_in_order_beside_the_public_ones():
     import time
 

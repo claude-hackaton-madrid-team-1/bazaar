@@ -1059,6 +1059,12 @@ range; the SG1 ladder probe plans nothing until fills drop or a card's official 
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
 
+### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
+Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
+7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
+and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
+third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
 ### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
 Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read
 refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused rate_limited` (a lost duel tick scores 0).
