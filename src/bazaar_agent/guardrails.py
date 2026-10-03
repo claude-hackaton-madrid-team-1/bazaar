@@ -879,7 +879,9 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
     """`human_approval_above`: a card trade at or above it (fee included, plus the copy a swap gives) needs an
     approval covering its card, side and price. Fails closed: approvals that cannot be read approve nothing."""
     side = approval_side(action)
-    if side is None or rules.human_approval_above <= 0 or action.price is None:
+    # A ranking or plan check skips it (as the official value cap): a plan prices at its ladder top, not at the
+    # bid, and a human is asked only about a write about to be sent.
+    if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:
         return []
     price = action.price + (action.gives_value if side == "buy" else 0.0)
     if price < rules.human_approval_above:
@@ -906,7 +908,7 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
         },
         int(ctx.t_hours),
     )
-    unread = "" if book is not None else " (approvals unreadable)"
+    unread = "" if book is not None else f" {approvals.UNREAD}"
     return [f"needs human approval: {action.item} {side} {shown}{unread}"]
 
 

@@ -173,3 +173,41 @@ def test_the_cli_approves_lists_and_revokes(conn, monkeypatch):  # noqa: F811
     approval_cli.revoke_cmd("LAV-09", "buy", "omar", 102, connect=Keep)  # type: ignore[arg-type]
     kinds = conn.execute("select kind from decisions where agent = 'guard' order by id").fetchall()
     assert [k[0] for k in kinds] == ["approval_needed", "approval_granted", "approval_revoked"]
+
+
+class Fixed(approvals.ApprovalBoard):
+    """A board that answers `answer` every tick (None: unreadable)."""
+
+    def __init__(self, answer):
+        super().__init__(None, write=lambda row: None)
+        self.answer = answer
+
+    def read(self, tick):
+        return self.answer
+
+
+def test_the_taker_holds_a_dealer_thread_while_the_approvals_cannot_be_read(tmp_path, asked):
+    # Review #209 P1: unreadable approvals hold the tick (no close_thread), as an unread official value does.
+    from tests.agent_fakes import FakePublic, FakeTeam, clock
+    from tests.test_official_value_agents import at, her_ask, taker
+
+    team = FakeTeam()
+    t, lines = taker(tmp_path, team, FakePublic(), live=True, dealers=3, human_approval_above=19)
+    t.on_tick(clock())
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    her_ask(team, 5000, 800, 24)
+    approvals.install(Fixed(None))
+    t.on_tick(at(team, team.now.tick + 1))
+    assert not [s for s in team.sent if s[0] == "close_thread"]
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    assert any("hold" in line and approvals.UNREAD in line for line in lines)
+    approvals.install(Fixed(book(approvals.Approval("LAV-08", "buy", 22, None, until_tick=10_000))))
+    t.on_tick(at(team, team.now.tick + 1))
+    assert not [s for s in team.sent if s[0] == "close_thread"]
+    assert [s for s in team.sent if s[0] == "say"][-1] == ("say", 5000, 19)
+
+
+def test_a_ranking_check_neither_refuses_nor_asks(asked):
+    ranking = gr.Context(cash=500, held={}, tick=10, t_hours=1.0, breakers=frozenset(), ranking=True)
+    assert gr.check(BUY, ranking, RULES).allowed
+    assert asked == []

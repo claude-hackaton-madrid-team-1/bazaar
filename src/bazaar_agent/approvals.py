@@ -33,6 +33,7 @@ Side = Literal["buy", "sell"]
 SIDES: tuple[str, ...] = ("buy", "sell")
 CARD = re.compile(r"^[A-Z]{3}-\d{2}$")
 DEFAULT_TTL_TICKS = 240
+UNREAD = "(approvals unreadable)"  # ends a refusal because the approvals could not be read: hold, never walk
 
 DDL = (
     "create table if not exists human_approvals (card text not null, "
