@@ -121,15 +121,16 @@ def _roadmap_item(it: dict[str, Any]) -> str:
 
 
 def render_roadmap(phases: list[dict[str, Any]]) -> str:
-    """One card per time slot, in order: when, title, then its items with priority, status and owner."""
+    """One card per time slot, in order: when, title, the organisers' events in it, then our items."""
     if not phases:
         return '<div class="item"><p>No roadmap yet in docs/architecture.status.json.</p></div>'
     cards = []
     for ph in phases:
         items = "".join(_roadmap_item(it) for it in ph["items"])
+        events = "".join(f'<p class="events">⏱ {_inline(e)}</p>' for e in ph.get("events", []))
         cards.append(
             f'<div class="item phase"><span class="mono">{html.escape(ph["when"])}</span>'
-            f"<b>{html.escape(ph['title'])}</b><ul>{items}</ul></div>"
+            f"<b>{html.escape(ph['title'])}</b>{events}<ul>{items}</ul></div>"
         )
     return "\n      ".join(cards)
 

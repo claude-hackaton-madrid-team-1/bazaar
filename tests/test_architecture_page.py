@@ -60,6 +60,7 @@ DATA = {
         {
             "when": "Sat 09:00-13:00",
             "title": "Morning",
+            "events": ["09:21 Market Test <1>"],
             "items": [
                 {"priority": "P0", "status": "wip", "text": "Fix `#61` <now>", "owner": "Marius"},
                 {"priority": "P2", "status": "done", "text": "Sim gate"},
@@ -126,6 +127,7 @@ def test_committed_page_is_current() -> None:
 def test_roadmap_renders_each_slot_with_priority_status_and_owner() -> None:
     page = ap.render_page(DATA, PLAN, TEMPLATE)
     assert "Sat 09:00-13:00" in page and "<b>Morning</b>" in page
+    assert '<p class="events">⏱ 09:21 Market Test &lt;1&gt;</p>' in page
     assert '<span class="prio P0">P0</span><span class="pill p-wip">doing</span>' in page
     assert "Fix <code>#61</code> &lt;now&gt;" in page and " · Marius" in page
     assert '<span class="pill p-done">done</span><span>Sim gate</span>' in page  # no owner, no separator

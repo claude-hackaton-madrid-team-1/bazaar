@@ -464,20 +464,47 @@
       ]
     },
     {
-      "when": "Sat 09:00–13:00 · morning",
-      "title": "Score on the ladder and the Market Test",
+      "when": "Sat 09:00–10:20 · open (Round 1 continues)",
+      "title": "First live hour",
+      "events": [
+        "09:00 doors open, 30 s ticks",
+        "~09:21 Market Test 1 (our free auto stall earns half)"
+      ],
       "items": [
+        {
+          "priority": "P0",
+          "status": "todo",
+          "text": "09:04 post-open check, 09:26 first-half-hour review (scheduled)",
+          "owner": "coordinator"
+        },
+        {
+          "priority": "P1",
+          "status": "todo",
+          "text": "Market Test: merge #71, decide the 270 P venue bond before ~11:21 (#11, #12)",
+          "owner": "Omar decides"
+        },
         {
           "priority": "P1",
           "status": "todo",
           "text": "Dealer ladder: walk instead of paying the opening ask (#8, #9)",
           "owner": "Marius"
-        },
+        }
+      ]
+    },
+    {
+      "when": "Sat 10:20–12:50 · Round 2",
+      "title": "Gran Vía, El Retiro, learn the dealers",
+      "events": [
+        "~10:21 Round 2 (Saturday · Gran Vía) + El Retiro page",
+        "~10:24 a pack + 150 primas for everyone",
+        "~11:21 Market Test 2"
+      ],
+      "items": [
         {
           "priority": "P1",
-          "status": "todo",
-          "text": "Market Test: merge #71, decide the 270 P venue bond (#11, #12)",
-          "owner": "Omar decides"
+          "status": "wip",
+          "text": "AI live-feed reader: dealer blockers into the RAG for taker + maker (N12)",
+          "owner": "worker"
         },
         {
           "priority": "P1",
@@ -494,14 +521,13 @@
       ]
     },
     {
-      "when": "Sat 13:00–23:00 · afternoon",
+      "when": "Sat 12:50–19:20 · Duels I",
       "title": "Widen the edge",
+      "events": [
+        "~12:51 Duels I: price only, one round-robin",
+        "~13:21 · 15:21 · 17:21 Market Tests"
+      ],
       "items": [
-        {
-          "priority": "P2",
-          "status": "todo",
-          "text": "Duels II/III policy + days module (#5, #7)"
-        },
         {
           "priority": "P2",
           "status": "todo",
@@ -531,8 +557,34 @@
       ]
     },
     {
+      "when": "Sat 19:20–23:00 · Duels II",
+      "title": "Two-issue duels",
+      "events": [
+        "~19:21 Duels II: price + delivery day, 2 rounds",
+        "~21:21 Market Test · ~22:21 the hard Market Test",
+        "23:00 doors close"
+      ],
+      "items": [
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Duels II/III policy + days module, due before ~19:21 (#5, #7)"
+        },
+        {
+          "priority": "P0",
+          "status": "wip",
+          "text": "Two-issue offers inside our limit (#60), merged before Duels II",
+          "owner": "Marius"
+        }
+      ]
+    },
+    {
       "when": "Sun 09:00–15:00 · finish (15 s ticks)",
       "title": "Pitch and close",
+      "events": [
+        "Round 3 (Sunday · Chamberí) + 150 primas",
+        "Duels III, the Grand Final, scores freeze"
+      ],
       "items": [
         {
           "priority": "P0",
