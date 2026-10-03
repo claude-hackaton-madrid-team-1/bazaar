@@ -1,7 +1,7 @@
 # Saturday review: dealing (Team 1, Sat 3 Oct 2026)
 
 Every deal and near-deal Team 1 made on Saturday, what each one scored, and what to change on Sunday.
-Session `sat-dealing`, written Sun 4 Oct 00:00–02:30 Madrid, revised after review (`_sat-review/review-dealing.md`,
+Session `sat-dealing`, written Sun 4 Oct 00:00–01:00 Madrid, revised after review (`_sat-review/review-dealing.md`,
 14 items; how each was handled is listed at the end). Read-only: SELECT-only Postgres; 4 logged keyed GETs and 1 keyless
 GET, all with the game closed; no game writes; no Railway access.
 
