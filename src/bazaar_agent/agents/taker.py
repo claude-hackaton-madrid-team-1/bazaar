@@ -294,6 +294,7 @@ class Taker:
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
+        self._skips: dict[str, str] = {}  # dealer -> the blocker last recorded as a `dealer_skip` (once each)
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -309,6 +310,9 @@ class Taker:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
             self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
+        finally:
+            if self.learner is not None:  # after every send of the tick, whatever happened in it
+                self.learner.flush()
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock
@@ -329,8 +333,6 @@ class Taker:
         self._converse(run, desk)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
-        if self.learner is not None:
-            self.learner.flush()
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"
@@ -392,24 +394,28 @@ class Taker:
 
     def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
         """Drop the dealer buys a learned blocker stops (cooloff, quota, sold out, locked), so the thread goes
-        to the next dealer instead of a refusal. One `dealer_skip` row per blocked dealer and tick."""
+        to the next dealer instead of a refusal. One `dealer_skip` row per dealer and blocker (not per tick);
+        its inputs use keys the public status view does not list, so `/state` shows only that a skip happened."""
         if not run.blocks:
             return moves
         kept: list[StrategyMove] = []
-        skipped: dict[str, tuple[StrategyMove, str]] = {}
+        skipped: dict[str, tuple[StrategyMove, Any]] = {}
         for mv in moves:
             stop = run.blocks.stops(mv.source, mv.ref)
             if stop is None:
                 kept.append(mv)
             elif mv.source not in busy and mv.source not in skipped:
-                skipped[mv.source] = (mv, stop.text)
-        for dealer, (mv, why) in skipped.items():
+                skipped[mv.source] = (mv, stop)
+        for dealer, (mv, stop) in skipped.items():
+            if self._skips.get(dealer) == stop.key():
+                continue
+            self._skips[dealer] = stop.key()
             self.rec.decide(
                 run.snap.clock.tick,
                 "dealer_skip",
-                f"skip {dealer} for {mv.ref}: {why}",
-                inputs={"dealer": dealer, "item": mv.ref, "score": mv.score, "blocker": why},
-                reason=why,
+                f"skip {dealer} for {mv.ref}: {stop.text}",
+                inputs={"blocked_dealer": dealer, "wanted": mv.ref, "until_tick": stop.until_tick, "why": stop.text},
+                reason=stop.text,
                 guardrail="-",
                 chosen=False,
                 status="rejected",

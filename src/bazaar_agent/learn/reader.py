@@ -24,6 +24,10 @@ Event = dict[str, Any]
 
 COOLOFF_DEFAULT_TICKS = 10  # a cooloff without `until_tick`: retry after this many ticks
 LOCKED_RECHECK_TICKS = 10  # a `locked` dealer: retry after this many ticks (an unlock event clears it sooner)
+# A refusal costs nothing and a blocker that lasts too long loses trades: every blocker is capped, and an
+# hourly one (quota, sold out) is retried after at most this many ticks even if the hour has not ended.
+HOURLY_CAP_TICKS = 60
+COOLOFF_CAP_TICKS = 400  # even a server-set `until_tick` is not believed beyond this
 # closed_reason / refusal code → learning kind. Anything else (idle, walked, deal) blocks nothing.
 REASON_KINDS: Mapping[str, Kind] = {
     "cooloff": "cooloff",
@@ -31,27 +35,39 @@ REASON_KINDS: Mapping[str, Kind] = {
     "sold_out": "sold_out",
     "locked": "blocker",
 }
-_UNTIL = re.compile(r"until tick (\d+)")
+TOPICS_MAX = 5000
+_UNTIL = re.compile(r"until tick (\d{1,9})")
 _SUBJECT = re.compile(SUBJECT_PATTERN)
 
 
 @dataclass(frozen=True)
 class GameHour:
-    """Where the current game hour ends, from one clock reading (a dealer's quota resets there)."""
+    """Where the current game hour ends, from one clock reading (a dealer's quota resets there).
+
+    `hours_per_tick` is the pace observed between two clock readings (Δt_hours / Δtick): it holds whether
+    `t_hours` follows wall-clock time or counts ticks. Without it, `tick_seconds / 3600` is assumed."""
 
     tick: int
     t_hours: float
     tick_seconds: float = 60.0
+    hours_per_tick: float | None = None
+
+    @property
+    def _per_tick(self) -> float:
+        observed = self.hours_per_tick
+        if observed is not None and 0 < observed < 1:
+            return observed
+        return max(self.tick_seconds, 1.0) / 3600
 
     @property
     def start_tick(self) -> int:
-        into = (self.t_hours - math.floor(self.t_hours)) * 3600 / max(self.tick_seconds, 1.0)
+        into = (self.t_hours - math.floor(self.t_hours)) / self._per_tick
         return self.tick - int(math.floor(into + 1e-6))
 
     @property
     def end_tick(self) -> int:
         """The first tick of the next game hour."""
-        left = (math.floor(self.t_hours) + 1 - self.t_hours) * 3600 / max(self.tick_seconds, 1.0)
+        left = (math.floor(self.t_hours) + 1 - self.t_hours) / self._per_tick
         return self.tick + max(1, math.ceil(left - 1e-6))
 
     def end_for(self, tick: int) -> int:
@@ -70,7 +86,7 @@ def _int(value: object) -> int | None:
         return None
     try:
         return int(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -118,13 +134,14 @@ def blocker(
     confidence, detail = 1.0, {"code": reason, "origin": origin}
     if kind == "cooloff":
         found = _UNTIL.search(message or "")
-        until_tick = until_tick or (int(found.group(1)) if found else None)
+        until_tick = until_tick or (_int(found.group(1)) if found else None)
         if until_tick is None:
             until_tick, confidence = tick + COOLOFF_DEFAULT_TICKS, 0.6
+        until_tick = min(until_tick, tick + COOLOFF_CAP_TICKS)
     elif kind == "blocker":
         until_tick = tick + LOCKED_RECHECK_TICKS
-    else:  # quota / sold out: until the game hour ends (an older event's hour is over)
-        until_tick = hour.end_for(tick) if hour is not None else tick + 1
+    else:  # quota / sold out: until the game hour ends (an older event's hour is over), retried within the cap
+        until_tick = min(hour.end_for(tick) if hour is not None else tick + 1, tick + HOURLY_CAP_TICKS)
         # a pack's hourly allotment, or one item sold out, blocks that item only; a card's quota the dealer
         if item is not None and (kind == "sold_out" or "-" not in item):
             detail["item"] = item
@@ -227,7 +244,8 @@ def _cooloff(e: Event, us: str | None, hour: GameHour | None) -> Learning | None
 
 def _strike(e: Event, us: str | None) -> Learning | None:
     p = _payload(e)
-    kinds = [str(k) for k in p.get("kinds") or [] if isinstance(k, str)][:5]
+    raw_kinds = p.get("kinds")
+    kinds = [k for k in raw_kinds if isinstance(k, str)][:5] if isinstance(raw_kinds, list) else []
     who = _who(_subject(p.get("team")), us)
     text = f"{p.get('persona')} gave {who} a strike ({', '.join(kinds) or '?'}), {p.get('strikes')} so far"
     learned = _notice(e, "dealer", p.get("persona"), "behaviour", text, strikes=_int(p.get("strikes")), kinds=kinds)
@@ -236,6 +254,8 @@ def _strike(e: Event, us: str | None) -> Learning | None:
 
 def _closed(e: Event, us: str | None, hour: GameHour | None, topics: Mapping[int, str]) -> Learning | None:
     p = _payload(e)
+    if p.get("kind") != "persona":  # a dealer conversation only; a team thread's end blocks nothing
+        return None
     thread = _int(p.get("thread"))
     return blocker(
         str(p.get("with") or ""),
@@ -285,8 +305,9 @@ def _fee(e: Event) -> Learning | None:
 def _venue(e: Event) -> Learning | None:
     p, kind = _payload(e), str(e.get("type"))
     venue, state = p.get("venue"), kind.split(".", 1)[1]
-    if kind == "venue.announcement":
-        return _notice(e, "venue", venue, "announcement", f"{venue} says: “{p.get('text') or ''}”", venue=venue)
+    if kind == "venue.announcement":  # a team writes it: one row per venue (the newest), however many it posts
+        text = f"{venue} says: “{p.get('text') or ''}”"
+        return _notice(e, "venue", venue, "announcement", text, venue=venue, aggregate="venue_notice")
     if kind == "venue.opened":
         text = f"{p.get('owner')} opened {venue} “{p.get('name') or ''}” at {_pct(p.get('fee_bps'))}"
         return _notice(
@@ -418,10 +439,15 @@ class FeedReader:
             if int(e["id"]) <= self.newest:
                 continue
             self.newest = int(e["id"])
-            self._remember(e, touched)
-            learned = read_event(e, self.us, hour, self.topics)
+            try:  # one malformed event is skipped; it never costs the learnings read around it
+                self._remember(e, touched)
+                learned = read_event(e, self.us, hour, self.topics)
+            except Exception:
+                continue
             if learned is not None:
                 out.append(learned)
+        if len(self.topics) > TOPICS_MAX:  # the newest threads only: an old thread's close is history
+            self.topics = {t: self.topics[t] for t in sorted(self.topics)[-TOPICS_MAX // 2 :]}
         return out + [d for item in sorted(touched) if (d := self._duel_learning(item)) is not None]
 
     def _remember(self, e: Event, touched: set[str]) -> None:

@@ -72,6 +72,18 @@ def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, 
     return counts
 
 
+def jsonb_safe(value: Any) -> Any:
+    """Strings Postgres `jsonb` accepts: no NUL, no lone surrogate. One such string in a feed payload would
+    otherwise fail the whole batch, tick after tick, until the event left the window."""
+    if isinstance(value, str):
+        return value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {jsonb_safe(str(k)): jsonb_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [jsonb_safe(v) for v in value]
+    return value
+
+
 def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str, int]:
     """`load_events` without the commit: the caller owns the transaction (the taker's feed archive)."""
     events = sorted(events, key=lambda e: e["id"])
@@ -80,7 +92,16 @@ def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str
         cur.executemany(
             "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s) "
             "on conflict (id) do nothing",
-            [(e["id"], e.get("tick"), e.get("type"), e.get("actor"), json.dumps(e.get("payload"))) for e in events],
+            [
+                (
+                    e["id"],
+                    e.get("tick"),
+                    e.get("type"),
+                    jsonb_safe(e.get("actor")),
+                    json.dumps(jsonb_safe(e.get("payload"))),
+                )
+                for e in events
+            ],
         )
     if prints:
         cur.executemany(

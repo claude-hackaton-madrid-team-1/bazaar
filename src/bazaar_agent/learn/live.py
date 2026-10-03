@@ -1,9 +1,10 @@
 """The live learner: what an agent's tick loop calls (the taker on Railway owns one).
 
-Per tick: read the new feed events (the ones the agent already holds: no extra game call), recall
-the blockers in force for us, and, after the tick's sends, write what was learned. Our own closed
-threads and refused `open_thread` calls are learned the moment they happen. Every method fails open:
-an error is logged and the agent carries on exactly as it would without learnings.
+Per tick, BEFORE the sends: read the new feed events (the ones the agent already holds: no extra game
+call) and answer which dealers are blocked for us, from memory only (no database I/O). AFTER the sends
+(`flush`): write what was learned and pull what other processes learned, for the next tick. Our own
+closed threads and refused `open_thread` calls are learned the moment they happen. Every method fails
+open: an error is logged and the agent carries on exactly as it would without learnings.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ from bazaar_agent.learn.store import LearningStore
 RECALL_LIMIT = 500
 
 
-def game_hour(clock: Any) -> GameHour:
-    return GameHour(int(clock.tick), float(clock.t_hours), float(clock.tick_seconds))
+def game_hour(clock: Any, hours_per_tick: float | None = None) -> GameHour:
+    return GameHour(int(clock.tick), float(clock.t_hours), float(clock.tick_seconds), hours_per_tick)
 
 
 class LiveLearner:
@@ -29,6 +30,19 @@ class LiveLearner:
         self.reader: FeedReader | None = None
         self.pending: list[Learning] = []
         self._failed: set[str] = set()
+        self._last: tuple[int, float] | None = None  # the previous clock reading: (tick, t_hours)
+        self._per_tick: float | None = None  # the game-hour pace observed between two readings
+        self._us: str | None = None
+        self._tick: int | None = None
+
+    def _hour(self, clock: Any) -> GameHour:
+        """This tick's game hour, at the pace observed between clock readings (it follows a pace change)."""
+        tick, t_hours = int(clock.tick), float(clock.t_hours)
+        if self._last is not None and tick > self._last[0] and t_hours > self._last[1]:
+            self._per_tick = (t_hours - self._last[1]) / (tick - self._last[0])
+        if self._last is None or tick != self._last[0]:
+            self._last = (tick, t_hours)
+        return game_hour(clock, self._per_tick)
 
     def _fail(self, what: str, error: Exception) -> None:
         if what not in self._failed:  # once per kind of failure: a broken learner must not flood the log
@@ -38,19 +52,21 @@ class LiveLearner:
     def blocks(self, events: Iterable[dict[str, Any]], us: str, clock: Any) -> Blocks:
         """Read the new events, then the blockers in force for us at this tick. Empty on any error."""
         try:
-            self.store.begin_tick(int(clock.tick))
+            tick = int(clock.tick)
+            self.store.begin_tick(tick)
+            self._us, self._tick = us, tick
             if self.reader is None or self.reader.us != us:
                 self.reader = FeedReader(us)
-            self.pending += self.reader.read(events, game_hour(clock))
-            self.store.memory.update({lr.key(): lr for lr in self.pending})  # in force before the write
-            dealer_facts = self.store.recall(tick=int(clock.tick), subject_kind="dealer", team=us, limit=RECALL_LIMIT)
-            return blocks_for(dealer_facts, us, int(clock.tick))
+            self.pending += self.reader.read(events, self._hour(clock))
+            self.store.remember(self.pending)  # in force before the write
+            facts = self.store.recall(tick=tick, subject_kind="dealer", team=us, limit=RECALL_LIMIT, use_db=False)
+            return blocks_for(facts, us, tick)
         except Exception as e:
             self._fail("recall", e)
             return Blocks()
 
     def thread_closed(self, thread: Mapping[str, Any], us: str, clock: Any) -> Learning | None:
-        return self._learn("thread", lambda: from_thread(thread, us, game_hour(clock)))
+        return self._learn("thread", lambda: from_thread(thread, us, self._hour(clock)))
 
     def refused(self, dealer: str, error: Any, us: str, clock: Any, item: str | None) -> Learning | None:
         """An `open_thread` refusal (a `BazaarError`: code, message, extra)."""
@@ -63,7 +79,7 @@ class LiveLearner:
                 str(getattr(error, "message", "")),
                 extra if isinstance(extra, dict) else {},
                 us,
-                game_hour(clock),
+                self._hour(clock),
                 item,
             )
 
@@ -77,16 +93,22 @@ class LiveLearner:
             return None
         if learned is not None:
             self.pending.append(learned)
-            self.store.memory[learned.key()] = learned
+            self.store.remember([learned])
             if learned.kind in BLOCKING_KINDS:
                 self.log(f"learned: {learned.text}")
         return learned
 
     def flush(self) -> int:
-        """Write what this tick learned (after the tick's sends)."""
+        """After the tick's sends: write what this tick learned, and pull what other processes learned
+        about dealers for us (a laptop's `dealer buy` refusal, say) into memory for the next tick."""
         batch, self.pending = self.pending, []
         try:
-            return self.store.record(batch)
+            written = self.store.record(batch)
+            if self._us is not None:
+                self.store.remember(
+                    self.store.recall(tick=self._tick, subject_kind="dealer", team=self._us, limit=RECALL_LIMIT)
+                )
+            return written
         except Exception as e:
             self._fail("write", e)
             return 0

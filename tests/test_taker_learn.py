@@ -134,3 +134,27 @@ def test_a_dry_run_skips_too_and_sends_nothing(tmp_path):
     t, _ = taker(tmp_path, team, store, live=False)
     t.on_tick(clock())
     assert team.sent == [] and [r["kind"] for r in rows(tmp_path)] == ["dealer_skip"]
+
+
+def test_a_blocker_is_recorded_once_and_its_row_stays_private(tmp_path):
+    from bazaar_agent.agents.status import public_decision
+
+    store = LearningStore()
+    store.record([blocker("cooloff", until=TICK + 30)])
+    team = FakeTeam()
+    t, _ = taker(tmp_path, team, store)
+    for tick in range(TICK, TICK + 4):
+        team.now = clock(tick=tick)
+        t.on_tick(team.now)
+    (skip,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    shown = public_decision({**skip, "inputs": skip["inputs"]})
+    assert shown["inputs"] == {} and shown["kind"] == "dealer_skip"  # no dealer, card or blocker in /state
+
+
+def test_the_refusal_kept_for_learning_has_no_traceback(tmp_path):
+    team = RefusingTeam()
+    t, _ = taker(tmp_path, team)
+    t.on_tick(clock())
+    refused = t.rec.last_error
+    assert refused is not None and refused.code == "cooloff" and refused.extra == {"until_tick": TICK + 5}
+    assert not isinstance(refused, BaseException)

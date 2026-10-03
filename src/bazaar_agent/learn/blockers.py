@@ -1,8 +1,10 @@
 """Which dealers (or dealer items) are blocked for us right now, from recalled learnings.
 
-Only a blocker bound to OUR team id blocks (another team's cooloff is behaviour, not our problem),
-only while it is in force (`until_tick` exclusive), and a `locked` blocker is lifted by a later unlock
-(`level.unlocked` for us, `persona.open_to_all`). A blocker never adds a move: it only removes one.
+Only a blocker read from structure (`source == "rules"`, from the feed, a refusal or our own thread,
+never an LLM reading of someone's words) and bound to OUR team id blocks (another team's cooloff is
+behaviour, not our problem), only while it is in force (`until_tick` exclusive), and a `locked` blocker
+is lifted by a later unlock (`level.unlocked` for us, `persona.open_to_all`). A blocker never adds a
+move: it only removes one.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from bazaar_agent.learn.model import Learning
+from bazaar_agent.learn.model import ORIGINS_THAT_BLOCK, Learning
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,8 @@ def blocks_for(learnings: Iterable[Learning], us: str | None, tick: int) -> Bloc
     items: dict[tuple[str, str], Learning] = {}
     for lr in pool:
         if not lr.blocking or lr.subject_kind != "dealer" or lr.team != us or not lr.active(tick):
+            continue
+        if lr.source != "rules" or not str(lr.detail.get("origin", "")).startswith(ORIGINS_THAT_BLOCK):
             continue
         if lr.kind == "blocker" and unlocked.get(lr.subject, -1) >= lr.tick:
             continue

@@ -76,7 +76,7 @@ def test_a_failing_statement_falls_back_to_memory_for_this_tick():
     store.begin_tick(5)
     store.record(learned())
     assert store.recall("chato", {"cooloff"}, 180, team=US)
-    assert lines[0] == "learnings: upsert failed in Postgres (OperationalError); memory only this tick"
+    assert lines[0] == "learnings: upsert failed in Postgres (OperationalError); memory meanwhile"
 
 
 # ---------------------------------------------------------------- the live learner (what the taker calls)
@@ -166,3 +166,51 @@ def test_the_schema_is_tried_once_at_open_and_a_failure_keeps_the_table_as_it_is
     store.open()
     assert calls == ["init", "rollback"]
     assert lines == ["learnings: schema init failed (LockNotAvailable); using the table as it is"]
+
+
+def test_an_unmigrated_table_turns_postgres_off_for_the_process():
+    lines: list[str] = []
+    calls: list[int] = []
+
+    class Unmigrated(BrokenConn):
+        @contextlib.contextmanager
+        def transaction(self):
+            calls.append(1)
+            raise psycopg.errors.UndefinedColumn("column dedupe_key does not exist")
+            yield
+
+    store = LearningStore(lambda: Unmigrated(), lines.append)  # type: ignore[arg-type,return-value]
+    for tick in range(1, 20):
+        store.begin_tick(tick)
+        store.record(learned())
+    assert calls == [1] and store.where == "memory only"
+    assert lines == ["learnings: the learnings table is not migrated (UndefinedColumn); memory only"]
+
+
+def test_a_down_database_is_retried_every_five_ticks_not_every_tick():
+    tries: list[int] = []
+
+    def down() -> psycopg.Connection:
+        tries.append(1)
+        raise psycopg.OperationalError("no route")
+
+    store = LearningStore(down)
+    for tick in range(1, 12):
+        store.begin_tick(tick)
+        store.record(learned())
+    assert len(tries) == 3  # ticks 1, 6, 11
+
+
+def test_the_live_learner_reads_memory_before_sends_and_pulls_postgres_after():
+    calls: list[bool] = []
+
+    class Spy(LearningStore):
+        def recall(self, *args, use_db=True, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append(use_db)
+            return super().recall(*args, use_db=use_db, **kwargs)
+
+    learner = LiveLearner(Spy())
+    learner.blocks(FEED, US, CLOCK)
+    assert calls == [False]  # before the sends: memory only
+    learner.flush()
+    assert calls == [False, True]  # after the sends: Postgres, for the next tick

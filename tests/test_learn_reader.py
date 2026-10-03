@@ -9,7 +9,9 @@ from pydantic import ValidationError
 from bazaar_agent.learn.blockers import Blocks, blocks_for
 from bazaar_agent.learn.model import Learning
 from bazaar_agent.learn.reader import (
+    COOLOFF_CAP_TICKS,
     COOLOFF_DEFAULT_TICKS,
+    HOURLY_CAP_TICKS,
     LOCKED_RECHECK_TICKS,
     FeedReader,
     GameHour,
@@ -192,3 +194,50 @@ def test_item_of_reads_buy_topics_only():
         and item_of({"buy": {"pack": "sobre_barrio"}}) == "sobre_barrio"
     )
     assert item_of({"sell": {"card": "LAV-03"}}) is None and item_of("LAV-03") is None
+
+
+# ---------------------------------------------------------------- review fixes (PR #89)
+
+
+def test_the_hour_follows_the_observed_pace_and_hourly_blockers_are_capped():
+    counted = GameHour(tick=500, t_hours=6.5, tick_seconds=30.0, hours_per_tick=1 / 60)  # t counts ticks
+    assert counted.end_tick == 530  # 0.5 h left at 1/60 h per tick, not 60 ticks at 30 s
+    slow = GameHour(tick=1000, t_hours=20.01, tick_seconds=5.0)
+    quota = from_refusal("abuela", "persona_quota", "", {}, US, slow, "LAV-03")
+    assert quota.until_tick == 1000 + HOURLY_CAP_TICKS  # not 1713: retried within the cap
+    far = from_refusal("abuela", "cooloff", "", {"until_tick": 10**10}, US, HOUR, None)
+    assert far.until_tick == HOUR.tick + COOLOFF_CAP_TICKS
+
+
+def test_one_malformed_event_never_costs_the_learnings_around_it():
+    events = [
+        {"id": 1, "tick": 5, "type": "persona.cooloff", "payload": {"persona": "abuela", "team": US, "until_tick": 30}},
+        {"id": 2, "tick": 5, "type": "persona.strike", "payload": {"persona": "abuela", "team": US, "kinds": 5}},
+        {"id": 3, "tick": 5, "type": "thread.closed", "payload": {"thread": 10**30, "kind": "persona", "with": "x"}},
+        {"id": 4, "tick": 6, "type": "persona.cooloff", "payload": {"persona": "chato", "team": US, "until_tick": 40}},
+    ]
+    learned = FeedReader(US).read(events, HOUR)
+    assert [(lr.subject, lr.kind) for lr in learned if lr.blocking] == [("abuela", "cooloff"), ("chato", "cooloff")]
+    assert one(learned, kind="behaviour").detail["kinds"] == []
+
+
+def test_only_rules_blockers_from_known_origins_block():
+    real = from_refusal("abuela", "cooloff", "", {"until_tick": 190}, US, HOUR, None)
+    llm = real.model_copy(update={"source": "llm"})
+    loaded = real.model_copy(update={"detail": {"code": "cooloff", "origin": "someone's script"}})
+    assert blocks_for([real], US, 180) and not blocks_for([llm], US, 180) and not blocks_for([loaded], US, 180)
+
+
+def test_a_team_thread_closing_blocks_nothing():
+    team_thread = {"id": 5, "tick": 9, "type": "thread.closed", "payload": {"thread": 3, "kind": "team", "team": US,
+                   "with": "abuela", "reason": "cooloff", "until_tick": 50}}  # fmt: skip
+    assert FeedReader(US).read([team_thread], HOUR) == []
+
+
+def test_a_venue_keeps_one_notice_row_however_many_it_posts():
+    posts = [
+        {"id": i, "tick": 9, "type": "venue.announcement", "payload": {"venue": "v03", "text": f"cheap {i}"}}
+        for i in (1, 2, 3)
+    ]
+    learned = FeedReader(US).read(posts, HOUR)
+    assert len(learned) == 3 and len({lr.key() for lr in learned}) == 1

@@ -1325,8 +1325,8 @@ def _run_agent(
         from bazaar_agent.learn.live import LiveLearner
         from bazaar_agent.learn.store import LearningStore
 
-        store = LearningStore(connect, log, init_schema=db.init_schema)
-        log(f"{name}: learnings {store.open()}")  # connect and apply the schema now, never inside a tick
+        store = LearningStore(connect, log)  # the ledger's `connect_ready` applied the schema at start already
+        log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
         extra["learner"] = LiveLearner(store, log)
 
     def params(tick: int) -> Any:
@@ -1368,7 +1368,10 @@ def agent_taker(
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     learn: bool = typer.Option(
-        True, help="Read the live feed into learnings, skip dealers under a learned blocker, archive the feed window"
+        True,
+        envvar="BAZAAR_LEARN",
+        help="Read the live feed into learnings, skip dealers under a learned blocker, archive the feed window "
+        "(BAZAAR_LEARN=0 turns it off on a service)",
     ),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
