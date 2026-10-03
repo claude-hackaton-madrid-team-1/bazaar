@@ -56,8 +56,10 @@ BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another si
 The whole team tests here before a PR merges, and CI does the same on every PR (the
 `sim-smoke` job: `uv run python scripts/sim_smoke.py`). It runs the same steps against a local
 simulator and fails the PR on any error, including an error a tick loop swallowed (`Traceback`,
-`tick loop:`). It holds no secrets: it drops the secret variables, never reads the repo `.env`
-(`BAZAAR_ENV_FILE` points at an empty file), and sends every non-local request to a dead proxy.
+`tick loop:`) or a write the simulator refused (a ` refused ` line). It holds no secrets and cannot
+reach the network: children inherit only an allow-listed environment, never read the repo `.env`
+(`BAZAAR_ENV_FILE` points at an empty file), and load `scripts/sim_guard/sitecustomize.py`, which
+raises on any non-loopback connection before a packet leaves (a dead proxy backs it up).
 
 1. **`.env` once.** Delete any `BAZAAR_URL=` line: it now stops every command. Keep `BAZAAR_KEY`
    for the real game. For the simulator nothing else is needed (`BAZAAR_SIM_KEY` defaults to

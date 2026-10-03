@@ -61,8 +61,9 @@ def reset(
         typer.echo("SIM_ADMIN_TOKEN is not set", err=True)
         raise typer.Exit(2)
     target = urlsplit(url)
-    local = target.hostname in ("127.0.0.1", "localhost", "::1")
-    if (target.scheme != "https" and not local) or target.hostname == "bazaar.causaprima.ai":
+    host = (target.hostname or "").rstrip(".")  # urlsplit lowercases it; "bazaar.causaprima.ai." is the same host
+    local = host in ("127.0.0.1", "localhost", "::1")
+    if (target.scheme != "https" and not local) or host == "bazaar.causaprima.ai":
         typer.echo("refusing: the admin token goes only to a simulator over https (or on this machine)", err=True)
         raise typer.Exit(2)
     body = json.dumps({"seed": seed} if seed is not None else {}).encode()

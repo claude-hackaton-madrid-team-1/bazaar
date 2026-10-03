@@ -6,9 +6,11 @@ It starts `bazaar-sim serve` on 127.0.0.1:8765 (BAZAAR_SIM=local's hardcoded add
 in-memory world, then drives our real CLI against it: status, one dealer buy with negotiation,
 two ticks of the taker and of the maker in --live, duel moves, the monitor's live stream, and the
 two key guards. No secrets, no database, no network beyond localhost: the repo's `.env` is never read
-(BAZAAR_ENV_FILE points at an empty file, and the secret variables are dropped from the environment),
-and every other host goes through a dead proxy, so a call to the real game (or to any API) fails the
-smoke instead of happening. A step also fails on a `Traceback` or a swallowed `tick loop:` error.
+(BAZAAR_ENV_FILE points at an empty file), children inherit only an allow-listed environment, and
+`scripts/sim_guard/sitecustomize.py` (first on every child's PYTHONPATH) raises on any non-loopback
+connect or DNS lookup, with a dead proxy behind it. A call to the real game (or to any API) fails the
+smoke instead of happening. A step also fails on a `Traceback`, a swallowed `tick loop:` error, or a
+` refused ` line (a write the simulator refused, or the socket guard's own refusal).
 Exit 0 when every step passes; 1 on the first failure, with the step's output and the sim's log.
 """
 
@@ -40,7 +42,7 @@ GUARD = Path(__file__).resolve().parent / "sim_guard"  # sitecustomize: loopback
 # An allow-list, not a deny-list: a child process inherits only these, so no token in the caller's
 # environment (MCP, Phoenix, GitHub, Railway, ...) can reach the smoke whatever its name.
 INHERITED = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "VIRTUAL_ENV")
-INHERITED_PREFIXES = ("LC_", "UV_")
+INHERITED_PREFIXES = ("LC_",)  # not UV_*: the children run the venv's python directly, and UV_* can hold tokens
 
 
 def inherited() -> dict[str, str]:
@@ -127,8 +129,8 @@ def bazaar(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=STEP_TIMEOUT_S, check=False)
     except subprocess.TimeoutExpired as e:
-        partial = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        fail(f"`bazaar {' '.join(args)}` ran past {STEP_TIMEOUT_S} s", partial)
+        streams = [s.decode(errors="replace") if isinstance(s, bytes) else (s or "") for s in (e.stdout, e.stderr)]
+        fail(f"`bazaar {' '.join(args)}` ran past {STEP_TIMEOUT_S} s", "".join(streams))
 
 
 def step(name: str, run: Callable[[], subprocess.CompletedProcess[str]], check: Callable[[str], bool]) -> str:

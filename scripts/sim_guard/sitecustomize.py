@@ -11,7 +11,7 @@ from __future__ import annotations
 import socket
 from typing import Any
 
-LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}  # compared after lower() and a trailing "." is dropped
 _connect = socket.socket.connect
 _connect_ex = socket.socket.connect_ex
 _getaddrinfo = socket.getaddrinfo
@@ -28,7 +28,7 @@ def _host(address: Any) -> str | None:
 
 
 def _check(host: str | None) -> None:
-    if host is not None and host not in LOOPBACK:
+    if host is not None and host.lower().rstrip(".") not in LOOPBACK:
         raise SmokeNetworkError(f"sim smoke: refused a connection to {host!r} (loopback only)")
 
 
@@ -47,6 +47,6 @@ def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     return _getaddrinfo(host, *args, **kwargs)
 
 
-socket.socket.connect = connect  # type: ignore[method-assign]
-socket.socket.connect_ex = connect_ex  # type: ignore[method-assign]
+socket.socket.connect = connect  # type: ignore[method-assign,assignment]
+socket.socket.connect_ex = connect_ex  # type: ignore[method-assign,assignment]
 socket.getaddrinfo = getaddrinfo
