@@ -399,7 +399,7 @@
       "status": "part",
       "label": "gap",
       "title": "Prompt-injection hardening (S1)",
-      "body": "Counterparty text is capped and escaped; bait inspector and auto-flagging still open (Marius #93 off by default)."
+      "body": "Offer inspector before every accept (dealer, board, duel; #146). Flags as proven decision rows, off by default and opt-in per dealer; injection tagging and hostile-text tests on every text path (#152)."
     }
   ],
   "links": [

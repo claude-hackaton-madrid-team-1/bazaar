@@ -135,6 +135,10 @@ class FakeTeam:
         self.sent.append(("close_thread", tid))
         return {"id": tid, "status": "closed"}
 
+    def flag(self, message_id, reason=""):
+        self.sent.append(("flag", message_id, reason))
+        return {"ok": True}
+
     def accept(self, offer_id, assets=None):
         self.sent.append(("accept", offer_id))
         return {"ok": True, "settles_tick": self.now.tick + 1}
