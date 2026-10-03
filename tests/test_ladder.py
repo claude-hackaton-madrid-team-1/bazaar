@@ -82,6 +82,22 @@ def test_a_fill_never_goes_to_an_abandoned_thread_that_never_named_its_price():
     assert fills == {1: None, 2: 22, 3: None}
 
 
+def test_a_fill_goes_to_the_thread_about_that_item():
+    """Friday thread 101 (LAV-04, our bids 6..9) must not take LAV-03's settlement at 7 from thread 99."""
+    events = [
+        opened(99, topic={"buy": {"card": "LAV-03"}}, tick=54),
+        said(99, "t05", 6, 54),
+        said(99, "abuela", 7, 55),
+        opened(101, topic={"buy": {"card": "LAV-04"}}, tick=56),
+        said(101, "t05", 6, 56),
+        settled(7, 56, ref="LAV-03"),
+        said(101, "abuela", 12, 57),
+        said(101, "t05", 7, 57),
+    ]
+    fills = {c.thread: c.fill for c in conversations(events)}
+    assert fills == {99: 7, 101: None}
+
+
 def test_the_final_offer_bounds_the_limit_and_counts_patience():
     c = Conversation(1, "t04", "abuela", "buy", "sobre_barrio", 0)
     c.turns = [Turn(0, True, 30), Turn(1, False, 9), Turn(1, True, 25), Turn(2, False, 11), Turn(2, True, 24, True)]
@@ -103,7 +119,7 @@ def test_rows_round_trip(real):
 def test_floor_table_from_every_teams_friday_threads(real):
     rows = main_rows(floor_table(real))
     unc = rows[("abuela", "card:uncommon")]
-    assert (unc.opening, unc.floor(0.25), unc.floor(0.5), unc.floor(0.75)) == (29, 21, 23, 24)
+    assert (unc.opening, unc.floor(0.1), unc.floor(0.5), unc.floor(0.9)) == (29, 21, 23, 25)
     assert rows[("abuela", "pack:sobre_barrio")].opening == 30  # the 17 opening was the first hour only
     assert rows[("abuela", "card:common")].floor() == 10
     assert rows[("chato", "card:rare")].floor() == 91
@@ -125,8 +141,11 @@ def test_no_plan_when_the_cap_sits_below_most_limits():
     assert choice.plan is None and "below market" in choice.reason
 
 
-def test_no_plan_without_a_closed_conversation():
+def test_no_plan_without_enough_closed_conversations():
     assert plan_for(row([]), cap=26).plan is None
+    thin = plan_for(row([22, 23, 24, 25]), cap=26)
+    assert thin.plan is None and "fewer than 5" in thin.reason
+    assert plan_for(row([22, 23, 24, 25]), cap=26, min_closed=4).plan is not None
 
 
 def ep(limit, patience=5, first_drop=4, opens_first=True, opening=29, later=(1,)):
@@ -174,4 +193,4 @@ def test_replaying_each_real_conversation(real):
     mine = [c for c in real if (c.dealer, c.price_class, c.opening, c.side) == ("abuela", "card:uncommon", 29, "buy")]
     results = [play(plan, e) for c in mine if (e := episode_from(c))]
     s = summarise(results)
-    assert s.runs == 35 and s.mean_share >= 0.85 and s.repeated == 0
+    assert s.runs == 37 and s.mean_share >= 0.85 and s.repeated == 0

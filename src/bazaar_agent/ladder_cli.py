@@ -86,12 +86,15 @@ def plan(
         None, help="What-if only (GUARDRAILS.md still binds): dealer:class=price, e.g. chato:card:uncommon=31"
     ),
     runs: int = typer.Option(2000, help="Backtest conversations per price class"),
+    since_tick: int = typer.Option(0, help="Fit on threads opened at or after this tick (e.g. Saturday only)"),
 ) -> None:
     """Write ladder_plan.json: floors, a BidPlan and backtest per class, and the window's schedule."""
     from bazaar_agent.evals.dealers import card_rarity
     from bazaar_agent.guardrails import load_guardrails
 
     convs, label = _conversations(source)
+    convs = [c for c in convs if c.opened_tick >= since_tick]
+    label += f", threads opened at tick {since_tick} or later" if since_tick else ""
     quotas = DEFAULT_QUOTAS
     if dealers_json is not None:
         body: Any = json.loads(Path(dealers_json).read_text())

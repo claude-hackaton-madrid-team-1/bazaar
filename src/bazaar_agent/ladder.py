@@ -23,7 +23,7 @@ from typing import Any
 
 from bazaar_agent.agents.dealer import BidPlan
 from bazaar_agent.evals.dealers import SELL, price_class
-from bazaar_agent.intel import Event, offer_price, tape
+from bazaar_agent.intel import Event, offer_price
 
 PLAN_WIDTH = 2  # PLAN.md W3: start = floor − 2, step 1, max = floor + 2
 
@@ -143,18 +143,32 @@ def conversations(events: Iterable[Event]) -> list[Conversation]:
         elif kind == "settlement":
             settlements.append(e)
     newest_first = sorted(threads.values(), key=lambda c: (c.opened_tick, c.thread), reverse=True)
-    for pr in tape(settlements):
-        if pr.persona is None:
+    for e in settlements:
+        p = e.get("payload") or {}
+        dealer, items = p.get("persona"), p.get("items") or []
+        if not dealer or not items or p.get("price") is None:
             continue
-        team = pr.buyer if pr.seller == pr.persona else pr.seller
-        side = "buy" if pr.seller == pr.persona else "sell"
+        price, tick = int(p["price"]), int(p.get("tick") or e.get("tick") or 0)
+        frm, to = str(items[0].get("frm")), str(items[0].get("to"))
+        side, team = ("buy", to) if frm == dealer else ("sell", frm)
         for c in newest_first:
-            if c.fill is not None or c.dealer != pr.persona or c.team != team or c.side != side:
+            if c.fill is not None or c.dealer != dealer or c.team != team or c.side != side:
                 continue
-            if c.opened_tick <= pr.tick and pr.price in (c.team_prices + c.dealer_prices):
-                c.fill, c.fill_tick = pr.price, pr.tick
+            if c.opened_tick <= tick and price in (c.team_prices + c.dealer_prices) and _same_item(c, items):
+                c.fill, c.fill_tick = price, tick
                 break
     return sorted(threads.values(), key=lambda c: c.thread)
+
+
+def _same_item(c: Conversation, items: list[dict[str, Any]]) -> bool:
+    """The settlement moved what the thread was about: that card or pack, those assets, or any card
+    of a requested rarity."""
+    if c.item.startswith("assets:"):
+        wanted = {int(a) for a in c.item.split(":", 1)[1].split(",") if a.strip().isdigit()}
+        return any(i.get("id") in wanted for i in items)
+    if ":" in c.item:  # a rarity request, "uncommon:LAV"
+        return True
+    return any(i.get("ref") == c.item for i in items)
 
 
 def _countered(c: Conversation) -> list[int]:
@@ -295,12 +309,18 @@ class PlanChoice:
     reason: str
 
 
-def plan_for(row: FloorRow, cap: int | None, *, q: float = 0.5, width: int = PLAN_WIDTH) -> PlanChoice:
+MIN_CLOSED = 5  # closed conversations a floor needs before a plan trusts it
+
+
+def plan_for(
+    row: FloorRow, cap: int | None, *, q: float = 0.5, width: int = PLAN_WIDTH, min_closed: int = MIN_CLOSED
+) -> PlanChoice:
     """start = floor − width, step 1, max = floor + width, never above the guardrail cap. No plan when
-    the cap sits below the lower quartile of the limits seen: most conversations could not close."""
+    fewer than `min_closed` conversations closed (a thin feed), or when the cap sits below the lower
+    quartile of the limits seen: most conversations could not close."""
     floor = row.floor(q)
-    if floor is None:
-        return PlanChoice(row, None, None, cap, "no conversation closed yet: no floor learned")
+    if floor is None or row.closed < min_closed:
+        return PlanChoice(row, None, floor, cap, f"{row.closed} closed conversations: fewer than {min_closed}")
     p25 = row.floor(0.25) or floor
     top = floor + width if cap is None else min(floor + width, cap)
     if top < p25:

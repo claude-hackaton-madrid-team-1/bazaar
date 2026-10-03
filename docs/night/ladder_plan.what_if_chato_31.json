@@ -62,8 +62,8 @@
    "price_class": "card:common",
    "opening": 7,
    "conversations": 4,
-   "closed": 1,
-   "fills": 2,
+   "closed": 2,
+   "fills": 3,
    "floor_p10": 7,
    "floor_p25": 7,
    "floor_p50": 7,
@@ -77,10 +77,10 @@
    "price_class": "card:uncommon",
    "opening": 29,
    "conversations": 58,
-   "closed": 35,
-   "fills": 31,
+   "closed": 37,
+   "fills": 32,
    "floor_p10": 21,
-   "floor_p25": 21,
+   "floor_p25": 22,
    "floor_p50": 23,
    "floor_p75": 24,
    "floor_p90": 25,
@@ -107,9 +107,9 @@
    "price_class": "pack:sobre_barrio",
    "opening": 30,
    "conversations": 51,
-   "closed": 33,
+   "closed": 34,
    "fills": 22,
-   "floor_p10": 21,
+   "floor_p10": 20,
    "floor_p25": 21,
    "floor_p50": 22,
    "floor_p75": 23,
@@ -122,8 +122,8 @@
    "price_class": "pack:sobre_barrio",
    "opening": 17,
    "conversations": 13,
-   "closed": 4,
-   "fills": 6,
+   "closed": 5,
+   "fills": 7,
    "floor_p10": 17,
    "floor_p25": 17,
    "floor_p50": 17,
@@ -138,7 +138,7 @@
    "opening": 5,
    "conversations": 22,
    "closed": 19,
-   "fills": 18,
+   "fills": 19,
    "floor_p10": 5,
    "floor_p25": 5,
    "floor_p50": 6,
@@ -228,7 +228,7 @@
    "opening": 33,
    "conversations": 12,
    "closed": 6,
-   "fills": 5,
+   "fills": 6,
    "floor_p10": 28,
    "floor_p25": 28,
    "floor_p50": 29,
@@ -298,11 +298,11 @@
    "reason": "floor p50 10 ± 2",
    "backtest": {
     "runs": 2000,
-    "mean_share": 0.968,
+    "mean_share": 0.976,
     "deal_rate": 1.0,
     "fill_within": 1.0,
-    "mean_price": 9.037,
-    "mean_ticks": 3.038,
+    "mean_price": 9.078,
+    "mean_ticks": 3.078,
     "repeated": 0,
     "at_opening": 8,
     "hows": {
@@ -325,18 +325,18 @@
    "reason": "floor p50 23 ± 2",
    "backtest": {
     "runs": 2000,
-    "mean_share": 0.948,
-    "deal_rate": 0.995,
-    "fill_within": 0.995,
-    "mean_price": 22.111,
-    "mean_ticks": 3.111,
+    "mean_share": 0.944,
+    "deal_rate": 0.993,
+    "fill_within": 0.993,
+    "mean_price": 22.153,
+    "mean_ticks": 3.153,
     "repeated": 0,
     "at_opening": 0,
     "hows": {
-     "her_ask": 127,
-     "her_final": 17,
-     "our_bid": 1845,
-     "walk": 11
+     "her_ask": 146,
+     "her_final": 30,
+     "our_bid": 1810,
+     "walk": 14
     }
    }
   },
@@ -395,7 +395,7 @@
    "floor_p50": 181,
    "cap": 20,
    "plan": null,
-   "reason": "cap 20 below market: 3 in 4 limits seen are above 180",
+   "reason": "1 closed conversations: fewer than 5",
    "backtest": null
   }
  ],
@@ -418,9 +418,9 @@
     "max": 12
    },
    "expected": {
-    "share": 0.968,
-    "price": 9.0,
-    "ticks": 3.0
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
    },
    "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
    "why": "floor p50 10 ± 2; reserve 12 P"
@@ -468,9 +468,9 @@
     "max": 12
    },
    "expected": {
-    "share": 0.968,
-    "price": 9.0,
-    "ticks": 3.0
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
    },
    "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
    "why": "floor p50 10 ± 2; reserve 12 P"
@@ -518,9 +518,9 @@
     "max": 12
    },
    "expected": {
-    "share": 0.968,
-    "price": 9.0,
-    "ticks": 3.0
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
    },
    "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
    "why": "floor p50 10 ± 2; reserve 12 P"
@@ -568,9 +568,9 @@
     "max": 25
    },
    "expected": {
-    "share": 0.948,
-    "price": 22.1,
-    "ticks": 3.1
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
    },
    "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
    "why": "floor p50 23 ± 2; reserve 25 P"
@@ -618,9 +618,9 @@
     "max": 12
    },
    "expected": {
-    "share": 0.968,
-    "price": 9.0,
-    "ticks": 3.0
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
    },
    "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
    "why": "floor p50 10 ± 2; reserve 12 P"
@@ -655,12 +655,12 @@
   "4": {
    "slots": 6,
    "reserved": 129,
-   "expected_spend": 111.3
+   "expected_spend": 111.6
   },
   "5": {
    "slots": 4,
    "reserved": 99,
-   "expected_spend": 87.3
+   "expected_spend": 87.5
   }
  },
  "blocked": [
@@ -677,7 +677,7 @@
   {
    "dealer": "chato",
    "price_class": "pack:sobre_plata",
-   "why": "cap 20 below market: 3 in 4 limits seen are above 180"
+   "why": "1 closed conversations: fewer than 5"
   }
  ],
  "notes": [

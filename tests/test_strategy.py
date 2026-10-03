@@ -498,3 +498,10 @@ def test_ladder_floor_quantile_opens_dealer_card_buys_from_the_floor_table():
     assert lav08(PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})) == (21, 25, 1)  # floor 23 ± 2
     assert strategy.floor_range(m.floors[("abuela", "card:uncommon")], 24.0, 26, 2, 0.5) == (21, 22)  # our value
     assert strategy.floor_range(m.floors[("chato", "card:rare")], 200.0, 80, 2, 0.5) is None  # cap below market
+
+
+def test_ladder_floor_quantile_falls_back_to_todays_ladder_without_a_floor():
+    """A thin feed (no floors, or too few closed threads) keeps the lowest-fill ladder."""
+    on = PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})
+    moves, _ = strategy.buy_moves(market(), on, RULES)  # EVENTS have no thread messages: floors == {}
+    assert market().floors == {} and next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)

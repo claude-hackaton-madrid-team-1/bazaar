@@ -189,10 +189,14 @@ class _Dealer:
         return None
 
 
-def play(plan: BidPlan, ep: Episode, *, max_ticks: int = 14) -> Result:
-    """Our `decide()` against one episode, one move per tick. An accept settles on the next tick."""
+def play(plan: BidPlan, ep: Episode, *, max_ticks: int = 14, reply_lag: int = 0) -> Result:
+    """Our `decide()` against one episode, one move per round. An accept settles on the next tick.
+    `reply_lag` ticks pass before each answer is seen: 0 when the dealer answers within the tick,
+    1 to cost every round two ticks (Friday's Abuela answered on the next tick 72 % of the time)."""
     neg, dealer = Negotiation(plan), _Dealer(ep)
-    for tick in range(1, max_ticks + 1):
+    tick = 0
+    while tick < max_ticks:
+        tick += 1
         offer = dealer.offer_id if dealer.ask is not None else None
         move = decide(neg, dealer.ask, offer, dealer.final)
         if move.kind == "accept" and move.price is not None:
@@ -203,6 +207,7 @@ def play(plan: BidPlan, ep: Episode, *, max_ticks: int = 14) -> Result:
         if move.kind == "bid" and move.price is not None:
             neg.bids.append(move.price)
             verdict = dealer.answer(move.price)
+            tick += reply_lag
             if verdict == "deal":
                 return Result(move.price, tick + 1, tuple(neg.bids), ep.limit, ep.opening, "our_bid")
             if verdict == "walk":
@@ -245,6 +250,8 @@ def summarise(results: Sequence[Result], *, within: int = 8) -> Summary:
     )
 
 
-def backtest(plan: BidPlan, model: DealerModel, *, runs: int = 2000, seed: int = 0, max_ticks: int = 14) -> Summary:
+def backtest(
+    plan: BidPlan, model: DealerModel, *, runs: int = 2000, seed: int = 0, max_ticks: int = 14, reply_lag: int = 0
+) -> Summary:
     rng = random.Random(seed)
-    return summarise([play(plan, draw(model, rng), max_ticks=max_ticks) for _ in range(runs)])
+    return summarise([play(plan, draw(model, rng), max_ticks=max_ticks, reply_lag=reply_lag) for _ in range(runs)])
