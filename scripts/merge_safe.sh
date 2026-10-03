@@ -12,7 +12,7 @@ case "$pr" in
 esac
 
 status=0
-uv run bazaar deploy-guard || status=$?
+env -u BAZAAR_SIM uv run bazaar deploy-guard || status=$?  # always the real game, never a simulator
 if [ "$status" -eq 0 ]; then
   exec gh pr merge "$pr" --merge
 fi

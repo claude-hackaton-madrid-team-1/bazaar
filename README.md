@@ -1327,6 +1327,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
 - [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
 - [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
@@ -1334,7 +1335,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
 - [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 - [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
-- [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 
 <!-- BAZAAR:STATUS:END -->
 

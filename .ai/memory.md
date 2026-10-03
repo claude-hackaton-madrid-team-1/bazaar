@@ -957,3 +957,9 @@ team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per
 `run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
 a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
 on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.
+
+### [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
+`bazaar deploy-guard` at tick 556 (session live): DO NOT MERGE, duel 2481 one tick from its deadline, safe only
+ticks 558–560 before duel 2496 enters its 4-tick guard. Merge through `scripts/merge_safe.sh <pr>`. A read-only
+replay of the watchdog rules on the shared DB (windows ending ticks 300/400/480/555) tripped nothing; its storms were
+real (SAL-07 refused 86×, SAL-08 53×). Breakers fail OPEN with one read per tick and a 15 s backoff after a failure.

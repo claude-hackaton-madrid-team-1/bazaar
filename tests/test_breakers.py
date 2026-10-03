@@ -218,3 +218,28 @@ def test_the_cli_trips_lists_and_resets(conn, capsys, monkeypatch):  # noqa: F81
     assert "board_accept: reset at tick 71" in out
     kinds = [r[0] for r in conn.execute("select kind from decisions order by id").fetchall()]
     assert kinds == ["breaker_trip", "breaker_reset"]
+
+
+def test_a_failed_read_is_the_ticks_answer_and_postgres_rests_before_the_next_try():
+    """#203 reviews (P1): a failing Postgres must not get one connect per check(): one try per tick, then a backoff."""
+    calls, clock = [], [0.0]
+
+    def down():
+        calls.append(1)
+        raise psycopg.OperationalError("too many clients")
+
+    board = breakers.BreakerBoard(down, timeout_s=1.0, notify=lambda m: None, now=lambda: clock[0])
+    for _ in range(200):
+        assert board.tripped(5) == frozenset()
+    assert len(calls) == 1
+    clock[0] = 5.0
+    assert board.tripped(6) == frozenset() and len(calls) == 1  # inside the backoff: no connect at all
+    clock[0] = breakers.RETRY_EVERY_S + 1
+    board.tripped(7)
+    assert len(calls) == 2
+
+
+def test_dealer_sell_paths_answer_to_the_dealer_sell_breaker():
+    accept = gr.Action("accept_sell", "LAV-03", "common", 9, your_value=4.0, scope="dealer_sell")
+    assert gr.breaker_scope(accept) == "dealer_sell"
+    assert not gr.check(accept, ctx({"dealer_sell"}), RULES).allowed

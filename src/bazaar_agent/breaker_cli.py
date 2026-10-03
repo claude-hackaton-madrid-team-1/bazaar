@@ -45,7 +45,7 @@ def _open(connect: Connect) -> psycopg.Connection:
     try:
         return connect()
     except Exception as e:  # noqa: BLE001
-        err_console.print(f"Postgres unreachable: {escape(pgconn.redact(str(e)))}")
+        err_console.print(f"Postgres unreachable ({type(e).__name__}): see `uv run bazaar db check`")
         raise typer.Exit(2) from e
 
 

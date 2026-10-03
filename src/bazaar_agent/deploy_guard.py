@@ -264,7 +264,7 @@ def deploy_guard_cmd(json_out: bool = typer.Option(False, "--json", help="Print 
     try:
         client, rules = _client(), _load_rules()
     except Exception as e:  # noqa: BLE001 - a missing key or a bad GUARDRAILS.md: the gate stays shut
-        err.print(f"[red]DO NOT MERGE: could not start the guard ({escape(type(e).__name__)}: {escape(str(e))})[/red]")
+        err.print(f"[red]DO NOT MERGE: could not start the guard ({escape(type(e).__name__)})[/red]")
         raise typer.Exit(1) from None
     v = run(client, rules)
     if json_out:

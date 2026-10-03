@@ -936,7 +936,7 @@ def dealer_sell(
         return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
 
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
-        return gr.Action(kind, ref, rarity, price, your_value=your_value)
+        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell")  # a dealer sell thread
 
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""

@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,7 @@ SCOPES: tuple[str, ...] = ("duel_accept", "team_swap", "dealer_buy", "board_acce
 NOTHING: frozenset[str] = frozenset()
 STATEMENT_TIMEOUT_MS = 1000
 CONNECT_TIMEOUT_S = 2
+RETRY_EVERY_S = 15.0  # after a failed read, skip Postgres this long: an outage never becomes a connect storm
 
 DDL = (
     "create table if not exists guard_breakers (scope text primary key, tripped bool not null default false, "
@@ -74,8 +76,10 @@ class BreakerBoard:
         connect: Callable[[], psycopg.Connection] | None,
         timeout_s: float = 1.0,
         notify: Callable[[str], None] = log.warning,
+        now: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._connect, self._timeout_s, self._notify = connect, timeout_s, notify
+        self._connect, self._timeout_s, self._notify, self._now = connect, timeout_s, notify, now
+        self._down_until = 0.0
         self._conn: psycopg.Connection | None = None
         self._tick: int | None = None
         self._scopes: frozenset[str] = NOTHING
@@ -91,6 +95,8 @@ class BreakerBoard:
                 return self._scopes
             if self._worker is not None and self._worker.is_alive():
                 return self._fail_open(tick, "an earlier read is still running")
+            if self._now() < self._down_until:
+                return self._fail_open(tick, f"Postgres failed less than {RETRY_EVERY_S:g} s ago", backoff=False)
             box: dict[str, Any] = {}
             worker = threading.Thread(target=self._read, args=(tick, box), name="breakers-read", daemon=True)
             self._worker = worker
@@ -103,7 +109,11 @@ class BreakerBoard:
             self._tick, self._scopes = tick, frozenset(box.get("scopes", ()))
             return self._scopes
 
-    def _fail_open(self, tick: int, why: str) -> frozenset[str]:
+    def _fail_open(self, tick: int, why: str, backoff: bool = True) -> frozenset[str]:
+        # The failure is this tick's answer (one try per tick), and the next tries wait out the backoff.
+        self._tick, self._scopes = tick, NOTHING
+        if backoff:
+            self._down_until = self._now() + RETRY_EVERY_S
         if self._failed_tick != tick:  # once per tick, never a flood
             self._failed_tick = tick
             self._notify(f"breakers: read failed at tick {tick} ({why}); no breaker applies (fail open)")

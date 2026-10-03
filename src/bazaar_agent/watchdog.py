@@ -227,10 +227,19 @@ def decision_findings(decisions: Iterable[Row]) -> list[Finding]:
 # ---------------------------------------------------------------- (b) team swaps
 
 
-def swap_cash(decisions: Sequence[Row], executions: Sequence[Row], ledger: Sequence[Row]) -> dict[int, tuple[int, int]]:
-    """Cash we added to each swap thread in the window, thread -> (tick, cash): the largest offer we posted there
-    (one deal per thread; each new offer replaces the last) or what we paid to take theirs."""
-    offers = {_int(d.get("id")) for d in decisions if d.get("kind") == "team_offer"}
+def swap_cash(
+    decisions: Sequence[Row], executions: Sequence[Row], ledger: Sequence[Row], trades: Iterable[Trade] = ()
+) -> dict[int, tuple[int, int]]:
+    """Cash we added to each SETTLED swap thread in the window, thread -> (tick, cash): our last offer posted there
+    before a swap with that team settled (each new offer replaces the last; an offer that lapsed or was cancelled
+    moved nothing and is not counted), or what we paid to take theirs."""
+    team_of = {_int(d.get("id")): str(_inputs(d).get("team") or "") for d in decisions if d.get("kind") == "team_offer"}
+    settled: dict[str, list[int]] = defaultdict(list)
+    for t in trades:
+        if t.kind == "swap":
+            settled[t.other].append(t.tick)
+    posted: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    team_of_thread: dict[int, str] = {}
     out: dict[int, tuple[int, int]] = {}
 
     def keep(thread: int | None, tick: int, cash: int) -> None:
@@ -239,11 +248,18 @@ def swap_cash(decisions: Sequence[Row], executions: Sequence[Row], ledger: Seque
 
     for e in executions:
         request = _map(e.get("request"))
-        if _int(e.get("decision_id")) not in offers or e.get("sdk_method") != "say" or e.get("error_code"):
+        did = _int(e.get("decision_id"))
+        if did not in team_of or e.get("sdk_method") != "say" or e.get("error_code"):
             continue
-        swap = _map(request.get("swap"))
-        give = _map(swap.get("give"))
-        keep(_int(request.get("thread_id")), _int(e.get("tick")) or 0, _int(give.get("cash")) or 0)
+        thread, give = _int(request.get("thread_id")), _map(_map(request.get("swap")).get("give"))
+        if thread is not None and team_of[did]:
+            posted[thread].append((_int(e.get("tick")) or 0, _int(give.get("cash")) or 0))
+            team_of_thread[thread] = team_of[did]
+    for thread, offers in posted.items():
+        for at in settled.get(team_of_thread[thread], []):
+            before = [o for o in sorted(offers) if o[0] <= at]
+            if before:
+                keep(thread, at, before[-1][1])
     taken = {_int(_inputs(d).get("thread")) for d in _done(decisions, "team_accept")}
     for row in ledger:
         item = str(row.get("item") or "")
@@ -254,13 +270,20 @@ def swap_cash(decisions: Sequence[Row], executions: Sequence[Row], ledger: Seque
 
 
 def swap_rules(
-    trades: Iterable[Trade], snapshots: Sequence[Row], cash: Mapping[int, tuple[int, int]], rules: Guardrails
+    trades: Iterable[Trade],
+    snapshots: Sequence[Row],
+    cash: Mapping[int, tuple[int, int]],
+    rules: Guardrails,
+    since: Mapping[str, int] | None = None,
 ) -> list[Finding]:
     """(b) A swap that left us without a copy of the card we gave, more than `watchdog_max_swaps_per_team` swaps
     with one team, or more than `watchdog_swap_cash_per_hour` cash added to swaps: trip `team_swap`."""
     out = []
+    since = since or {}
     snaps = sorted(snapshots, key=lambda s: _int(s.get("tick")) or 0)
-    swaps = [t for t in trades if t.kind == "swap"]
+    after_change = since.get("team_swap", -(10**9))  # evidence before the last trip or human reset is spent
+    swaps = [t for t in trades if t.kind == "swap" and t.tick > after_change]
+    cash = {k: v for k, v in cash.items() if v[0] > after_change}
     for t in swaps:
         after = next((s for s in snaps if (_int(s.get("tick")) or 0) >= t.tick), None)
         if after is None:
@@ -298,7 +321,7 @@ class Send:
 
 
 def sends_of(decisions: Iterable[Row], executions: Iterable[Row]) -> list[Send]:
-    """Every priced send that went out, with its breaker scope and its counterparty or thread."""
+    """Every priced send to a dealer that went out, with its breaker scope and its thread (or dealer and asset)."""
     out = []
     rows = list(decisions)
     for d in rows:
@@ -311,19 +334,8 @@ def sends_of(decisions: Iterable[Row], executions: Iterable[Row]) -> list[Send]:
             out.append(Send("dealer_buy", f"thread:{thread}", price, tick, order))
         elif kind == "dealer_ask" and (price := _int(move.get("price"))) is not None:
             out.append(Send("dealer_sell", f"{inputs.get('dealer')}:{inputs.get('asset')}", price, tick, order))
-        elif kind in ("post_bid", "post_ask") and inputs.get("to") and (price := _int(inputs.get("price"))) is not None:
-            out.append(Send("maker_post", f"to:{inputs.get('to')}:{inputs.get('ref')}", price, tick, order))
-    offers = {_int(d.get("id")) for d in rows if d.get("kind") == "team_offer"}
-    for e in executions:
-        request = _map(e.get("request"))
-        if _int(e.get("decision_id")) not in offers or e.get("sdk_method") != "say" or e.get("error_code"):
-            continue
-        swap = _map(request.get("swap"))
-        give = _map(swap.get("give"))
-        want = _map(swap.get("want"))
-        net = (_int(want.get("cash")) or 0) - (_int(give.get("cash")) or 0)
-        tick = _int(e.get("tick")) or 0
-        out.append(Send("team_swap", f"thread:{request.get('thread_id')}", net, tick, _int(e.get("decision_id")) or 0))
+    # Dealers only: hint 5 is about a dealer hearing the same price again. A maker re-post at a steady target and a
+    # cash-free swap step (net 0 every time) are not spam, and counting them tripped normal trading (#203 reviews).
     return out
 
 
@@ -494,7 +506,7 @@ def read_window(conn: psycopg.Connection, tick: int, ticks: int) -> Window:
         for r in _rows(
             conn,
             "select id, tick, agent, kind, status, chosen, candidates, policy_checks, thread_id from decisions "
-            "where tick > %s and tick <= %s and dry_run is false order by id limit %s",
+            "where tick > %s and tick <= %s and dry_run is false order by id desc limit %s",
             (lo, tick, MAX_ROWS),
         )
     ]  # fmt: skip
@@ -503,7 +515,7 @@ def read_window(conn: psycopg.Connection, tick: int, ticks: int) -> Window:
         for r in _rows(
             conn,
             "select decision_id, tick, sdk_method, request, error_code from executions "
-            "where tick > %s and tick <= %s order by id limit %s",
+            "where tick > %s and tick <= %s order by id desc limit %s",
             (lo, tick, MAX_ROWS),
         )
     ]
@@ -512,7 +524,7 @@ def read_window(conn: psycopg.Connection, tick: int, ticks: int) -> Window:
         for r in _rows(
             conn,
             "select id, tick, payload from feed_events where type = 'settlement' and tick > %s and tick <= %s "
-            "order by id limit %s",
+            "order by id desc limit %s",
             (lo, tick, MAX_ROWS),
         )
     ]
@@ -564,7 +576,7 @@ def evaluate(w: Window, tick: int, rules: Guardrails) -> tuple[list[Finding], li
     findings = [
         *bad_trades(trades, w.snapshots, w.decisions, rules.official_value_margin),
         *decision_findings(w.decisions),
-        *swap_rules(trades, w.snapshots, swap_cash(w.decisions, w.executions, w.ledger), rules),
+        *swap_rules(trades, w.snapshots, swap_cash(w.decisions, w.executions, w.ledger, trades), rules, w.since),
         *repeat_price_rule(sends_of(w.decisions, w.executions), tick, rules, w.since),
         *duel_findings(w.duels, duel_moves, tick),
     ]

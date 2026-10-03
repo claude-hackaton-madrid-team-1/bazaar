@@ -154,26 +154,32 @@ def test_swap_cash_over_the_hourly_cap_trips_team_swap():
     assert [(f.scope, f.at) for f in found] == [("team_swap", 13)] and "41" in found[0].reason
 
 
-def test_swap_cash_per_thread_is_the_largest_offer_or_the_accept_pay():
-    decisions = [drow(1, 10, "team_offer"), drow(2, 11, "team_accept", {"thread": 12})]
-    executions = [
-        {
-            "decision_id": 1,
-            "tick": 10,
-            "sdk_method": "say",
-            "request": {"thread_id": 11, "swap": {"give": {"cash": 5}}},
-        },
-        {
-            "decision_id": 1,
-            "tick": 12,
-            "sdk_method": "say",
-            "request": {"thread_id": 11, "swap": {"give": {"cash": 9}}},
-        },
-        {"decision_id": 1, "tick": 12, "sdk_method": "cancel", "request": {"offer": 3}},
-        {"decision_id": 2, "tick": 11, "sdk_method": "accept", "request": {"their_offer": 7}, "error_code": None},
+def say(did, tick, thread, cash):
+    return {
+        "decision_id": did,
+        "tick": tick,
+        "sdk_method": "say",
+        "request": {"thread_id": thread, "swap": {"give": {"cash": cash}}},
+    }
+
+
+def test_swap_cash_counts_only_a_settled_swap_at_its_last_offer_and_the_accept_pay():
+    decisions = [
+        drow(1, 10, "team_offer", {"team": "t05", "thread": 11}),
+        drow(2, 11, "team_accept", {"thread": 12}),
+        drow(3, 10, "team_offer", {"team": "t06", "thread": 13}),  # posted, never settled: moved nothing
     ]
+    executions = [say(1, 10, 11, 5), say(1, 12, 11, 9), say(1, 20, 11, 30), say(3, 10, 13, 25)]
     ledger = [{"tick": 11, "price": 14, "item": "team:12"}, {"tick": 11, "price": 99, "item": "team:13"}]
-    assert wd.swap_cash(decisions, executions, ledger) == {11: (12, 9), 12: (11, 14)}
+    trades = wd.trades_of([swap(50, 14, "t05", (1, "LAV-03"), (2, "SAL-01"))], US)
+    assert wd.swap_cash(decisions, executions, ledger, trades) == {11: (14, 9), 12: (11, 14)}
+
+
+def test_unsettled_swap_offers_never_trip_the_cash_rule():
+    decisions = [drow(i, 10 + i, "team_offer", {"team": f"t0{i + 2}", "thread": 20 + i}) for i in range(3)]
+    executions = [say(i, 10 + i, 20 + i, 15) for i in range(3)]
+    cash = wd.swap_cash(decisions, executions, [], [])
+    assert cash == {} and wd.swap_rules([], [], cash, RULES) == []
 
 
 # ---------------------------------------------------------------- (c) the same price again
@@ -205,7 +211,7 @@ def test_another_thread_in_between_still_counts_per_key_and_a_refused_send_is_no
     assert wd.sends_of(rows, []) == []
 
 
-def test_team_offers_and_maker_posts_to_one_team_count_too():
+def test_maker_reposts_and_cash_free_swap_steps_are_not_spam():
     offers = [drow(i, 10 + i, "team_offer") for i in range(5)]
     execs = [
         {
@@ -221,7 +227,7 @@ def test_team_offers_and_maker_posts_to_one_team_count_too():
     ]
     sends = wd.sends_of(offers + posts, execs)
     found = wd.repeat_price_rule(sends, 30, RULES, {})
-    assert sorted(f.scope for f in found) == ["maker_post", "team_swap"]
+    assert found == [] and sends == []  # hint 5 is about dealers (#203 reviews: these tripped normal trading)
 
 
 # ---------------------------------------------------------------- (d) duels
