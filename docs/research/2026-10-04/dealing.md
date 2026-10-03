@@ -78,7 +78,9 @@ balances.
 ## 1. Per counterparty
 
 All Saturday. "Msgs" are priced messages, ours / theirs.
-- **Below our value:** deals priced under our value of the card (from the sign of the `/me` neg_points change).
+- **Below our value:** sells priced under our value of the card, from the sign of the `/me` neg_points change. Blank (–)
+  on buy rows: a dealer buy never moved neg_points either way, so the sign says nothing about a buy's price against our
+  value.
 - **Off the opening:** the discount we got from the dealer's first ask (buys), or the premium over its first bid (sells).
 - **Dropped column:** "price vs our limit" (review item 2). Our sell "limit" was the hand CLI's `--floor`, not our value:
   SAL-07 and RET-06 sold above that floor and still below our value. Our buy "limit" was a price cap. Single-deal rows
@@ -91,15 +93,15 @@ Sources: `dealer_threads.py`, `team_counterparties.sql`, `addressed_in.sql`, `ad
 
 | Dealer, side | Threads | Msgs | Deals | Deal rate | Off the opening | Our msgs per deal | Below our value | Cash (P) | Cards | Score produced |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Abuela (L1), we buy | 13 | 43 / 44 | 3 | 23 % | 18 % | 3.7 | 0 | −71 | +3 | ladder +0.009, +0.010, +0.020 |
+| Abuela (L1), we buy | 13 | 43 / 44 | 3 | 23 % | 18 % | 3.7 | – | −71 | +3 | ladder +0.009, +0.010, +0.020 |
 | Abuela, we sell | 12 | 49 / 56 | 1 | 8 % | 20 % | 4.0 | 0 | +6 | −1 | ladder +0.003 |
-| Chato (L2), we buy | 2 | 11 / 11 | 1 | 50 % | 2 % | 3.0 | 0 | −95 | +1 | ladder +0.001 |
+| Chato (L2), we buy | 2 | 11 / 11 | 1 | 50 % | 2 % | 3.0 | – | −95 | +1 | ladder +0.001 |
 | Chato, we sell | 2 | 15 / 15 | 1 | 50 % | 23 % | 10.0 | **1** (RET-06) | +16 | −1 | ladder 0; a small neg_points loss |
 | Pilar (L3), we sell | 9 | 56 / 56 | 5 | 56 % | 19 % | 6.0 | **1** (SAL-07, an only copy) | +157 | −5 | ladder +0.050, +0.045, +0.044 (**board +3.35**); SAL-07 **board −4.33** |
-| Pícaros (L4), we buy | 33 | 64 / 63 | 4 | 12 % | 17 % | 3.2 | 0 | −241 | +4 | ladder +0.049, +0.046, +0.047 (board +0.55 to +0.70 each) |
+| Pícaros (L4), we buy | 33 | 64 / 63 | 4 | 12 % | 17 % | 3.2 | – | −241 | +4 | ladder +0.049, +0.046, +0.047 (board +0.55 to +0.70 each) |
 | Pícaros, we sell | 4 | 21 / 20 | 1 | 25 % | 25 % | 4.0 | 0 | +5 | −1 | ladder +0.012 |
 | Banco (L5) | 0 | – | 0 | – | – | – | – | 0 | 0 | – |
-| **All dealers** | **75** | | **16** | **21 %** | 18 % (field ≈ 15 %) | | **2** | **−223** | **+8 / −8** | ladder 0 → 0.336; neg_points ≈ −90 (the 2 below-value sales) |
+| **All dealers** | **75** | | **16** | **21 %** | 18 % (field ≈ 15 %) | | **2 of 8 sells** | **−223** | **+8 / −8** | ladder 0 → 0.336; neg_points ≈ −90 (the 2 below-value sales) |
 
 - **Deal rate:** the field converts 37 % of dealer threads (other_teams §2). 29 of our 75 could never close (§3.4); on the
   46 others our rate is 35 %.
@@ -306,15 +308,17 @@ Sources: `feed_events` (clock, round, level, schedule, persona, bench, duels and
   - The reviewer's text search for 8 inbound ids (11099, 12872, 15532, 15718, 16001, 16782, 18095, 18135) in `decisions`
     and `executions` found nothing.
 - **Mechanism, confirmed in code plus one live check:**
-  1. The taker scans each venue with the **keyless** client: `taker.py:1007` `board_offers(self.public.board(venue_id), …)`,
+  1. The taker scans each venue with the **keyless** client: `agents/taker.py:1017` (`_board_of`, origin/main 03244c12)
+     `board_offers(self.public.board(venue_id), …)`,
      where `self.public` is `PublicBazaar`, "without the X-Team-Key header" (`sdk.py:51`).
      - A keyless board does not show addressed offers. At 00:51 the keyless rastro board listed 34 open offers, 0
-       addressed. The feed shows addressed offer 19999 (t10 → t08, expires 1446) still open on rastro, and it was absent
-       (n=1, the game closed).
+       addressed. The feed shows addressed offer 19999 (t10 → t08, expires 1446) still open on rastro, and it was absent.
+       The reviewer's two keyless GETs (v15, v11 at 01:00) returned 0 offers, while the feed shows 5 addressed offers
+       still open there (incl. 19981, t05 → t01): n = 6, all after the close.
      - `market.board_offers` would accept `to == us`; it never receives them.
   2. `/api/me/offers` does return offers addressed to us. `market.our_open_offers` skips them on purpose ("unless another
      team addressed it to us"), and nothing else reads them.
-  3. Selling into bids is off on the live taker: `accept_bids: bool = False` (`taker.py:176`). The Railway start command is
+  3. Selling into bids is off on the live taker: `accept_bids: bool = False` (`agents/taker.py:187`, origin/main). The Railway start command is
      `bazaar agent taker` without `--accept-bids` (`.railway/railway.py:283`), and Saturday has 0 `accept_bid`
      decisions. So no process of ours could take a team's bid, addressed or public.
 - **Value lost, honestly small:**
@@ -452,7 +456,7 @@ The full sub-report is `dealing/other_teams/REPORT.md`. The main points, with ou
 |---|---|---|---|---|
 | 1 | **Trade card value with teams on the board, both ways**: sell spares and cards worth little to us at the tape price, buy below our value | (a) Maker: list every spare and every `protect_page_exceptions` card on rastro at the tape price, never to a dealer below value (`STRATEGY.md` `sell_min_surplus`, GUARDRAILS:48). (b) **`buyer_rank_enabled` = true** (GUARDRAILS:137): the maker addresses each ask to the best buyer and re-posts it for anyone after `buyer_rank_fallback_ticks` 6. Hand approvals with a buyer keep using `bazaar sell list --to` (41 posts Saturday). (c) Keep `human_approval_above` 250 (GUARDRAILS:147) | **+1.2 to +3** in round 3 (2–4 rare-size trades; Saturday +1.26 to +1.98 each, × 0.6) | Gains may cap near the field's top neg_points (Saturday morning: +0.67, then 0.00, while we led): read `/me` and the board after each trade. Addressed asks went 41 for 0 on Saturday; the fallback keeps them public. Feeding: no side payments (RULES.md:131). Requests: within the maker's 12 listings/tick, no extra reads |
 | 2 | **Fill the dealer ladder deliberately.** Before ≈ 12:17 (round 2): one negotiated Chato deal (L2 holds a 2 %-off buy and a below-value sale) and better-share L1 deals. From ≈ 12:17: 3 negotiated deals per level, L3 first | Hand checklist with `bazaar dealer sell` (it ran every scoring L3 deal Saturday), or `dealer_sell_enabled` = true (GUARDRAILS:120) with the floor at value + `dealer_sell_min_surplus`, **never a hand `--floor` below value**. Taker ladder probes: `ladder_probe_min_share` (GUARDRAILS:134) | **+1.8 to +3** in round 3 (Saturday L3 +3.35, L4 ≈ +1.8 for 3, × 0.6); **+0.3 to +0.6** for the Chato slot before ≈ 12:17 | Dealer patience and quota (Pilar and Chato 6/h); slot clash with the taker (GUARDRAILS:126–129). **L5 only by selling an epic worth less to us than Banco's bid** (`GET /api/me/value`), else skip: t16 −5.56, t06 −2.40. Requests: a hand thread is 1 msg/tick; run it between benches and outside Duels III |
-| 3 | **Read offers addressed to us, and let the taker sell into bids** | (a) Taker: add the offers `/api/me/offers` returns with `to == us` to its board candidates (`agents/taker.py` `_board_offers`; `market.our_open_offers` already sees and skips them), or read boards with the team client. (b) `--accept-bids` on bazaar-taker (`.railway/railway.py:283` start command; `TakerConfig.accept_bids`): sells into a bid only when it beats our value by `sell_min_surplus` and every sell guard holds (`protect_page_sets`, move impact) | **+0.3 to +1** (Saturday's 4 above-value bid pairs ≈ 30 neg_points, × 0.03–0.05, × 0.6); more if teams address more to us on Sunday | New code (a) and a start-command change (b): merge outside benches and duel sessions, and test that `protect_page_sets` and #227 bind on the bid path. Requests: (a) is one `GET /api/me/offers` per tick unless the snapshot already holds it |
+| 3 | **Read offers addressed to us, and let the taker sell into bids** | (a) Taker: add the offers `/api/me/offers` returns with `to == us` to its board candidates (`agents/taker.py` `_board_offers`; `market.our_open_offers` already sees and skips them), or read boards with the team client. (b) `--accept-bids` on bazaar-taker (`.railway/railway.py:283` start command; `TakerConfig.accept_bids`; alone it reaches public bids only, because it reads the same keyless boards: addressed bids need (a)): sells into a bid only when it beats our value by `sell_min_surplus` and every sell guard holds (`protect_page_sets`, move impact) | **+0.3 to +1** (Saturday's 4 above-value bid pairs ≈ 30 neg_points, × 0.03–0.05, × 0.6); more if teams address more to us on Sunday | New code (a) and a start-command change (b): merge outside benches and duel sessions, and test that `protect_page_sets` and #227 bind on the bid path. Requests: (a) is one `GET /api/me/offers` per tick unless the snapshot already holds it |
 | 4 | **Clamp dealer ladder tops by the official-value cap before opening a thread**, and skip a card whose clamped top is under the dealer's lowest fill seen | Taker planning (`agents/taker.py` ladder plan, `agents/dealer_plan.py`): top = min(top, official value − `official_value_margin`); skip when top < the learner's lowest fill for that card or class | 0 directly; frees Pícaros' 6 deals/hour and patience (23 dead threads Saturday) | None. It **saves** requests (≈ 2 msgs per dead thread) |
 | 5 | **Duels III: a role-aware days sign, per duel** | `agents/duel_days.py` `evidence()`: "adds … to your side" = gain for this duel, "costs you" = cost; decide per duel instead of a global latch. Seller: open with high days and accept the rival's days. Buyer: days at 0 unless the price compensates. Keep the worst case for unrecognised text | +1 to +2 duel points if Duels III has days (≈ +7 % on Duels II); ≈ +0.1 to +0.3 final board (relative, × 0.6) | A changed text falls back to the worst case. Merge before ≈ 14:17 and outside benches (a redeploy re-arms state). No extra requests |
 | 6 | **Team desk off for Sunday; keep answering inbound offers** | `team_threads_enabled` = false (GUARDRAILS:105), or `team_threads_max_open` 0; inbound offers go through rec 3 | 0 directly; saves requests at 15 s ticks and returns 2 conversation slots to the ladder | We lose a rare inbound thread swap (t04's, Saturday) only if rec 3 is not in |
@@ -469,7 +473,9 @@ swaps (quiet), venue and broker (mm-probe), album and packs (collections).
    round 3 resets everything?
 3. **L3 sells in round 3:** by hand again (Saturday's way), or `dealer_sell_enabled` on with floors ≥ value?
 4. **Addressed offers (rec 3):** which do you want before Sunday's first bench: the taker reading `/api/me/offers` (code),
-   `--accept-bids` (start command), both, or neither?
+   `--accept-bids` (start command), both, or neither? Note: `--accept-bids` **alone still cannot see an addressed bid**:
+   the bid path takes its bids from the same keyless boards (`agents/taker.py:742` → `_board_offers` → `_board_of`,
+   :1017 on origin/main), so it would reach public bids only. Addressed bids need (a), or (a) and (b) together.
 5. **Team desk:** off for Sunday (rec 6)?
 6. **Duels III days fix (rec 5):** worth a merge before ≈ 14:17, given the freeze rules?
 
@@ -477,8 +483,9 @@ swaps (quiet), venue and broker (mm-probe), album and packs (collections).
 - **Railway logs:** not linked, and I did not link them.
 - **Team-thread replies before tick 1289:** `/api/me/threads` returns only our last 50 threads, so the in-thread 0-reply
   finding covers 25 of 83. Board counter-bids (t02) are a reply of another kind (§1).
-- **Addressed offers on the keyless board:** one live example (offer 19999), after the close. That the board hides them
-  is consistent with 0 of 127 reaching a decision, but it is n=1 against the API.
+- **Addressed offers on the keyless board:** 6 live examples (19999 on rastro; 19942, 19979, 19981, 20249, 20252 on v11 and
+  v15), all after the close. That the board hides them is consistent with 0 of 127 reaching a decision, but it was not
+  observed during play.
 - **The value of inbound bids** (≈ 30 neg_points) is the reviewer's computation against `snapshots.assets` at the time; I
   did not recompute it. The 5 inbound asks were checked against end-of-Saturday values, not the values at the time.
 - **Who posted the 41 addressed asks:** "hand `bazaar sell list --to`" is proven by the ledger rows (`source` = `sell`,
@@ -511,6 +518,7 @@ swaps (quiet), venue and broker (mm-probe), album and packs (collections).
 | 12 | Timeline gaps | Market Tests 2 and 3, Duels I end (15:39), Banco v2, round-2 start added |
 | 13 | Ids, per-rival duels, walk count | Thread ids added; per-rival table added; 63 team walks (62 + 1 failed close) |
 | 14 | Coverage | Covered by 1, 8 and 9 |
+| Re-check N1–N3 | `--accept-bids` alone cannot see addressed bids; "below our value" blank on buy rows; code lines | Q4 and rec 3(b) say so; buy rows blanked and the definition reworded; taker.py lines refreshed to origin/main 03244c12 (GUARDRAILS, market.py, sdk.py and railway.py citations unchanged there); keyless check now n = 6 |
 
 ## Files (`docs/research/2026-10-04/dealing/`)
 
