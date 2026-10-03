@@ -868,3 +868,7 @@ flag), a flag goes only to a GUARDRAILS.md `flag_dealers` dealer a human opted i
 words in `bazaar flags precision`, at most `max_flags_sent` ever per data dir, never twice. A missed flag loses a
 bonus; a wrong one costs points.
 
+### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+`docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
+"0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
+`docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
