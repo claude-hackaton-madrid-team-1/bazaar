@@ -159,14 +159,23 @@ def step(name: str, run: Callable[[], subprocess.CompletedProcess[str]], check: 
     return output
 
 
-def missing_common() -> str:
+def missing_common(max_price: int) -> str:
+    """A common we miss whose official value (`GET /api/me/value`) covers `max_price`: every buy is capped at it,
+    so a card of a set we care little about would walk at the dealer's floor. One read per released set."""
     me, catalog = get("/api/me", keyed=True), get("/api/catalog")
     held = {a["ref"] for a in me["assets"] if a["kind"] == "card"}
-    for s in catalog["sets"]:
-        for c in s["cards"]:
-            if s.get("released") and c["rarity"] == "common" and c["id"] not in held:
-                return str(c["id"])
-    fail("team t01 already holds every common")
+    firsts = [
+        next((str(c["id"]) for c in s["cards"] if c["rarity"] == "common" and c["id"] not in held), None)
+        for s in catalog["sets"]
+        if s.get("released")
+    ]
+    valued = [(float(get(f"/api/me/value?card={ref}", keyed=True)["your_value"]), ref) for ref in firsts if ref]
+    best = max(valued, default=None)
+    if best is None:
+        fail("team t01 already holds every common")
+    if best[0] < max_price:
+        fail(f"no missing common worth {max_price} to team t01 (best {best[1]} at {best[0]:g})")
+    return best[1]
 
 
 def duel_ticks_left() -> tuple[list[int], int]:
@@ -219,7 +228,7 @@ def run_smoke(env: dict[str, str]) -> None:
     )
     if "Team 1" not in out:
         fail("status did not show Team 1", out)
-    ref = missing_common()
+    ref = missing_common(10)
     step(
         f"dealer buy {ref} from Abuela, negotiated",
         lambda: bazaar(env, "dealer", "buy", ref, "--start", "6", "--max", "10", "--live"),

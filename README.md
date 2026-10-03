@@ -1297,13 +1297,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
+- [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
+- [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 - [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 - [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 - [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
 - [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
 - [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
-- [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
-- [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
 
 <!-- BAZAAR:STATUS:END -->
 
