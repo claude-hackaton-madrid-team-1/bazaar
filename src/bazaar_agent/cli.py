@@ -577,8 +577,8 @@ def duel_run(
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
         try:  # another process may have taken it already
             slots: int | None = max(0, limit - ledger.accepts_in_tick(c.tick))
-        except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, v2 holds every duel
-            console.print(f"  ledger unreadable ({type(e).__name__}): v2 holds every duel this tick")
+        except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, every duel holds
+            console.print(f"  ledger unreadable ({type(e).__name__}): every duel holds this tick (no accept, no offer)")
             slots = None
         params = V2Params.from_rules(rules_t, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
