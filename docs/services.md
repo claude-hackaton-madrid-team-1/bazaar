@@ -215,6 +215,20 @@ status`. A dashboard can point its base URL there to develop against live-lookin
 take `X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). The taker's,
 maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. README, "Simulator".
 
+## Bazaar Live (the show)
+
+`bazaar-live` (repo [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)): the
+buyer and the seller at a Rastro stall, acting out and voicing every public move. Its public URL is the
+Railway-generated domain of service `bazaar-live` (generated once by hand; listed in its README).
+
+- The page reads only the taker's and maker's public `/health`, `/state` and `WS /events` above, from
+  the browser, and keeps only the public fields; it sends nothing to the agents or the game and holds no
+  team key. `?mock=1` plays recorded fixtures when the doors are closed.
+- Its own server answers `GET /health` (`{ok, service, tts}`), `GET /api/tts/providers` and
+  `POST /api/tts`: a proxy to ElevenLabs / Gemini TTS with the keys server-side (`ELEVENLABS_API_KEY`,
+  `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
+  (`Origin`), under per-address and global rate limits and a daily character budget.
+
 ## Not public
 
 - **Postgres** (`iriguchi.proxy.rlwy.net:28880`, db `railway`): the shared memory. Credentials only in

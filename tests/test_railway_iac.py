@@ -8,11 +8,13 @@ deploy commands, nested resources, a context-only branch) is checked as Railway 
    (an undeclared hand-set variable is deleted by the next apply; a declared value would set it).
 2. Live is BAZAAR_LIVE only: no start or pre-deploy command carries `--live` or BAZAAR_LIVE, and only
    the duel player `--play`s.
-3. Every service builds our repo on main (Phoenix: its pinned image). An OFF service, without a
-   source, is redeployed from its last image by any apply that changes its config (bazaar-monitor,
-   2026-10-02 23:14 UTC).
+3. Every service builds our repo on main (Phoenix: its pinned image; bazaar-live: the bazaar-live repo on
+   main). An OFF service, without a source, is redeployed from its last image by any apply that changes
+   its config (bazaar-monitor, 2026-10-02 23:14 UTC).
 4. Exactly the services and volumes we run are declared (an allowlist: add a new one here on
    purpose). The monitor runs in the CLI and the evals inside the agents, so neither is declared.
+5. The show (bazaar-live) holds no team key and no database: only its runtime settings and the two
+   optional voice keys, both preserve().
 """
 
 from __future__ import annotations
@@ -27,12 +29,23 @@ import railway_sdk
 
 IAC = Path(__file__).resolve().parents[1] / ".railway" / "railway.py"
 REPO = "claude-hackaton-madrid-team-1/bazaar"
-SERVICES = frozenset({"phoenix", "bazaar-duels", "bazaar-taker", "bazaar-maker", "bazaar-mcp", "bazaar-sim"})
+SERVICES = frozenset(
+    {"phoenix", "bazaar-duels", "bazaar-taker", "bazaar-maker", "bazaar-mcp", "bazaar-sim", "bazaar-live"}
+)
+LIVE_SHOW = "bazaar-live"
+LIVE_SHOW_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
+LIVE_SHOW_VARIABLES = {
+    "RAILPACK_NODE_VERSION": {"type": "literal", "value": "22.23.3"},
+    "PORT": {"type": "literal", "value": "8080"},
+    "ELEVENLABS_API_KEY": {"type": "preserve"},
+    "GEMINI_API_KEY": {"type": "preserve"},
+}
 VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
 LIVE_IN_COMMAND = re.compile(r"--live\b|BAZAAR_LIVE")
 PHOENIX_IMAGE = "arizephoenix/phoenix:version-20.19.0"  # the exact pin (docker-compose.yml): never a moving tag
 BUILD_COMMAND = "uv sync --locked --no-dev"  # a build runs no game command
+LIVE_SHOW_BUILD = "npm run build"  # the show's Vite build: no game command either
 # The exact start commands: a wrapper script could add `--live` behind a clean-looking command, and
 # live is decided by BAZAAR_LIVE alone. Changing one is a reviewed edit of this map.
 START_COMMANDS = {
@@ -42,6 +55,7 @@ START_COMMANDS = {
     "bazaar-maker": "/app/.venv/bin/bazaar agent maker",
     "bazaar-mcp": "/app/.venv/bin/bazaar mcp serve --host 0.0.0.0",
     "bazaar-sim": "/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
+    "bazaar-live": "node server/index.ts",
 }
 
 
@@ -87,7 +101,8 @@ def test_no_command_turns_a_service_live(services: dict[str, dict[str, Any]]) ->
     starts = {name: (s.get("deploy") or {}).get("startCommand") for name, s in services.items()}
     assert starts == START_COMMANDS
     builds = {name: (s.get("build") or {}).get("buildCommand") for name, s in services.items()}
-    assert builds == {name: None if name == "phoenix" else BUILD_COMMAND for name in services}, builds
+    expected = {"phoenix": None, LIVE_SHOW: LIVE_SHOW_BUILD}
+    assert builds == {name: expected.get(name, BUILD_COMMAND) for name in services}, builds
 
 
 def test_every_service_builds_our_repo_on_main_or_the_pinned_phoenix(services: dict[str, dict[str, Any]]) -> None:
@@ -96,7 +111,15 @@ def test_every_service_builds_our_repo_on_main_or_the_pinned_phoenix(services: d
         if name == "phoenix":
             assert source == {"type": "image", "image": PHOENIX_IMAGE}, source
         else:
-            assert (source.get("type"), source.get("repo"), source.get("branch")) == ("github", REPO, "main"), (
+            repo = LIVE_SHOW_REPO if name == LIVE_SHOW else REPO
+            assert (source.get("type"), source.get("repo"), source.get("branch")) == ("github", repo, "main"), (
                 name,
                 source,
             )
+
+
+def test_the_show_holds_no_team_key_and_no_database(services: dict[str, dict[str, Any]]) -> None:
+    show = services[LIVE_SHOW]
+    # Exactly these variables: no BAZAAR_KEY, no DATABASE_URL, no Phoenix key; the voice keys only preserve().
+    assert show.get("variables") == LIVE_SHOW_VARIABLES, show.get("variables")
+    assert not show.get("volumeAttachments"), show.get("volumeAttachments")
