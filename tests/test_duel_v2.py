@@ -171,3 +171,15 @@ def test_replay_of_the_unanswered_practice_duels_beats_v1():
     v1 = sum(r["result"] for r in arena.replay(duels, arena.v1_policy()))
     v2 = sum(r["result"] for r in arena.replay(duels, arena.v2_policy()))
     assert v2 > v1 > 0
+
+
+def test_jev_cannot_hold_back_the_accepts_the_planner_times_across_duels():
+    duels = [duel(did, rival=[(100, 120 + did)], ours=[(100, 160)]) for did in range(1, 7)]
+    jev = DuelJev(lambda state: JevAdvice("hold", 0.95))  # a Jev that always wants to wait
+    accepted = []
+    for tick in range(101, 112):
+        live = [d for d in duels if d["duel"] not in accepted]
+        picks = jev.pick(live, tick, {d["duel"]: 100 for d in duels}, anchor=0.6, floor=0.05, endgame_ticks=2,
+                         left=lambda: 30.0, v2=V2Params())  # fmt: skip
+        accepted += [did for did, p in picks.items() if p.move.kind == "accept"]
+    assert sorted(accepted) == [1, 2, 3, 4, 5, 6]

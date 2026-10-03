@@ -169,14 +169,15 @@ def legal_moves(
     """The moves that stay inside our limit, by `duel_move` option. Today's move stands for its own option.
     A counter that asks less than the rival already offers (a seller) or more (a buyer) is dominated by
     accepting, so it is not a move. Under v2 (`duel_policy` = v2) an accept is legal only where the accept
-    planner gave this duel the team's slot, and a counter only within v2's caps on our priced messages."""
+    planner gave this duel the team's slot, and is then the only move (Jev cannot see the queue of accepts);
+    a counter is legal only within v2's caps on our priced messages."""
     limit_role = _limit_role(duel)
     if limit_role is None or duel_done(duel):
         return {"hold": default}
     left = ticks_left(duel, tick)
     endgame = left is not None and left <= endgame_ticks
     accept = default if default.kind == "accept" else (None if v2 is not None else accept_move(duel))
-    if accept is not None and endgame:
+    if accept is not None and (endgame or v2 is not None):  # v2: the planner timed it across every duel
         return {"accept": accept}
     moves: dict[str, DuelMove] = {} if accept is None else {"accept": accept}
     offer = default if default.kind == "offer" else counter
