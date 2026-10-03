@@ -198,7 +198,9 @@ class DecisionLog:
         """What this log remembers of `agent`'s live threads with a decision at or after `since_tick`, and of
         `thread_ids` whatever their age (the threads still open): the memory a restarted process has of the
         threads the one before it drove. Postgres and this machine's JSONL are both read (a write falls back to
-        the file while Postgres is down). Raises nothing: an unreadable store remembers nothing (`complete`)."""
+        the file while Postgres is down). Only dealer threads (`DEALER_KINDS` rows): a swap thread with another
+        team (`team_*` rows) is the team desk's, booked by it. Raises nothing: an unreadable store remembers
+        nothing (`complete`)."""
         ids = sorted({int(i) for i in thread_ids})
         rows: list[tuple[Any, ...]] = []
         conn = self._db()
@@ -207,8 +209,8 @@ class DecisionLog:
                 rows += conn.execute(
                     "select thread_id, tick, kind, candidates->>'item', chosen->>'price', candidates->>'owner' "
                     "from decisions where agent = %s and thread_id is not null and dry_run is not true "
-                    "and (tick >= %s or thread_id = any(%s)) order by id",
-                    (agent, since_tick, ids),
+                    "and starts_with(kind, %s) and (tick >= %s or thread_id = any(%s)) order by id",
+                    (agent, DEALER_KINDS, since_tick, ids),
                 ).fetchall()
             except psycopg.Error as e:
                 self._failed("thread read", e)
@@ -217,6 +219,8 @@ class DecisionLog:
         for row in _live_rows(lines, agent):
             tick, tid = _int(row.get("tick")), row.get("thread_id")
             if not isinstance(tid, int) or tick is None or (tick < since_tick and tid not in ids):
+                continue
+            if not str(row.get("kind") or "").startswith(DEALER_KINDS):
                 continue
             move = row.get("move") if row.get("chosen") else None
             price = move.get("price") if isinstance(move, dict) else None
@@ -266,6 +270,7 @@ class DecisionLog:
 
 
 THREAD_CLOSED = "dealer_closed"  # the decision kind that wraps a thread up: its deal (if any) is booked
+DEALER_KINDS = "dealer_"  # the prefix of every dealer-thread decision kind: the only threads a restart wraps up
 PROCESS_STARTED = "process_started"  # a process that writes THREAD_CLOSED started: its threads' deals are known
 
 

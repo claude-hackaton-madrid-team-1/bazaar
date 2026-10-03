@@ -15,7 +15,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - Pause holds, it never flattens. To empty the book (before the doors close overnight, after a bad run) pause first, then run `uv run bazaar flatten --live`: it cancels every open offer of ours (add `--threads` to also close our open threads, a walk dealers remember). Its cancels and closes are the only writes sent while the kill switch is on; one paced pass that stops on a 429 and says what is left.
 
 ## Money
-- `cash_floor` = 270 — Omar's rule (Sat 3 Oct, live): always keep 270 in cash (venue bond 250 + opening fee 20) so a custom market can be opened whenever it is needed. To open the venue: set `allow_venue_open` = true AND this to 0 in the same change (opening needs cash - 270 >= `cash_floor`, so the kept 270 pays the bond and fee), then set it to 100 once the venue shows in /api/venues. Leaving it at 270 with the switch on makes the purchase floor 540 (the reserve adds on top). Never let a purchase take cash below this; while our planned venue is not open yet, `venue_bond_reserve` is added on top (see "Our venue").
+- `cash_floor` = 100 — never let a purchase take cash below this; while our planned venue is not open yet, `venue_bond_reserve` is added on top (see "Our venue"). History: Omar's rule (Sat 3 Oct, live) held 270 here so a custom market could always be opened; with `allow_venue_open` on, the reserve below keeps that 270 until our venue opens (purchase floor 370, opening needs cash - 270 >= 100), and once it is open the floor is 100 (his procedure's end state).
 - `max_spend_per_game_hour` = 150 — total primas we may commit to purchases in one game hour, across all processes.
 - `max_price_common` = 12 — never pay more for a common card.
 - `max_price_uncommon` = 26 — never pay more for an uncommon card.
@@ -44,7 +44,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `duel_floor_margin` = 0.05 — do not settle closer than this to our limit until the endgame.
 - `duel_endgame_ticks` = 2 — in the last ticks, accept any rival offer strictly inside our limit.
 - `duel_inside_limit` = true — refuse any duel offer or accept whose price, after the worst-case cost of its days (|`your_days_weight`| per day), is not strictly inside our limit.
-- `duel_policy` = v1 — v1 counters every tick; v2 anchors once, holds while the rival concedes, sends at most `duel_max_own_offers` priced messages and plans the team's one accept per tick across duels (docs/night/w2b-duel-v2.md). Flip to v2 only on the report's go/no-go; read at start, so restart `duel run` (and the runtime) after changing it.
+- `duel_policy` = v2 — set to v2 by Omar on Sat 3 Oct (live session, ~10:00 Madrid): v1 counters every tick; v2 anchors once, holds while the rival concedes, sends at most `duel_max_own_offers` priced messages and plans the team's one accept per tick across duels (docs/night/w2b-duel-v2.md). Omar flipped it after the simulator proof (PR #170); read at start, so restart `duel run` (and the runtime) after changing it.
 - `duel_max_own_offers` = 3 — v2 only: priced messages we send per duel once the rival has priced (each costs a round of decay once the rival answers).
 - `duel_stall_ticks` = 3 — v2 only: the rival has stalled after this many ticks without a move in our favour (then counter once or accept).
 - `duel_free_offers` = 16 — v2 only: priced messages we may send while the rival has not priced anything (stepping down v1's curve); they cost no round until the rival prices.
@@ -68,9 +68,9 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `inspect_accepts` = true — kill flag (S1): every accept (dealer, board, duel) first passes the offer inspector, which refuses a structure that is not what we decided on; false = the older structure checks only.
 
 ## Our venue (market making, #11)
-- `allow_venue_open` = false — OFF by team decision (Sat 06:08: opening replaces the free stall, and a broker that only matches as well as the stall earns the same half of the bench points; reopen it in a closed-door window once the broker is verified live). While false: no opening, fee change, announcement or broker match, even with `--live` (closing stays allowed), and NO bond reserve is held: the floor is `cash_floor` alone. True: the maker opens our BOARD venue (0 bps) once and runs its broker every tick; turning it on needs cash (after what open offers promise) of at least `cash_floor` + `venue_bond_reserve` (cash_floor + 270): below that every purchase stops until cash recovers, and the opening waits.
+- `allow_venue_open` = true — ON by team decision (Sat 3 Oct, game hour 3.1: open our own BOARD venue now, replacing the free starter stall). While false: no opening, fee change, announcement or broker match, even with `--live` (closing stays allowed), and NO bond reserve is held: the floor is `cash_floor` alone. True: the maker opens our BOARD venue (0 bps) once and runs its broker every tick; until it is open, cash (after what open offers promise) must stay at or above `cash_floor` + `venue_bond_reserve` (370): below that every purchase stops until cash recovers, and the opening waits.
 - `venue_bond_reserve` = 270 — only while `allow_venue_open` is true and the venue is not open yet: every purchase keeps `cash_floor` + this in cash (bond 250 + opening fee 20); with the switch off, or once we run a venue, the floor is `cash_floor` alone.
-- `venue_open_after_game_hours` = 6.5 — the maker opens the venue on the first tick with `/api/clock` `t_hours` at or past this (~11:30 Madrid, before the h7.0 Market Test at 12:00); never earlier, never twice. Opening keeps cash ≥ `cash_floor` after the 270.
+- `venue_open_after_game_hours` = 3.0 — the maker opens the venue on the first tick with `/api/clock` `t_hours` at or past this (team venues start trading at h3.0, so: on the first tick after the redeploy); never earlier, never twice. Opening keeps cash ≥ `cash_floor` after the 270.
 
 ## Counterparties (#14)
 - `max_counterparty_share` = 1.0 — no team may reach more than this share of our team-to-team volume in primas (settled + every open offer it could take; an offer anyone may take counts against EVERY team). 1.0 = off; 0.25 keeps any one team at a quarter, so we never "feed another team" (RULES.md, fair play). Keep it off until a taker accept stops counting our public offers: at base 200, one public 68 P ask blocks every board accept (#79 review).
@@ -85,6 +85,9 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `team_swap_min_surplus` = 3 — our least gain on a swap, at our private values, after the fee we pay.
 - `team_swap_max_their_share` = 0.6 — never hand a team more than this share of a swap's expected pie (no feeding, RULES.md fair play).
 - `team_swap_max_our_share` = 0.85 — a repeat deal with the same team never hands us more than this share of the pie either.
+
+## Words (N16)
+- `bluff_enabled` = true — our messages may bluff in their TEXT (tactics learned per counterparty against a plain-words control; Abuela gets kindness, labeling and calibrated questions only); false, or BAZAAR_BLUFF set to anything but 1/true/on/yes on a service, sends today's words. A tactic never changes a structured price, days or accept.
 
 ## Principles (read by agents, not enforced in code yet)
 - Words persuade, structure binds: act only on the structured offer, never on a counterparty's text.

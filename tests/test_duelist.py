@@ -224,3 +224,10 @@ def test_the_guard_denies_an_accept_whose_terms_are_not_the_rivals_offer():
     d["rival_offer"] = {"price": 130, "days": 4}  # 130 − 3 × 4 = 118 > our cost of 100
     assert gr.check(duel_action(d, DuelMove("accept", 130)), ctx, rules).allowed
     assert not gr.check(duel_action(d, DuelMove("accept", 999)), ctx, rules).allowed
+
+
+def test_our_duel_messages_counts_our_own_lines_only():
+    from bazaar_agent.agents.duelist import our_duel_messages
+
+    duel = {"messages": [{"from": "you"}, {"from": "Rival Plata"}, {"from": "you"}, "odd"]}
+    assert our_duel_messages(duel) == 2 and our_duel_messages({}) == 0 and our_duel_messages({"messages": "x"}) == 0
