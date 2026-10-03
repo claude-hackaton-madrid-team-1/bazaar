@@ -60,7 +60,7 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
 ## What Marius must decide
 1. **Turn it on or not:** off (default), the recommended four knobs, or band-only (`band_jump_share` 0.2, `jump_max` 2, `band_gap` 2: no time cost, little hiding). Unpredictability scores nothing by itself (see Verdict).
 2. **`dealer_min_step_pct` = 0.02** applies only with a jitter on. The "2 % of book" rule is not in RULES.md, the fixtures, the feed capture or the simulator; it comes from the B12 brief. On its own it takes Chato rare share on the real threads (limit at the top) from 0.948 to 0.916. Set it to 0 if the rule is not real.
-3. **Merge order:** after #81. #72 conflicts in `dealer.py`, `taker.py` and `cli.py` (other stack). To re-apply after #72:
+3. **Merge order:** after #81. #100 is not in the B5 rehearsal (#120, frozen at about 04:00); its re-apply notes are recorded in `docs/night/b5-rehearsal.md`, against #72's head e4efc82. #72 conflicts in `dealer.py`, `taker.py` and `cli.py` (other stack). To re-apply after #72:
    - `may_close` is now `may_take` (one test);
    - `counter_below` should use `base_step`;
    - #72's `reopen_start` reads `neg.bids[0]`, which a jitter lowers, so the reopened thread starts 1 lower.
