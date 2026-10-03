@@ -46,8 +46,9 @@ UNTIL_HORIZON_TICKS = 2000  # an expiry the text "states" further out than this 
 READ_FEED_MODELS = frozenset({"haiku-4-5", "sonnet-5-5"})  # the cost cap: Jev may not steer reading to Opus
 READ_FEED_FALLBACK = "haiku-4-5"
 BACKOFF_MAX = 3  # spacing doubles per consecutive failure, up to 2**3 times
-# Which texts are read first, and never mixed in one call: organiser notices (the organisers wrote them),
-# then dealer words (the organisers' characters), then venue notices (another team wrote them).
+# The kinds of text, never mixed in one call: organiser notices (the organisers wrote them) always first, then
+# dealer words (the organisers' characters) and venue notices (another team wrote them) in turn, so rare venue
+# notices are never starved by dealer chatter.
 CHANNELS = ("organiser", "dealer", "venue")
 CHANNEL_MAX = PENDING_MAX // 2
 _DIGITS = re.compile(r"\d+")
@@ -255,6 +256,7 @@ class FeedInterpreter:
         self._busy = threading.Event()
         self._failed_reasons: set[str] = set()
         self._failures = 0  # consecutive failed calls (written by the worker, read by the tick thread)
+        self._turn = 0  # which of dealer / venue goes first when there is no organiser notice
         self._next_tick: int | None = None
 
     @property
@@ -285,11 +287,18 @@ class FeedInterpreter:
                 self._pending[channel] = {i: texts[i] for i in sorted(texts)[-CHANNEL_MAX:]}
 
     def _batch(self) -> list[Snippet]:
-        """The newest texts of the first channel that has any (organiser, dealer, venue): never mixed."""
-        for channel in CHANNELS:
+        """The newest texts of one channel: organiser notices first, then dealer and venue texts in turn."""
+        others = ("dealer", "venue") if self._turn % 2 == 0 else ("venue", "dealer")
+        for channel in ("organiser", *others):
             texts = self._pending[channel]
-            if texts:
+            if not texts:
+                continue
+            if channel == "organiser":
                 return [texts.pop(i) for i in sorted(texts)[-BATCH_MAX:]]
+            self._turn += 1  # a dealer's or venue's texts: ONE speaker per call, so no text is credited to another
+            speaker = texts[max(texts)].speaker
+            mine = [i for i in sorted(texts) if texts[i].speaker == speaker][-BATCH_MAX:]
+            return [texts.pop(i) for i in mine]
         return []
 
     def offer(

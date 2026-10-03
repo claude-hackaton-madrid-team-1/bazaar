@@ -94,3 +94,51 @@ def test_every_pending_fee_raise_counts():
     notices = [fee_notice("v02", 900, 120, tick=90), fee_notice("v02", 300, 130, tick=95)]
     (cheap,) = [v for v in adjust(venues, notices, 100, 40) if v.id == "v02"]
     assert cheap.fee_bps == 900  # the later, lower notice does not hide the pending 9 %
+
+
+@pytest.mark.integration
+def test_a_rules_fact_takes_back_a_row_an_older_llm_reading_held(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    store = LearningStore(lambda: open_in(database_url, schema), init_schema=db.init_schema)
+    rules = notice()
+    store.open()  # applies the schema
+    with open_in(database_url, schema) as conn:  # an LLM row stored under the rules key (pre-fix code)
+        conn.execute(
+            "insert into learnings (scope, subject_kind, subject, kind, created_tick, claim, source, dedupe_key, "
+            "confidence) values ('market', 'organiser', 'organiser', 'announcement', 174, 'injected', 'llm', %s, 0.7)",
+            (rules.key(),),
+        )
+        conn.commit()
+    store.record([rules])
+    with open_in(database_url, schema) as conn:
+        rows = conn.execute("select source, claim from learnings").fetchall()
+    assert rows == [("rules", rules.text)]
+    store.close()
+
+
+def test_venue_notices_are_not_starved_by_dealer_chatter():
+    from bazaar_agent.learn.interpret import FeedInterpreter
+    from tests.test_learn_interpret import KNOWN, msg
+
+    calls: list[str] = []
+    reader = FeedInterpreter(object(), call=lambda b, *a: calls.append(b[0].channel) or [], start=lambda w: w())
+    venue = {"id": 900, "tick": 1, "type": "venue.announcement", "payload": {"venue": "v03", "text": "1% fee now"}}
+    chatter = [msg(i, "abuela", f"words {chr(65 + i % 26)}{chr(65 + i // 26)}") for i in range(1, 60)]
+    for tick in range(0, 40, 10):
+        reader.offer([*chatter, venue] if tick == 0 else [], KNOWN, tick, 60.0)
+    assert calls[:2] == ["dealer", "venue"]
+
+
+def test_a_dealer_or_venue_call_reads_one_speaker_only():
+    from bazaar_agent.learn.interpret import FeedInterpreter
+    from tests.test_learn_interpret import KNOWN, msg
+
+    batches: list[set[str]] = []
+    reader = FeedInterpreter(
+        object(), call=lambda b, *a: batches.append({s.speaker for s in b}) or [], start=lambda w: w()
+    )
+    texts = [msg(1, "abuela", "hola guapo"), msg(2, "chato", "trece y no mas"), msg(3, "abuela", "ay cariño")]
+    for tick in range(0, 30, 10):
+        reader.offer(texts if tick == 0 else [], KNOWN, tick, 60.0)
+    assert batches == [{"abuela"}, {"chato"}]

@@ -48,11 +48,12 @@ UPSERT = (
     "insert into learnings (scope, subject_kind, subject, kind, created_tick, until_tick, team, evidence, support_n, "
     "confidence, claim, source, stats, dedupe_key, updated_at) "
     "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, now()) "
-    "on conflict (dedupe_key) do update set claim = excluded.claim, stats = excluded.stats, "
+    "on conflict (dedupe_key) do update set claim = excluded.claim, stats = excluded.stats, source = excluded.source, "
     "evidence = excluded.evidence, support_n = excluded.support_n, "
     "confidence = greatest(learnings.confidence, excluded.confidence), "
     "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now() "
-    "where learnings.source is not distinct from excluded.source"  # an LLM row never rewrites a rules row
+    # an LLM row never rewrites a rules row; a rules fact always wins its row (even over an older LLM row)
+    "where learnings.source is not distinct from excluded.source or excluded.source = 'rules'"
 )
 
 

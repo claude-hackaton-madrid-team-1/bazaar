@@ -22,6 +22,7 @@ from bazaar_agent.learn.model import Learning
 from bazaar_agent.learn.reader import FeedReader, GameHour
 from bazaar_agent.learn.store import LearningStore, matches
 
+LLM_MAX_TEXTS = 80  # `--llm N`: at most ten calls in the foreground
 KIND_HELP = "Only these kinds (repeat): cooloff, quota, sold_out, blocker, fee_change, announcement, ..."
 console = Console()
 err_console = Console(stderr=True)
@@ -54,9 +55,15 @@ def hour_from(events: list[Event]) -> GameHour | None:
     return GameHour(int(newest["tick"]), float(newest["t"]), tick_seconds)
 
 
-def _llm_pass(events: list[Event], newest: int) -> list[Learning]:
-    """The LLM pass over the newest free texts, once, in the foreground (the taker runs it in the background)."""
+def _llm_pass(events: list[Event], newest: int, settings: Any) -> list[Learning]:
+    """The LLM pass over the newest free texts, once, in the foreground (the taker runs it in the background).
+    Refused while the kill switch (`.local/PAUSE`) is on."""
+    from bazaar_agent.config import REPO_ROOT
     from bazaar_agent.guardrails import load_guardrails
+
+    if (REPO_ROOT / load_guardrails().rules.pause_file).exists():
+        err_console.print("[yellow]kill switch on (.local/PAUSE): no LLM pass[/yellow]")
+        return []
     from bazaar_agent.learn.interpret import BATCH_MAX, CHANNELS, interpret, snippet
     from bazaar_agent.llm import cli as llm_cli
 
@@ -68,7 +75,7 @@ def _llm_pass(events: list[Event], newest: int) -> list[Learning]:
         and e["payload"].get("kind") == "persona"
     }
     found = [s for e in events if (s := snippet(e, dealers)) is not None][-newest:]
-    runtime = llm_cli.runtime_for(load_settings(), load_guardrails().rules, "learnings --llm")
+    runtime = llm_cli.runtime_for(settings, load_guardrails().rules, "learnings --llm")
     if runtime is None or not found:
         return []
     known: dict[str, Any] = {d: "dealer" for d in dealers}
@@ -127,7 +134,12 @@ def learnings(
     every: bool = typer.Option(False, "--all", help="Every learning, expired ones included"),
     save: bool = typer.Option(False, help="Also write them to the shared learnings table (Postgres)"),
     limit: int = typer.Option(40, help="Rows to print"),
-    llm: int = typer.Option(0, help="Also read the newest N free texts (dealer words, notices) with the runtime LLM"),
+    llm: int = typer.Option(
+        0,
+        min=0,
+        max=LLM_MAX_TEXTS,
+        help="Also read the newest N free texts (dealer words, notices) with the runtime LLM",
+    ),
     as_json: bool = typer.Option(False, "--json", help="JSON instead of tables"),
 ) -> None:
     """What the live-feed reader learned from the captured feed, and the dealer blockers for us."""
@@ -141,7 +153,7 @@ def learnings(
     hour = hour_from(events)
     learned = FeedReader(us).read(events, hour)
     if llm > 0:
-        learned += _llm_pass(events, llm)
+        learned += _llm_pass(events, llm, settings)
     now = tick if tick is not None else max((int(e.get("tick") or 0) for e in events), default=0)
     if save:
         store = LearningStore((lambda: conn) if conn is not None else None, err_console.print, db.init_schema)

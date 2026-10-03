@@ -71,6 +71,12 @@ LOCKED_ENV: Mapping[str, str] = {
     "TYPESAFE_API_KEY": "",
     "BAZAAR_MCP_TOKEN": "",
     "OPENAI_API_KEY": "",
+    "PHOENIX_API_KEY": "",
+    "PHOENIX_SECRET": "",
+    "SIM_ADMIN_TOKEN": "",
+    "PGPASSWORD": "",
+    "ELEVENLABS_API_KEY": "",
+    "GEMINI_API_KEY": "",
 }
 AUTH_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed", "account_on_hold"})
 

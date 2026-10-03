@@ -201,9 +201,9 @@ def test_the_reader_reads_organiser_notices_first_one_kind_per_call_spaced_by_ti
     assert [lr.evidence for lr in notice] == [(4,)]
     assert [[s.event_id for s in b] for b in calls] == [[4]]  # tick 105: not due yet (every 10 ticks)
     assert reader.offer([], KNOWN, 110, 60.0) == []
-    assert [[s.event_id for s in b] for b in calls] == [[4], [1, 3]]  # then the dealer words, never mixed
-    assert [lr.evidence for lr in reader.offer([], KNOWN, 111, 60.0)] == [(1,)]
-    assert reader.status == "idle" and reader.pending == 0
+    assert [[s.event_id for s in b] for b in calls] == [[4], [3]]  # then one dealer's words (chato), never mixed
+    assert [lr.evidence for lr in reader.offer([], KNOWN, 111, 60.0)] == [(3,)]
+    assert reader.status == "idle" and reader.pending == 1  # abuela's text waits for the next due tick
 
 
 def test_failures_back_off_and_the_kill_switch_holds_the_reader():
