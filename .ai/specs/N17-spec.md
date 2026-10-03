@@ -1,6 +1,7 @@
 # N17 — Team-to-team swap threads  (per-task spec)
 
-- Task id: N17 (new, local; indexed in [`02-plan.md`](./02-plan.md), **P1**, next to N14)
+- Task id: N17 (new, local, **P1**; its index row in [`02-plan.md`](./02-plan.md) comes with the
+  coordinator's #124, its steps are under "Per-task steps")
 - Status: **DRAFT — Phase 1 (spec + plan only, no code)**. Phase 2 (code) starts when the coordinator
   replies "go", after PR #72 merges.
 - Backlog source: local (`.ai/specs`); the coordinator's brief (Orca task `task_a3927baba1ba`) is the
