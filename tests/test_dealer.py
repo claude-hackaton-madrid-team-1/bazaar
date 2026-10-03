@@ -801,11 +801,15 @@ def test_on_thread_sees_every_read_and_a_failing_inspector_never_breaks_the_deal
 def test_the_accept_gate_runs_before_the_guard_and_a_refusal_never_accepts_nor_claims_the_slot():
     from bazaar_agent.agents.dealer import negotiate
 
-    guarded, lines = [], []
+    guarded, reserved, lines = [], [], []
 
     def guard(move, thread_id):
         guarded.append(move.kind)
         return None
+
+    def reserve(move, clock):
+        reserved.append(move.offer_id)
+        return True
 
     client = FakeDealerClient(asks=[12, 10, 9])
     out = negotiate(
@@ -817,9 +821,11 @@ def test_the_accept_gate_runs_before_the_guard_and_a_refusal_never_accepts_nor_c
         sleep=lambda _: None,
         max_ticks=6,
         guard=guard,
+        reserve=reserve,
         inspect=lambda thread, move: "block: it binds LAV-01",
     )
-    assert client.accepted == [] and "accept" not in guarded and out.status != "deal"
+    assert client.accepted == [] and "accept" not in guarded and reserved == []  # the slot is never claimed
+    assert out.status == "timeout" and out.reopen_start is None  # a refusal is never a walk, never a reopen
     assert any("INSPECTOR refused the accept of offer" in line and "LAV-01" in line for line in lines)
 
 
