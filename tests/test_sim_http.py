@@ -65,7 +65,7 @@ def test_every_public_sdk_method_works_against_the_simulator(server):
     assert "teams" in b.leaderboard()
     assert isinstance(b.feed(limit=20)["events"], list)
     assert "upcoming" in b.schedule()
-    assert {d["id"] for d in b.dealers()["personas"]} == {"abuela", "chato"}
+    assert {d["id"] for d in b.dealers()["personas"]} == {"abuela", "chato", "pilar"}
     assert b.personas()["personas"] == b.dealers()["personas"]
     assert b.dealer("abuela")["menu"]["sells"][0]["pack"] == "sobre_barrio"
     assert b.levels()["levels"][0]["id"] == "chato"
@@ -147,6 +147,19 @@ def test_wait_for_tick_carries_next_tick(server):
 # ---------------------------------------------------------------- the spec and the captured fixtures
 
 
+def _known_spec_gap(error: Any) -> bool:
+    """The spec types `MenuBuy.sets` as a string ("released"), but the real /api/dealers entry for Doña Pilar
+    (verified keyless 2026-10-03) lists sets: `{"rarity": "rare", "sets": ["SAL", "RET"]}`. Tolerate exactly that."""
+    where = list(error.absolute_path)
+    return (
+        len(where) >= 2
+        and where[-1] == "sets"
+        and "buys" in where
+        and isinstance(error.instance, list)
+        and all(isinstance(x, str) for x in error.instance)
+    )
+
+
 def validate_against_spec(method: str, path: str, status: int, ctype: str, body: bytes) -> Any:
     response, schema = spec.schema_of(method, path, status, ctype)
     assert response is not None, f"{method.upper()} {path} returned {status}, undocumented"
@@ -155,7 +168,9 @@ def validate_against_spec(method: str, path: str, status: int, ctype: str, body:
     payload = json.loads(body)
     validator = Draft202012Validator({**schema, "components": spec.SPEC["components"]})
     errors = [
-        f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message[:120]}" for e in validator.iter_errors(payload)
+        f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message[:120]}"
+        for e in validator.iter_errors(payload)
+        if not _known_spec_gap(e)
     ]
     assert errors == [], f"{method.upper()} {path} does not match its schema"
     declared = spec.resolve(schema).get("properties")

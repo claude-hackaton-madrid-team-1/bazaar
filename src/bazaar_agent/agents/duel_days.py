@@ -14,11 +14,13 @@ which way the weight points, every day must be valued at the worst case (|weight
     conflict two real payloads disagree: never signed again (the safe side)
 
 `signed` switches anything on only when two real signals agree (a signed text and a signed score, or the scores of
-two different finished deals): one misread signal must never drop the guard's worst case (#150 security review).
+two finished deals at two different delivery days): one misread signal must never drop the guard's worst case (#150
+security review), and a scorer counting days back from 10 scores a day-5 deal like ours (#150 r3).
 Both signals must come from the CURRENT session (#150 security r2 P2): `?done=true` lists every duel we ever finished,
 and Saturday and Sunday bring rule variants, so an earlier session's deals never vouch for a later one. Each signal
 records its payload's `session`; the current session is the highest `session` among the live duels this process
-last read (never taken from the file); none known, nothing is corroborated. A conflict stays for good, every session.
+last read (never taken from the file), and none when any of them lacks an int one: then nothing is corroborated.
+A conflict stays for good, every session.
 It persists to a small JSON file, so a restart keeps the verdict; an unreadable file reads as a conflict.
 The caller passes `real_game` (from
 `Settings.simulator`), and decides whether the latch may switch anything on (a guardrail, default off).
@@ -83,14 +85,20 @@ def _union(a: Iterable[int], b: Iterable[int]) -> list[int]:
     return sorted({*a, *b})  # sorted: two processes write the same file the same way (no rewrite ping-pong)
 
 
-def _union_pairs(a: Iterable[list[int]], b: Iterable[list[int]]) -> list[list[int]]:
-    return [list(pair) for pair in sorted({(s, d) for s, d in (*a, *b)})]
+def _union_scored(a: Iterable[list[int]], b: Iterable[list[int]]) -> list[list[int]]:
+    """`[session, duel, days]` entries (or an older file's `[session, duel]`: days unknown), sorted, no repeats."""
+    return [list(entry) for entry in sorted({tuple(entry) for entry in (*a, *b)})]
 
 
 def _number(value: object) -> float | None:
-    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+    """A finite number from the payload, else None (bools, NaN, infinities and ints too large for a float)."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # a 400-digit int: math.isfinite raised on it and stopped the caller (#165 P3-3)
+        return None
+    return number if math.isfinite(number) else None
 
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
@@ -133,7 +141,11 @@ def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     practice payloads score `result = surplus × (1 - decay) ** rounds`, so `result / kept - (price vs limit)` is
     what the days added. `signed` when that is +weight × days with weight > 0; `cost` when it is -|weight| × days
     with weight > 0 (the worst case is the truth); `reversed` when it is -weight × days with weight < 0; anything
-    else, a negative weight that cannot tell signed from cost included, is `unknown`."""
+    else, a negative weight that cannot tell signed from cost included, is `unknown`. So is a payload whose `rounds`
+    is negative or not whole, or whose `decay_per_round` is outside [0, 1): it used to raise or mis-score (#150 r3).
+    So is a deal whose score cannot tell the models apart (#165 P3-4): a scorer counting days back from 10 adds
+    w·(10 - d), within the tolerance of signed when |w|·|10 - 2d| <= 2·SCORE_TOLERANCE (any w at day 5), and days
+    not scored add 0, within it when |w|·d <= 2·SCORE_TOLERANCE."""
     if not real_game or not two_issue(duel) or duel.get("status") != "deal":
         return "unknown"
     price, days, result = _number(duel.get("price")), _number(duel.get("days")), _number(duel.get("result"))
@@ -141,7 +153,11 @@ def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     rounds, decay = _number(duel.get("rounds")), _number(duel.get("decay_per_round"))
     if price is None or days is None or result is None or weight is None or limit is None:
         return "unknown"
-    if rounds is None or decay is None or not days or not weight:
+    if rounds is None or decay is None:
+        return "unknown"
+    if abs(weight) * min(days, abs(DAYS_MAX - 2 * days)) <= 2 * SCORE_TOLERANCE:
+        return "unknown"  # too close to tell the models apart (day 0 and weight 0 included)
+    if rounds < 0 or not rounds.is_integer() or not 0 <= decay < 1:
         return "unknown"
     kept = (1 - decay) ** rounds
     if kept <= 0:
@@ -176,16 +192,17 @@ class DaysSwitch:
     """The first real evidence about the sign, latched and persisted. `signed(allowed)` is what a policy reads.
 
     `signed` needs two real signals that agree (#150 security P1: one misread text or score would drop the guard's
-    worst case for every duel): a signed text and a signed score, or the scores of two different finished deals,
-    both from the current session (#150 security r2 P2). A file from before sessions were recorded keeps its verdict
-    but none of its signals, so it is never corroborated."""
+    worst case for every duel): a signed text and a signed score, or the scores of two finished deals at two
+    different delivery days (#150 r3), both from the current session (#150 security r2 P2). A file from before
+    sessions were recorded keeps its verdict but none of its signals, so it is never corroborated; a `[session, duel]`
+    score from before days were recorded counts with a text, never toward the two-score rule."""
 
     verdict: Verdict = "unknown"
     duel: int | None = None  # the payload that decided it
     text: str | None = None
     path: Path | None = None
     texts: list[int] = field(default_factory=list)  # sessions whose real `days_meaning` text said signed
-    scored: list[list[int]] = field(default_factory=list)  # [session, duel] of finished real deals scored signed
+    scored: list[list[int]] = field(default_factory=list)  # [session, duel, days] of real deals scored signed
     session: int | None = None  # the current session: from the live duels last read, never saved to the file
 
     @classmethod
@@ -205,26 +222,27 @@ class DaysSwitch:
             "conflict": "conflict",
         }
         verdict = verdicts.get(str(raw.get("verdict")), "unknown")
-        texts, pairs = raw.get("texts"), raw.get("scored")  # an old file's `text_signed` and bare ids: dropped
+        texts, entries = raw.get("texts"), raw.get("scored")  # an old file's `text_signed` and bare ids: dropped
         sessions = [s for s in texts if _int(s) is not None] if isinstance(texts, list) else []
         scored = (
-            [p for p in pairs if isinstance(p, list) and len(p) == 2 and all(_int(x) is not None for x in p)]
-            if isinstance(pairs, list)
+            [e for e in entries if isinstance(e, list) and len(e) in (2, 3) and all(_int(x) is not None for x in e)]
+            if isinstance(entries, list)
             else []
         )
-        return cls(verdict, raw.get("duel"), raw.get("text"), path, _union(sessions, []), _union_pairs(scored, []))
+        return cls(verdict, raw.get("duel"), raw.get("text"), path, _union(sessions, []), _union_scored(scored, []))
 
     def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> Verdict:
         """Read every payload, live or finished: its text and, for a finished deal, its score. The first real
         evidence latches; later evidence that disagrees is a conflict, for good. Another process's verdict in the
         file is merged in first, so `duel run` and the runtime never undo each other. Rows whose `status` is live
-        set the current session: the highest int `session` among them (None when none has one)."""
+        set the current session: the highest `session` among them, None when any lacks an int one (#150 r3)."""
         self.refresh()
         before, before_corroborated = self.verdict, self.corroborated
         rows = list(duels)
         live = [duel for duel in rows if duel.get("status") == "live"]
         if live:
-            self.session = max((s for duel in live if (s := _int(duel.get("session"))) is not None), default=None)
+            sessions = [s for duel in live if (s := _int(duel.get("session"))) is not None]
+            self.session = max(sessions) if len(sessions) == len(live) else None
         for duel in rows:
             said, scored = evidence(duel, real_game), scored_evidence(duel, real_game)
             self._count(duel, said, scored)
@@ -242,14 +260,15 @@ class DaysSwitch:
         return self.verdict
 
     def _count(self, duel: Mapping[str, Any], said: Verdict, scored: Verdict) -> None:
-        """Record a signed text or score under its payload's session; a row without an int `session` never counts."""
-        session, did = _int(duel.get("session")), _int(duel.get("duel"))
+        """Record a signed text or score under its payload's session (a score with its int days, when it has them);
+        a row without an int `session` never counts."""
+        session, did, days = _int(duel.get("session")), _int(duel.get("duel")), _int(duel.get("days"))
         if session is None:
             return
         if said == "signed":
             self.texts = _union(self.texts, [session])
         if scored == "signed" and did is not None:
-            self.scored = _union_pairs(self.scored, [[session, did]])
+            self.scored = _union_scored(self.scored, [[session, did] if days is None else [session, did, days]])
 
     def refresh(self) -> None:
         """Merge the verdict on disk (another process may have written it) into this one: the per-session signals
@@ -261,15 +280,19 @@ class DaysSwitch:
             self.duel, self.text = disk.duel, disk.text
         self.verdict = _merge(self.verdict, disk.verdict)
         self.texts = _union(self.texts, disk.texts)
-        self.scored = _union_pairs(self.scored, disk.scored)
+        self.scored = _union_scored(self.scored, disk.scored)
 
     @property
     def corroborated(self) -> bool:
-        """Two real signals of the current session agree on signed: a text and a score, or two deals' scores."""
+        """Two real signals of the current session agree on signed: a text and a score, or the scores of two deals at
+        two different days (an entry without days counts only with a text)."""
         if self.verdict != "signed" or self.session is None:
             return False
-        deals = {did for session, did in self.scored if session == self.session}
-        return len(deals) >= 2 or (bool(deals) and self.session in self.texts)
+        now = [entry for entry in self.scored if entry[0] == self.session]
+        if now and self.session in self.texts:
+            return True
+        known = [entry for entry in now if len(entry) == 3]
+        return len({entry[1] for entry in known}) >= 2 and len({entry[2] for entry in known}) >= 2
 
     def signed(self, allowed: bool) -> bool:
         """Value days with their sign only when allowed (a guardrail) AND two real signals of this session said so."""
@@ -288,7 +311,8 @@ class DaysSwitch:
         return raw if isinstance(raw, dict) else None
 
     def _save(self) -> None:
-        """Merge with the file, then replace it atomically (a temp file and `os.replace`)."""
+        """Merge with the file, then replace it atomically (a temp file and `os.replace`). ASCII JSON: a lone
+        surrogate in a server's text cannot be encoded as utf-8 and used to raise on every tick (#150 r3)."""
         if self.path is None:
             return
         self.refresh()
@@ -296,7 +320,7 @@ class DaysSwitch:
         record = self._record()
         tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
         with tmp.open("w", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write(json.dumps(record))
             handle.flush()
             os.fsync(handle.fileno())  # durable before the rename: a crash never leaves a half-written verdict
         os.replace(tmp, self.path)
@@ -356,6 +380,7 @@ def rival_days(duel: Mapping[str, Any]) -> RivalDays:
         and _number(m.get("price")) is not None
         and isinstance(d := m.get("days"), int)
         and not isinstance(d, bool)
+        and _number(d) is not None  # a 400-digit day overflowed `fmean` (#165 P3-3)
     ]
     if not days:
         return RivalDays(None, 0.0, 0)
