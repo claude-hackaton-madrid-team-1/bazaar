@@ -14,16 +14,17 @@ Stacked on B17 (#114), which is stacked on #72. B18 alone: `git diff origin/nigh
 | X20: the accept is refused `offer_closed` / `insufficient_cash` / any other 4xx | slot burned | released, and the **next candidate is accepted in the same tick** |
 | X20: the duel loop's accept is refused | slot burned | released (same codes) |
 | X6e: another process wins the reservation race | one keyed `GET /api/clock` per proposal (3 in the test) | the accept loop stops: **1** clock read |
-| X6c: the SDK re-sends a `429`-refused call | GET ×3, POST ×3 | **GET ×1, POST ×1** |
+| X6c: the SDK re-sends a `429`-refused call | GET ×3, POST ×3 | **GET ×2, POST ×1** (a read once more after 0.25 s, so one 429 does not cost the whole tick; r1) |
+| The accept is answered with a 5xx (500/502/504) | slot kept, spend not booked | slot kept **and spend booked**: a gateway timeout can follow an accept the game processed (r1) |
 | X2: one hung keyed read | 15 s timeout × 3 attempts = **46.5 s** (3 Sunday ticks) | 4 s per attempt: **13.5 s** at 30 s ticks (2 network retries), **4 s** at ≤ 15 s ticks (no retry) |
 | one hung keyed write | 15 s | 4 s, never re-sent |
 
 ## What changed
 
-- `Recorder.refusal`: the last send's refusal code. `KEEPS_THE_ACCEPT = (wait_for_tick, network, bad_response)`.
-  `wait_for_tick` means the team's accept of this tick is already used. With `network` and `bad_response` the
-  accept may have landed. Every other refusal "costs nothing and moves nothing" (RULES.md), so its ledger
-  reservation is released.
+- `Recorder.last_code` (now also on #72) is the last send's refusal code; `runtime.may_have_landed(e)` is `network`,
+  `bad_response` or any 5xx (r1: a gateway timeout can follow a processed accept), and sets `maybe_landed`, so the
+  spend is booked. `wait_for_tick` means the team's accept of this tick is already used. Every other refusal "costs
+  nothing and moves nothing" (RULES.md), so its ledger reservation is released.
 - `LedgerStore.release_accept(tick, item)`: the JSONL file appends a `release` row (it stays append-only) that
   `accept_items` / `accepts_in_tick` / `reserve_accept` subtract under the same file lock. Postgres deletes the
   newest matching reservation row (`kind` keeps its `spend|accept|listing` check; no schema change).
@@ -32,20 +33,20 @@ Stacked on B17 (#114), which is stacked on #72. B18 alone: `git diff origin/nigh
 - Duel loop (`bazaar duel run`): a refused accept releases `duel:<id>`. This is the only edit there, kept small
   because B15 owns that loop. If the ledger is unreachable, the slot stays taken (fail closed).
 - `sdk.team_client` returns `TeamBazaar`, a subclass of the vendored `Bazaar` (the vendored file is untouched):
-  4 s per attempt, no re-send of any refused call (a `429` included) or of a write. A GET is re-sent only after a
-  network error, and only while the last `/api/clock` answer says ticks are slower than 15 s. The public
+  4 s per attempt; a write is never re-sent; a GET refused by the rate limit is sent once more after 0.25 s; a GET
+  that hit a network error is re-sent only while the last `/api/clock` answer says ticks are slower than 15 s. The public
   (keyless) client keeps the SDK's retries.
 
 ## Evidence
 
 - r2's four xfails flip and the two safety checks still pass: a hung read never sends late; the taker stays
   within #78's ceiling of 16 keyed calls per tick.
-- `tests/test_accept_release.py` (18 tests + 1 Postgres integration): file ledger release and re-reserve, a stray
+- `tests/test_accept_release.py` (21 tests + 1 Postgres integration; 5xx keeps the slot and books the spend, a read is sent once more after a 429): file ledger release and re-reserve, a stray
   release is a no-op and no spend; `offer_closed` / `insufficient_cash` / `not_found` give the slot to the next
   candidate; `rate_limited` frees it and stops; `wait_for_tick` / `network` / `bad_response` keep it; a refused
   accept books no spend; the duel loop releases on `rate_limited` / `duel_closed` and keeps on `network`;
   `TeamBazaar`'s retries on slow vs fast ticks, writes and 429s sent once, the public client unchanged.
-- Gates: `pytest` 931 passed, `ruff`, `black --check`, `mypy src` clean.
+- Gates: `pytest` 982 passed (on #72 @ 2f01a6f), `ruff`, `black --check`, `mypy src` clean.
 
 ## Risks and what Marius must decide
 
