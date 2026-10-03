@@ -271,7 +271,7 @@ def test_a_refused_dealer_thread_skips_only_that_conversation(tmp_path):
     class OneThreadRefused(FakeTeam):
         def thread(self, tid):
             if tid == 51:
-                raise BazaarError("not_found", "no such thread", 404)
+                raise BazaarError("rate_limited", "slow down", 429)
             return super().thread(tid)
 
     for name, speed in (("off", SPEED_OFF), ("on", SPEED_ON)):
@@ -294,7 +294,7 @@ def test_a_refused_dealer_thread_skips_only_that_conversation(tmp_path):
         t.on_tick(clock(tick=TICK + 1))
         assert (t.convs["abuela"].ticks, t.convs["chato"].ticks) == (1, 0)  # abuela moved on, chato waits a tick
         assert ("say", 50, 18) in team.sent and not [s for s in team.sent if s[1] == 51]
-        assert any("thread 51 with chato refused not_found; it waits a tick" in line for line in lines)
+        assert any("thread 51 with chato refused rate_limited; it waits a tick" in line for line in lines)
 
 
 def test_the_card_of_an_unreadable_dealer_thread_is_not_bought_on_a_board_that_tick(tmp_path):
@@ -304,7 +304,7 @@ def test_the_card_of_an_unreadable_dealer_thread_is_not_bought_on_a_board_that_t
 
     class Refused(FakeTeam):
         def thread(self, tid):
-            raise BazaarError("not_found", "no such thread", 404)
+            raise BazaarError("network", "timed out", 0)
 
     for name, speed in (("off", SPEED_OFF), ("on", SPEED_ON)):
         team = Refused()
@@ -391,3 +391,32 @@ def test_a_failed_keyed_read_stops_the_keyed_ones_after_it():
     with pytest.raises(BazaarError) as err:
         read_together(reads, True, keyed=("me", "offers", "threads"))
     assert err.value.code == "rate_limited" and sorted(ran) == ["catalog", "me"]  # as in order: threads never ran
+
+
+def test_a_dealer_thread_the_server_no_longer_knows_is_dropped(tmp_path):
+    from bazaar_agent.agents.dealer import BidPlan, Negotiation
+    from bazaar_agent.agents.desk import Conversation
+
+    for code, kept in (("not_found", False), ("rate_limited", True)):
+
+        class Refused(FakeTeam):
+            def thread(self, tid, code=code):
+                raise BazaarError(code, code, 404)
+
+        team = Refused()
+        t = Taker(
+            team,
+            FakePublic(),
+            live=True,
+            log=lambda line: None,
+            now=lambda: 1000.0,
+            sleep=lambda s: None,
+            config=TakerConfig(max_dealer_threads=0),
+            **parts(tmp_path / code, **SPEED_ON),
+        )
+        t.convs["abuela"] = Conversation(
+            "abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK
+        )
+        team.now = clock(tick=TICK + 1)
+        t.on_tick(team.now)
+        assert ("abuela" in t.convs) is kept and team.sent == []  # gone: dropped; refused for now: it waits

@@ -133,6 +133,7 @@ from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
 
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
+THREAD_GONE = "not_found"  # a dealer thread read refused with this is dropped, not retried every tick
 
 
 @dataclass(frozen=True)
@@ -1208,12 +1209,18 @@ class Taker:
 
     def _thread_of(self, run: _TickRun, conv: Conversation) -> dict[str, Any] | None:
         """One dealer thread; a refusal skips that conversation for this tick only (no tick counted, no move) and
-        keeps its card off the boards this tick (`run.unread`)."""
+        keeps its card off the boards this tick (`run.unread`). A thread the server no longer knows is dropped."""
         try:
             thread: dict[str, Any] = self.team.thread(conv.thread_id)
             return thread
         except BazaarError as e:
             run.unread.add(conv.item)
+            if e.code == THREAD_GONE:  # the server no longer knows it: no bid of ours can stand there
+                self.convs.pop(conv.dealer, None)
+                self.log(
+                    f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} is gone; dropped"
+                )
+                return None
             self.log(
                 f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} refused {e.code}; "
                 f"it waits a tick, and {conv.item} is not bought elsewhere this tick"
