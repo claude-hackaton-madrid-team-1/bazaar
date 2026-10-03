@@ -1064,3 +1064,10 @@ Three live `judge()` calls on the laptop's subscription token (duels.json 2 ques
 7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
 and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
 third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
+### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read
+refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused rate_limited` (a lost duel tick scores 0).
+Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
+service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
+429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.

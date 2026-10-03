@@ -250,13 +250,13 @@ def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday()
 
 def test_today_s_team_client_loses_every_refused_call_at_the_edge_unless_the_loops_stagger():
     """sdk.TeamBazaar (B18) never re-sends a 429: a refused call waits for the next tick. At the ceiling the
-    simultaneous wake-up loses 11 of 64 team-key calls; the proposed stagger loses none (6 with three extra
+    simultaneous wake-up loses 11 of 64 team-key calls; the proposed stagger loses none (1 with three extra
     `dealer buy` processes)."""
     ceiling = rb.burst(rb.saturday_plan(), retries=rb.TEAM_RESENDS)
     assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 64, 11, 11)
     assert rb.burst(rb.saturday_plan(), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS).failed == 0
     crowded = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS)
-    assert (crowded.calls, crowded.failed) == (79, 6)
+    assert (crowded.calls, crowded.failed) == (79, 1)
 
 
 def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lose_it():
