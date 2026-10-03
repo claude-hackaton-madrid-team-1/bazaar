@@ -1218,8 +1218,23 @@ def plan_pages(
     dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
     schedule = read(schedule_file, "schedule")
     events = _jsonl_file(feed_file) if feed_file else _events(live)
-    ladder = pg.ladder_slots_from(_json_file(ladder_file)) if ladder_file else []
-    chasers, expected = pg.from_affinity_map(_json_file(affinity_file)) if affinity_file else (None, None)
+
+    def parsed(path: str | None, what: str, parse: Callable[[Any], Any], default: Any) -> Any:
+        """A plan file from another tool, checked here: a bad one stops with its name, never a traceback."""
+        if not path:
+            return default
+        try:
+            return parse(_json_file(path))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+            _fail(f"{path} is not {what}: {type(e).__name__} {e}")
+
+    ladder = parsed(ladder_file, "a W3 ladder plan (schedule rows)", pg.ladder_slots_from, [])
+    trades = parsed(trades_file, "a W4 trade plan (listings, threads)", pg.trades_from, [])
+    chasers, expected = parsed(affinity_file, "a W4 affinity map", pg.from_affinity_map, (None, None))
+    if chasers_file:
+        chasers = parsed(chasers_file, "{set: [team, ...]}", pg.chasers_from, None)
+    if multipliers_file:
+        expected = parsed(multipliers_file, "{team: {set: multiplier}}", pg.multipliers_from, None)
     plan = pg.build_plan(
         me,
         catalog,
@@ -1230,11 +1245,11 @@ def plan_pages(
         rules,
         now_hours=now_hours,
         ladder=ladder,
-        trades=pg.trades_from(_json_file(trades_file)) if trades_file else [],
+        trades=trades,
         venue_later=venue_later,
         what_if_floor=what_if_floor,
-        chasers=_json_file(chasers_file) if chasers_file else chasers,
-        expected=_json_file(multipliers_file) if multipliers_file else expected,
+        chasers=chasers,
+        expected=expected,
     )
     if as_json:
         typer.echo(json.dumps(pg.plan_dict(plan), indent=2, ensure_ascii=False))

@@ -120,6 +120,11 @@ def test_minted_is_raised_to_the_highest_serial_seen_in_the_feed_or_our_hand():
 def test_open_asks_drop_cancelled_expired_and_settled_offers():
     asks = pages.open_asks(EVENTS, tick=159)
     assert [(a.offer, a.maker, a.price) for a in asks] == [(500, "t15", 60)]
+    bought_then_listed = [
+        settle(1, 1, "t02", "t09", "LAT-09", 50, tick=100, kind="card", persona=None, asset_id=777),
+        listed(2, 600, "t09", "LAT-09", 70, 777, tick=120),
+    ]
+    assert [a.offer for a in pages.open_asks(bought_then_listed, tick=159)] == [600]
 
 
 def test_dealer_fills_are_grouped_by_dealer_and_rarity():
@@ -439,3 +444,70 @@ def test_bazaar_plan_pages_reads_every_input_from_the_simulator_over_http(sessio
     assert data["scenarios"][-1]["name"].startswith("no venue")
     assert all(s["floor"] == RULES.cash_floor for s in data["scenarios"])
     assert ours() == before  # read-only: no offer, no thread, no cash moved
+
+
+def test_a_later_venue_hour_already_past_is_not_planned():
+    plan = pages.build_plan(ME, CATALOG, EVENTS, DEALERS, SCHEDULE, PARAMS, RULES, now_hours=12.0, venue_later=9)
+    assert [s.name for s in plan.scenarios if s.venue_hour is not None][:2] == [
+        "venue at open (h12)",
+        "venue Sunday (h18)",
+    ]
+
+
+def test_a_trade_that_brings_cash_in_is_credited_and_a_held_trade_waits_for_a_later_hour():
+    sale = pages.PlannedTrade("t09", (), 0, 80, 20.0, "sell a duplicate")
+    rare = pages.PlannedTrade("t07", ("LAV-09",), 60, 0, 30.0, "bid")
+    s = pages.cash_plan("t", 300, 4, [pages.Grant(6.05, 500, "grant")], [], RULES, trades=[rare, sale])
+    assert [(x.hour, x.kind, x.item, x.amount) for x in s.steps] == [
+        (4, "trade", "sell", -80),  # trades that bring cash in go first: 380
+        (4, "trade", "LAV-09", 60),  # ...so the bid fits the same hour (300 − 60 alone is under the floor)
+        (6, "grant", "+500", -500),
+    ]
+    late = pages.cash_plan("t", 300, 4, [pages.Grant(6.05, 500, "grant")], [], RULES, trades=[rare])
+    assert [(x.hour, x.kind) for x in late.steps] == [(6, "grant"), (6, "trade")]
+    assert late.trade_surplus == 30
+
+
+def test_end_cash_without_any_step_is_the_starting_cash():
+    assert pages.cash_plan("idle", 1000, 20, [], [], RULES).end_cash == 1000
+
+
+def test_a_slot_naming_a_card_records_the_slots_dealer_even_when_the_list_picked_another():
+    abuela_pick = want("LAV-06", "abuela", 22, channel="ladder", rarity="uncommon")
+    slot = pages.LadderSlot(4, "chato", "card:uncommon", 29, 31, "LAV-06")
+    s = pages.cash_plan("x", 600, 4, [], [abuela_pick], RULES, ladder=[slot])
+    step = s.steps[0]
+    assert (step.kind, step.item, step.source, step.amount) == ("ladder", "LAV-06", "chato", 29)
+    assert step.note == "W3 slot buys LAV-06 from chato (the buy list picked abuela)"
+
+
+def test_a_buy_above_the_hour_cap_says_so_rather_than_blaming_the_floor():
+    s = pages.cash_plan("cap", 1000, 4, [], [want("LAV-09", "teams", 180)], RULES)
+    assert s.steps[-1].note == "price 180 > max_spend_per_game_hour 150"
+
+
+def test_only_future_ladder_slots_that_will_run_count_against_the_best_three():
+    slots = [
+        pages.LadderSlot(4, "abuela", "card:common", 9, 12),  # already run: the feed has it
+        pages.LadderSlot(8, "abuela", "card:uncommon", 22, 25, "LAV-06"),  # the trade plan buys LAV-06
+        pages.LadderSlot(9, "abuela", "card:common", 9, 12),
+    ]
+    free = pages.scoring_dealers([], "t01", DEALERS, slots, start_hour=8, taken={"LAV-06"})
+    assert free == {"abuela": 2, "chato": 3}
+
+
+def test_plan_files_from_other_tools_are_checked_at_the_cli(tmp_path, monkeypatch):
+    bad = tmp_path / "ladder.json"
+    bad.write_text(json.dumps({"schedule": [{"game_hour": 4, "dealer": "abuela", "plan": {"start": 8}}]}))
+    files = {"me": ME, "catalog": CATALOG, "dealers": DEALERS, "schedule": SCHEDULE}
+    args = ["plan", "pages", "--ladder-plan", str(bad)]
+    for name, data in files.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(data))
+        args += [f"--{name}", str(tmp_path / f"{name}.json")]
+    (tmp_path / "feed.jsonl").write_text(json.dumps(EVENTS[0]) + "\n")
+    args += ["--feed", str(tmp_path / "feed.jsonl")]
+    result = CliRunner().invoke(cli.app, args, env={"COLUMNS": "250", "BAZAAR_SIM": "1"})
+    assert result.exit_code == 1
+    assert "is not a W3 ladder plan (schedule rows): KeyError" in result.output
+    with pytest.raises((TypeError, ValueError)):
+        pages.multipliers_from({"t07": {"LAV": None}})

@@ -52,14 +52,14 @@ The walk goes hour by hour and respects:
 - W3's ladder slots (a slot that names a card W4 already buys is flagged as a duplicate);
 - W4's trades, whose cash is committed at the open.
 
-| scenario (floor 270 unless stated) | venue | ladder deals | W4 trades | trade surplus | Saturday spend | end cash |
+| scenario (floor 270 unless stated) | venue | ladder deals | W4 trades placed | trade surplus | Saturday spend | end cash |
 |---|---|---|---|---|---|---|
-| no venue | – | 3 | 7/7 | **+82 P** | 144 | 508 |
-| venue at the open (h4) | **refused** (503 < 540) | 3 | 7/7 | +82 P | 144 | 508 |
-| venue at h9 (14:00) | **refused**: the 540 P reserve freezes the morning | 0 | 0/7 | +2 P | 9 | 644 |
-| venue Sunday (h18) | opens (653 ≥ 540) | 0 | 0/7 | +2 P | 0 | 374 |
-| venue at the open + planned sells (LAT-09 and 2 more, +93 P) | opens | 0 | 4/7 | +54 P | 326 | 411 |
-| venue at the open, **what-if `cash_floor` 0** | opens | 3 | 7/7 | +82 P | 414 | 239 |
+| no venue | – | 3 | 7 on Sat | **+82 P** | 144 | 510 |
+| venue at the open (h4) | **refused** (503 < 540) | 3 | 7 on Sat | +82 P | 144 | 510 |
+| venue at h9 (14:00) | **refused**: the 540 P reserve freezes the morning | 0 (all held) | 7, after 14:00 | +82 P | 90 | 563 |
+| venue Sunday (h18) | opens (653 ≥ 540) | 0 (all held) | 7 on Sunday | +82 P | 0 | 293 |
+| venue at the open + planned sells (LAT-09 and 2 more, +93 P) | opens | 0 | 4 Sat, 3 Sun | +82 P | 325 | 386 |
+| venue at the open, **what-if `cash_floor` 0** | opens | 3 | 7 on Sat | +82 P | 414 | 240 |
 
 W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-07 and MAL-08**. Five of W3's eight Abuela slots are duplicates. W7's call is that W4 keeps them, because a team buy scores and a fourth Abuela deal does not.
 
