@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
 | [#127](../../pull/127) | feat(team-desk): negotiate direct deals in team threads, structured offers only (B24) | `night/b24-team-negotiator` |
 | [#126](../../pull/126) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (B14, bite X15) | `night/b14-expired-bids` |
 | [#125](../../pull/125) | B23: live opportunity alerts in the monitor (arbitrage, duplicates, B4), read-only, with a lifetime log (stacked on #101) | `night/b23-opportunity-alerts` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | `ogarciarevett/feat-feed-reader-llm` |
 | [#110](../../pull/110) | fix(market): price an announced venue fee that applies by settlement (B19, bite X8) | `night/b19-pending-fee` |
 | [#109](../../pull/109) | feat(packs): B9 packs as inventory vs ladder cash: bazaar plan packs (stacked on #87) | `night/b9-packs-ev` |
-| [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | `ogarciarevett/feat-desk-jev-model` |
 
 <!-- BAZAAR:ACTIVITY:END -->
