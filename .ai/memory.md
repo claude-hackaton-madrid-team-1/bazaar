@@ -664,6 +664,17 @@ equals the stall (0.5 of the bench points) in every simulation, unverifiable liv
 switch is off no bond reserve is held (`effective_cash_floor` = `cash_floor` 100). Turn it on only in a
 closed-door window with Omar, once the broker has an edge (#84) or organic trades to serve.
 
+### [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
+symptom: masking private numbers inside `scrub()` turned `cash_floor 270` into `[redacted]` in the `decisions` row
+(test_status) → root cause: `decisions.scrubbed` calls `scrub` too → fix: `scrub_for_span` (span attributes only)
+cuts a number named like a limit/cost/value/floor; `scrub` keeps our numbers for Postgres and JSONL.
+
+### [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
+`SMOKE_TRACING=0|1 SMOKE_DUMP=<file> uv run python scripts/sim_smoke.py` dumps the sim feed (types and payloads,
+ids and ticks dropped): the 58 events (settlements, offers, thread messages with our words and prices) are
+identical, and the run passes with a dead Phoenix on 127.0.0.1:6006. A span used to carry `bazaar.duel.limit` and
+`bazaar.plan.max` in clear: both are gone.
+
 ### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
 From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
 1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
