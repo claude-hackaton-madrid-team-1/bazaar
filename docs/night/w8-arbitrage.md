@@ -71,6 +71,18 @@ dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_pri
   (wrong copy sold, exit never firing, closed rows revived). Fixed by tracking the asset id, with 4 regression tests.
 - **CLI**: `bazaar arb study STREAM [--me FILE]` (offline) and `bazaar arb scan` (reads only).
 
+## End to end in the local simulator (#55, in-process on 127.0.0.1; `docs/night/w8_sim_e2e.py`)
+
+| run | tick 0 | tick 1 | cash |
+|---|---|---|---:|
+| ask 6 on El Rastro (t02), bid 16 on a 0 bps venue (t03) | bought MAL-01, asset 16 | sold **asset 16** into the bid | **+9** |
+| the same, the bid cancelled after tick 0 | bought | re-read: bid gone → the card is left to the maker | −7 |
+| ask 6, bid 10 (net below 3) | nothing | nothing | 0 |
+| duplicate: LAV-08 (one more worth 4.38) asked at 1, switch off / on | nothing / bought for 3 | | 0 / −2 |
+
+The taker's value of one more copy equals the sim's `/api/me/value` (4.38). The sim rounds fees where the real tape
+rounds up, so our cost estimate (8) was 1 P above the sim's charge (7): conservative.
+
 ## Risks and open questions
 
 - **Scoring per leg is unverified.** The buy leg of a held card usually scores negative on its own (a common at 1.6
