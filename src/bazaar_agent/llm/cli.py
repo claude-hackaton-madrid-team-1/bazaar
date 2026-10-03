@@ -120,6 +120,10 @@ def runtime_for(settings: Settings, rules: Guardrails, purpose: str) -> LLMRunti
     except (RuntimeConfigError, UnknownModelError, LLMError) as e:
         console.print(f"[yellow]{purpose}: runtime LLM off ({escape(str(e))})[/yellow]")
         return None
+    aliases = (*loaded.config.runtime_models, loaded.config.runtime_model_default)
+    if not any(credential_for(resolve(alias).provider, settings) is not None for alias in aliases):
+        console.print(f"[yellow]{purpose}: runtime LLM off (no credential for any runtime model)[/yellow]")
+        return None
     console.print(f"{purpose}: runtime LLM, {claude_auth(settings)}, model from Jev's read_feed choice")
     return runtime
 

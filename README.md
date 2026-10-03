@@ -513,13 +513,16 @@ already reads the shared `feed_events` table plus the public 500-event window ev
 that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
 keeps growing while the laptop sleeps, with no new service and no extra game call.
 
-**The LLM pass (free text only).** Dealer words, organiser notices, venue notices, a dealer's update note and
-a level's teaser go, as quoted data in one JSON array, to the model Jev picks for `read_feed` through the
-runtime LLM (the Claude subscription when `CLAUDE_CODE_OAUTH_TOKEN` is set), on a background thread inside
-the taker, one bounded call at a time (8 texts, 1,500 tokens, 25 s), never in a tick. Our code keeps only a
-learning whose event is one we sent, whose subject is a dealer or venue we know (or `organiser`), with a
-plausible expiry, confidence capped at 0.7, `source: llm`, bound to nobody: **an LLM reading never blocks a
-dealer**. `--no-llm-read` (or `BAZAAR_LLM_READ=0`) turns it off.
+**The LLM pass (free text only, opt-in).** Off until RUNTIME.md `llm_read_feed = true` (it spends the same
+subscription or key as everything else). Then dealer words, organiser notices, venue notices, a dealer's update
+note and a level's teaser go, as quoted data in one JSON array, to the model Jev picks for `read_feed` (capped
+at Haiku or Sonnet unless a model is pinned), on a background thread inside the taker: one bounded call (8
+texts of ONE kind, 1,500 tokens, 25 s) at most every `read_feed_every_ticks` (10) ticks, doubled after each
+failure, organiser notices first, never while `.local/PAUSE` exists, never in a tick. Our code keeps only a
+learning about the text's own speaker (an organiser notice may also name a dealer or venue we know), with a
+plausible expiry, confidence capped at 0.7, stored as its own `source: llm` row, bound to nobody: **an LLM
+reading never blocks a dealer** and never takes a place in the blocker recall. `--no-llm-read` (or
+`BAZAAR_LLM_READ=0`, declared `preserve()` on Railway) turns it off for one process.
 
 **The maker reads fee notices.** A venue owner may announce a fee from a later tick ("v04 will charge 0% from
 T161"). The maker (`--learn`, default on, `BAZAAR_LEARN=0` turns it off) scores each venue at the worse of its
@@ -975,6 +978,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a background LLM reader is a cost, not a free extra: opt-in and spaced
 - [2026-10-03] finding — the LLM feed reader on real captured text: 24 texts → 15 learnings, subjects need a guard
 - [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
 - [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
@@ -983,7 +987,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
 - [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
-- [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 
 <!-- BAZAAR:STATUS:END -->
 

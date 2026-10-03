@@ -51,7 +51,8 @@ UPSERT = (
     "on conflict (dedupe_key) do update set claim = excluded.claim, stats = excluded.stats, "
     "evidence = excluded.evidence, support_n = excluded.support_n, "
     "confidence = greatest(learnings.confidence, excluded.confidence), "
-    "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now()"
+    "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now() "
+    "where learnings.source is not distinct from excluded.source"  # an LLM row never rewrites a rules row
 )
 
 
@@ -83,10 +84,12 @@ def matches(
     subject_kind: str | None,
     tick: int | None,
     team: str | None,
+    source: str | None = None,
 ) -> bool:
     """`team`: the learnings that bind this team or everyone (None = every learning)."""
     return (
-        (subject is None or learning.subject == subject)
+        (source is None or learning.source == source)
+        and (subject is None or learning.subject == subject)
         and (kinds is None or learning.kind in kinds)
         and (subject_kind is None or learning.subject_kind == subject_kind)
         and (tick is None or learning.active(tick))
@@ -212,16 +215,17 @@ class LearningStore:
         team: str | None = None,
         limit: int = 50,
         use_db: bool = True,
+        source: str | None = None,
     ) -> list[Learning]:
         """The learnings in force at `tick` (all ticks when None), newest first, deduped by key.
         `use_db=False`: memory only, no I/O (what a tick reads before its sends)."""
         found = {k: lr for k, lr in self.memory.items()}
-        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit) if use_db else ():
+        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit, source) if use_db else ():
             found.setdefault(lr.key(), lr)
         hits = [
             lr
             for lr in found.values()
-            if matches(lr, subject=subject, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team)
+            if matches(lr, subject=subject, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team, source=source)
         ]
         return sorted(hits, key=lambda lr: (-lr.tick, lr.key()))[:limit]
 
@@ -233,6 +237,7 @@ class LearningStore:
         subject_kind: str | None,
         team: str | None,
         limit: int,
+        source: str | None = None,
     ) -> list[Learning]:
         conn = self._db()
         if conn is None:
@@ -244,6 +249,7 @@ class LearningStore:
             "and (%(sk)s::text is null or subject_kind = %(sk)s) "
             "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
             "and (%(team)s::text is null or team is null or team = %(team)s) "
+            "and (%(source)s::text is null or source = %(source)s) "
             "order by created_tick desc nulls last, id desc limit %(limit)s"
         )
         params = {
@@ -253,6 +259,7 @@ class LearningStore:
             "tick": tick,
             "team": team,
             "limit": limit,
+            "source": source,
         }
         try:
             with conn.transaction():

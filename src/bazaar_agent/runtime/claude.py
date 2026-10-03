@@ -63,6 +63,14 @@ LOCKED_ENV: Mapping[str, str] = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",  # no auto-update, telemetry or release notes in a tick
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
     "CLAUDE_AGENT_SDK_CLIENT_APP": "bazaar-agent",
+    # The CLI reads hostile text (the feed reader) and needs none of our other secrets: blank them.
+    "BAZAAR_KEY": "",
+    "BAZAAR_SIM_KEY": "",
+    "DATABASE_URL": "",
+    "BAZAAR_SIM_DATABASE_URL": "",
+    "TYPESAFE_API_KEY": "",
+    "BAZAAR_MCP_TOKEN": "",
+    "OPENAI_API_KEY": "",
 }
 AUTH_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed", "account_on_hold"})
 

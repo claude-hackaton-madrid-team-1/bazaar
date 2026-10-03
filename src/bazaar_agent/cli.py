@@ -1284,11 +1284,24 @@ def _status_port(port: int | None) -> int:
 
 
 def _feed_interpreter(settings: Any, rules: Any, log: Callable[[str], None]) -> Any:
-    """The LLM pass over the feed's free text (N12), or None without a runtime LLM credential."""
+    """The LLM pass over the feed's free text (N12): only with RUNTIME.md `llm_read_feed = true` and a
+    runtime LLM credential; at most one call per `read_feed_every_ticks`, never while the kill switch is on."""
     from bazaar_agent.learn.interpret import FeedInterpreter
+    from bazaar_agent.llm.config import RuntimeConfigError, load_runtime
 
+    try:
+        config = load_runtime().config
+    except RuntimeConfigError as e:
+        log(f"feed reader: LLM pass off ({e})")
+        return None
+    if not config.llm_read_feed:
+        log("feed reader: LLM pass off (RUNTIME.md llm_read_feed = false); structure only")
+        return None
     runtime = llm_cli.runtime_for(settings, rules, "feed reader")
-    return FeedInterpreter(runtime, log) if runtime is not None else None
+    if runtime is None:
+        return None
+    pause = REPO_ROOT / rules.pause_file
+    return FeedInterpreter(runtime, log, every_ticks=config.read_feed_every_ticks, paused=pause.exists)
 
 
 def _run_agent(

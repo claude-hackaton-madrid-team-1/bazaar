@@ -368,3 +368,10 @@ default on an undecided verdict): "Chato holds firm on price (13) and dislikes h
 to politeness", "Abuela offers 5 P for El Organillero". The model wrote subjects as `dealer:chato` (copying
 the `from` field), which our validation first dropped: the prefix is now accepted only when it matches our own
 record of that id. LLM learnings stay `source: llm`, confidence ≤ 0.7, bound to nobody, and never block.
+
+### [2026-10-03] gotcha — a background LLM reader is a cost, not a free extra: opt-in and spaced
+PR #111's review replayed Friday's feed through the reader: 1,100 free texts → 125 calls (one per tick) with
+no spacing, on the same subscription as the desk and duels. Now RUNTIME.md `llm_read_feed = false` by default,
+at most one call per `read_feed_every_ticks` (10), doubled per failure, never while `.local/PAUSE` exists, model
+capped at Haiku/Sonnet. An LLM reading of a notice keeps its own `source: llm` row (the dedupe key includes the
+source) and never enters the blocker recall window (`recall(source="rules")`).

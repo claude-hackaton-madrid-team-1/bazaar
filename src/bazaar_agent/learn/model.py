@@ -95,4 +95,6 @@ class Learning(BaseModel):
         notice = self.kind in ("announcement", "rule_change") and "aggregate" not in self.detail
         if notice or (not about and self.until_tick is None):
             raw.append(list(self.evidence[:1]))  # a notice is its own event
+        if self.source != "rules":  # an LLM reading of a notice never shares the notice's own row
+            raw.append(self.source)
         return hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()[:32]

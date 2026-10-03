@@ -18,8 +18,8 @@ from bazaar_agent.learn.reader import FeedReader, GameHour, from_refusal, from_t
 from bazaar_agent.learn.store import LearningStore
 
 RECALL_LIMIT = 500
-# What the blocker view needs: the blockers, and the announcements that lift a `locked` one. Other kinds
-# (behaviour, fees, and the learner's lessons) never take a place in the recall window.
+# What the blocker view needs: the blockers, and the announcements that lift a `locked` one, read from
+# structure only (`source="rules"`). Other kinds and LLM readings never take a place in the recall window.
 BLOCKER_RECALL_KINDS = frozenset({*BLOCKING_KINDS, "announcement"})
 
 
@@ -73,7 +73,14 @@ class LiveLearner:
             self._interpret(fresh, known or {}, clock)
             self.store.remember(self.pending)  # in force before the write
             facts = self.store.recall(
-                None, BLOCKER_RECALL_KINDS, tick, subject_kind="dealer", team=us, limit=RECALL_LIMIT, use_db=False
+                None,
+                BLOCKER_RECALL_KINDS,
+                tick,
+                subject_kind="dealer",
+                team=us,
+                limit=RECALL_LIMIT,
+                use_db=False,
+                source="rules",
             )
             return blocks_for(facts, us, tick)
         except Exception as e:
@@ -132,7 +139,13 @@ class LiveLearner:
             if self._us is not None:
                 self.store.remember(
                     self.store.recall(
-                        None, BLOCKER_RECALL_KINDS, self._tick, subject_kind="dealer", team=self._us, limit=RECALL_LIMIT
+                        None,
+                        BLOCKER_RECALL_KINDS,
+                        self._tick,
+                        subject_kind="dealer",
+                        team=self._us,
+                        limit=RECALL_LIMIT,
+                        source="rules",
                     )
                 )
             return written

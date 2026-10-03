@@ -57,11 +57,16 @@ def hour_from(events: list[Event]) -> GameHour | None:
 def _llm_pass(events: list[Event], newest: int) -> list[Learning]:
     """The LLM pass over the newest free texts, once, in the foreground (the taker runs it in the background)."""
     from bazaar_agent.guardrails import load_guardrails
-    from bazaar_agent.learn.interpret import BATCH_MAX, interpret, snippet
+    from bazaar_agent.learn.interpret import BATCH_MAX, CHANNELS, interpret, snippet
     from bazaar_agent.llm import cli as llm_cli
 
-    dealers = {str((e.get("payload") or {}).get("with")) for e in events if e.get("type") == "thread.opened"}
-    dealers = {d for d in dealers if d and not d.startswith("t")}
+    dealers = {
+        str(e["payload"].get("with"))
+        for e in events
+        if e.get("type") == "thread.opened"
+        and isinstance(e.get("payload"), dict)
+        and e["payload"].get("kind") == "persona"
+    }
     found = [s for e in events if (s := snippet(e, dealers)) is not None][-newest:]
     runtime = llm_cli.runtime_for(load_settings(), load_guardrails().rules, "learnings --llm")
     if runtime is None or not found:
@@ -69,9 +74,15 @@ def _llm_pass(events: list[Event], newest: int) -> list[Learning]:
     known: dict[str, Any] = {d: "dealer" for d in dealers}
     known.update({s.speaker: s.speaker_kind for s in found})
     out: list[Learning] = []
-    for i in range(0, len(found), BATCH_MAX):
+    batches = [
+        chunk[i : i + BATCH_MAX]
+        for channel in CHANNELS
+        if (chunk := [s for s in found if s.channel == channel])
+        for i in range(0, len(chunk), BATCH_MAX)
+    ]  # one kind of text per call, as the taker reads them
+    for batch in batches:
         try:
-            out += interpret(found[i : i + BATCH_MAX], runtime, known, None, 60.0)
+            out += interpret(batch, runtime, known, None, 60.0)
         except Exception as e:  # one failed batch: report it, keep the rest
             err_console.print(f"[yellow]LLM batch failed ({type(e).__name__}: {escape(str(e)[:80])})[/yellow]")
     err_console.print(f"[dim]LLM pass: {len(found)} texts read, {len(out)} learnings kept[/dim]")
@@ -92,7 +103,7 @@ def _connect() -> Any:
 
 def _table(rows: list[Learning], tick: int | None) -> Table:
     table = Table(title=f"learnings in force at tick {tick}" if tick is not None else "every learning")
-    for col in ("tick", "subject", "kind", "until", "team", "conf", "text", "evidence"):
+    for col in ("tick", "subject", "kind", "until", "team", "conf", "src", "text", "evidence"):
         table.add_column(col, overflow="fold")
     for lr in rows:
         table.add_row(
@@ -102,6 +113,7 @@ def _table(rows: list[Learning], tick: int | None) -> Table:
             "-" if lr.until_tick is None else f"T{lr.until_tick}",
             lr.team or "all",
             f"{lr.confidence:.2f}",
+            lr.source if lr.source == "rules" else f"{lr.source} ({lr.detail.get('from', '?')})",
             escape(lr.text),
             ",".join(map(str, lr.evidence[-3:])),
         )

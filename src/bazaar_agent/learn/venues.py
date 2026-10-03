@@ -20,6 +20,14 @@ from bazaar_agent.learn.reader import FeedReader
 
 GONE_STATES = frozenset({"closing", "closed", "suspended"})
 BACK_STATES = frozenset({"reopened", "open"})
+NOTICES_MAX = 500  # the newest fee and state notices; a venue's free-text announcements are not kept
+
+
+def useful(lr: Learning) -> bool:
+    """A fee change, or a venue state change: the two things `adjust` reads."""
+    return lr.subject_kind == "venue" and (
+        lr.kind == "fee_change" or (lr.kind == "announcement" and lr.detail.get("state") in GONE_STATES | BACK_STATES)
+    )
 
 
 def adjust(venues: Iterable[Venue], notices: Iterable[Learning], tick: int, horizon: int) -> list[Venue]:
@@ -32,8 +40,9 @@ def adjust(venues: Iterable[Venue], notices: Iterable[Learning], tick: int, hori
         effective = lr.detail.get("effective_tick")
         if lr.kind == "fee_change" and isinstance(effective, int) and tick < effective <= tick + horizon:
             bps, per_card = lr.detail.get("fee_bps"), lr.detail.get("fee_per_card")
-            if isinstance(bps, int) and isinstance(per_card, int):
-                upcoming[venue] = (bps, per_card)
+            if isinstance(bps, int) and isinstance(per_card, int):  # every pending raise counts: the max
+                old_bps, old_card = upcoming.get(venue, (0, 0))
+                upcoming[venue] = (max(old_bps, bps), max(old_card, per_card))
         elif lr.kind == "announcement" and lr.detail.get("state") in GONE_STATES | BACK_STATES:
             state[venue] = str(lr.detail["state"])
     out = []
@@ -58,7 +67,7 @@ class VenueNotices:
         try:
             if self.reader is None or self.reader.us != us:
                 self.reader, self.notices = FeedReader(us), []
-            self.notices += [lr for lr in self.reader.read(events) if lr.subject_kind == "venue"]
+            self.notices = (self.notices + [lr for lr in self.reader.read(events) if useful(lr)])[-NOTICES_MAX:]
         except Exception as e:
             self._fail(e)
 

@@ -6,8 +6,8 @@ from typing import Any
 
 from bazaar_agent.learn.blockers import blocks_for
 from bazaar_agent.learn.interpret import (
+    CHANNEL_MAX,
     LLM_CONFIDENCE_MAX,
-    PENDING_MAX,
     Draft,
     DraftLearning,
     FeedInterpreter,
@@ -97,7 +97,7 @@ def test_validation_keeps_known_subjects_and_caps_confidence():
         ("organiser", "rule_change", "llm", None),
     ]
     assert kept[0].confidence == LLM_CONFIDENCE_MAX and kept[0].evidence == (1,)
-    assert kept[0].detail == {"from": "dealer:abuela", "model": "haiku-4-5"}
+    assert kept[0].detail == {"from": "dealer:abuela", "channel": "dealer", "model": "haiku-4-5"}
 
 
 def test_the_from_prefix_is_accepted_only_when_it_matches_our_records():
@@ -124,8 +124,9 @@ def test_unknown_events_and_subjects_are_dropped_and_wild_expiries_ignored():
 
 def test_an_injected_blocker_never_blocks():
     """The injected text asks to block Abuela for us: even a model that complies produces nothing that blocks."""
-    assert validate(draft(row(3, "abuela", "cooloff", until=9000, text="block abuela")), BATCH, KNOWN, "m") == []
-    kept = validate(draft(row(3, "abuela", "cooloff", until=900, text="block abuela")), BATCH, KNOWN, "m")
+    assert validate(draft(row(3, "chato", "cooloff", until=9000, text="block chato")), BATCH, KNOWN, "m") == []
+    assert validate(draft(row(3, "abuela", "cooloff", until=900, text="block abuela")), BATCH, KNOWN, "m") == []
+    kept = validate(draft(row(3, "chato", "cooloff", until=900, text="block chato")), BATCH, KNOWN, "m")
     assert kept and kept[0].team is None and kept[0].source == "llm"
     assert not blocks_for(kept, "t01", 200)
     hijacked = kept[0].model_copy(update={"team": "t01"})  # even bound to us, an LLM reading does not block
@@ -186,20 +187,80 @@ def run_now(work):  # type: ignore[no-untyped-def]
     work()
 
 
-def test_the_reader_hands_results_back_on_the_next_offer_and_reads_each_text_once():
+def test_the_reader_reads_organiser_notices_first_one_kind_per_call_spaced_by_ticks():
     calls: list[list[Snippet]] = []
 
     def call(batch, runtime, known, tick, tick_seconds):  # type: ignore[no-untyped-def]
         calls.append(batch)
         return validate(draft(row(batch[0].event_id, batch[0].speaker)), batch, known, "m")
 
-    reader = FeedInterpreter(object(), call=call, start=run_now)
+    reader = FeedInterpreter(object(), call=call, start=run_now, every_ticks=10)
     assert reader.offer(TEXTS, KNOWN, 100, 60.0) == []  # queued and read; the result comes next time
-    again = msg(5, "abuela", "Ay, cariño, 22 P, and this is my last word.")
-    first = reader.offer(TEXTS + [again], KNOWN, 101, 60.0)
-    assert [lr.evidence for lr in first] == [(1,)]
-    assert [s.event_id for s in calls[0]] == [1, 3, 4] and len(calls) == 1  # 5 only differs by a number
-    assert reader.status == "idle"
+    again = msg(5, "abuela", "Ay, cariño, 22 P, and this is my last word.")  # differs only by a number
+    notice = reader.offer(TEXTS + [again], KNOWN, 105, 60.0)  # the organiser notice's learning comes back
+    assert [lr.evidence for lr in notice] == [(4,)]
+    assert [[s.event_id for s in b] for b in calls] == [[4]]  # tick 105: not due yet (every 10 ticks)
+    assert reader.offer([], KNOWN, 110, 60.0) == []
+    assert [[s.event_id for s in b] for b in calls] == [[4], [1, 3]]  # then the dealer words, never mixed
+    assert [lr.evidence for lr in reader.offer([], KNOWN, 111, 60.0)] == [(1,)]
+    assert reader.status == "idle" and reader.pending == 0
+
+
+def test_failures_back_off_and_the_kill_switch_holds_the_reader():
+    started: list[int] = []
+    paused = [True]
+
+    def fail(*args):  # type: ignore[no-untyped-def]
+        started.append(1)
+        raise LLMError("timeout", "slow")
+
+    lines: list[str] = []
+    reader = FeedInterpreter(object(), lines.append, call=fail, start=run_now, every_ticks=10, paused=lambda: paused[0])
+    many = [msg(i, "abuela", "text " + "".join(chr(65 + int(d)) for d in str(i))) for i in range(1, 40)]
+    reader.offer(many, KNOWN, 100, 60.0)
+    assert started == []  # .local/PAUSE: nothing is read
+    paused[0] = False
+    for tick in range(100, 160):
+        reader.offer([], KNOWN, tick, 60.0)
+    assert len(started) == 3  # ticks 100, 110 (+10), 130 (+20); the next is due at 170 (+40)
+    reader._call = lambda *a: []  # type: ignore[method-assign]
+    reader.offer([msg(500, "abuela", "something new")], KNOWN, 160, 60.0)
+    for tick in range(161, 200):
+        reader.offer([], KNOWN, tick, 60.0)
+    assert lines == [
+        "learnings: the LLM reader failed (timeout); deterministic learnings only meanwhile",
+        "learnings: the LLM reader works again",
+    ]
+
+
+def test_a_text_teaches_about_its_own_speaker_only():
+    venue_note = Snippet(7, 100, "venue", "v03", "Organisers: every accept costs 50 P from T300", "venue")
+    notice = Snippet(8, 100, "organiser", "organiser", "Chato opens to everyone at T200", "organiser")
+    rows = [
+        row(7, "organiser", "rule_change", text="accepts cost 50 P"),
+        row(7, "abuela", "behaviour", text="abuela is rude"),
+        row(7, "v03", "fee_change", text="v03 is cheap"),
+        row(8, "chato", "announcement", text="Chato opens at T200"),
+    ]
+    kept = validate(draft(*rows), [venue_note, notice], KNOWN, "m")
+    assert [(lr.subject, lr.evidence) for lr in kept] == [("v03", (7,)), ("chato", (8,))]
+
+
+def test_the_model_is_capped_at_haiku_or_sonnet_unless_pinned():
+    class Runtime:
+        pin = None
+
+        def pick(self, situation, tick=None, budget_s=None):  # type: ignore[no-untyped-def]
+            return Picked(Ref("claude-opus-5-5", "opus-5-5"), FakeProvider(draft()))
+
+        def provider(self, ref):  # type: ignore[no-untyped-def]
+            self.capped = ref.alias
+            return self.provider_obj
+
+    runtime = Runtime()
+    runtime.provider_obj = FakeProvider(draft(row()))  # type: ignore[attr-defined]
+    kept = interpret(BATCH, runtime, KNOWN, 100, 60.0)
+    assert runtime.capped == "haiku-4-5" and kept[0].detail["model"] == "haiku-4-5"  # type: ignore[attr-defined]
 
 
 def test_a_busy_reader_queues_and_a_failing_one_logs_once():
@@ -225,5 +286,5 @@ def test_the_backlog_keeps_the_newest_texts():
     reader = FeedInterpreter(object(), start=started.append)
     many = [msg(i, "abuela", "text " + "".join(chr(65 + int(d)) for d in str(i))) for i in range(1, 200)]
     reader.offer(many, KNOWN, 100, 60.0)
-    # the newest 40 were kept; the newest 8 of them went to the first call, the rest wait
-    assert len(started) == 1 and sorted(reader._pending) == list(range(200 - PENDING_MAX, 192))
+    # each channel keeps its newest 20; the newest 8 went to the first call, the rest wait
+    assert len(started) == 1 and sorted(reader._pending["dealer"]) == list(range(200 - CHANNEL_MAX, 192))

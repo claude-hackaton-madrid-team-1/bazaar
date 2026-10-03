@@ -166,4 +166,6 @@ def test_the_cli_llm_pass_keeps_validated_learnings(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["learnings", "--llm", "3", "--all", "--json", "--subject", "organiser"])
     assert result.exit_code == 0, result.output
     out = json.loads(result.output[result.output.index("{") :])
-    assert seen == [3] and any(lr["source"] == "llm" for lr in out["learnings"])
+    # the newest 3 texts: two organiser notices and one venue notice, read in two calls (never mixed);
+    # the venue's text may not teach about the organiser, so only the organiser call's learning is kept
+    assert sorted(seen) == [1, 2] and [lr["source"] for lr in out["learnings"]].count("llm") == 1
