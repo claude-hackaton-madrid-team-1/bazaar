@@ -522,13 +522,15 @@ def negotiate(
             for _ in range(5):
                 if not now.is_live or now.tick > first.tick:
                     break
-                sleep(seconds_until_next_tick(now))
+                sleep(min(seconds_until_next_tick(now), now.max_tick_seconds + 1))  # never trust a huge next_tick_in
                 now = Clock.model_validate(client.clock())
-        except BazaarError as e:
-            log(f"thread {tid}: clock unreadable ({e.code}), no second close")
+        except Exception as e:  # like run_per_tick's clock read: an empty body or a cut connection never crashes
+            log(f"thread {tid}: clock unreadable ({type(e).__name__}), no second close")
+            reread(state["clock"] or Clock(tick=0))  # a "Deal!" that landed is still booked
             return
         if not now.is_live or now.tick <= first.tick:
             log(f"thread {tid}: no live tick for a second close ({now.doors}, paused={now.paused})")
+            reread(now)  # a "Deal!" that landed is still booked
             return
         if holding(f"tick {now.tick}, before closing thread {tid} again"):
             reread(now)  # a "Deal!" that landed is booked; otherwise the thread stays open, never closed

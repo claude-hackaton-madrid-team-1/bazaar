@@ -773,3 +773,59 @@ def test_no_second_close_waits_out_closed_doors():
     )
     assert client.closes == 1 and out.status == "open" and max(slept, default=0) < 300
     assert any("no live tick for a second close" in line for line in lines)
+
+
+def test_a_retry_that_gives_up_still_books_a_deal_that_landed():
+    # Security audit #72 round 6 (P3): her "Deal!" lands right after the refused close, then the doors close.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class DealThenClosing(FakeDealerClient):
+        def close_thread(self, tid):
+            self.status, self.doors = "deal", "closed"
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            return {**super().clock(), "doors": getattr(self, "doors", "open")}
+
+        def thread(self, tid):
+            if self.status == "deal":
+                return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 7}}}]}
+            return super().thread(tid)
+
+    booked: list[int] = []
+    out = negotiate(
+        DealThenClosing(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert (out.status, booked) == ("deal", [7])
+
+
+def test_an_unreadable_clock_in_the_retry_never_crashes_dealer_buy():
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class EmptyClock(FakeDealerClient):
+        def close_thread(self, tid):
+            self.broken = True
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            return {} if getattr(self, "broken", False) else super().clock()  # a 200 with an empty body
+
+    out = negotiate(
+        EmptyClock(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    assert out.status == "open"  # logged, "close it by hand", no traceback
