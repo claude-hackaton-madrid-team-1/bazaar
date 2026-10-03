@@ -136,8 +136,8 @@
           "mark": "✓"
         },
         {
-          "text": "bazaar-live: v1 built (PR #1)",
-          "note": true
+          "text": "bazaar-live: deployed (voiced show)",
+          "mark": "✓"
         }
       ],
       "mark": "✓"
@@ -190,7 +190,7 @@
           "note": true
         },
         {
-          "text": "venue + broker: blocked",
+          "text": "venue opens at h6.5 + broker (#71)",
           "note": true
         }
       ],
@@ -289,7 +289,7 @@
           "mark": "◑"
         },
         {
-          "text": "Bazaar Live show: v1 in review",
+          "text": "Bazaar Live show: deployed",
           "note": true
         }
       ],
@@ -316,12 +316,6 @@
       "label": "worker",
       "title": "Evals inside the agents",
       "body": "No separate service: taker, maker and duels score their own settled decisions. BAZAAR_LIVE kept by the IaC (#73)."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
-      "title": "Bazaar Live show",
-      "body": "v1 built: bazaar-live PR #1 (stage, transcript, voices, CI), Railway service in bazaar #85; under /pr-review."
     },
     {
       "status": "wip",
@@ -399,6 +393,12 @@
       "name": "bazaar-sim",
       "urls": [
         "https://bazaar-sim-production-1d48.up.railway.app"
+      ]
+    },
+    {
+      "name": "Bazaar Live",
+      "urls": [
+        "https://bazaar-live-production.up.railway.app"
       ]
     }
   ],
@@ -789,8 +789,8 @@
           {
             "title": "Bazaar Live show (bazaar-live #1, #85)",
             "start": "2026-10-03T01:55",
-            "end": "2026-10-03T12:00",
-            "status": "wip",
+            "end": "2026-10-03T04:00",
+            "status": "done",
             "priority": "P3",
             "owner": "worker"
           },

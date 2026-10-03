@@ -346,3 +346,25 @@ for the rounded `t_hours`); an unknown created tick books no refund in the windo
 `DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
 real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
 address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.
+
+### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
+On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
+identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the
+free stall earns. On main's static bench too (`scripts/sim_market_test.py`: b1 0.892 vs 0.892, b2 1.0 vs 1.0).
+Ties must follow the book order (stable sort, as the stall): sorting by id lost 2 of 200 books to the stall.
+Beating the stall needs #84's edge (limit estimates, probes): opening our board venue alone buys the hook.
+
+### [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
+`BAZAAR_SIM=local` is hardcoded to :8765, so two workers cannot each run their own local sim through it.
+`scripts/sim_market_test.py` and `tests/test_sim_venue.py` serve `bazaar_sim` in-process on a free port instead.
+
+### [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
+symptom: property test `ours >= stall` failed (173 < 183) → root cause: equal quotes (two asks of 56) were
+sorted by id ("b1-10" < "b1-6"), so we matched a different seller than the stall at the same quoted surplus,
+and the hidden limits differ → fix: stable sort by price + a book-order term in the assignment weights, so
+at 0 bps we pick exactly the stall's traders (tests/test_matcher.py, 200 benches against `_auto_bench`).
+
+### [2026-10-03] build-error — a sim venue test opened nothing: `locked` at tick 0
+symptom: the keeper logged "opening refused locked" and retried 10 ticks later → root cause: the simulator
+unlocks El Chato (level 2, needed for a venue) at `chato_open_ticks`, never at tick 0 → fix: advance one tick
+first (`/sim/tick`). `locked` stays a retryable refusal in the keeper (a level can arrive later).

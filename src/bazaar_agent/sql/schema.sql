@@ -107,6 +107,11 @@ create table if not exists ledger (
 create index if not exists ledger_kind_tick on ledger (kind, tick);
 create index if not exists ledger_kind_hours on ledger (kind, t_hours);
 
+-- Our venue's broker key (RULES.md "Your own market"), returned once by the opening: a SECRET like the team
+-- key. Written and read only by `venue.KeyVault` (the maker on Railway, `bazaar venue open`); no public route,
+-- view or eval reads this table. The vault runs the same statement before it writes (venue.VENUE_KEYS_DDL).
+create table if not exists venue_keys (target text not null, venue text not null, broker_key text not null, opened_tick int, created_at timestamptz not null default now(), primary key (target, venue));
+
 -- Monitoring agent (bazaar monitor): the announcements and trader changes it saw.
 create table if not exists alerts (
   id bigserial primary key, tick int, kind text, subject text, detail text,

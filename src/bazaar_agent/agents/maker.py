@@ -20,6 +20,9 @@ ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers
 that is not a strategy target is cancelled, so stop the maker before trading by hand.
 While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
 posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
+
+Our own venue rides on the same tick (`agents/venue_keeper.py`, before the offers above): opened once
+after `venue_open_after_game_hours`, then its broker matches the book every tick.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -68,6 +71,7 @@ from bazaar_agent.guardrails import (
     LedgerStore,
     check,
     context_from,
+    effective_cash_floor,
     kill_switch,
     refund_row,
 )
@@ -198,6 +202,7 @@ class Maker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         jev: MakerJev | None = None,
+        market: Any = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
@@ -205,12 +210,22 @@ class Maker:
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.market = market  # agents.venue_keeper.VenueKeeper: our venue and its broker; None = no venue
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
+        snap: Snapshot | None = None
         try:
-            self._tick(read_snapshot(self.team, self.public, self.feed, clock), window)
+            snap = read_snapshot(self.team, self.public, self.feed, clock)
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
+        if self.market is not None:  # the bench first: a broker without our reads still matches the bench
+            self.market.on_tick(clock, snap, window)
+        if snap is None:
+            return
+        try:
+            self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
@@ -505,8 +520,8 @@ class Maker:
         cash = int(run.snap.me.get("cash") or 0)
         return {
             "cash": cash,
-            "cash_floor": self.rules.cash_floor,
-            "cash_above_floor": max(0, cash - self.rules.cash_floor),
+            "cash_floor": effective_cash_floor(self.rules, run.base),
+            "cash_above_floor": max(0, cash - effective_cash_floor(self.rules, run.base)),
             "open_offers": run.open_total,
             "max_open_offers": run.snap.clock.limits.max_open_offers_per_team,
             "listings_left_this_tick": run.listings_left,

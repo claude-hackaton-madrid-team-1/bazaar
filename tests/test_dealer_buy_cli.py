@@ -1,13 +1,15 @@
 """`bazaar dealer buy --live` guards every move with our OTHER open offers (the maker's board bids, the
 taker's dealer threads) and leaves out its own thread, whose bid the next move replaces (PR #72 review)."""
 
+from dataclasses import replace
+
 import pytest
 from typer.testing import CliRunner
 
 from bazaar_agent import cli
 from bazaar_agent.agents.dealer import Move, Outcome
 from bazaar_agent.config import Settings
-from bazaar_agent.guardrails import Ledger
+from bazaar_agent.guardrails import Ledger, load_guardrails
 
 OWN = 85  # the thread `dealer buy` opens
 ACCEPT_20 = ((Move("accept", 20, 7), OWN),)
@@ -53,6 +55,11 @@ def dealer_buy(monkeypatch, tmp_path):
             seen["verdicts"] = [guard(move, tid) for move, tid in moves]
             return Outcome(OWN, "walked", None, (), 1)
 
+        # Pinned to the floor these cases were written for (270, no venue planned): #71's committed file
+        # (cash_floor 100 + venue_bond_reserve 270 until the venue opens) must not change what they prove.
+        loaded = load_guardrails()
+        pinned = loaded.rules.model_copy(update={"cash_floor": 270, "allow_venue_open": False})
+        monkeypatch.setattr(cli, "_rules", lambda: replace(loaded, rules=pinned))
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)  # #62: live=

@@ -119,3 +119,98 @@ def test_a_duel_move_outside_our_limit_is_denied():
     assert "cannot value" in str(duel_check(role=None))
     off = gr.parse_guardrails("- `duel_inside_limit` = false — x").rules
     assert duel_check(price=50, rules=off).allowed
+
+
+# ---------------------------------------------------------------- our venue (build only)
+
+VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
+
+
+def test_the_committed_file_opens_our_venue_at_game_hour_6_5_and_reserves_the_bond_until_then():
+    rules = REAL.rules
+    assert rules.allow_venue_open is True
+    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (100, 270, 6.5)
+    assert gr.Guardrails().allow_venue_open is False  # the model's default stays off: only the file turns it on
+
+
+def test_allow_venue_open_false_refuses_every_venue_write_but_close():
+    off = gr.Guardrails()
+    for kind in ("venue_open", "venue_fee", "venue_announce", "broker_match"):
+        assert "allow_venue_open = false" in str(gr.check(gr.Action(kind), ctx(cash=600, t_hours=7.0), off))
+    assert gr.check(gr.Action("venue_close", "v07"), ctx(), off).allowed
+    on = gr.Guardrails(allow_venue_open=True)
+    for kind in VENUE_KINDS:
+        assert gr.check(gr.Action(kind), ctx(cash=600, t_hours=7.0), on).allowed
+
+
+def test_the_venue_bond_and_opening_fee_never_take_cash_below_the_floor():
+    on = gr.Guardrails(allow_venue_open=True, cash_floor=100)
+    assert gr.VENUE_COST == 270
+    assert gr.check(gr.Action("venue_open"), ctx(cash=370, t_hours=6.5), on).allowed
+    denied = gr.check(gr.Action("venue_open"), ctx(cash=369, t_hours=6.5), on)
+    assert "cash 369 - venue bond and fee 270 < cash_floor 100" in str(denied)
+    # the bond is not a purchase: no rarity cap, no spend cap
+    assert gr.check(gr.Action("venue_open"), ctx(cash=600, spent_last_hour=150, t_hours=7.0), on).allowed
+
+
+def test_the_venue_opens_once_and_not_before_its_game_hour():
+    on = gr.Guardrails(allow_venue_open=True, cash_floor=100)
+    early = gr.check(gr.Action("venue_open"), ctx(cash=600, t_hours=6.49), on)
+    assert "game hour 6.49 < venue_open_after_game_hours 6.5" in str(early)
+    twice = gr.check(gr.Action("venue_open"), ctx(cash=600, t_hours=7.0, has_venue=True), on)
+    assert "never open a second one" in str(twice)
+    assert gr.check(gr.Action("broker_match"), ctx(t_hours=1.0, has_venue=True), on).allowed  # matching any time
+
+
+def test_the_bond_reserve_lifts_the_floor_for_every_purchase_until_the_venue_opens():
+    planned = gr.Guardrails(allow_venue_open=True, cash_floor=100, venue_bond_reserve=270)
+    buy = gr.Action("buy", "LAV-09", "rare", 30)
+    assert gr.effective_cash_floor(planned, ctx()) == 370
+    assert gr.check(buy, ctx(cash=400), planned).allowed  # 370 left
+    denied = gr.check(buy, ctx(cash=399), planned)
+    assert "cash 399 - 30 < cash_floor 100 + venue_bond_reserve 270" in str(denied)
+    opened = ctx(cash=131, has_venue=True)
+    assert gr.effective_cash_floor(planned, opened) == 100 and gr.check(buy, opened, planned).allowed
+    assert "cash 129 - 30 < cash_floor 100" in str(gr.check(buy, ctx(cash=129, has_venue=True), planned))
+    not_planned = gr.Guardrails(allow_venue_open=False, cash_floor=100)
+    assert gr.effective_cash_floor(not_planned, ctx()) == 100  # no venue planned: nothing to reserve
+
+
+@pytest.mark.parametrize(
+    ("venue", "runs"),
+    [
+        (None, False),
+        ({"venue": "v07", "name": "Team 1 market", "status": "open"}, True),
+        ({"venue": "v07", "status": "closing"}, True),
+        ({"venue": "v07", "status": "closed"}, False),
+        ({"venue": "s01", "status": "open", "starter": True}, False),
+        ("v07", True),
+        ("", False),
+    ],
+)
+def test_runs_venue_reads_me_and_context_from_carries_it(venue, runs):
+    assert gr.runs_venue({"venue": venue}) is runs
+    ledger = gr.Ledger(Path("/nonexistent/ledger.jsonl"))
+    assert gr.context_from({"cash": 400, "venue": venue}, 1, 0.1, ledger, REAL.rules).has_venue is runs
+
+
+def test_the_kill_switch_and_the_pause_file_stop_every_venue_write():
+    off = gr.Guardrails(allow_venue_open=True, trading_enabled=False)
+    on = gr.Guardrails(allow_venue_open=True)
+    for kind in VENUE_KINDS:
+        assert "trading_enabled = false" in str(gr.check(gr.Action(kind), ctx(cash=600), off))
+        assert "pause file" in str(gr.check(gr.Action(kind), ctx(cash=600, paused=True), on))
+
+
+@pytest.mark.parametrize("venue", ["s05", {"venue": "s05", "status": "open"}])
+def test_a_venue_named_next_to_a_starter_broker_key_is_the_free_stall(venue):
+    """The kit: /me carries `starter_broker_key` while we have the free stall. Neither shape of the stall may
+    drop the bond reserve for buyers or block our own opening."""
+    me = {"cash": 400, "venue": venue, "starter_broker_key": "bk_" + "S7a11Only"}
+    assert gr.runs_venue(me) is False
+    ledger = gr.Ledger(Path("/nonexistent/ledger.jsonl"))
+    planned = gr.Guardrails(allow_venue_open=True, cash_floor=100, venue_bond_reserve=270)
+    c = gr.context_from(me, 400, 6.5, ledger, planned)
+    assert gr.effective_cash_floor(planned, c) == 370
+    assert gr.check(gr.Action("venue_open"), c, planned).allowed
+    assert not gr.check(gr.Action("buy", "LAV-09", "rare", 40), c, planned).allowed  # 360 < 370
