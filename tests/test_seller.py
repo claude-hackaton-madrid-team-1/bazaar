@@ -140,6 +140,19 @@ def test_dealer_thread_bids_count_toward_the_hourly_spend_and_pack_caps():
     assert "3 pack(s) bought this game hour" in str(check(Action("bid", "sobre_barrio", "pack", 18), ctx, RULES))
 
 
+def test_a_dealer_thread_counts_once_at_its_biggest_open_bid():
+    # Thread 101: our bids 7, 8 and 9 are offers 732, 744 and 759. If the old ones still read open, the thread
+    # still settles one deal at most: 9 P and one pack at risk, not 24 P and three packs.
+    thread = [
+        {"id": oid, "maker": "t01", "status": "open", "thread": 101, "give": {"cash": p}, "want": {"types": [t]}}
+        for oid, p, t in [(732, 7, "pack:sobre_barrio"), (759, 9, "pack:sobre_barrio"), (744, 8, "pack:sobre_barrio")]
+    ]
+    c = seller.open_commitments([OUR_OPEN[0], *thread], "t01")
+    assert (c.cash, c.thread_cash, c.thread_packs, c.wanted) == (70 + 9, 9, 1, ("LAV-09", "sobre_barrio"))
+    same = [{**o, "give": {"cash": 9}} for o in thread]  # a tie: the newest stands for the thread
+    assert [o["id"] for o in seller.one_per_thread(same)] == [759]
+
+
 def test_open_bids_block_a_second_bid_and_count_toward_the_cash_floor():
     client, c = FakeOfferClient(), seller.open_commitments(OUR_OPEN, "t01")
     again = seller.post(client, seller.bid_listing("LAV-09", "rare", 60), CTX, RULES, live=True, commitments=c)
