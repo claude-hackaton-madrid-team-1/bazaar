@@ -136,9 +136,12 @@ def bench_policy_by_default(monkeypatch):
 def jev_decider_by_default(monkeypatch):
     """A BAZAAR_DECIDER=llm exported on a laptop or service must never send the suite's judge() calls to
     Claude: every test starts on Jev with a fresh per-process LLM decider."""
+    from bazaar_agent.jev.decider import note_tick_seconds
     from bazaar_agent.llm import decider as llm_decider
 
     monkeypatch.delenv("BAZAAR_DECIDER", raising=False)
+    note_tick_seconds(None)  # a tick loop run by an earlier test must not leave a tick length behind
     llm_decider.reset_process_decider()
     yield
     llm_decider.reset_process_decider()
+    note_tick_seconds(None)
