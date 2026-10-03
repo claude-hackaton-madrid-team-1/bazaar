@@ -14,6 +14,11 @@ It exposes trading tools on a public domain, so:
   server for every one of them (`actions.run_write`): there is no desk hook on this path;
 - every answer goes through `tools.safe_value`: no key, token, password or URL leaves the server;
 - every write call is a `decisions` row (agent `mcp`), and every request it sent an `executions` row.
+
+The human tools (`runtime.human_tools`: approvals, approve, revoke) are served only on a request that ALSO carries
+`X-Approver-Token` equal to BAZAAR_APPROVER_TOKEN (constant time). The bearer alone never lists nor runs them; a
+wrong approver token is a 403, and 5 wrong ones from one bearer token lock it out of them for 15 minutes. Without
+BAZAAR_APPROVER_TOKEN they do not exist here. Their writes are capped at 10 per minute and logged by the tools.
 """
 
 from __future__ import annotations
@@ -22,12 +27,21 @@ import hashlib
 import hmac
 import json
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
 
 from bazaar_agent.runtime.backend import Backend
+from bazaar_agent.runtime.human_tools import (
+    APPROVER_HEADER,
+    APPROVER_VARIABLE,
+    WRITES_PER_MINUTE,
+    ApprovalStore,
+    PgApprovalStore,
+    human_specs,
+)
 from bazaar_agent.runtime.journal import record_write
-from bazaar_agent.runtime.tools import BY_NAME, SERVER, TOOLS, VERSION, answer, call
+from bazaar_agent.runtime.tools import BY_NAME, SERVER, TOOLS, VERSION, ToolSpec, answer, call
 
 TOKEN_VARIABLE = "BAZAAR_MCP_TOKEN"
 MIN_TOKEN_CHARS = 32
@@ -37,6 +51,8 @@ HEALTH_PATH = "/health"
 HTTP_RATE_PER_S, HTTP_BURST = 5.0, 20  # MCP plumbing (initialize, tools/list) per token, before tool calls
 TOOL_BURST = 5
 STATE_KEY = "bazaar_token"  # the caller's token digest, for the per-token tool-call bucket
+APPROVER_KEY = "bazaar_approver"  # True on a request whose X-Approver-Token matched
+APPROVER_FAILURES, APPROVER_LOCK_S = 5, 900.0  # wrong approver tokens per bearer token, then locked this long
 
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -48,14 +64,25 @@ class TokenError(ValueError):
     """BAZAAR_MCP_TOKEN is missing or too short: the server will not expose tools without it."""
 
 
-def require_token(value: str | None) -> str:
+def require_token(value: str | None, variable: str = TOKEN_VARIABLE) -> str:
     """32+ characters with 16+ distinct ones: `secrets.token_urlsafe(48)` passes, "aaaa…" does not."""
     token = (value or "").strip()
     if len(token) < MIN_TOKEN_CHARS or len(set(token)) < MIN_DISTINCT_CHARS:
         raise TokenError(
-            f"{TOKEN_VARIABLE} must be a random value of {MIN_TOKEN_CHARS}+ characters "
+            f"{variable} must be a random value of {MIN_TOKEN_CHARS}+ characters "
             "(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
         )
+    return token
+
+
+def approver_token(value: str | None, bearer: str) -> str | None:
+    """BAZAAR_APPROVER_TOKEN: None when unset (the human tools do not exist), else a strong token that is not the
+    bearer token (the bearer alone must never approve). Raises TokenError otherwise."""
+    if not (value or "").strip():
+        return None
+    token = require_token(value, APPROVER_VARIABLE)
+    if hmac.compare_digest(digest(token), digest(bearer.strip())):
+        raise TokenError(f"{APPROVER_VARIABLE} must differ from {TOKEN_VARIABLE}")
     return token
 
 
@@ -80,6 +107,34 @@ class Bucket:
         return (1.0 - self.level) / self.rate
 
 
+class Window:
+    """At most `limit` events in any `seconds`: `take()` is 0 when one may go now (and counts it), else the wait."""
+
+    def __init__(self, limit: int, seconds: float, now: Callable[[], float] = time.monotonic) -> None:
+        self.limit, self.seconds, self.now = limit, seconds, now
+        self._at: deque[float] = deque()
+
+    def _trim(self) -> float:
+        t = self.now()
+        while self._at and t - self._at[0] >= self.seconds:
+            self._at.popleft()
+        return t
+
+    def full(self) -> bool:
+        self._trim()
+        return len(self._at) >= self.limit
+
+    def add(self) -> None:
+        self._at.append(self._trim())
+
+    def take(self) -> float:
+        t = self._trim()
+        if len(self._at) < self.limit:
+            self._at.append(t)
+            return 0.0
+        return self.seconds - (t - self._at[0])
+
+
 class Buckets:
     """One bucket per bearer token digest."""
 
@@ -99,8 +154,16 @@ async def _reply(send: Send, status: int, body: dict[str, Any], headers: Iterabl
     await send({"type": "http.response.body", "body": raw})
 
 
+def _header(scope: Scope, wanted: bytes) -> str | None:
+    for name, value in scope.get("headers") or []:
+        if name.lower() == wanted:
+            return str(value.decode("latin-1"))
+    return None
+
+
 class BearerGate:
-    """ASGI middleware in front of the MCP app: health, bearer auth, the per-token HTTP rate limit."""
+    """ASGI middleware in front of the MCP app: health, bearer auth, the per-token HTTP rate limit, and the
+    approver token that alone opens the human tools."""
 
     def __init__(
         self,
@@ -109,17 +172,31 @@ class BearerGate:
         live: bool,
         now: Callable[[], float] = time.monotonic,
         target: dict[str, str] | None = None,
+        approver: str | None = None,
     ) -> None:
-        self.app, self.live, self.target = app, live, target or {}
+        self.app, self.live, self.target, self.now = app, live, target or {}, now
         self._expected = digest(require_token(token))
         self._http = Buckets(HTTP_RATE_PER_S, HTTP_BURST, now)
+        checked = approver_token(approver, token)  # unset or blank: None, so no header can ever match
+        self._approver = None if checked is None else digest(checked)
+        self._failed: dict[bytes, Window] = {}  # bearer digest -> its wrong approver tokens
 
     def _presented(self, scope: Scope) -> str:
-        for name, value in scope.get("headers") or []:
-            if name.lower() == b"authorization":
-                text = value.decode("latin-1")
-                return text[7:].strip() if text[:7].lower() == "bearer " else ""
-        return ""
+        text = _header(scope, b"authorization") or ""
+        return text[7:].strip() if text[:7].lower() == "bearer " else ""
+
+    def _approver_ok(self, bearer: bytes, offered: str) -> bool:
+        """Constant-time match of X-Approver-Token; after APPROVER_FAILURES misses in APPROVER_LOCK_S from one
+        bearer token, even the right one is refused until the window passes. Off (no token set): always False."""
+        if self._approver is None:
+            return False
+        right = hmac.compare_digest(digest(offered.strip()), self._approver)
+        failures = self._failed.setdefault(bearer, Window(APPROVER_FAILURES, APPROVER_LOCK_S, self.now))
+        if failures.full():
+            return False
+        if not right:
+            failures.add()
+        return right
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -143,15 +220,32 @@ class BearerGate:
         if wait > 0:
             await _reply(send, 429, {"error": "rate_limited"}, [(b"retry-after", str(max(1, round(wait))).encode())])
             return
-        scope.setdefault("state", {})[STATE_KEY] = presented
+        state = scope.setdefault("state", {})
+        state[STATE_KEY] = presented
+        offered = _header(scope, APPROVER_HEADER)
+        if offered is not None:  # asking for the human tools: the right approver token or nothing at all
+            if not self._approver_ok(presented, offered):
+                await _reply(send, 403, {"error": "forbidden"})
+                return
+            state[APPROVER_KEY] = True
         await self.app(scope, receive, send)
+
+
+def _state(ctx: Any) -> dict[str, Any]:
+    scope = getattr(getattr(ctx, "request", None), "scope", None) or {}
+    state = scope.get("state")
+    return state if isinstance(state, dict) else {}
 
 
 def _caller_key(ctx: Any) -> bytes:
     """The token digest `BearerGate` put on the HTTP request, for this caller's tool-call bucket."""
-    scope = getattr(getattr(ctx, "request", None), "scope", None) or {}
-    key = (scope.get("state") or {}).get(STATE_KEY)
+    key = _state(ctx).get(STATE_KEY)
     return key if isinstance(key, bytes) else b"?"
+
+
+def _is_approver(ctx: Any) -> bool:
+    """True only when `BearerGate` matched this request's X-Approver-Token."""
+    return _state(ctx).get(APPROVER_KEY) is True
 
 
 def _audit(backend: Backend, tool: str, arguments: dict[str, Any], text: str, secrets: tuple[str, ...]) -> None:
@@ -175,17 +269,27 @@ def _recovery_line(backend: Backend, record: dict[str, Any]) -> None:
 
 
 def build_server(
-    backend: Backend, calls_per_minute: int, secrets: Iterable[str] = (), now: Callable[[], float] = time.monotonic
+    backend: Backend,
+    calls_per_minute: int,
+    secrets: Iterable[str] = (),
+    now: Callable[[], float] = time.monotonic,
+    human: Iterable[ToolSpec] = (),
 ) -> Any:
-    """The low-level MCP `Server` with every spec: list, and call through `tools.call` on a worker thread."""
+    """The low-level MCP `Server` with every spec: list, and call through `tools.call` on a worker thread.
+    `human` (the approver tools) is listed and called only on a request `BearerGate` marked as the approver's."""
     import anyio
     from mcp import types
     from mcp.server.lowlevel import Server
 
     held = tuple(secrets)
     calls = Buckets(calls_per_minute / 60.0, min(TOOL_BURST, calls_per_minute), now)
-    listed = [
-        types.Tool(
+    human_by_name = {spec.name: spec for spec in human}
+    if set(human_by_name) & set(BY_NAME):
+        raise ValueError("a human tool may not share a name with an agent tool")
+    human_writes = Window(WRITES_PER_MINUTE, 60.0, now)
+
+    def described(spec: ToolSpec) -> types.Tool:
+        return types.Tool(
             name=spec.name,
             description=spec.description,
             input_schema=spec.schema(),
@@ -193,25 +297,31 @@ def build_server(
                 read_only_hint=not spec.write, destructive_hint=spec.write, open_world_hint=True
             ),
         )
-        for spec in TOOLS
-    ]
+
+    listed = [described(spec) for spec in TOOLS]
+    human_listed = [described(spec) for spec in human_by_name.values()]
 
     def text_result(text: str, failed: bool) -> types.CallToolResult:
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)], is_error=failed)
 
     async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=listed)
+        return types.ListToolsResult(tools=listed + human_listed if _is_approver(ctx) else listed)
 
     async def on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         spec = BY_NAME.get(params.name)
-        if spec is None:
+        by_human = spec is None and _is_approver(ctx) and params.name in human_by_name
+        if by_human:
+            spec = human_by_name[params.name]
+        if spec is None:  # a human tool without the approver token reads exactly like a tool that does not exist
             return text_result(f"unknown tool {params.name!r}", True)
         wait = calls.take(_caller_key(ctx))
         if wait > 0:
             return text_result(f"rate limited: {calls_per_minute} tool calls per minute; retry in {wait:.0f}s", True)
+        if by_human and spec.write and (wait := human_writes.take()) > 0:
+            return text_result(f"rate limited: {WRITES_PER_MINUTE} approvals per minute; retry in {wait:.0f}s", True)
         arguments = dict(params.arguments or {})
         text, failed = await anyio.to_thread.run_sync(call, spec, backend, arguments, held)
-        if spec.write:  # the audit trail the desk's hooks keep, for remote callers
+        if spec.write and not by_human:  # the audit trail the desk's hooks keep; the human tools write their own
             await anyio.to_thread.run_sync(_audit, backend, spec.name, arguments, text, held)
         return text_result(text, failed)
 
@@ -232,13 +342,19 @@ def build_app(
     secrets: Iterable[str] = (),
     host: str = "0.0.0.0",
     now: Callable[[], float] = time.monotonic,
+    approver: str | None = None,
+    store: ApprovalStore | None = None,
 ) -> BearerGate:
     """The ASGI app: `BearerGate` → the MCP Streamable HTTP app at `/mcp` (stateless, JSON responses).
+    With an `approver` token (BAZAAR_APPROVER_TOKEN), the human tools on `store` (the shared Postgres by default).
 
     Bound to localhost, the SDK also turns on its DNS-rebinding protection (allowed Host headers)."""
-    server = build_server(backend, calls_per_minute, (*secrets, token), now)
+    approver = approver_token(approver, token)
+    human = human_specs(store or PgApprovalStore()) if approver else ()
+    held = (*secrets, token, *([approver] if approver else []))
+    server = build_server(backend, calls_per_minute, held, now, human)
     app = server.streamable_http_app(streamable_http_path=MCP_PATH, stateless_http=True, json_response=True, host=host)
-    return BearerGate(app, token, backend.live, now, backend.settings.target)
+    return BearerGate(app, token, backend.live, now, backend.settings.target, approver)
 
 
 def serve(app: BearerGate, host: str, port: int) -> None:

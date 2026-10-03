@@ -33,6 +33,7 @@ Side = Literal["buy", "sell"]
 SIDES: tuple[str, ...] = ("buy", "sell")
 CARD = re.compile(r"^[A-Z]{3}-\d{2}$")
 DEFAULT_TTL_TICKS = 240
+PENDING_TICKS = 240  # "the last 2 game hours" at Saturday's 30 s ticks: how far back a request is still listed
 UNREAD = "(approvals unreadable)"  # ends a refusal because the approvals could not be read: hold, never walk
 
 DDL = (
@@ -261,6 +262,17 @@ def pending(conn: psycopg.Connection, since_tick: int) -> list[dict[str, Any]]:
     conn.commit()
     rows = [{**(r[1] or {}), "tick": r[0]} for r in out]
     return sorted(rows, key=lambda r: -(r["tick"] or 0))
+
+
+def denials(conn: psycopg.Connection, since_tick: int) -> list[tuple[str, str, int]]:
+    """(card, side, tick) of every `approval_denied` row since `since_tick`: a human said no to that request."""
+    out = conn.execute(
+        "select candidates->>'card', candidates->>'side', tick from decisions "
+        "where agent = 'guard' and kind = 'approval_denied' and tick >= %s",
+        (since_tick,),
+    ).fetchall()
+    conn.commit()
+    return [(str(r[0]), str(r[1]), int(r[2])) for r in out if r[2] is not None]
 
 
 def record(conn: psycopg.Connection, kind: str, tick: int, inputs: dict[str, Any]) -> None:

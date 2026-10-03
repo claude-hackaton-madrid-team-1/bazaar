@@ -21,7 +21,7 @@ from bazaar_agent.breakers import CONNECT_TIMEOUT_S
 
 console = Console()
 err_console = Console(stderr=True)
-PENDING_TICKS = 240  # "the last 2 game hours" at Saturday's 30 s ticks
+PENDING_TICKS = approvals.PENDING_TICKS
 
 
 def _connect() -> psycopg.Connection:
