@@ -1255,6 +1255,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar affinity` | Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone. |
 | `uv run bazaar trade-plan` | Dry-run trade plan for the next opening, fair by construction; sends nothing. |
 | `uv run bazaar swaps` | Read-only: the swaps the taker's team desk would propose in team threads (N17), sends nothing. |
+| `uv run bazaar team-checks` | Read-only: the N17 spec's Q1-Q6 answered from the shared DB (the feed, our refused sends, thread offers) |
 | `uv run bazaar rivals` | Rival behaviour profiles: pricing against the tape and own value, fills, takes, reprices. |
 | `uv run bazaar opportunities` | Read-only scanner: standing offers ranked by what accepting them gains us, guardrails checked. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
@@ -1301,6 +1302,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
 - [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
 - [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
 - [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
@@ -1308,7 +1310,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 - [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
 - [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
-- [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 
 <!-- BAZAAR:STATUS:END -->
 
