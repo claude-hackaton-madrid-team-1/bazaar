@@ -246,3 +246,12 @@ def test_a_conflict_reached_by_merging_the_file_is_written_back(tmp_path):
     duel_run = dd.DaysSwitch(verdict="conflict", path=tmp_path / dd.LATCH_FILE)  # held in memory, file says signed
     duel_run.observe([], True)
     assert dd.latch(tmp_path).verdict == "conflict" and not dd.latch(tmp_path).signed(True)
+
+
+@pytest.mark.parametrize("issues", [5, True, 1.5, "days", None])
+def test_a_malformed_issues_field_skips_only_its_own_row(tmp_path, issues):
+    # #150 security r2 P3: `observe` runs on every v1 tick; a bad row used to raise and stop every duel that tick.
+    switch = dd.latch(tmp_path)
+    good = duel(duel=8, days_meaning=SIM_TEXT)
+    assert switch.observe([duel(issues=issues, days_meaning=SIM_TEXT), good], True) == "signed"
+    assert dd.two_issue({"issues": issues}) is False

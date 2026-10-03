@@ -73,7 +73,8 @@ class DuelPick:
 
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
-    return "days" in (duel.get("issues") or [])
+    issues = duel.get("issues")
+    return isinstance(issues, list | tuple) and "days" in issues
 
 
 def _limit_role(duel: Mapping[str, Any]) -> tuple[int, str] | None:

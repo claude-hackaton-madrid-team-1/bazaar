@@ -596,7 +596,8 @@ def duel_run(
         days_switch.observe(rows, real)
         if days_switch.verdict != before:
             console.print(
-                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
+                f"  duel days sign: {days_switch.verdict} (duel {escape(str(days_switch.duel))}: "
+                f"{escape(str(days_switch.text))})"
             )
 
     def read_done_days(tick: int) -> None:

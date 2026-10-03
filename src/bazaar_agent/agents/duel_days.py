@@ -78,7 +78,8 @@ def _number(value: object) -> float | None:
 
 
 def two_issue(duel: Mapping[str, Any]) -> bool:
-    return "days" in (duel.get("issues") or [])
+    issues = duel.get("issues")
+    return isinstance(issues, list | tuple) and "days" in issues  # a malformed field is not two-issue (security r2)
 
 
 # ---------------------------------------------------------------- the sign of our weight
