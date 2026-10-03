@@ -10,7 +10,7 @@ Postgres is retried at most once per tick, and memory keeps serving recall meanw
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Sequence
 from typing import Any
 
 import psycopg
@@ -21,7 +21,7 @@ from bazaar_agent.learn.model import Learning
 STATEMENT_TIMEOUT_MS = 1500  # a recall or a write must never eat the tick
 RETRY_EVERY = 5  # ticks between Postgres retries once it failed (a connect may take seconds)
 MEMORY_MAX = 5000
-SCOPES = {"dealer": "trader", "team": "trader", "venue": "market", "organiser": "market"}
+SCOPES = {"dealer": "trader", "team": "trader", "venue": "market", "organiser": "market", "rival": "duel"}
 COLUMNS = "subject_kind, subject, kind, created_tick, until_tick, team, evidence, confidence, claim, source, stats"
 
 
@@ -48,10 +48,13 @@ UPSERT = (
     "insert into learnings (scope, subject_kind, subject, kind, created_tick, until_tick, team, evidence, support_n, "
     "confidence, claim, source, stats, dedupe_key, updated_at) "
     "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, now()) "
-    "on conflict (dedupe_key) do update set claim = excluded.claim, stats = excluded.stats, "
+    "on conflict (dedupe_key) do update set claim = excluded.claim, stats = excluded.stats, source = excluded.source, "
     "evidence = excluded.evidence, support_n = excluded.support_n, "
     "confidence = greatest(learnings.confidence, excluded.confidence), "
-    "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now()"
+    "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now() "
+    # an LLM row never rewrites another source's row; a rules fact takes back only a row an older LLM reading held
+    "where learnings.source is not distinct from excluded.source "
+    "or (excluded.source = 'rules' and learnings.source = 'llm')"
 )
 
 
@@ -83,10 +86,12 @@ def matches(
     subject_kind: str | None,
     tick: int | None,
     team: str | None,
+    source: str | None = None,
 ) -> bool:
     """`team`: the learnings that bind this team or everyone (None = every learning)."""
     return (
-        (subject is None or learning.subject == subject)
+        (source is None or learning.source == source)
+        and (subject is None or learning.subject == subject)
         and (kinds is None or learning.kind in kinds)
         and (subject_kind is None or learning.subject_kind == subject_kind)
         and (tick is None or learning.active(tick))
@@ -110,6 +115,7 @@ class LearningStore:
         self._tried_tick: int | None = None
         self._init_tried = False
         self._disabled = False  # the table lacks a column we need: memory only for this process
+        self._has_vectors: bool | None = None  # learnings.embedding exists (pgvector), read once per connection
         self.memory: dict[str, Learning] = {}
 
     # ---------------------------------------------------------------- connection (DecisionLog's pattern)
@@ -142,7 +148,7 @@ class LearningStore:
             return None
         if self._down:
             self._log("learnings: Postgres back")
-        self._conn, self._down = conn, False
+        self._conn, self._down, self._has_vectors = conn, False, None
         return conn
 
     def open(self) -> str:
@@ -212,16 +218,17 @@ class LearningStore:
         team: str | None = None,
         limit: int = 50,
         use_db: bool = True,
+        source: str | None = None,
     ) -> list[Learning]:
         """The learnings in force at `tick` (all ticks when None), newest first, deduped by key.
         `use_db=False`: memory only, no I/O (what a tick reads before its sends)."""
         found = {k: lr for k, lr in self.memory.items()}
-        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit) if use_db else ():
+        for lr in self._recall_db(subject, kinds, tick, subject_kind, team, limit, source) if use_db else ():
             found.setdefault(lr.key(), lr)
         hits = [
             lr
             for lr in found.values()
-            if matches(lr, subject=subject, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team)
+            if matches(lr, subject=subject, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team, source=source)
         ]
         return sorted(hits, key=lambda lr: (-lr.tick, lr.key()))[:limit]
 
@@ -233,6 +240,7 @@ class LearningStore:
         subject_kind: str | None,
         team: str | None,
         limit: int,
+        source: str | None = None,
     ) -> list[Learning]:
         conn = self._db()
         if conn is None:
@@ -244,6 +252,7 @@ class LearningStore:
             "and (%(sk)s::text is null or subject_kind = %(sk)s) "
             "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
             "and (%(team)s::text is null or team is null or team = %(team)s) "
+            "and (%(source)s::text is null or source = %(source)s) "
             "order by created_tick desc nulls last, id desc limit %(limit)s"
         )
         params = {
@@ -253,6 +262,7 @@ class LearningStore:
             "tick": tick,
             "team": team,
             "limit": limit,
+            "source": source,
         }
         try:
             with conn.transaction():
@@ -263,6 +273,190 @@ class LearningStore:
             return []
         return [lr for row in rows if (lr := _from_row(row)) is not None]
 
+    # ---------------------------------------------------------------- candidates (N3: the hybrid recall)
+
+    def candidates(
+        self,
+        *,
+        kinds: Collection[str] | None,
+        subjects: Collection[str] | None,
+        sources: Collection[str] | None,
+        subject_kind: str | None,
+        team: str | None,
+        tick: int | None,
+        where: Sequence[tuple[str, str]] = (),
+        limit: int,
+    ) -> list[Learning]:
+        """Every learning that passes ALL the hard filters, newest first: the filters run in SQL before the
+        limit, so many rows about other subjects can never push the relevant ones out of the pool."""
+
+        def wanted(lr: Learning) -> bool:
+            return (
+                matches(lr, subject=None, kinds=kinds, subject_kind=subject_kind, tick=tick, team=team)
+                and (subjects is None or lr.subject in subjects)
+                and (sources is None or lr.source in sources)
+                and all(str(lr.detail.get(k)) == v for k, v in where)
+            )
+
+        found = {k: lr for k, lr in list(self.memory.items()) if wanted(lr)}
+        conn = self._db()
+        if conn is not None:
+            query = (
+                f"select {COLUMNS} from learnings where dedupe_key is not null and superseded_by is null "
+                f"{FILTERS} order by created_tick desc nulls last, id desc limit %(limit)s"
+            )
+            params = _filters(kinds, subjects, sources, subject_kind, team, tick, where) | {"limit": limit}
+            try:
+                with conn.transaction():
+                    conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                    rows = conn.execute(query, params).fetchall()  # type: ignore[arg-type]
+            except psycopg.Error as e:
+                self._failed("candidates", e)
+                rows = []
+            for row in rows:
+                lr = _from_row(row)
+                if lr is not None and wanted(lr):
+                    found.setdefault(lr.key(), lr)
+        return sorted(found.values(), key=lambda lr: (-lr.tick, lr.key()))[:limit]
+
+    # ---------------------------------------------------------------- vectors (N3: the hybrid recall)
+
+    def _vector_off(self, conn: psycopg.Connection, error: Exception) -> None:
+        """A vector column or type is missing (no pgvector, an unmigrated table): the vector leg and the
+        embeddings stop for this connection, everything else in the store goes on."""
+        if self._has_vectors is not False:
+            self._log(f"learnings: no vector search here ({type(error).__name__}); BM25 only")
+        self._has_vectors = False
+        if not conn.closed and conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            conn.rollback()
+
+    def _vectors_on(self, conn: psycopg.Connection) -> bool:
+        """Whether `learnings.embedding` exists (it does only where pgvector is installed)."""
+        if self._has_vectors is None:
+            row = conn.execute(
+                "select 1 from information_schema.columns where table_schema = current_schema() "
+                "and table_name = 'learnings' and column_name = 'embedding'"
+            ).fetchone()
+            self._has_vectors = row is not None
+        return self._has_vectors
+
+    def vector_rank(
+        self,
+        vector: Sequence[float],
+        *,
+        kinds: Collection[str] | None,
+        tick: int | None,
+        subject_kind: str | None,
+        team: str | None,
+        subjects: Collection[str] | None,
+        limit: int,
+        sources: Collection[str] | None = None,
+        where: Sequence[tuple[str, str]] = (),
+    ) -> list[tuple[str, float]]:
+        """(dedupe key, cosine similarity) of the embedded learnings nearest `vector`, under the same hard
+        filters as `recall()`. Empty without pgvector, without a connection, or on any error."""
+        conn = self._db()
+        if conn is None:
+            return []
+        query = (
+            "select dedupe_key, 1 - (embedding <=> %(v)s::vector) from learnings "
+            f"where embedding is not null and dedupe_key is not null and superseded_by is null {FILTERS} "
+            "order by embedding <=> %(v)s::vector limit %(limit)s"
+        )
+        params = _filters(kinds, subjects, sources, subject_kind, team, tick, where) | {
+            "v": vector_literal(vector),
+            "limit": limit,
+            "where": json.dumps(dict(where)) if where else None,
+        }
+        try:
+            if not self._vectors_on(conn):
+                return []
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                rows = conn.execute(query, params).fetchall()  # type: ignore[arg-type]
+        except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedObject) as e:
+            self._vector_off(conn, e)
+            return []
+        except psycopg.Error as e:
+            self._failed("vector search", e)
+            return []
+        return [(str(key), float(cos)) for key, cos in rows if key is not None and cos is not None]
+
+    def embed_missing(self, embed: Callable[[list[str]], list[list[float]] | None], limit: int = 64) -> int:
+        """Embed the learnings whose text changed since they were embedded (or never were). Returns how
+        many were written; 0 without pgvector, without models or on any error (retried next pass)."""
+        conn = self._db()
+        if conn is None:
+            return 0
+        try:
+            if not self._vectors_on(conn):
+                return 0
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                rows = conn.execute(
+                    "select id, claim from learnings where claim is not null and dedupe_key is not null "
+                    "and (embedding is null or embedded_hash is distinct from md5(claim)) order by id limit %s",
+                    (limit,),
+                ).fetchall()
+            if not rows:
+                return 0
+            vectors = embed([str(claim) for _, claim in rows])
+            if not vectors or len(vectors) != len(rows):
+                return 0
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                with conn.cursor() as cur:
+                    cur.executemany(  # a claim edited meanwhile keeps its old hash: embedded again next pass
+                        "update learnings set embedding = %s::vector, embedded_hash = md5(claim) "
+                        "where id = %s and md5(claim) = md5(%s)",
+                        [(vector_literal(v), rid, claim) for (rid, claim), v in zip(rows, vectors, strict=True)],
+                    )
+        except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedObject) as e:
+            self._vector_off(conn, e)
+            return 0
+        except psycopg.Error as e:
+            self._failed("embedding write", e)
+            return 0
+        return len(rows)
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
+
+
+FILTERS = (
+    "and (%(kinds)s::text[] is null or kind = any(%(kinds)s)) "
+    "and (%(subjects)s::text[] is null or subject = any(%(subjects)s)) "
+    "and (%(sources)s::text[] is null or source = any(%(sources)s)) "
+    "and (%(sk)s::text is null or subject_kind = %(sk)s) "
+    "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
+    "and (%(team)s::text is null or team is null or team = %(team)s) "
+    # each feature compared as text, as memory compares it (a number 115 matches "115")
+    "and (%(where)s::jsonb is null or not exists (select 1 from jsonb_each_text(%(where)s::jsonb) w "
+    "where (stats ->> w.key) is distinct from w.value))"
+)
+
+
+def _filters(
+    kinds: Collection[str] | None,
+    subjects: Collection[str] | None,
+    sources: Collection[str] | None,
+    subject_kind: str | None,
+    team: str | None,
+    tick: int | None,
+    where: Sequence[tuple[str, str]],
+) -> dict[str, Any]:
+    return {
+        "kinds": sorted(kinds) if kinds is not None else None,
+        "subjects": sorted(subjects) if subjects is not None else None,
+        "sources": sorted(sources) if sources is not None else None,
+        "sk": subject_kind,
+        "tick": tick,
+        "team": team,
+        "where": json.dumps(dict(where)) if where else None,
+    }
+
+
+def vector_literal(vector: Sequence[float]) -> str:
+    """pgvector's text form: '[0.1,0.2,...]' (no pgvector Python adapter needed)."""
+    return "[" + ",".join(f"{float(x):.6g}" for x in vector) + "]"

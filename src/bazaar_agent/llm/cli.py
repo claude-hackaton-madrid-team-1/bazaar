@@ -43,6 +43,7 @@ from bazaar_agent.llm.steering import (
     steer_request,
 )
 from bazaar_agent.llm.words import llm_words
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.ticks import Clock
 
 console = Console()
@@ -109,6 +110,23 @@ def words_for(settings: Settings, rules: Guardrails, fallback: WordsFn) -> Words
         return fallback
     console.print(f"words: runtime LLM (llm_words = true), {claude_auth(settings)}, templates on any failure")
     return llm_words(runtime, fallback, log=lambda line: console.print(escape(line)))
+
+
+def runtime_for(settings: Settings, rules: Guardrails, purpose: str) -> LLMRuntime | None:
+    """The runtime LLM for a background job (the feed reader), built before the first tick; None without one."""
+    try:
+        loaded = load_runtime()
+        runtime = build_runtime(settings, loaded.config, rules, cli_pin=STATE["pin"])
+        runtime.warm()
+    except (RuntimeConfigError, UnknownModelError, LLMError) as e:
+        console.print(f"[yellow]{purpose}: runtime LLM off ({escape(str(e))})[/yellow]")
+        return None
+    aliases = (*loaded.config.runtime_models, loaded.config.runtime_model_default)
+    if not any(credential_for(resolve(alias).provider, settings) is not None for alias in aliases):
+        console.print(f"[yellow]{purpose}: runtime LLM off (no credential for any runtime model)[/yellow]")
+        return None
+    console.print(f"{purpose}: runtime LLM, {claude_auth(settings)}, model from Jev's read_feed choice")
+    return runtime
 
 
 def claude_auth(settings: Settings) -> str:
@@ -311,7 +329,8 @@ def _print_verdict(intent: Intent, settings: Settings, rules: Guardrails) -> Non
         return
     from bazaar_agent.ledger_pg import open_ledger
 
-    ctx = gr.context_from(me, clock.tick, clock.t_hours, open_ledger(settings.data_dir, source="ask"), rules)
+    ledger = open_ledger(settings.data_dir, source="ask")
+    ctx = gr.context_from(me, clock.tick, clock.t_hours, ledger, rules, OfficialValues.of(client))
     verdict = gr.check(action, ctx, rules)
     colour = "green" if verdict.allowed else "red"
     console.print(

@@ -334,6 +334,10 @@ class TeamDesk:
             "created_tick": talk.sent_tick,
         }
 
+    def thread_payload(self, tid: int) -> dict[str, Any] | None:
+        """The team thread as `proposals` read it this tick (None: not read): the accept gate reads it again."""
+        return self._payloads.get(tid)
+
     def clear_before_accept(self, v: DeskView, a: SwapAccept, decision_id: int) -> bool:
         """Before we take a team's offer in a thread, our own offer there goes: never two deals in one thread
         (both copies would leave). False when a cancel was refused: the taker then does not accept."""

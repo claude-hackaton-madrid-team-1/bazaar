@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from bazaar_agent.agents.bluff import Counterparty, TacticBook, message_id
+from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 
 MoveKind = Literal["accept", "bid", "walk", "wait"]
@@ -35,15 +38,31 @@ KIND_WORDS = (
 
 @dataclass(frozen=True)
 class BidPlan:
-    """Our side of one conversation. `max_price` is the hard limit: never pay above it."""
+    """Our side of one conversation. `max_price` is the hard limit on our bids and on a plain ask.
+    `final_max` (N14a): the most we take for the dealer's FINAL offer (its limit, take it or it walks);
+    None = `max_price`, as before. It is set only from `guardrails.final_cap_for` and our value."""
 
     start: int
     step: int
     max_price: int
+    final_max: int | None = None
+    lift_after: int = 0  # a final above `max_price` is taken only after this many of our bids (N14a)
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
             raise ValueError(f"bad plan: start={self.start} step={self.step} max={self.max_price}")
+        if self.final_max is not None and self.final_max < self.max_price:
+            raise ValueError(f"bad plan: final_max={self.final_max} below max={self.max_price}")
+
+    @property
+    def final_cap(self) -> int:
+        return self.max_price if self.final_max is None else self.final_max
+
+    def takes_final(self, ask: int, bids: int) -> bool:
+        """A final we take: inside our top, or inside `final_max` once we have bid `lift_after` times (a dealer
+        that names a high "final" before haggling is not given the lifted cap: Friday's earliest real one came
+        after 4 bids)."""
+        return ask <= self.max_price or (ask <= self.final_cap and bids >= self.lift_after)
 
 
 @dataclass(frozen=True)
@@ -147,13 +166,16 @@ def reopen_start(neg: Negotiation) -> int | None:
     return lower if lower < first else None
 
 
-def meet_ask(neg: Negotiation, ask: int | None) -> Move:
+def meet_ask(neg: Negotiation, ask: int | None, final: bool = False) -> Move:
     """Our accept slot went elsewhere this tick: bid exactly her ask instead (a new, higher price inside our
-    max), so the dealer can accept OUR offer; going silent would freeze the thread. Only for an ask we may
-    take (`may_take`): her opening price never. Otherwise wait."""
+    max, or her final inside `final_max` once we bid `lift_after` times: N14a), so the dealer can accept OUR
+    offer; going silent would freeze the thread. Only for an ask we may take (`may_take`): her opening price
+    never. Otherwise wait."""
     last = neg.bids[-1] if neg.bids else 0
-    if ask is not None and neg.may_take(ask) and last < ask <= neg.plan.max_price:
-        return Move("bid", ask, reason="accept slot used: meet her ask")
+    inside = ask is not None and (neg.plan.takes_final(ask, len(neg.bids)) if final else ask <= neg.plan.max_price)
+    if ask is not None and inside and neg.may_take(ask) and last < ask:
+        what = "final" if ask > neg.plan.max_price else "ask"
+        return Move("bid", ask, reason=f"accept slot used: meet her {what}")
     return Move("wait", reason="accept slot used this tick")
 
 
@@ -171,8 +193,15 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             if final:
                 return Move("walk", reason=f"her final {ask} is her opening price: it scores nothing", reopen=True)
             return counter_below(neg, ask)
+        if final and ask <= neg.plan.final_cap:  # above our top: a lifted final (N14a, `dealer_final_lift`)
+            if not neg.plan.takes_final(ask, len(neg.bids)):
+                early = f"final {ask} above our top {neg.plan.max_price} after {len(neg.bids)} bid(s)"
+                return Move("walk", reason=f"{early}: a lifted final needs {neg.plan.lift_after}")
+            if neg.may_take(ask):
+                return Move("accept", ask, offer_id, "final within limit")
+            return Move("walk", reason=f"her final {ask} is her opening price: it scores nothing", reopen=True)
         if final:
-            return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
+            return Move("walk", reason=f"final {ask} above our limit {neg.plan.final_cap}")
     if nxt is None:  # our max is bid: her answer to it may still be a "Deal!"
         wait = patient(neg, neg.awaiting_reply, "her answer to our max bid is not in yet")
         return wait or Move("walk", reason="no higher bid left inside our limit")
@@ -292,17 +321,27 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
         return "the offer gives cash on a buy"
     if item is None:
         return None
-    refs = [str(t).split(":", 1)[-1] for t in give.get("types") or []]
-    refs += [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
-    if refs != [item]:
-        return f"the offer gives {refs or 'nothing'} instead of exactly [{item}]"
+    kinds = [str(t) for t in give.get("types") or []]  # 'card:LAV-08' / 'pack:sobre_barrio': the kind binds too
+    kinds += [f"{a.get('kind') or 'card'}:{a.get('ref')}" for a in give.get("assets") or [] if isinstance(a, dict)]
+    expected = f"{'card' if '-' in item else 'pack'}:{item}"
+    if kinds != [expected] or len(give.get("assets") or []) + len(give.get("types") or []) != 1:
+        return f"the offer gives {kinds or 'nothing'} instead of exactly [{expected}]"
     return None
 
 
 Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move, int], str | None]  # (move, our thread id) → a deny reason, or None when allowed
-# (accept, its clock) → True: the team's accept slot is ours; False: taken; None: unreadable, hold the tick
+# (accept, its clock) → True: the team's accept slot is ours; False: taken; None (or `Hold`): unreadable, hold the tick
 Reserve = Callable[[Move, Any], bool | None]
+Inspect = Callable[[dict[str, Any], Move], str | None]  # the accept gate on this tick's thread: a refusal, or None
+
+
+class Hold(Exception):
+    """Raised by a guard or a reserve that cannot decide this tick (the shared ledger is down): nothing is
+    sent, the thread stays open, and the move is decided again next tick. A denial walks; a hold never does.
+    Unlike the kill switch, a held tick still counts toward `max_ticks`: a long outage ends in the timeout."""
+
+
 DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a deal settles
 KillSwitch = Callable[[], Sequence[str]]  # why every write is refused right now (empty: off)
 
@@ -361,6 +400,10 @@ class Observer:
     def finished(self, outcome: Outcome) -> None:
         """The negotiation ended."""
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        """Wraps one request to the game (`say`, `accept`, `close_thread`)."""
+        return nullcontext()
+
 
 class _SafeObserver(Observer):
     """Runs every hook of a real observer but swallows its failures: tracing never breaks a deal."""
@@ -400,6 +443,12 @@ class _SafeObserver(Observer):
     def finished(self, outcome: Outcome) -> None:
         self._call("finished", outcome)
 
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        try:
+            return self._inner.tool(name)
+        except Exception:
+            return nullcontext()
+
 
 def negotiate(
     client: Any,
@@ -417,6 +466,10 @@ def negotiate(
     words_fn: WordsFn = template_words,
     reserve: Reserve | None = None,
     kill_switch: KillSwitch | None = None,
+    on_thread: Callable[[dict[str, Any]], None] | None = None,
+    inspect: Inspect | None = None,
+    bluff: TacticBook | None = None,
+    events: Callable[[int], list[dict[str, Any]]] | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
@@ -430,6 +483,16 @@ def negotiate(
     stays open, and a held tick does not count toward `max_ticks`, so the negotiation resumes where it
     was when the switch goes off. It is read again just before every send. Any other guard denial still
     turns the move into a walk. A walk because she held her opening ask returns `Outcome.reopen_start`.
+
+    `on_thread` sees each tick's thread payload first (the offer inspector's would-flag log); it never
+    changes the move, and its failures are logged, not raised. `inspect` is the accept gate (S1): it runs
+    before `guard` and before the team's accept slot is claimed; a refusal means no accept this tick, never
+    a walk.
+
+    `bluff` (N16) picks a tactic for a bid's words only, after `decide()` and the guard set the move; it is
+    scored on her next move. `events` (the keyless public feed window, short timeout) is read at the start
+    of a tick, before that tick's message, as the taker does: a strike or a flag lands on the message that
+    drew it.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -444,6 +507,7 @@ def negotiate(
         return Outcome(None, "held", None, (), 0)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
+    conversation = f"thread:{tid}"
     obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
     state: dict[str, Any] = {
@@ -479,6 +543,11 @@ def negotiate(
             state["price"] = settled_price(thread) or state["price"] or (neg.bids[-1] if neg.bids else None)
             if on_deal is not None and state["price"] is not None:
                 on_deal(int(state["price"]), clock.tick, clock.t_hours)
+        if bluff is not None:  # after the booking: the tactic lesson never delays a deal's spend
+            reason = thread.get("closed_reason")
+            why = reason if isinstance(reason, str) else None
+            bluff.ended(conversation, status=state["status"], closed_reason=why, tick=clock.tick)
+            bluff.flush()
         return True
 
     def reread(clock: Clock) -> None:
@@ -499,7 +568,8 @@ def negotiate(
         simulator answers 200 {"status": "deal"}), may hide a "Deal!" that landed since our last read: read
         the thread again and book it. A rate limit sends nothing more now: the thread stays open."""
         try:
-            answer = client.close_thread(tid)
+            with obs.tool("close_thread"):
+                answer = client.close_thread(tid)
         except BazaarError as e:
             log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
             if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
@@ -546,6 +616,11 @@ def negotiate(
         state["ticks"] += 1
         thread = client.thread(tid)
         obs.thread_read(thread)
+        if on_thread is not None:
+            try:
+                on_thread(thread)
+            except Exception as e:  # inspection must never change or break the negotiation
+                log(f"tick {clock.tick}: offer inspection failed ({type(e).__name__}); negotiation continues")
         if ended(thread, clock):
             return
         if hold(f"tick {clock.tick}"):  # a held tick does not count toward max_ticks
@@ -560,6 +635,10 @@ def negotiate(
             log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
             ask, offer_id, final = None, None, False
         see_history(neg, thread, dealer, item)  # her opening ask, even if it lapsed while we held
+        if bluff is not None:
+            bluff.begin_tick(clock.tick, clock.round)
+            bluff.read_events(events, clock.tick)  # before this tick's message: a strike is about the last one
+            bluff.observe(conversation, their_price=ask, their_offer=offer_id, tick=clock.tick)
         move = decide(neg, ask, offer_id, final)
         if advisor is not None and action_budget_s(clock) > 4.0:
             move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id)
@@ -570,8 +649,18 @@ def negotiate(
             f"tick {clock.tick}: her ask {ask}{' FINAL' if final else ''} → {move.kind} {move.price or ''} "
             f"({move.reason})"
         )
+        if inspect is not None and move.kind == "accept":
+            refused = inspect(thread, move)
+            if refused:
+                log(f"tick {clock.tick}: INSPECTOR refused the accept of offer {move.offer_id}: {refused}")
+                obs.guardrail(move, f"inspector: {refused}")
+                return
         if guard is not None and move.kind in ("accept", "bid"):
-            denied = guard(move, tid)
+            try:
+                denied = guard(move, tid)
+            except Hold as e:
+                log(f"tick {clock.tick}: HOLD {move.kind} {move.price}: {e} → nothing sent, deciding next tick")
+                return
             obs.guardrail(move, denied)
             if denied and hold(f"tick {clock.tick}"):  # the switch went on mid-tick: hold, never walk
                 return
@@ -589,7 +678,11 @@ def negotiate(
             send_by = time.monotonic() + action_budget_s(fresh)
             if move.kind == "accept" and hold(f"tick {clock.tick}, before reserving the accept slot"):
                 return  # never take the team's accept slot (the duel player's too) while the switch is on
-            slot = reserve(move, fresh) if move.kind == "accept" and reserve is not None else True
+            try:
+                slot = reserve(move, fresh) if move.kind == "accept" and reserve is not None else True
+            except Hold as e:
+                log(f"tick {clock.tick}: HOLD accept {move.price}: {e} → nothing sent, deciding next tick")
+                return
             if slot is None:  # the shared ledger cannot answer: send nothing, never a bid it could not book
                 log(f"tick {fresh.tick}: the team's accept slot cannot be read → hold this tick")
                 return
@@ -598,9 +691,16 @@ def negotiate(
                 log(f"tick {fresh.tick}: the team's accept slot is taken this tick → {move.kind} {move.price or ''}")
                 if move.kind != "bid":
                     return
-        text = None
+        text, choice = None, None
         if move.kind == "bid" and move.price is not None:
-            text = bid_words(words_fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
+            if bluff is not None:
+                avoid = private_numbers(plan.max_price)
+                cp = Counterparty.dealer(dealer)
+                step = len(neg.bids)
+                choice = bluff.choose(cp, "buy", conversation, step, move.price, avoid=avoid, their_price=ask)
+                log(f"tick {clock.tick}: words tactic {choice.tactic or 'none'} ({choice.reason})")
+            fn = choice.words(words_fn) if choice is not None else words_fn
+            text = bid_words(fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
             if time.monotonic() > send_by:
                 log(f"tick {clock.tick}: the words took the rest of the tick, re-deciding next tick")
                 return
@@ -609,18 +709,26 @@ def negotiate(
         obs.move(move, text)
         try:
             if move.kind == "accept" and move.offer_id is not None:
-                client.accept(move.offer_id)
+                with obs.tool("accept"):
+                    client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None and text is not None:
-                client.say(tid, text, price=move.price)
+                with obs.tool("say"):
+                    body = client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
+                if bluff is not None and choice is not None:
+                    bluff.sent(choice, their_price=ask, their_offer=offer_id, tick=clock.tick, message=message_id(body))
             elif move.kind == "walk":
                 state["status"] = close("walked", clock)
                 if state["status"] in ("walked", "closed"):
                     state["reopen"] = reopen_start(neg) if move.reopen else None
+                if bluff is not None:
+                    bluff.dropped(conversation)
         except BazaarError as e:
             obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
+        if bluff is not None:
+            bluff.flush()  # after the send: the lessons go to the store
 
     tick = obs.wrap_tick(on_tick)
     run_per_tick(

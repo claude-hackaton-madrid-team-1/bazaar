@@ -74,7 +74,8 @@ def test_open_offers_count_addressed_to_their_team_and_public_ones_to_every_team
 def test_dealers_and_non_trades_are_never_capped():
     ctx = Context(cash=1000, held={}, tick=1, t_hours=0.1, trades=TradeBook({"t05": 10_000}))
     assert check(Action("accept_buy", "LAV-02", "common", 12), ctx, CAP).allowed  # a dealer: no counterparty
-    assert check(Action("duel_accept", "duel:1", None, 999, counterparty="t05"), ctx, CAP).allowed
+    duel = Action("duel_accept", "duel:1", None, 999, counterparty="t05", limit=1000, role="buyer")  # inside our limit
+    assert check(duel, ctx, CAP).allowed
     assert not check(Action("accept_buy", "LAV-02", "common", 12, counterparty="t05"), ctx, CAP).allowed
 
 
@@ -432,6 +433,7 @@ def test_a_dealer_accept_holds_the_tick_when_the_shared_ledger_cannot_answer():
     from types import SimpleNamespace
 
     from bazaar_agent import cli
+    from bazaar_agent.agents.dealer import Hold
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     class Down:
@@ -443,7 +445,8 @@ def test_a_dealer_accept_holds_the_tick_when_the_shared_ledger_cannot_answer():
             return False
 
     move = SimpleNamespace(price=20)
-    assert cli._reserve_accept(Down(), Guardrails(), "LAV-08", move, clock()) is None  # hold, never a traceback
+    with pytest.raises(Hold, match="no write without the shared ledger"):  # hold the tick, never a traceback
+        cli._reserve_accept(Down(), Guardrails(), "LAV-08", move, clock())
     assert cli._reserve_accept(Full(), Guardrails(), "LAV-08", move, clock()) is False
     from bazaar_agent.guardrails import Ledger
 
