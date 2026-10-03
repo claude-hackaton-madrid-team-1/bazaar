@@ -880,6 +880,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#74](../../pull/74) | docs: status page after #55 and #69 | `docs/status-sim-live` |
 | [#73](../../pull/73) | fix: BAZAAR_LIVE survives applies; the OFF monitor can't be revived; docs say taker/maker are LIVE | `ogarciarevett/fix-railway-live-monitor` |
 | [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
 | [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
