@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
 from bazaar_agent.rank_watch import RankWatch
 from bazaar_agent.schedule_watch import ScheduleWatch
@@ -236,13 +237,17 @@ class NewsSentinel:
         log: Callable[[str], None],
         out_dir: Path,
         every: int = READ_EVERY_TICKS,
+        history: LeaderboardStore | None = None,
     ) -> None:
         self.public, self.record, self.log, self.every = public, record, log, every
         self.path = out_dir / EVENTS_FILE
         self.seen: dict[str, NewsItem] = {}
         self.events: list[MarketEvent] = []
         self.schedule = ScheduleWatch(record, log)
-        self.ranks = RankWatch(record, log)
+        self.ranks = RankWatch(record, log, save=history.save if history is not None else None)
+        if history is not None:  # at process start, never in a tick
+            boards = self.ranks.seed(history.load(self.ranks.history))
+            log(f"news: rank history {boards} board(s) from Postgres")
         self.upcoming: list[dict[str, Any]] = []
         self._last_read: int | None = None
         self._due: list[str] = []  # this window's reads still to make, one per tick

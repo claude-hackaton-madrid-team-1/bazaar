@@ -335,3 +335,11 @@ create table if not exists team_buyer_rank (
   card text not null, team text not null, position int, rank int, willing numeric, interest numeric,
   missing bool, expected numeric, rival text, blocked bool, why text, updated_tick int,
   primary key (card, team));
+
+-- The public leaderboard, one row per team per news-sentinel window (`leaderboard_store.py`): the rank watch
+-- reloads its history from here after a restart. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
+create table if not exists leaderboard_snapshots (
+  world text not null, tick int not null, team text not null, rank int not null, score numeric,
+  negotiating numeric, market numeric, level int, pages int, deals int, venue text,
+  read_at timestamptz not null default now(),
+  primary key (world, tick, team));

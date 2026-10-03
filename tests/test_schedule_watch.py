@@ -138,3 +138,10 @@ def test_a_level_with_an_odd_id_is_skipped():
         "levels": [{"id": "x" * 65, "state": "announced"}, {"id": "a b", "state": "announced"}, {"state": "announced"}]
     }
     assert events_from_levels(odd) == []
+
+
+def test_an_id_with_a_trailing_newline_is_refused():
+    from bazaar_agent.rank_watch import _id
+
+    assert events_from_levels({"levels": [{"id": "pilar\n", "state": "announced"}]}) == []
+    assert _id("t14\n") is None and _id("t14") == "t14"

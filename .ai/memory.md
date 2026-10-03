@@ -965,3 +965,8 @@ on the next tick, read the clock until `tick` is strictly later (bounded), as `n
 service (judge answers `undecided`), a Jev timeout or a tick with < `jev_min_budget_s` left all mean no swap
 (fail closed, a `rejected` decision row with the verdict). The cash we add to swaps is booked as `team:<card>`
 spend rows (`team_swap_max_cash_per_hour` sums them), still counted in `max_spend_per_game_hour`.
+### [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
+An integration test that failed before `conn.close()` left a psycopg session `idle in transaction` (its last select
+holds a lock), and the `schema` fixture's `drop schema … cascade` waited on it with no timeout: pytest hung for
+minutes. Use `conn.autocommit = True` and `try/finally: conn.close()` in such tests. Also: macOS has no `timeout`
+command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; run it in the background instead.
