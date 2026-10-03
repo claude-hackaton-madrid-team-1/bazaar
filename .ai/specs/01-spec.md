@@ -2,7 +2,7 @@
 
 - Status: **DRAFT — awaiting human approval** (reply `approved` or `change: <details>`)
 - Date: 2026-10-02 (Friday, game hour 0.32, tick 17)
-- Traces to: kickoff briefing (`docs/briefing.md`), `vendor/bazaar-kit/RULES.md`, GitHub issues #1–#24
+- Traces to: kickoff briefing (`docs/briefing.md`), `vendor/bazaar-kit/RULES.md`, the repo specs (`.ai/specs/*-spec.md`; GitHub issues #1–#24 were migrated there and closed on 2026-10-03, archive in `docs/issues-archive.md`)
 - Part 2 (phases, backlog, steps): [`02-plan.md`](./02-plan.md)
 - Language: **Python only.** No `.ts` or `.rs` in our code. Jev is ported to Python (§6.3);
   `vendor/jev-sdk/` stays as the reference implementation and a test oracle, never a runtime dependency.

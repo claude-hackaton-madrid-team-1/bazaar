@@ -43,6 +43,8 @@ class Guardrails(BaseModel):
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     block_buying_held_cards: bool = True
+    holdings_from_db: bool = True
+    holdings_max_age_s: float = Field(default=5.0, ge=0, le=60)
     max_accepts_per_tick: int = 1
     dealer_max_ticks_per_thread: int = 14
     jev_can_accept_early: bool = True
@@ -76,6 +78,8 @@ ENFORCED_BY: dict[str, str] = {
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
+    "holdings_from_db": "holdings.Holdings.me",
+    "holdings_max_age_s": "holdings.Holdings.me (Postgres clock)",
     "max_accepts_per_tick": "guardrails.check + ledger.reserve_accept (shared, atomic)",
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice; agents.duel_jev.choose",

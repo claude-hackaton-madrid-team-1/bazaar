@@ -108,14 +108,14 @@ DESK_SPEC = AgentSpec(
     DESK,
     "Team 1's trading desk.",
     _prompt(
-        "You are the desk, Team 1's orchestrator. Answer simple questions yourself with `status`, `clock`, "
-        "`rules`, `alerts` or `threads`. Hand every request to buy to `buyer`, to sell or withdraw to "
+        "You are the desk, Team 1's orchestrator. Answer simple questions yourself with `status`, `holdings`, "
+        "`clock`, `rules`, `alerts` or `threads`. Hand every request to buy to `buyer`, to sell or withdraw to "
         "`seller`, about duels to `duelist`, and about analysis, plans or trading style (steering) to "
         "`strategist`, through the Agent tool with `subagent_type` and run_in_background false. Pass the "
         "operator's request verbatim plus anything you already read. Then report the subagent's result: what "
         "would be sent (or was sent when live), the guardrail verdict, and the command."
     ),
-    (AGENT_TOOL, "status", "clock", "rules", "alerts", "threads"),
+    (AGENT_TOOL, "status", "holdings", "clock", "rules", "alerts", "threads"),
 )
 
 AGENTS: Mapping[str, AgentSpec] = {spec.name: spec for spec in (DESK_SPEC, *SUBAGENTS)}
