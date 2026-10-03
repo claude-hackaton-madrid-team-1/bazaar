@@ -66,14 +66,23 @@ def table_counts(conn: psycopg.Connection) -> list[tuple[str, int]]:
 
 def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, int]:
     """Insert raw events and their settlements (tape). Safe on any subset: conflicts are ignored."""
+    with conn.cursor() as cur:
+        counts = insert_events(cur, events)
+    conn.commit()
+    return counts
+
+
+def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str, int]:
+    """`load_events` without the commit: the caller owns the transaction (the taker's feed archive)."""
     events = sorted(events, key=lambda e: e["id"])
     prints: list[Print] = sorted(tape(events), key=lambda p: p.settlement)
-    with conn.cursor() as cur:
+    if events:
         cur.executemany(
             "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s) "
             "on conflict (id) do nothing",
             [(e["id"], e.get("tick"), e.get("type"), e.get("actor"), json.dumps(e.get("payload"))) for e in events],
         )
+    if prints:
         cur.executemany(
             "insert into tape (settlement_id, tick, venue, persona, buyer, seller, items, card_id, price, "
             "fee) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (settlement_id) do nothing",
@@ -93,7 +102,6 @@ def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, 
                 for p in prints
             ],
         )
-    conn.commit()
     return {"feed_events": len(events), "tape": len(prints)}
 
 
