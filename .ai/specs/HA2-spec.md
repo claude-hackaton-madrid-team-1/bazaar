@@ -14,9 +14,10 @@ CLI, and no agent of ours can ever approve its own trade.
   They are NOT in `tools.TOOLS`: the desk's in-process server, the subagents' allow-lists, the desk's PreToolUse
   hook and `bazaar agent chat` never see them.
 - `runtime/mcp_server.py`: served only on a request whose `X-Approver-Token` equals `BAZAAR_APPROVER_TOKEN`
-  (sha256 digests, `hmac.compare_digest`), on top of the bearer token. Bearer alone: not listed, a call reads
-  `unknown tool`. A wrong or empty approver token: `403 {"error": "forbidden"}`; 5 wrong ones from one bearer token
-  in 15 minutes lock even the right one out for the rest of the window. `BAZAAR_APPROVER_TOKEN` unset, weak (the
+  (sha256 digests, `hmac.compare_digest`), on top of the bearer token. An approver request sees ONLY the three
+  human tools (it never reads counterparty text next to `approve`). Bearer alone: not listed, a call reads
+  `unknown tool`. A wrong or empty approver token: `403 {"error": "forbidden"}` and a WARN line; no lockout (review
+  of #241: a lock keyed on the shared bearer let any bearer holder lock the human out). `BAZAAR_APPROVER_TOKEN` unset, weak (the
   bearer's rule: 32+ chars, 16+ distinct) or equal to the bearer: the tools do not exist (every approver header is a
   403). It is read from the environment only (never `.env`) and scrubbed from every answer like the bearer.
 - Validation: card `^[A-Z]{3}-\d{2}$` and in the catalog, side buy|sell, price int in [1, 1000], ttl in [1, 480]
@@ -26,7 +27,10 @@ CLI, and no agent of ours can ever approve its own trade.
   the official value of one more copy (`/api/me/value`, unreadable → refused), or of a rarity with no cap; a sell
   of a card we do not hold, of a page's last copy (`protect_page_sets`), or below `sell_min_value_ratio` × our value
   of the copy (unreadable → refused). /me unreadable: the tool fails and writes nothing.
-- Writes capped at 10 per minute (server-wide), on top of the per-token tool-call bucket.
+- Writes capped at 10 per minute (server-wide), on top of the per-token tool-call bucket. Approves and revokes run
+  one at a time (a revoke never overtakes an approve still checking), each with its audit row on one connection;
+  a stored reason is scrubbed of our secrets. A revoke (or a deny) marks the card+side's requests denied. A sell
+  approval also releases a sale `max_score_loss_per_move` (MI1) holds.
 - Every approve, refusal, revoke and denial writes a `decisions` row (agent `guard`, kinds `approval_granted`,
   `approval_refused`, `approval_revoked`, `approval_denied`), scrubbed, no secret.
 - `approvals` answers the requests of the last 2 game hours (`approvals.PENDING_TICKS`) with state
@@ -40,7 +44,8 @@ CLI, and no agent of ours can ever approve its own trade.
 1. The human tools are in no agent tool set (TOOLS, allow-lists, desk options, subagent definitions) and the desk
    hook denies them.
 2. The bearer token alone neither lists nor runs them; `/health` says nothing about them.
-3. A wrong approver token is a 403; 5 lock the right one out for 15 minutes; unset → they do not exist.
+3. A wrong approver token is a 403 and a WARN, never a lockout; unset → they do not exist; an approver request
+   sees only the human tools.
 4. The approver token must be strong and differ from the bearer; the serve command turns the tools off otherwise.
 5. Every input is validated before anything is read or written.
 6. Buys above a hard cap and sells of a last copy or below our value are refused and logged; others approved with

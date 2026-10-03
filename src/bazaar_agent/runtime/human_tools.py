@@ -5,21 +5,26 @@ An approval (`approvals.py`, HA1) is the human's veto over our own agents, so no
   hooks and `bazaar agent chat` never see them;
 - only the remote server (`runtime.mcp_server`) serves them, and only on a request that carries
   `X-Approver-Token` equal to BAZAAR_APPROVER_TOKEN, a second secret beside the bearer token. Unset, too weak or
-  equal to the bearer token, the tools are not even listed (fail closed); the bearer alone never shows them.
+  equal to the bearer token, the tools are not even listed (fail closed); the bearer alone never shows them. An
+  approver request sees ONLY these three tools, so counterparty text never shares a context with `approve`.
 
 Every input is validated (a card of the catalog, a price in [1, 1000], a ttl in [1, 480] ticks), and an approval
-the agents could never use is refused: it only lifts `human_approval_above`, never a hard cap (the rarity cap, the
-official value, the hourly spend cap), never `protect_page_sets` (a page's last copy) and never a sell below
+the agents could never use is refused. An approval lifts `human_approval_above` and, for a sell,
+`max_score_loss_per_move` (MI1 asks for the same approval); never a hard cap (the rarity cap, the official value,
+the hourly spend cap), never `protect_page_sets` (a page's last copy) and never a sell below
 `sell_min_value_ratio` × our value. Reads fail closed: an unreadable /me, catalog or official value refuses.
 Every call that changes something writes a `decisions` row (agent `guard`): approval_granted, approval_refused,
-approval_revoked or approval_denied, with `by` from the token's identity ("human:mcp", or "human:<via>").
+approval_revoked or approval_denied. `by` is "human:mcp", or "human:<via>" when the caller names its relay (a slug:
+one approver token, so the relay's name is the caller's word, never free text). Approves and revokes run one at a
+time in this process, so a revoke sent right after an approve always lands after it.
 """
 
 from __future__ import annotations
 
 import contextlib
 import math
-from collections.abc import Callable, Iterator
+import threading
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict
 from typing import Any, Literal, Protocol
 
@@ -32,7 +37,7 @@ from bazaar_agent.guardrails import OFF_PAGE_RARITIES
 from bazaar_agent.llm.intent import lowest_value_copy
 from bazaar_agent.runtime import actions as ac
 from bazaar_agent.runtime.backend import Backend
-from bazaar_agent.runtime.tools import ToolSpec
+from bazaar_agent.runtime.tools import ToolSpec, safe_text
 
 APPROVER_VARIABLE = "BAZAAR_APPROVER_TOKEN"
 APPROVER_HEADER = b"x-approver-token"
@@ -41,6 +46,7 @@ PRICE_MIN, PRICE_MAX = 1, 1000
 TTL_MIN, TTL_MAX = 1, 480
 VIA = r"^[a-z][a-z0-9-]{0,23}$"  # who relays the human's click (bazaar-live): part of `by`, never free text
 STATEMENT_TIMEOUT_MS = 3000
+_WRITES = threading.Lock()  # one approve or revoke at a time: a revoke never overtakes an approve still checking
 
 
 class ApprovalsArgs(ac.Args):
@@ -71,8 +77,15 @@ class ApprovalStore(Protocol):
     def active(self, tick: int) -> list[Approval]: ...
     def pending(self, since_tick: int) -> list[dict[str, Any]]: ...
     def denials(self, since_tick: int) -> list[tuple[str, str, int]]: ...
-    def approve(self, card: str, side: str, price: int, until_tick: int, by: str, reason: str) -> Approval: ...
-    def revoke(self, card: str, side: str) -> bool: ...
+    def approve(self, card: str, side: str, price: int, tick: int, until_tick: int, by: str, reason: str) -> Approval:
+        """Write the approval and its `approval_granted` row on one connection."""
+        ...
+
+    def revoke(self, card: str, side: str, tick: int, by: str, reason: str) -> bool:
+        """Remove the approval and write `approval_revoked`, or `approval_denied` when there was none (the reason
+        defaults to "revoked" / "denied")."""
+        ...
+
     def record(self, kind: str, tick: int, inputs: dict[str, Any]) -> None: ...
 
 
@@ -100,13 +113,20 @@ class PgApprovalStore:
         with self._conn() as conn:
             return approvals.denials(conn, since_tick)
 
-    def approve(self, card: str, side: str, price: int, until_tick: int, by: str, reason: str) -> Approval:
+    def approve(self, card: str, side: str, price: int, tick: int, until_tick: int, by: str, reason: str) -> Approval:
         with self._conn() as conn:
-            return approvals.approve(conn, card, side, price, until_tick, by, reason)
+            a = approvals.approve(conn, card, side, price, until_tick, by, reason)
+            audit = {"card": card, "side": side, "price": price, "until_tick": until_tick, "by": by, "reason": reason}
+            approvals.record(conn, "approval_granted", tick, audit)
+            return a
 
-    def revoke(self, card: str, side: str) -> bool:
+    def revoke(self, card: str, side: str, tick: int, by: str, reason: str) -> bool:
         with self._conn() as conn:
-            return approvals.revoke(conn, card, side)
+            was = approvals.revoke(conn, card, side)
+            kind = "approval_revoked" if was else "approval_denied"
+            audit = {"card": card, "side": side, "by": by, "reason": reason or kind.removeprefix("approval_")}
+            approvals.record(conn, kind, tick, audit)
+            return was
 
     def record(self, kind: str, tick: int, inputs: dict[str, Any]) -> None:
         with self._conn() as conn:
@@ -264,28 +284,29 @@ def read_approvals(b: Backend, store: ApprovalStore) -> dict[str, Any]:
     }
 
 
-def grant(b: Backend, store: ApprovalStore, args: ApproveArgs) -> dict[str, Any]:
+def grant(b: Backend, store: ApprovalStore, args: ApproveArgs, secrets: Iterable[str] = ()) -> dict[str, Any]:
     """Approve one card on one side, after every check an approval can never lift; refused with the reasons."""
-    tick, by = b.clock().tick, _by(args.via)
-    rarity = b.rarity_of(args.card, tick)
-    base = {"card": args.card, "side": args.side, "price": args.price}
-    if rarity is None:
-        reasons = [f"{args.card} is not in the catalog"]
-    else:
-        me = b.me_now().me  # album first; an unreadable /me raises: the tool fails, nothing is written
-        if args.side == "buy":
-            reasons = buy_refusals(b, args.card, args.price, rarity, tick, me)
+    with _WRITES:
+        tick, by = b.clock().tick, _by(args.via)
+        rarity = b.rarity_of(args.card, tick)
+        base = {"card": args.card, "side": args.side, "price": args.price}
+        if rarity is None:
+            reasons = [f"{args.card} is not in the catalog"]
         else:
-            reasons = sell_refusals(b, args.card, args.price, rarity, me)
-    if reasons:
-        store.record("approval_refused", tick, {**base, "by": by, "reason": "; ".join(reasons)})
-        return {"status": "refused", **base, "reasons": reasons}
-    reason = args.reason.strip() or f"approved by {by}"
-    a = store.approve(args.card, args.side, args.price, tick + args.ttl_ticks, by, reason)
-    store.record("approval_granted", tick, {**base, "until_tick": a.until_tick, "by": by, "reason": reason})
+            me = b.me_now().me  # album first; an unreadable /me raises: the tool fails, nothing is written
+            if args.side == "buy":
+                reasons = buy_refusals(b, args.card, args.price, rarity, tick, me)
+            else:
+                reasons = sell_refusals(b, args.card, args.price, rarity, me)
+        if reasons:
+            store.record("approval_refused", tick, {**base, "by": by, "reason": "; ".join(reasons)})
+            return {"status": "refused", **base, "reasons": reasons}
+        reason = safe_text(args.reason.strip(), secrets) or f"approved by {by}"
+        a = store.approve(args.card, args.side, args.price, tick, tick + args.ttl_ticks, by, reason)
     notes = []
-    if args.price < b.rules.human_approval_above:
-        notes.append(f"{args.price} is below human_approval_above {b.rules.human_approval_above}: no approval needed")
+    threshold = b.rules.human_approval_above
+    if args.side == "buy" and args.price < threshold:  # a sell may still need it: max_score_loss_per_move
+        notes.append(f"a buy at {args.price} is below human_approval_above {threshold}: it needed no approval")
     return {
         "status": "approved",
         "card": a.card,
@@ -299,28 +320,29 @@ def grant(b: Backend, store: ApprovalStore, args: ApproveArgs) -> dict[str, Any]
     }
 
 
-def withdraw(b: Backend, store: ApprovalStore, args: RevokeArgs) -> dict[str, Any]:
-    """Remove the approval of a card on a side; with none, record a denial of its request."""
-    tick, by = b.clock().tick, _by(args.via)
-    was = store.revoke(args.card, args.side)
-    kind = "approval_revoked" if was else "approval_denied"
-    reason = args.reason.strip() or ("revoked" if was else "denied")
-    store.record(kind, tick, {"card": args.card, "side": args.side, "by": by, "reason": reason})
+def withdraw(b: Backend, store: ApprovalStore, args: RevokeArgs, secrets: Iterable[str] = ()) -> dict[str, Any]:
+    """Remove the approval of a card on a side; with none, record a denial. Either way its request reads denied."""
+    with _WRITES:
+        tick, by = b.clock().tick, _by(args.via)
+        reason = safe_text(args.reason.strip(), secrets)
+        was = store.revoke(args.card, args.side, tick, by, reason)
     return {"status": "revoked" if was else "denied", "card": args.card, "side": args.side, "tick": tick, "by": by}
 
 
-def human_specs(store: ApprovalStore) -> tuple[ToolSpec, ...]:
-    """The three human tools on `store`. Never added to `tools.TOOLS`: the desk must not see them."""
+def human_specs(store: ApprovalStore, secrets: Iterable[str] = ()) -> tuple[ToolSpec, ...]:
+    """The three human tools on `store`. Never added to `tools.TOOLS`: the desk must not see them. `secrets` are
+    cut out of a stored reason (the answers are scrubbed by `tools.call`)."""
+    held = tuple(secrets)
     return (
         ToolSpec("approvals", "HUMAN ONLY. Big trades waiting for a human (the last 2 game hours): card, side, price, "
                  "why the guardrail asked, our and the official value, album impact (a page's last copy?), the cap no "
                  "approval lifts, who asked; and the active approvals.", ApprovalsArgs, False,
                  lambda b, a: read_approvals(b, store)),
-        ToolSpec("approve", "HUMAN ONLY. Let the agents trade CARD on SIDE at or above human_approval_above: a buy up "
-                 "to PRICE (fee included), a sell down to PRICE, for ttl_ticks. Refused when a hard cap, the page's "
-                 "last copy or our value forbids it: an approval only lifts the human threshold.", ApproveArgs, True,
-                 lambda b, a: grant(b, store, a)),
+        ToolSpec("approve", "HUMAN ONLY. Let the agents trade CARD on SIDE although it needs a human (at or above "
+                 "human_approval_above, or a sell that max_score_loss_per_move holds): a buy up to PRICE (fee "
+                 "included), a sell down to PRICE, for ttl_ticks. Refused when a hard cap, the page's last copy or "
+                 "our value forbids it.", ApproveArgs, True, lambda b, a: grant(b, store, a, held)),
         ToolSpec("revoke", "HUMAN ONLY. Remove the approval of CARD on SIDE (already posted offers stay: `bazaar "
-                 "flatten` cancels them); with none, record a denial of its request.", RevokeArgs, True,
-                 lambda b, a: withdraw(b, store, a)),
+                 "flatten` cancels them), or with none deny its request. Either way the request reads denied.",
+                 RevokeArgs, True, lambda b, a: withdraw(b, store, a, held)),
     )  # fmt: skip

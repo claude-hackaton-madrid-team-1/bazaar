@@ -2,6 +2,7 @@
 with the approver token, validated, and refused when an approval could only loosen a hard cap. No network, no DB."""
 
 import json
+import threading
 
 import pytest
 from starlette.testclient import TestClient
@@ -43,13 +44,21 @@ class Store:
     def denials(self, since_tick):
         return [d for d in self.denied if d[2] >= since_tick]
 
-    def approve(self, card, side, price, until_tick, by, reason):
-        a = Approval(card, side, price if side == "buy" else None, price if side == "sell" else None, until_tick, by)
+    def approve(self, card, side, price, tick, until_tick, by, reason):
+        a = Approval(
+            card, side, price if side == "buy" else None, price if side == "sell" else None, until_tick, by, reason
+        )
         self.approvals[(card, side)] = a
+        audit = {"card": card, "side": side, "price": price, "until_tick": until_tick, "by": by, "reason": reason}
+        self.record("approval_granted", tick, audit)
         return a
 
-    def revoke(self, card, side):
-        return self.approvals.pop((card, side), None) is not None
+    def revoke(self, card, side, tick, by, reason):
+        was = self.approvals.pop((card, side), None) is not None
+        kind = "approval_revoked" if was else "approval_denied"
+        self.denied.append((card, side, tick))
+        self.record(kind, tick, {"card": card, "side": side, "by": by, "reason": reason or kind[len("approval_") :]})
+        return was
 
     def record(self, kind, tick, inputs):
         self.records.append((kind, tick, dict(inputs)))
@@ -142,22 +151,25 @@ def test_the_bearer_token_alone_neither_lists_nor_runs_the_human_tools(tmp_path)
         text, failed = tool(c, "approve", {"card": "LAV-09", "side": "buy", "price": 90}, approver=None)
         assert failed and text == "unknown tool 'approve'"
         assert tool(c, "approvals", {}, approver=None, rid=2) == ("unknown tool 'approvals'", True)
-        assert listed(c, approver=APPROVER) >= HUMAN | {"status", "sell_bid"}
+        assert listed(c, approver=APPROVER) == HUMAN  # an approver connection never reads counterparty text
+        assert tool(c, "thread", {"thread_id": 7}, rid=3) == ("unknown tool 'thread'", True)
         health = c.get(ms.HEALTH_PATH).json()
         assert health["tools"] == len(tl.TOOLS) and "approv" not in json.dumps(health)
     assert store.approvals == {} and store.records == []
 
 
-def test_a_wrong_approver_token_is_forbidden_and_five_lock_the_right_one_out(tmp_path):
-    now = Clock()
-    with client(human_backend(tmp_path), Store(), now=now) as c:
-        for wrong in ("", "nope", APPROVER[:-1], APPROVER + "x", MCP_TOKEN):
+def test_a_wrong_approver_token_is_forbidden_and_logged_but_never_locks_the_human_out(tmp_path):
+    lines: list[str] = []
+    b = human_backend(tmp_path)
+    b.log = lines.append
+    with client(b, Store()) as c:
+        for wrong in ("", "nope", APPROVER[:-1], APPROVER + "x", MCP_TOKEN, "x", "y"):
             reply = rpc(c, "tools/list", approver=wrong)
             assert reply.status_code == 403 and reply.json() == {"error": "forbidden"}
-        assert rpc(c, "tools/list", approver=APPROVER).status_code == 403  # locked: 5 misses in 15 minutes
-        assert rpc(c, "tools/list").status_code == 200  # the agent tools stay open to the bearer token
-        now.t += ms.APPROVER_LOCK_S
-        assert listed(c, approver=APPROVER) >= HUMAN
+        assert listed(c, approver=APPROVER) == HUMAN  # seven misses from this bearer: the right token still works
+        assert rpc(c, "tools/list").status_code == 200
+    assert len(lines) == 7 and all("X-Approver-Token refused (bearer " in line for line in lines)
+    assert not any(APPROVER in line or MCP_TOKEN in line or "nope" in line for line in lines)
 
 
 def test_without_an_approver_token_the_human_tools_do_not_exist(tmp_path):
@@ -209,12 +221,48 @@ def test_approval_writes_are_capped_per_minute(tmp_path):
     assert not failed and ok["status"] == "approved"
 
 
-def test_no_answer_carries_the_approver_token(tmp_path):
+def test_no_answer_and_no_stored_reason_carries_a_token(tmp_path):
     store = Store()
     with client(human_backend(tmp_path), store) as c:
         ok, _ = tool(c, "approve", {"card": "LAV-09", "side": "buy", "price": 90, "reason": f"x {APPROVER}"})
-        raw = rpc(c, "tools/call", {"name": "approvals", "arguments": {}}, approver=APPROVER, rid=2).text
-    assert ok["status"] == "approved" and APPROVER not in raw and MCP_TOKEN not in raw
+        gone, _ = tool(c, "revoke", {"card": "LAV-09", "side": "buy", "reason": f"y {MCP_TOKEN}"}, rid=2)
+        raw = rpc(c, "tools/call", {"name": "approvals", "arguments": {}}, approver=APPROVER, rid=3).text
+    assert ok["status"] == "approved" and gone["status"] == "revoked"
+    assert APPROVER not in raw and MCP_TOKEN not in raw
+    stored = json.dumps([r[2] for r in store.records])
+    assert APPROVER not in stored and MCP_TOKEN not in stored and "[redacted]" in stored
+
+
+def test_a_revoke_sent_while_an_approve_is_still_checking_lands_after_it(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    class Slow(Valued):
+        def value(self, card):
+            entered.set()
+            release.wait(5)
+            return super().value(card)
+
+    store = Store()
+    b = human_backend(tmp_path, team=Slow({"LAV-09": 120.0}))
+    answers: dict[str, dict] = {}
+    approve = threading.Thread(
+        target=lambda: answers.update(
+            approve=run("approve", b, store, {"card": "LAV-09", "side": "buy", "price": 90})[0]
+        )
+    )
+    revoke = threading.Thread(
+        target=lambda: answers.update(revoke=run("revoke", b, store, {"card": "LAV-09", "side": "buy"})[0])
+    )
+    approve.start()
+    assert entered.wait(5)
+    revoke.start()
+    revoke.join(0.3)
+    assert revoke.is_alive()  # waits for the approve still reading /api/me/value
+    release.set()
+    approve.join(5)
+    revoke.join(5)
+    assert answers["approve"]["status"] == "approved" and answers["revoke"]["status"] == "revoked"
+    assert store.approvals == {}
 
 
 # ---------------------------------------------------------------- approve: what an approval may cover
@@ -265,7 +313,7 @@ def test_a_buy_inside_every_cap_is_approved_and_logged_with_who_approved(tmp_pat
     )
     assert not failed and ok["status"] == "approved"
     assert (ok["max_price"], ok["min_price"], ok["until_tick"], ok["by"]) == (90, None, TICK + 30, "human:bazaar-live")
-    assert store.approvals[("LAV-09", "buy")].covers(90, TICK + 29)
+    assert store.approvals[("LAV-09", "buy")].covers(90, TICK + 29) and ok["notes"] == []
     ((kind, tick, inputs),) = store.records
     assert (kind, tick, inputs["by"], inputs["until_tick"]) == (
         "approval_granted",
@@ -378,7 +426,7 @@ def test_the_requests_say_why_what_it_costs_the_album_and_where_each_stands(tmp_
         ],
         denials=[("LAT-03", "sell", 85)],
     )
-    store.approve("LAV-10", "buy", 255, TICK + 10, "human:mcp", "")
+    store.approve("LAV-10", "buy", 255, TICK, TICK + 10, "human:mcp", "")
     out = approvals_answer(human_backend(tmp_path, rules=RULES.model_copy(update={"human_approval_above": 250})), store)
     assert (out["tick"], out["threshold"], out["notes"]) == (TICK, 250, [])
     rows = {(r["card"], r["side"]): r for r in out["pending"]}
@@ -418,29 +466,49 @@ def approvals_answer(b, store):
     return answer
 
 
-def test_the_postgres_store_uses_one_short_connection_per_call():
-    seen: list[str] = []
+def test_the_postgres_store_writes_each_change_and_its_audit_row_on_one_connection():
+    opened: list[list[str]] = []
 
     class Conn:
         def __enter__(self):
+            opened.append([])
             return self
 
         def __exit__(self, *exc):
-            seen.append("closed")
+            pass
 
         def execute(self, sql, params=None):
-            seen.append(sql.split()[0])
+            opened[-1].append(" ".join(sql.split()[:3]))
             return self
 
         def fetchall(self):
             return []
+
+        def fetchone(self):
+            return None
 
         def commit(self):
             pass
 
     store = ht.PgApprovalStore(lambda: Conn())
     assert store.denials(10) == [] and store.pending(10) == []
-    assert seen[0] == "set" and seen.count("closed") == 2
+    store.approve("LAV-09", "buy", 90, TICK, TICK + 30, "human:mcp", "ok")
+    assert store.revoke("LAV-09", "buy", TICK, "human:mcp", "") is False
+    assert len(opened) == 4 and all(statements[0] == "set statement_timeout =" for statements in opened)
+    assert "insert into human_approvals" in opened[2] and "insert into decisions" in opened[2]
+    assert "delete from human_approvals" in opened[3] and "insert into decisions" in opened[3]
+
+
+def test_only_a_cheap_buy_is_told_it_needed_no_approval(tmp_path):
+    rules = RULES.model_copy(update={"human_approval_above": 500})
+    buy, _ = run(
+        "approve", human_backend(tmp_path, rules=rules), Store(), {"card": "LAV-09", "side": "buy", "price": 90}
+    )
+    assert buy["notes"] == ["a buy at 90 is below human_approval_above 500: it needed no approval"]
+    sell, _ = run(
+        "approve", human_backend(tmp_path, rules=rules), Store(), {"card": "LAT-03", "side": "sell", "price": 9}
+    )
+    assert sell["status"] == "approved" and sell["notes"] == []  # max_score_loss_per_move may hold any sale
 
 
 def test_each_human_tool_publishes_a_strict_schema():

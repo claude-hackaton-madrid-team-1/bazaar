@@ -16,9 +16,11 @@ It exposes trading tools on a public domain, so:
 - every write call is a `decisions` row (agent `mcp`), and every request it sent an `executions` row.
 
 The human tools (`runtime.human_tools`: approvals, approve, revoke) are served only on a request that ALSO carries
-`X-Approver-Token` equal to BAZAAR_APPROVER_TOKEN (constant time). The bearer alone never lists nor runs them; a
-wrong approver token is a 403, and 5 wrong ones from one bearer token lock it out of them for 15 minutes. Without
-BAZAAR_APPROVER_TOKEN they do not exist here. Their writes are capped at 10 per minute and logged by the tools.
+`X-Approver-Token` equal to BAZAAR_APPROVER_TOKEN (constant time), and such a request sees ONLY them: an approver
+connection never reads counterparty text next to `approve`. The bearer alone never lists nor runs them; a wrong
+approver token is a 403 and a WARN line (never a lockout: a bearer holder must not be able to lock the human out of
+the veto, and a 32+ character token cannot be guessed behind the request bucket). Without BAZAAR_APPROVER_TOKEN they
+do not exist here. Their writes are capped at 10 per minute and logged by the tools.
 """
 
 from __future__ import annotations
@@ -52,7 +54,6 @@ HTTP_RATE_PER_S, HTTP_BURST = 5.0, 20  # MCP plumbing (initialize, tools/list) p
 TOOL_BURST = 5
 STATE_KEY = "bazaar_token"  # the caller's token digest, for the per-token tool-call bucket
 APPROVER_KEY = "bazaar_approver"  # True on a request whose X-Approver-Token matched
-APPROVER_FAILURES, APPROVER_LOCK_S = 5, 900.0  # wrong approver tokens per bearer token, then locked this long
 
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -120,13 +121,6 @@ class Window:
             self._at.popleft()
         return t
 
-    def full(self) -> bool:
-        self._trim()
-        return len(self._at) >= self.limit
-
-    def add(self) -> None:
-        self._at.append(self._trim())
-
     def take(self) -> float:
         t = self._trim()
         if len(self._at) < self.limit:
@@ -173,29 +167,24 @@ class BearerGate:
         now: Callable[[], float] = time.monotonic,
         target: dict[str, str] | None = None,
         approver: str | None = None,
+        log: Callable[[str], None] = lambda line: None,
     ) -> None:
-        self.app, self.live, self.target, self.now = app, live, target or {}, now
+        self.app, self.live, self.target, self.log = app, live, target or {}, log
         self._expected = digest(require_token(token))
         self._http = Buckets(HTTP_RATE_PER_S, HTTP_BURST, now)
         checked = approver_token(approver, token)  # unset or blank: None, so no header can ever match
         self._approver = None if checked is None else digest(checked)
-        self._failed: dict[bytes, Window] = {}  # bearer digest -> its wrong approver tokens
 
     def _presented(self, scope: Scope) -> str:
         text = _header(scope, b"authorization") or ""
         return text[7:].strip() if text[:7].lower() == "bearer " else ""
 
     def _approver_ok(self, bearer: bytes, offered: str) -> bool:
-        """Constant-time match of X-Approver-Token; after APPROVER_FAILURES misses in APPROVER_LOCK_S from one
-        bearer token, even the right one is refused until the window passes. Off (no token set): always False."""
-        if self._approver is None:
-            return False
-        right = hmac.compare_digest(digest(offered.strip()), self._approver)
-        failures = self._failed.setdefault(bearer, Window(APPROVER_FAILURES, APPROVER_LOCK_S, self.now))
-        if failures.full():
-            return False
+        """Constant-time match of X-Approver-Token. Off (no token set): always False. A miss is a WARN line naming
+        the bearer by an 8-hex prefix of its digest, never a token."""
+        right = self._approver is not None and hmac.compare_digest(digest(offered.strip()), self._approver)
         if not right:
-            failures.add()
+            self.log(f"bazaar-mcp: WARN X-Approver-Token refused (bearer {bearer.hex()[:8]})")
         return right
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -305,14 +294,14 @@ def build_server(
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)], is_error=failed)
 
     async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=listed + human_listed if _is_approver(ctx) else listed)
+        return types.ListToolsResult(tools=human_listed if _is_approver(ctx) else listed)
 
     async def on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
-        spec = BY_NAME.get(params.name)
-        by_human = spec is None and _is_approver(ctx) and params.name in human_by_name
-        if by_human:
-            spec = human_by_name[params.name]
-        if spec is None:  # a human tool without the approver token reads exactly like a tool that does not exist
+        # An approver request reaches only the human tools; any other request only the agent tools. A tool of the
+        # other set reads exactly like a tool that does not exist.
+        by_human = _is_approver(ctx)
+        spec = human_by_name.get(params.name) if by_human else BY_NAME.get(params.name)
+        if spec is None:
             return text_result(f"unknown tool {params.name!r}", True)
         wait = calls.take(_caller_key(ctx))
         if wait > 0:
@@ -350,11 +339,11 @@ def build_app(
 
     Bound to localhost, the SDK also turns on its DNS-rebinding protection (allowed Host headers)."""
     approver = approver_token(approver, token)
-    human = human_specs(store or PgApprovalStore()) if approver else ()
+    human = human_specs(store or PgApprovalStore(), (*secrets, token, approver)) if approver else ()
     held = (*secrets, token, *([approver] if approver else []))
     server = build_server(backend, calls_per_minute, held, now, human)
     app = server.streamable_http_app(streamable_http_path=MCP_PATH, stateless_http=True, json_response=True, host=host)
-    return BearerGate(app, token, backend.live, now, backend.settings.target, approver)
+    return BearerGate(app, token, backend.live, now, backend.settings.target, approver, backend.log)
 
 
 def serve(app: BearerGate, host: str, port: int) -> None:

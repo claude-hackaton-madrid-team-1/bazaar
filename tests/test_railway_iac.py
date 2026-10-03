@@ -154,9 +154,10 @@ def test_every_service_builds_our_repo_on_main_or_the_pinned_phoenix(services: d
             )
 
 
-def test_the_show_holds_no_team_key_and_no_database(services: dict[str, dict[str, Any]]) -> None:
+def test_the_show_holds_no_database_and_only_hand_set_secrets(services: dict[str, dict[str, Any]]) -> None:
     show = services[LIVE_SHOW]
-    # Exactly these variables: no BAZAAR_KEY, no DATABASE_URL, no Phoenix key; the voice keys only preserve().
+    # Exactly these variables: no DATABASE_URL, no Phoenix key; every secret (the voice keys, the relay's BAZAAR_KEY,
+    # GAME_VIEW_TOKEN, the approval variables) only preserve(), set by hand.
     assert show.get("variables") == LIVE_SHOW_VARIABLES, show.get("variables")
     assert not show.get("volumeAttachments"), show.get("volumeAttachments")
 

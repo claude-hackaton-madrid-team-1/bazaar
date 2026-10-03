@@ -265,10 +265,11 @@ def pending(conn: psycopg.Connection, since_tick: int) -> list[dict[str, Any]]:
 
 
 def denials(conn: psycopg.Connection, since_tick: int) -> list[tuple[str, str, int]]:
-    """(card, side, tick) of every `approval_denied` row since `since_tick`: a human said no to that request."""
+    """(card, side, tick) of every `approval_denied` or `approval_revoked` row since `since_tick`: a human said no
+    to that card and side (a request asked before it reads denied)."""
     out = conn.execute(
         "select candidates->>'card', candidates->>'side', tick from decisions "
-        "where agent = 'guard' and kind = 'approval_denied' and tick >= %s",
+        "where agent = 'guard' and kind in ('approval_denied', 'approval_revoked') and tick >= %s",
         (since_tick,),
     ).fetchall()
     conn.commit()
