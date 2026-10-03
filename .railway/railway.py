@@ -163,6 +163,38 @@ def simulator() -> object:
     )
 
 
+LIVE_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
+LIVE_PORT = "8080"
+LIVE_NODE = "22.22.0"  # node runs server/*.ts by stripping types: Node 22.18 or newer (.nvmrc in that repo)
+
+
+def live_show() -> object:
+    """Bazaar Live (repo bazaar-live): the buyer and the seller at a Rastro stall, a static React show
+    plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
+    The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
+
+    The voice keys are set once by hand with `railway variable set ... --stdin` and declared preserve()
+    so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
+    the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
+    the bazaar-live README) must be declared here before it is set. Its public domain is generated once
+    with `railway domain --service bazaar-live --port 8080`: Railway IaC does not declare generated domains."""
+    return service(
+        "bazaar-live",
+        source=github(LIVE_REPO, branch=BRANCH),
+        build={"buildCommand": "npm run build"},
+        start="node server/index.ts",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/health",
+        env={
+            "RAILPACK_NODE_VERSION": LIVE_NODE,
+            "PORT": LIVE_PORT,
+            "ELEVENLABS_API_KEY": preserve(),
+            "GEMINI_API_KEY": preserve(),
+        },
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
@@ -203,6 +235,7 @@ def main(ctx=None):
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     sim = simulator()
+    live = live_show()
 
     return project(
         "heartfelt-warmth",
@@ -213,6 +246,7 @@ def main(ctx=None):
             maker,
             mcp,
             sim,
+            live,
             phoenix_data,
             duels_data,
             taker_data,

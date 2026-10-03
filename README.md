@@ -703,6 +703,7 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | **LIVE**: `BAZAAR_LIVE=1` set by hand Sat 01:45 Madrid; the file `preserve()`s it; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-sim` | `bazaar-sim serve` on `PORT` 8080 (healthcheck `/api/health`), one tick every 10 s | database `bazaar_sim` (schema `sim`) on the team's Postgres | https://bazaar-sim-production-1d48.up.railway.app; the generated domain is not IaC (Railway does not declare generated domains) |
+| `bazaar-live` | [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)'s `node server/index.ts` on `PORT` 8080 (healthcheck `/health`): the show and its TTS proxy | none | reads only the agents' public `/health`, `/state`, `/events`; `ELEVENLABS_API_KEY` / `GEMINI_API_KEY` `preserve()` (both optional); the generated domain is not IaC |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
