@@ -192,14 +192,17 @@ def latest_score(conn: psycopg.Connection) -> tuple[int, dict[str, Any]] | None:
     return (int(rows[0][0]), dict(rows[0][1])) if rows and isinstance(rows[0][1], Mapping) else None
 
 
-# Our own reasons for a verdict no Jev call produced (agents.runtime, agents.duel_jev, agents.maker_jev).
+# Our own reasons for a verdict no Jev call produced (agents.runtime, agents.duel_jev, agents.maker_jev), plus
+# any reason starting with "cached": the taker marks a reused answer `cached (<the original reason>)` (SP1).
 NOT_A_CALL = ("jev off", "no tick budget for jev", "jev answered after the tick budget", "cached")
 _JEV_CALLS = """
 with rows as (
   select agent, split_part(kind, '_', 1) as kind, jev->>'digest' as digest,
          coalesce(jev->>'verdict', 'undecided') <> 'undecided' as decided
     from decisions
-   where jev is not null and (jev->>'digest' is not null or coalesce(jev->>'reason', '') <> all(%s)))
+   where jev is not null
+     and (jev->>'digest' is not null
+          or (coalesce(jev->>'reason', '') <> all(%s) and coalesce(jev->>'reason', '') not like 'cached (%%')))
 select agent, kind, count(distinct digest) + count(*) filter (where digest is null),
        count(distinct digest) filter (where decided) + count(*) filter (where digest is null and decided)
   from rows group by agent, kind

@@ -3,7 +3,7 @@
 Everything we know about the game in one place. Sources:
 
 - **Slides:** `The Bazaar · Kickoff` (14 slides, Causa Prima, 2026-10-02).
-- **Audio:** [kickoff transcript](transcripts/2026-10-02-hackathon-kickoff.md).
+- **Audio:** [kickoff transcript](transcripts/2026-10-02-hackathon-kickoff.md); [Saturday morning memos](transcripts/2026-10-03-morning-voice-memo.md) (the organisers' 09:19 opening talk, plus our 03:22 Spanish readback).
 - **Kit:** `RULES.md` and `README.md` from the official kit (PR #18, `kit/`).
 - **API:** what we observed on the real API with our key (issues #21, #22, #23).
 

@@ -62,10 +62,14 @@ def _two_issue(duel: Mapping[str, Any]) -> bool:
 
 
 def _number(value: object) -> float | None:
-    """A finite number from the payload, else None (bools, NaN and infinities are not numbers here)."""
-    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+    """A finite number from the payload, else None (bools, NaN, infinities and ints too large for a float)."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # a 400-digit int: math.isfinite raised on it and stopped the caller (#165 P3-3)
+        return None
+    return number if math.isfinite(number) else None
 
 
 def worth(duel: Mapping[str, Any], price: int, days: object, zero_days_free: bool = False) -> float | None:

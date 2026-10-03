@@ -124,9 +124,14 @@ class V2Plan:
 
 
 def _number(value: object) -> float | None:
-    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+    """A finite number from the payload, else None (bools, NaN, infinities and ints too large for a float)."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # a 400-digit int: math.isfinite raised on it and stopped the caller (#165 P3-3)
+        return None
+    return number if math.isfinite(number) else None
 
 
 def value_of(duel: Mapping[str, Any], price: int, days: object, signed: bool, v2: bool = True) -> float | None:

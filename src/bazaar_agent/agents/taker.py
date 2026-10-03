@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any
 
 from bazaar_agent.affinity import AffinityMap
@@ -54,6 +55,7 @@ from bazaar_agent.agents.desk import (
 )
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
+from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
 from bazaar_agent.agents.market import (
     BoardOffer,
     OpenOffer,
@@ -77,6 +79,7 @@ from bazaar_agent.agents.runtime import (
     new_page_line,
     no_jev,
     read_snapshot,
+    read_together,
     window_for,
 )
 from bazaar_agent.agents.seller import (
@@ -129,6 +132,9 @@ from bazaar_agent.strategy import (
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
+
+OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
+THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
 
 
 @dataclass(frozen=True)
@@ -420,6 +426,8 @@ class _TickRun:
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
     team_view: DeskView | None = None  # what the team desk saw this tick (N17)
     plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
+    unread: set[str] = field(default_factory=set)  # cards of dealer threads we could not read this tick
+    listed: frozenset[int] = frozenset()  # our open threads as /api/me/threads listed them this tick
 
 
 class Taker:
@@ -494,6 +502,8 @@ class Taker:
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
         self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
+        # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
+        self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -501,8 +511,16 @@ class Taker:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
-            threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
+            snap = read_snapshot(
+                self.team,
+                self.public,
+                self.feed,
+                clock,
+                self.holdings,
+                parallel=self.rules.parallel_reads,
+                extra={"threads": lambda: self.team.my_threads("open")},
+            )
+            threads = [t for t in snap.extra["threads"].get("threads") or [] if isinstance(t, dict)]
             ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
             self._tick(snap, threads, window)
         except BazaarError as e:
@@ -544,6 +562,7 @@ class Taker:
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
+        run.listed = frozenset(int(t["id"]) for t in threads if isinstance(t.get("id"), int))
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
@@ -684,22 +703,29 @@ class Taker:
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
+        """`offer_is_worth_accepting` for this state. The same state (tick aside) asked within `jev_cache_ticks`
+        gets the same answer without a call or a slot; a reused answer carries no digest (one call, one outcome)."""
+        tick, key = run.snap.clock.tick, state_key(OFFER_QUESTION, state)
+        cached = self.jev_cache.get(key, tick)
+        if cached is not None:  # marked, so a reused answer never reads as a fresh call in the decision log
+            return replace(cached, digest=None, reason=f"cached ({cached.reason})" if cached.reason else "cached")
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         run.jev_calls += 1
-        return self.jev(state)
+        advice = self.jev(state)
+        if advice.reason in CACHED_REASONS:
+            self.jev_cache.put(key, tick, advice)
+        return advice
 
     # ------------------------------------------------------------ (a) boards
 
     def _board_offers(self, run: _TickRun) -> tuple[list[BoardOffer], dict[str, Venue]]:
         """Every plain standing offer on the venues we may trade on, makers named when the cap needs them."""
         venues = {v.id: v for v in tradable_venues(run.snap.venues, run.snap.us)}
-        offers: list[BoardOffer] = []
-        for venue in venues.values():
-            try:
-                offers += board_offers(self.public.board(venue.id), venue.id, run.snap.us)
-            except BazaarError as e:
-                self.log(f"tick {run.snap.clock.tick} taker: board {venue.id} refused {e.code}; skipped")
+        boards = read_together(
+            {venue_id: partial(self._board_of, run, venue_id) for venue_id in venues}, self.rules.parallel_reads
+        )
+        offers: list[BoardOffer] = [o for venue_id in venues for o in boards[venue_id]]
         if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
             makers = listed_makers(run.snap.events)
             offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
@@ -709,6 +735,9 @@ class Taker:
         self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
     ) -> list[AskCandidate]:
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
+        # a card whose dealer thread we could not read this tick is not bought here: our bid there may still
+        # stand (and she may take it), and that thread cannot be walked until we read it again
+        offers = [o for o in offers if o.ref not in run.unread]
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
 
     def _bids(
@@ -761,6 +790,14 @@ class Taker:
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
         return out
+
+    def _board_of(self, run: _TickRun, venue_id: str) -> list[BoardOffer]:
+        """One venue's board; a refusal skips that venue only."""
+        try:
+            return board_offers(self.public.board(venue_id), venue_id, run.snap.us)
+        except BazaarError as e:
+            self.log(f"tick {run.snap.clock.tick} taker: board {venue_id} refused {e.code}; skipped")
+            return []
 
     # ------------------------------------------------------------ (c) sealed packs we hold
 
@@ -1017,7 +1054,9 @@ class Taker:
         up; an open one is left as it is, and the tick does not count toward its tick limit."""
         out = []
         for dealer, conv in list(self.convs.items()):
-            thread = self.team.thread(conv.thread_id)
+            thread = self._thread_of(run, conv)  # keyed: one at a time, like every keyed read
+            if thread is None:  # refused: this conversation waits a tick, the others go on
+                continue
             self._keep(thread, run.snap, conv)
             if held and str(thread.get("status") or "open") == "open":
                 continue
@@ -1176,6 +1215,30 @@ class Taker:
             c = p.candidate
             return board_gate(c.offer, p.ref, c.total, c.fee, p.rarity)
         return Gate("board", p.offer_id, "block", ("an accept with no offer to inspect",))
+
+    def _thread_of(self, run: _TickRun, conv: Conversation) -> dict[str, Any] | None:
+        """One dealer thread; a refusal skips that conversation for this tick only (no tick counted, no move) and
+        keeps its card off the boards this tick (`run.unread`). A thread the server no longer knows is dropped."""
+        try:
+            thread: dict[str, Any] = self.team.thread(conv.thread_id)
+            return thread
+        except BazaarError as e:
+            run.unread.add(conv.item)
+            # gone: refused as unknown (404, whatever its code) AND missing from this tick's list of our open
+            # threads; one read never retires a thread the server still lists
+            if e.status == THREAD_GONE_STATUS and conv.thread_id not in run.listed:
+                self.convs.pop(conv.dealer, None)
+                gone = {"status": "closed", "closed_reason": "gone"}  # no deal can be booked on a thread it lost
+                self._wrapped(run, conv.thread_id, conv.dealer, conv.item, gone, None)  # a restart never re-reads it
+                self.log(
+                    f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} is gone; dropped"
+                )
+                return None
+            self.log(
+                f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} refused {e.code}; "
+                f"it waits a tick, and {conv.item} is not bought elsewhere this tick"
+            )
+            return None
 
     def _jev_early(self, run: _TickRun, dm: DeskMove) -> DeskMove:
         """Jev may accept a dealer's ask early (still inside our max); it never lifts the limit."""
@@ -1533,6 +1596,8 @@ class Taker:
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
         self._commit(run, p.price, p.ref, skip_thread, maker, ask)
+        # If /me already shows the accept paid, its cash counts twice for the rest of the tick: kept on purpose. It
+        # only ever denies, and a same-tick cash drop from another process cannot be told apart from this deal.
         self._after_deal(run, f"accept of offer {p.offer_id}")  # after the books: a failed re-read loses nothing
         return True
 
