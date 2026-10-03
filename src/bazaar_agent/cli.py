@@ -536,43 +536,6 @@ def duel_run(
             except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
                 console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
                 planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
-        # v2: the planner's accept takes the team's slot now, before Jev and the taker (r2 X17). The ledger is
-        # append-only, so a booked slot is not released: it goes unused only if this tick's time runs out or the
-        # send fails (Jev's only legal move for that duel is the accept).
-        booked: set[int] = set()
-        for planned_id, m in planned.items() if play else ():
-            d = next(x for x in duels if duel_id(x) == planned_id)
-            ctx = gr.Context(
-                cash=0,
-                held={},
-                tick=c.tick,
-                t_hours=c.t_hours,
-                accepts_this_tick=ledger.accepts_in_tick(c.tick),
-                paused=(REPO_ROOT / rules.pause_file).exists(),
-            )
-            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules).allowed:
-                continue
-            if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
-                booked.add(planned_id)
-            else:
-                planned[planned_id] = DuelMove("hold", reason="another process took the team's accept this tick")
-        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
-            endgame = rules.duel_endgame_ticks
-            left = lambda: send_by - time.monotonic()  # noqa: E731
-            try:
-                picks = duel_jev.pick(
-                    duels,
-                    c.tick,
-                    first_seen,
-                    anchor=anchor,
-                    floor=floor,
-                    endgame_ticks=endgame,
-                    left=left,
-                    v2=params,
-                    slots=slots,
-                )
-            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
-                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
 
         def play_one(d: dict[str, Any]) -> None:
             did = duel_id(d)
@@ -599,7 +562,7 @@ def duel_run(
                     held={},
                     tick=c.tick,
                     t_hours=c.t_hours,
-                    accepts_this_tick=ledger.accepts_in_tick(c.tick) - (did in booked),  # not our own booking
+                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
                 verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
@@ -609,8 +572,7 @@ def duel_run(
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     return
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-                fresh = move.kind == "accept" and did not in booked  # a v2 accept was booked before Jev was asked
-                if fresh and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
+                if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
                     console.print(f"  duel {did}: another process took the team's accept this tick")
                     record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
                     return
@@ -623,11 +585,43 @@ def duel_run(
             status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
             record(d, move, pick, c.tick, status)
 
-        for d in duels:  # one malformed row must not cost the other duels their move (r2 bite B2b)
+        def play_safely(d: dict[str, Any]) -> None:
             try:
                 play_one(d)
-            except Exception as e:
+            except Exception as e:  # one malformed row must not cost the other duels their move (r2 bite B2b)
                 console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
+
+        # v2: the planner's accepts are booked AND sent now, before Jev is asked about the other duels (r2 X17, as
+        # B15 does for v1's forced accepts): the taker claims the team's accept 2 s into the tick, and a slow Jev
+        # can no longer strand a booked slot. Jev's only legal move for such a duel is that accept anyway.
+        early = sorted(
+            (d for d in duels if planned.get(duel_id(d) or -1, DuelMove("hold")).kind == "accept"),
+            key=lambda d: duel_deadline(d) or 0,
+        )
+        for d in early:
+            play_safely(d)
+        done = {duel_id(d) for d in early}
+        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
+            endgame = rules.duel_endgame_ticks
+            left = lambda: send_by - time.monotonic()  # noqa: E731
+            try:
+                picks = duel_jev.pick(
+                    duels,
+                    c.tick,
+                    first_seen,
+                    anchor=anchor,
+                    floor=floor,
+                    endgame_ticks=endgame,
+                    left=left,
+                    v2=params,
+                    slots=slots,
+                )
+            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
+                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
+
+        for d in duels:
+            if duel_id(d) not in done:
+                play_safely(d)
         duel_traces.end_tick(duel_id(d) for d in duels)
         if duel_jev is not None:
             try:
