@@ -98,12 +98,15 @@ def forgiving_plan(
 ) -> BidPlan:
     """The plan for this dealer and item. A forgiving dealer's: step 1 (a fake deadline is no reason to jump), no
     lifted final (N14a), its list price and the most we take from its fills. Any other dealer's: unchanged.
-    `completes` (the card completes a page, `strategy.completes_page`): the most we take is our top, not its fills;
-    still never at or above its list price."""
-    if persona is None or not is_forgiving(persona, rules):
+    `completes` (the card completes a page, `strategy.completes_page`): unchanged too. The page is worth far more
+    than a ladder deal, so its FINAL is taken inside our top (our value minus the minimum surplus, the rarity cap,
+    the official value), its list price included, as any dealer's; its opening ask is still never taken, and the
+    offer inspector still blocks and flags a deal that binds another card (tick 1201-1205: its finals were 60-63,
+    above the low third of its fills, and a page completer walked)."""
+    if completes or persona is None or not is_forgiving(persona, rules):
         return plan
     fills = class_fills(prints, persona.id, item, us)
-    accept_max = plan.max_price if completes else accept_cap(fills, rules.trickster_accept_fill_share)
+    accept_max = accept_cap(fills, rules.trickster_accept_fill_share)
     return replace(
         plan,
         step=1,

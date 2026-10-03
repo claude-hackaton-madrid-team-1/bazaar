@@ -83,7 +83,7 @@ def test_a_card_another_process_accepted_last_tick_is_not_bought_again(tmp_path)
     ledger.reserve_accept(TICK - 1, 1.49, 18, "LAV-08", 1)
     t.on_tick(clock())
     assert team.sent == []
-    assert any("we already hold LAV-08" in line for line in lines)
+    assert any("an offer of ours, open or settling, already wants LAV-08" in line for line in lines)
 
 
 def test_once_two_ticks_passed_without_the_card_the_accept_no_longer_counts(tmp_path):
@@ -133,7 +133,7 @@ def test_the_maker_does_not_bid_for_a_card_the_taker_accepted_last_tick(tmp_path
     team.now = clock()
     m.on_tick(team.now)
     assert not [s for s in team.sent if s[0] == "list_offer" and s[1].get("cash")]
-    assert any("we already hold LAV-09" in line for line in lines)
+    assert any("an offer of ours, open or settling, already wants LAV-09" in line for line in lines)
 
 
 class Rows:

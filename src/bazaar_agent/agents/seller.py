@@ -367,6 +367,7 @@ def committed_context(ctx: Context, commitments: Commitments) -> Context:
         spent_last_hour=ctx.spent_last_hour + commitments.thread_cash,
         packs_last_hour=ctx.packs_last_hour + commitments.thread_packs,
         sellable=sellable,
+        wanted=ctx.wanted + commitments.wanted,
     )
 
 

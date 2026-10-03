@@ -1462,7 +1462,8 @@ class Taker:
     ) -> BidPlan:
         """A trickster's FINAL is not its limit (agents/trickster.py): a forgiving dealer's plan carries its list price
         and the most we take, from its fills in our feed history (its tape is read once a tick, only when needed;
-        `completes`: a page completer's most is our top instead). Every other dealer's plan comes back unchanged."""
+        `completes`: a page completer's plan comes back unchanged, its FINAL taken inside our top). Every other
+        dealer's plan comes back unchanged."""
         persona = self.personas.personas.get(dealer)
         if not is_forgiving(persona, self.rules):
             return plan

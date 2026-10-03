@@ -15,7 +15,8 @@ import pytest
 
 from bazaar_agent import approvals, intel, strategy
 from bazaar_agent import guardrails as gr
-from bazaar_agent.agents.dealer import BidPlan
+from bazaar_agent.agents.dealer import BidPlan, Negotiation, decide
+from bazaar_agent.agents.dealer import Move as DMove
 from bazaar_agent.agents.dealer_plan import plan_dealer_buy
 from bazaar_agent.agents.persona_desk import shape
 from bazaar_agent.agents.taker import official_top
@@ -126,19 +127,29 @@ PICAROS = {
     "level": 4,
     "status": "active",
     "traits": {"chattiness": 0.8, "strictness": 0.1, "memory": 0.3, "shrewdness": 0.7},
-    "menu": {"sells": [{"rarity": "rare", "sets": "released", "list_price": 73}]},
+    "menu": {"sells": [{"rarity": "rare", "sets": "released", "list_price": 63}]},
 }
 SOLD = [settle(i, i, "picaros", "t07", "LAV-10", p, tick=700 + i, kind="card", persona="picaros") for i, p in
         enumerate([48, 58, 67], 1)]  # fmt: skip
 
 
-def test_a_trickster_takes_a_page_completers_ask_up_to_our_top_but_never_its_list_price():
+def test_a_trickster_final_inside_our_top_closes_a_page_completer_its_list_price_included():
+    # Tick 1201-1205: "we take an ask only at or under 58, never at its list price 63", and its finals were 60-63.
     persona = parse_persona(PICAROS)
     plain = forgiving_plan(BidPlan(48, 2, 95), persona, "LAV-09", "rare", intel.tape(SOLD), gr.Guardrails())
-    assert plain.accept_max == 54  # 48 + 0.33 × (67 - 48): the low third of its fills
+    assert (plain.forgiving, plain.accept_max, plain.list_price) == (True, 54, 63)  # any other card: as before
+    n = Negotiation(plain, [48, 49, 50])
+    n.see_ask(73)
+    assert decide(n, 63, 9, True).kind == "bid"  # its FINAL 63 is not its limit: we step by 1, never meeting it
     mine = forgiving_plan(BidPlan(48, 2, 95), persona, "LAV-09", "rare", intel.tape(SOLD), gr.Guardrails(), None, True)
-    assert (mine.forgiving, mine.step, mine.accept_max, mine.list_price) == (True, 1, 95, 73)
-    assert mine.accepts(63) and not mine.accepts(73)  # its final 63 now closes; its list price still never
+    assert mine == BidPlan(48, 2, 95)  # a page completer: no forgiving plan
+    n = Negotiation(mine, [48, 50, 52])
+    n.see_ask(73)
+    assert decide(n, 63, 9, True) == DMove("accept", 63, 9, "final within limit")  # its final closes the page
+    assert decide(n, 96, 9, True).kind == "walk"  # a final above our top: never
+    early = Negotiation(mine, [48])
+    early.see_ask(73)
+    assert decide(early, 73, 9, True).kind == "walk"  # its opening ask as a final: never taken (scores nothing)
 
 
 # ---------------------------------------------------------------- the official value cap at the open
@@ -198,3 +209,18 @@ def test_buys_need_no_human_approval_sells_still_do(asked):
 def test_the_shipped_rules_turn_buy_approvals_off():
     rules = gr.load_guardrails().rules
     assert rules.human_approval_buys is False and rules.human_approval_above > 0
+
+
+def test_a_card_an_open_offer_wants_is_refused_with_its_own_reason():
+    from bazaar_agent.agents.seller import Commitments, committed_context
+
+    base = gr.Context(cash=400, held={"LAV-01": 1}, tick=5, t_hours=1.0, breakers=frozenset())
+    ctx = committed_context(base, Commitments(60, ("LAV-09",)))
+    rules = gr.Guardrails(cash_floor=0, max_spend_per_game_hour=1000, max_price_rare=95)
+    assert gr.check(gr.Action("buy", "LAV-09", "rare", 48), ctx, rules).violations[0] == (
+        "an offer of ours, open or settling, already wants LAV-09 (block_buying_held_cards)"
+    )  # the taker's thread for it is open: a second buy is still refused, but /me holds none
+    assert (
+        "we already hold LAV-01 (block_buying_held_cards)"
+        in gr.check(gr.Action("buy", "LAV-01", "common", 5), ctx, rules).violations
+    )

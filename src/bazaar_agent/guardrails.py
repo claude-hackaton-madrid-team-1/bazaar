@@ -754,6 +754,7 @@ class Context:
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
     sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
+    wanted: tuple[str, ...] = ()  # cards our open offers want, counted in `held` (seller.committed_context)
     # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
     trades: TradeBook | None = None
     values: OfficialValues | None = None  # GET /api/me/value reads: every card buy capped; None refuses them all
@@ -867,7 +868,11 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             f"{rules.max_packs_per_game_hour})"
         )
     if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0:
-        v.append(f"we already hold {action.item} (block_buying_held_cards)")
+        # A copy an open offer of ours wants counts as held (a second buy of it is refused), but it is not in /me yet.
+        if ctx.held[action.item] <= ctx.wanted.count(action.item):
+            v.append(f"an offer of ours, open or settling, already wants {action.item} (block_buying_held_cards)")
+        else:
+            v.append(f"we already hold {action.item} (block_buying_held_cards)")
     if action.kind in SELLING and action.price is not None and action.your_value is not None:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
