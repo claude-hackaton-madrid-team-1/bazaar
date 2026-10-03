@@ -1203,6 +1203,12 @@ the smoke runs with no Postgres by design → fix (#258): a simulator target (`g
 from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
 ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
 
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))`; the JSONL ledger has no such check, so a new kind
+passes every file-ledger test and fails live with `CheckViolation` (found by the #236 reviews). A Workshop craft is
+booked as `spend` at price 0 with item `taller:<refs>` and counted by prefix (`count_since(kind, t_hours, prefix)`).
+
 ### [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
 From `decisions`/`executions` (read-only). Taker rejections: `max_price_uncommon` 341 (204 ticks, asks 27-33 vs cap 26,
 ticks 174-310), `cash_floor` 100 + `max_spend` 72 (all before the Sat 16:35 loosening: floor 100/50, hourly 150), `max_price_rare`

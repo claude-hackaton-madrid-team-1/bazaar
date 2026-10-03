@@ -2381,16 +2381,26 @@ def taller_cmd(
 ) -> None:
     """The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`).
 
-    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
-    hourly cap counts the taker's crafts only). Dry run by default."""
+    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch, the
+    hourly cap shared with every process (the shared ledger, booked before the send) and the hold on an accept still
+    settling that cannot name its copy. Unlike the taker it does not wait for a duel deadline or a Market Test
+    (`bazaar deploy-guard` says when). Dry run by default."""
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents import taller as tl
 
     client, me = _team_me()
-    rules, _, ctx, commitments = _sell_context(client, me, live)
-    busy = set(commitments.listed)
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
+    try:  # the taker's busy set: offers, sell threads, accepts of this and the last tick (no team-desk memory here)
+        threads = (client.my_threads("open") or {}).get("threads") or []
+        busy = set(commitments.listed) | tl.busy_copies(me, _my_offers(client), threads, ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    except BazaarError as e:
+        _fail(f"our offers or threads could not be read ({escape(str(e.code))}): nothing sent")
     public = public_client(load_settings())
     catalog = public.catalog()
     if not assets:
@@ -2407,14 +2417,23 @@ def taller_cmd(
     if len(rarities) != 1:
         _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
     action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
-    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    try:  # the shared ledger: every process's crafts this hour, and accepts still settling (fail closed)
+        done, hold = tl.crafts_last_hour(ledger, ctx.t_hours), tl.unnamed_settling(ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    verdict = gr.check(
+        action, replace(ctx, sellable=tl.free_counts(me, busy), taller_last_hour=done, taller_hold=hold), rules
+    )
     console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
     if not verdict.allowed or not live:
         if verdict.allowed:
             console.print("[dim]dry run: nothing sent (add --live)[/dim]")
         return
     try:
+        tl.book_craft(ledger, ctx.tick, ctx.t_hours, refs)  # before the send: the shared hourly cap
         answer = tl.craft(client, assets)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
     except BazaarError as e:
         _fail(f"refused: {escape(str(e.code))} ({escape(tl.pulled({'card': str(e.message)[:80]}))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
