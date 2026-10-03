@@ -75,7 +75,8 @@ def _row(
 ) -> FinalsRow | None:
     cap, final_cap = rules.max_price_for(rarity), rules.final_cap_for(rarity)
     assert cap is not None and final_cap is not None and stats.floor is not None
-    start, top, step = patience_ladder((cap, cap, 1), stats.patience, stats.opening, stats.silent_below)
+    max_bids = max(1, rules.dealer_max_ticks_per_thread - 2)  # as the taker: the final fits inside the thread
+    start, top, step = patience_ladder((cap, cap, 1), stats.patience, stats.opening, stats.silent_below, max_bids)
     ladder = Ladder(start, step, top)
     pool = [
         t for t in threads if t.dealer == stats.dealer and t.side == "buy" and price_class(t.item) == stats.price_class
