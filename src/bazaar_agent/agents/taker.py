@@ -539,6 +539,7 @@ class Taker:
             in_use=len(threads) + opened_now,
             ctx=lambda thread: self._ctx(run, skip_thread=thread),
             window_open=run.window.open,
+            listing_cap=snap.clock.limits.offers_per_team_per_tick,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
