@@ -1,6 +1,6 @@
 # B20: the fastest safe path to an open venue
 
-Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at 1696789 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
+Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at f29ffeb (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
 
 ## The premise needs one correction
 
