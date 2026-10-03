@@ -45,6 +45,13 @@ LIVE_SHOW_VARIABLES = {
     "TRANSCRIPT_SPEAK_QUOTES": {"type": "preserve"},
     "TRANSCRIPT_STREAMS_PER_ADDRESS": {"type": "preserve"},
     "TTS_DAILY_CHARS": {"type": "preserve"},
+    "ELEVENLABS_VOICE_SELLER": {"type": "preserve"},
+    "BAZAAR_KEY": {"type": "preserve"},  # the game screens' relay (bazaar-live #9), set by hand
+    "GAME_VIEW_TOKEN": {"type": "preserve"},
+    "APPROVER_PASSWORD": {"type": "preserve"},  # the Approvals screen (HA2), set by hand
+    "BAZAAR_MCP_URL": {"type": "preserve"},
+    "BAZAAR_MCP_TOKEN": {"type": "preserve"},
+    "BAZAAR_APPROVER_TOKEN": {"type": "preserve"},
 }
 VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
@@ -89,6 +96,16 @@ def test_exactly_the_services_and_volumes_we_run_are_declared(resources: list[di
     assert {r["name"] for r in resources if r["type"] == "service"} == SERVICES
     attached = {a for r in resources for a in (r.get("volumeAttachments") or {})}
     assert {r["name"] for r in resources if r["type"] == "volume"} | attached == VOLUMES
+
+
+def test_only_the_mcp_server_and_the_show_hold_the_approver_token_and_never_a_value(
+    services: dict[str, dict[str, Any]],
+) -> None:
+    """HA2: BAZAAR_APPROVER_TOKEN opens the human approval tools. No agent service may hold it (an agent must never
+    approve its own trade): only bazaar-mcp (which checks it) and bazaar-live (the Approvals screen) declare it."""
+    held = {name: (s.get("variables") or {}).get("BAZAAR_APPROVER_TOKEN") for name, s in services.items()}
+    assert {n for n, v in held.items() if v is not None} == {"bazaar-mcp", LIVE_SHOW}
+    assert {n for n, v in held.items() if v == {"type": "preserve"}} == {"bazaar-mcp", LIVE_SHOW}
 
 
 def test_only_the_live_agents_declare_bazaar_live_and_only_as_preserve(services: dict[str, dict[str, Any]]) -> None:
