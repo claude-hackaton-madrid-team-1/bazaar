@@ -56,6 +56,7 @@ from bazaar_agent.agents.seller import (
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
@@ -170,11 +171,13 @@ class Maker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         jev: MakerJev | None = None,
+        notices: VenueNotices | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
+        self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
 
@@ -193,6 +196,8 @@ class Maker:
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
         params = self.params(clock.tick)
+        if self.notices is not None:
+            self.notices.update(snap.events, snap.us)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
         mine, total = our_open_offers(snap.offers, snap.us)
         listed = self.ledger.count_in_tick("listing", clock.tick)
@@ -290,7 +295,10 @@ class Maker:
     def _post(self, run: _MakerRun, t: Target, why: str) -> int | None:
         """Post one offer; the new offer's id when it went out live, else None."""
         tick = run.snap.clock.tick
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venues = run.snap.venues
+        if self.notices is not None:  # a fee announced for later in the listing's life counts now
+            venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
+        venue = best_venue(venues, run.snap.us, t.price)
         blocked = self._blocked(run)
         t, advice, candidates = self._jev_price(run, t, venue.id) if venue and not blocked else (t, None, None)
         inputs = {

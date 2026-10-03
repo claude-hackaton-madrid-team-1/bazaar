@@ -1283,6 +1283,14 @@ def _status_port(port: int | None) -> int:
     return int(raw) if raw.isdigit() else 0
 
 
+def _feed_interpreter(settings: Any, rules: Any, log: Callable[[str], None]) -> Any:
+    """The LLM pass over the feed's free text (N12), or None without a runtime LLM credential."""
+    from bazaar_agent.learn.interpret import FeedInterpreter
+
+    runtime = llm_cli.runtime_for(settings, rules, "feed reader")
+    return FeedInterpreter(runtime, log) if runtime is not None else None
+
+
 def _run_agent(
     name: str,
     live: bool,
@@ -1291,6 +1299,7 @@ def _run_agent(
     port: int | None = None,
     host: str | None = None,
     learn: bool = False,
+    llm_read: bool = False,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
     read-only status server, the loop. `learn`: this agent owns the live-feed reader (N12): it archives
@@ -1330,7 +1339,7 @@ def _run_agent(
 
         store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
-        extra["learner"] = LiveLearner(store, log)
+        extra["learner"] = LiveLearner(store, log, _feed_interpreter(settings, rules, log) if llm_read else None)
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
@@ -1376,6 +1385,11 @@ def agent_taker(
         help="Read the live feed into learnings, skip dealers under a learned blocker, archive the feed window "
         "(BAZAAR_LEARN=0 turns it off on a service)",
     ),
+    llm_read: bool = typer.Option(
+        True,
+        envvar="BAZAAR_LLM_READ",
+        help="Also read the feed's free text (dealer words, notices) with the runtime LLM, off the tick loop",
+    ),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
@@ -1394,7 +1408,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host, learn=learn)
+    _run_agent("taker", live, max_ticks, build, port, host, learn=learn, llm_read=learn and llm_read)
 
 
 @agent_app.command("maker")
@@ -1404,12 +1418,19 @@ def agent_maker(
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    learn: bool = typer.Option(
+        True,
+        envvar="BAZAAR_LEARN",
+        help="Score venues at fees announced in the feed for later in a listing's life (BAZAAR_LEARN=0: off)",
+    ),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
+    from bazaar_agent.learn.venues import VenueNotices
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
+        notices = VenueNotices(kw["log"]) if learn else None
+        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, notices=notices, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host)
 

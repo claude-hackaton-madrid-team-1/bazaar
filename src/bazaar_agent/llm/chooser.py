@@ -26,7 +26,7 @@ from bazaar_agent.llm.models import Pin
 
 QUESTION_FILE = REPO_ROOT / "questions" / "runtime_model.json"
 QUESTION_ID = "model_for_move"
-MoveKind = Literal["buy", "sell", "words", "parse_request", "steer"]
+MoveKind = Literal["buy", "sell", "words", "parse_request", "steer", "read_feed"]
 ChoiceSource = Literal["flag", "env", "runtime.md", "jev", "default"]
 MIN_JEV_BUDGET_S = 1.0  # less time than this left for Jev: use the default instead of a late answer
 WARM_LINES = 200

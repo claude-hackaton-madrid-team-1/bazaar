@@ -111,6 +111,19 @@ def words_for(settings: Settings, rules: Guardrails, fallback: WordsFn) -> Words
     return llm_words(runtime, fallback, log=lambda line: console.print(escape(line)))
 
 
+def runtime_for(settings: Settings, rules: Guardrails, purpose: str) -> LLMRuntime | None:
+    """The runtime LLM for a background job (the feed reader), built before the first tick; None without one."""
+    try:
+        loaded = load_runtime()
+        runtime = build_runtime(settings, loaded.config, rules, cli_pin=STATE["pin"])
+        runtime.warm()
+    except (RuntimeConfigError, UnknownModelError, LLMError) as e:
+        console.print(f"[yellow]{purpose}: runtime LLM off ({escape(str(e))})[/yellow]")
+        return None
+    console.print(f"{purpose}: runtime LLM, {claude_auth(settings)}, model from Jev's read_feed choice")
+    return runtime
+
+
 def claude_auth(settings: Settings) -> str:
     """Which credential Claude models use, by variable name only (never a value)."""
     credential = credential_for("anthropic", settings)
