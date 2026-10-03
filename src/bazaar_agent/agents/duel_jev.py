@@ -26,6 +26,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from bazaar_agent.agents.duel_v2 import V2Params, counter_offer, may_counter, plan_moves, value_of
 from bazaar_agent.agents.duelist import (
     DuelMove,
     duel_deadline,
@@ -147,34 +148,49 @@ def accept_move(duel: Mapping[str, Any]) -> DuelMove | None:
     return DuelMove("accept", rival["price"], reason="inside our limit")
 
 
-def _dominated(duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str) -> bool:
+def _dominated(
+    duel: Mapping[str, Any], counter: DuelMove, accept: DuelMove, role: str, signed: bool = False, v2: bool = False
+) -> bool:
     """True when the rival's standing offer is already at least as good for us as our own counter."""
-    rival = effective_price(dict(duel), int(accept.price or 0))
-    ours = own_worth(duel, int(counter.price or 0), counter.days)
+    rival_days = (duel.get("rival_offer") or {}).get("days")
+    rival = value_of(duel, int(accept.price or 0), rival_days, signed, v2)
+    ours = value_of(duel, int(counter.price or 0), counter.days, signed, v2)
     if rival is None or ours is None:
         return False
     return rival >= ours if role == "seller" else rival <= ours
 
 
 def legal_moves(
-    duel: Mapping[str, Any], tick: int, default: DuelMove, counter: DuelMove, endgame_ticks: int
+    duel: Mapping[str, Any],
+    tick: int,
+    default: DuelMove,
+    counter: DuelMove,
+    endgame_ticks: int,
+    v2: V2Params | None = None,
 ) -> dict[str, DuelMove]:
     """The moves that stay inside our limit, by `duel_move` option. Today's move stands for its own option.
     A counter that asks less than the rival already offers (a seller) or more (a buyer) is dominated by
-    accepting, so it is not a move."""
+    accepting, so it is not a move. Under v2 (`duel_policy` = v2) an accept is legal only where the accept
+    planner gave this duel the team's slot, and is then the only move (Jev cannot see the queue of accepts);
+    a counter is legal only within v2's caps on our priced messages."""
     limit_role = _limit_role(duel)
     if limit_role is None or duel_done(duel):
         return {"hold": default}
     left = ticks_left(duel, tick)
     endgame = left is not None and left <= endgame_ticks
-    accept = default if default.kind == "accept" else accept_move(duel)
-    if accept is not None and endgame:
+    accept = default if default.kind == "accept" else (None if v2 is not None else accept_move(duel))
+    if accept is not None and (endgame or v2 is not None):  # v2: the planner timed it across every duel
         return {"accept": accept}
     moves: dict[str, DuelMove] = {} if accept is None else {"accept": accept}
     offer = default if default.kind == "offer" else counter
-    worth = own_worth(duel, offer.price, offer.days) if offer.kind == "offer" and offer.price is not None else None
-    priced = worth is not None and inside_limit(worth, *limit_role)  # after the worst-case cost of our days
-    if priced and (accept is None or not _dominated(duel, offer, accept, limit_role[1])):
+    signed = v2 is not None and v2.days_signed
+    price, days = offer.price, offer.days
+    worth = value_of(duel, price, days, signed, v2 is not None) if offer.kind == "offer" and price is not None else None
+    priced = worth is not None and inside_limit(worth, *limit_role)  # after the cost of our days
+    within_caps = v2 is None or default.kind == "offer" or may_counter(duel, v2)
+    rival = accept or accept_move(duel)
+    dominated = rival is not None and _dominated(duel, offer, rival, limit_role[1], signed, v2 is not None)
+    if priced and within_caps and not dominated:
         moves["counter"] = offer
     if not endgame:
         moves["hold"] = DuelMove("hold", reason="wait for the rival's answer")
@@ -386,17 +402,26 @@ class DuelJev:
         floor: float,
         endgame_ticks: int,
         left: Callable[[], float],
+        v2: V2Params | None = None,
+        slots: int = 1,
     ) -> dict[int, DuelPick]:
-        """Each live duel's move this tick (keyed by duel id). `left` is the seconds left in the tick."""
+        """Each live duel's move this tick (keyed by duel id). `left` is the seconds left in the tick.
+        With `v2` (`duel_policy` = v2), today's move is `duel_v2.plan_moves` across every duel at once."""
+        duels = list(duels)
+        planned = plan_moves(duels, tick, first_seen, v2, slots) if v2 is not None else {}
         plans: dict[int, tuple[dict[str, Any], DuelMove, dict[str, DuelMove], dict[str, Any]]] = {}
         for d in duels:
             did = duel_id(d)
             if did is None:
                 continue
             start = first_seen.get(did, tick)
-            default = duel_move(d, tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
-            counter = duel_move({**d, "rival_offer": None}, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
-            legal = legal_moves(d, tick, default, counter, endgame_ticks)
+            if v2 is not None:
+                default, counter = planned[did], counter_offer(d, tick, start, v2)
+            else:
+                default = duel_move(d, tick, start, anchor=anchor, floor=floor, endgame_ticks=endgame_ticks)
+                no_rival = {**d, "rival_offer": None}
+                counter = duel_move(no_rival, tick, start, anchor=anchor, floor=floor, endgame_ticks=0)
+            legal = legal_moves(d, tick, default, counter, endgame_ticks, v2)
             plans[did] = (d, default, legal, duel_state(d, tick, legal, default, counter))
         self._cache = {key: advice for key, advice in self._cache.items() if key[0] in plans}  # live duels only
         answers = self._ask(self._questions(plans), left)
