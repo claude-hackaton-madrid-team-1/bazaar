@@ -24,6 +24,8 @@ from bazaar_sdk import Bazaar, BazaarError, Broker, _Http  # noqa: E402
 __all__ = ["Bazaar", "BazaarError", "Broker", "PublicBazaar", "TrackedBazaar", "public_client", "team_client"]
 
 WriteHook = Callable[[str, str, str], None]  # (method, path, "before" | "after")
+TEAM_TIMEOUT_S = 15.0  # one team request's HTTP timeout
+TEAM_RETRIES = 2  # retries after a network error: a /me may take (TEAM_RETRIES + 1) x TEAM_TIMEOUT_S
 log = logging.getLogger(__name__)
 
 
@@ -75,4 +77,7 @@ def team_client(settings: Settings, *, track: bool = True) -> Bazaar:
     from bazaar_agent import holdings
 
     hook = holdings.process_tracker(settings) if track else None
-    return TrackedBazaar(settings.bazaar_url, settings.require_team_key(), on_write=hook, wait_on_tick=False, retries=2)
+    key = settings.require_team_key()
+    return TrackedBazaar(
+        settings.bazaar_url, key, on_write=hook, wait_on_tick=False, retries=TEAM_RETRIES, timeout=TEAM_TIMEOUT_S
+    )

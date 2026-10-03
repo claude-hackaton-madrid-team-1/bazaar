@@ -9,6 +9,7 @@ Skipped when Postgres is unreachable.
 import threading
 import time
 from copy import deepcopy
+from datetime import UTC, datetime
 
 import pytest
 
@@ -258,8 +259,7 @@ def test_a_slow_game_read_is_awaited_not_asked_twice(opener, monkeypatch):
 
 
 def test_a_database_that_hangs_after_the_game_answered_costs_the_caller_nothing(opener, monkeypatch):
-    monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
-    real_save = hd.save
+    real_save = hd.save  # production deadlines: the caller is woken by the answer, not by the deadline
 
     def hung_save(*args, **kwargs):  # the link hangs during the store, after /me answered
         time.sleep(2.0)
@@ -274,15 +274,42 @@ def test_a_database_that_hangs_after_the_game_answered_costs_the_caller_nothing(
     time.sleep(2.2)  # let the worker finish the store before the schema is dropped
 
 
+def test_a_store_that_lands_late_makes_the_row_look_old_never_new(opener, monkeypatch):
+    real_save = hd.save
+
+    def stalled_save(*args, **kwargs):  # the link stalls after /me answered, then the store lands
+        time.sleep(1.2)
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(hd, "save", stalled_save)
+    game = Game()
+    reader(opener, game).me(clock(tick=TICK))
+    time.sleep(1.4)  # the store has landed
+    late = reader(opener, game, "maker", holdings_max_age_s=1.0).me(clock(tick=TICK))
+    assert (late.source, late.why) == ("live", "older than 1 s")
+
+
+def test_an_error_after_the_game_answered_reaches_the_caller_once(opener, monkeypatch):
+    def broken(self, raw, clock, epoch, why):
+        raise RuntimeError("bad payload")
+
+    monkeypatch.setattr(Holdings, "_as_read", broken)
+    game = Game()
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        reader(opener, game).me(clock(tick=TICK))
+    assert time.monotonic() - started < 2.0 and game.calls == 1
+
+
 def test_a_job_whose_caller_gave_up_never_asks_the_game(opener, monkeypatch):
     monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
-    real_epoch = hd.current_epoch
+    real_epoch = hd.epoch_and_time
 
     def slow_epoch(*args, **kwargs):  # Postgres is slow before the game is asked
         time.sleep(1.0)
         return real_epoch(*args, **kwargs)
 
-    monkeypatch.setattr(hd, "current_epoch", slow_epoch)
+    monkeypatch.setattr(hd, "epoch_and_time", slow_epoch)
     game = Game()
     read = reader(opener, game).me(clock(tick=TICK))
     time.sleep(1.2)  # the job wakes up after its caller left
@@ -295,9 +322,11 @@ def test_two_writers_in_one_tick_never_move_the_row_backwards(opener):
     shared = SharedDb(opener)
     newer = deepcopy({**ME, "tick": TICK, "cash": 380})
     with shared.session() as conn:
-        assert save(conn, REAL, parse_me(newer), newer, TICK, 5, "taker", 0.0)
+        assert save(conn, REAL, parse_me(newer), newer, TICK, 5, "taker", datetime.now(UTC))
         old = {**ME, "tick": TICK}
-        assert not save(conn, REAL, parse_me(old), old, TICK, 4, "maker", 0.0)  # read under an older epoch
+        assert not save(
+            conn, REAL, parse_me(old), old, TICK, 4, "maker", datetime.now(UTC)
+        )  # read under an older epoch
         row = conn.execute("select epoch, cash, read_by from me_snapshots where team = 't01' and tick = %s", (TICK,))
         assert row.fetchone() == (5, 380, "taker")
         evals = conn.execute("select cash from snapshots where tick = %s", (TICK,)).fetchone()

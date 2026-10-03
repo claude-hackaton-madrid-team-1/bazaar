@@ -51,6 +51,7 @@ from bazaar_agent.catalog_db import CatalogSync, save_catalog
 from bazaar_agent.config import Settings
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.identity import valid_team_id
+from bazaar_agent.sdk import TEAM_RETRIES, TEAM_TIMEOUT_S
 from bazaar_agent.ticks import Clock
 
 LOCK_TIMEOUT_MS = 3000  # wait this long for another process's /me read, then read it ourselves
@@ -64,7 +65,8 @@ HOOK_TIMEOUT_S = 0.2  # the write tracker never holds a send longer than this, w
 READ_DEADLINE_S = 5.0  # a database read (lock wait 3 s + the leader's /me) past this: read /me live
 STUCK_AFTER_S = 5.0  # a worker busy this long is stuck: reads skip the database until it is free
 WRITER_RETRY_AFTER_S = 5.0  # the writer reconnects sooner: a lost bump is a lost invalidation
-ME_BUDGET_S = 50.0  # the SDK's own budget for one /me (3 attempts of 15 s + backoff): a read already asked
+# The SDK's own budget for one /me (every attempt of `sdk.TEAM_TIMEOUT_S`, plus backoff): a read already asked.
+ME_BUDGET_S = (TEAM_RETRIES + 1) * TEAM_TIMEOUT_S + 5.0
 EXIT_CATCH_UP_S = 2.0  # a one-shot command waits this long, at exit, to record a bump it lost
 NO_HOLDINGS_EFFECT = ("/api/duels", "/api/flags")  # sends that move no card and no cash
 
@@ -144,7 +146,7 @@ def parse_me(raw: Any) -> MePayload | None:
 
 def digest(me: MePayload) -> str:
     """The etag of what we hold: cash, level, every asset and the album counts. Same holdings, same digest."""
-    pages = sorted((str(p.get("set")), p.get("have")) for p in me.album.get("pages") or [] if isinstance(p, dict))
+    pages = sorted((str(p.get("set")), str(p.get("have"))) for p in me.album.get("pages") or [] if isinstance(p, dict))
     basis = {
         "cash": me.cash,
         "level": me.level,
@@ -277,8 +279,17 @@ def verdict(row: Stored | None, team: str, max_age_s: float) -> str:
 
 
 def current_epoch(conn: psycopg.Connection, world: str) -> int:
-    row = conn.execute("select epoch from holdings_state where scope = %s", (world,)).fetchone()
-    return int(row[0]) if row else 0
+    return epoch_and_time(conn, world)[0]
+
+
+def epoch_and_time(conn: psycopg.Connection, world: str) -> tuple[int, Any]:
+    """The epoch and the server's clock, read BEFORE `/me`: the row's `read_at` is when the read began, so a
+    store that lands late (a stalled link) makes the row look old, never new."""
+    row = conn.execute(
+        "select coalesce((select epoch from holdings_state where scope = %s), 0), clock_timestamp()", (world,)
+    ).fetchone()
+    assert row is not None
+    return int(row[0]), row[1]
 
 
 def bump(conn: psycopg.Connection, world: str, kind: WriteKind, what: str, writer: str) -> None:
@@ -295,14 +306,14 @@ def bump(conn: psycopg.Connection, world: str, kind: WriteKind, what: str, write
 
 
 def save(conn: psycopg.Connection, scope: Scope, me: MePayload, raw: dict[str, Any], tick: int, epoch: int,
-         read_by: str, latency_s: float) -> bool:  # fmt: skip
+         read_by: str, read_at: Any) -> bool:  # fmt: skip
     """Upsert the snapshot: a newer epoch, or the same epoch read later, wins; True when this row won. Only
     then, and only when the scope may, the evals' `snapshots` row of the tick follows it."""
     s = summary(me)
     written = conn.execute(
         "insert into me_snapshots (world, team, tick, epoch, digest, read_at, read_by, cash, level, cards, "
-        "duplicates, packs, pages, affinity, score, me) values (%s, %s, %s, %s, %s, "
-        "clock_timestamp() - make_interval(secs => %s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "duplicates, packs, pages, affinity, score, me) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+        "%s, %s, %s, %s, %s) "
         "on conflict (world, team, tick) do update set epoch = excluded.epoch, digest = excluded.digest, "
         "read_at = excluded.read_at, read_by = excluded.read_by, cash = excluded.cash, level = excluded.level, "
         "cards = excluded.cards, duplicates = excluded.duplicates, packs = excluded.packs, pages = excluded.pages, "
@@ -310,7 +321,7 @@ def save(conn: psycopg.Connection, scope: Scope, me: MePayload, raw: dict[str, A
         "where excluded.epoch > me_snapshots.epoch "
         "or (excluded.epoch = me_snapshots.epoch and excluded.read_at >= me_snapshots.read_at)",
         (
-            scope.world, me.id, tick, epoch, digest(me), latency_s, read_by, round(me.cash), me.level,
+            scope.world, me.id, tick, epoch, digest(me), read_at, read_by, round(me.cash), me.level,
             json.dumps(s["cards"]), json.dumps(s["duplicates"]), json.dumps(s["packs"]), json.dumps(s["pages"]),
             json.dumps(me.affinity), json.dumps(me.score), json.dumps(raw),
         ),
@@ -606,8 +617,10 @@ class Ticket:
         self.asked = False
         self.cancelled = False
         self.answered = threading.Event()
+        self.ready = threading.Event()  # the game answered, or the job ended: the caller stops waiting
         self.read: MeRead | None = None
         self.error: BaseException | None = None
+        self.note: str | None = None  # why the job gave no read (e.g. "postgres error")
 
     def ask(self) -> bool:
         """The job, before `/me`: False when the caller already gave up."""
@@ -626,6 +639,7 @@ class Ticket:
     def answer(self, read: MeRead | None, error: BaseException | None) -> None:
         self.read, self.error = read, error
         self.answered.set()
+        self.ready.set()
 
 
 class Holdings:
@@ -659,25 +673,38 @@ class Holdings:
         reason = live_because or self._skip_reason(clock, self._now() - read_at)
         if reason is not None or clock is None:
             return self._live(clock, reason or "no clock")
-        ok, got = self._on_worker(lambda c, t: self._from_db(c, clock, read_at, t))
+        ok, got, note = self._on_worker(lambda c, t: self._from_db(c, clock, read_at, t))
         if got is not None:
             return got
-        return self._plain(clock, "postgres busy or not connected" if ok else "postgres too slow")
+        return self._plain(clock, note or ("postgres busy or not connected" if ok else "postgres too slow"))
 
-    def _on_worker(self, job: Callable[[psycopg.Connection, Ticket], MeRead | None]) -> tuple[bool, MeRead | None]:
-        """Run a read on the worker. Past READ_DEADLINE_S the caller gives up, unless the job has already
-        asked the game: then it waits for the game's answer (at most ME_BUDGET_S, the SDK's own budget),
-        which the job hands over BEFORE storing it, so a database that hangs after `/me` costs nothing.
-        A job whose caller gave up never asks the game. (ok, read): ok False = the deadline passed."""
+    def _on_worker(
+        self, work: Callable[[psycopg.Connection, Ticket], MeRead | None]
+    ) -> tuple[bool, MeRead | None, str | None]:
+        """Run a read on the worker; the caller wakes as soon as the game has answered (the store goes on
+        without it) or the job ended, and gives up after READ_DEADLINE_S unless the job has already asked
+        the game: then it waits for that answer, at most ME_BUDGET_S (the SDK's own budget for one /me). A
+        job whose caller gave up never asks the game. (ok, read, note): ok False = the deadline passed."""
         ticket = Ticket()
-        ok, got = self.shared.call(lambda c: None if c is None else job(c, ticket), READ_DEADLINE_S)
-        if ok:
-            return True, got
-        if ticket.give_up() and ticket.answered.wait(ME_BUDGET_S):
+
+        def job(conn: psycopg.Connection | None) -> None:
+            try:
+                if conn is not None and ticket.read is None:
+                    found = work(conn, ticket)
+                    ticket.read = ticket.read or found
+            except BaseException as e:  # handed to the caller (a refused /me)
+                ticket.error = ticket.error or e
+            finally:
+                ticket.ready.set()
+
+        if self.shared.stuck():
+            return False, None, None
+        self.shared.call(job, 0.0, queue_if_stuck=True)  # enqueue (runs inline without a database)
+        if ticket.ready.wait(READ_DEADLINE_S) or (ticket.give_up() and ticket.answered.wait(ME_BUDGET_S)):
             if ticket.error is not None:
                 raise ticket.error
-            return False, ticket.read
-        return False, None
+            return True, ticket.read, ticket.note
+        return False, None, None
 
     def after_deal(self, clock: Clock | None, what: str) -> MeRead:
         """A deal of ours (sent, or seen settled): bump the epoch, so no process trusts an older snapshot,
@@ -719,6 +746,8 @@ class Holdings:
     def _from_db(self, conn: psycopg.Connection, clock: Clock, read_at: float, ticket: Ticket) -> MeRead | None:
         """On the worker. None (the caller reads `/me` itself) when Postgres fails before the game was asked."""
         assert self.team is not None
+        if ticket.cancelled:  # the caller left: no database work, no game call
+            return None
         try:
             found, why = self._fresh(conn, clock, read_at)
             if found is not None:
@@ -732,11 +761,13 @@ class Holdings:
                 found, why = self._fresh(conn, clock, read_at)  # after the wait: the tick may be ending
                 if found is not None:
                     return found
-                return self._read_and_store(conn, clock, current_epoch(conn, self.scope.world), why, ticket)
+                epoch, began = epoch_and_time(conn, self.scope.world)
+                return self._read_and_store(conn, clock, epoch, began, why, ticket)
         except psycopg.errors.LockNotAvailable:
             return self._live_unlocked(conn, clock, "waited too long for another reader", ticket)
         except psycopg.Error as e:
             self.shared.failed(e)
+            ticket.note = "postgres error"
             return ticket.read  # the game's answer when it came before the failure, else None
 
     def _fresh(self, conn: psycopg.Connection, clock: Clock, read_at: float) -> tuple[MeRead | None, str]:
@@ -755,45 +786,45 @@ class Holdings:
         return MeRead(me, "db", row.tick, row.age_s, row.epoch, row.digest, row.read_by, why), why
 
     def _read_and_store(
-        self, conn: psycopg.Connection, clock: Clock | None, epoch: int, why: str, ticket: Ticket
+        self, conn: psycopg.Connection, clock: Clock | None, epoch: int, began: Any, why: str, ticket: Ticket
     ) -> MeRead | None:
         """/me from the game (unless the caller gave up), handed to the caller at once, then the upsert in a
         savepoint: a failed or hung write never loses or delays the read."""
         if not ticket.ask():
             return None
-        started = self._now()
-        try:
+        try:  # from ask() to answer(): whatever happens, the caller is told
             raw = without_secrets(self._read_me())
+            self.counts["live"] += 1
+            read = self._as_read(raw, clock, epoch, why)
         except BaseException as e:
             ticket.answer(None, e)
             raise
-        latency = self._now() - started
-        self.counts["live"] += 1
-        read = self._as_read(raw, clock, epoch, why)
         ticket.answer(read, None)
         me = parse_me(raw)
         if me is not None and read.tick is not None:
             try:
                 with conn.transaction():
-                    save(conn, self.scope, me, raw, read.tick, epoch, self.reader, latency)
+                    save(conn, self.scope, me, raw, read.tick, epoch, self.reader, began)
             except psycopg.Error as e:
                 log.warning("holdings: snapshot not stored (%s)", type(e).__name__)
         return read
 
     def _live(self, clock: Clock | None, why: str) -> MeRead:
-        ok, got = self._on_worker(lambda c, t: self._live_unlocked(c, clock, why, t))
+        ok, got, note = self._on_worker(lambda c, t: self._live_unlocked(c, clock, why, t))
         if got is not None:
             return got
         return self._plain(clock, why if ok else f"{why}; postgres too slow")
 
     def _live_unlocked(self, conn: psycopg.Connection, clock: Clock | None, why: str, ticket: Ticket) -> MeRead | None:
         """A live read stored under the epoch read BEFORE it (a send in between makes it stale at once)."""
+        if ticket.cancelled:
+            return None
         try:
-            epoch = current_epoch(conn, self.scope.world)
+            epoch, began = epoch_and_time(conn, self.scope.world)
         except psycopg.Error as e:
             self.shared.failed(e)
             return None  # the caller reads /me itself
-        return self._read_and_store(conn, clock, epoch, why, ticket)
+        return self._read_and_store(conn, clock, epoch, began, why, ticket)
 
     def _plain(self, clock: Clock | None, why: str) -> MeRead:
         raw = without_secrets(self._read_me())

@@ -333,6 +333,12 @@ def test_a_send_never_waits_for_a_hung_database():
     assert calls == ["holdings-writes"]  # opened on the worker, never in the caller's thread
 
 
+def test_the_read_budget_covers_the_sdk_s_own_budget_for_one_me():
+    from bazaar_agent.sdk import TEAM_RETRIES, TEAM_TIMEOUT_S
+
+    assert hd.ME_BUDGET_S >= (TEAM_RETRIES + 1) * TEAM_TIMEOUT_S + 1.5  # every attempt plus the SDK's backoff
+
+
 def test_a_stuck_writer_costs_a_send_nothing_and_queues_nothing(monkeypatch):
     import time
 

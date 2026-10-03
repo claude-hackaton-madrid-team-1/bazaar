@@ -280,8 +280,9 @@ process whose bump was lost, a lock wait over 3 s. One reader at a time reads `/
 (`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two. After a deal
 (our accept, or a dealer thread that ended in a deal) the acting agent books it, bumps the epoch and
 re-reads `/me`. **Nothing here holds up a send or a tick**: every Postgres call runs on one worker thread
-per connection; a send waits at most 0.2 s for its bump and a read at most 5 s, then reads `/me` live (a
-hung network costs a deadline, never a tick). A lost bump is caught up by the next one, when the
+per connection; a send waits at most 0.2 s for its bump and a read at most 5 s for the database, then reads
+`/me` live (a hung network costs a deadline, never a tick); a read that has already asked the game waits for
+that answer as a direct `/me` would, and gets it before the store, which finishes on its own. A lost bump is caught up by the next one, when the
 connection reopens, or when the process exits.
 `holdings_from_db = false` in GUARDRAILS.md turns the shared answers off (snapshots are still written).
 
@@ -976,14 +977,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
-- [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
-- [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
-- [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
-- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
-- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
-- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+- [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
+- [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
+- [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
+- [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
+- [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
+- [2026-10-03] build-error — a reset simulator world's rows hid the current tick from the holdings
+- [2026-10-03] gotcha — parallel worktrees running `scripts/sim_smoke.py` collide on 127.0.0.1:8765
+- [2026-10-03] gotcha — another worker's simulator may own 127.0.0.1:8765
 
 <!-- BAZAAR:STATUS:END -->
 
