@@ -214,7 +214,11 @@ class Requirement:
         return None if self.min_deals is None or self.ours is None else max(0, self.min_deals - self.ours)
 
 
-COUNTED = RULES["buys not at the opening price"]  # what the plan counts toward an unlock (RULES.md + Friday)
+# What the plan counts toward an unlock: a lower bound, never relying on sales or opening-price deals, both
+# unverified (t08 and t16 suggest a sale may count; our LAV-03 at Abuela's opening ask counted). "The opening"
+# is the dealer's first price in the thread: her opening ask when she speaks first, and also when we bid first
+# and she answers with her opening line.
+COUNTED = RULES["buys not at the opening price"]
 
 
 def requirements(
