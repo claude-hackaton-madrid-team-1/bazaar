@@ -121,7 +121,7 @@ def test_chato_holds_the_first_move_then_matches_a_big_one():
     assert big.price == 90 or big.price == max(small.neg.limit, 96 - 6)  # six from you, six from me
 
 
-def test_a_dealer_buying_quotes_once_and_never_moves():
+def test_a_dealer_buying_opens_low_and_raises_one_per_move_up_to_its_ceiling():
     neg = dealers.start(
         ABUELA,
         side="buy",
@@ -133,12 +133,15 @@ def test_a_dealer_buying_quotes_once_and_never_moves():
         assets=[7],
         rng=random.Random(0),
     )
+    assert neg.limit == 6  # real feed: Abuela bid 5 → 6 for commons
     neg = opened(ABUELA, neg, price=14)
     assert neg.ask == 5
-    hold = dealers.reply(ABUELA, neg, 12, None, 0.0, random.Random(0), "x")
-    assert hold.price == 5
-    deal = dealers.reply(ABUELA, hold.neg, 5, None, 0.0, random.Random(0), "x")
-    assert deal.kind == "accept"
+    moved = dealers.reply(ABUELA, neg, 12, None, 0.0, random.Random(0), "x")
+    assert moved.price == 6  # we moved down: she moves up one
+    capped = dealers.reply(ABUELA, moved.neg, 10, None, 0.0, random.Random(0), "x")
+    assert capped.price == 6  # never above her secret limit
+    deal = dealers.reply(ABUELA, capped.neg, 6, None, 0.0, random.Random(0), "x")
+    assert (deal.kind, deal.price) == ("accept", 6)
 
 
 @pytest.mark.parametrize(

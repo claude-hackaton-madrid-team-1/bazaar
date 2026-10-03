@@ -28,6 +28,7 @@ from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -745,13 +746,14 @@ def dealer_buy(
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("dealer-buy", live=True)
+    values = OfficialValues.of(client)  # every bid and accept capped at GET /api/me/value (Day-2 hint 1)
 
     def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
         """/me + the shared ledger + every open offer of ours (the maker's bids, the taker's dealer threads),
         except this command's own thread, whose bid the next move replaces."""
         me = client.me()
         offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
-        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules)
+        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules, values)
         return committed_context(base, open_commitments(offers, str(me.get("id") or "")))
 
     clock_now = Clock.model_validate(client.clock())
@@ -829,6 +831,150 @@ def dealer_buy(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
         f"in {out.ticks} ticks"
     )
+
+
+@dealer_app.command("sell")
+def dealer_sell(
+    ref: str = typer.Argument(help="Card ref we sell, e.g. MAL-02 (the copy we lose least by selling)"),
+    floor: int = typer.Option(..., "--min", min=1, help="Hard floor: never sell below this (≥ the copy's your_value)"),
+    start: int = typer.Option(..., help="Opening ask"),
+    step: int = typer.Option(1, min=1, help="Drop per tick (small steps earn small steps)"),
+    dealer: str = typer.Option(
+        "abuela", help="Dealer id: abuela, chato, pilar, ... (its menu must buy this rarity and set)"
+    ),
+    live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
+) -> None:
+    """Sell one duplicate to a dealer (a ladder deal): falling distinct asks, hard floor, never at her opening bid."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.dealer import Hold
+    from bazaar_agent.agents.dealer_sell import (
+        AskPlan,
+        SellRefused,
+        ask_schedule,
+        check_floor,
+        copy_to_sell,
+        dealer_refusal,
+        negotiate_sell,
+        only_copy,
+        sell_topic,
+    )
+    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
+    from bazaar_agent.decisions import DecisionLog, Status
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules = _rules().rules
+    settings = load_settings()
+    client, me = _team_me()  # album first: the copy, its your_value and how many we hold, from /api/me
+    mine = open_commitments(_my_offers(client), str(me.get("id") or ""))  # copies our asks give
+    try:
+        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed)
+        your_value = float(asset["your_value"])
+        check_floor(floor, your_value)
+        plan = AskPlan(start, step, floor)
+    except (SellRefused, ValueError) as e:
+        _fail(str(e))
+    rarity, asset_id = asset.get("rarity"), int(asset["id"])
+    personas = public_client(settings).dealers().get("personas") or []
+    if refusal := dealer_refusal(dealer, personas, me, asset):
+        _fail(refusal)
+    topic = sell_topic(asset_id)
+    if not live:
+        console.print(
+            f"[yellow]dry run[/yellow] {dealer} {topic} ({ref}, your_value {your_value:g}): asks "
+            f"{ask_schedule(plan)}; take her bid once she came up from her opening and it meets our next ask, "
+            f"never below {floor}. Add --live to trade."
+        )
+        return
+    ledger = _ledger("dealer-sell", live=True)
+
+    def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
+        """/me + the shared ledger + every open offer of ours except this thread's own ask."""
+        me_now = client.me()
+        offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
+        base = gr.context_from(me_now, c.tick, c.t_hours, ledger, rules)
+        return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
+
+    def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
+        return gr.Action(kind, ref, rarity, price, your_value=your_value)
+
+    def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
+        """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
+        verdict = gr.check(action(kind, price), ctx, rules)
+        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
+            why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
+            return gr.Verdict(False, (*verdict.violations, why))
+        return verdict
+
+    try:
+        pre = checked("sell", floor, committed(Clock.model_validate(client.clock())))
+    except LedgerUnavailable as e:
+        _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
+    if not pre.allowed:
+        tm.guardrail_refusal("dealer.open", ref, pre.violations)
+        _fail(f"guardrails refuse to open this thread: {pre}")
+
+    def guard(move: Any, thread_id: int) -> str | None:
+        """A ledger failure holds the move (nothing sent, decided again next tick), never a walk."""
+        try:
+            ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
+        except LedgerUnavailable as e:
+            raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
+        verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
+        return None if verdict.allowed else "; ".join(verdict.violations)
+
+    decisions = DecisionLog(
+        settings.data_dir, _db_connect("bazaar-dealer-sell") if ledger.where.startswith("postgres") else None
+    )
+    rec = Recorder("dealer-sell", decisions, True, lambda line: None)  # negotiate_sell prints its own lines
+
+    def on_move(move: Any, tick: int, outcome: str) -> None:
+        """One decision row per move we decided to send (or that a guard stopped)."""
+        kind = {"bid": "dealer_ask", "accept": "dealer_accept", "walk": "dealer_walk"}.get(move.kind, "dealer_wait")
+        denied = outcome.startswith("denied")
+        status: Status = {"sent": "done", "held": "approved"}.get(outcome, "rejected" if denied else "failed")  # type: ignore[assignment]
+        decisions.begin_tick(tick)
+        rec.decide(
+            tick,
+            kind,
+            f"{dealer} {ref} {move.kind} {move.price or ''}",
+            inputs={"dealer": dealer, "ref": ref, "asset": asset_id, "floor": floor, "your_value": your_value},
+            reason=move.reason,
+            guardrail=outcome if denied else "allowed",
+            chosen=True,
+            status=status,
+            move={"kind": move.kind, "price": move.price, "offer": move.offer_id},
+        )
+
+    def on_deal(price: int, tick: int, t_hours: float) -> None:
+        tm.event("dealer.sold", {"dealer": dealer, "ref": ref, "price": price, "tick": tick})
+
+    try:
+        out = negotiate_sell(
+            client,
+            dealer,
+            asset_id,
+            plan,
+            log=lambda line: console.print(escape(line)),  # server and counterparty words: never markup
+            max_ticks=rules.dealer_max_ticks_per_thread,
+            guard=guard,
+            reserve=lambda move, c: _reserve_accept(ledger, rules, ref, move, c),
+            kill_switch=lambda: gr.kill_switch(rules),
+            on_deal=on_deal,
+            on_move=on_move,
+            **_offer_inspector(settings, dealer, topic, rules),
+        )
+    finally:
+        decisions.close()
+    colour = "green" if out.status == "deal" else "red"
+    console.print(
+        f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} asks {list(out.bids)} "
+        f"in {out.ticks} ticks"
+    )
+    if out.status == "deal":  # album first: re-read what we hold after every deal
+        console.print(f"cash now {client.me().get('cash')} P")
 
 
 def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: Any) -> dict[str, Any]:
@@ -1509,7 +1655,7 @@ def rules_check(
     settings = load_settings()
     client = team_client(settings)
     c = Clock.model_validate(client.clock())
-    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
+    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules, OfficialValues.of(client))
     try:
         action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
     except ValueError as e:
@@ -1984,7 +2130,7 @@ def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any
     ledger = _ledger("sell", live=live)
     now = Clock.model_validate(client.clock())
     try:
-        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules, OfficialValues.of(client))
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
     offers = _my_offers(client)
