@@ -124,14 +124,15 @@ def test_an_unreachable_or_refusing_phoenix_is_skipped(monkeypatch: pytest.Monke
         raise httpx.ConnectError("refused", request=request)
 
     real = httpx.Client
-    for handler in (refused, down):
+    for handler, url in ((refused, "http://phoenix.test"), (down, "http://user:pa55word@phoenix.test")):
 
         def fake_client(*args: Any, _h: Any = handler, **kwargs: Any) -> httpx.Client:
             return real(*args, transport=httpx.MockTransport(_h), **kwargs)
 
         monkeypatch.setattr(httpx, "Client", fake_client)
-        assert annotator_from("http://phoenix.test", secret, "bazaar", warnings.append) is None
-    assert len(warnings) == 2 and not any(secret in w for w in warnings)
+        assert annotator_from(url, secret, "bazaar", warnings.append) is None
+    assert len(warnings) == 2 and not any(secret in w or "pa55word" in w for w in warnings)
+    assert "phoenix.test unreachable" in warnings[1]  # the host, never the whole URL
 
 
 def test_a_phoenix_that_answers_gives_an_annotator(monkeypatch: pytest.MonkeyPatch) -> None:

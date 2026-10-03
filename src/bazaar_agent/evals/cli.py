@@ -1,8 +1,8 @@
 """`bazaar evals run | report | import-duels`: Team 1's online-outcome evals (questions/evals.json).
 
 Postgres in, Postgres and Phoenix out. No command here uses the team key, so the evals add nothing to
-its 5 req/s budget. `run --every-ticks N` is the always-on loop of the `bazaar-evals` Railway service.
-Like every loop here it is driven by the game clock (tick discipline), read keyless from the public
+its 5 req/s budget. The agents run the evals themselves (evals/inline.py); `run --every-ticks N` is the
+laptop loop. Like every loop here it is driven by the game clock (tick discipline), read keyless from the public
 `/api/clock` (the shared `ticks.run_per_tick`: doors closed = no pass, clock errors back off). Every N
 ticks it scores again when an input moved (a tick, duel, snapshot or decision in Postgres, or an outcome
 still waiting for its Phoenix span); a Postgres outage is retried at the next due tick.
@@ -28,6 +28,7 @@ evals_app = typer.Typer(
     no_args_is_help=True, help="Evals: score settled duels, dealer deals, trades (Postgres + Phoenix)"
 )
 console = Console()
+err_console = Console(stderr=True)  # warnings: `--json` keeps stdout pure JSON
 
 
 def register(app: typer.Typer) -> None:
@@ -35,7 +36,7 @@ def register(app: typer.Typer) -> None:
 
 
 def _warn(message: str) -> None:
-    console.print(f"[yellow]{escape(message)}[/yellow]")
+    err_console.print(f"[yellow]{escape(message)}[/yellow]")
 
 
 def _connect() -> psycopg.Connection:
@@ -44,7 +45,7 @@ def _connect() -> psycopg.Connection:
     return db.connect_ready("bazaar-evals")
 
 
-def _team(conn: psycopg.Connection) -> str | None:
+def team_id(conn: psycopg.Connection) -> str | None:
     """BAZAAR_TEAM_ID, else the cached id, else the newest /me snapshot in Postgres (never the API)."""
     from bazaar_agent.evals.inputs import team_from_snapshots
     from bazaar_agent.identity import resolve_team_id
@@ -57,6 +58,9 @@ def _annotator(phoenix: bool) -> Any:
     from bazaar_agent.evals.phoenix import annotator_from
 
     if not phoenix:
+        return None
+    if load_settings().simulator:  # simulated duel ids collide with real ones: never annotate the real traces
+        _warn("phoenix: simulator, scores stay in Postgres only")
         return None
     cfg = tm.tracing_config()
     return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, _warn)
@@ -89,15 +93,50 @@ def _pending(conn: psycopg.Connection) -> int:
     return int(row[0]) if row else 0
 
 
+def _held_targets(conn: psycopg.Connection) -> set[str]:
+    """The targets of every agent kind whose evals lock this session could take (the others are being
+    scored by that agent right now: two writers would double-count Phoenix misses)."""
+    from bazaar_agent.evals.inline import TARGETS_BY_AGENT, lock_key
+
+    held: set[str] = set()
+    for agent, targets in TARGETS_BY_AGENT.items():
+        row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (lock_key(agent),)).fetchone()
+        if row and row[0]:
+            held |= targets
+        else:
+            _warn(f"evals: the {agent} agent is scoring {', '.join(sorted(targets))} right now; skipped here")
+    conn.commit()
+    return held
+
+
 def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_json: bool) -> None:
+    from bazaar_agent.evals.inline import IDLE_SESSION_TIMEOUT, STATEMENT_TIMEOUT_MS
     from bazaar_agent.evals.run import run_once
 
-    annotator = _annotator(phoenix)
+    # Like the agents: a laptop that sleeps mid-pass loses its session, and the locks with it.
+    conn.execute(f"set idle_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+    conn.execute(f"set idle_in_transaction_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+    conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")
+    conn.commit()
+    annotator = None
     try:
-        summary = run_once(conn, _team(conn), since_tick=since_tick, annotator=annotator, warn=_warn)
+        targets = _held_targets(conn)
+        if not targets:
+            _warn("evals: every agent kind is scoring right now (their locks are held); nothing to do")
+            return
+        annotator = _annotator(phoenix)
+        summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn, targets=targets)
     finally:
-        if annotator is not None:
-            annotator.close()
+        conn.rollback()  # an aborted transaction must not hide the error or keep the locks
+        try:
+            if annotator is not None:
+                annotator.close()
+        finally:
+            conn.execute("select pg_advisory_unlock_all()")
+            conn.execute("reset idle_session_timeout")  # the --every-ticks connection idles between passes
+            conn.execute("reset idle_in_transaction_session_timeout")
+            conn.execute("reset statement_timeout")
+            conn.commit()
     if as_json:
         console.print_json(json.dumps(summary.__dict__, default=list))
         return
@@ -132,7 +171,7 @@ class TickGate:
             if seen != self.seen or (self.phoenix and _pending(self.conn) > 0):
                 self.run_pass(self.conn)
                 self.seen = seen
-        except psycopg.Error:
+        except Exception:  # any error: ending the session releases every evals lock it took
             self.conn.close()
             self.conn = None
             raise
