@@ -1,6 +1,6 @@
 """Read-only status of one agent (taker or maker) over HTTP and WebSocket, beside its tick loop.
 
-    GET /health  {ok, agent, mode: dry|live, tick, last_tick_at}
+    GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, tick, last_tick_at}
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
@@ -45,8 +45,11 @@ CORS = {
 class StatusHub:
     """What the server shows. Written by the tick loop (any thread), read by the server thread."""
 
-    def __init__(self, agent: str, live: bool, wall: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, agent: str, live: bool, wall: Callable[[], float] = time.time, target: dict[str, str] | None = None
+    ) -> None:
         self.agent, self.mode, self._wall = agent, "live" if live else "dry", wall
+        self.target = dict(target or {})  # {"mode": "real" | "simulator", "url": ...}: where its requests go
         self._lock = threading.Lock()
         self._events: deque[str] = deque(maxlen=REPLAY)
         self._decisions: deque[dict[str, Any]] = deque(maxlen=LAST_DECISIONS)
@@ -119,6 +122,7 @@ class StatusHub:
                 "ok": True,
                 "agent": self.agent,
                 "mode": self.mode,
+                "target": self.target,
                 "tick": self._tick,
                 "last_tick_at": self._last_tick_at,
                 **self._doors,

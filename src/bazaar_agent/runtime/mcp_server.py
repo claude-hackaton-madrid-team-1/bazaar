@@ -102,8 +102,15 @@ async def _reply(send: Send, status: int, body: dict[str, Any], headers: Iterabl
 class BearerGate:
     """ASGI middleware in front of the MCP app: health, bearer auth, the per-token HTTP rate limit."""
 
-    def __init__(self, app: ASGIApp, token: str, live: bool, now: Callable[[], float] = time.monotonic) -> None:
-        self.app, self.live = app, live
+    def __init__(
+        self,
+        app: ASGIApp,
+        token: str,
+        live: bool,
+        now: Callable[[], float] = time.monotonic,
+        target: dict[str, str] | None = None,
+    ) -> None:
+        self.app, self.live, self.target = app, live, target or {}
         self._expected = digest(require_token(token))
         self._http = Buckets(HTTP_RATE_PER_S, HTTP_BURST, now)
 
@@ -125,8 +132,8 @@ class BearerGate:
             return
         if scope.get("path") == HEALTH_PATH and scope.get("method") == "GET":
             await _reply(
-                send, 200, {"ok": True, "server": SERVER, "tools": len(TOOLS)}
-            )  # nothing more, unauthenticated
+                send, 200, {"ok": True, "server": SERVER, "tools": len(TOOLS), "target": self.target}
+            )  # nothing more, unauthenticated (the target is a mode and a public URL, never a key)
             return
         presented = digest(self._presented(scope))
         if not hmac.compare_digest(presented, self._expected):
@@ -231,7 +238,7 @@ def build_app(
     Bound to localhost, the SDK also turns on its DNS-rebinding protection (allowed Host headers)."""
     server = build_server(backend, calls_per_minute, (*secrets, token), now)
     app = server.streamable_http_app(streamable_http_path=MCP_PATH, stateless_http=True, json_response=True, host=host)
-    return BearerGate(app, token, backend.live, now)
+    return BearerGate(app, token, backend.live, now, backend.settings.target)
 
 
 def serve(app: BearerGate, host: str, port: int) -> None:

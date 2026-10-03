@@ -15,8 +15,81 @@ first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 | Taker | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` |
 | Maker | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` |
 | Phoenix | https://phoenix-production-6aa3.up.railway.app |
+| Simulator (a fake Bazaar for tests, key `sim-team1`) | https://bazaar-sim-production-1d48.up.railway.app · see [Simulator](#simulator-test-every-agent-while-the-game-is-closed) |
 
 Endpoints, event envelope and examples for the dashboard: [`docs/services.md`](docs/services.md).
+
+## Simulator (test every agent while the game is closed)
+
+`bazaar-sim` is an HTTP API that behaves like `https://bazaar.causaprima.ai`: the same routes, the
+same JSON shapes (checked against `docs/api/openapi.json` and the captured fixtures), the same rules.
+The vendored SDK and every `bazaar` command work against it unchanged. It never talks to the real
+game. Public instance: **https://bazaar-sim-production-1d48.up.railway.app** (`/api/health`, `/api/clock`, `/sim/state`).
+
+**The target is one flag, `BAZAAR_SIM`, over hardcoded URLs** (`src/bazaar_agent/config.py` decides,
+every client goes through it: CLI, agents, runtime, MCP server, monitor):
+
+| `BAZAAR_SIM` | Target | Key |
+|---|---|---|
+| unset or `0` | the real game, https://bazaar.causaprima.ai | `BAZAAR_KEY` (the team slip) |
+| `1` | the simulator, https://bazaar-sim-production-1d48.up.railway.app | `BAZAAR_SIM_KEY` (default `sim-team1`) |
+| `local` | a simulator on this laptop, http://127.0.0.1:8765 (`uv run bazaar-sim serve`) | `BAZAAR_SIM_KEY` |
+
+Every command prints its target first (`target: real game …` or `target: SIMULATOR …`), and so do
+`bazaar status`, the taker's and maker's `/health` and the MCP server's `/health` (`target`).
+`BAZAAR_URL` is gone: if it is still set (old `.env` files had it), every command stops at once and
+says so. Remove the line.
+
+```sh
+BAZAAR_SIM=1 uv run bazaar status                                   # Team 1 in the simulator: 400 P, 15 cards
+BAZAAR_SIM=1 uv run bazaar clock                                    # one tick every 10 s
+BAZAAR_SIM=1 uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live   # haggle with the simulated Abuela
+BAZAAR_SIM=1 uv run bazaar sell list <ref> --price 10 --live        # a rival team may buy it a few ticks later
+BAZAAR_SIM=1 uv run bazaar duel run --play --max-ticks 20           # a simulated duel session
+BAZAAR_SIM=1 uv run bazaar agent taker --live --max-ticks 10        # the taker/maker against the simulator
+BAZAAR_SIM=1 uv run bazaar monitor --no-db                          # the live SSE stream works too
+BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another simulated team (sim-team1 ... 8)
+```
+
+- **Keys.** `sim-team1` … `sim-team8` are teams `t01` … `t08` (not secrets: it is a simulator).
+  With `BAZAAR_SIM=1` the real `BAZAAR_KEY` is not even read, so it cannot reach the simulator; on
+  top, only a `sim-` key is ever sent to a simulator and a `sim-` key is refused for the real game,
+  before any request. The simulator itself answers `401 bad_key` to anything that is not one of its
+  keys and never logs a presented key.
+- **Its own files and database.** Against a simulator our files default to `.local/sim-client/`
+  (the real feed capture and ledger in `.local/` never see simulated play), and Postgres is
+  `BAZAAR_SIM_DATABASE_URL`: the `bazaar_sim` database on the team's server (same host, port and
+  password as `DATABASE_URL`, database `bazaar_sim` instead of `railway`; schema already applied).
+  A database URL naming `railway` is refused while `BAZAAR_SIM` is on; without
+  `BAZAAR_SIM_DATABASE_URL` the ledger falls back to the local JSONL file.
+- **Rules it enforces** (RULES.md): structured offers settle at the next tick, all at once or not
+  at all; per tick one accept per team, one message per conversation, twelve new listings (a
+  cancelled one counts), `429 wait_for_tick` with `next_tick`; six conversations (one per dealer),
+  thirty open offers; `insufficient_cash`, `not_owner`, `asset_locked`, `self_venue`,
+  `persona_quota`, `locked`, `cooloff`, `sold_out`, `missing_days`; 5 requests/s per key (bursts of
+  20) and the wrong-key lockout; strict JSON bodies; six live streams per key.
+- **What lives in it.** Abuela and El Chato haggle as the real feed shows (Abuela opens commons at
+  12 and fills them at 7–9, packs at 30 with a floor of 17; Chato opens uncommons at 33 and rares at
+  97, holds your first move, then matches you), never concede on a repeated price, name a `final`
+  offer when patience runs out, and remember rudeness lightly (kindness lowers Abuela's floor once).
+  El Chato unlocks after three negotiated Abuela deals, or for everyone after an hour. Private values
+  follow the catalog (affinity × copy marginals), packs open by their slot odds, print runs are
+  finite. Six synthetic rival teams list duplicates, bid for missing cards and take good offers, so
+  the taker and the maker have a market. Duel sessions (the real payload shape; even sessions add
+  delivery days) start every 15 minutes, the Market Test every 20; team venues get broker keys
+  (`simbk-…`), `auto` crossing and bench offers. `/api/me` carries a live score (an approximation).
+- **Not simulated:** flags score nothing, no starter stalls, no gifts or easter eggs, a single
+  always-open day (no calendar), scoring weights are approximate.
+- **Reset** to tick 0 (the token is only in Railway: `bazaar-sim` → Variables → `SIM_ADMIN_TOKEN`):
+  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`
+  (add `--seed N` for another world).
+  `POST /sim/tick` with the same `X-Admin-Token` header advances one tick at once.
+- **Run one locally:** `uv run bazaar-sim serve` (http://127.0.0.1:8765; `SIM_TICK_SECONDS=2` for a
+  faster clock; the world persists in `.local/sim/world.sqlite`, `SIM_DATABASE_URL=memory` for none),
+  then `BAZAAR_SIM=local uv run bazaar status`.
+- **Code and tests:** `src/bazaar_sim/` (`app.py` routes, `world.py` clock and ticks, `threads.py` and
+  `dealers.py` the haggling, `market.py` and `broker.py` offers and venues, `duels.py`, `rivals.py`).
+  `tests/test_sim_*.py` run the unchanged vendored SDK and our CLI against an in-process server.
 
 ## Start in two minutes
 
@@ -552,6 +625,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | dry run (no `BAZAAR_LIVE`) |
 | `bazaar-mcp` | https://bazaar-mcp-production.up.railway.app/mcp (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | running, dry run (no `BAZAAR_LIVE`) |
 | `bazaar-evals` | none (worker, no HTTP) | — | scores settled duels, dealer deals and trades (`evals run --every-ticks 6`) into Postgres `outcomes` and Phoenix annotations | running |
+| `bazaar-sim` | https://bazaar-sim-production-1d48.up.railway.app (`/api/health`, `/sim/state`) | `bazaar-sim.railway.internal:8080` | the simulated Bazaar for testing agents (keys `sim-team1`…`8`), world in the `bazaar_sim` database | running |
 | `bazaar-events` | (planned) public WebSocket + REST for the dashboard | — | streams our events from Postgres to the web dashboard | planned |
 
 **Game endpoints a dashboard can use directly** (organiser API, `https://bazaar.causaprima.ai`):
@@ -574,6 +648,7 @@ Code, Python authoring, beta): change it by PR.
 | `bazaar-maker` | `bazaar agent maker` + status on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-maker-data` on `/app/.local` | dry run unless `BAZAAR_LIVE=1` is set by hand; never accepts |
 | `bazaar-mcp` | `bazaar mcp serve --host 0.0.0.0` on `PORT` 8080 (healthcheck `/health`) | volume `bazaar-mcp-data` on `/app/.local` | bearer `BAZAAR_MCP_TOKEN` (`preserve()`), dry run unless `BAZAAR_LIVE=1` is set by hand |
 | `bazaar-evals` | `bazaar evals run --every-ticks 6` (README "Evals") | none: Postgres in, Postgres and Phoenix annotations out | no `BAZAAR_KEY`: only the keyless `/api/clock` paces it |
+| `bazaar-sim` | `bazaar-sim serve` on `PORT` 8080 (healthcheck `/api/health`), one tick every 10 s | database `bazaar_sim` (schema `sim`) on the team's Postgres | https://bazaar-sim-production-1d48.up.railway.app; the generated domain is not IaC (Railway does not declare generated domains) |
 | `phoenix` | `arizephoenix/phoenix:version-20.19.0` (same pin as `docker-compose.yml`), auth on | volume `phoenix-data` on `/mnt/data` | UI: https://phoenix-production-6aa3.up.railway.app |
 | `Postgres` | `postgres-ssl:18` + pgvector | its own volume | managed in the dashboard, NOT by `.railway/railway.py` |
 
@@ -591,7 +666,7 @@ Code, Python authoring, beta): change it by PR.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
   `PHOENIX_API_KEY = ${{phoenix.PHOENIX_API_KEY}}`, `BAZAAR_TRACING=1`, `BAZAAR_DATA_DIR=/app/.local`.
-  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `PHOENIX_SECRET`,
+  Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `SIM_ADMIN_TOKEN`, `PHOENIX_SECRET`,
   `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`, `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
   it touching a command line: `printf %s "$VALUE" | railway variable set NAME --stdin --service <svc>`.
 - **Pause every write** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
@@ -765,14 +840,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+- [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+- [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+- [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
 - [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
 - [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
-- [2026-10-03] gotcha — how bazaar-mcp was applied while bazaar-sim lives only on PR #55
-- [2026-10-03] gotcha — `railway config apply` from main deletes bazaar-sim until PR #55 merges
-- [2026-10-03] gotcha — `right` is a reserved word in Postgres
-- [2026-10-03] build-error — dealer fills went to an abandoned older thread
-- [2026-10-03] finding — a finished duel's `result` is our surplus after decay; there is no pie or share
-- [2026-10-03] gotcha — `ruff format` output can fail `black --check`; format with black
 
 <!-- BAZAAR:STATUS:END -->
 

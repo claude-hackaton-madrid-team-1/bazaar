@@ -44,6 +44,9 @@ ALWAYS = {"restartPolicyType": "ALWAYS"}
 AGENT_PORT = "8080"  # each agent's read-only status: GET /health, GET /state, WS /events (public domain)
 
 
+# No BAZAAR_URL and no BAZAAR_SIM anywhere in this file: every service plays the real game
+# (https://bazaar.causaprima.ai with BAZAAR_KEY), the target src/bazaar_agent/config.py picks when the
+# flag is unset. Only bazaar-sim below IS the simulator; nothing here points a client at it.
 def runtime_env() -> dict:
     """What `bazaar monitor`, `bazaar duel run` and `bazaar agent` read (config.py, telemetry.py)."""
     return {
@@ -87,7 +90,9 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
     DRY RUN on purpose: this file never sets BAZAAR_LIVE. Live trading needs BAZAAR_LIVE=1 set by hand
-    on the service (README "Autonomous agents"), never here. `enabled=False`: no source (see runtime())."""
+    on the service (README "Autonomous agents"), never here. It is declared `preserve()` so an apply keeps
+    whatever was set by hand: undeclared, `railway config plan` proposed to delete it (2026-10-03), which
+    would have put a live agent back in dry run. `enabled=False`: no source (see runtime())."""
     return service(
         name,
         source=github(REPO, branch=BRANCH) if enabled else None,
@@ -97,7 +102,7 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT},
+        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve()},
     )
 
 
@@ -149,6 +154,42 @@ def evals_service() -> object:
     )
 
 
+SIM_PORT = "8080"
+# The simulator's world lives in its OWN database on the team's Postgres server, created once with
+# `create database bazaar_sim` (README "Simulator"). The simulator refuses any other database name,
+# so this can never point at the real `railway` one.
+SIM_DATABASE_URL = (
+    "postgresql://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/bazaar_sim"
+)
+
+
+def simulator() -> object:
+    """`bazaar-sim serve`: a simulated Bazaar API for testing every agent while the game is closed.
+
+    Team keys are `sim-team1` ... `sim-team8`; a real key is refused. SIM_ADMIN_TOKEN (reset and
+    manual ticks) is generated once and set with `railway variable set ... --stdin`, never here.
+    Its public domain is a Railway-generated `*.up.railway.app` one: Railway IaC does not declare
+    generated domains (docs.railway.com/infrastructure-as-code/reference, "Custom domains"), so it was
+    created once with `railway domain --service bazaar-sim` and is listed in the README."""
+    return service(
+        "bazaar-sim",
+        source=github(REPO, branch=BRANCH),
+        build=BUILD,
+        start="/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/api/health",
+        env={
+            "RAILPACK_PYTHON_VERSION": "3.12",
+            "PORT": SIM_PORT,
+            "SIM_DATABASE_URL": SIM_DATABASE_URL,
+            "SIM_TICK_SECONDS": "10",
+            "SIM_CLIENT_IP_HEADER": "x-real-ip",  # set by Railway's edge; a client-sent X-Forwarded-For is ignored
+            "SIM_ADMIN_TOKEN": preserve(),
+        },
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
@@ -189,6 +230,7 @@ def main(ctx=None):
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     evals = evals_service()
+    sim = simulator()
 
     return project(
         "heartfelt-warmth",
@@ -200,6 +242,7 @@ def main(ctx=None):
             maker,
             mcp,
             evals,
+            sim,
             phoenix_data,
             monitor_data,
             duels_data,

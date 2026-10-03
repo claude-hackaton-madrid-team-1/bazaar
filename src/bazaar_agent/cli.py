@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -56,6 +57,17 @@ def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTI
     With BAZAAR_TRACING=1: one root span per command, every console line mirrored into spans.
     """
     llm_cli.pin_runtime(llm_runtime)
+    try:
+        settings = load_settings()  # BAZAAR_URL set, or a bad BAZAAR_SIM: fail fast, before any command runs
+    except ConfigError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    # The banner: every command says which Bazaar it talks to. On a laptop it goes to stderr, so a
+    # `--json` stdout stays clean; on Railway (which files stderr as errors) to stdout, where no
+    # service command's output is parsed.
+    style = "bold yellow" if settings.simulator else "dim"
+    banner = console if os.environ.get("RAILWAY_ENVIRONMENT") else err_console
+    banner.print(f"[{style}]{settings.target_line()}[/{style}]", highlight=False)
     # Warnings (e.g. Phoenix unreachable) go to stdout with the console lines: a container platform
     # such as Railway files stderr as errors. A no-op when logging is already configured.
     logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
@@ -216,7 +228,7 @@ def status(cards: bool = typer.Option(True, help="Also list our cards with your_
         _fail(str(e))
     except BazaarError as e:
         _fail(f"/api/me refused: {e.code} ({e.status})")
-    console.print(render.status_table(me))
+    console.print(render.status_table(me, load_settings().target_line()))
     from bazaar_agent.album import album_view
 
     console.print(render.album_table(album_view(me, public_client(load_settings()).catalog())))
@@ -737,7 +749,7 @@ def open_stream(settings: Any, emit: Callable[[Any], None]) -> Any:
     """The monitor's live feed: ONE SSE connection with our key (tests replace this factory)."""
     from bazaar_agent.stream import EventStream
 
-    key = settings.bazaar_key.get_secret_value() if settings.bazaar_key else None
+    key = settings.team_key()  # the same sim-/real guard as every team request
     return EventStream(settings.bazaar_url, key, emit)
 
 
@@ -797,7 +809,7 @@ def traders() -> None:
 
     from bazaar_agent import db
 
-    with db.connect(load_settings().database_url.get_secret_value()) as cx:
+    with db.connect(load_settings().require_database_url()) as cx:
         rows = db.trader_rows(cx)
     t = Table(title=f"Traders · {len(rows)} (kept current by `bazaar monitor`)")
     for col in ("id", "kind", "name", "status", "level", "first seen", "last seen"):
@@ -1296,7 +1308,7 @@ def _run_agent(
         return db.connect(app=f"bazaar-{name}")
 
     mode = "LIVE: trades are sent" if is_live else "DRY RUN: nothing is sent (add --live, or BAZAAR_LIVE=1)"
-    console.print(f"[bold]{name}[/bold] · {mode}")
+    console.print(f"[bold]{name}[/bold] · {mode} · {settings.target_line()}")
     ledger = open_ledger(settings.data_dir, source=name, log=log)
     decisions = DecisionLog(settings.data_dir, connect, log)
     feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log)
@@ -1304,7 +1316,7 @@ def _run_agent(
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
 
-    hub = StatusHub(name, is_live)
+    hub = StatusHub(name, is_live, target=settings.target)
     serve_on = _status_port(port)
     if serve_on:
         bind = host or "0.0.0.0"  # read-only public status (Railway routes PORT to it)

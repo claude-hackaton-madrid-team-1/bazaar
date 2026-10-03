@@ -273,3 +273,33 @@ passes locally in 0.2 s and on a rerun. A slow runner, not a regression: rerun t
 `PreToolUse:mcp__bazaar__<tool> hook error: <reason>`. Nothing was sent; the rows are in `decisions`
 (`desk/buyer`, rejected). The desk answered in Spanish to an English request: tighten its language line.
 
+### [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
+13 of 13 Abuela deals where she accepted our bid (message with no offer, "Deal!"/"Venga") show the
+`settlement` event in that same tick (feed, ticks 8–46). Our own accept of her offer settles at the
+next tick. The simulator (`bazaar-sim`) does the same; settling a tick later made the taker walk.
+
+### [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+docs.railway.com/infrastructure-as-code/reference: "Generated Railway service domains are not included
+in `.railway/railway.ts`" (custom domains only). `bazaar-sim`'s domain was made once with
+`railway domain --service bazaar-sim`; `railway config plan` still reports up to date afterwards.
+
+### [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+Created with `create database bazaar_sim` (connected to `postgres`, never `railway`); our schema is
+applied there. Against a simulator our client refuses a database URL naming `railway`
+(`BAZAAR_SIM_DATABASE_URL`), and its files default to `.local/sim-client/`, never the real `.local/`.
+
+### [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+symptom: PR #55's `test` job failed with no summary right after `test_bodies_are_strict_json` →
+root cause: the 413 case's parameter (65 KB of "x") became the test id printed by `pytest -v`, and the
+log/step died there; locally and in a Linux container the suite passed → fix: `ids=[...]` short names.
+
+### [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+`railway config plan --file <main's railway.py>` (01:50): "Delete variable bazaar-taker.BAZAAR_LIVE",
+"...bazaar-maker.BAZAAR_LIVE" and "Delete service bazaar-sim". The named partial owns those services, so
+a variable set by hand but not declared is removed: the live agents would drop to dry run. Fix: declare
+it `preserve()` (no value in the file). PR #55 does that for BAZAAR_LIVE and keeps bazaar-sim declared.
+
+### [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+`BAZAAR_SIM=1 uv run bazaar status` talks to the simulator with `BAZAAR_SIM_KEY` (default sim-team1);
+unset is the real game with `BAZAAR_KEY`. `BAZAAR_URL` makes every command stop: delete it from `.env`.
+
