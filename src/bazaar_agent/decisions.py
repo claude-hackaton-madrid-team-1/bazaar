@@ -13,6 +13,7 @@ import itertools
 import json
 import os
 import socket
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -80,6 +81,10 @@ class DecisionLog:
     def begin_tick(self, tick: int) -> None:
         """While Postgres is down, try it again at most once per tick (a connect can take 10 s)."""
         self._tick = tick
+
+    def writer(self) -> str:
+        """This log's writer token (`writer`): one per Railway service, else one per data directory."""
+        return writer(self.dir)
 
     @property
     def complete(self) -> bool:
@@ -276,12 +281,33 @@ class ThreadTrail:
     owner: str | None = None  # `writer()` of the process that opened it (None: opened before owners were written)
 
 
-def writer() -> str:
-    """Who writes these rows: the Railway service (stable across its redeploys), else this machine, as a short
-    hash (the log scrubs host names, and neither needs to be in it). Two live processes of one agent (Railway
+def writer(data_dir: Path | None = None) -> str:
+    """Who writes these rows, as a short token the log keeps (it scrubs host names): the Railway service (its
+    `RAILWAY_SERVICE_ID` is stable across redeploys), else an id saved once under `data_dir` (a laptop's host
+    name changes with its network), else this machine's host name. Two live processes of one agent (Railway
     and a laptop) never take over each other's threads."""
-    raw = os.environ.get("RAILWAY_SERVICE_ID") or socket.gethostname() or "local"
-    return "w" + hashlib.sha256(raw.encode()).hexdigest()[:10]
+    service = os.environ.get("RAILWAY_SERVICE_ID")
+    if service:
+        return "w" + hashlib.sha256(service.encode()).hexdigest()[:10]
+    if data_dir is not None:
+        path = data_dir / WRITER_FILE
+        try:
+            saved = path.read_text(encoding="utf-8").strip()
+            if saved:
+                return saved
+        except OSError:
+            pass
+        token = "w" + uuid.uuid4().hex[:10]
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(token, encoding="utf-8")
+            return token
+        except OSError:
+            pass
+    return "w" + hashlib.sha256((socket.gethostname() or "local").encode()).hexdigest()[:10]
+
+
+WRITER_FILE = "writer-id"  # under the decisions log's directory: this checkout's writer token
 
 
 MAX_INT = 10_000_000  # RULES.md: prices are whole primas up to 10,000,000; ticks stay far below it

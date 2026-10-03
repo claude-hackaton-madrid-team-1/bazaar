@@ -69,7 +69,7 @@ from bazaar_agent.agents.runtime import (
 )
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
-from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail, writer
+from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.ledger_pg import LedgerUnavailable
@@ -328,7 +328,7 @@ class Taker:
         self._restart_tries: dict[int, int] = {}  # thread -> wrap-up reads that did not wrap it up
         self._first_start: int | None = None  # the earliest PROCESS_STARTED tick: rows from then on wrap up
         self._trails: dict[int, ThreadTrail] = {}  # threads the taker drove, from the decisions log
-        self._owner = writer()  # this service (or machine): only its own threads are adopted, closed or booked
+        self._owner = decisions.writer()  # this service or checkout: only its own threads are touched
         self._restart_ticks = 0  # ticks the restart wrap-up ran (bounded by `restart_lookback_ticks`)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
 

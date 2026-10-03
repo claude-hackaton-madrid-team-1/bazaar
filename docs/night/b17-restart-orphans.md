@@ -100,3 +100,6 @@ pr-reviewer and security-auditor found two ways a deal still went unbooked, and 
   were written counts as ours). Open threads are looked up by id with no lookback (a pause longer than 40
   ticks), a Postgres blip at boot does not end the wrap-up (`DecisionLog.complete`), a rate limit or network
   error does not use up a thread's tries, and the wrap-up ends after `restart_lookback_ticks` ticks at most.
+- **Round 3.** Off Railway the writer is a token saved once under the decisions directory (`.local/agents/
+  writer-id`), since a laptop's host name changes with its network. New tests break when the boot-blip guard,
+  the try counting, the 40-tick cap or the taker's own owner stamp is removed (checked by mutation).

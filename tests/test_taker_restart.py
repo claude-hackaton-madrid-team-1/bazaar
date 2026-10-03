@@ -191,7 +191,7 @@ def test_restart_reads_are_bounded_per_tick(tmp_path):
 
 
 def _started(log, tick, owner=None):
-    inputs = {"owner": owner or writer()}
+    inputs = {"owner": owner or log.writer()}
     log.decide(_bid_row(None, tick, 0, kind=PROCESS_STARTED, inputs=inputs, chosen=False, status="done", move={}))
 
 
@@ -364,10 +364,10 @@ def test_thread_trails_skip_rows_that_are_not_objects_or_have_bad_ticks(tmp_path
         )
     trails = log.thread_trails("taker", 0)
     assert sorted(trails) == [1, 3] and trails[3].top_price is None
-    assert log.first_tick("taker", PROCESS_STARTED, writer()) is None
+    assert log.first_tick("taker", PROCESS_STARTED, log.writer()) is None
     _started(log, 80, owner="wsomeone-else")
     _started(log, 90)
-    assert log.first_tick("taker", PROCESS_STARTED, writer()) == 90
+    assert log.first_tick("taker", PROCESS_STARTED, log.writer()) == 90
 
 
 # ---------------------------------------------------------------- review round 2 of #140
@@ -397,7 +397,7 @@ def test_a_thread_another_live_taker_opened_is_never_adopted_or_booked(tmp_path)
 def test_an_open_thread_older_than_the_lookback_is_still_adopted(tmp_path):
     """A pause longer than `restart_lookback_ticks`, then a redeploy: the open thread is looked up by id."""
     log = DecisionLog(tmp_path)
-    _opened_by(log, 40, TICK - 90, 20, owner=writer())  # tick 10: outside the 40-tick lookback
+    _opened_by(log, 40, TICK - 90, 20, owner=log.writer())  # tick 10: outside the 40-tick lookback
     team = FakeTeam(threads=[DEALER_THREAD], offers=[thread_bid(77, 40, "LAV-08", 20)])
     t, lines, _ = make_taker(tmp_path, team, FakePublic())
     t.on_tick(at(team, TICK))
@@ -417,3 +417,92 @@ def test_a_postgres_blip_at_boot_does_not_end_the_wrap_up(tmp_path):
     assert not log.complete or calls["n"] == 0
     log.thread_trails("taker", 0)
     assert not log.complete  # a store is configured and did not answer
+
+
+# ---------------------------------------------------------------- review round 3 of #140
+
+
+def _rows(tmp_path):
+    return [json.loads(line) for line in (tmp_path / "agents" / "decisions.jsonl").read_text().splitlines()]
+
+
+def test_the_taker_stamps_its_own_threads_and_its_start_with_its_writer(tmp_path):
+    team = FakeTeam()
+    t, _, _ = make_taker(tmp_path, team, FakePublic())
+    t.on_tick(at(team, TICK))  # opens 5000 with abuela
+    me = DecisionLog(tmp_path).writer()
+    opened = [r for r in _rows(tmp_path) if r.get("kind") == "dealer_opened"]
+    started = [r for r in _rows(tmp_path) if r.get("kind") == PROCESS_STARTED]
+    assert [(r["thread_id"], r["inputs"]["owner"]) for r in opened] == [(5000, me)]
+    assert [r["inputs"]["owner"] for r in started] == [me]
+
+
+def test_a_laptop_keeps_its_writer_when_its_host_name_changes(tmp_path, monkeypatch):
+    """A Mac's host name follows its network: the writer is saved once per data directory (review round 3)."""
+    monkeypatch.delenv("RAILWAY_SERVICE_ID", raising=False)
+    monkeypatch.setattr("socket.gethostname", lambda: "cafe-wifi.local")
+    first = DecisionLog(tmp_path).writer()
+    monkeypatch.setattr("socket.gethostname", lambda: "home.local")
+    assert DecisionLog(tmp_path).writer() == first
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "svc-taker")
+    assert DecisionLog(tmp_path).writer() == writer() != first  # on Railway: the service, whatever the disk
+
+
+def test_a_store_that_never_answers_keeps_the_wrap_up_going_until_its_cap(tmp_path):
+    """Postgres down at boot: nothing pending in the JSONL is no proof the old threads are done (round 3)."""
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import parts
+
+    def down():
+        raise OSError("no route")
+
+    team = FakeTeam()
+    kw = parts(tmp_path, max_spend_per_game_hour=0) | {"decisions": DecisionLog(tmp_path, down)}
+    config = TakerConfig(max_dealer_threads=3, restart_lookback_ticks=6)
+    t = Taker(
+        team, FakePublic(), live=True, log=lambda s: None, now=lambda: 1000.0, sleep=lambda s: None, config=config, **kw
+    )
+    _ticks(t, team, TICK, 3)
+    assert not t._restart_checked
+    _ticks(t, team, TICK + 3, 3)
+    assert t._restart_checked
+
+
+def test_rate_limited_and_network_reads_do_not_use_up_tries(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    log = DecisionLog(tmp_path)
+    _started(log, TICK - 2)
+    log.decide(_bid_row(70, TICK - 1, 21))
+    team = FakeTeam()
+    dealer_took_our_bid(team, 70, 701, "LAV-08", 21)
+    real, fails = team.thread, {"n": 0}
+
+    def thread(tid):
+        if tid == 70 and fails["n"] < 8:
+            fails["n"] += 1
+            team.reads.append(f"thread {tid}")
+            raise BazaarError("rate_limited" if fails["n"] % 2 else "network", "x", 429)
+        return real(tid)
+
+    team.thread = thread
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    _ticks(t, team, TICK, 12)
+    assert fails["n"] == 8 and ledger.spent_since(0) == 21  # more failed reads than RESTART_TRIES, still booked
+
+
+def test_a_trail_thread_that_can_never_be_adopted_stops_costing_reads(tmp_path):
+    log = DecisionLog(tmp_path)
+    inputs = {"dealer": "ghost", "thread": 80, "item": "LAV-08", "owner": log.writer()}
+    log.decide(_bid_row(80, TICK - 2, 0, kind="dealer_opened", inputs=inputs, chosen=False, status="done", move={}))
+    team = FakeTeam(threads=[{"id": 80, "with": "ghost", "team": "t01", "status": "open"}])
+    t, _, _ = make_taker(tmp_path, team, FakePublic())
+    n, real = {"trails": 0}, t.rec.decisions.thread_trails
+
+    def counted(*a, **k):
+        n["trails"] += 1
+        return real(*a, **k)
+
+    t.rec.decisions.thread_trails = counted
+    _ticks(t, team, TICK, 60)
+    assert n["trails"] == 40 and t._restart_checked  # restart_lookback_ticks
