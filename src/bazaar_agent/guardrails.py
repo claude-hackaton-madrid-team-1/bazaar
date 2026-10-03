@@ -143,6 +143,8 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     open_sealed_packs: bool = False
+    taller_enabled: bool = False
+    max_taller_per_game_hour: int = Field(default=2, ge=0, le=20)
     card_release_boost_enabled: bool = False
     card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
@@ -274,6 +276,8 @@ ENFORCED_BY: dict[str, str] = {
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
+    "taller_enabled": "guardrails.check (taller) + agents.taker._taller (needs the level active: level_watch)",
+    "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, this process)",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
@@ -609,6 +613,7 @@ ActionKind = Literal[
     "venue_announce",
     "broker_match",
     "dealer_sell",
+    "taller",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 # A sale: `sell` (a board ask), `accept_sell` (we take a bid), `dealer_sell` (our ask to a dealer on a sell thread).
@@ -715,6 +720,7 @@ class Context:
     breakers: frozenset[str] | None = None
     # Human approvals (`approvals.py`). None: read this process's board for `tick` (once per tick, fail closed).
     approvals: ApprovalBook | None = None
+    taller_last_hour: int = 0  # Workshop crafts in the last game hour (`max_taller_per_game_hour`, this process)
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -833,6 +839,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append("allow_flags = false")
     if action.kind == "open_pack" and not rules.open_sealed_packs:
         v.append("open_sealed_packs = false")
+    if action.kind == "taller":
+        v.extend(_taller_violations(action, ctx, rules))
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
@@ -843,6 +851,26 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if not v:  # after every other rule: a human is asked only about a trade nothing else refuses
         v.extend(_approval_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
+
+
+def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """The Workshop: `action.item` is the three card refs we give ("LAV-04,SAL-01,SAL-01"). Behind `taller_enabled`
+    and `max_taller_per_game_hour`; every card keeps at least one free copy (a copy in an open ask of ours is not
+    free: `Context.sellable`), whatever the set, so a page never loses its last copy."""
+    v = [] if rules.taller_enabled else ["taller_enabled = false"]
+    if ctx.taller_last_hour >= rules.max_taller_per_game_hour:
+        v.append(
+            f"{ctx.taller_last_hour} Workshop craft(s) this game hour (max_taller_per_game_hour "
+            f"{rules.max_taller_per_game_hour})"
+        )
+    refs = [r.strip() for r in action.item.split(",") if r.strip()]
+    if len(refs) != 3:
+        v.append(f"the Workshop takes three copies, not {len(refs)}")
+    free = ctx.held if ctx.sellable is None else ctx.sellable
+    for ref, n in sorted(Counter(refs).items()):
+        if free.get(ref, 0) - n < 1:
+            v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    return v
 
 
 def breaker_scope(action: Action) -> str | None:
