@@ -185,7 +185,8 @@ LIVE_NODE = "22.23.3"  # node runs server/*.ts by stripping types (>= 22.18); sa
 def live_show() -> object:
     """Bazaar Live (repo bazaar-live): the buyer and the seller at a Rastro stall, a static React show
     plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
-    The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
+    The show reads only the agents' public /health, /state and WS /events; it sends nothing to them. The game
+    screens read the game through the server (GET /api/game/stream), keyed and token-gated, still read-only.
 
     The voice keys and the show's read-only database URL are set once by hand with
     `railway variable set ... --stdin` and declared preserve() so an apply keeps them (an undeclared
@@ -214,6 +215,12 @@ def live_show() -> object:
             "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
             "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
             "TTS_DAILY_CHARS": preserve(),  # daily ElevenLabs budget (chars ~ credits): guards the 10k weekend credits
+            # The game screens (bazaar-live /agent, /negotiations, /album, /market, /debug): the server reads the
+            # game with the taker's team key (a reference, no copy) and relays it. They show private state (cash,
+            # assets with their values, the album), so GAME_VIEW_TOKEN, set by hand with --stdin, gates them (?token=).
+            "BAZAAR_KEY": "${{bazaar-taker.BAZAAR_KEY}}",
+            "GAME_VIEW_TOKEN": preserve(),
+            "GAME_POLL_MS": preserve(),  # relay poll interval (default 5000 ms)
         },
     )
 
