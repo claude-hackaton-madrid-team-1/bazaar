@@ -159,6 +159,11 @@
           "end": "2026-10-02T23:00:00+02:00",
           "day": "fri"
         }
+      },
+      "play": {
+        "who": "-",
+        "do": "Friday's doors closed at 23:00 with the clock frozen at h 2.65 (tick 159).",
+        "points": 0
       }
     },
     {
@@ -184,6 +189,11 @@
           "end": "2026-10-03T09:00:00+02:00",
           "day": "sat"
         }
+      },
+      "play": {
+        "who": "Marius + anyone",
+        "do": "Doors open at 09:00 on the calendar in both columns. G0 at 08:55 picks the column; restart bazaar-duels, bazaar-taker and bazaar-maker just after 09:00:00 (300 s closed-door poll).",
+        "points": 0
       }
     },
     {
@@ -1001,6 +1011,14 @@
       "owner": "Marius"
     },
     {
+      "id": "G1b",
+      "when": "all day",
+      "question": "Is this a safe moment to merge?",
+      "check": "a merge to main touching src/**, GUARDRAILS.md, STRATEGY.md, RUNTIME.md, uv.lock, pyproject.toml, vendor/bazaar-kit/**, questions/** or .railway/** redeploys bazaar-duels, bazaar-taker and bazaar-maker (.railway/railway.py watchPatterns)",
+      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open",
+      "owner": "Marius"
+    },
+    {
       "id": "G2",
       "when": "first board refresh after round 2 starts (resume 10:21 / jump 09:00)",
       "question": "Does the ladder restart per round?",
@@ -1072,6 +1090,10 @@
     }
   ],
   "unscheduled": [
+    {
+      "event": "day.opened (09:00)",
+      "do": "with the doors closed every loop polls the clock every 300 s (ticks.CLOSED_POLL_MAX_S): restart bazaar-duels, bazaar-taker and bazaar-maker just after 09:00:00, or check each logs a tick by 09:01"
+    },
     {
       "event": "level.announced",
       "do": "read GET /api/levels and B3's persona plan (#93); nothing to send",

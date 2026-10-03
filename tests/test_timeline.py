@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -171,9 +172,8 @@ def test_the_committed_schedule_is_the_generated_one():
     args += ["--plays", "docs/night/saturday-plays.json", "--json"]
     out = CliRunner().invoke(app, args)
     assert out.exit_code == 0, out.output
-    committed = json.loads(open("docs/night/saturday-schedule.json", encoding="utf-8").read())
+    committed = json.loads(Path("docs/night/saturday-schedule.json").read_text(encoding="utf-8"))
     assert json.loads(out.stdout) == committed
-    saturday = [
-        e for e in committed["events"] if e["action"] in ("bench", "duels", "grant_all", "round") and e["at_hours"] < 18
-    ]
+    saturday = [e for e in committed["events"] if e["at_hours"] < 18]
+    assert len(saturday) == 17
     assert all("play" in e for e in saturday)
