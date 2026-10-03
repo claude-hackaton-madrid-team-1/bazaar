@@ -572,8 +572,17 @@ D − 2). 1 of 96 duels for v2 and for v1 at decay 0.08. A planner that also cou
 `refused duel_closed (duel N is live)`: the rival accepted our previous offer earlier in the tick, the deal settles next
 tick, and the payload has no `accepted` flag to tell us. The deal still closes at our earlier offer; nothing is lost.
 
-### [2026-10-03] finding — bazaar-sim duels now score like the real game and share the team's one accept per tick
-After #151: a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
-practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
-team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
-(a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
+### [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
+Offline repro (two temp dirs, connector raising ConnectionError, `reserve_accept(999999, limit=1)` each):
+main gave `[True, True]` on two `ledger.jsonl` files; now `open_ledger(live=True)` on the real game returns the
+reconnecting `PgLedger` → `['refused', 'refused']` and no file, and two processes on one Postgres → `[True, False]`.
+A live taker/maker pings the ledger before its tick's first write (`ensure_writable`), `/health` carries
+`ledger: shared|down|local file`, and `dealer buy` HOLDS on a ledger blip (no walk). DATABASE_URL must be the
+shared Postgres on every live service, or the process exits at start ("refusing to trade").
+
+### [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
+`postgresql://u:SEC@RETPW@x.proxy.rlwy.net:12345/railway` parses to host `RETPW@x.proxy.rlwy.net`, and
+`u:SEC/RETPW@...` to host `u:SEC`: a `host:port` log label then prints a piece of the password (#162 reviews).
+`ledger_pg._target` now labels only a plain host/IP/socket with a numeric port; anything else is "unparseable",
+never shared (a live process refuses it). Percent-encode passwords. Also never shared: host lists, `hostaddr`,
+`127.1`/`2130706433`/`0x7f000001`, `*.local`, single-label names (compose services).
