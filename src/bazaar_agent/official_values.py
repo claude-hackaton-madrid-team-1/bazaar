@@ -116,11 +116,12 @@ UNREAD = "(GET /api/me/value): buying it is not allowed"  # ends every not-read 
 
 
 def unread_only(violations: tuple[str, ...]) -> bool:
-    """Refused only because the official value or the human approvals could not be read: hold for the tick, never
-    walk on it."""
+    """Refused only because the official value, the human approvals or our sales (`no_buyback_ticks`) could not be
+    read: hold for the tick, never walk on it."""
     from bazaar_agent.approvals import UNREAD as APPROVALS_UNREAD
+    from bazaar_agent.move_impact import SALES_UNREAD
 
-    return bool(violations) and all(v.endswith((UNREAD, APPROVALS_UNREAD)) for v in violations)
+    return bool(violations) and all(v.endswith((UNREAD, APPROVALS_UNREAD, SALES_UNREAD)) for v in violations)
 
 
 def over_cap(price: int, ref: str, values: OfficialValues, tick: int, held: int, margin: float) -> str | None:

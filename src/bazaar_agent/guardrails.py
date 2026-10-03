@@ -198,6 +198,7 @@ class Guardrails(BaseModel):
     max_score_loss_per_move: float = Field(default=0.0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
     score_per_neg_point_fallback: float = Field(default=0.053, gt=0, le=1)
     dealer_ladder_score: float = Field(default=0.05, ge=0, le=1)
+    no_buyback_ticks: int = Field(default=0, ge=0, le=5000)  # 0: off (GUARDRAILS.md turns it on)
     live_watchdog_enabled: bool = False
     watchdog_window_ticks: int = Field(default=120, ge=1, le=2000)
     watchdog_swap_cash_per_hour: int = Field(default=40, ge=0)
@@ -345,6 +346,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_score_loss_per_move": "guardrails.check (every sale) → move_impact.sell_impact + impact_board (fail closed)",
     "score_per_neg_point_fallback": "move_impact.slope (k when our snapshots measured none)",
     "dealer_ladder_score": "move_impact.estimate (every dealer deal)",
+    "no_buyback_ticks": "guardrails.check (every card buy) → impact_board (our sales in feed_events, fail closed)",
     "live_watchdog_enabled": "agents.taker → watchdog.run (after the tick's sends)",
     "watchdog_window_ticks": "watchdog.run (every rule's window)",
     "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
@@ -878,6 +880,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
     v.extend(_breaker_violations(action, ctx, rules))
+    if buying and not v:  # before the official value: a buy-back needs no /api/me/value read
+        v.extend(_buyback_violations(action, ctx, rules))
     if buying and not v and not ctx.ranking:  # last, so /api/me/value is read only for a buy every rule allows
         v.extend(_official_value_violations(action, ctx, rules))
     if not v:  # after every other rule: the score a sale could cost us (the SAL-07 incident, move_impact)
@@ -964,6 +968,34 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
     return [f"needs human approval: {action.item} {side} {shown}{unread}"]
 
 
+def _impact_facts(ctx: Context, rules: Guardrails) -> move_impact.Facts | None:
+    """This tick's origins, sales and score history (`impact_board`, read once per tick); None when unread."""
+    if ctx.impact is not None:
+        return ctx.impact
+    from bazaar_agent import impact_board
+
+    return impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
+
+
+def _buyback_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """`no_buyback_ticks`: never buy (from a dealer, the board, or a swap) a card we sold or swapped away in the last
+    that many ticks: a buy-back is not realistic trading (SAL-07: sold to Pilar at tick 948, bought back from Abuela
+    at 958). Our sales come from our settlements. Unread: a send is refused and holds; a ranking skips the rule."""
+    if rules.no_buyback_ticks <= 0 or action.rarity == "pack" or is_pack(action.item):
+        return []
+    facts = _impact_facts(ctx, rules)
+    team = ctx.cards.team if ctx.cards is not None else None
+    if facts is None or (team is not None and facts.team != team):
+        return [] if ctx.ranking else [f"no_buyback_ticks: {action.item} not bought {move_impact.SALES_UNREAD}"]
+    sold = facts.sold.get(action.item)
+    if sold is None or ctx.tick - sold >= rules.no_buyback_ticks:
+        return []
+    return [
+        f"no buy-back: we sold {action.item} at tick {sold}, {ctx.tick - sold} ticks ago "
+        f"(no_buyback_ticks {rules.no_buyback_ticks}: buying it back is not realistic trading)"
+    ]
+
+
 def _impact_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
     """`max_score_loss_per_move`: a sale (a board ask, a bid we take, a dealer sell, the copy a swap gives) whose
     estimated score change (`move_impact.sell_impact`) is below minus this needs a human approval of that card, side
@@ -973,11 +1005,9 @@ def _impact_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
         return []
     if action.rarity == "pack" or is_pack(action.item):
         return []
-    from bazaar_agent import approvals, impact_board
+    from bazaar_agent import approvals
 
-    facts = ctx.impact
-    if facts is None:
-        facts = impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
+    facts = _impact_facts(ctx, rules)
     dealer = action.kind == "dealer_sell" or action.scope == "dealer_sell"
     who = None if dealer else (action.counterparty if move_impact.is_team(action.counterparty) else ANY_TEAM)
     impact = move_impact.sell_impact(
