@@ -68,6 +68,19 @@ class TrackedBazaar(Bazaar):
         super().__init__(url, key, **kwargs)
         self.on_write = on_write
 
+    def duel_say(self, duel_id: int, text: str = "", price: int | None = None, days: int | None = None) -> dict:
+        """The SDK's `duel_say`, with `days` at the top level too. The SDK sends the price at the top level and the
+        days only inside `offer`; RULES.md accepts `{"price", "days"}` or both inside `"offer"`, and a priced
+        message without days is refused (`missing_days`). Sending both forms, with the same values, satisfies
+        either reading of the server; no two-issue message of ours had reached the real server before Duels II."""
+        body: dict[str, Any] = {"text": text}
+        if price is not None:
+            body["price"] = int(price)
+            if days is not None:
+                body["days"] = int(days)
+                body["offer"] = {"price": int(price), "days": int(days)}
+        return self._call("POST", f"/api/duels/{int(duel_id)}/messages", body)
+
     def _call(self, method: str, path: str, body: Any = None, query: dict[str, Any] | None = None) -> Any:
         hook = self.on_write
         if hook is None or method.upper() == "GET":
