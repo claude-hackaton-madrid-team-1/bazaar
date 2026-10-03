@@ -250,7 +250,11 @@ def evals_score_sim(
         if tick % model.refresh_ticks == 0 or tick in (min(d.ours), last):
             ours.add_row(str(tick), f"{official:.2f}", f"{modelled:.2f}", f"{modelled - official:+.2f}")
     console.print(ours)
-    console.print(f"RMSE {cal.rmse_ours:.2f} over {len(cal.ours)} snapshots, worst {cal.max_err_ours:.2f}")
+    console.print(
+        f"in sample (level-2 weight fitted on this series): RMSE {cal.rmse_ours:.2f} over {len(cal.ours)} snapshots "
+        f"({len({t - t % model.refresh_ticks for t in d.ours})} board refreshes), worst {cal.max_err_ours:.2f}; "
+        "out of sample (fit on ticks < 140) at tick 159: 7.87 vs 8.34 (tests/evals/test_score_sim.py)"
+    )
     board = Table(title="Public board at tick 30 (ladder only): official vs model")
     for col in ("team", "official", "model"):
         board.add_column(col, justify="right")

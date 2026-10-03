@@ -23,3 +23,9 @@ def spans():
 def no_real_tracing(monkeypatch):
     """A teammate's BAZAAR_TRACING=1 in .env must never make the suite export to a real Phoenix."""
     monkeypatch.setenv("BAZAAR_TRACING", "0")
+
+
+@pytest.fixture(autouse=True)
+def no_tick_stagger(monkeypatch):
+    """A BAZAAR_TICK_OFFSET_S in a teammate's .env must not shift every tick loop the suite runs."""
+    monkeypatch.setenv("BAZAAR_TICK_OFFSET_S", "")

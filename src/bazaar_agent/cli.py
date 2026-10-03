@@ -838,7 +838,10 @@ def budget(
     dealer_children: int = typer.Option(0, help="`bazaar dealer buy` processes running besides the taker"),
     laptops: int = typer.Option(1, help="Copies of taker and maker (each laptop running them)"),
     stagger: bool = typer.Option(False, help="Model the proposed stagger (opt-in per service: BAZAAR_TICK_OFFSET_S)"),
-    operator_rps: float = typer.Option(0.0, min=0.0, help="MCP tools, desk, `bazaar ask`/`status`: average req/s"),
+    operator_rps: float = typer.Option(
+        0.0, min=0.0, help="MCP tools, desk, `bazaar ask`/`status`: average req/s (0 = not counted)"
+    ),
+    flatten: bool = typer.Option(False, help="Add one `bazaar flatten` (32 calls) at the tick edge"),
 ) -> None:
     """Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made."""
     from rich.table import Table
@@ -851,6 +854,8 @@ def budget(
     plan = rb.with_copies(plan, {"taker": laptops, "maker": laptops})
     if operator_rps:
         plan.append(rb.operator(operator_rps, tick_seconds))
+    if flatten:
+        plan.append(rb.flatten())
     offsets = rb.PROPOSED_STAGGER if stagger else None
     t = Table(title=f"Calls per tick · {tick_seconds:g} s ticks · {'ceiling' if ceiling else 'steady'}")
     for col in ("loop", "copies", "team", "team/s", "broker", "broker/s", "keyless", "keyless/s"):
