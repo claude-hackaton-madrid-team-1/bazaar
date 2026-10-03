@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from typing import Any, Literal, Protocol
 
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, ProbeStats, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS, BenchPrior
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, max_weight_assignment, plan_matches, quotes_from
 
@@ -457,9 +457,16 @@ def tournament(
                 if name in ORACLES:
                     outs = [_bound(name, spec, t) for t in drawn]
                 else:
-                    outs = [play(spec, t, factories[name](preset)) for t in drawn]
+                    probes = ProbeStats()  # one broker process: probe statistics carry over from book to book
+                    outs = [play(spec, t, _shared(factories[name](preset), probes)) for t in drawn]
                 rows.append(_row(preset, scenario, spec, name, outs))
     return rows
+
+
+def _shared(policy: Policy, probes: ProbeStats) -> Policy:
+    if isinstance(policy, Edge):
+        policy.edge.probes = probes
+    return policy
 
 
 def _bound(name: str, spec: BenchSpec, traders: list[Trader]) -> Outcome:
