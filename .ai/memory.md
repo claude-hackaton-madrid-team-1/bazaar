@@ -362,6 +362,20 @@ never in a tick loop.
 `insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
 window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
 
+### [2026-10-03] finding — the LLM feed reader on real captured text: 24 texts → 15 learnings, subjects need a guard
+`uv run bazaar learnings --llm 24` (subscription, Jev picked opus-5-5; an earlier run got haiku-4-5 as the
+default on an undecided verdict): "Chato holds firm on price (13) and dislikes haggling", "Abuela responds well
+to politeness", "Abuela offers 5 P for El Organillero". The model wrote subjects as `dealer:chato` (copying
+the `from` field), which our validation first dropped: the prefix is now accepted only when it matches our own
+record of that id. LLM learnings stay `source: llm`, confidence ≤ 0.7, bound to nobody, and never block.
+
+### [2026-10-03] gotcha — a background LLM reader is a cost, not a free extra: opt-in and spaced
+PR #111's review replayed Friday's feed through the reader: 1,100 free texts → 125 calls (one per tick) with
+no spacing, on the same subscription as the desk and duels. Now RUNTIME.md `llm_read_feed = false` by default,
+at most one call per `read_feed_every_ticks` (10), doubled per failure, never while `.local/PAUSE` exists, model
+capped at Haiku/Sonnet. An LLM reading of a notice keeps its own `source: llm` row (the dedupe key includes the
+source) and never enters the blocker recall window (`recall(source="rules")`).
+
 ### [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
 `bazaar learnings --lessons --save` on a copy of the shared DB (tick 159): 26 outcomes → 26 lessons + 9 dealer
 curves + 1169 dealer moves. `--query "open a thread with chato to buy LAV-08; his opening ask 33"` → thread 187's
@@ -586,3 +600,184 @@ shared Postgres on every live service, or the process exits at start ("refusing 
 `ledger_pg._target` now labels only a plain host/IP/socket with a numeric port; anything else is "unparseable",
 never shared (a live process refuses it). Percent-encode passwords. Also never shared: host lists, `hostaddr`,
 `127.1`/`2130706433`/`0x7f000001`, `*.local`, single-label names (compose services).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
+The port is hardcoded twice (`scripts/sim_smoke.py` PORT/SIM and `config.LOCAL_SIM_URL`, which the CLI children
+use), and the smoke refuses a busy port. With several workers on one laptop: `git worktree add --detach <scratch>
+HEAD`, `sed` both files to a free port (check with `lsof -iTCP:<port> -sTCP:LISTEN`), run the smoke there.
+
+### [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
+symptom: the S1 accept gate refused LAV-08 in `test_live_accepts_one_offer...` → root cause: `tests/agent_fakes.ask()`
+hardcoded `"rarity": "common"` on every asset (the server builds the asset with its catalog rarity) → fix: `ask()`
+takes the catalog rarity (`catalog_rarity(ref)`), and a bait passes `rarity=` explicitly.
+
+### [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
+symptom: duel B's accept went out at 90 against our limit 104 → root cause: the S1 accept gate cached the tick's
+first successful `/api/duels` re-read and checked a later accept against it, while B's rival moved in between
+→ fix: every duel accept re-reads; only a FAILED re-read is kept, for its own tick (no 429 retry burst);
+test `test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught`.
+
+### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
+On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
+identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the
+free stall earns. On main's static bench too (`scripts/sim_market_test.py`: b1 0.892 vs 0.892, b2 1.0 vs 1.0).
+Ties must follow the book order (stable sort, as the stall): sorting by id lost 2 of 200 books to the stall.
+Beating the stall needs #84's edge (limit estimates, probes): opening our board venue alone buys the hook.
+
+### [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
+`BAZAAR_SIM=local` is hardcoded to :8765, so two workers cannot each run their own local sim through it.
+`scripts/sim_market_test.py` and `tests/test_sim_venue.py` serve `bazaar_sim` in-process on a free port instead.
+
+### [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
+symptom: property test `ours >= stall` failed (173 < 183) → root cause: equal quotes (two asks of 56) were
+sorted by id ("b1-10" < "b1-6"), so we matched a different seller than the stall at the same quoted surplus,
+and the hidden limits differ → fix: stable sort by price + a book-order term in the assignment weights, so
+at 0 bps we pick exactly the stall's traders (tests/test_matcher.py, 200 benches against `_auto_bench`).
+
+### [2026-10-03] build-error — a sim venue test opened nothing: `locked` at tick 0
+symptom: the keeper logged "opening refused locked" and retried 10 ticks later → root cause: the simulator
+unlocks El Chato (level 2, needed for a venue) at `chato_open_ticks`, never at tick 0 → fix: advance one tick
+first (`/sim/tick`). `locked` stays a retryable refusal in the keeper (a level can arrive later).
+
+### [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
+symptom: (review round 2) after one failed connect, `KeyVault.ready()` never succeeded again, so the h6.5
+opening would never come → root cause: the backoff raised, every caller's `except` re-armed the backoff,
+so it never ran out → fix: a call skipped by the backoff raises `_Skipped`, which never re-arms it
+(`venue.KeyVault._failed`; test `test_one_postgres_blip_never_locks_the_vault_out_for_good`).
+
+### [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
+The kit's `Bazaar.me()` docstring: /me carries `starter_broker_key` while we have the free starter stall;
+opening our own venue replaces the stall (RULES.md). `guardrails.runs_venue` reads it that way (the bond
+reserve stays, our opening is not blocked). Unverified live: if the key stays after we open, the floor stays
+370 all game; set `venue_bond_reserve = 0` then. The broker-key table is `venue_broker_keys` (target, venue):
+#84 still creates an older `venue_keys` shape, which nothing reads.
+
+### [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
+`holdings.without_secrets` (#105) strips every key-named field from a stored or answered /me, so
+`guardrails.runs_venue` would take the free stall for our venue (bond reserve gone, h6.5 opening refused).
+It now keeps `has_starter_stall: true` in the key's place. A snapshot written by older code has neither:
+deploy taker and maker together, and pull before a laptop uses the shared database.
+
+### [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
+Sat 06:08: opening our venue replaces the free stall (RULES.md "Your own market"), and our exact broker only
+equals the stall (0.5 of the bench points) in every simulation, unverifiable live before opening. While the
+switch is off no bond reserve is held (`effective_cash_floor` = `cash_floor` 100). Turn it on only in a
+closed-door window with Omar, once the broker has an edge (#84) or organic trades to serve.
+
+### [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
+symptom: masking private numbers inside `scrub()` turned `cash_floor 270` into `[redacted]` in the `decisions` row
+(test_status) → root cause: `decisions.scrubbed` calls `scrub` too → fix: `scrub_for_span` (span attributes only)
+cuts a number named like a limit/cost/value/floor; `scrub` keeps our numbers for Postgres and JSONL.
+
+### [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
+`SMOKE_TRACING=0|1 SMOKE_DUMP=<file> uv run python scripts/sim_smoke.py` dumps the sim feed (types and payloads,
+ids and ticks dropped): the 58 events (settlements, offers, thread messages with our words and prices) are
+identical, and the run passes with a dead Phoenix on 127.0.0.1:6006. A span used to carry `bazaar.duel.limit` and
+`bazaar.plan.max` in clear: both are gone.
+
+### [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
+Friday's feed, Chato's uncommons: t03 started at 13, stepped by 1 and took finals of 28/29/29 (threads 253, 234,
+275). The big steppers paid 31-32 (228, 268). His finals came after 4-8 team bids (median 6), Abuela's after 4-9.
+Repeating our top price brought a final in only 1 of 11 threads, so the patience play makes the ladder long
+enough (at least 9 distinct bids) instead of holding at the top. `bazaar dealer finals` replays it: lift 0.15
+closes 4 of 12 Chato uncommon threads at 28-29 and 11 of 15 rares (mean 88); lift 0.25 closes 11 of 12 and 15 of 15.
+
+### [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
+A run that restarts the simulator resumes the old world (tick 149, our cash at the floor), which looks like
+someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time, as `scripts/sim_smoke.py` does.
+Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
+an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
+
+### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
+From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
+1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
+counterparty cap; the live maker cancelled hand-posted offers (now `hands-off:<id>` ledger rows it never
+touches); Friday's addressed vs public fill rates were first miscounted (34 % / 7 %, really 20 % / 6 %).
+
+### [2026-10-03] gotcha — CliRunner's `.output` includes stderr: parse `.stdout` in JSON CLI tests
+The CLI prints its target banner (`target: real game …`) to stderr, and click 8.2's `Result.output` mixes
+stderr in, so `json.loads(out.output)` fails once a branch meets main (#79's `test_affinity`, #98's
+`test_rivals`). Parse `out.stdout`, and keep every CLI note on `err_console` so `--json` stays pure.
+
+### [2026-10-03] build-error — a ledger outage made the dealer bid her ask instead of holding (#79 review)
+symptom: `_reserve_accept` caught `LedgerUnavailable` and returned False ("slot taken"), so `negotiate` sent
+`meet_ask` (a bid at her ask) whose spend the dead ledger could not book → root cause: one bool for two
+answers → fix: `Reserve` returns `None` when the slot cannot be read, and the dealer holds the tick
+(`test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask`).
+
+### [2026-10-03] build-error — merging main into the N17 stack: a new ledger method must reach FallbackLedger too
+symptom: `mypy` after merging main into #137: `open_ledger` returns `PgLedger | FallbackLedger`, not `LedgerStore`
+→ root cause: #79 added `hands_off_ids` to the `LedgerStore` protocol, and main's #162 `FallbackLedger` (dry run:
+Postgres, else the file) did not have it → fix: `FallbackLedger.hands_off_ids` + test. Same merge: #79's
+`_reserve_accept` returned None on a ledger outage, main's dealer raises `Hold`; `_reserve_accept` now raises
+`Hold` (main's message), and `negotiate` still holds on a `None` too.
+
+### [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
+1. A sell was priced from the copies `/me` holds, which still counts a copy in our own ask (or sold last
+   tick, settling next): the last FREE copy was sold as a duplicate (+6.8 shown, −3.2 real once the ask
+   fills and the page loses its bonus) → `score_offer(..., unavailable=)` prices from free copies only.
+2. `market.parse_offer`'s bid branch never checked `want.assets`: a bid for `card:X` that also wants the id
+   of our rare read as plain → any side key outside cash/assets/types/cards with a value is not plain.
+Also: the sell path must re-read the kill switch after the duel grace wait, as the buy path does.
+
+### [2026-10-03] build-error — #138's `accept_bids` sold into a bid without main's S1 accept gate (#146)
+symptom: after merging main into the N17 stack, a sell into a board bid sent `accept(offer, assets=[copy])` with
+no inspector row → root cause: #146 gated `_accept_one` (dealer + board asks); #138's `_accept_bid` is a separate
+accept path written before the gate existed, and `board_gate` refuses every bid → fix: `accept_gate.bid_gate`
+(a bid, the ref and price we priced, any copy, and the copy we hand over is that card in /me), checked in
+`_accept_bid` before the duel grace and the slot; a block never takes the accept slot (tests in test_rivals.py).
+
+### [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
+`trade_desk.build_plan` refuses any plan where one team passes `max_share` (0.25) of the PLANNED volume, so a
+swaps-only plan of fewer than four teams is empty (fixtures: 0 swaps at 0.25 and 0.5, 2 at 1.0). The team
+desk (N17) plans with `max_share = 1.0` and keeps fairness per deal (`swaps.judge`: our gain >= 3 P, their
+share <= 0.6) plus the cumulative `max_counterparty_share` guardrail.
+
+### [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
+symptom: the desk's end-to-end run settled LAV-09 (held 1) for LAT-02 + 62 P → root cause: the trade desk's
+`our_copies` offers one copy of EVERY card we hold (its loss includes the page bonus) → fix: the desk gives a
+card only while we hold two free copies (`team_desk.spare`), at opening, adoption and accept.
+
+### [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
+After a rival accepted our swap offer, the desk read its message as a reply and tried to concede: the cancel
+was refused `offer_accepted`. An offer of ours reading `accepted` in the thread's `standing_offers` now marks
+the thread as waiting for its deal. The simulator's rivals also stack one counter per tick (old ones stay
+open): read every standing offer, judge each, log a refusal once.
+
+### [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
+symptom: the sim smoke's `bazaar swaps --json` step failed: stdout started with `WARNING bazaar_agent.holdings:
+... Postgres unavailable` → root cause: the CLI's `logging.basicConfig(stream=sys.stdout)` (stdout because
+Railway files stderr as errors) → fix: `cli.log_stream()`: stdout only when RAILWAY_ENVIRONMENT is set, as the
+target banner already does; stderr elsewhere, so every `--json` command stays pure JSON on a laptop.
+
+### [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
+A rival can accept our swap offer and close the thread in the same tick: the deal settles, the thread reads
+`closed`. So the team desk never refunds a spend because a thread ended or a close answered 200: it books the
+cash we add when the offer is POSTED and gives it back only when a read shows that offer `cancelled`,
+`expired` or `failed` (a cancel's own answer, or the thread re-read for at most 10 ticks); otherwise it stays
+booked (over-count, fail safe). Found by security-auditor rounds 2-5 on #123 against the in-process simulator.
+
+### [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
+symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspector row once main's #146 gate was in
+→ root cause: #123 checks the swap structure when it proposes (`read_offer` + `is_the_planned_swap`) but the accept
+was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
+offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
+the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
+### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
+Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
+ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
+tick is unknown; the simulator charges the old one (`settle_due` runs before `venue_tick`) and rounds fees
+half-to-even while the tape rounds up. The taker prices the higher fee from `effective_tick ≤ tick + 2` (B19).
+
+### [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+Twice on Sat morning (load from ~10 parallel review agents), `uv run pytest` ended with no summary and a
+"Extension modules: psycopg_binary.pq, …" dump instead; the same commit passed on an immediate rerun (1127 and
+1172 passed). Rerun before blaming the change; a crash that repeats on an idle machine is real.
+
+### [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
+Private sim, 16-tick sessions: v2 held while the sim's rival conceded every tick, then accepted at D − 3 and D − 2
+(94 and 88, 0 rounds, 56–58 % of the pie). The old 3-tick smoke step saw no move, so `scripts/sim_smoke.py` now runs
+`duel run --play` to the session's deadline (SIM_DUEL_TICKS 24) and needs every duel closed as a deal inside our
+limit. Two-issue session, `duel_days_signed` false: v2 valued the rival's 74 at 10 days as 36 (cost 40), offered 42 at
+0 days and made 2 of a 63 pie; the sim's scoring put the 74 offer at +72. After the rival took our 42, v2 sent the second
+"last offer" and the sim refused it (`duel_closed`): no cost, but a step that has a " refused " marker fails the smoke.

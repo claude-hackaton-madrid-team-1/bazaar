@@ -483,6 +483,31 @@ def test_a_busy_accept_slot_bids_her_ask_instead_of_going_silent():
     assert (client.closed, out.status, out.price) == (False, "deal", 9)
 
 
+def test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask():
+    # pr-reviewer #79 P2: a ledger outage is not "slot taken". `reserve` answers None: nothing is sent that
+    # tick (no accept, no meet-her-ask bid whose spend the dead ledger could not book), and the thread stays.
+    from bazaar_agent.agents.dealer import negotiate
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    calls: list[int] = []
+
+    def reserve(move, clock):
+        calls.append(clock.tick)
+        return None if len(calls) == 1 else True  # the ledger is down once, then answers
+
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        reserve=reserve,
+    )
+    assert client.sent == [6, 7, 8] and len(calls) == 2  # no bid of 9 on the held tick
+    assert client.accepted and (client.closed, out.status) == (False, "deal")
+
+
 def test_a_busy_accept_slot_never_bids_her_opening_ask():
     from bazaar_agent.agents.dealer import meet_ask
 
@@ -862,3 +887,73 @@ def test_no_second_close_waits_out_closed_doors():
     )
     assert client.closes == 1 and out.status == "open" and max(slept, default=0) < 300
     assert any("no live tick for a second close" in line for line in lines)
+
+
+def test_on_thread_sees_every_read_and_a_failing_inspector_never_breaks_the_deal():
+    from bazaar_agent.agents.dealer import negotiate
+
+    seen, lines = [], []
+
+    def inspector(thread):
+        seen.append(thread["status"])
+        raise RuntimeError("boom")
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        on_thread=inspector,
+    )
+    assert (out.status, out.price) == ("deal", 9) and len(seen) >= 4
+    assert any("offer inspection failed (RuntimeError)" in line for line in lines)
+
+
+def test_the_accept_gate_runs_before_the_guard_and_a_refusal_never_accepts_nor_claims_the_slot():
+    from bazaar_agent.agents.dealer import negotiate
+
+    guarded, reserved, lines = [], [], []
+
+    def guard(move, thread_id):
+        guarded.append(move.kind)
+        return None
+
+    def reserve(move, clock):
+        reserved.append(move.offer_id)
+        return True
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=6,
+        guard=guard,
+        reserve=reserve,
+        inspect=lambda thread, move: "block: it binds LAV-01",
+    )
+    assert client.accepted == [] and "accept" not in guarded and reserved == []  # the slot is never claimed
+    assert out.status == "timeout" and out.reopen_start is None  # a refusal is never a walk, never a reopen
+    assert any("INSPECTOR refused the accept of offer" in line and "LAV-01" in line for line in lines)
+
+
+def test_the_real_gate_lets_the_offer_we_priced_through():
+    from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.agents.inspector import CardIndex
+
+    topic = {"buy": {"card": "LAV-03"}}
+
+    def inspect(thread, move):
+        gate = dealer_gate(thread, "abuela", move.offer_id, move.price, topic, CardIndex.from_catalog({}))
+        return None if gate.allowed else gate.reason
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(client, "abuela", topic, BidPlan(6, 1, 10), log=print, sleep=lambda _: None, inspect=inspect)
+    assert (out.status, out.price) == ("deal", 9) and client.accepted == [503]

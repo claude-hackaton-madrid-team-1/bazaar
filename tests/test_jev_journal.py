@@ -94,6 +94,17 @@ class DuelClient:
         return {"ok": True}
 
 
+def use_policy(monkeypatch, cli, policy):
+    """`duel run` reads GUARDRAILS.md through `cli._rules`: pin the duel policy a test is about."""
+    from dataclasses import replace
+
+    from bazaar_agent.guardrails import load_guardrails
+
+    loaded = load_guardrails()
+    rules = loaded.rules.model_copy(update={"duel_policy": policy})
+    monkeypatch.setattr(cli, "_rules", lambda: replace(loaded, rules=rules))
+
+
 @pytest.fixture
 def duel_cli(monkeypatch, tmp_path):
     import psycopg
@@ -121,6 +132,7 @@ def duel_cli(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
+    use_policy(monkeypatch, cli, "v1")  # these tests are about v1 (GUARDRAILS.md runs v2): v2 tests pin v2
     return cli, client, asked, tmp_path
 
 
@@ -241,15 +253,8 @@ def test_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_site(duel
 
 @pytest.mark.parametrize("jev", [False, True])
 def test_duel_run_under_v2_holds_in_silence_and_jev_cannot_take_the_planners_accept(duel_cli, monkeypatch, jev):
-    from dataclasses import replace
-
-    from bazaar_agent.guardrails import load_guardrails
-
     cli, client, asked, tmp_path = duel_cli
-    loaded = load_guardrails()
-    monkeypatch.setattr(
-        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
-    )
+    use_policy(monkeypatch, cli, "v2")
     args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
     result = CliRunner().invoke(cli.app, args)
     assert result.exit_code == 0, result.output
@@ -259,16 +264,10 @@ def test_duel_run_under_v2_holds_in_silence_and_jev_cannot_take_the_planners_acc
 
 
 def test_a_bug_in_the_v2_planner_holds_every_duel(duel_cli, monkeypatch):
-    from dataclasses import replace
-
     from bazaar_agent.agents import duel_v2
-    from bazaar_agent.guardrails import load_guardrails
 
     cli, client, asked, tmp_path = duel_cli
-    loaded = load_guardrails()
-    monkeypatch.setattr(
-        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
-    )
+    use_policy(monkeypatch, cli, "v2")
     monkeypatch.setattr(duel_v2, "plan_moves", lambda *a, **kw: 1 / 0)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
@@ -277,18 +276,12 @@ def test_a_bug_in_the_v2_planner_holds_every_duel(duel_cli, monkeypatch):
 
 def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cli, monkeypatch):
     """r2 bite X17: the taker claims the team's accept 2 s into the tick; the duel books its accept first."""
-    from dataclasses import replace
-
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents import duel_jev
-    from bazaar_agent.guardrails import load_guardrails
 
     cli, client, asked, tmp_path = duel_cli
     client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
-    loaded = load_guardrails()
-    monkeypatch.setattr(
-        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
-    )
+    use_policy(monkeypatch, cli, "v2")
     order: list[str] = []
     reserve, pick = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick
     monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
@@ -321,17 +314,11 @@ def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monke
 
 def test_under_v2_a_ledger_outage_holds_every_duel_instead_of_killing_the_tick(duel_cli, monkeypatch):
     """b5 (rehearsal with #62): the planner's slot read and the pre-booking fail closed."""
-    from dataclasses import replace
-
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.guardrails import load_guardrails
 
     cli, client, asked, tmp_path = duel_cli
     client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
-    loaded = load_guardrails()
-    monkeypatch.setattr(
-        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
-    )
+    use_policy(monkeypatch, cli, "v2")
 
     def down(self, *a):
         raise ConnectionError("ledger down")
@@ -340,6 +327,149 @@ def test_under_v2_a_ledger_outage_holds_every_duel_instead_of_killing_the_tick(d
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "ledger unreadable (ConnectionError)" in result.output and client.sent == []
+
+
+# ---------------------------------------------------------------- v2: the same safety nets as v1 (GUARDRAILS.md: v2)
+
+PLANNED_ACCEPT = {**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}
+
+
+@pytest.mark.parametrize(("kind", "jev"), [("offer", False), ("offer", True), ("accept", False), ("accept", True)])
+def test_under_v2_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_site(duel_cli, monkeypatch, kind, jev):
+    """Whatever the planner (or Jev on top of it) chose, a move worth less than our cost 104 is never sent."""
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import duel_jev, duel_v2, duelist
+
+    cli, client, asked, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, "v2")
+    if kind == "offer":  # 110 - 2 × 5 = 100 < cost 104
+        client.payload = [{**LIVE, "issues": ["price", "days"], "your_days_weight": 2.0}]
+        outside = duelist.DuelMove("offer", 110, 5, "a planner bug")
+    else:  # the rival's standing 100: on the limit is no surplus
+        client.payload = [{**PLANNED_ACCEPT, "rival_offer": {"id": 702, "price": 100, "tick": 133, "days": 0}}]
+        outside = duelist.DuelMove("accept", 100, None, "a planner bug")
+    monkeypatch.setattr(duel_v2, "plan_moves", lambda *a, **kw: {95: outside})
+    if jev:
+        pick = duel_jev.DuelPick(outside, outside, (kind if kind == "accept" else "counter",), f"jev {kind}")
+        monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, duels, *a, **kw: {95: pick})
+    args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and "duel_inside_limit" in " ".join(result.output.split())
+    assert gr.Ledger(tmp_path / "ledger.jsonl").accept_items(134) == []  # denied before the slot was booked
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "rejected" and "duel_inside_limit" in row["guardrail"]
+
+
+@pytest.mark.parametrize("broken", ["down", "reserve"])
+def test_under_v2_a_ledger_failure_costs_the_planned_accept_its_write_never_the_loop(duel_cli, monkeypatch, broken):
+    """v2 fails closed twice: a ledger it cannot read holds every duel; a reservation that fails drops the accept."""
+    import psycopg
+
+    from bazaar_agent import ticks
+    from bazaar_agent.ledger_pg import PgLedger
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [PLANNED_ACCEPT]
+    use_policy(monkeypatch, cli, "v2")
+
+    def refused():
+        raise psycopg.OperationalError("the server closed the connection")
+
+    ledger = PgLedger(refused, "duels") if broken == "down" else ReserveFails(tmp_path / "ledger.jsonl")
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
+    loop_errors = []
+    run = ticks.run_per_tick
+    monkeypatch.setattr(cli, "run_per_tick", lambda *a, **k: run(*a, **k, on_error=lambda *e: loop_errors.append(e)))
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert loop_errors == [] and client.sent == []  # the tick ended normally and nothing was sent
+    output = " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    if broken == "down":  # the planner's slot read failed: no accept and no offer this tick
+        assert "ledger unreadable" in output and "every duel holds" in output
+        assert (row["kind"], row["chosen"]) == ("duel_hold", False)  # Jev, asked with no slot, holds it too
+    else:  # the planner accepted, the reservation failed: dropped, never sent unbooked
+        assert "no accept this tick (fail closed)" in output
+        assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
+        assert row["guardrail"].startswith("ledger unavailable:")
+
+
+def test_under_v2_a_planned_accept_that_finds_the_slot_taken_holds_and_sends_nothing(duel_cli, monkeypatch):
+    """Taken before the tick: the planner sees no slot and holds; nothing is sent past the team's quota."""
+    from bazaar_agent import guardrails as gr
+
+    cli, client, asked, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, "v2")
+    client.payload = [PLANNED_ACCEPT]
+    ledger = gr.Ledger(tmp_path / "ledger.jsonl")
+    ledger.reserve_accept(134, 2.2, 12, "LAV-02", 1)  # the taker went first
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and ledger.accept_items(134) == ["LAV-02"]
+    (row,) = decision_rows(tmp_path)
+    assert row["kind"] == "duel_hold" and "accept queued" in row["reason"]
+
+
+def test_under_v2_the_taker_claiming_the_slot_during_the_re_read_costs_the_accept(duel_cli, monkeypatch):
+    """Taken after the planner read the slot (during the S1 re-read): the reservation refuses the accept."""
+    from bazaar_agent import guardrails as gr
+
+    cli, client, asked, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, "v2")
+    reads: list[int] = []
+
+    def duels():  # the S1 re-read before the accept: the taker reserves the team's accept meanwhile
+        reads.append(1)
+        if len(reads) == 2:
+            gr.Ledger(tmp_path / "ledger.jsonl").reserve_accept(134, 2.2, 12, "LAV-02", 1)
+        return {"duels": deepcopy([PLANNED_ACCEPT])}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(reads) == 2
+    assert gr.Ledger(tmp_path / "ledger.jsonl").accept_items(134) == ["LAV-02"]
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"], row["guardrail"]) == (
+        "duel_accept",
+        "rejected",
+        "accept slot taken by another process",
+    )
+
+
+def test_under_v2_a_sent_accept_records_the_clean_inspection(duel_cli, monkeypatch):
+    cli, client, asked, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, "v2")
+    client.payload = [PLANNED_ACCEPT]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)]
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "done")
+    assert row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_under_v2_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monkeypatch):
+    """The planner holds a duel it cannot read (duel_v2.plan_moves) and still plans the others."""
+    from bazaar_agent.agents import duel_v2
+
+    cli, client, asked, tmp_path = duel_cli
+    use_policy(monkeypatch, cli, "v2")
+    client.payload = [{**LIVE, "duel": 94}, PLANNED_ACCEPT]
+    real = duel_v2.duel_plan
+
+    def flaky(d, *a, **kw):
+        if d.get("duel") == 94:
+            raise ValueError("malformed row")
+        return real(d, *a, **kw)
+
+    monkeypatch.setattr(duel_v2, "duel_plan", flaky)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)]
+    rows = {r["move"]["duel"]: r for r in decision_rows(tmp_path)}
+    assert rows[94]["kind"] == "duel_hold" and "unreadable duel (ValueError)" in rows[94]["reason"]
 
 
 def _book_order(monkeypatch, client):
@@ -437,3 +567,155 @@ def test_without_jev_a_forced_accept_goes_first_and_its_row_has_no_jev_context(d
     assert result.exit_code == 0, result.output
     (row,) = decision_rows(tmp_path)
     assert client.sent == [("accept", 95)] and row["jev"] is None and "jev not asked" not in row["reason"]
+
+
+def test_duel_run_refuses_an_accept_when_the_rival_moved_its_offer_after_our_read(duel_cli):
+    """S1: the accept binds the offer standing when it lands, so the duel is read again first."""
+    cli, client, asked, tmp_path = duel_cli
+    reads = []
+    lowered = [{**LIVE, "rival_offer": {"id": 703, "price": 105, "tick": 134, "days": 0}}]
+
+    def duels():
+        reads.append(1)
+        return {"duels": deepcopy(client.payload if len(reads) == 1 else lowered)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(reads) == 2
+    assert "INSPECTOR block" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
+    (finding,) = row["inputs"]["inspector"]["findings"]
+    assert finding == "the rival's offer moved against us: we priced 110 (days 0), it is 105 (days 0) now"
+
+
+def test_duel_run_records_the_clean_inspection_on_a_sent_accept(duel_cli):
+    cli, client, asked, tmp_path = duel_cli
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "done" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_drops_an_accept_whose_re_read_took_the_rest_of_the_tick(duel_cli, monkeypatch):
+    """Review P2: the SDK may retry a slow read; an accept after the tick's deadline is dropped, never sent late."""
+    import time as real_time
+
+    cli, client, asked, tmp_path = duel_cli
+    late = {"by": 0.0}
+    payload = client.payload
+
+    def duels():
+        if client.sent == [] and late["by"] == 0.0 and getattr(duels, "calls", 0) == 1:
+            late["by"] = 10_000.0  # the gate's re-read: the clock jumps past the tick
+        duels.calls = getattr(duels, "calls", 0) + 1
+        return {"duels": deepcopy(payload)}
+
+    client.duels = duels
+    clock = real_time.monotonic  # the real one, captured before the patch
+    monkeypatch.setattr(cli.time, "monotonic", lambda: clock() + late["by"])
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and "the re-read took the rest of tick" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "expired" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_re_reads_once_per_tick_and_a_failed_re_read_fails_every_accept(duel_cli):
+    """Security audit P2: a refused re-read is never retried per duel inside the tick (no 429 burst)."""
+    from bazaar_agent.sdk import BazaarError
+
+    cli, client, asked, tmp_path = duel_cli
+    two = [{**d, "duel": n} for n in (95, 96) for d in client.payload]
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) > 1:
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(two)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 2  # the tick's read, then ONE re-read for both accepts
+    rows = decision_rows(tmp_path)
+    assert [r["status"] for r in rows] == ["rejected", "rejected"]
+    assert all("could not be read again" in r["inputs"]["inspector"]["findings"][0] for r in rows)
+
+
+def test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught(duel_cli):
+    """Review r2 P1: a successful re-read is never reused for a later accept of the same tick."""
+    cli, client, asked, tmp_path = duel_cli
+    a, b = ({**d, "duel": n} for n in (95, 96) for d in client.payload)
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # duel 95's re-read: its rival moved against us
+            return {"duels": deepcopy([{**a, "rival_offer": {**a["rival_offer"], "price": 105}}, b])}
+        if len(calls) == 3:  # duel 96's re-read: its rival dropped below our limit in the meantime
+            return {"duels": deepcopy([a, {**b, "rival_offer": {**b["rival_offer"], "price": 90}}])}
+        return {"duels": deepcopy([a, b])}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 3
+    findings = [r["inputs"]["inspector"]["findings"][0] for r in decision_rows(tmp_path)]
+    assert "moved against us" in findings[0] and "90 is not inside our limit" in findings[1]
+
+
+def test_duel_run_forgets_a_failed_re_read_at_every_tick_even_a_repeated_tick_number(duel_cli, monkeypatch):
+    """Review r4 P3: `rereads.new_tick()` in duel_run (ticks 134 → 135 → 134 after a world reset). The ticks
+    are driven directly, so a regression fails instead of waiting for a tick that never comes."""
+    from bazaar_agent.sdk import BazaarError
+    from bazaar_agent.ticks import Clock
+
+    cli, client, asked, tmp_path = duel_cli
+    calls: list[int] = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # tick 134's re-read
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(client.payload)}
+
+    def three_ticks(read_clock, on_tick, **kwargs):
+        for tick in (134, 135, 134):
+            on_tick(Clock.model_validate({"tick": tick, "next_tick_in": 40.0, "tick_seconds": 60.0, "t_hours": 2.2}))
+        return 3
+
+    client.duels = duels
+    monkeypatch.setattr(cli, "run_per_tick", three_ticks)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "3"])
+    assert result.exit_code == 0, result.output
+    # 134: refused (429); 135: re-read, accepted; 134 again: the old failure is forgotten, re-read, accepted
+    assert client.sent == [("accept", 95), ("accept", 95)] and len(calls) == 6
+
+
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+def test_a_forced_or_planned_early_accept_is_refused_when_the_re_read_shows_a_moved_offer(
+    duel_cli, monkeypatch, policy
+):
+    """S1 on #150's early pass: v1's forced endgame accept and v2's planned accept are booked before Jev, so
+    the gate must run there too, before the slot, on a fresh read."""
+    cli, client, asked, tmp_path = duel_cli
+    standing = {**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}
+    moved = {**standing, "rival_offer": {"id": 703, "price": 105, "tick": 134, "days": 0}}
+    reads: list[int] = []
+
+    def duels():
+        reads.append(1)
+        return {"duels": deepcopy([standing] if len(reads) == 1 else [moved])}
+
+    client.duels = duels
+    use_policy(monkeypatch, cli, policy)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert not [s for s in client.sent if s[0] == "accept"] and len(reads) >= 2
+    rows = [r for r in decision_rows(tmp_path) if r["kind"] == "duel_accept"]
+    assert (
+        rows and rows[0]["status"] == "rejected" and "moved against us" in rows[0]["inputs"]["inspector"]["findings"][0]
+    )

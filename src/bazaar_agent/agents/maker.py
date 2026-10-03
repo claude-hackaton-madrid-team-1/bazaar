@@ -8,6 +8,9 @@ Album first (`/api/me`), then:
     offer already promises counted, so open bids can never take cash below `cash_floor`;
   - each on the venue with the best expected fill (`market.best_venue`: El Rastro or a busier, cheaper
     team venue), never our own venue (`self_venue`);
+  - with `max_counterparty_share` on (GUARDRAILS.md, #14), an offer anyone may take is posted only while no
+    team could pass its share by taking it; otherwise it is addressed (`to`) to the strategy's counterparty
+    (the set's chaser for an ask, a holder for a bid) with the most room, or not posted;
   - stale offers repriced (the target moved by `reprice_min_change`: tape and supply move it, or an ask
     fell below its floor) or cancelled (no longer a target: we hold the card, the copy is needed, the sell
     surplus is gone). A reprice cancels only once its replacement would pass the guardrails; an offer
@@ -16,10 +19,14 @@ Album first (`/api/me`), then:
   - with Jev (`maker_jev.MakerJev`), each price picked among three legal candidates by
     `list_price_choice` and each reprice weighed by `reprice_or_hold`; `undecided` keeps today's move.
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
-ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
-that is not a strategy target is cancelled, so stop the maker before trading by hand.
+ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers, except those a person
+posted with `bazaar sell ... --live` (booked in the shared ledger as `guardrails.HANDS_OFF` listings): it
+never cancels or reprices those, and posts nothing for the copy or card they already cover. Any other
+offer of ours that is not a strategy target is cancelled.
 While the kill switch is on (`guardrails.kill_switch`, read every tick) the maker HOLDS: it reads, but
 posts nothing and cancels nothing (a reprice is a cancel plus a post), so our open offers stay open.
+Our own venue rides on the same tick (`agents/venue_keeper.py`, before the offers above): opened once
+after `venue_open_after_game_hours`, then its broker matches the book every tick.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -60,6 +67,7 @@ from bazaar_agent.agents.seller import (
     open_commitments,
     post,
     sell_listing,
+    trade_book,
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
@@ -68,12 +76,16 @@ from bazaar_agent.guardrails import (
     Guardrails,
     LedgerRow,
     LedgerStore,
+    TradeBook,
     check,
     context_from,
+    effective_cash_floor,
     kill_switch,
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
+from bazaar_agent.intel import book_values, settled_volume
+from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
@@ -98,20 +110,27 @@ class Target:
     value: float  # asks: what we lose by selling; bids: worth to us
     score: float
     reason: str
+    counterparties: tuple[str, ...] = ()  # asks: the teams that chase the set; bids: the likely holders
+    to: str | None = None  # addressed to this team (`max_counterparty_share`); None: anyone on the venue
 
 
 def targets_from(book: Playbook) -> list[Target]:
     asks = [
-        Target("ask", mv.ref, mv.rarity, int(mv.limit), mv.asset_id, mv.value, mv.score, mv.reason)
+        Target("ask", mv.ref, mv.rarity, int(mv.limit), mv.asset_id, mv.value, mv.score, mv.reason, mv.counterparties)
         for mv in book.sells
         if mv.asset_id is not None and mv.limit > 0
     ]
     bids = [
-        Target("bid", mv.ref, mv.rarity, int(mv.limit), None, mv.value, mv.score, mv.reason)
+        Target("bid", mv.ref, mv.rarity, int(mv.limit), None, mv.value, mv.score, mv.reason, mv.counterparties)
         for mv in book.buys
         if mv.action == "bid" and mv.limit > 0
     ]
     return sorted(asks + bids, key=lambda t: -t.score)
+
+
+def _covered_by(t: Target, offers: Iterable[OpenOffer]) -> bool:
+    """An offer a person posted by hand already stands for this target's copy (asks) or card (bids)."""
+    return any(o.side == t.side and (o.asset_id == t.asset_id if t.side == "ask" else o.ref == t.ref) for o in offers)
 
 
 def sell_floor(your_value: float, rules: Guardrails) -> int:
@@ -182,6 +201,7 @@ class _MakerRun:
     spent: int = 0  # bid cash committed this tick (posted or would-be), counted against the spend cap
     posted: list[str] = field(default_factory=list)
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
+    settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
 
 
 class Maker:
@@ -202,22 +222,34 @@ class Maker:
         hub: Any = None,
         jev: MakerJev | None = None,
         holdings: Holdings | None = None,
+        market: Any = None,
+        notices: VenueNotices | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
+        self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
+        self.market = market  # agents.venue_keeper.VenueKeeper: our venue and its broker; None = no venue
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
+        snap: Snapshot | None = None
         try:
             snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
-            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
+        try:
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down, our venue's included
+            if self.market is not None:  # the bench first: a broker without our reads still matches the bench
+                self.market.on_tick(clock, snap, window)
+            if snap is None:
+                return
             self._tick(snap, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
@@ -240,7 +272,12 @@ class Maker:
                 f"stay open): {'; '.join(stops)}"
             )
             return
+        hands_off = self.ledger.hands_off_ids()
+        by_hand = [o for o in mine if o.id in hands_off]
+        mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
+        if self.notices is not None:
+            self.notices.update(snap.events, snap.us)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
@@ -251,8 +288,13 @@ class Maker:
             total,
             max(0, clock.limits.offers_per_team_per_tick - listed),
             params=params,
+            settled=(
+                settled_volume(snap.events, snap.us, book_values(snap.catalog))
+                if self.rules.max_counterparty_share < 1
+                else None
+            ),
         )
-        targets = targets_from(book)
+        targets = [t for t in targets_from(book) if not _covered_by(t, by_hand)]
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")
@@ -274,7 +316,13 @@ class Maker:
     def _ctx(self, run: _MakerRun) -> Context:
         """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
         kill switch as it is now (it may go on mid-tick)."""
-        return replace(run.base, spent_last_hour=run.base.spent_last_hour + run.spent, stops=kill_switch(self.rules))
+        trades = None if run.settled is None else self._trades(run)
+        return replace(
+            run.base,
+            spent_last_hour=run.base.spent_last_hour + run.spent,
+            stops=kill_switch(self.rules),
+            trades=trades,
+        )
 
     def _do(self, run: _MakerRun, action: MakerAction) -> None:
         if action.kind == "cancel" and action.offer is not None:
@@ -366,17 +414,40 @@ class Maker:
 
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
         if t.side == "ask" and t.asset_id is not None:
-            listing = sell_listing(run.snap.me, str(t.asset_id), t.price, venue)
+            listing = sell_listing(run.snap.me, str(t.asset_id), t.price, venue, to=t.to)
             if listing.your_value is not None and t.price < sell_floor(listing.your_value, self.rules):
                 raise OfferError(f"ask {t.price} is below the sell floor {sell_floor(listing.your_value, self.rules)}")
             return listing
-        return bid_listing(t.ref, t.rarity, t.price, venue)
+        return bid_listing(t.ref, t.rarity, t.price, venue, to=t.to)
+
+    def _trades(self, run: _MakerRun) -> TradeBook:
+        return trade_book(run.offers, run.snap.us, run.settled or {}, book_values(run.snap.catalog))
+
+    def _route(self, run: _MakerRun, t: Target, venue: str) -> Target:
+        """With `max_counterparty_share` on: the offer for anyone when no team could pass its share by taking
+        it, else addressed to the counterparty with the most room that passes. Unchanged when the cap is off
+        or nothing passes (the post is then refused with the public offer's reason)."""
+        if run.settled is None or t.to is not None:
+            return t
+        denied = self._denied(run, t, venue)
+        if denied is None or "counterparty" not in denied:
+            return t
+        trades = self._trades(run)
+        for team in sorted(t.counterparties, key=lambda c: (trades.exposure(c), c)):
+            if team != run.snap.us and self._denied(run, replace(t, to=team), venue) is None:
+                return replace(t, to=team, reason=f"{t.reason}; addressed to {team} (max_counterparty_share)")
+        return t
 
     def _post(self, run: _MakerRun, t: Target, why: str) -> int | None:
         """Post one offer; the new offer's id when it went out live, else None."""
         tick = run.snap.clock.tick
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venues = run.snap.venues
+        if self.notices is not None:  # a fee announced for later in the listing's life counts now
+            venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
+        venue = best_venue(venues, run.snap.us, t.price)
         blocked = self._blocked(run)
+        if venue is not None and not blocked:
+            t = self._route(run, t, venue.id)
         t, advice, candidates = self._jev_price(run, t, venue.id) if venue and not blocked else (t, None, None)
         inputs = {
             "side": t.side,
@@ -387,9 +458,11 @@ class Maker:
             "value": t.value,
             "score": t.score,
             "venue": venue.id if venue else None,
+            **({"to": t.to} if t.to else {}),
             **({"price_candidates": candidates} if candidates else {}),
         }
-        what = f"post {t.side} {t.ref}{f' #{t.asset_id}' if t.asset_id else ''} at {t.price}"
+        to = f" to {t.to}" if t.to else ""
+        what = f"post {t.side} {t.ref}{f' #{t.asset_id}' if t.asset_id else ''} at {t.price}{to}"
         if venue is None or blocked:
             why_not = blocked or "no venue we may trade on"
             self._reject(run, t, what, inputs, why_not, "rejected")
@@ -422,14 +495,19 @@ class Maker:
             return None
         offer_id = None
         if self.live:
-            request = {"give": listing.give, "want": listing.want, "venue": venue.id}
+            addressed = {"to": listing.to} if listing.to else {}
+            request = {"give": listing.give, "want": listing.want, "venue": venue.id, **addressed}
             body = self.rec.send(
                 did,
                 tick,
                 "list_offer",
                 request,
                 lambda: self.team.list_offer(
-                    listing.give, listing.want, venue=venue.id, expires_in_ticks=self.config.offer_ttl_ticks
+                    listing.give,
+                    listing.want,
+                    venue=venue.id,
+                    expires_in_ticks=self.config.offer_ttl_ticks,
+                    **addressed,
                 ),
             )
             if body is None and not self.rec.maybe_landed:
@@ -447,7 +525,9 @@ class Maker:
         give = listing.give  # our open offers this tick; an ask names its card (protect_page_sets counts it)
         if listing.asset_id is not None:
             give = {**give, "assets": [{"id": listing.asset_id, "ref": listing.ref}]}
-        run.offers.append({"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want})
+        run.offers.append(
+            {"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want, "to": listing.to}
+        )
         run.open_total += 1
         run.listings_left -= 1
         run.posted.append(t.ref)
@@ -511,14 +591,14 @@ class Maker:
         venue = best_venue(run.snap.venues, run.snap.us, t.price)
         if venue is None:
             return "no venue we may trade on"
-        return self._blocked(run) or self._denied(run, t, venue.id)
+        return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)
 
     def _jev_context(self, run: _MakerRun) -> dict[str, Any]:
         cash = int(run.snap.me.get("cash") or 0)
         return {
             "cash": cash,
-            "cash_floor": self.rules.cash_floor,
-            "cash_above_floor": max(0, cash - self.rules.cash_floor),
+            "cash_floor": effective_cash_floor(self.rules, run.base),
+            "cash_above_floor": max(0, cash - effective_cash_floor(self.rules, run.base)),
             "open_offers": run.open_total,
             "max_open_offers": run.snap.clock.limits.max_open_offers_per_team,
             "listings_left_this_tick": run.listings_left,
