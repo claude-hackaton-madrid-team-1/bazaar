@@ -290,7 +290,7 @@ def test_the_plan_runs_every_scenario_and_says_to_open_packs_first():
     names = [s.name for s in plan.scenarios]
     assert names[:4] == ["venue at open (h4)", "venue at h9", "venue at the last round (h18)", "no venue"]
     assert "venue at open (h4) · what-if cash_floor 0" in names
-    assert plan.notes[0].startswith("open first (sobre_bienvenida)")
+    assert plan.notes[0].startswith("open first (sobre_bienvenida), by hand")
     data = pages.plan_dict(plan)
     json.dumps(data)  # serialisable
     assert data["pages"][0]["missing"][0]["sources"]

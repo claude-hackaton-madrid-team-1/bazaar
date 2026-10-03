@@ -1157,7 +1157,10 @@ def build_plan(
         notes.append(f"what-if dealer caps {caps}: not in GUARDRAILS.md, so a buy at these prices is still refused")
     packs = unopened_packs(me)
     if packs:
-        notes.append(f"open first ({', '.join(packs)}): free, and a pull changes what is missing")
+        notes.append(
+            f"open first ({', '.join(packs)}), by hand: no agent opens packs"
+            " (SDK open_pack, POST /api/packs/<id>/open); it is free, and a pull changes what is missing"
+        )
     if taken:
         notes.append(f"bought by the trade plan, not again here: {', '.join(sorted(taken))}")
     if not grants:

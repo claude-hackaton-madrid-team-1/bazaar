@@ -93,7 +93,7 @@ W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-0
 
 ## 5. Saturday 09:00 steps (within 1 accept per tick, 12 listings, 6 conversations, Abuela 8 deals an hour, 150 P an hour)
 0. **Plan with the clock:** `bazaar plan pages --now-hours <t_hours from GET /api/clock>`. Before the doors open, use the hour they open at; without it the plan counts Friday's dealer deals against Saturday's best three.
-1. **Open** the welcome pack (asset 425) and the pack in the grant. Opening is free and luck does not score. The welcome pack's rare slot gives a LAV rare with p ≈ 0.4 × 2/10. Then re-run `bazaar plan pages`.
+1. **Open** the welcome pack (asset 425) and the pack in the grant, **by hand**: no agent in our code opens packs (r2, B20 / PR #107). Use the SDK's `open_pack(asset_id)` (`POST /api/packs/{id}/open`) at about 09:05. Opening is free and luck does not score. The welcome pack's rare slot gives a LAV rare with p ≈ 0.4 × 2/10. A sealed pack's cards never reach the album, the ladder or the trade plans: every number here assumes they are opened. Then re-run `bazaar plan pages`.
 2. **Post W4's plan:** 4 bids and 3 thread swaps, 82 P committed, every counterparty under 25 %. It fits the 83 P above the floor before the grant.
 3. **Once the grant lands** (09:03, or ~10:24 if the clock resumes at h2.65), **run W3's best three Abuela deals** on SAL-02 (C), SAL-07 (U) and MAL-06 (U): about 54 P at 21→25 / 8→12. Drop W3's other slots; they score nothing.
 4. **Take t06's MAL-04 ask** #2633 (7 P + fee 2), if it is still open.
