@@ -108,8 +108,8 @@ footer { color: var(--muted); font-size: 13px }
       <text x="1608" y="148" class="s">bazaar-duels: playing ✓</text>
       <text x="1608" y="176" class="s">bazaar-taker, -maker: LIVE ✓</text>
       <text x="1608" y="204" class="s">phoenix (auth) · Postgres ✓</text>
-      <text x="1608" y="232" class="s">bazaar-monitor: back on (drift) ◐</text>
-      <text x="1608" y="260" class="s">bazaar-mcp ✓ · sim, evals ◑</text>
+      <text x="1608" y="232" class="s">monitor: CLI only (service removed)</text>
+      <text x="1608" y="260" class="s">bazaar-mcp ✓ · bazaar-sim ✓ (#55) ✓</text>
       <text x="1608" y="290" class="n">bazaar-live: folder trust</text>
       <rect x="1588" y="376" width="380" height="200" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="1608" y="418" class="t">LLM → Sonnet 5.5 ✓</text>
@@ -168,8 +168,9 @@ footer { color: var(--muted); font-size: 13px }
     <section>
       <h2>Being built now</h2>
       <div class="list">
-<div class="item"><span class="pill p-wip">worker</span><b>bazaar-sim</b><p>Down until #55 merges (the service builds from main). Now: rebase, conflicts, and the BAZAAR_SIM=1 flag with hard-coded URLs.</p></div>
-        <div class="item"><span class="pill p-wip">worker</span><b>Evals on Railway</b><p>Code merged (#58). Now: the bazaar-evals service, taking bazaar-monitor down again, and BAZAAR_LIVE kept by the IaC.</p></div>
+<div class="item"><span class="pill p-wip">worker</span><b>Simulator as the merge gate</b><p>bazaar-sim is live (#55): BAZAAR_SIM=1 targets it with a sim- key. Now: a CI smoke job that runs the agents against a local sim on every PR.</p></div>
+        <div class="item"><span class="pill p-wip">worker</span><b>Evals inside the agents</b><p>No separate service: taker, maker and duels score their own settled decisions. BAZAAR_LIVE kept by the IaC (#73).</p></div>
+        <div class="item"><span class="pill p-wip">review</span><b>Marius&#x27;s live fixes before 09:00</b><p>#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, three leaks left for a follow-up.</p></div>
       </div>
     </section>
     <section>
@@ -191,6 +192,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><b>Maker</b><span class="mono">https://bazaar-maker-production.up.railway.app · wss://bazaar-maker-production.up.railway.app/events</span></div>
       <div class="item"><b>Phoenix</b><span class="mono">https://phoenix-production-6aa3.up.railway.app</span></div>
       <div class="item"><b>bazaar-mcp</b><span class="mono">https://bazaar-mcp-production.up.railway.app/mcp</span></div>
+      <div class="item"><b>bazaar-sim</b><span class="mono">https://bazaar-sim-production-1d48.up.railway.app</span></div>
     </div>
   </section>
   <section>
