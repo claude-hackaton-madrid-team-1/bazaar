@@ -140,6 +140,7 @@ class Guardrails(BaseModel):
     card_release_boost_enabled: bool = False
     card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
+    persona_model_enabled: bool = True
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
     team_threads_enabled: bool = False
@@ -242,6 +243,7 @@ ENFORCED_BY: dict[str, str] = {
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
+    "persona_model_enabled": "agents.persona_desk via taker._persona_shaped + agents.dealer_sell_desk (ranking)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",
