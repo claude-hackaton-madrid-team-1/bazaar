@@ -229,6 +229,32 @@ PR 2 (supply + packs, 09:30 window or next).
 - Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
   packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
 
+### D1 — Duels II readiness: takeover of Marius's duel night PRs (2026-10-03, coordinator task_0d831308422a)
+Spec: [`D1-spec.md`](D1-spec.md) (criteria 1-2 now; 3, post-duel calibration, after #91) and the PR texts and night
+reports of #60, #86, #103, #113, #115, #130 (`docs/night/{w2b-duel-v2,b11-endgame,b15-duels-first,b7-order-jev}.md`)
+and #80, #97, #117 (`docs/night/{w2a-duel-zoo,b11-exploiters,b8-days}.md`); RULES.md "Duels" (days 0-10, `missing_days`,
+a deal outside the limit loses points) and "Per tick" (one accept per team). Marius is offline: squash, do not stack.
+- Step 1 — Two takeover PRs on `main`, one squash commit per Marius PR: the duel player (#60 → #86 → #103 → #113 →
+  #115 → #130, with Marius's `night/b27-duel-stack` integration) and the simulator harness (#80 → #97 → #117's sim
+  part → B27's `SIM_DUEL_PAIRS`). · **Acceptance:** each PR alone on `main` passes the gate; the cli.py conflict
+  (#130 vs #113) resolves to #130's single early accept pass plus #113's scored days read.
+- Step 2 — #60's open review items (I own #60 now): no `round()` in the inside-limit accept checks (duelist,
+  duel_jev, duel_v2) · finite numbers in duel_jev (NaN days) · the rival's days priced in by `with_rival_days`, and
+  left alone under signed v2. · **Acceptance:** tests that fail on the squashed code (101 with 1 day at w 0.6 for a
+  cost of 100 is accepted, not countered at 110; NaN days do not abort `DuelJev.pick`; 114 → 122 with 4 days).
+- Step 3 — Proof on the live simulator: `duel run --play --no-jev` over HTTP against `bazaar-sim` with zoo and
+  exploiter rivals (`SIM_DUEL_STYLES`), 3 pairs per team on one deadline (`SIM_DUEL_PAIRS`), price-only and two-issue
+  sessions, both roles, decay 0.08 and 0.10; v1 vs v2 vs v2 + B11 (min share 0.3, endgame ticks 1).
+  · **Acceptance:** per policy: duels, deal rate, mean share and points from `/api/duels?done=true`, and 0 deals
+  outside our limit; `scripts/sim_smoke.py` green (local port 8805).
+- Step 4 — Flag decision for Duels II: the evidence goes to the coordinator; Jev decides `duel_policy`,
+  `duel_endgame_min_share` + `duel_endgame_ticks`, `duel_days_auto`. · **Acceptance:** the verdict quoted in the PR;
+  a flag flips only on a yes, in its own commit.
+- Step 5 — `/pr-review` (pr-reviewer + security-auditor) on both PRs; every P0/P1 fixed with a failing-first test;
+  Marius's PRs closed with a pointer once ours are open. · **Acceptance:** APPROVE on both, merge asked, never done by us.
+- Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
+  rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
+
 ---
 
 ### N15 — Jev picks the desk's model per request
