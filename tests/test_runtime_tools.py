@@ -213,7 +213,7 @@ def cli_env(tmp_path, monkeypatch):
     monkeypatch.setattr("bazaar_agent.config.read_env_file", lambda path: {})
     monkeypatch.setattr(cli, "_team_me", lambda: (team, team.me()))
     monkeypatch.setattr(cli, "public_client", lambda settings: Public())
-    monkeypatch.setattr(cli, "_ledger", lambda source: Ledger(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(cli, "_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr("bazaar_agent.pack_gate.jev_pack_judge", lambda settings, timeout_s: lambda state: ("no", 0.1))
     monkeypatch.setattr(cli, "_events", lambda live: Public().feed_window(500))
@@ -305,6 +305,37 @@ def test_a_server_never_falls_back_to_a_local_ledger(tmp_path, monkeypatch):
     live = Backend(settings(tmp_path), Guardrails(), live=True, team=Team(), public=Public())
     with pytest.raises(LedgerUnavailable):  # a live desk counts with the team or not at all
         _ = live.ledger
+
+
+def test_a_live_desk_or_server_without_the_shared_database_url_fails_closed(tmp_path):
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.runtime.backend import Backend
+    from tests.runtime_fakes import settings
+
+    lines: list[str] = []
+    for live, server in ((True, False), (False, True)):  # DATABASE_URL is the local docker default here
+        b = Backend(settings(tmp_path), Guardrails(), live=live, team=Team(), public=Public(), server=server)
+        b.log = lines.append
+        with pytest.raises(LedgerUnavailable):
+            _ = b.ledger
+        text, failed = run(b, "sell_bid", {"ref": "LAV-09", "price": 60})
+        assert failed and "the shared ledger is unreachable: no write without it" in text
+    assert "live trading needs the team's shared ledger" in lines[0]
+    assert not (tmp_path / "ledger.jsonl").exists()  # never a local count
+
+
+def test_a_postgres_ledger_is_kept_after_a_failure_it_reconnects_by_itself(tmp_path):
+    import psycopg
+
+    from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger
+
+    def refused():
+        raise psycopg.OperationalError("down")
+
+    pg = PgLedger(refused, "runtime")
+    b = backend(tmp_path, live=True, ledger=pg)
+    b.failed(LedgerUnavailable("ledger read failed (Postgres unreachable)"))
+    assert b._ledger is pg  # a fresh open would retry at once; its own reconnector waits RETRY_EVERY_S
 
 
 def test_team_written_thread_topics_and_alerts_reach_the_model_as_untrusted_data(tmp_path):

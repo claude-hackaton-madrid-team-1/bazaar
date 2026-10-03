@@ -461,9 +461,10 @@ The maker owns our **board** offers: a hand-listed offer that is not a strategy 
 stop the maker before trading by hand. Offers inside a dealer thread belong to the taker's desk.
 
 **One accept per tick for the whole team, across machines.** The guardrail ledger is the Postgres
-`ledger` table (`bazaar db init` creates it; the JSONL file only when Postgres is unreachable at
-start). `bazaar-duels`, the taker, `dealer buy` and the CLI all reserve accepts through
-`ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
+`ledger` table (`bazaar db init` creates it). A live process against the real game refuses to start
+unless DATABASE_URL is the shared (non-local) Postgres, and fails closed while it is unreachable; only a
+dry run (or a simulator) may count on the JSONL file. `bazaar-duels`, the taker, `dealer buy` and the
+CLI all reserve accepts through `ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
 take the same slot. **Duels first**: the duel player decides right after the tick lands; the taker
 waits until 2 s into the tick (15 % on fast ticks) and steps back when a `duel:<id>` accept is already
 recorded for the tick. The maker never accepts. Spend per game hour and packs per hour come from the
@@ -778,9 +779,11 @@ then redeploy `bazaar-duels`.
 
 - **The guardrail ledger is shared.** Accepts per tick, spend per game hour and listings per tick
   live in the Postgres `ledger` table, so `bazaar-duels`, `bazaar-taker`, `bazaar-maker` and a laptop's
-  `dealer buy` see one count (see "Autonomous agents"). A process that cannot reach Postgres at start
-  falls back to its own `ledger.jsonl` and says so in its log; a ledger failure mid-run sends nothing
-  that tick (fail closed).
+  `dealer buy` see one count (see "Autonomous agents"). Every service that runs live needs
+  `DATABASE_URL` set to the shared Postgres: without it a live process exits at start ("refusing to
+  trade"). The ledger reconnects after a drop (retried at most every 15 s); while Postgres is down a live
+  process sends nothing (fail closed), and a dry run counts on its own `ledger.jsonl` until Postgres answers.
+  The log line `ledger: postgres ledger table on <host>:<port> (shared, …)` says which one is in use.
 - **Live or dry run** (a team decision, not a deploy). **The taker and the maker are LIVE since
   Sat 2026-10-03 01:45 Madrid** (`BAZAAR_LIVE=1` set by hand on both; nothing trades before the doors
   open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
