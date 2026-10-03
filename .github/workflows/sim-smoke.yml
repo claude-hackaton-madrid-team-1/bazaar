@@ -1,0 +1,23 @@
+# The merge gate: every PR runs our CLI and agents end to end against a LOCAL simulator.
+# No secrets, no database, no network beyond localhost (scripts/sim_smoke.py routes every other host
+# through a dead proxy), so it can never reach the real game. Make it a required check on main.
+name: sim-smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sim-smoke:
+    name: simulator smoke (status, dealer buy, taker, maker, duel, monitor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the project (pyproject.toml + uv.lock)
+        run: uv sync --locked
+      - name: End-to-end smoke against bazaar-sim on 127.0.0.1:8765 (BAZAAR_SIM=local)
+        run: uv run python scripts/sim_smoke.py
