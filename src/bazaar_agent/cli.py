@@ -1784,6 +1784,9 @@ def agent_taker(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     threads: int = typer.Option(3, min=0, max=6, help="Dealer conversations at once (one per dealer)"),
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
+    accept_bids: bool = typer.Option(
+        False, "--accept-bids", help="Also sell into standing bids that beat our value by sell_min_surplus"
+    ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
 ) -> None:
@@ -1800,7 +1803,7 @@ def agent_taker(
             jev=_offer_jev(settings, rules.jev_timeout_s) if jev else no_jev,
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads),
+            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             **kw,
         )
 
