@@ -126,6 +126,7 @@ negotiates well.
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 | [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
+| DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -521,6 +522,21 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
 - Step 2 — CLI `bazaar db readonly-user`: password generated or read (prompt / pipe), SCRAM verifier only, URL
   printed once. · **Acceptance:** CLI test + manual run on local docker.
 - Step 3 — docs (`docs/services.md`). The coordinator runs it on Railway after the merge.
+
+### DA1 — Duels and the team accept (PR #201)
+Spec: Marius's brief (2026-10-03, ~12:40): duels exchange no cash and no cards (organisers' talk at Calle de Olite,
+12:35), so none of the trade bookkeeping applies to them. RULES.md:91 (duel routes) and :109 ("Per tick your team
+may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.py` (`release_refused_accept`),
+`cli.py` (`duel run` `send`), `GUARDRAILS.md` (`max_accepts_per_tick`), `tests/test_runtime_tools.py`,
+`tests/test_accept_release.py`.
+- Step 1 — audit every place a duel meets cash, spend, holdings or the accept slot. · **Acceptance:** the PR body's
+  file:line list; slot reserved only on an accept tick, no spend row, no buy rules, no holdings epoch bump.
+- Step 2 — a refused (4xx, not `wait_for_tick`) runtime duel accept releases `duel:<id>`, through the same helper as
+  `duel run`. · **Acceptance:** `test_a_refused_runtime_duel_accept_gives_the_slot_back` (fails on the old code).
+- Step 3 — GUARDRAILS.md wording + the duel ledger invariant. · **Acceptance:**
+  `test_a_duel_takes_the_teams_accept_only_on_the_tick_it_accepts_and_never_books_spend`.
+- Step 4 — find out whether a duel accept counts against `accepts_per_team_per_tick`. · 🚫 unknown from the data
+  (never observed either way); live probe proposed in the PR, a human runs it.
 
 ## Parallel-work notes
 

@@ -976,3 +976,12 @@ An integration test that failed before `conn.close()` left a psycopg session `id
 holds a lock), and the `schema` fixture's `drop schema … cascade` waited on it with no timeout: pytest hung for
 minutes. Use `conn.autocommit = True` and `try/finally: conn.close()` in such tests. Also: macOS has no `timeout`
 command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; run it in the background instead.
+
+### [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
+Up to tick 548 (Sat, Duels I): 17 duel accepts on 17 ticks and 11 taker accepts on other ticks (`decisions` and
+`ledger`), so no tick ever held both, and no 429 in the bazaar-duels logs. Our shared ledger always gives the
+slot to one process, so passive data can never answer this; only a live probe (a duel accept, then a trade accept
+in the same tick: `wait_for_tick` = shared) can. The simulator's shared slot is our assumption. We keep counting duel
+accepts (GUARDRAILS.md `max_accepts_per_tick`). The same day, none of the taker's 528 rejections was a lost slot:
+all were `cash_floor`, `max_spend_per_game_hour` or `max_price_*` (PR #201).
+

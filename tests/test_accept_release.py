@@ -220,6 +220,23 @@ def test_a_refused_duel_accept_gives_the_slot_back(duel_cli, code, status, kept)
     assert _duel_ledger(tmp_path).accepts_in_tick(134) == kept
 
 
+def test_the_shared_release_helper_frees_only_a_slot_that_cost_nothing_and_fails_closed(tmp_path):
+    from bazaar_agent.agents.runtime import release_refused_accept
+
+    ledger = _duel_ledger(tmp_path)
+    ledger.reserve_accept(134, 0.0, 0, "duel:95", 1)
+    release_refused_accept(ledger, 134, "duel:95", "wait_for_tick", 429)  # the quota was spent: kept
+    assert ledger.accept_items(134) == ["duel:95"]
+    release_refused_accept(ledger, 134, "duel:95", "duel_closed", 409)
+    assert ledger.accept_items(134) == []
+
+    class Unreachable:
+        def release_accept(self, tick, item):
+            raise LedgerUnavailable("accept release: down")
+
+    release_refused_accept(Unreachable(), 134, "duel:95", "duel_closed", 409)  # no raise: the slot stays taken
+
+
 @pytest.mark.parametrize("jev", [True, False])
 def test_a_duel_takes_the_teams_accept_only_on_the_tick_it_accepts_and_never_books_spend(duel_cli, jev):  # noqa: F811
     """A duel moves no cash and no card: an offer tick leaves the ledger empty (the taker keeps the slot); an accept
