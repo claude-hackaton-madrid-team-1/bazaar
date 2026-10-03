@@ -209,10 +209,12 @@ def load_settings(env_file: Path | None = None) -> Settings:
     sim_db = data.pop("database_url_sim")
     if sim_db and simulated:
         data["database_url"] = sim_db
-    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved.
-    saved = read_env_file(Path(data.get("data_dir") or REPO_ROOT / ".local") / BROKER_ENV_FILE)
-    data["broker_key"] = pick("BAZAAR_BROKER_KEY") or saved.get("BAZAAR_BROKER_KEY") or None
-    data["venue_id"] = pick("BAZAAR_VENUE") or saved.get("BAZAAR_VENUE") or None
+    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved. Against
+    # the simulator only its own data dir's file counts: a real broker key is never loaded there.
+    saved = read_env_file(Path(str(data.get("data_dir") or REPO_ROOT / ".local")) / BROKER_ENV_FILE)
+    env_key, env_venue = (None, None) if simulated else (pick("BAZAAR_BROKER_KEY"), pick("BAZAAR_VENUE"))
+    data["broker_key"] = env_key or saved.get("BAZAAR_BROKER_KEY") or None
+    data["venue_id"] = env_venue or saved.get("BAZAAR_VENUE") or None
     return Settings.model_validate(data)
 
 
