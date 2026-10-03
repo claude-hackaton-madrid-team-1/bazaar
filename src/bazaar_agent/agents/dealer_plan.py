@@ -156,13 +156,17 @@ def plan_dealer_buy(
         # walks (the simulator opened Chato 7 times at 80→80 with no price history).
         why = "cash: what we may still commit is below" if lifted else "no price history for a final above our top:"
         return DealerPlan(None, skip=f"{why} {mv.source} {cls} fills ~{mv.price:g}")
-    if final_max is not None:
+    if final_max is not None and mv.price > ladder[1]:
+        # The patience play only where we need the final: the dealer fills above our top (Chato). Where its fills
+        # sit inside our top (Abuela), today's ladder closes in 1-2 ticks; the simulator's patience play there won
+        # 1 P a deal and cost 8 ticks each (2 deals instead of 7 in the same run).
         ref, patience = _patience_ref(cls, mv, curve, policy)
         opening, silent = (curve.opening, curve.silent_below) if curve is not None else (None, None)
         played = patience_ladder(ladder, patience, opening, silent, max(1, rules.dealer_max_ticks_per_thread - 2))
         if played != ladder:
             notes.append(Note("curve", ref, f"ladder {fmt(ladder)} → {fmt(played)}"))
             ladder = played
+    if final_max is not None:
         lift = f"dealer_final_lift {rules.dealer_final_lift:g}"
         effect = (
             f"take a final up to {final_max} after {LIFTED_FINAL_MIN_BIDS} bids (our bids stay at or under {ladder[1]})"

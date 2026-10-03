@@ -185,3 +185,13 @@ def test_with_the_lift_a_buy_only_a_final_could_close_is_skipped_without_price_h
         and plan.skip == "no price history for a final above our top: trileros card:uncommon fills ~28"
     )
     assert plan_dealer_buy(chato_move(), None, None, OFF, SURPLUS, room=100).move == chato_move()  # lift off: today
+
+
+def test_the_patience_play_runs_only_where_the_dealer_fills_above_our_top():
+    abuela = replace(chato_move(ladder=(17, 26, 1)), source="abuela", price=22.0)  # her fills inside our top
+    curve = replace(CURVE, dealer="abuela")
+    plan = plan_dealer_buy(abuela, None, curve, LIFT, SURPLUS, room=100)
+    assert plan.move is not None and plan.move.ladder == (17, 26, 1) and plan.final_max == 29  # today's ladder
+    assert plan.changed_by == [
+        "dealer_final_lift 0.15: take a final up to 29 after 4 bids (our bids stay at or under 26)"
+    ]
