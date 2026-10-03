@@ -124,7 +124,7 @@ def learnings(
             query=query,
             save=save,
             subject=subject,
-            limit=limit if limit != 40 else 5,
+            limit=min(limit, 10),  # hits per query (lessons tables print every row)
             min_score=min_score,
             as_json=as_json,
             init_schema=db.init_schema,

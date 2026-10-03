@@ -77,7 +77,10 @@ def show(
     started = time.monotonic()
     models.load()
     err_console.print(f"[dim]models: {models.status} ({time.monotonic() - started:.1f} s)[/dim]")
-    store = LearningStore(connect if save else None, err_console.print, init_schema)
+    if save and init_schema is not None:
+        with connect() as conn:  # the new columns exist before the first write
+            init_schema(conn)
+    store = LearningStore(connect if save else None, err_console.print)
     out: dict[str, Any] = {"tick": tick, "us": us}
     result: PassResult | None = None
     if lessons:
@@ -120,7 +123,7 @@ def show(
         recall.close()
     if as_json:
         if result is not None and lessons:
-            out["lessons"] = [lr.model_dump() for lr in result.learned][: max(limit, 50)]
+            out["lessons"] = [lr.model_dump() for lr in result.learned]
         console.print_json(json.dumps(out, default=str))
         return
     if result is not None:
@@ -131,7 +134,7 @@ def show(
         )
         if lessons:
             rows = [lr for lr in result.learned if subject is None or lr.subject == subject]
-            console.print(_lesson_table(rows[: max(limit, 40)]))
+            console.print(_lesson_table(rows))
     if query:
         q = out["query"]
         console.print(f"recall {q['status']} in {q['elapsed_ms']} ms · {q['candidates']} candidates · legs {q['legs']}")

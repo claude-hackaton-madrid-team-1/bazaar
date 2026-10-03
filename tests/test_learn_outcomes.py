@@ -192,3 +192,39 @@ def test_a_dry_run_pass_writes_nothing_to_postgres(database_url, schema):  # noq
         assert conn.execute(
             "select (select count(*) from learnings) + (select count(*) from trader_behaviors)"
         ).fetchone() == (0,)
+
+
+def test_the_clock_going_back_restarts_the_schedule():
+    lr, _ = learner(lambda tick, us: PassResult(tick))
+    assert lr.maybe_run(100, US) is True
+    lr.wait(2)
+    assert lr.maybe_run(3, US) is True  # a simulator reset: tick 3 < 100
+    lr.wait(2)
+    lr.close()
+
+
+@pytest.mark.integration
+def test_later_passes_read_only_new_events_and_insert_only_new_moves(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from bazaar_agent.learn.outcomes import PassState, learn_once
+    from tests.test_db import open_in
+
+    def connect():
+        return open_in(database_url, schema)
+
+    events = feed()
+    with connect() as conn:
+        db.init_schema(conn)
+        db.load_events(conn, events[:7])
+    state, store = PassState(), LearningStore(connect)
+    first = learn_once(connect, store, None, US, 70, state=state)
+    assert state.last_id == 7 and len(state.events) == 7 and first.lessons == 1
+    assert len(state.recorded) == len(first.learned)
+    with connect() as conn:
+        db.load_events(conn, events[7:])
+    second = learn_once(connect, store, None, US, 75, state=state)
+    assert state.last_id == 12 and len(state.events) == 12 and second.behaviours == 5
+    assert len(state.moves) == 5
+    with connect() as conn:
+        assert conn.execute("select count(*) from trader_behaviors").fetchone() == (5,)
+    store.close()

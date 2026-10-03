@@ -16,7 +16,7 @@ quoted data (`as_quoted`), never as instructions.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field, replace
@@ -46,6 +46,10 @@ class Query:
     subject_kind: str | None = None
     team: str | None = None  # learnings that bind this team or everyone
     tick: int | None = None  # only learnings still valid at this tick
+    # Whose rows: by default only what the outcome learner wrote from our own scored outcomes (prices, never
+    # words). The feed reader's rows (N12) are opt-in: some quote feed text another team chose.
+    sources: tuple[str, ...] | None = ("outcome",)
+    where: tuple[tuple[str, str], ...] = ()  # situation features that must match, e.g. (("mechanic", "duel"),)
     k: int = 3
     min_score: float = MIN_SCORE
     budget_s: float = DEFAULT_BUDGET_S
@@ -80,6 +84,7 @@ class Recalled:
                 "quoted_lesson": h.learning.text,
                 "about": h.learning.subject,
                 "kind": h.learning.kind,
+                "source": h.learning.source,
                 "tick": h.learning.tick,
                 "relevance": round(h.score, 2),
                 "confidence": h.learning.confidence,
@@ -101,10 +106,6 @@ def fuse(rankings: Sequence[Sequence[str]], k: int = RRF_K) -> dict[str, float]:
         for rank, key in enumerate(ranking, start=1):
             out[key] = out.get(key, 0.0) + 1.0 / (k + rank)
     return out
-
-
-def _wanted(lr: Learning, subjects: Collection[str] | None) -> bool:
-    return subjects is None or lr.subject in subjects
 
 
 class HybridRecall:
@@ -135,13 +136,16 @@ class HybridRecall:
         """The pipeline itself (synchronous; tests and the CLI call it directly)."""
         started = time.monotonic()
         self.store.begin_tick(query.tick if query.tick is not None else -1)
-        pool = [
-            lr
-            for lr in self.store.recall(
-                None, query.kinds, query.tick, subject_kind=query.subject_kind, team=query.team, limit=CANDIDATES
-            )
-            if _wanted(lr, query.subjects)
-        ]
+        pool = self.store.candidates(
+            kinds=query.kinds,
+            subjects=query.subjects,
+            sources=query.sources,
+            subject_kind=query.subject_kind,
+            team=query.team,
+            tick=query.tick,
+            where=query.where,
+            limit=CANDIDATES,
+        )
         if not pool or not query.text.strip():
             return Recalled(status="no_candidates", candidates=len(pool))
         by_key = {lr.key(): lr for lr in pool}

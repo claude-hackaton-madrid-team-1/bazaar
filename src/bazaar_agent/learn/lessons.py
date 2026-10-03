@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from pydantic import ValidationError
+
 from bazaar_agent.evals.model import Outcome
-from bazaar_agent.learn.curves import CurveStats
+from bazaar_agent.learn.curves import CurveStats, known_class
 from bazaar_agent.learn.model import TEXT_MAX, Learning
 
 SUPPORT_FULL = 20  # threads of evidence at which a dealer pattern reaches its top confidence
@@ -89,6 +91,8 @@ def dealer_lesson(o: Outcome, stats: CurveStats | None, us: str) -> Learning | N
     d = dict(o.details)
     dealer, cls, item = d.get("dealer"), d.get("price_class"), d.get("item")
     if not isinstance(dealer, str) or not isinstance(item, str) or o.tick is None:
+        return None
+    if known_class(item) is None:  # a topic we cannot read as a card or a known pack: never quoted
         return None
     ours, asks = list(d.get("our_prices") or []), list(d.get("dealer_prices") or [])
     fill = d.get("fill_price")
@@ -286,19 +290,25 @@ def lessons_from(
 ) -> list[Learning]:
     """Every lesson the outcomes and the dealers' curves teach, deduped by key (one per outcome)."""
     out: dict[str, Learning] = {}
-    for o in outcomes:
-        learned: Learning | None = None
-        if o.target == "dealer":
-            key = (str(o.details.get("dealer")), str(o.details.get("price_class")))
-            learned = dealer_lesson(o, curves.get(key), us)
-        elif o.target == "duel":
-            did = o.details.get("duel")
-            learned = duel_lesson(o, rivals.get(did) if isinstance(did, int) else None, us)
-        elif o.target == "trade":
-            learned = trade_lesson(o, us)
+
+    def one(build: Callable[[], Learning | None]) -> None:
+        try:
+            learned = build()
+        except (ValidationError, ValueError, TypeError, KeyError):  # one odd row (a new dealer id) is skipped
+            return
         if learned is not None:
             out[learned.key()] = learned
+
+    for o in outcomes:
+        if o.target == "dealer":
+            stats = curves.get((str(o.details.get("dealer")), str(o.details.get("price_class"))))
+            one(lambda o=o, stats=stats: dealer_lesson(o, stats, us))  # type: ignore[misc]
+        elif o.target == "duel":
+            did = o.details.get("duel")
+            rival = rivals.get(did) if isinstance(did, int) else None
+            one(lambda o=o, rival=rival: duel_lesson(o, rival, us))  # type: ignore[misc]
+        elif o.target == "trade":
+            one(lambda o=o: trade_lesson(o, us))  # type: ignore[misc]
     for stats in curves.values():
-        learned = behaviour_learning(stats, us, tick)
-        out[learned.key()] = learned
+        one(lambda stats=stats: behaviour_learning(stats, us, tick))  # type: ignore[misc]
     return sorted(out.values(), key=lambda lr: (lr.subject, lr.kind, lr.tick, lr.key()))

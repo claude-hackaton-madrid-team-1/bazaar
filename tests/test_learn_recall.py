@@ -161,7 +161,8 @@ def test_hits_are_quoted_data_with_relevance():
     r = recall_over(CHATO, ABUELA)
     quoted = r.search(Query("chato LAV-08 uncommon", team=US, tick=120)).as_quoted()
     assert quoted[0]["quoted_lesson"] == CHATO.text and quoted[0]["about"] == "chato"
-    assert set(quoted[0]) == {"quoted_lesson", "about", "kind", "tick", "relevance", "confidence"}
+    assert set(quoted[0]) == {"quoted_lesson", "about", "kind", "source", "tick", "relevance", "confidence"}
+    assert quoted[0]["source"] == "outcome"
 
 
 def test_only_the_fused_top_reaches_the_reranker():
@@ -299,3 +300,112 @@ def test_model_dir_comes_from_the_env_or_the_data_dir(monkeypatch, tmp_path):
     monkeypatch.delenv(MODEL_DIR_ENV)
     assert model_dir(tmp_path) == tmp_path / "models"
     assert shared_models() is shared_models()
+
+
+# ---------------------------------------------------------------- review fixes (PR #96)
+
+
+def test_by_default_only_our_outcome_rows_are_recalled_feed_rows_are_opt_in():
+    feed_row = Learning(
+        subject_kind="dealer",
+        subject="chato",
+        kind="behaviour",
+        tick=110,
+        confidence=0.9,
+        source="rules",
+        text="chato LAV-08 uncommon behaviour quoted from the feed",
+        detail={"aggregate": "x"},
+    )
+    r = recall_over(CHATO, feed_row)
+    hits = r.search(Query("chato LAV-08 uncommon", team=US, tick=120, k=5, min_score=-99)).hits
+    assert [h.learning for h in hits] == [CHATO]
+    both = r.search(Query("chato LAV-08 uncommon", team=US, tick=120, k=5, min_score=-99, sources=None)).hits
+    assert {h.learning.source for h in both} == {"outcome", "rules"}
+
+
+def test_many_rows_about_other_subjects_never_push_the_relevant_lesson_out():
+    junk = [lesson("abuela", f"abuela common filler lesson {i}", tick=1000 + i) for i in range(700)]
+    r = recall_over(CHATO, *junk)
+    found = r.search(Query("buy LAV-08 uncommon from chato", subjects=("chato",), team=US, tick=2000))
+    assert found.hits and found.hits[0].learning == CHATO and found.candidates == 1
+
+
+def test_a_failed_model_load_is_retried_after_some_warms(monkeypatch, tmp_path):
+    from bazaar_agent.learn import embed
+
+    models = LocalModels(tmp_path)
+    loads: list[int] = []
+
+    def load() -> bool:
+        loads.append(1)
+        models._failed = "no network"
+        return False
+
+    monkeypatch.setattr(models, "load", load)
+    models.load()
+    for _ in range(embed.RETRY_AFTER_WARMS - 1):
+        models.warm()
+    assert len(loads) == 1  # not yet
+    models.warm()
+    models._loading.join(2)  # type: ignore[union-attr]
+    assert len(loads) == 2
+
+
+def test_model_threads_env_is_parsed_safely(monkeypatch):
+    from bazaar_agent.learn.embed import THREADS_ENV, _threads_from_env
+
+    for raw, want in (("", 1), ("abc", 1), ("2", 2), ("99", 8), ("-1", 1)):
+        monkeypatch.setenv(THREADS_ENV, raw)
+        assert _threads_from_env() == want
+
+
+@pytest.mark.integration
+def test_the_sql_candidates_apply_every_filter_before_the_limit(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from tests.test_db import open_in
+
+    store = LearningStore(lambda: open_in(database_url, schema), init_schema=db.init_schema)
+    junk = [lesson("abuela", f"abuela common filler lesson {i}", tick=1000 + i) for i in range(50)]
+    store.record([CHATO, *junk])
+    reader = LearningStore(lambda: open_in(database_url, schema))
+    pool = reader.candidates(
+        kinds=("lesson",),
+        subjects=("chato",),
+        sources=("outcome",),
+        subject_kind=None,
+        team=US,
+        tick=2000,
+        where=(("item", "LAV-08"),),
+        limit=5,
+    )
+    assert [lr.key() for lr in pool] == [CHATO.key()]
+    assert (
+        reader.candidates(kinds=None, subjects=None, sources=("llm",), subject_kind=None, team=None, tick=None, limit=5)
+        == []
+    )
+    store.close()
+    reader.close()
+
+
+@pytest.mark.integration
+def test_a_claim_edited_while_it_was_embedded_is_embedded_again(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from tests.test_db import open_in
+
+    store = LearningStore(lambda: open_in(database_url, schema), init_schema=db.init_schema)
+    store.record([CHATO])
+    with open_in(database_url, schema) as conn:
+        if db.pgvector_version(conn) is None:
+            pytest.skip("pgvector not installed on this Postgres")
+
+    def embed_while_edited(texts):
+        with open_in(database_url, schema) as other:
+            other.execute("update learnings set claim = claim || ' (edited)'")
+        return FakeModels().embed(texts)
+
+    assert store.embed_missing(embed_while_edited) == 1
+    with open_in(database_url, schema) as conn:
+        row = conn.execute("select embedded_hash is null, embedding is null from learnings").fetchone()
+    assert row == (True, True)  # the stale vector was not written
+    assert store.embed_missing(FakeModels().embed) == 1
+    store.close()

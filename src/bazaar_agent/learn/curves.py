@@ -13,6 +13,7 @@ into ladder parameters.
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -20,6 +21,17 @@ from statistics import median
 
 from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.intel import DealerThread
+
+# The only price classes we learn about. A thread's topic is chosen by the team that opened it and the feed
+# publishes it as is, so a made-up "pack" name must never become a class, a lesson or a ladder.
+KNOWN_CLASS = re.compile(r"^(card:(common|uncommon|rare|epic|legendary)|pack:sobre_[a-z0-9_]{1,24}|sell)$")
+DEALER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def known_class(item: str) -> str | None:
+    """`price_class(item)` when it is one we learn about, else None (an unknown or forged topic)."""
+    cls = price_class(item)
+    return cls if cls is not None and KNOWN_CLASS.fullmatch(cls) else None
 
 
 def quantile(values: Sequence[float], q: float) -> float | None:
@@ -86,8 +98,8 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
     """Per (dealer, price class), from every dealer thread in the feed (ours and other teams')."""
     groups: dict[tuple[str, str], list[DealerThread]] = defaultdict(list)
     for t in threads:
-        cls = price_class(t.item)
-        if cls is not None and t.side in ("buy", "sell"):
+        cls = known_class(t.item)
+        if cls is not None and t.side in ("buy", "sell") and DEALER_ID.fullmatch(t.dealer):
             groups[(t.dealer, cls)].append(t)
     out: dict[tuple[str, str], CurveStats] = {}
     for (dealer, cls), members in groups.items():
