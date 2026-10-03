@@ -606,8 +606,8 @@ def test_a_ladder_slot_that_does_not_fit_waits_for_the_grant():
     assert pages.cash_plan("w", 600, 2, [], [], RULES, ladder=[early]).steps == ()
 
 
-def test_a_plan_run_on_friday_leaves_saturdays_best_three_open(monkeypatch):
-    """r1 review: Friday's dealer deals must not close Saturday's slots when the plan runs before 09:00."""
+def test_our_deals_today_hold_their_best_three_slots_and_planning_a_later_day_counts_none(monkeypatch):
+    """r1 review: Friday's deals must not close Saturday's slots, and a mid-day re-run must count today's."""
     friday = [{"id": 1, "tick": 0, "type": "day.opened", "payload": {"day": "fri"}}]
     friday += [settle(10 + i, 100 + i, "abuela", "t01", "LAV-06", 22, tick=20 + i, kind="card") for i in range(3)]
     seen = {}
@@ -618,5 +618,19 @@ def test_a_plan_run_on_friday_leaves_saturdays_best_three_open(monkeypatch):
         return seen["out"]
 
     monkeypatch.setattr(pages, "scoring_dealers", spy)
-    pages.build_plan(ME, CATALOG, friday, DEALERS, SCHEDULE, PARAMS, RULES)
+    pages.build_plan(ME, CATALOG, friday, DEALERS, SCHEDULE, PARAMS, RULES, now_hours=4.0)  # Saturday, from Friday
     assert seen["out"].get("abuela") == 3
+    pages.build_plan(ME, CATALOG, friday, DEALERS, SCHEDULE, PARAMS, RULES)  # Friday itself: its deals hold
+    assert "abuela" not in seen["out"]
+    saturday = [*friday, {"id": 20, "tick": 160, "type": "day.opened", "payload": {"day": "sat"}}]
+    saturday.append(settle(21, 200, "abuela", "t01", "LAV-01", 9, tick=161, kind="card"))
+    today = {**SCHEDULE, "now_hours": 5.5}
+    pages.build_plan(ME, CATALOG, saturday, DEALERS, today, PARAMS, RULES, now_hours=5.5)  # a mid-morning re-run
+    assert seen["out"].get("abuela") == 2  # one deal today; Friday's three are replaced by better ones
+
+
+def test_w3_slots_move_back_only_when_the_clock_shows_an_earlier_hour_than_w3_planned_for():
+    row = {"game_hour": 4, "dealer": "abuela", "price_class": "card:common", "plan": {"max": 12}, "expected": {}}
+    plan = {"window": {"t_start": 4.0}, "schedule": [row]}
+    assert pages.ladder_slots_from(plan, open_hour=2)[0].hour == 2
+    assert pages.ladder_slots_from(plan, open_hour=5)[0].hour == 4  # a re-run after the open moves nothing

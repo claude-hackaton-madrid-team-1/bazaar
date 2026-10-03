@@ -619,10 +619,13 @@ class LadderSlot:
 
 def ladder_slots_from(plan: dict[str, Any], open_hour: int | None = None) -> list[LadderSlot]:
     """W3's scheduled dealer deals (`schedule`), one slot per conversation, in schedule order. W3 plans the
-    first 90 minutes after the open from its `window.t_start`; with `open_hour` (the game hour the doors
-    actually open at) every slot moves by the difference."""
+    first 90 minutes after the open from its `window.t_start`. With `open_hour` (the game hour the clock
+    shows when the doors open) earlier than that, every slot moves back by the difference: the clock resumed
+    where it stopped instead of jumping (b6). A later hour moves nothing: the open is past, the slots before
+    it are history."""
     t_start = (plan.get("window") or {}).get("t_start")
-    shift = open_hour - math.floor(float(t_start)) if open_hour is not None and t_start is not None else 0
+    early = open_hour is not None and t_start is not None and open_hour < math.floor(float(t_start))
+    shift = open_hour - math.floor(float(t_start)) if early and open_hour is not None and t_start else 0
     out = []
     for row in plan.get("schedule") or []:
         if not row.get("plan"):
@@ -1046,6 +1049,14 @@ def scoring_dealers(
     return {str(d.get("id")): 3 - ours[str(d.get("id"))] for d in dealers if ours[str(d.get("id"))] < 3}
 
 
+AHEAD_HOURS = 0.25  # --now-hours this far past the schedule's present plans a later day, not today
+
+
+def day_opened_tick(events: Iterable[intel.Event]) -> int:
+    """The tick the latest `day.opened` in the feed fired at (0 when the feed has none)."""
+    return max((int(e.get("tick") or 0) for e in events if e.get("type") == "day.opened"), default=0)
+
+
 def rounds_from(schedule: dict[str, Any]) -> list[float]:
     """Game hours at which an upcoming round starts (`round` actions), from /api/schedule."""
     body = schedule.get("body", schedule)
@@ -1104,7 +1115,13 @@ def build_plan(
     taken = {ref for t in trades for ref in t.refs_in}
     us = str(me.get("id") or "")
     next_round = min((r for r in rounds_from(schedule) if r > hour_now), default=float(ends))
-    scoring = scoring_dealers(events, us, dealers, ladder, start_hour=start, until_hour=next_round, taken=taken)
+    # Run during a day, our deals since it opened hold their place among the best three; planning ahead of the
+    # schedule's present (Saturday from Friday's feed), the day has not opened: nothing of ours counts yet.
+    ahead = now_hours is not None and now_hours > float(body.get("now_hours") or 0) + AHEAD_HOURS
+    since = None if ahead else day_opened_tick(events)
+    scoring = scoring_dealers(
+        events, us, dealers, ladder, start_hour=start, until_hour=next_round, taken=taken, since_tick=since
+    )
     wants = buy_list(pages, params.min_buy_surplus, skip=taken, scoring=scoring)
     cash = int(me.get("cash") or 0)
     sells = planned_sells(me, m, params, rules, start)
