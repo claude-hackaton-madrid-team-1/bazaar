@@ -20,8 +20,10 @@ r.efficiency, r.stall, r.oracle, r.points(), r.refused, r.max_requests_per_tick
 | arrivals | spread over ticks 0–10 | same | **assumption** (`arrive_spread`) |
 | relaxing | linear with age, gives up 50–100 % of its shade by its last tick | same | **assumption** |
 | limits, shades | cost 20–60, ask +5–30 %; value 40–95, bid −5–25 % | same | #55, unchanged |
+| sides | 5 sellers + 5 buyers | 6 + 6 | **assumption** (#55's even split) |
 | match rule | `quote` (today's, default) or `limit` (hidden limits honoured) | same | **unknown**. The SDK's `Broker.match` docstring, "(ask <= price, price + fee <= bid)", reads as `quote`; the kit README's "a broker that estimates those limits does better" fits `limit` better. The morning probe settles it. |
-| stall replica | crosses by quote every tick, fee 0, the kit's tie-break | same | starter_broker.py docstring; fee is an **assumption** |
+| stall replica | crosses by quote every tick, fee 0, the kit's tie-break | same | starter_broker.py docstring; fee is an **assumption**. The oracle pays our venue's fee and the stall pays none, so compare them at fee 0 (at 1000 bps + 5 P the stall beats the oracle on 210 of 1,000 books). |
+| simulator default | `SIM_BENCH_PRESET=static`: #55's book, draw for draw | | merging changes no Market Test on the shared simulator; `normal` and `hard` are opt-in |
 
 Efficiency is the realised gain divided by the possible gains at the true limits (the static optimum, regardless of who is in the book when). The **oracle** knows every limit, arrival, departure and future quote: it is an exact max-weight matching over the pairs that can be matched at some tick under the rule. No broker can beat it.
 
@@ -58,7 +60,7 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 1. **W1b's edge policy on this bench** (its message at 02:40, PR #84, 1,000 books): under `quote` it wins 7–9 % of sessions, with points 0.53–0.54 and the same mean as the stall. Under `limit` its probe scores 0.61–0.92 points depending on the cell. With every trader at tick 0, 2× shades and all firm, it reaches +0.13 p50.
 2. **The W1b bar "p50 ≥ stall + 0.15" cannot be reached in the default cell.** Even the oracle reaches only +0.03 to +0.06 there. It reaches +0.15 only under the `limit` rule with shades about 2× wider or traders mostly firm. Under `quote` it gets there only if every trader is in the book at tick 0, shades are 2× wider and every trader is firm (+0.157). W1b found the same thing independently with its own bench model (STATUS 02:17: stall 0.80, ceiling 0.90).
 3. **The win rate over the stall matters more than the margin.** Points are relative to the top-three mean, so beating a stall-level field by any amount earns the full point for that session, and ties earn 0.5. The oracle ties the stall on 23–41 % of books, so no broker can win more than 59–76 % of sessions.
-4. **The default cell is the most pessimistic one for a smart broker.** The kit says crossing by quote earns "half the bench points and no more" and that estimating limits beats the stall. In the default cell the hard test is barely harder than the normal one (stall 0.821 vs 0.827), because 5–30 % shades let firm traders cross anyway. The cells consistent with the designers' text are the `limit` rule and/or shades ≥ 1.5×. If the probe confirms `quote`, as the SDK docstring suggests, the oracle's median edge stays ≤ 0.05 whenever arrivals are spread out. The edge then comes almost entirely from winning ties, never from margin.
+4. **The default cell leaves a smart broker little room.** Only the "whole book at tick 0, narrow shades" cells are tighter (+0.008 to +0.023). The kit says crossing by quote earns "half the bench points and no more" and that estimating limits beats the stall. In the default cell the hard test is barely harder than the normal one (stall 0.821 vs 0.827), because 5–30 % shades let firm traders cross anyway. The cells consistent with the designers' text are the `limit` rule and/or shades ≥ 1.5×. If the probe confirms `quote`, as the SDK docstring suggests, the oracle's median edge stays ≤ 0.05 whenever arrivals are spread out. The edge then comes almost entirely from winning ties, never from margin.
 
 ## Go / no-go
 
@@ -67,8 +69,11 @@ Efficiency is the realised gain divided by the possible gains at the true limits
   - never below the stall on any book (issue #12's own "never worse than greedy");
   - 0 refused matches under `quote`, and refusals reported under `limit`;
   - win rate over the stall ≥ 50 % of the oracle's win rate;
-  - mean session points ≥ 0.70 against the stall-level field (the stall scores 0.50, the oracle 0.79–0.88);
-  - the efficiency margin reported, but not gated.
+  - mean session points ≥ 0.70 against the stall-level field (the stall scores 0.50, the oracle 0.79–0.88). This is a step function: any edge scores 1.0. So also:
+  - mean session points ≥ 0.60 against two oracle-level rivals, where the margin counts (stall 0.50, half the oracle's edge 0.68–0.73);
+  - PLAN's "p50 ≥ 0.85 of the true-limit optimum" kept as a margin criterion. It is reachable: oracle p50 0.91–0.93, stall 0.82–0.83.
+
+  B1 (#94) settles the risk question: if a loss below the stall scores 0, the policy must be loss-averse; if it scores linearly, small losses are cheap. Both readings are reported there.
 
   On W1b's own numbers, its edge fails this bar under `quote`: it wins 7–9 % of sessions, against the oracle's 59–69 %. It passes the points bar in the stronger `limit` cells (up to 0.92 points).
 
@@ -84,7 +89,7 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 ## What Marius must decide
 
 1. **The W1b go/no-go:** adopt the points-based bar above or keep "stall + 0.15".
-2. **The simulator default after the morning probe.** If a match that crosses only at the limits is accepted, set `SIM_BENCH_MATCH_RULE=limit` on the shared simulator. Nothing changes tonight.
+2. **The simulator default after the morning probe.** If a match that crosses only at the limits is accepted, set `SIM_BENCH_MATCH_RULE=limit` on the shared simulator. Nothing changes on merge: the default preset is `static`.
 3. **Calibration, no venue needed.** Our team has a free stall, so after each real Market Test `GET /api/me` → `score.bench_efficiency` is the real stall's efficiency on that book. Compare it with the simulator's stall per cell (`bazaar-sim bench --shade X --relax lo,hi`):
 
    | normal, spread | relax 0.5–1.0 | all firm |

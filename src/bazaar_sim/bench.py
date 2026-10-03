@@ -75,6 +75,7 @@ class BenchPreset:
     value: tuple[int, int] = (40, 95)  # a buyer's hidden limit
     sell_shade: tuple[float, float] = (1.05, 1.3)  # opening ask = cost × shade
     buy_shade: tuple[float, float] = (0.75, 0.95)  # opening bid = value × shade
+    legacy: bool = False  # draw exactly as the first simulator did (two numbers a trader, static traders)
 
     @property
     def spread(self) -> int:
@@ -102,9 +103,16 @@ class BenchPreset:
 
 NORMAL = BenchPreset("normal", traders=10, firm_share=0.2, impatient_share=0.25)
 HARD = BenchPreset("hard", traders=12, firm_share=0.35, impatient_share=0.35)
-# The simulator's first bench: the whole book at tick 0, every trader stays the whole run and never relaxes.
+# The simulator's first bench, draw for draw: the whole book at tick 0, every trader stays the whole run and never
+# relaxes. The simulator's default, so merging this changes no Market Test until SIM_BENCH_PRESET says so.
 STATIC = BenchPreset(
-    "static", traders=10, firm_share=1.0, impatient_share=0.0, patient_life=(1_000, 1_000), arrive_spread=0
+    "static",
+    traders=10,
+    firm_share=1.0,
+    impatient_share=0.0,
+    patient_life=(1_000, 1_000),
+    arrive_spread=0,
+    legacy=True,
 )
 PRESETS = {p.name: p for p in (NORMAL, HARD, STATIC)}
 
@@ -124,6 +132,11 @@ def make_traders(rng: random.Random, p: BenchPreset, run: int = 1) -> list[Bench
         sell = k % 2 == 0
         limit = rng.randint(*(p.cost if sell else p.value))
         shade = rng.uniform(*(p.sell_shade if sell else p.buy_shade))
+        if p.legacy:
+            traders.append(
+                BenchTrader(id=f"b{run}-{k}", side="sell" if sell else "buy", limit=limit, quote=round(limit * shade))
+            )
+            continue
         u_firm, u_impatient, u_life, u_arrive, u_relax = (rng.random() for _ in range(5))
         lo, hi = p.impatient_life if u_impatient < p.impatient_share else p.patient_life
         relax = 0.0 if u_firm < p.firm_share else round(p.relax[0] + u_relax * (p.relax[1] - p.relax[0]), 3)

@@ -64,9 +64,24 @@ def test_two_presets_with_one_seed_share_limits_and_quotes():
     assert [(t.limit, t.quote) for t in normal] == [(t.limit, t.quote) for t in hard[:10]]
 
 
-def test_the_static_preset_is_the_first_simulators_book():
+def test_the_static_preset_is_the_first_simulators_book_draw_for_draw_and_the_default():
+    for seed in range(50):
+        rng, old = random.Random(seed), []
+        for k in range(10):  # the generator #55 shipped
+            if k % 2 == 0:
+                cost = rng.randint(20, 60)
+                old.append(
+                    BenchTrader(id=f"b1-{k}", side="sell", limit=cost, quote=round(cost * rng.uniform(1.05, 1.3)))
+                )
+            else:
+                value = rng.randint(40, 95)
+                old.append(
+                    BenchTrader(id=f"b1-{k}", side="buy", limit=value, quote=round(value * rng.uniform(0.75, 0.95)))
+                )
+        assert bench.make_book(STATIC, seed) == old
     for t in bench.make_book(STATIC, 1):
         assert t.arrive == 0 and t.firm and bench.present(t, 15) and bench.quote_at(t, 15) == t.quote
+    assert SimConfig().bench_preset == "static" and SimConfig.from_env().bench_preset == "static"
 
 
 def test_a_quote_relaxes_toward_the_limit_with_age_and_a_firm_one_never_moves():
@@ -252,7 +267,7 @@ def test_the_simulators_book_shows_who_is_there_now_at_their_current_quote():
 
 
 def test_a_broker_cannot_match_a_trader_who_left():
-    m = manual_world(bench_first_tick=1)
+    m = manual_world(bench_first_tick=1, bench_preset="normal")
     w = m.world
     vid, key = _open(w, "board")
     m.step()
@@ -291,7 +306,7 @@ def test_an_auto_venue_scores_what_the_stall_replica_scores_and_the_finish_names
 
 
 def test_every_nth_market_test_is_the_hard_one_and_the_schedule_says_so():
-    m = manual_world(bench_first_tick=1, bench_every_ticks=20, bench_hard_every=2)
+    m = manual_world(bench_first_tick=1, bench_every_ticks=20, bench_hard_every=2, bench_preset="normal")
     w = m.world
     m.step()
     assert w.state.bench[-1].preset == "normal"

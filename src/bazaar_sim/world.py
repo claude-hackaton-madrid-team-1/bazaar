@@ -60,7 +60,7 @@ class SimConfig:
     bench_first_tick: int = 30
     bench_every_ticks: int = 120
     bench_ticks: int = 16
-    bench_preset: str = "normal"  # bench.PRESETS: normal, hard, static (the first simulator's book)
+    bench_preset: str = "static"  # bench.PRESETS: static (the first simulator's book, the default), normal, hard
     bench_match_rule: str = "quote"  # what a broker's bench match must cross at: quote or limit
     bench_hard_every: int = 0  # every n-th Market Test is the hard one (0: never)
     idle_ticks: int = 40
@@ -87,7 +87,7 @@ class SimConfig:
             bench_first_tick=_env_int("SIM_BENCH_FIRST_TICK", 30),
             bench_every_ticks=max(5, _env_int("SIM_BENCH_EVERY_TICKS", 120)),
             bench_ticks=max(2, _env_int("SIM_BENCH_TICKS", 16)),
-            bench_preset=os.environ.get("SIM_BENCH_PRESET") or "normal",
+            bench_preset=os.environ.get("SIM_BENCH_PRESET") or "static",
             bench_match_rule=os.environ.get("SIM_BENCH_MATCH_RULE") or "quote",
             bench_hard_every=max(0, _env_int("SIM_BENCH_HARD_EVERY", 0)),
             idle_ticks=max(5, _env_int("SIM_IDLE_TICKS", 40)),
