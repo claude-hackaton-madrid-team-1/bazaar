@@ -48,7 +48,7 @@ With 15 points on organic, a single genuine pair between two other teams on our 
 - It scores every matching of the pairs that cross at today's quotes (the stall's plan, other matchings, waiting), each continued stall-style to the end, as win 1 / tie 0.5 / loss.
 - It deviates from the stall's plan only when the paired gain clears 1 standard error.
 
-It uses the quote rule only, so it never sends a refusable match, and it decides in under 5 ms per read.
+It uses the quote rule only, so it never sends a refusable match, and it decides in under 10 ms per read (0.04–0.09 s per 16-tick book).
 
 **Results** (W1a's bench, quote rule, 300 holdout books, seeds 1000–1299, `scripts/b1_bench_tournament.py`). "Cautious" = `loss_curve="zero"` (the default), "aggressive" = `"linear"`.
 
@@ -72,7 +72,7 @@ The stall scores 0.500 in every row. Points are against two stall-level rivals.
 Reading it:
 - **Cautious** gains +0.042 points per session (0.542 vs 0.500 with losses at 0) when its prior is right. Where the prior is wrong it gains +0.008 to +0.038, rising to +0.113 if every trader is in the book at tick 0. It loses to the stall on 4–9 % of sessions.
 - **Aggressive** wins more often (17–40 %) but loses 26–51 % of sessions, so it scores below the stall (0.42–0.45) whenever a loss scores 0, even with the right prior. It only pays if a loss below the stall still scores linearly. That segment of the curve has the least support (RULES.md gives two anchors, both at or above the stall), so **aggressive is never recommended** while the curve is unknown.
-- For comparison, on the same bench the oracle scores 0.79 (normal) and 0.84 (hard) points, the stall 0.50, and W1b's edge policy 0.53–0.54. Cautious captures roughly 13–25 % of the oracle's headroom.
+- For comparison, on the same bench the oracle scores 0.79 (normal) and 0.84 (hard) points, the stall 0.50, and W1b's edge policy 0.53–0.54. Cautious captures 12–24 % of the oracle's headroom over the stall.
 - This resolves the tension with W1a's proposed "never below the stall" gate. The objective is expected points. "Never below" is the right safety rule only if below-stall scores 0 or the field is strong, and the cautious mode is built for exactly that case.
 
 ## Go / no-go
