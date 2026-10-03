@@ -92,14 +92,14 @@ def connection_params(url: str, app: str = DEFAULT_APP) -> dict[str, str]:
 
 
 def connect(
-    database_url: str | None = None, *, app: str = DEFAULT_APP, timeout_s: int | None = None
+    database_url: str | None = None, *, app: str = DEFAULT_APP, connect_timeout_s: int | None = None
 ) -> psycopg.Connection:
     """Open Postgres at `database_url`, or DATABASE_URL (env, then `.env`, then the local default).
-    `timeout_s` overrides the connect timeout (a background writer that must not stall a loop)."""
+    `connect_timeout_s` replaces our default wait (never one the URL sets)."""
     url = load_settings().require_database_url(database_url)
     params = connection_params(url, app)
-    if timeout_s is not None:
-        params = {**params, "connect_timeout": str(timeout_s)}
+    if connect_timeout_s is not None and "connect_timeout" not in _parse(url):
+        params["connect_timeout"] = str(connect_timeout_s)
     return psycopg.connect(make_conninfo(**params))
 
 
