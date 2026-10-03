@@ -235,6 +235,20 @@ first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / B
 `team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
 through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
 
+## Rival board (Postgres, RV1)
+
+`rival_board` (a view, one row per OTHER team; `sql/schema.sql`): `team, tick, rank, score, negotiating, market, level,
+pages, deals, venue, rank_change, score_change, trend_ticks, trend, our_team, our_rank, our_score, our_negotiating,
+our_market, our_pages, dealer_deals, venue_trades, top_set, set_interest, strengths, weaknesses, they_want, they_have,
+we_have_for_them, they_have_for_us, match_count, guarded, guard_reason, move_kind, move_give, move_get, move_price,
+our_gain, their_gain, suggested_move, why_climbed, why_climbed_tick`, in that order: bazaar-live's
+`db/rival_board.sql` passes exactly these through `show.rival_board`, so a new column goes last and a changed type
+needs both repos. Gains are estimates (their side at book × the top multiplier, our fee on bids and asks we take).
+Read-only (DataGrip `bazaar_team_ro`); private (our spares and moves), so bazaar-live serves it only behind
+`GAME_VIEW_TOKEN`. `init_schema` replaces it only when `board_version` (its comment) is newer, with a 2 s lock wait,
+and a failure only logs `schema: rival_board vN not applied (...)`. Any function the view calls runs as the caller
+(`bazaar_live_reader` holds no table grant): keep it plain SQL.
+
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
