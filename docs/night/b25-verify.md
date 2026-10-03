@@ -1,5 +1,7 @@
 # B25 · Morning assumption verifier (night shift, 3 Oct 2026)
 
+> **Where things live (06:00):** `bazaar verify` lives only on branch `night/b25-verify` (#132, closed in coordinator triage; run it from that branch). PR states: #93 (B3 personas) **open**; #109 (B9), #119 (B21) and #132 (B25) **closed**, their reports salvaged in #154. #154's copy of this report predates the review fixes (bbaa5bd): this branch's copy is current.
+
 Draft PR on `night/b25-verify`, stacked on B21 (`night/b21-levels`, #119). Nothing went live.
 - **Inputs:** every night report (`docs/night/*.md`), PLAN.md, REVIEWS.md and BITES.md, read by four read-only harvest passes and merged by hand. Friday's public feed and the API fixtures for the dry run.
 - **Run:** `uv run bazaar verify` (fixtures), `uv run bazaar verify --live` (tomorrow; GETs only; the feed checks start at today's first tick, worked out from the clock, or pass `--since-tick`). Add `--priority high` for the short list, `--json` for a machine-readable copy.
