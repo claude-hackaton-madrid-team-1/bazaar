@@ -151,9 +151,10 @@ def steady_plan(*, duel_concurrency: int = 3, book_reads: int = 1) -> list[LoopB
     ]
 
 
-# Proposed, not wired: when each loop would start its calls after the tick lands (seconds). Duels first
-# (a duel's pie shrinks every round), then the monitor and broker, the taker after the duel grace it
-# already waits before accepting, the maker last. `burst(..., offsets=PROPOSED_STAGGER)` quantifies it.
+# The proposed stagger, opt-in per service with BAZAAR_TICK_OFFSET_S (ticks.run_per_tick; unset = 0 =
+# today): when each loop starts its calls after the tick lands (seconds). Duels first (a duel's pie
+# shrinks every round), then the monitor and broker, the taker after the duel grace it already waits
+# before accepting, the maker last. `burst(..., offsets=PROPOSED_STAGGER)` quantifies it.
 PROPOSED_STAGGER: dict[str, float] = {
     "duels": 0.0,
     "monitor": 0.5,

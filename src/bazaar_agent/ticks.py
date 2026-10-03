@@ -6,8 +6,10 @@ The server ticks every 60 s (Fri), 30 s (Sat) or 15 s (Sun) and the organisers m
 
 from __future__ import annotations
 
+import math
+import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -16,6 +18,10 @@ AFTER_TICK_S = 0.3  # settle margin after a tick lands, so reads see the settled
 PAUSED_POLL_S = 5.0
 CLOSED_POLL_MAX_S = 300.0
 MIN_SLEEP_S = 0.05
+# Opt-in stagger (`bazaar budget --stagger`): each service wakes this many seconds later than the tick,
+# so not every loop spends the key's burst of 20 at the same instant. Unset or 0: today's timing.
+TICK_OFFSET_ENV = "BAZAAR_TICK_OFFSET_S"
+MAX_OFFSET_SHARE = 0.4  # never wake later than 40 % into a tick: a 15 s tick keeps 9 s for the work
 
 
 class Limits(BaseModel):
@@ -46,13 +52,31 @@ class Clock(BaseModel):
         return self.doors == "open" and not self.paused
 
 
-def seconds_until_next_tick(clock: Clock) -> float:
-    """How long to sleep so the next read lands just after the next tick (or the next poll)."""
+def tick_offset_from_env(environ: Mapping[str, str] | None = None) -> float:
+    """`BAZAAR_TICK_OFFSET_S` in seconds (0 when unset); a value that is not a number ≥ 0 fails fast."""
+    raw = (os.environ if environ is None else environ).get(TICK_OFFSET_ENV, "").strip()
+    if not raw:
+        return 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{TICK_OFFSET_ENV}={raw!r}: expected seconds ≥ 0 (unset for today's timing)")
+    return value
+
+
+def seconds_until_next_tick(clock: Clock, offset_s: float = 0.0) -> float:
+    """How long to sleep so the next read lands just after the next tick (or the next poll).
+
+    `offset_s` delays the wake-up further (the stagger), never past 40 % of the tick.
+    """
     if clock.doors != "open":
         return CLOSED_POLL_MAX_S
     if clock.paused:
         return PAUSED_POLL_S
-    return max(MIN_SLEEP_S, clock.next_tick_in) + AFTER_TICK_S
+    offset = min(max(0.0, offset_s), clock.tick_seconds * MAX_OFFSET_SHARE)
+    return max(MIN_SLEEP_S, clock.next_tick_in) + AFTER_TICK_S + offset
 
 
 def action_budget_s(clock: Clock, safety_margin_s: float = 2.0) -> float:
@@ -86,6 +110,7 @@ def run_per_tick(
     stop: Callable[[], bool] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     on_error: Callable[[str, BaseException], None] = _report,
+    start_offset_s: float | None = None,
 ) -> int:
     """Call `on_tick` once per new live tick until `max_ticks` or `stop()`. Returns ticks handled.
 
@@ -95,7 +120,11 @@ def run_per_tick(
     Unattended loops must survive the network: a failed clock read is reported and retried with
     exponential backoff (1 s → 60 s), and a failed tick is reported and counted as handled so it is
     never retried in a burst. Only KeyboardInterrupt / SystemExit stop the loop.
+
+    `start_offset_s` (else `BAZAAR_TICK_OFFSET_S`, else 0) wakes the loop that much later after each
+    tick: one value per service staggers their calls (`rate_budget.PROPOSED_STAGGER`).
     """
+    offset = tick_offset_from_env() if start_offset_s is None else start_offset_s
     handled, last_tick, failures = 0, None, 0
     while (max_ticks is None or handled < max_ticks) and not (stop and stop()):
         try:
@@ -117,5 +146,5 @@ def run_per_tick(
                 break
         # The clock was read before on_tick did its work: subtract that time, or we oversleep.
         worked = time.monotonic() - started if clock.is_live else 0.0
-        sleep(max(MIN_SLEEP_S, seconds_until_next_tick(clock) - worked))
+        sleep(max(MIN_SLEEP_S, seconds_until_next_tick(clock, offset) - worked))
     return handled

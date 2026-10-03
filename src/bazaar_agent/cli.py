@@ -837,7 +837,7 @@ def budget(
     ceiling: bool = typer.Option(False, help="Every loop at its ceiling instead of a steady busy tick"),
     dealer_children: int = typer.Option(0, help="`bazaar dealer buy` processes running besides the taker"),
     laptops: int = typer.Option(1, help="Copies of taker and maker (each laptop running them)"),
-    stagger: bool = typer.Option(False, help="Model the proposed per-loop start offsets (not wired yet)"),
+    stagger: bool = typer.Option(False, help="Model the proposed stagger (opt-in per service: BAZAAR_TICK_OFFSET_S)"),
 ) -> None:
     """Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made."""
     from rich.table import Table
