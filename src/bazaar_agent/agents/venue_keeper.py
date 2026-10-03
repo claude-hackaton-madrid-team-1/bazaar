@@ -87,7 +87,7 @@ def announcement(plan: VenueSpec, venue: str, house: Venue | None = None) -> Ann
             where = "El Rastro" if house.id == "rastro" else "the house market"
             text += (
                 f" A {EXAMPLE_PRICE} P sale on {where} costs the side that accepts {theirs} P"
-                f" ({_fee_text(house.fee_bps, house.fee_per_card)}); here {here}."
+                f" ({_fee_text(house.fee_bps, house.fee_per_card)}); here it costs {here}."
             )
     where_mid = "at the midpoint" if not (plan.fee_bps or plan.fee_per_card) else "near the midpoint"
     text += f" Asks and bids welcome: our broker pairs crossing bids and asks every tick, {where_mid}."

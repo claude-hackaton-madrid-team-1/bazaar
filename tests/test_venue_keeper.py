@@ -563,7 +563,7 @@ def test_our_venue_is_announced_once_then_at_most_once_per_game_hour(tmp_path):
     assert len(broker.notes) == 2
     note = broker.notes[0]
     assert note.startswith("Team 1 market (v09): 0 % fee.") and len(note) <= vn.ANNOUNCE_MAX_CHARS
-    assert "El Rastro costs the side that accepts 2 P (5 % + 1 P/card); here 0." in note  # the live house row
+    assert "El Rastro costs the side that accepts 2 P (5 % + 1 P/card); here it costs 0." in note  # the live house row
     executions = [e["sdk_method"] for e in rows(tmp_path, "executions.jsonl")]
     assert executions.count("broker_announce") == 2
     assert [d["status"] for d in rows(tmp_path) if d.get("kind") == "venue_announce"] == ["approved", "approved"]
@@ -607,7 +607,7 @@ def test_the_notice_prices_a_sale_on_the_house_market_from_its_live_fees_and_say
     note = vk.announcement(vk.PLAN, "v19", rastro).text
     assert note == (
         "Team 1 market (v19): 0 % fee. A 20 P sale on El Rastro costs the side that accepts 2 P (5 % + 1 P/card);"
-        " here 0. Asks and bids welcome: our broker pairs crossing bids and asks every tick, at the midpoint."
+        " here it costs 0. Asks and bids welcome: our broker pairs crossing bids and asks every tick, at the midpoint."
     )
     assert len(note) <= vn.ANNOUNCE_MAX_CHARS
     # the example follows the live fee: 10 % + 2 P/card on 20 P is 4 P
