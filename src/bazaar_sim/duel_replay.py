@@ -152,24 +152,23 @@ def replay_all(
 
 
 def replay_groups(
-    policy: zoo.Policy,
+    policy: zoo.Policy | None,
     duels: Sequence[Mapping[str, Any]] | None = None,
     counterfactual: Counterfactual = "conservative",
     accepts_per_tick: int | None = 1,
+    batch: zoo.BatchPolicy | None = None,
 ) -> list[Replayed]:
-    """The unanswered duels replayed together by deadline (6 shared tick 132), sharing one accept per tick."""
+    """The unanswered duels replayed on one clock, sharing one accept per tick: 6 of them end at tick 132, and the
+    groups ending at 144 and 146 overlap. `batch` plans every live duel at once (W2b's `plan_moves`)."""
     rows = [d for d in (load() if duels is None else duels) if unanswered(d)]
-    groups: dict[int, list[Mapping[str, Any]]] = {}
-    for d in rows:
-        groups.setdefault(int(d["deadline_tick"]), []).append(d)
+    scs = [scenario_for(d) for d in rows]
+    rivals = [scripted_rival(d, counterfactual) for d in rows]
+    played = zoo.play_batch(policy, scs, rivals, accepts_per_tick, batch)
     out = []
-    for _, group in sorted(groups.items()):
-        scs = [scenario_for(d) for d in group]
-        played = zoo.play_batch(policy, scs, [scripted_rival(d, counterfactual) for d in group], accepts_per_tick)
-        for d, (record, _) in zip(group, played, strict=True):
-            actual = d.get("result")
-            out.append(Replayed(int(d["duel"]), str(d["role"]), float(actual) if isinstance(actual, int | float)
-                                else 0.0, oracle(d), record))  # fmt: skip
+    for d, (record, _) in zip(rows, played, strict=True):
+        actual = d.get("result")
+        result = float(actual) if isinstance(actual, int | float) else 0.0
+        out.append(Replayed(int(d["duel"]), str(d["role"]), result, oracle(d), record))
     return out
 
 

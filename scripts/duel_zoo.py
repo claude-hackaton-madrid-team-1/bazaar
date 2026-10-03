@@ -6,7 +6,9 @@
 
 A policy is `v1` (bazaar_agent.agents.duelist.duel_move at today's GUARDRAILS.md values), a reference policy
 of `bazaar_sim.duel_zoo.REFERENCE_POLICIES` by name, or `module:attribute` for any callable with the
-`duel_move(duel, tick, started_tick)` signature; `label=module:attr` names its column. `--gate X` adds the night
+`duel_move(duel, tick, started_tick)` signature; `label=module:attr` names its column. `--batch label=module:attr`
+adds a planner over all live duels (`plan_moves(duels, tick, first_seen)`), used as is where duels share the
+team's accepts and one duel at a time elsewhere. `--gate X` adds the night
 plan's go/no-go of X against v1, once per `--gate-decays` pair (default 0.06,0.08).
 """
 
@@ -242,32 +244,33 @@ def order_section(policies: dict[str, Policy], n: int) -> str:
     return f"## Within-tick order ({len(base)} duels on the go/no-go grid, and the replay)\n\n" + table(head, rows)
 
 
-def accept_cap_section(policies: dict[str, Policy], duels: int = 1200) -> str:
+def accept_cap_section(batches: dict[str, duel_zoo.BatchPolicy], duels: int = 1200) -> str:
     """One accept per tick for the whole team (RULES.md; GUARDRAILS `max_accepts_per_tick` = 1, duels first),
-    against batches of duels sharing a deadline; and the real deadline groups replayed together."""
+    against batches of duels sharing a deadline; and the unanswered practice duels replayed on one clock. Each
+    policy plans every live duel at once (`--batch`) or decides per duel with first-come accepts."""
     mixes = {"flat 6 plan styles": {s: 1.0 for s in duel_zoo.PLAN_STYLES}, "practice mix": duel_replay.practice_mix()}
     rows = []
     for mix_name, mix in mixes.items():
-        for decay in (0.06, 0.08):
+        for decay in (0.06, 0.08, 0.10):
             for size in (1, 3, 6):
                 grid = duel_zoo.batches(size, duels // size, mix, decay=decay)
                 cells = []
-                for p in policies.values():
-                    free = duel_zoo.summarize(duel_zoo.run_batches(p, grid, None)).mean_result
-                    capped = duel_zoo.summarize(duel_zoo.run_batches(p, grid, 1)).mean_result
+                for b in batches.values():
+                    free = duel_zoo.summarize(duel_zoo.run_batches(None, grid, None, b)).mean_result
+                    capped = duel_zoo.summarize(duel_zoo.run_batches(None, grid, 1, b)).mean_result
                     cells.append(f"{free:.2f} → {capped:.2f}")
                 rows.append((mix_name, decay, size, *cells))
     replay_rows = [
-        (name, round(sum(r.result for r in duel_replay.replay_groups(p, accepts_per_tick=None)), 2),
-         round(sum(r.result for r in duel_replay.replay_groups(p)), 2))
-        for name, p in policies.items()
+        (name, round(sum(r.result for r in duel_replay.replay_groups(None, accepts_per_tick=None, batch=b)), 2),
+         round(sum(r.result for r in duel_replay.replay_groups(None, batch=b)), 2))
+        for name, b in batches.items()
     ]  # fmt: skip
     return (
         f"## One accept per tick for the whole team ({duels} duels per row, in batches sharing a deadline)\n\n"
         "Mean P per duel, no cap → one accept per tick. Duels move in `duel` order; an accept past the budget is "
         "refused and retried next tick.\n\n"
-        + table(("mix", "decay", "batch", *policies), rows)
-        + "\n\nThe 12 unanswered practice duels replayed by deadline group (6 share tick 132), conservative:\n\n"
+        + table(("mix", "decay", "batch", *batches), rows)
+        + "\n\nThe 12 unanswered practice duels replayed on one clock (6 end at tick 132), conservative:\n\n"
         + table(("policy", "no cap P", "one accept per tick P"), replay_rows)
     )
 
@@ -310,6 +313,7 @@ def gate_section(name: str, candidate: Policy, n: int, decays: Sequence[float] =
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", action="append", help="v1, a reference policy, or module:attr (repeatable)")
+    ap.add_argument("--batch", action="append", default=[], help="label=module:attr, a planner over all live duels")
     ap.add_argument("--gate", action="append", default=[], help="a policy to put through the go/no-go vs v1")
     ap.add_argument("--gate-decays", action="append", default=[], help="decay pairs for --gate, e.g. 0.08,0.10")
     ap.add_argument("--n", type=int, default=200, help="scenarios per style × role × decay × length")
@@ -318,6 +322,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     names = args.policy or ["v1", *duel_zoo.REFERENCE_POLICIES]
     specs = [n.partition("=")[::2] if "=" in n else (n, n) for n in names]  # label=module:attr names a column
     policies = {label: resolve(spec) for label, spec in specs}
+    batch_of = {label: duel_zoo.per_duel(p) for label, p in policies.items()}
+    for b in args.batch:  # a planner plays the one-duel sections one duel at a time
+        label, spec = b.partition("=")[::2] if "=" in b else (b, b)
+        module, _, attr = spec.partition(":")
+        batch_of[label] = getattr(importlib.import_module(module), attr)
+        policies[label] = duel_zoo.single(batch_of[label])
     sections = [
         fit_section(),
         realism_section(args.n),
@@ -326,7 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seeds_section(policies, args.n),
         sensitivity_section(policies, args.n),
         order_section(policies, args.n),
-        accept_cap_section(policies),
+        accept_cap_section(batch_of),
         replay_section(policies),
         *(
             gate_section(label, resolve(spec), args.n, tuple(map(float, d.split(","))))

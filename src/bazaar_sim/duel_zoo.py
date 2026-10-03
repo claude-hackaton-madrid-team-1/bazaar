@@ -82,6 +82,27 @@ class Move(Protocol):
 
 
 Policy = Callable[[dict[str, Any], int, int], Move]
+# A planner over all of a team's live duels at once (W2b's `duel_v2.plan_moves`): payloads, tick, {duel: started}.
+BatchPolicy = Callable[[list[dict[str, Any]], int, dict[int, int]], Mapping[int, Move]]
+
+
+def per_duel(policy: Policy) -> BatchPolicy:
+    """A one-duel policy as a batch policy: each duel decides alone; the accept budget goes first come, in duel
+    order (what `bazaar duel run` does through `ledger.reserve_accept`)."""
+
+    def batch(duels: list[dict[str, Any]], tick: int, first_seen: dict[int, int]) -> dict[int, Move]:
+        return {d["duel"]: policy(d, tick, first_seen[d["duel"]]) for d in duels}
+
+    return batch
+
+
+def single(batch: BatchPolicy) -> Policy:
+    """A batch policy asked about one duel at a time (no other duel competes for the accept)."""
+
+    def policy(duel: dict[str, Any], tick: int, started_tick: int) -> Move:
+        return batch([duel], tick, {duel["duel"]: started_tick})[duel["duel"]]
+
+    return policy
 
 
 @dataclass(frozen=True)
@@ -538,8 +559,11 @@ def _rival_turn(d: _Duel, rival: Rival, tick: int, rng: random.Random) -> None:
 
 def _team_turn(d: _Duel, policy: Policy, tick: int, can_accept: bool = True) -> bool:
     """Our move in one duel. True when it was an accept that went through (it spends the team's accept)."""
+    return _apply(d, policy(payload(d), tick, d.sc.started_tick), tick, can_accept)
+
+
+def _apply(d: _Duel, move: Move | None, tick: int, can_accept: bool = True) -> bool:
     sc = d.sc
-    move = policy(payload(d), tick, sc.started_tick)
     kind = getattr(move, "kind", "hold")
     if kind == "accept":
         if d.rival_offer is None:
@@ -583,15 +607,21 @@ def play(policy: Policy, sc: Scenario, rival: Rival | None = None) -> tuple[Reco
 
 
 def play_batch(
-    policy: Policy,
+    policy: Policy | None,
     scs: Sequence[Scenario],
     rivals: Sequence[Rival] | None = None,
     accepts_per_tick: int | None = 1,
+    batch: BatchPolicy | None = None,
 ) -> list[tuple[Record, dict[str, Any]]]:
     """One team's duels in lockstep, sharing the team's accepts: RULES.md lets a team accept one offer per tick,
     and GUARDRAILS.md `max_accepts_per_tick` = 1 applies it to duels ("duels first"). Each tick the duels move in
     `duel` order, as the CLI walks `/api/duels`; an accept past the budget is refused (`accept_cap`) and the duel
-    stays open. A rival accepting OUR offer spends nothing. `accepts_per_tick=None` is no cap."""
+    stays open. A rival accepting OUR offer spends nothing. `accepts_per_tick=None` is no cap. With `batch`, one
+    call per tick plans every live duel at once (`policy` is then ignored)."""
+    if batch is None:
+        if policy is None:
+            raise ValueError("play_batch needs a policy or a batch policy")
+        batch = per_duel(policy)
     duels = [_Duel(sc) for sc in scs]
     rivals = list(rivals) if rivals is not None else [RIVALS[sc.style] for sc in scs]
     rngs = [random.Random(f"{sc.seed}:{sc.duel}") for sc in scs]
@@ -613,8 +643,11 @@ def play_batch(
         for i in live:
             if not scs[i].team_first:
                 _rival_turn(duels[i], rivals[i], tick, rngs[i])
-        for i in live:
-            if duels[i].accepted is None and _team_turn(duels[i], policy, tick, budget is None or budget > 0):
+        asking = [i for i in live if duels[i].accepted is None]
+        first_seen = {scs[i].duel: scs[i].started_tick for i in asking}
+        moves = batch([payload(duels[i]) for i in asking], tick, first_seen) if asking else {}
+        for i in asking:
+            if _apply(duels[i], moves.get(scs[i].duel), tick, budget is None or budget > 0):
                 budget = None if budget is None else budget - 1
         for i in live:
             if scs[i].team_first and duels[i].accepted is None:
@@ -717,8 +750,13 @@ def batches(
     return out
 
 
-def run_batches(policy: Policy, grid: Iterable[Sequence[Scenario]], accepts_per_tick: int | None = 1) -> list[Record]:
-    return [record for batch in grid for record, _ in play_batch(policy, batch, accepts_per_tick=accepts_per_tick)]
+def run_batches(
+    policy: Policy | None,
+    grid: Iterable[Sequence[Scenario]],
+    accepts_per_tick: int | None = 1,
+    batch: BatchPolicy | None = None,
+) -> list[Record]:
+    return [r for b in grid for r, _ in play_batch(policy, b, accepts_per_tick=accepts_per_tick, batch=batch)]
 
 
 def run(policy: Policy, grid: Iterable[Scenario]) -> list[Record]:

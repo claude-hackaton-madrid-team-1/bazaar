@@ -407,3 +407,21 @@ def test_batches_start_and_end_together_with_roles_alternating():
     roles = [sc.role for b in grid for sc in b]
     assert roles.count("seller") == roles.count("buyer") == 12
     assert len({sc.duel for b in grid for sc in b}) == 24
+
+
+def test_a_batch_policy_plans_every_live_duel_once_per_tick():
+    calls: list[tuple[int, list[int], dict]] = []
+
+    def planner(duels: list[dict], tick: int, first_seen: dict[int, int]) -> dict[int, zoo.Act]:
+        calls.append((tick, [d["duel"] for d in duels], dict(first_seen)))
+        best = max(duels, key=lambda d: d["rival_offer"]["price"] if d["rival_offer"] else -1)  # we sell: highest
+        return {d["duel"]: zoo.Act("accept") if d is best else zoo.HOLD for d in duels}
+
+    scs = [scenario(style="linear", params=LINEAR, duel=i, rival_limit=150 + 10 * i) for i in (1, 2, 3)]
+    out = zoo.play_batch(None, scs, batch=planner)
+    assert calls[0] == (100, [1, 2, 3], {1: 100, 2: 100, 3: 100})
+    assert [r.close_tick for r, _ in out] == [103, 102, 101]  # the richest rival first, one accept per tick
+    assert all(not r.errors for r, _ in out)
+    assert zoo.play_batch(zoo.endgame_accept, scs) == zoo.play_batch(None, scs, batch=zoo.per_duel(zoo.endgame_accept))
+    one = zoo.single(planner)
+    assert zoo.play(one, scs[0])[0].deal
