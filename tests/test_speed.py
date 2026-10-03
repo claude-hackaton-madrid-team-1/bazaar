@@ -394,16 +394,23 @@ def test_a_failed_keyed_read_stops_the_keyed_ones_after_it():
 
 
 def test_a_dealer_thread_the_server_no_longer_knows_is_dropped(tmp_path):
+    """Dropped only when refused as unknown AND missing from this tick's list of our open threads."""
     from bazaar_agent.agents.dealer import BidPlan, Negotiation
     from bazaar_agent.agents.desk import Conversation
 
-    for code, kept in (("not_found", False), ("rate_limited", True)):
+    cases = (
+        ("not_found", 404, [], False),
+        ("unknown_thread", 404, [], False),  # the real game's spelling is not documented: the status decides
+        ("not_found", 404, [{"id": 50, "with": "abuela"}], True),  # still listed as open: it waits
+        ("rate_limited", 429, [], True),
+    )
+    for n, (code, status, listed, kept) in enumerate(cases):
 
         class Refused(FakeTeam):
-            def thread(self, tid, code=code):
-                raise BazaarError(code, code, 404)
+            def thread(self, tid, code=code, status=status):
+                raise BazaarError(code, code, status)
 
-        team = Refused()
+        team = Refused(threads=listed)
         t = Taker(
             team,
             FakePublic(),
@@ -412,11 +419,11 @@ def test_a_dealer_thread_the_server_no_longer_knows_is_dropped(tmp_path):
             now=lambda: 1000.0,
             sleep=lambda s: None,
             config=TakerConfig(max_dealer_threads=0),
-            **parts(tmp_path / code, **SPEED_ON),
+            **parts(tmp_path / str(n), **SPEED_ON),
         )
         t.convs["abuela"] = Conversation(
             "abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK
         )
         team.now = clock(tick=TICK + 1)
         t.on_tick(team.now)
-        assert ("abuela" in t.convs) is kept and team.sent == []  # gone: dropped; refused for now: it waits
+        assert ("abuela" in t.convs) is kept and team.sent == [], (code, status, listed)

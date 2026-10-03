@@ -133,7 +133,7 @@ from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
 
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
-THREAD_GONE = "not_found"  # a dealer thread read refused with this is dropped, not retried every tick
+THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
 
 
 @dataclass(frozen=True)
@@ -426,6 +426,7 @@ class _TickRun:
     team_view: DeskView | None = None  # what the team desk saw this tick (N17)
     plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
     unread: set[str] = field(default_factory=set)  # cards of dealer threads we could not read this tick
+    listed: frozenset[int] = frozenset()  # our open threads as /api/me/threads listed them this tick
 
 
 class Taker:
@@ -554,6 +555,7 @@ class Taker:
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
+        run.listed = frozenset(int(t["id"]) for t in threads if isinstance(t.get("id"), int))
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
@@ -1215,7 +1217,9 @@ class Taker:
             return thread
         except BazaarError as e:
             run.unread.add(conv.item)
-            if e.code == THREAD_GONE:  # the server no longer knows it: no bid of ours can stand there
+            # gone: refused as unknown (404, whatever its code) AND missing from this tick's list of our open
+            # threads; one read never retires a thread the server still lists
+            if e.status == THREAD_GONE_STATUS and conv.thread_id not in run.listed:
                 self.convs.pop(conv.dealer, None)
                 self.log(
                     f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} is gone; dropped"
