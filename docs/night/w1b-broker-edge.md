@@ -2,7 +2,7 @@
 
 Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stacked on #71** (`feat/venue-broker-build-only`). Refs #12, #71, #77. Nothing went live tonight. This PR changes no guardrail value: #71 now sets `allow_venue_open = true` and opens the venue from the maker. Every switch added here defaults to today's behaviour.
 
-## Since 03:40: rebased onto the new #71 (venue keeper, ffb0877)
+## Since 03:40: rebased onto the new #71 (venue keeper, 1696789)
 
 #71 now opens our board venue from the maker at game hour 6.5 (`agents/venue_keeper.py`), with an exact broker whose ties follow the stall's book order. This PR was re-applied onto it as one commit (the old history is in `backup/w1b-old` locally).
 
@@ -21,7 +21,7 @@ Night shift 3–4 Oct 2026. Branch `night/w1b-broker-edge`, draft PR #84, **stac
 | `evals/bench.py` | In-process tournament: stall, greedy (= `starter_broker.bench_plan`, checked against the kit), exact (#71), edge and edge_limit, plus three bounds: prescient (knows present limits and departures), oracle_quote and oracle_limit. Run with `uv run python -m bazaar_agent.evals.bench`. |
 | `evals/bench_w1a.py` | The same policies on **W1a's bench** (`bazaar_sim.bench`, #77), with W1a's stall, oracle and session points. It needs bazaar_sim; tonight it ran on a local copy of W1a's four files. |
 
-Gates (on #71 @ ffb0877): 2,065 passed and 35 skipped (the W1a adapter test skips until `bazaar_sim.bench` (#77) is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 14 ms with the probe, retries included (#12's limit is 50 ms). `bazaar broker probe <sell> <buy> <price> [--live]` sends one match and prints the venue's verdict: the morning probe as a command, logged as a decision and gated like any match.
+Gates (on #71 @ 1696789): 2,065 passed and 35 skipped (the W1a adapter test skips until `bazaar_sim.bench` (#77) is merged); ruff, black and mypy clean. Planning for 40 traders takes at most 1.5 ms by quote and 14 ms with the probe, retries included (#12's limit is 50 ms). `bazaar broker probe <sell> <buy> <price> [--live]` sends one match and prints the venue's verdict: the morning probe as a command, logged as a decision and gated like any match.
 
 ## Evidence: W1a's bench, 1,000 books per row, p50 efficiency
 
