@@ -1,8 +1,8 @@
 """`bazaar evals run | report | import-duels`: Team 1's online-outcome evals (questions/evals.json).
 
 Postgres in, Postgres and Phoenix out. No command here uses the team key, so the evals add nothing to
-its 5 req/s budget. `run --every-ticks N` is the always-on loop of the `bazaar-evals` Railway service.
-Like every loop here it is driven by the game clock (tick discipline), read keyless from the public
+its 5 req/s budget. The agents run the evals themselves (evals/inline.py); `run --every-ticks N` is the
+laptop loop. Like every loop here it is driven by the game clock (tick discipline), read keyless from the public
 `/api/clock` (the shared `ticks.run_per_tick`: doors closed = no pass, clock errors back off). Every N
 ticks it scores again when an input moved (a tick, duel, snapshot or decision in Postgres, or an outcome
 still waiting for its Phoenix span); a Postgres outage is retried at the next due tick.
