@@ -188,20 +188,51 @@ SEEDS = {
 }
 
 
+SEED = r"""
+import sys, time
+from bazaar_agent.config import load_settings
+from bazaar_agent.sdk import team_client
+
+dealer, item, price, top = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+team = team_client(load_settings())
+tid, last, said = int(team.open_thread(dealer, topic={"buy": {"card": item}})["id"]), -1, None
+for _ in range(400):  # one move per tick, about 30 ticks at most
+    tick = int(team.clock()["tick"])
+    if tick == last:
+        time.sleep(0.2)
+        continue
+    last = tick
+    thread = team.thread(tid)
+    if thread.get("status") != "open":
+        print(f"thread {tid} {thread.get('status')} at {said}")
+        break
+    offers = [o for o in thread.get("standing_offers") or [] if o.get("maker") == dealer and o.get("status") == "open"]
+    ask = int((offers[-1].get("want") or {}).get("cash") or 0) if offers else None
+    if ask is not None and ask <= top and (offers[-1].get("final") or ask <= price):
+        team.accept(int(offers[-1]["id"]))
+        said = ask
+        continue
+    if price <= top:
+        team.say(tid, "Buenas, ¿le parece bien?", price=price)
+        said, price = price, price + 1
+"""
+
+
 def seed(dealers: list[str], env: dict[str, str]) -> None:
+    """Another team (sim-team2) negotiates one buy per class with each dealer under test, through the plain SDK
+    (our CLI refuses a top above our caps, as it should): the fills our taker then sees as price history."""
     for dealer in dealers:
         for item, start, top in SEEDS.get(dealer, []):
-            args = ["dealer", "buy", item, "--start", str(start), "--max", str(top), "--dealer", dealer, "--live"]
             run = subprocess.run(
-                [sys.executable, "-m", "bazaar_agent.cli", *args, "--no-jev"],
+                [sys.executable, "-c", SEED, dealer, item, str(start), str(top)],
                 cwd=ROOT,
                 env={**env, "BAZAAR_SIM_KEY": "sim-team2"},
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=180,
             )
-            done = [line for line in run.stdout.splitlines() if "thread" in line and ("deal" in line or "walk" in line)]
-            print(f"seed: sim-team2 {item} from {dealer}: {(done or ['no deal'])[-1].strip()[:100]}")
+            said = (run.stdout.strip().splitlines() or [run.stderr.strip()[-160:] or "no answer"])[-1]
+            print(f"seed: sim-team2 {item} from {dealer}: {said}")
 
 
 def describe(lift: float, out: Path, caps: dict[str, int]) -> None:
