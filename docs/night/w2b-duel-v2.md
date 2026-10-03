@@ -33,12 +33,12 @@ The strictly-inside-limit guard stays on every path. It covers v2's own offers, 
 accept is not legal, and counter only within the caps.
 
 ## Evidence
-**W2a's gate** (PR #80 `aa6d14f`, independent rival models with the fixed listening one-shot), n = 200, one duel at a time:
+**W2a's gate** (PR #80 at `7f5c94c`, independent rival models with the fixed listening one-shot), n = 200, one duel at a time:
 
 | check | decays 0.06/0.08 (plan) | decays 0.08/0.10 (what is left) | bar |
 |---|---|---|---|
 | mean result v2/v1 | **1.420 ✅** (seeds 7/11/13: 1.420 / 1.432 / 1.432) | **1.550 ✅** (seeds: 1.550 / 1.575 / 1.566) | ≥ 1.40 |
-| … if we move before the rival in a tick | 1.387 (3-seed mean) | **1.508** | |
+| … if we move before the rival in a tick | 1.33 (3-seed mean 1.325 before the double last offer, 1.340 after) | **1.44** | |
 | … with `duel_accept_margin_ticks` = 0 | 1.534 | 1.679 | |
 | deal rate vs conceders | 0.999 (v1 0.992) ✅ | 0.999 (v1 0.993) ✅ | ≥ v1 |
 | deal rate vs one-shot | 0.895 (bar 0.789) ✅ | 0.877 (bar 0.777) ✅ | ≥ 0.9 × v1 |
@@ -65,7 +65,7 @@ deadline and the team's one accept per tick. Decays 0.08/0.10, 12 and 16 ticks, 
 
 - By decay: 1.23× at 0.06, 1.34× at 0.08, **1.44× at 0.10**. With 2 duels per deadline: **1.48×** (seeds 1.477–1.480).
   With `duel_accept_margin_ticks` = 0: 1.43×.
-- Deal rates: v2 0.972 vs v1 0.968. Against conceders 0.983 vs 0.978; against one-shot 0.981 vs 0.984 (bar 0.885).
+- Deal rates: v2 0.973 vs v1 0.968. Against conceders 0.983 vs 0.978; against one-shot 0.985 vs 0.984 (bar 0.885).
 - Outside our limit in 10,000 duels (price only and two-issue): 0 for both policies. Guardrail refusals: 0.
 - Robustness rivals, not in the gate: `late` (silent 3–5 ticks, then concedes) 21.81 vs 17.37. `stubborn`
   (one price, duel 274) 23.19 vs 15.87. W2a's `holdout`: 28.2 vs 20.3.
@@ -84,7 +84,8 @@ Ideal 195 P, **v2 176.4 P** (margin 0: 187.0), v1 121.7 P. Where v2's 18.6 P go:
 ## Verdict
 - **GO on the plan's harness (W2a's gate), all five checks, at both decay pairs**: 1.42× at 0.06/0.08 and 1.55× at
   0.08/0.10, on every seed. 0 outside, replay +52 P.
-- When we move before the rival within a tick: 1.39× at 0.06/0.08 (just under) and 1.51× at 0.08/0.10.
+- When we move before the rival within a tick: W2a gives 1.34× at 0.06/0.08 (under the bar) and 1.44× at 0.08/0.10 (passes);
+  our arena gives 1.44×.
 - Our congested arena (6 duels share each deadline and one accept per tick) at 0.08/0.10 is 1.39× (NO-GO by 0.01
   on every seed). It passes at 0.10 (1.44×) and with 2 duels per deadline (1.48×).
 - Safety holds everywhere with the default worst-case days: 0 outside-limit closes.
@@ -92,15 +93,32 @@ Ideal 195 P, **v2 176.4 P** (margin 0: 187.0), v1 121.7 P. Where v2's 18.6 P go:
 ## Risks
 - Every rival is a model. W2a: pure silence loses deals to tit-for-tat (deal rate 0.49). v2's anchor, stall-counter
   and last offer keep it at 0.999 against tit-for-tat.
-- **Within-tick order.** If we move before the rival within a tick, v2's lift drops by about 0.05 (W2a: 1.56 → 1.51
-  at 0.08/0.10; replay 173.5 → 152.8 P). Free offers now wait 3 ticks for the rival to open; that took the replay
+- **Within-tick order: the main open risk.** If we move before the rival within a tick, W2a's lift drops by about 0.1
+  (1.56 → 1.44 at 0.08/0.10; replay 173.5 → 152.8 P). Two changes help in that order:
+  - Free offers wait 3 ticks for the rival to open (replay 140.1 → 152.8 P).
+  - The last offer is said at D − 3 and again at D − 2, so it is still fresh in the rival's endgame (tit-for-tat deals 0.87 → 0.999).
+
+  Our arena goes the other way (1.44×), because v1 loses more there. A morning probe of the real tick order settles it. Free offers now wait 3 ticks for the rival to open; that took the replay
   from 140.1 to 152.8 in this order.
 - The planner accepts by D − 2. An accept on D − 1 is worth +0.05 to +0.11 of lift and +10 P of replay, but it is
   unverified; it is one knob.
 - Free offers: if a rival goes silent and then talks again, each of its messages adds a round, up to our offer count.
   `late`: 1.3 rounds, still +26 % over v1. Convex rivals in our arena: 1.4 rounds vs 1.1 before.
 - The runtime agent path acts only on the duel it is asked about. The duelist prompt now asks it to call
-  `duel_move` for every live duel each tick. `duel run` plans across all duels by itself.
+  `duel_move` for every live duel each tick, and the runtime remembers each duel's first tick, because the live
+  payload has no start. `duel run` plans across all duels by itself.
+- An independent review of the diff found no change to v1 with the defaults, no move outside our limit, and never more
+  than one accept per tick. Fixed from it:
+  - the runtime tool now ages duels;
+  - tickless messages are never read as a stall;
+  - a malformed row holds only that duel.
+
+  Still open (low):
+  - Jev may counter on a duel whose accept is queued (at most 3 rounds, inside our limit);
+  - non-integer rival prices are truncated before valuing, as v1 does.
+- Harness caveat: W2a's batch runner calls the one-duel adapter `single_duel_move`, which has no cross-duel planner.
+  Its capped-batch numbers (1.05–1.11×) therefore do not score v2 as `duel run` plays it. Our arena runs `plan_moves`
+  on 6 duels per deadline with one accept per tick: 1.39×.
 
 ## What Marius must decide
 1. Flip `duel_policy` = v2 for Duels II (0.08) or only for Sunday (0.10)? W2a: 1.55× at 0.08/0.10. Our arena: 1.34×
