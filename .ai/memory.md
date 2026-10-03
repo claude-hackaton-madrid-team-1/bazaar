@@ -418,3 +418,8 @@ call stayed inside `jev_timeout_s` 3 s. A 90 P request reused the cache in a new
 browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title or line before committing it.
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
+
+### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+`docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
+"0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
+`docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.

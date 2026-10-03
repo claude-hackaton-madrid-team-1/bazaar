@@ -1,142 +1,73 @@
-<!-- Draft from the B29 demo inventory (read-only checks, Sat 3 Oct ~05:00). Credentials are kept out on purpose: Phoenix login is in Railway. -->
-# Sunday 5-minute demo · asset inventory (read-only, Sat 2026-10-03 ~04:30)
+# The 90-second live demo, and its backup
 
-Everything below was read or run read-only. Nothing was committed, no key was sent to
-bazaar.causaprima.ai. Commands marked "ran" were run on this laptop and worked.
+Draft as of Sat 3 Oct, ~06:00 Madrid. Asset inventory from Marius's earlier pass: `demo-inventory.md` (moved from `demo.md`; its
+Saturday 04:30 facts may be stale). Commands here were checked against the code (see `evidence.md`), not run live.
 
-## 1. Explainer site (game-explainer-site)
+**Goal:** show, in 90 seconds, that the agents are real, traceable and bounded: **Bazaar Live** (what they do) → **one Phoenix replay**
+(why, tick by tick) → **one `/state` view** (what the public sees).
+**Rule:** one thread, one story. The Phoenix replay and `/state` show the **same deal** as slide 3.
 
-- Worktree: `/Users/mariusserban/orca/workspaces/bazaar/game-explainer-site`, branch `game-explainer-site`.
-- **Not pushed, no PR**: no upstream, 7 local commits ahead of `origin/main` (head `6801ec3`).
-  `gh pr list --search explainer` finds nothing related. If the demo laptop is not this Mac, push first.
-- Files: `site/index.html` (612 lines), `site/styles.css`, `site/js/{core,world,negotiation,market,system}.js`.
-  **Fully offline**: no CDN, no web font, favicon is a data: URI. Works from `file://` too.
-- Serve: `python3 -m http.server 8000 -d /Users/mariusserban/orca/workspaces/bazaar/game-explainer-site/site`
-  then http://127.0.0.1:8000/ (or `open .../site/index.html`). Dark-mode toggle, chapters menu (TOC button), progress bar.
-- Structure: hero ("A card market run by AI agents, explained") then
-  - **Part 1 · How the game works**: `#rule` Words persuade, structure binds (words-vs-structure widget) ·
-    `#world` tabs Cards/Pages/Primas/Dealers/Venues (sets explorer) · `#clock` heartbeat demo + weekend timeline ·
-    `#value` card value playground · `#dealers` concession-curve shaper + **Haggle with a simulated Abuela** ·
-    `#duels` split the pie (ZOPA), price + delivery days, **Play a duel against a bot** ·
-    `#market` order book, best-prices-first counter-case, **Be the broker: mini Market Test** ·
-    `#scoring` 100-point bar, you vs the top three · `#fairplay` Spot the trick quiz.
-  - **Part 2 · What Team 1 built**: `#built` Five ideas + **clickable system diagram** (16 boxes + 2 ghosts: API, Monitor,
-    Postgres+pgvector, Strategy, Jev, LLM words-only, Guardrails, Ledger, Taker, Maker, Duels, Dealer, Runtime+MCP,
-    Phoenix, Evals, Railway; ghosts Venue/Learner) · `#tick` One tick, eight steps · `#guardrails`
-    **Try to break the rules** checker + one-accept-per-tick race · `#shield` **A naive agent versus ours**
-    (prompt-injection toggle) · `#status` status board · `#glossary`.
-- Strongest 3 moments: (a) `#shield` naive vs ours toggle (the "hostile text in, nothing binding out" story);
-  (b) `#built` click Jev → Guardrails → LLM boxes (the five ideas); (c) `#dealers` Haggle with Abuela or
-  `#duels` play a duel (judges can touch the game in 20 s).
-- **Stale**: `#status` and the diagram labels say taker/maker "Dry run", Jev/LLM/runtime "Being built"; they
-  went LIVE Sat 01:45. Skip Chapter 14 or say "status as of Saturday morning".
+## Before the room (Sunday 08:30 pre-flight, then again 30 minutes before)
 
-## 2. Dashboard: what replaced PR #43
-
-- #43 `feat/web-live` (Next.js dashboard) CLOSED Sat 00:54Z: repo is Python-only, 9 Greptile P1s, conflicts;
-  "TypeScript UIs live in their own repo (bazaar-live) and read the public taker/maker /state and /events".
-  The branch still exists.
-- Replacements:
-  1. **Bazaar Live (the show)**: https://bazaar-live-production.up.railway.app (repo
-     claude-hackaton-madrid-team-1/bazaar-live; declared in bazaar PR #85, MERGED). `GET /health` (ran) →
-     `{"ok":true,"service":"bazaar-live","tts":[]}`; `/?mock=1` → HTTP 200 (ran). Shows the BUYER (taker) and SELLER
-     (maker) as animated characters at a Rastro stall, cork board of our offers, every public move acted out and
-     spoken; Jev verdict meter, guardrail denials, LIVE/DRY badge. Params: `?mock=1` recorded afternoon,
-     `?speed=2`, `?mode=dry`, `?tts=webspeech|off`; key **M** mutes; opens with a "Start the show with sound /
-     Watch muted" gate (needs a click). Deployed = v1 + #2; RPG scene (#4) and real transcripts (#5) are OPEN.
-     `tts: []` means browser Web Speech only (no ElevenLabs key on the service).
-  2. **Public agent endpoints** (`src/bazaar_agent/agents/status.py`, allow-list `public_decision` /
-     `public_execution` / `public_view`): https://bazaar-taker-production.up.railway.app/{health,state},
-     https://bazaar-maker-production.up.railway.app/{health,state}, `wss://…/events` (last 200 then live).
-     Ran `/health`: taker `mode: live`. Maker `/state` now: empty decisions (doors closed).
-     **PR #121 (OPEN)** "public /state and /events must not reveal our limits": check the payload before
-     projecting raw `/state` or `wscat`.
-  3. `bazaar evals report --json` is documented as "the dashboard" data feed (docs/services.md "Evals scorecard").
-  4. `bazaar cockpit` (below) is the operator's screen.
-- Architecture page (`docs/architecture.html` on main) lists all live links incl. Bazaar Live.
-
-## 3. Phoenix
-
-- URL: https://phoenix-production-6aa3.up.railway.app (ran: HTTP 200). Project **`bazaar`**.
-  the Railway dashboard (project `heartfelt-warmth`). Log in **before** the demo.
-- Best traces (README "Observability"):
-  - `duel` (AGENT) root per duel: role, limit, a `duel tick N` child per tick with rival offer, our move,
-    `jev_verdict`, `jev_choice` (default, chosen, legal moves, why), guardrail, refusals. Annotation **`duel_pie_share`**.
-  - `negotiation` (AGENT) root per dealer thread: `tick N` children with `message`, `dealer_offer`,
-    `jev_verdict`, `guardrail`, `our_move`; root has full transcript. Annotation **`ladder_share`**.
-  - `taker tick N` / `maker tick N` (deciding tick): annotation **`trade_surplus`**.
-  - Desk (Claude Agent SDK runtime): `runtime.tool_call` and `runtime.tool.<name>` spans.
-  - Also `duels tick N`, `monitor tick N`, `monitor stream`, `cli <command>`, `thread.view`.
-- Evals annotate spans: annotator `CODE`, identifier `bazaar-evals:<subject>` (e.g. `duel:85`, `thread:101`),
-  label good (≥0.6) / ok (≥0.3) / bad, score 0..1, explanation. Written by `bazaar evals run` (Phoenix on by default).
-- Tip: a running `negotiation`/`duel` root lands only when it ends; while live, use the **Spans** tab.
-  Pre-demo count by name: `uv run bazaar obs spans` (needs `PHOENIX_API_KEY`, `BAZAAR_TRACING` config).
-  Pick 1 duel with a `good` duel_pie_share and 1 negotiation with ladder_share beforehand; keep tabs open.
-
-## 4. Read-only CLI views
-
-Run from `/Users/mariusserban/orca/workspaces/bazaar/night-b6-saturday-playbook` (branch `night/b29-pitch-kit`,
-stacked on `night/b22-cockpit` #122 OPEN → `night/b6-saturday-playbook` #102 OPEN). **None of cockpit /
-timeline / score-sim is in main yet.**
-
-| Command | Ran? | What it shows | Network |
-|---|---|---|---|
-| `BAZAAR_SIM=1 uv run bazaar cockpit` | ran (sim) | 10 panels with ok/WARN/BAD: Clock, Next (playbook), Cash vs floor (270 P) + headroom, Ledger, Agents (/health), Caps, Duels, Ladder, Market Test, Alerts | sim + Railway /health |
-| `uv run bazaar cockpit --no-key` | not run | keyless reads only (clock, schedule, dealers, /health) | real game, keyless |
-| `uv run bazaar cockpit --watch` | not run | refresh every 2 ticks mid-tick (~30 s on Sunday's 15 s ticks) | **real game + team key**: only for the live demo |
-| `uv run bazaar timeline` | ran | every scheduled event in game hours and Madrid time (Duels I/II/III, Market Tests, rounds, Grand Final) | offline, but the fixture clock anchors to *now*: on Sunday the Madrid times shift a day |
-| `uv run bazaar timeline --from-api` | ran (Sat 04:30: `resume: h2.65 = Sat 09:00`, resume/jump columns while closed) | same, live keyless `/api/clock` + `/api/schedule` | keyless GETs only: use this on Sunday |
-| `uv run bazaar evals report` | **not run** (no `.env` in the b6 worktree, so no `DATABASE_URL`) | scorecard per target/day, dealer ladder best-3, worst 5, Jev calibration, annotations | Postgres only |
-| `uv run bazaar evals score-sim` | ran, in `/Users/mariusserban/orca/workspaces/bazaar/night-w5w6-score-redteam-morning` (#78 OPEN) | board-formula model vs official: RMSE 0.34 over 38 snapshots, board MAE 0.47 over 18 teams; value of one more dealer deal; Saturday levers | **offline** (Friday fixture) |
-| `BAZAAR_SIM=1 uv run bazaar status` | ran | target banner SIMULATOR, cash, level, cards, score breakdown, album | simulator |
-| `uv run bazaar status` | not run | same on the real game | **real game + team key** |
-| `BAZAAR_SIM=1 uv run bazaar agent taker --max-ticks 5` | not run | dry run, WOULD-moves only | simulator |
-| `BAZAAR_SIM=1 uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live` | not run | haggle with simulated Abuela (~4 ticks, 10 s each) | simulator, safe |
-
-- Simulator: https://bazaar-sim-production-1d48.up.railway.app (ran `/api/health`: doors open, tick 849, 10 s ticks).
-  `BAZAAR_SIM=1` = public sim (key `sim-team1`), `BAZAAR_SIM=local` = `SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve` on 127.0.0.1:8765. Every command prints `target: SIMULATOR …` first.
-- Cockpit in sim mode shows **overall BAD** because the Ledger panel is "file ledger.jsonl (THIS machine only)";
-  on the real game with Postgres it should be ok (unverified). Say so, or show it real.
-
-## 5. Architecture boxes to point at
-
-`docs/architecture.html` (on main, auto-refreshed): open it locally or on GitHub. Point at:
-1. **JEV (decision / orchestrator)**: jev-1.13.0; negotiation_move, offer_is_worth_accepting, duel_move, maker prices; "undecided is never a yes".
-2. **Guardrails / hard rules**: GUARDRAILS.md checked before every write; 1 accept per tick (Postgres ledger); prompt injection quoted.
-3. **Claude Agent SDK runtime + LLM → Sonnet 5.5**: desk + 4 subagents, MCP tools + guardrail hook, bazaar-mcp (bearer, dry run), LLM writes words only.
-4. **Observability + evals**: Phoenix every negotiation/duel/tick; outcomes → Postgres + Phoenix annotations; Bazaar Live deployed.
-
-`docs/agent-harness.md` is the **dev** harness (`.ai/` source → `scripts/sync-ai-docs.sh` → AGENTS.md/CLAUDE.md/
-`.claude/` skills, agents, commands; lifecycle `/spec → /plan → /build → /test → /review`, Honest Implementation
-Report). One sentence max ("how we built it with Claude Code"); the runtime story is RUNTIME.md "The desk" +
-`src/bazaar_agent/runtime/`.
-
-## Demo assets table
-
-| # | Asset | URL / command | What to show | Risk if offline | Fallback |
-|---|---|---|---|---|---|
-| 1 | Explainer site | `python3 -m http.server 8000 -d …/game-explainer-site/site` → http://127.0.0.1:8000/#shield | `#shield` naive vs ours; `#built` click Jev/Guardrails/LLM; `#dealers` haggle | none (static, no CDN); only on this Mac (unpushed) | `open …/site/index.html` (file://) |
-| 2 | Bazaar Live show | https://bazaar-live-production.up.railway.app (live) | buyer/seller acting out public moves, Jev meter, guardrail denial | needs internet; quiet if agents idle; sound gate | `/?mock=1&speed=2` (recorded afternoon), `?tts=off` |
-| 3 | Phoenix | https://phoenix-production-6aa3.up.railway.app, project `bazaar` | one `duel` root with `duel_pie_share`, one `negotiation` root with `ladder_share`, Jev verdict events | internet + login | screenshots taken beforehand; `uv run bazaar thread <id>` in terminal |
-| 4 | Cockpit | `uv run bazaar cockpit` (real) or `BAZAAR_SIM=1 uv run bazaar cockpit` | one screen of gates: cash vs floor, ledger, agents live, duels, ladder | real needs key + internet; sim shows Ledger BAD | `--no-key`, `BAZAAR_SIM=1`, or `--json` saved earlier |
-| 5 | Timeline | `uv run bazaar timeline --from-api` | the weekend in game hours ↔ Madrid time | keyless GETs need internet; the fixture default anchors to now (wrong day on Sunday) | `uv run bazaar timeline --compare docs/night/saturday-schedule.json`, or a saved `--json` |
-| 6 | Score model | `uv run bazaar evals score-sim` (w5w6 worktree) | model vs official RMSE 0.34; what one more deal is worth | none (fixture) | screenshot |
-| 7 | Evals report | `uv run bazaar evals report` | scorecard good/ok/bad, ladder best-3, Jev calibration | needs Postgres `DATABASE_URL` (no `.env` in the b6 worktree) | Phoenix annotations, docs/services.md example |
-| 8 | Architecture page | `docs/architecture.html` (main) | 4 boxes above, status colours, live links | none (local file) | explainer `#built` diagram |
-| 9 | Simulator | `BAZAAR_SIM=1 uv run bazaar status` / `dealer buy … --live` | safe live-looking play | sim on Railway | `BAZAAR_SIM=local` + `bazaar-sim serve` |
-
-## Suggested 5-minute order
-
-| Time | Beat | Asset |
+| Check | How | If it fails |
 |---|---|---|
-| 0:00–0:40 | The game in one breath + "structure binds" | Explainer hero → `#rule` (or skip straight to `#built`) |
-| 0:40–1:30 | Five ideas, click Jev → Guardrails → LLM words-only | Explainer `#built` diagram (or architecture.html boxes 1–4) |
-| 1:30–2:10 | Hostile text in, nothing binding out | Explainer `#shield` toggle naive ↔ ours |
-| 2:10–3:00 | It is live: the agents trading right now, voiced | Bazaar Live (fallback `?mock=1`) |
-| 3:00–3:50 | Every decision is a trace and is graded | Phoenix: `duel` root + `duel_pie_share`, `negotiation` + `ladder_share` |
-| 3:50–4:35 | The operator's screen + numbers | `bazaar cockpit` (second window, `--watch`), then `evals score-sim` or `evals report` |
-| 4:35–5:00 | What's next / honest gaps | architecture.html Roadmap + "Not started" |
+| Services up | `curl -s https://bazaar-taker-production.up.railway.app/health` and the maker's; `curl -s https://bazaar-live-production.up.railway.app/health` | Go straight to the backup recording |
+| Phoenix logged in, trace open | https://phoenix-production-6aa3.up.railway.app, project `bazaar`, user `admin@localhost` (password is in Railway only; never on a slide or in the repo). Keep two tabs open: the chosen trace, and the Spans list | Screenshot of the trace (taken Saturday) |
+| Bazaar Live sound gate clicked once | Open the URL, click "Start the show with sound" (or "Watch muted"), then leave it | `?mock=1&speed=2` plays recorded fixtures; say it is a recording |
+| `/state` shows only sent rows | Open `https://bazaar-taker-production.up.railway.app/state` and read it **before** the room | Do not show it; use the screenshot |
+| Database answers | `uv run bazaar db tables` (never show the URL) | Skip any on-screen SQL; use screenshots |
+| Laptop | Unmuted, notifications off, do-not-disturb on, display scaling checked, no `.env` open, terminal font large | — |
 
-Pre-flight (Sunday 08:30): push explainer branch or demo from this Mac; log in to Phoenix and open 2 chosen
-traces; open bazaar-live once and click the sound gate; confirm #121 status before showing raw `/state`;
-have `DATABASE_URL` available for `evals report` (never paste it on screen); unmute laptop.
+**Never put on screen:** `.env`, the team key, `DATABASE_URL`, the Phoenix password, a `decisions` row with limits, `GUARDRAILS.md` values,
+affinities or card values. Raw `/state` and `/events` are allow-listed since #69/#121 (sent rows only, `jev` null), but read the payload
+once before you show it.
+
+## The 90 seconds
+
+| Time | Screen | Say (short) | Source |
+|---|---|---|---|
+| 0:00–0:30 | **Bazaar Live**, `https://bazaar-live-production.up.railway.app` (live), buyer and seller at the stall, the deal from slide 3 on the cork board or in the speech | "These characters act out our agents' public moves, spoken. This is the {{CARD}} deal." | `docs/services.md` "Bazaar Live" |
+| 0:30–1:00 | **Phoenix**, project `bazaar`: the `negotiation` root of thread {{T}} → the `tick N` children → one event each of `message`, `dealer_offer`, `jev_verdict`, `guardrail`, `our_move`. Then the `ladder_share` annotation on the root | "Same deal, tick by tick: her message, her offer, Jev's floats and whether it cleared its bar, the guardrail verdict, our move. And the score of this negotiation." | README "Observability"; `capture.md`-verified span names |
+| 1:00–1:30 | **`/state`** of the taker (`.../state`), browser JSON viewer, or `curl -s .../state \| jq '.decisions[0:3]'` | "Anyone can read this. It says what we did. It never says why in numbers; our limits and Jev's floats are not published." | `docs/services.md` "Public by design" |
+
+If Phoenix's session view is merged (#139, N18) use **Sessions → `dealer:{dealer}:thread:{id}`** instead of the `negotiation` root. If
+not, use the Spans tab, because a `negotiation` root appears **only when the negotiation ends**. Choose a thread that has ended.
+
+## The deceptive offer is not in the 90 seconds
+
+Slide 4 uses a pre-recorded terminal: `uv run pytest tests/test_accept_gate.py tests/test_inspector.py -v` on the merged inspector, with
+the green lines for the bait test (`test_the_explainer_trickster_names_a_legendary_and_binds_a_common`). Put a small label on the
+recording: **SIMULATED: crafted offer, unit test**. Do not run it live.
+
+## BACKUP: what to record, and when
+
+Record on **Saturday afternoon, during a real deal**, so the backup is real and not a mock. Three assets, in this order of priority:
+
+| # | Recording | When | How |
+|---|---|---|---|
+| R1 | **Bazaar Live + Phoenix + `/state` as one 90 s screen recording**, exactly the table above, on the thread of a deal that just settled | Saturday 15:00–17:00 Madrid, as soon as a clean dealer deal settles (the Chato ladder and Duels II are the other candidates). Finish it with a deal you can name | macOS `Cmd+Shift+5` → record selected portion, microphone off, 1080p, laptop on power. Save as `pitch-demo-R1-<date>-<hhmm>.mov` in `~/Desktop/pitch/` and a copy on Marius's laptop |
+| R2 | **Slide 4's pytest run** (the bait refused) | Saturday, any time after #146 merges | Terminal at large font, record the full run, 20–30 s |
+| R3 | **A Bazaar Live mock** fallback with sound | Any time | `?mock=1&speed=2`, 60 s; use if the show is silent because agents are idle |
+| S | Stills: the thread transcript, the settlement row, the Phoenix tree, the `/state` JSON, the `bazaar evals report` table | At the same moments | `Cmd+Shift+4`; name them `S<n>-<what>.png`; **no secrets in frame** |
+
+Rules for recordings:
+1. Record **while the deal is fresh**, then immediately save the evidence set (`evidence.md` §3) for the same thread.
+2. Label on screen or in the first frame: date, time, "REAL, recorded". If it is a mock: "RECORDING OF A SIMULATION".
+3. Watch each recording once, start to end, before Sunday; check no key, URL with credentials, or limit appears.
+4. If the live demo and the recording disagree, trust the recording and say it is a recording.
+
+## Failure plan (decide before the room)
+
+| Failure | Action |
+|---|---|
+| Wi-Fi down | Play R1 from the desktop. Phone hotspot is the second network; test it Sunday 08:30 |
+| Phoenix slow or logged out | Show the screenshot `S-phoenix`; keep talking |
+| Bazaar Live silent (no agent activity) | `?mock=1&speed=2` and say "recording" |
+| `/state` empty after a redeploy (the 50-decision ring resets) | Show the screenshot; say the archive is Postgres |
+| Anything fails twice | Marius takes the laptop; Omar continues the story without it |
+
+## Open items
+
+- Bazaar Live PRs #4 (RPG scene) and #5 (real transcripts) were open at Saturday 04:30; confirm what is deployed.
+- #139 (session replay) is open; the Sessions view is UNVERIFIED on the live Phoenix.
+- The explainer site (`game-explainer-site`, Marius) was unpushed with a stale status chapter. Push it, or skip it. Not in these 90 s.
