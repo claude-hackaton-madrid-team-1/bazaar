@@ -411,3 +411,13 @@ def test_relistings_of_one_copy_are_one_copy_and_inexact_fills_do_not_count():
     odd = [ask(1, 10, "t06", "LAT-10", 84, 90, expires=40), settle(1, 14, "t06", "t15", "LAT-10", 90, 70)]
     prof = rv.profiles(rv.listings(odd), odd, AMAP, CATALOG)
     assert (prof["t06"].asks_filled, prof["t06"].inexact, prof.get("t15")) == (0, 1, None)  # no take credited
+
+
+def test_an_accepted_ask_is_promised_once_not_twice():
+    # pr-reviewer (rebase on #145): #145 added accepted asks to the sell count while #138's PROMISED already
+    # kept them among our offers; both together listed LAT-09 twice and a free duplicate became unsellable.
+    from bazaar_agent.agents.seller import open_commitments
+
+    accepted = {"id": 9, "maker": "t01", "status": "accepted", "give": {"assets": [{"id": 5, "ref": "LAT-09"}]}}
+    c = open_commitments([accepted], "t01")
+    assert c.listed == frozenset({5}) and c.listed_refs == ("LAT-09",)
