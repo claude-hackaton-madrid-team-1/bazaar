@@ -47,11 +47,13 @@ from bazaar_agent.agents.runtime import (
     JevAdvice,
     JevFn,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
     accept_limit,
     guard_context,
+    new_page_line,
     no_jev,
     read_snapshot,
     window_for,
@@ -308,6 +310,7 @@ class Taker:
         # (once); after the lower one held too, (dealer, item) -> the game hour until which we leave it.
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -331,6 +334,8 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked

@@ -468,3 +468,15 @@ AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last
 (`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
 `200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
 as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
+The smoke and `BAZAAR_SIM=local` both hardcode 127.0.0.1:8765. A wrapper that imports `sim_smoke`, sets
+`PORT`/`SIM` to another port and `GUARD` to a dir whose `sitecustomize.py` runs the repo's guard and then sets
+`bazaar_agent.config.LOCAL_SIM_URL` runs the whole gate there (children get only `GUARD` on PYTHONPATH). N14b
+used 8815: `SMOKE PASSED in 18 s`.
+
+### [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
+The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every tick, and "released" comes only
+from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
+maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
+value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.
