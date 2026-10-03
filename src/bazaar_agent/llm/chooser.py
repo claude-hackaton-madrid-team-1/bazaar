@@ -49,6 +49,10 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
     "money_command": re.compile(
         r"\b(accept|acepta|pay|paga|transfer|send|env[ií]a)\b.{0,30}\d", re.IGNORECASE | re.DOTALL
     ),
+    "asset_grab": re.compile(
+        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|every|todas|todos)\b|\bgive\b.{0,10}\bassets?\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
 }
 
 

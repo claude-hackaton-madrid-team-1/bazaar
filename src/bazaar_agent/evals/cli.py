@@ -229,3 +229,149 @@ def evals_import_duels(
             console.print(f"{path}: {n} duel snapshot(s) upserted")
             total += n
     console.print(f"imported {total} duel snapshot(s); the newest per duel is kept")
+
+
+@evals_app.command("score-sim")
+def evals_score_sim(
+    data: Annotated[Path | None, typer.Option(help="Calibration fixture (default: the repo's Friday fixture)")] = None,
+    feed: Annotated[Path | None, typer.Option(help="Rebuild the dealer deals from a feed capture (JSONL)")] = None,
+    fit: bool = typer.Option(False, help="Refit the level-2 weight on our official series first"),
+    as_json: bool = typer.Option(False, "--json", help="Calibration and marginals as JSON"),
+) -> None:
+    """The board-formula model vs Friday's official numbers, and what one more dealer deal is worth. Offline."""
+    from dataclasses import asdict, replace
+
+    from rich.table import Table
+
+    from bazaar_agent.evals import score_sim as ss
+
+    d = ss.load_data(data or ss.FRIDAY_DATA, feed)
+    model = ss.ScoreModel()
+    if fit:
+        w2, _ = ss.fit_level2_weight(d.deals, d.ours, d.team, model)
+        model = replace(model, level_weights={**model.level_weights, 2: w2})
+    cal = ss.calibrate(d.deals, d.board30, d.ours, d.team, model)
+    last = max(d.ours)
+    raw = ss.ladder_raw(d.deals, ss.snapshot_tick(last, model), model, ss.learned_ranges(d.deals), teams=[d.team])
+    top = ss.top_mean(raw.values())
+    marginals = ss.ladder_marginals(raw[d.team], top, model)
+    friday = raw[d.team] / top if top else 0.0
+    per_point = ss.final_points_per_round_point("sat", model)
+    levers = [
+        ("Friday's pattern again: ladder only", ss.RoundOutlook(ladder=friday)),
+        ("+ Duels I at the top-3 mean", ss.RoundOutlook(ladder=friday, duels=1.0)),
+        ("+ Market Test at the stall's level", ss.RoundOutlook(ladder=friday, duels=1.0, bench=0.5)),
+        ("+ trades at half the top-3 mean", ss.RoundOutlook(ladder=friday, duels=1.0, bench=0.5, trades=0.5)),
+        ("everything at the top-3 mean", ss.RoundOutlook(1.0, 1.0, 1.0, 1.0, 1.0)),
+    ]
+    if as_json:
+        out = {
+            "model": asdict(model),
+            "level2_weight": cal.level2_weight,
+            "ours": cal.ours,
+            "rmse_ours": round(cal.rmse_ours, 3),
+            "max_err_ours": round(cal.max_err_ours, 2),
+            "board30": cal.board,
+            "board30_mae": round(cal.board_mae, 2),
+            "ladder_raw": {"ours": round(raw[d.team], 4), "top3_mean": round(top, 4), "tick": last},
+            "marginals": [asdict(m) for m in marginals],
+            "saturday_levers": [
+                {"scenario": name, **o.points(model), "round": round(o.total(model), 2)} for name, o in levers
+            ],
+            "final_points_per_saturday_point": round(per_point, 3),
+        }
+        print(json.dumps(out, indent=2))
+        return
+    ours = Table(title=f"Our negotiating: official vs model (level-2 weight {cal.level2_weight:g})")
+    for col in ("tick", "official", "model", "error"):
+        ours.add_column(col, justify="right")
+    for tick, official, modelled in cal.ours:
+        if tick % model.refresh_ticks == 0 or tick in (min(d.ours), last):
+            ours.add_row(str(tick), f"{official:.2f}", f"{modelled:.2f}", f"{modelled - official:+.2f}")
+    console.print(ours)
+    console.print(
+        f"in sample (level-2 weight fitted on this series): RMSE {cal.rmse_ours:.2f} over {len(cal.ours)} snapshots "
+        f"({len({t - t % model.refresh_ticks for t in d.ours})} board refreshes), worst {cal.max_err_ours:.2f}; "
+        "out of sample (fit on ticks < 140) at tick 159: 7.87 vs 8.34 (tests/evals/test_score_sim.py)"
+    )
+    board = Table(title="Public board at tick 30 (ladder only): official vs model")
+    for col in ("team", "official", "model"):
+        board.add_column(col, justify="right")
+    for team, official, modelled in cal.board:
+        board.add_row(team, f"{official:.2f}", f"{modelled:.2f}")
+    console.print(board)
+    console.print(f"board MAE {cal.board_mae:.2f} over {len(cal.board)} teams")
+    table = Table(title=f"One more dealer deal, at tick {last}'s top-3 mean ({top:.3f}; ours {raw[d.team]:.3f})")
+    for col in ("move", "raw +", "round points +"):
+        table.add_column(col, justify="right")
+    for m in marginals:
+        table.add_row(m.move, f"{m.raw_delta:.3f}", f"{m.points:+.2f}")
+    console.print(table)
+    sat = Table(title=f"Saturday round levers (1 round point = {per_point:.2f} final game points)")
+    for col in ("scenario", "round points", "final +"):
+        sat.add_column(col, justify="right")
+    for name, outlook in levers:
+        sat.add_row(name, f"{outlook.total(model):.1f}", f"{outlook.total(model) * per_point:.1f}")
+    console.print(sat)
+    console.print(
+        "[dim]Weights: ladder 12.5 fitted; duels 12.5 (refuted: /me showed 14.39 on Saturday), trades 5, bench 15, "
+        "venue 15 assumed (unverified).[/dim]"
+    )
+
+
+@evals_app.command("score-check")
+def evals_score_check(
+    round_start: int = typer.Option(0, help="Count dealer deals from this tick (a round's first tick)"),
+    last: int = typer.Option(12, min=1, help="How many of the newest /me snapshots to show"),
+    as_json: bool = typer.Option(False, "--json", help="The rows as JSON"),
+) -> None:
+    """The score model next to our newest official /me numbers, from Postgres. Read-only, no game API call."""
+    from dataclasses import asdict
+
+    from rich.table import Table
+
+    from bazaar_agent.db import connect
+    from bazaar_agent.evals import inputs
+    from bazaar_agent.evals import score_sim as ss
+
+    with connect(app="bazaar-score-check") as conn:
+        conn.read_only = True
+        team = inputs.team_from_snapshots(conn)
+        feed = conn.execute(  # every team's dealer deals: the top-3 mean needs them all
+            "select id, tick, type, actor, payload from feed_events where type = any(%s) order by id",
+            (list(inputs.DEALER_EVENT_TYPES),),
+        ).fetchall()
+        events = [{"id": i, "tick": t, "type": k, "actor": a, "payload": p or {}} for i, t, k, a, p in feed]
+        snaps = conn.execute(
+            "select tick, score from snapshots where jsonb_typeof(score) = 'object' order by tick desc limit %s",
+            (last,),
+        ).fetchall()
+    if team is None:
+        _warn("no /me snapshot in Postgres yet: nothing to compare")
+        return
+    rows = ss.live_check(ss.deals_from_feed(events), sorted(snaps), team, ss.ScoreModel(), round_start)
+    if as_json:
+        print(json.dumps([asdict(r) | {"unexplained": r.unexplained} for r in rows], indent=2))
+        return
+    t = Table(title=f"{team}: official /me vs the score model (deals from tick {round_start})")
+    for col in ("tick", "negotiating", "ladder_points", "model", "model ladder", "duel_points", "rest"):
+        t.add_column(col, justify="right")
+
+    def cell(value: float | None) -> str:
+        return "–" if value is None else f"{value:g}"
+
+    for r in rows:
+        t.add_row(
+            str(r.tick),
+            cell(r.negotiating),
+            cell(r.ladder_points),
+            cell(r.model_ladder_points),
+            cell(r.model_ladder),
+            cell(r.duel_points),
+            cell(r.unexplained),
+        )
+    console.print(t)
+    console.print(
+        "[dim]ladder_points vs model: the share model. rest = negotiating − model ladder: duels + trades + error. "
+        "If ladder_points drops to 0 when a round opens, rerun with --round-start at that tick.[/dim]"
+    )

@@ -1301,6 +1301,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | `uv run bazaar monitor` | The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts. |
 | `uv run bazaar traders` | Every trader we know (dealers and teams) from the monitor's Postgres table, with status and level. |
 | `uv run bazaar alerts` | The latest alerts raised by the monitor: new dealers, level changes, announcements. |
+| `uv run bazaar budget` | Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made. |
 | `uv run bazaar feed capture` | Append the public feed to .local/feed/feed.jsonl once per tick. Ctrl-C to stop. |
 | `uv run bazaar feed stats` | How much feed history we hold, and the event mix. |
 | `uv run bazaar obs up` | Start Arize Phoenix (docker compose): UI and OTLP/HTTP on 127.0.0.1:6006, OTLP/gRPC on :4317. |
