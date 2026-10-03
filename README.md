@@ -304,6 +304,14 @@ assets already listed. Packs are scarce: at most `max_packs_per_game_hour` (GUAR
 dealer's own quota, so a pack move is kept only when Jev (`questions/packs.json`) says the slot is
 worth spending now; the header shows the slots used and left this game hour.
 
+`uv run bazaar plan pages` is the page economics (read-only, never trades): each missing page card's
+value with and without its page-bonus share, its price by source and the channel it scores through
+(a dealer deal counts only among our best three per level, a team buy as surplus at our private
+values), which pages are worth finishing, the buy order, and the cash plan hour by hour for each venue
+scenario under GUARDRAILS.md (grants from `/api/schedule`). It takes W3's `--ladder-plan`, W4's
+`--trades` and `--affinity`, and every API input as a file (`--me`, `--catalog`, `--dealers`,
+`--schedule`, `--feed`). Report: [`docs/night/w7-page-economics.md`](docs/night/w7-page-economics.md).
+
 - `uv run bazaar sell list <asset_id|ref> --price N` lists a card for cash, never below its `your_value`.
 - `uv run bazaar sell bid <ref> --price N` bids cash for any copy (how we buy rares only teams hold).
 - `uv run bazaar sell offers` shows our open offers; `uv run bazaar sell cancel <offer_id>` withdraws one.

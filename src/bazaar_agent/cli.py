@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -211,12 +212,15 @@ def teams(
     console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
 
 
-def _json_file(path: str) -> Any:
-    """A captured payload: a bare body, a fixture (`{"body": ...}`) or a feed event (`{"payload": ...}`)."""
-    from pathlib import Path
-
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and isinstance(data.get("body"), dict):
+def _json_file(path: str | None) -> Any:
+    """A captured payload: a bare body, a captured API response (`{"body": ...}`) or a feed event
+    (`{"type": ..., "payload": {...}}`); None for no file. One helper for `affinity`/`trade-plan` (#79) and
+    `plan pages` (#87): each PR defined its own, and the later definition silently replaced the earlier."""
+    if path is None:
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "body" in data:
         return data["body"]
     if isinstance(data, dict) and isinstance(data.get("payload"), dict) and "type" in data:
         return data["payload"]
@@ -1428,6 +1432,148 @@ def strategy(
         typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
         return
     _print_playbook(book, loaded, rules, ctx, commitments)
+
+
+# ---------------------------------------------------------------- plans (read-only)
+
+plan_app = typer.Typer(no_args_is_help=True, help="Read-only plans: page economics and the cash plan. Never trades")
+app.add_typer(plan_app, name="plan")
+FILE_HELP = "Read this JSON file instead of the API"
+
+
+def _jsonl_file(path: str) -> list[Event]:
+    """A feed capture: one event per line, or a monitor stream (its `agent.*` lines are skipped)."""
+    events = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                e = json.loads(line)
+                if isinstance(e.get("id"), int) and not str(e.get("type", "")).startswith("agent."):
+                    events.append(e)
+    return sorted(events, key=lambda e: e["id"])
+
+
+@plan_app.command("pages")
+def plan_pages(
+    me_file: str | None = typer.Option(None, "--me", help=f"{FILE_HELP} (GET /api/me)"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help=f"{FILE_HELP} (GET /api/catalog)"),
+    dealers_file: str | None = typer.Option(None, "--dealers", help=f"{FILE_HELP} (GET /api/dealers, or a list)"),
+    schedule_file: str | None = typer.Option(None, "--schedule", help=f"{FILE_HELP} (GET /api/schedule)"),
+    feed_file: str | None = typer.Option(None, "--feed", help="Read the feed from this JSONL capture"),
+    ladder_file: str | None = typer.Option(None, "--ladder-plan", help="W3's ladder_plan.json: its dealer slots"),
+    now_hours: float | None = typer.Option(
+        None,
+        "--now-hours",
+        help="Game hour to plan from (default: the schedule's now). Before the doors open, pass the hour they open "
+        "at (GET /api/clock t_hours), or yesterday's dealer deals keep today's best-three slots",
+    ),
+    venue_later: int = typer.Option(9, "--venue-later", help="Game hour of the 'venue later' scenario"),
+    what_if_floor: int | None = typer.Option(None, "--what-if-floor", help="Also plan the venue at this cash floor"),
+    trades_file: str | None = typer.Option(
+        None, "--trades", help="W4's trade-plan.json: its trades' cash is committed and their cards not bought twice"
+    ),
+    affinity_file: str | None = typer.Option(
+        None, "--affinity", help="W4's `bazaar affinity --json`: chasers (P(top set) ≥ 0.5) and holders' multipliers"
+    ),
+    multipliers_file: str | None = typer.Option(
+        None, "--holder-multipliers", help="JSON {team: {set: expected multiplier}}: what each holder wants"
+    ),
+    chasers_file: str | None = typer.Option(
+        None, "--chasers", help="JSON {set: [team, ...]}: who chases each set (e.g. from `bazaar affinity`)"
+    ),
+    what_if_caps: str = typer.Option(
+        "", "--what-if-caps", help="Plan as if these dealer caps held, e.g. chato:rare=93,chato:uncommon=31"
+    ),
+    venue_floor_rule: bool = typer.Option(
+        True, "--venue-floor-rule/--no-venue-floor-rule", help="PR #71: the bond + fee keep cash ≥ cash_floor"
+    ),
+    steps: bool = typer.Option(False, "--steps", help="Print every scenario hour by hour"),
+    as_json: bool = typer.Option(False, "--json", help="Print the plan as JSON"),
+    live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
+) -> None:
+    """Page economics: each missing page card's worth (with and without the page bonus), price by source and
+    scoring channel, which pages to finish, the buy order and the cash plan per venue scenario. Read-only:
+    every input can come from a file; the rest are GET requests. Nothing is ever posted."""
+    from bazaar_agent import pages as pg
+    from bazaar_agent import render
+
+    loaded, rules = _strategy(), _rules().rules
+
+    def read(path: str | None, route: str) -> Any:
+        return _json_file(path) if path else getattr(public_client(load_settings()), route)()
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    catalog = read(catalog_file, "catalog")
+    personas = read(dealers_file, "dealers")
+    dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
+    schedule = read(schedule_file, "schedule")
+    events = _jsonl_file(feed_file) if feed_file else _events(live)
+
+    def parsed(path: str | None, what: str, parse: Callable[[Any], Any], default: Any) -> Any:
+        """A plan file from another tool, checked here: a bad one stops with its name, never a traceback."""
+        if not path:
+            return default
+        try:
+            return parse(_json_file(path))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+            _fail(f"{path} is not {what}: {type(e).__name__} {e}")
+
+    schedule_hours = float((schedule.get("body", schedule) or {}).get("now_hours") or 0)
+    open_hour = math.floor(now_hours if now_hours is not None else schedule_hours)
+    ladder = parsed(ladder_file, "a W3 ladder plan (schedule rows)", lambda p: pg.ladder_slots_from(p, open_hour), [])
+    trades = parsed(trades_file, "a W4 trade plan (listings, threads)", pg.trades_from, [])
+    chasers, expected = parsed(affinity_file, "a W4 affinity map", pg.from_affinity_map, (None, None))
+    if chasers_file:
+        chasers = parsed(chasers_file, "{set: [team, ...]}", pg.chasers_from, None)
+    if multipliers_file:
+        expected = parsed(multipliers_file, "{team: {set: multiplier}}", pg.multipliers_from, None)
+    try:
+        caps = pg.parse_caps(what_if_caps)
+    except ValueError as e:
+        _fail(str(e))
+    plan = pg.build_plan(
+        me,
+        catalog,
+        events,
+        dealers,
+        schedule,
+        loaded.params,
+        rules,
+        now_hours=now_hours,
+        ladder=ladder,
+        trades=trades,
+        venue_later=venue_later,
+        what_if_floor=what_if_floor,
+        chasers=chasers,
+        expected=expected,
+        venue_floor_rule=venue_floor_rule,
+        what_if_caps=caps,
+    )
+    if as_json:
+        typer.echo(json.dumps(pg.plan_dict(plan), indent=2, ensure_ascii=False))
+        return
+    grants = ", ".join(f"+{g.cash} at h{g.hour:g}" for g in plan.grants) or "none"
+    console.print(
+        f"tick {plan.tick} · cash {plan.cash} · cash_floor {rules.cash_floor} · grants still to come: {grants} · "
+        f"W3 ladder slots: {len(ladder)}"
+    )
+    if now_hours is None:
+        console.print(
+            f"[yellow]planned from the schedule's now (h{schedule_hours:g}): before the doors open, re-run with "
+            "--now-hours <the hour they open at> so yesterday's dealer deals do not hold today's best-three slots"
+            "[/yellow]"
+        )
+    for note in plan.notes:
+        console.print(f"[yellow]{note}[/yellow]")
+    console.print(render.pages_table(list(plan.pages)))
+    console.print(render.page_cards_table(list(plan.pages)))
+    console.print(render.buy_order_table(list(plan.wants)))
+    console.print(render.scenarios_table(list(plan.scenarios)))
+    if steps:
+        for scenario in plan.scenarios:
+            for line in render.scenario_steps(scenario):
+                console.print(line, soft_wrap=True, markup=False, highlight=False)
+    console.print("[yellow]A plan, not an order: every buy is a separate command, and guardrails re-check it.[/yellow]")
 
 
 # ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
