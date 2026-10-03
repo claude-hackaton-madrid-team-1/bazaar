@@ -213,6 +213,25 @@ rebased on `main` after the previous one merges.
   `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
   raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
 
+### TO114 / TO116 / TO126 / TO133 / TO110 / TO128 — takeover of Marius's night "bite" PRs (2026-10-03, task_edf74300462e)
+Spec (external, no local spec file): each PR's body and its report under `docs/night/` (B17, B18, B14, B16, B19,
+B10); RULES.md "Dealers", "The clock" and "Your own market". Marius is offline: each one is squashed onto the
+current base (his night history is dropped), every default kept (no flag flips), the gate + `scripts/sim_smoke.py`
+run, then `/pr-review` (pr-reviewer + security-auditor: money paths). His PR is closed with a pointer to ours.
+- TO114 (B17, base #72). Steps: restart wrap-up books deals of threads the old process drove · adopt an orphan
+  whose old bid stands (no fresh wait for her answer: it already had `orphan_after_ticks`) or close it after 3 quiet
+  ticks · kill switch / dry run hold. · **Acceptance:** the r2 bite tests flip; `tests/test_taker_restart.py`.
+- TO116 (B18, on TO114). Steps: a refused accept gives the team's accept back · the team client never re-sends a
+  429 or a write · 4 s timeouts. · **Acceptance:** its bite tests flip; gate; sim smoke.
+- TO126 (B14, on TO116). Steps: a maker bid that lapses unfilled books a refund dated at its spend · a bid listed
+  again on the confirming tick is alive. · **Acceptance:** its bite tests flip; the hour's spend never < 0.
+- TO133 (B16, on TO126). Steps: an accept `/api/me` does not show yet counts as held and its cash as gone.
+  · **Acceptance:** its bite tests flip.
+- TO110 (B19, base #106 + #71). Steps: an announced venue fee that applies by settlement is priced in.
+  · **Acceptance:** its tests; no conflict with the #71 venue code.
+- TO128 (B10). Steps: maker cancel cap, per-service tick offset, injection detector gaps. · **Acceptance:**
+  its tests; every new limit in GUARDRAILS.md at today's behaviour.
+
 ---
 
 ### N15 — Jev picks the desk's model per request
