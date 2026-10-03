@@ -131,6 +131,7 @@ negotiates well.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
+| [HA2](HA2-spec.md) (new) | Approve big trades from chat and Bazaar Live: bazaar-mcp's human-only tools `approvals`, `approve`, `revoke` (not in any agent's tool set; served only with `X-Approver-Token` = BAZAAR_APPROVER_TOKEN, fail closed, lockout, 10 writes/min; refused when an approval could only loosen a hard cap, a page's last copy or our value) + bazaar-live #53's Approvals screen calling them server-side | 1 | 🔵 PR (feat/approval-mcp-tools) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
@@ -632,6 +633,12 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
   would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
   sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
+
+### SP2 — The schedule playbook ([spec](SP2-spec.md))
+- Step 1 — `playbook.py` + news sentinel wiring, learnings rows per instruction, taker obeys `no_new_dealer_thread`
+  behind `playbook_enabled` · **Acceptance:** tests/test_playbook.py; full gate.
+- Follow-ups: maker and duels obey their constraints (`keep_broker_up`, `yield_accepts`); a price probe that turns a
+  rumour into a verified signal.
 
 ## Parallel-work notes
 
