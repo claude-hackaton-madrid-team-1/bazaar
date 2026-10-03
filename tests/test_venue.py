@@ -70,7 +70,7 @@ def vault(data_dir, connect=None):
 
 class FakeConn:
     """psycopg's surface the vault uses (execute(...).fetchone(), autocommit, closed, close()), over a dict
-    {(target, venue): (key, tick)} that stands for the `venue_keys` table."""
+    {(target, venue): (key, tick)} that stands for the `venue_broker_keys` table."""
 
     def __init__(self, store, fail=False):
         self.store, self.fail, self.closed, self.autocommit = store, fail, False, False
@@ -81,25 +81,28 @@ class FakeConn:
         self.last = None
         if sql.startswith("create table"):
             return self
-        if sql.startswith("select count(*) from venue_keys where target = %s and venue <> %s"):
+        if sql.startswith("select count(*) from venue_broker_keys where target = %s and venue <> %s"):
             target, claim = params
             self.last = (sum(1 for t, v in self.store if t == target and v != claim),)
         elif sql.startswith("select count(*)"):
             self.last = (sum(1 for t, _ in self.store if t == params[0]),)
-        elif sql.startswith("insert into venue_keys") and "''" in sql:  # the claim
+        elif sql.startswith("insert into venue_broker_keys") and "do nothing" in sql:  # a venue without its key
+            target, venue, tick = params
+            self.store.setdefault((target, venue), ("", tick))
+        elif sql.startswith("insert into venue_broker_keys") and "''" in sql:  # the claim
             target, claim, tick, stale = params
             held = self.store.get((target, claim))
             if held is None or held[1] < stale:
                 self.store[(target, claim)] = ("", tick)
                 self.last = (claim,)
-        elif sql.startswith("insert into venue_keys"):
+        elif sql.startswith("insert into venue_broker_keys"):
             target, venue, key, tick = params
             self.store[(target, venue)] = (key, tick)
-        elif sql.startswith("delete from venue_keys"):
+        elif sql.startswith("delete from venue_broker_keys"):
             self.store.pop(tuple(params), None)
         elif sql.startswith("select venue, broker_key"):
             target, claim, wanted, _ = params
-            rows = [(v, k) for (t, v), (k, _) in self.store.items() if t == target and v != claim]
+            rows = [(v, k) for (t, v), (k, _) in self.store.items() if t == target and v != claim and k]
             rows = [r for r in rows if wanted in (None, r[0])]
             self.last = rows[-1] if rows else None
         else:
@@ -202,7 +205,7 @@ def test_the_vault_reads_postgres_first_then_the_file_then_the_environment(tmp_p
     assert down.load("v07") is None and down.save("v07", SIM_KEY, 1) == ("file",)
 
 
-def test_the_vault_table_is_the_schema_s_venue_keys(tmp_path):
+def test_the_vault_table_is_the_schema_s_venue_broker_keys(tmp_path):
     from importlib.resources import files
 
     schema = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
@@ -322,3 +325,18 @@ def test_cli_venue_fee_rejects_a_fee_above_the_cap_before_anything_is_sent(tmp_p
     monkeypatch.setattr(cli, "_team_client", lambda: team)
     result = CliRunner().invoke(cli.app, ["venue", "fee", "1500", "--live"])
     assert result.exit_code == 1 and "invalid" in result.output and team.sent == []
+
+
+def test_one_postgres_blip_never_locks_the_vault_out_for_good(tmp_path):
+    """Round-2 review P1: a call skipped by the backoff must not re-arm it, or the h6.5 opening never comes."""
+    store, attempts = {}, []
+
+    def flaky():
+        attempts.append(1)
+        return FakeConn(store, fail=len(attempts) == 1)  # only the first connect's statement fails
+
+    v = vault(tmp_path, flaky)
+    answers = [v.ready(durable=True) for _ in range(vn.DB_RETRY_CALLS + 2)]
+    assert answers[0] is not None and answers[-1] is None  # down once, back after the backoff
+    assert len(attempts) == 2
+    assert v.claim(400) and v.opened_before() is False

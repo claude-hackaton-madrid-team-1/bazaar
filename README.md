@@ -283,7 +283,7 @@ hour 6.5 (`venue_open_after_game_hours`, ~11:30 Madrid, before the 12:00 Market 
 its broker every tick: exact maximum-surplus matching, bench first, ties in book order like the free stall
 (so never below it on the same book), never two offers of one maker, never ours. Until the venue is open
 every purchase keeps `cash_floor` + `venue_bond_reserve` (100 + 270) in cash. The broker key goes to the
-shared Postgres (`venue_keys`) and is never shown anywhere. Details, the key and how to stop it:
+shared Postgres (`venue_broker_keys`) and is never shown anywhere. Details, the key and how to stop it:
 [docs/services.md](docs/services.md#our-venue-opened-by-the-maker-at-game-hour-65).
 
 - `uv run bazaar venue status` shows the switch, our venue (if any) and what the broker would match now.
@@ -952,14 +952,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
+- [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
 - [2026-10-03] build-error — a sim venue test opened nothing: `locked` at tick 0
 - [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
 - [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
 - [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
-- [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
-- [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
 
 <!-- BAZAAR:STATUS:END -->
 

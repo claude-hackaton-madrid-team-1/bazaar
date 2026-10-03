@@ -8,7 +8,7 @@ opening fee may never take cash below `cash_floor`.
 
 The broker key is returned once, by the opening call. It is a secret like the team key: never printed,
 logged, published or committed. `KeyVault` keeps it where the maker finds it again after a restart or a
-Railway redeploy: the shared Postgres `venue_keys` table (the simulator has its own database), and
+Railway redeploy: the shared Postgres `venue_broker_keys` table (the simulator has its own database), and
 `<data_dir>/broker.env` (mode 0600, read back by `config.load_settings` as `BAZAAR_BROKER_KEY`). No public
 route reads that table. A real broker key is only sent to the real game, a simulator key (`simbk-...`)
 only to another host.
@@ -122,8 +122,9 @@ def check_key_file_writable(data_dir: Path) -> None:
 # a key is never lost to a database the schema was not applied to yet. One row per venue we opened on a
 # target (the game's host, or a simulator's host:port), plus a `_claim` row while an opening is in flight.
 VENUE_KEYS_DDL = (
-    "create table if not exists venue_keys (target text not null, venue text not null, broker_key text not null, "
-    "opened_tick int, created_at timestamptz not null default now(), primary key (target, venue))"
+    "create table if not exists venue_broker_keys (target text not null, venue text not null, "
+    "broker_key text not null, opened_tick int, created_at timestamptz not null default now(), "
+    "primary key (target, venue))"
 )
 CLAIM = "_claim"  # the venue column of the row that reserves an opening for one process
 CLAIM_STALE_TICKS = 20  # a claim older than this, with no venue to show for it, was a process that died
@@ -142,8 +143,12 @@ def _target(url: str) -> str:
     return parts.netloc.lower() or url
 
 
+class _Skipped(ConfigError):
+    """Postgres is skipped for a few calls after a failure."""
+
+
 class KeyVault:
-    """Where our broker key lives between restarts: the shared Postgres `venue_keys` table first (a Railway
+    """Where our broker key lives between restarts: the shared Postgres `venue_broker_keys` table first (a Railway
     redeploy keeps it), then `<data_dir>/broker.env`, then BAZAAR_BROKER_KEY / BAZAAR_VENUE. It also holds
     what makes the automatic opening happen once across processes and restarts (`opened_before`, `claim`).
     Errors name only their type: a psycopg message could quote a parameter. Every key it reads or saves is
@@ -171,18 +176,22 @@ class KeyVault:
             raise ConfigError("no database configured for the broker key")
         if self._skip > 0:
             self._skip -= 1
-            raise ConfigError("Postgres was unreachable a moment ago")
+            raise _Skipped("Postgres was unreachable a moment ago")
         if self._conn is None or self._conn.closed:
             try:
                 self._conn = self._connect()
                 self._conn.autocommit = True
                 self._conn.execute(VENUE_KEYS_DDL)
-            except Exception:
-                self._drop()
+            except Exception as e:
+                self._failed(e)
                 raise
         return self._conn
 
-    def _drop(self) -> None:
+    def _failed(self, e: BaseException) -> None:
+        """A connect or query that failed: drop the connection and skip Postgres for a few calls. A call skipped
+        by that backoff is not a new failure (else one blip would lock Postgres out for good)."""
+        if isinstance(e, _Skipped):
+            return
         conn, self._conn, self._skip = self._conn, None, DB_RETRY_CALLS
         if conn is not None:
             with contextlib.suppress(Exception):  # already gone
@@ -192,9 +201,11 @@ class KeyVault:
         """None when a key returned now can be saved (`durable`: in Postgres, which a redeploy keeps), else why not."""
         if durable:
             try:
-                self._db().execute("select count(*) from venue_keys where target = %s", (self.target,)).fetchone()
+                self._db().execute(
+                    "select count(*) from venue_broker_keys where target = %s", (self.target,)
+                ).fetchone()
             except Exception as e:
-                self._drop()
+                self._failed(e)
                 return f"Postgres cannot hold the broker key ({type(e).__name__})"
             return None
         try:
@@ -208,11 +219,13 @@ class KeyVault:
         try:
             row = (
                 self._db()
-                .execute("select count(*) from venue_keys where target = %s and venue <> %s", (self.target, CLAIM))
+                .execute(
+                    "select count(*) from venue_broker_keys where target = %s and venue <> %s", (self.target, CLAIM)
+                )
                 .fetchone()
             )
-        except Exception:
-            self._drop()
+        except Exception as e:
+            self._failed(e)
             return None
         return bool(row and row[0])
 
@@ -223,24 +236,36 @@ class KeyVault:
             row = (
                 self._db()
                 .execute(
-                    "insert into venue_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
+                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
                     "on conflict (target, venue) do update set opened_tick = excluded.opened_tick "
-                    "where venue_keys.opened_tick < %s returning venue",
+                    "where venue_broker_keys.opened_tick < %s returning venue",
                     (self.target, CLAIM, tick, tick - CLAIM_STALE_TICKS),
                 )
                 .fetchone()
             )
-        except Exception:
-            self._drop()
+        except Exception as e:
+            self._failed(e)
             return False
         return row is not None
+
+    def mark(self, venue: str, tick: int) -> None:
+        """Remember a venue we run without its key (an opening whose answer was lost): it counts as opened, so
+        the maker never opens another after it closes. The key column stays empty; `load` skips it."""
+        try:
+            self._db().execute(
+                "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
+                "on conflict (target, venue) do nothing",
+                (self.target, venue, tick),
+            )
+        except Exception as e:
+            self._failed(e)
 
     def release(self) -> None:
         """Give the claim back (the opening was refused: nothing was opened)."""
         try:
-            self._db().execute("delete from venue_keys where target = %s and venue = %s", (self.target, CLAIM))
-        except Exception:
-            self._drop()
+            self._db().execute("delete from venue_broker_keys where target = %s and venue = %s", (self.target, CLAIM))
+        except Exception as e:
+            self._failed(e)
 
     def save(self, venue: str, key: str, tick: int) -> tuple[str, ...]:
         """Write the key everywhere it can go; where it went (empty: nowhere, say so without the key)."""
@@ -252,15 +277,15 @@ class KeyVault:
             try:
                 db = self._db()
                 db.execute(
-                    "insert into venue_keys (target, venue, broker_key, opened_tick) values (%s, %s, %s, %s) "
+                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, %s, %s) "
                     "on conflict (target, venue) do update set broker_key = excluded.broker_key, "
                     "opened_tick = excluded.opened_tick",
                     (self.target, venue, key, tick),
                 )
-                db.execute("delete from venue_keys where target = %s and venue = %s", (self.target, CLAIM))
+                db.execute("delete from venue_broker_keys where target = %s and venue = %s", (self.target, CLAIM))
                 saved.append("postgres")
-            except Exception:
-                self._drop()
+            except Exception as e:
+                self._failed(e)
         try:
             save_broker_key(self.data_dir, venue, key)
             saved.append("file")
@@ -283,16 +308,16 @@ class KeyVault:
                 row = (
                     self._db()
                     .execute(
-                        "select venue, broker_key from venue_keys where target = %s and venue <> %s "
-                        "and (%s::text is null or venue = %s) order by created_at desc limit 1",
+                        "select venue, broker_key from venue_broker_keys where target = %s and venue <> %s "
+                        "and broker_key <> '' and (%s::text is null or venue = %s) order by created_at desc limit 1",
                         (self.target, CLAIM, venue, venue),
                     )
                     .fetchone()
                 )
                 if row is not None:
                     return StoredVenue(str(row[0]), SecretStr(str(row[1])), "postgres")
-            except Exception:
-                self._drop()
+            except Exception as e:
+                self._failed(e)
         saved = read_env_file(self.data_dir / BROKER_ENV_FILE)
         if saved.get("BAZAAR_BROKER_KEY") and saved.get("BAZAAR_VENUE") and venue in (None, saved["BAZAAR_VENUE"]):
             return StoredVenue(saved["BAZAAR_VENUE"], SecretStr(saved["BAZAAR_BROKER_KEY"]), "file")
@@ -339,6 +364,12 @@ def guarded_write(
     response = call()
     body = dict(response) if isinstance(response, dict) else {"result": response}
     return VenueOutcome(True, verdict, body, f"sent: {describe}")
+
+
+def may_have_landed(e: BazaarError) -> bool:
+    """A write the server may have carried out although we got no answer: no response, a 5xx, or a body that
+    is not JSON. Only a 4xx refusal is sure to have changed nothing."""
+    return not 400 <= e.status < 500
 
 
 class AlreadyOpened(ConfigError):
@@ -392,13 +423,16 @@ def open_venue(
                 raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
             if not vault.claim(ctx.tick):
                 raise ConfigError("another process holds the opening claim: not opening")
+            if vault.opened_before() is not False:  # another process saved its venue between our two reads
+                vault.release()
+                raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
         mechanism = {"mechanism": spec.mechanism}
         try:
             return team.open_venue(
                 spec.name, spec.fee_bps, spec.fee_per_card, rules=mechanism, description=spec.description
             )
         except BazaarError as e:
-            if durable and e.code != "network":  # refused: nothing opened, the next try may claim again
+            if durable and not may_have_landed(e):  # refused: nothing opened, the next try may claim again
                 vault.release()
             raise
 
