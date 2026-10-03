@@ -15,7 +15,8 @@ from bazaar_agent.agents.inspector import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CARDS = CardIndex.from_catalog(json.loads((FIXTURES / "api" / "get_api_catalog.anon.json").read_text())["body"])
+CATALOG_BODY = json.loads((FIXTURES / "api" / "get_api_catalog.anon.json").read_text())["body"]
+CARDS = CardIndex.from_catalog(CATALOG_BODY)
 
 
 def offer(give, want=None, oid=77):
@@ -151,16 +152,18 @@ def test_the_message_that_carried_an_offer():
 def test_the_flag_book_sends_up_to_its_limit_and_never_flags_a_trusted_dealer():
     from bazaar_agent.guardrails import Guardrails
 
-    book = FlagBook.from_rules(Guardrails(max_flags_per_process=1, flag_trusted_dealers="abuela"))
+    rules = Guardrails(max_flags_sent=1, flag_trusted_dealers="abuela", flag_dealers="trile")
+    book = FlagBook.from_rules(rules)
     (i,) = inspect_thread(THREAD, "trile", CARDS)
     assert book.candidate(i) and book.room() and book.trusted == frozenset({"abuela"})
-    book.sent[901] = i.reason
+    assert book.opted_out(i) is None and book.opted_in == frozenset({"trile"})
+    book.remember(901, i.reason)
     assert not book.candidate(i) and not book.room()  # sent once; the send limit is reached
     assert not FlagBook(trusted=frozenset({"trile"})).candidate(i)  # a trusted dealer is never flagged
 
 
 def test_a_denied_flag_is_logged_once_and_sent_once_flags_are_allowed():
-    book, sent, lines = FlagBook(), [], []
+    book, sent, lines = FlagBook(opted_in=frozenset({"trile"})), [], []
     allowed = {"now": False}
 
     def run():
@@ -210,7 +213,7 @@ def step(guard_reason=None, send=True):
         THREAD,
         "trile",
         CARDS,
-        FlagBook(),
+        FlagBook(opted_in=frozenset({"trile"})),
         guard=lambda _: guard_reason,
         send=(lambda mid, reason: sent.append((mid, reason))) if send else None,
         log=lines.append,
@@ -258,18 +261,20 @@ def test_a_name_inside_a_longer_name_is_one_card_and_a_negated_mention_is_no_cla
         assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=5).verdict == "block"
 
 
-def test_a_bare_no_is_not_a_denial_so_a_covering_trickster_still_flags():
+def test_any_negation_in_the_sentence_means_no_claim_even_a_covering_trickster():
+    """Precision over recall (#152 audit r2): a wrong flag costs points, a missed one only a bonus. This
+    trickster is still refused (block); it is just not flagged."""
     o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
     text = "No lo dudes: Teatro Valle-Inclán, recién llegado, 25 P."
-    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=11).verdict == "flag"
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=11).verdict == "block"
 
 
 def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
     from bazaar_agent.sdk import BazaarError
 
-    for status, tries in ((400, 1), (0, 1), (503, 2)):
+    for status, tries in ((400, 1), (0, 1), (503, 1), (504, 1), (429, 2)):
         calls: list[int] = []
-        book = FlagBook()
+        book = FlagBook(opted_in=frozenset({"trile"}))
 
         def send(mid, reason, status=status, calls=calls):
             calls.append(mid)
@@ -277,7 +282,8 @@ def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
 
         for _ in range(2):
             flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=send, log=lambda _: None)
-        assert len(calls) == tries  # 4xx: refused for good; no response: it may have landed; 5xx: try again
+        assert len(calls) == tries  # never twice, except a 429 (not processed)
+        assert book.landed == (0 if status in (400, 429) else 1)  # a refusal never counts toward the cap
 
 
 @pytest.mark.parametrize(
@@ -299,8 +305,161 @@ def test_honest_out_of_stock_words_block_but_never_flag(text):
     assert inspect_offer(o, topic, text, CARDS, message_id=12).verdict == "block"
 
 
-def test_one_denied_mention_never_hides_a_claim_in_another():
-    """Review r2 P2: 'No X like mine anywhere! X for you' still claims X."""
+def test_any_denial_anywhere_in_the_message_means_no_claim_the_trick_is_still_refused():
+    """Precision over recall (#152 review r3): 'No X like mine anywhere! X for you' is refused (block), not
+    flagged: a denial word anywhere in a message is enough to stay silent."""
     o = offer({"types": ["card:LAV-03"]}, {"cash": 21})
     text = "No Teatro Valle-Inclán like mine anywhere! Teatro Valle-Inclán for you, 21 P."
-    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "flag"
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "block"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "LAV-06? Gone. Take this one instead, it is cheaper.",
+        "LAV-06 isn't available today. This common is all I have.",
+        "La Tabacalera no está disponible, cariño. Te doy este.",
+    ],
+)
+def test_honest_disclosures_from_the_security_audit_block_but_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=13).verdict == "block"
+
+
+def test_a_corrupt_flags_file_never_stops_a_start_and_keeps_every_readable_flag(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+
+    path = tmp_path / "flags.jsonl"
+    path.write_text('{"message_id": 77, "landed": true, "reason": "x"}\n{"message_id": 79, "rea\n[1, 2]\n')
+    book = FlagBook.from_rules(Guardrails(flag_dealers="trile"), path)
+    assert book.sent == {77: "x"} and book.skipped == 2
+    assert book.landed == 3  # fail closed: each unreadable line may have been a flag that landed
+    assert book.remember(80, "y", landed=False) is None and book.landed == 3  # a refusal never counts
+    assert FlagBook.from_rules(Guardrails(), path).sent.keys() == {77, 80}
+
+
+def test_an_untrusted_dealer_not_opted_in_is_logged_never_sent():
+    sent, lines = [], []
+    flag_step(
+        THREAD,
+        "trile",
+        CARDS,
+        FlagBook(),  # flag_dealers = none: no dealer may be flagged
+        guard=lambda _: None,
+        send=lambda mid, reason: sent.append(mid),
+        log=lines.append,
+    )
+    assert sent == [] and lines and "trile is not in flag_dealers" in lines[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I do not currently have LAV-06, so here is a common for 12.",
+        "LAV-06 is not something I can give you today; this one instead, 12 P.",
+        "Nothing like La Tabacalera left. Este, 12.",
+        "Lo siento, La Tabacalera nunca la tuve. Te doy este por 12.",
+        "I can't find LAV-06 anywhere. Take this.",
+    ],
+)
+def test_honest_disclosures_with_a_negation_in_the_sentence_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=15).verdict == "block"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera para ti, 12 P. Una joya.",
+        "Here it is: LAV-06, the one you asked for. 12 P.",
+        "Un cromo raro, solo 12.",
+    ],
+)
+def test_the_signature_without_any_negation_still_flags(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    topic = {"buy": {"rarity": "rare", "set": "LAV"}} if "raro" in text else {"buy": {"card": "LAV-06"}}
+    assert inspect_offer(o, topic, text, CARDS, message_id=16).verdict == "flag"
+
+
+def test_the_rules_never_let_a_trusted_dealer_be_opted_in():
+    from bazaar_agent import guardrails as gr
+
+    for line in ("- `flag_dealers` = abuela — x", "- `flag_dealers` = trile,chato — x"):
+        with pytest.raises(gr.GuardrailsError, match="never flagged"):
+            gr.parse_guardrails(line)
+    text = "- `flag_trusted_dealers` = none — x\n- `flag_dealers` = abuela — x"
+    with pytest.raises(gr.GuardrailsError, match="never flagged"):
+        gr.parse_guardrails(text)  # emptying the trusted list does not free abuela either
+
+
+def test_a_torn_last_line_is_ended_before_the_next_flag_is_appended(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+
+    path = tmp_path / "flags.jsonl"
+    path.write_text('{"message_id": 77, "landed": true, "reason": "x"}\n{"message_id": 79, "rea')
+    book = FlagBook.from_rules(Guardrails(), path)
+    book.remember(80, "y")
+    again = FlagBook.from_rules(Guardrails(), path)
+    assert set(again.sent) == {77, 80} and again.skipped == 1 and again.landed == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera? Ya no tengo. Este, 12.",
+        "Rare card? Not today. This one for 12.",
+        "La Tabacalera... se me ha terminado. Te doy este por 12.",
+        "Nobody has LAV-06 this week. Here, 12 P.",
+        "LAV-06, ya la vendí. Este por 12.",
+        "My last La Tabacalera went yesterday. 12 P for this.",
+        "I wish I still had La Tabacalera! This one, 12.",
+    ],
+)
+def test_honest_words_with_the_denial_in_another_sentence_never_flag(text):
+    """#152 review r3 P2: the denial need not share the card's sentence."""
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    topic = {"buy": {"rarity": "rare", "set": "LAV"}} if "Rare" in text else {"buy": {"card": "LAV-06"}}
+    assert inspect_offer(o, topic, text, CARDS, message_id=17).verdict == "block"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera? Out of stock, sorry. Este, 12.",
+        "You asked for La Tabacalera. I don't have it. 12 P.",
+        "La Tabacalera is all gone. 12 P for this.",
+        "La Tabacalera se agotó. Toma este, 12.",
+        "In place of La Tabacalera, this one for 12.",
+        "La Tabacalera has been taken by another team. 12 P for this.",
+        "Here is a common for you instead of La Tabacalera: 12 P.",
+        "Te doy una común, 12 P. La Tabacalera vuela.",
+    ],
+)
+def test_the_security_audits_round_3_honest_shapes_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=18).verdict == "block"
+
+
+def test_a_flag_whose_row_cannot_be_written_first_is_never_sent(tmp_path):
+    """Security r3 P3: the row goes to disk BEFORE the POST; no row, no flag (a restart would forget it)."""
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("a file where the data dir should be")
+    book = FlagBook(opted_in=frozenset({"trile"}), path=blocked / "flags.jsonl")
+    sent, lines = [], []
+    flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=lambda m, r: sent.append(m), log=lines.append)
+    assert sent == [] and any("not sent: flags file not written" in line for line in lines)
+
+
+def test_a_rate_limited_flag_is_withdrawn_on_disk_and_a_restart_may_try_it_again(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+    from bazaar_agent.sdk import BazaarError
+
+    path = tmp_path / "flags.jsonl"
+    book = FlagBook(opted_in=frozenset({"trile"}), path=path)
+
+    def limited(mid, reason):
+        raise BazaarError("rate_limited", "slow", 429)
+
+    flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=limited, log=lambda _: None)
+    again = FlagBook.from_rules(Guardrails(flag_dealers="trile"), path)
+    assert 901 not in again.sent and again.landed == 0  # the pending row was withdrawn by the 429

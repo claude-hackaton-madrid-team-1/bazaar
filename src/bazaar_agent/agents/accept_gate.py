@@ -21,8 +21,10 @@ from typing import Any, Literal
 from bazaar_agent.agents.duelist import DuelMove, duel_done, duel_id, effective_price, inside_limit, rival_text
 from bazaar_agent.agents.inspector import CardIndex, Verdict, inspect_offer, message_for_offer
 from bazaar_agent.agents.market import BoardOffer
+from bazaar_agent.swaps import TheirOffer, is_the_planned_swap, read_offer
+from bazaar_agent.trade_desk import Trade
 
-GateKind = Literal["dealer", "board", "duel"]
+GateKind = Literal["dealer", "board", "duel", "team"]
 # A price the words claim: "80 P", "80p", "80 primas", "80 €" (a bare number is too ambiguous to read as one).
 PRICE_CLAIM = re.compile(r"(?<![\w.])(\d{1,7})\s*(?:p|primas?|€)(?!\w)", re.IGNORECASE)
 
@@ -87,9 +89,10 @@ def dealer_gate(
     message_id, text = message_for_offer(thread, offer_id)
     inspection = inspect_offer(offer, topic, text, cards, dealer=dealer, message_id=message_id)
     findings = list(inspection.findings)
-    asks = (offer.get("want") or {}).get("cash")
+    selling = isinstance(topic.get("sell"), Mapping)  # a sale: the dealer's bid is the cash it gives
+    asks = (offer.get("give" if selling else "want") or {}).get("cash")
     if price is not None and asks != price:
-        findings.append(f"the structure asks {asks} P, our decision priced {price} P")
+        findings.append(f"the structure {'bids' if selling else 'asks'} {asks} P, our decision priced {price} P")
     verdict: Verdict = inspection.verdict
     if verdict == "clean" and findings:
         verdict = "block"
@@ -109,6 +112,54 @@ def board_gate(offer: BoardOffer, ref: str, total: int, fee: int, catalog_rarity
     if offer.rarity and catalog_rarity and offer.rarity != catalog_rarity:
         findings.append(f"the copy says {offer.rarity}; the catalog has {ref} as {catalog_rarity}")
     return Gate("board", offer.id, "block" if findings else "clean", tuple(findings))
+
+
+def bid_gate(offer: BoardOffer, ref: str, price: int, copy: Mapping[str, Any] | None) -> Gate:
+    """A board bid about to be accepted with one of our copies (`accept_bids`): cash for any copy of `ref`, at
+    the price we priced, and the copy we hand over (from /me) is a card of that ref."""
+    findings = []
+    if offer.side != "bid":
+        findings.append(f"offer {offer.id} is an {offer.side}, not a bid")
+    if offer.ref != ref:
+        findings.append(f"it wants {offer.ref}, our decision priced {ref}")
+    if offer.price != price:
+        findings.append(f"it pays {offer.price}, our decision priced {price}")
+    if offer.asset_id is not None:
+        findings.append(f"it binds asset {offer.asset_id}, not any copy of {offer.ref}")
+    if copy is None:
+        findings.append("the copy we would hand over is not in /me")
+    elif copy.get("kind", "card") != "card" or copy.get("ref") != offer.ref:
+        findings.append(f"the copy we would hand over is {copy.get('ref')}, not {offer.ref}")
+    return Gate("board", offer.id, "block" if findings else "clean", tuple(findings))
+
+
+def swap_gate(
+    thread: Mapping[str, Any], us: str, priced: TheirOffer, trade: Trade, copy: Mapping[str, Any] | None
+) -> Gate:
+    """A team's offer in a swap thread (N17) about to be accepted: read from the thread again, it is still an
+    open plain offer from that team to us, with the structure we priced (the planned cards, the same cash
+    either way), and the copy we hand over is our copy of the planned card in /me."""
+    oid = priced.offer_id
+    raw = next((o for o in thread.get("standing_offers") or [] if isinstance(o, dict) and o.get("id") == oid), None)
+    if raw is None:
+        return _block("team", oid, f"offer {oid} is not a standing offer in this thread")
+    fresh = read_offer(raw, us)
+    if fresh is None:
+        return _block("team", oid, f"offer {oid} is no longer a plain open offer to us")
+    findings = []
+    if fresh.team != priced.team:
+        findings.append(f"it is {fresh.team}'s offer, our decision priced {priced.team}'s")
+    if (fresh.cash_in, fresh.cash_out) != (priced.cash_in, priced.cash_out):
+        findings.append(
+            f"its cash is +{fresh.cash_in}/-{fresh.cash_out}, our decision priced +{priced.cash_in}/-{priced.cash_out}"
+        )
+    if fresh != priced or not is_the_planned_swap(fresh, trade):
+        findings.append("it does not move the cards we priced")
+    if copy is None:
+        findings.append("the copy we would hand over is not in /me")
+    elif copy.get("kind", "card") != "card" or copy.get("ref") != trade.refs[0]:
+        findings.append(f"the copy we would hand over is {copy.get('ref')}, not {trade.refs[0]}")
+    return Gate("team", oid, "block" if findings else "clean", tuple(dict.fromkeys(findings)))
 
 
 def price_claims(text: str | None) -> list[int]:

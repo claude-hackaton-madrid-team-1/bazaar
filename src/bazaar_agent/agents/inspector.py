@@ -18,13 +18,24 @@ one (the requested card, a dearer card, or a higher rarity). Any structural mism
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 RARITY_RANK = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
 # Rarity words a dealer may use (English and Spanish), above common: a claim the structure must back.
+# The bound card's own rarity named in the words ("a common for you"): the swap is disclosed, not hidden.
+DISCLOSED_RARITY = {
+    "common": r"\b(?:common|com[uú]n|comunes)\b",
+    "uncommon": r"\b(?:uncommon|poco com[uú]n)\b",
+    "rare": r"\b(?:rare|rar[oa]s?)\b",
+    "epic": r"\b(?:epic|[ée]pic[oa]s?)\b",
+    "legendary": r"\b(?:legendary|legendari[oa]s?)\b",
+}
+MAX_TEXT_CHARS = 2_000  # the server keeps 1,200 characters; the sentence scan never runs on more
 RARITY_WORDS = {
     "legendary": 4,
     "legendaria": 4,
@@ -108,19 +119,52 @@ NEGATION_BEFORE = (
     r"|out of|acab[óo]|vend[ií]|vendid|agotad|instead of|rather than|en vez de|en lugar de|se fue|gone|sold)[^.!?]*$"
 )
 NEGATION_AFTER = (
-    r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid)"
+    r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid"
+    r"|(?:is|are)n't available|(?:is|are) not available|not in stock|no est[áa] disponible|no disponible)"
 )
+# The answer right after the mention: "LAV-06? Gone.", "La Corrala: agotada".
+NEGATION_RIGHT_AFTER = r"^\s*[?!.:,;-]?\s*(?:gone|sold out|agotad[oa]s?|vendid[oa]s?|none left|no queda)\b"
 # A negator right before the mention: "no rare card left", "I have no X for you", "ni un cromo raro", "ningún X".
 # Only right before it: "No lo dudes: X" is still a claim of X.
 NEGATION_RIGHT_BEFORE = r"(?:\bno|\bni(?:\s+una?)?|\bning[uú]n[oa]?|\bnot\s+an?|\bnone\s+of\s+the)\s+$"
 
 
+# Any negation in the mention's own sentence: that sentence makes no claim. A wrong flag costs points and
+# a missed one only a bonus, so precision wins: "No lo dudes: X" is not flagged either (S1 #152 audit, r2).
+SENTENCE_NEGATION = re.compile(
+    r"(?:\b(?:no|not|never|nothing|none|cannot|nunca|ni|sin|ningun[oa]?|ningún|nada|tampoco)\b|n't\b)"
+)
+SENTENCE_END = re.compile(r"[.!?\n]")
+# A message that denies or regrets anything anywhere ("La Tabacalera? Ya no tengo.", "Rare card? Not today.",
+# "Se me ha terminado", "I wish I still had it") makes no claim at all: honest out-of-stock words come in
+# every shape, and a wrong flag costs points while a missed one only loses a bonus (S1 #152 review r3).
+MESSAGE_DENIAL = re.compile(
+    SENTENCE_NEGATION.pattern
+    + r"|\b(?:nobody|no one|nadie|wish|ojal[aá]|sold|gone|went|lost|taken|took|llev[oó]|llevad[oa]s?|terminad[oa]s?"
+    r"|termin[oó]|acabad[oa]s?"
+    r"|acab[oó]|agotad[oa]s?|agot[oó]|vend[ií]|vendid[oa]s?|perd[ií]|sorry|lo siento|unfortunately"
+    r"|lamentablemente|out of stock|in place of|instead|en vez|en lugar|replacement|substitut\w*|sustitu\w*)\b"
+)
+
+
+def _sentence(low: str, start: int, end: int) -> str:
+    """The sentence around [start, end): from the previous '.', '!', '?' or newline to the next one."""
+    head = max((m.end() for m in SENTENCE_END.finditer(low, 0, start)), default=0)
+    tail = SENTENCE_END.search(low, end)
+    return low[head : tail.start() if tail else len(low)]
+
+
 def _negated_at(low: str, start: int, end: int) -> bool:
-    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X', 'no X left'.
-    The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole text (S1 audit)."""
+    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X', 'no X left', or any
+    negation in its sentence. The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole
+    text (S1 audit)."""
     before, after = low[max(0, start - 30) : start], low[end : end + 25]
+    if SENTENCE_NEGATION.search(_sentence(low, start, end)):
+        return True
     negators = (NEGATION_BEFORE, NEGATION_RIGHT_BEFORE)
-    return any(re.search(p, before) for p in negators) or bool(re.search(NEGATION_AFTER, after))
+    return any(re.search(p, before) for p in negators) or any(
+        re.search(p, after) for p in (NEGATION_AFTER, NEGATION_RIGHT_AFTER)
+    )
 
 
 CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
@@ -288,7 +332,14 @@ def _words_claim(
     text: str, asked: str, bound: list[str], bound_worth: float, bound_rank: int, cards: CardIndex
 ) -> str | None:
     """The words claim something better than the structure binds: the card we asked for, a dearer card,
-    or a higher rarity. None when they do not (or say nothing about the item)."""
+    or a higher rarity. None when they do not, say nothing about the item, or deny anything anywhere
+    (MESSAGE_DENIAL: precision over recall)."""
+    text = text[:MAX_TEXT_CHARS]
+    if MESSAGE_DENIAL.search(text.lower()):
+        return None
+    rarities = {cards.by_ref[b].rarity for b in bound if b in cards.by_ref}
+    if any(re.search(DISCLOSED_RARITY.get(r, r"(?!)"), text.lower()) for r in rarities):
+        return None  # "here is a common for you": it says what the structure binds
     named = cards.mentioned(text)
     if any(i.ref in bound for i in named):
         return None  # the words name what the structure binds: the substitution is disclosed, not a trick
@@ -328,23 +379,76 @@ TRUSTED_DEALERS = frozenset({"abuela", "chato"})
 
 @dataclass
 class FlagBook:
-    """Flag decisions in this process. Each certain trickster message is logged once (uncapped, so the
-    `would flag` calibration log never goes silent); at most `limit` flags are actually SENT (a wrong
-    flag costs points); a server error (5xx) is retried on the next read, a refusal (4xx) or a lost answer
-    never is. Trusted dealers are never flagged. GUARDRAILS.md sets `limit` and `trusted` (read once per
-    process: switching allow_flags on needs a restart)."""
+    """Flag decisions, per data dir. Each certain trickster message is logged once (uncapped, so the `would
+    flag` calibration log never goes silent). A flag is SENT only to an opted-in dealer (GUARDRAILS.md
+    `flag_dealers`, none by default: an honest out-of-stock message can read like a trick), never to a
+    trusted one, and at most `limit` flags that may have landed, ever (`agents/flags.jsonl` survives
+    restarts). No message is flagged twice: only a 429 (not processed) is tried again; a refusal (4xx)
+    is never re-sent and does not count; a 5xx or a lost answer may have landed, so it counts and is never
+    re-sent. GUARDRAILS.md is read once per process: switching flags on needs a restart."""
 
     limit: int = 2
     trusted: frozenset[str] = TRUSTED_DEALERS
+    opted_in: frozenset[str] = frozenset()
     seen: set[int] = field(default_factory=set)
-    sent: dict[int, str] = field(default_factory=dict)
+    sent: dict[int, str] = field(default_factory=dict)  # every message we ever tried: never again
+    landed: int = 0  # flags that were accepted or may have landed: what `limit` caps
+    path: Path | None = None
+    skipped: int = 0  # unreadable lines in `path` (a half-written line after a crash)
 
     @classmethod
-    def from_rules(cls, rules: Any) -> FlagBook:
-        return cls(int(rules.max_flags_per_process), frozenset(rules.trusted_dealers))
+    def from_rules(cls, rules: Any, path: Path | None = None) -> FlagBook:
+        book = cls(
+            int(rules.max_flags_sent), frozenset(rules.trusted_dealers), frozenset(rules.flag_dealer_ids), path=path
+        )
+        last: dict[int, dict[str, Any]] = {}  # the newest row per message wins (pending → outcome)
+        for line in _lines(path):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                book.skipped += 1
+                continue
+            if isinstance(row, dict) and isinstance(row.get("message_id"), int):
+                last[row["message_id"]] = row
+            else:
+                book.skipped += 1
+        for mid, row in last.items():
+            if row.get("retry") is True:  # a 429: not processed, it may be tried again
+                continue
+            book.sent[mid] = str(row.get("reason") or "")
+            book.landed += 1 if row.get("landed", True) is not False else 0
+        book.landed += book.skipped  # fail closed: an unreadable line may have been a flag that landed
+        return book
+
+    def _write(self, row: dict[str, Any]) -> str | None:
+        if self.path is None:
+            return None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:  # the leading newline ends a torn line
+                handle.write("\n" + json.dumps(row) + "\n")
+        except OSError as e:
+            return f"flags file not written ({type(e).__name__})"
+        return None
+
+    def pending(self, message_id: int, reason: str) -> str | None:
+        """Written BEFORE the POST, counted as landed: a crash or a restart mid-send never lets a flag go
+        twice or past the cap. A write problem means the flag is NOT sent (returned as the reason)."""
+        return self._write({"message_id": message_id, "landed": True, "reason": reason[:FLAG_REASON_CHARS]})
+
+    def retry_later(self, message_id: int) -> None:
+        """A 429: the server did not process it; the pending row is withdrawn so a later read tries again."""
+        self._write({"message_id": message_id, "landed": False, "retry": True})
+
+    def remember(self, message_id: int, reason: str, *, landed: bool = True) -> str | None:
+        """A flag we tried: never again, in this process or the next. Returns a write problem, or None."""
+        self.sent[message_id] = reason
+        self.landed += 1 if landed else 0
+        return self._write({"message_id": message_id, "landed": landed, "reason": reason[:FLAG_REASON_CHARS]})
 
     def candidate(self, inspection: Inspection) -> bool:
-        """A certain trickster message from an untrusted dealer that we have not flagged yet."""
+        """A certain trickster message from an untrusted dealer that we have not tried yet (logged and
+        recorded; whether it is SENT is `opted_out`, the guard and `room`)."""
         mid = inspection.message_id
         return (
             inspection.verdict == "flag"
@@ -353,8 +457,19 @@ class FlagBook:
             and inspection.dealer not in self.trusted
         )
 
+    def opted_out(self, inspection: Inspection) -> str | None:
+        if inspection.dealer in self.opted_in:
+            return None
+        return f"{inspection.dealer} is not in flag_dealers"
+
     def room(self) -> bool:
-        return len(self.sent) < self.limit
+        return self.landed < self.limit
+
+
+def _lines(path: Path | None) -> list[str]:
+    if path is None or not path.is_file():
+        return []
+    return [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
 
 
 def inspect_thread(thread: Mapping[str, Any], dealer: str, cards: CardIndex) -> list[Inspection]:
@@ -380,6 +495,7 @@ def summarise(inspections: Iterable[Inspection]) -> dict[str, int]:
 
 Guard = Callable[[Inspection], str | None]  # a deny reason (GUARDRAILS.md allow_flags, kill switch), or None
 Send = Callable[[int, str], Any]  # POST /api/flags (message_id, reason)
+Record = Callable[[Inspection, str | None], Any]  # the decision row: why it is not sent, or None when it is
 
 FLAG_REASON_CHARS = 300  # the reason is ours to write: keep it short and structural
 
@@ -394,11 +510,13 @@ def flag_step(
     send: Send | None,
     log: Callable[[str], None],
     topic: Mapping[str, Any] | None = None,
+    record: Record | None = None,
 ) -> Inspection | None:
     """Inspect the dealer's newest offer in a thread payload and flag it when it is a certain trickster,
     the flag book has room and `guard` allows it. A flag is decided once per message, sent or not: a
-    denied one (allow_flags = false) is logged as `would flag`. `send` None is a dry run. Returns the
-    inspection (None when the dealer has no standing offer)."""
+    denied one (allow_flags = false) is logged as `would flag`. `send` None is a dry run. `record` writes
+    the decision row (the evidence) once per decision, before any send. Returns the inspection (None when
+    the dealer has no standing offer)."""
     from bazaar_agent.agents.dealer import newest_dealer_offer
 
     newest = newest_dealer_offer(dict(thread), dealer)  # the standing offer, else the newest one it sent
@@ -416,21 +534,34 @@ def flag_step(
     first = mid not in book.seen
     book.seen.add(mid)
     reason = inspection.reason[:FLAG_REASON_CHARS]
-    denied = guard(inspection)
+    denied = guard(inspection) or book.opted_out(inspection)
     if denied or send is None or not book.room():
         if first:  # logged once per message
             why = denied or ("dry run" if send is None else f"flag limit {book.limit} reached")
             log(f"would flag message {mid} from {dealer} ({why}): {reason}")
+            if record is not None:
+                record(inspection, why)
         return inspection
+    unwritten = book.pending(mid, reason)
+    if unwritten:  # no record of it on disk: a restart could send it again, so it is not sent at all
+        log(f"flag of message {mid} not sent: {unwritten}")
+        return inspection
+    if record is not None:
+        record(inspection, None)
     try:
         send(mid, reason)
-        book.sent[mid] = reason
-        log(f"flagged message {mid} from {dealer}: {reason}")
     except Exception as e:  # a refused flag never breaks the negotiation
         status = int(getattr(e, "status", 0) or 0)
-        if status >= 500:  # the server failed: try again on the next read
-            log(f"flag of message {mid} failed ({status}); retrying next read")
-        else:  # refused (4xx: never re-POST) or ambiguous (no response: it may have landed): count it as sent
-            book.sent[mid] = f"not retried after {type(e).__name__} {status or 'no response'}: {reason}"
-            log(f"flag of message {mid} not retried ({type(e).__name__}: {str(e)[:80]})")
+        if status == 429:  # rate limited: the server did not process it, so it may be tried on a later read
+            book.retry_later(mid)
+            log(f"flag of message {mid} rate limited; tried again on a later read")
+            return inspection
+        landed = status == 0 or status >= 500  # no answer or a server error: it may have landed
+        problem = book.remember(mid, f"{type(e).__name__} {status or 'no response'}: {reason}", landed=landed)
+        log(f"flag of message {mid} not retried ({type(e).__name__} {status or 'no response'})")
+    else:
+        problem = book.remember(mid, reason)
+        log(f"flagged message {mid} from {dealer}: {reason}")
+    if problem:
+        log(problem)
     return inspection

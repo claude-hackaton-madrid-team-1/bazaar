@@ -2,7 +2,7 @@
 
 - Task id: S1 (migrated from GitHub issue(s) #24, #10)
 - Priority: P0
-- Status: 🔵 part A (offer inspector on every accept) in review; B (flags) and C (injection tests) next. Untrusted text is capped and escaped today (#59); the public /state leak is fixed (#121).
+- Status: ✅ merged: part A #146 (offer inspector on every accept), parts B+C #152 (flags off/opt-in, injection hardening), follow-up #176. Open items in `98-nice-to-haves.md`.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 

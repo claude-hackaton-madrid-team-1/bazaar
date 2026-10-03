@@ -331,6 +331,58 @@ def test_sells_go_to_chasers_at_their_need_and_never_below_what_we_lose():
     assert next(m for m in strict.sells if m.ref == "LAT-09").price == 135
 
 
+SPARES = PARAMS.model_copy(update={"sell_spare_slots": 8})
+
+
+def with_spares():
+    """ME plus a cheap second LAV-01 (a duplicate of our boosted set) and a MAL card nobody chases."""
+    catalog, me = deepcopy(CATALOG), deepcopy(ME)
+    catalog["sets"].append({"id": "MAL", "cards": [card("MAL-01", "common", 20)]})
+    me["affinity"] = {**me["affinity"], "MAL": 0.8}
+    me["album"]["pages"].append({"set": "MAL", "have": 1, "of": 1})
+    me["assets"] += [
+        {"id": 7, "kind": "card", "ref": "LAV-01", "rarity": "common", "your_value": 6.0},
+        {"id": 8, "kind": "card", "ref": "MAL-01", "rarity": "common", "your_value": 8.0},
+    ]
+    return me, catalog
+
+
+def test_sell_spares_off_keeps_sell_to_need_exactly_as_it_was():
+    me, catalog = with_spares()
+    off = strategy.build_playbook(me, catalog, EVENTS, DEALERS, PARAMS, RULES)
+    assert [m.ref for m in off.sells] == ["LAT-09", "LAT-03"]  # the duplicate and the unchased card: not offered
+    assert all(m.strategy == "sell_to_need" for m in off.sells)
+
+
+def test_sell_spares_lists_a_duplicate_and_an_unchased_card_above_what_we_lose():
+    me, catalog = with_spares()
+    book = strategy.build_playbook(me, catalog, EVENTS, DEALERS, SPARES, RULES)
+    spares = {m.ref: m for m in book.sells if m.strategy == "sell_spares"}
+    assert set(spares) == {"LAV-01", "MAL-01"}
+    lav01 = spares["LAV-01"]  # the cheaper copy, a duplicate: below the chasers' need + surplus, still offered
+    assert lav01.asset_id == 7 and lav01.value == 6.0 and lav01.price == 11.0 and lav01.counterparties == ("t03", "t10")
+    mal01 = spares["MAL-01"]  # nobody chases MAL: offered to anyone
+    assert mal01.counterparties == () and "nobody seen chasing MAL" in mal01.reason
+    assert all(m.price >= m.value + SPARES.sell_min_surplus for m in book.sells)
+    assert all(m.price >= m.value * RULES.sell_min_value_ratio for m in book.sells)
+
+
+def test_sell_spares_never_offers_our_only_copy_of_a_boosted_set_or_a_protected_card():
+    me, catalog = with_spares()
+    book = strategy.build_playbook(me, catalog, EVENTS, DEALERS, SPARES, RULES)
+    assert "LAV-06" not in [m.ref for m in book.sells]  # our only copy, LAV is boosted
+    assert next(m for m in book.sells if m.ref == "LAV-01").asset_id == 7  # never the full-value first copy
+    protected = strategy.build_playbook(me, catalog, EVENTS, DEALERS, SPARES, Guardrails(protect_page_sets="MAL"))
+    assert "MAL-01" not in [m.ref for m in protected.sells]
+
+
+def test_sell_spares_are_capped_by_their_slots():
+    me, catalog = with_spares()
+    one_slot = SPARES.model_copy(update={"sell_spare_slots": 1})
+    one = strategy.build_playbook(me, catalog, EVENTS, DEALERS, one_slot, RULES)
+    assert len([m for m in one.sells if m.strategy == "sell_spares"]) == 1
+
+
 def test_the_page_bonus_at_stake_is_all_of_it_on_a_complete_page_and_a_share_otherwise():
     m = market()
     assert strategy.bonus_at_stake(m, m.cards["LAT-09"], PARAMS) == pytest.approx(0.25 * 80 * 0.5)

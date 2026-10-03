@@ -1,13 +1,15 @@
 """`bazaar dealer buy --live` guards every move with our OTHER open offers (the maker's board bids, the
 taker's dealer threads) and leaves out its own thread, whose bid the next move replaces (PR #72 review)."""
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
 from bazaar_agent import cli
 from bazaar_agent.agents.dealer import Move, Outcome
 from bazaar_agent.config import Settings
-from bazaar_agent.guardrails import Ledger
+from bazaar_agent.guardrails import GUARDRAILS_FILE, Ledger, parse_guardrails
 
 OWN = 85  # the thread `dealer buy` opens
 ACCEPT_20 = ((Move("accept", 20, 7), OWN),)
@@ -54,6 +56,16 @@ def dealer_buy(monkeypatch, tmp_path):
             return Outcome(OWN, "walked", None, (), 1)
 
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+        # the committed file as it was with our venue off (Omar's 270 floor, no bond reserve): these cases are
+        # about the cash our open offers promise, not the venue
+        venue_off = re.sub(
+            r"`cash_floor` = \d+",
+            "`cash_floor` = 270",
+            GUARDRAILS_FILE.read_text(encoding="utf-8").replace(
+                "`allow_venue_open` = true", "`allow_venue_open` = false"
+            ),
+        )
+        monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)
@@ -64,14 +76,14 @@ def dealer_buy(monkeypatch, tmp_path):
 
 
 def test_the_guard_counts_the_makers_bids_and_the_takers_threads(dealer_buy):
-    # Cash 225: a maker bid of 40 and a taker thread bid of 70 at Chato are promised. Accepting 20 here
-    # leaves 225 - 110 - 20 = 95 < cash_floor 100 if all three fill (no venue planned: no bond reserve).
-    # Before the fix the guard saw 225 - 20 = 205.
-    client = Client(225, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
+    # Cash 395: a maker bid of 40 and a taker thread bid of 70 at Chato are promised. Accepting 20 here
+    # leaves 395 - 110 - 20 = 265 < cash_floor 270 if all three fill (no venue planned: no bond reserve).
+    # Before the fix the guard saw 395 - 20 = 375.
+    client = Client(395, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
     result, verdicts = dealer_buy(client)
     assert result.exit_code == 0, result.output
     (denied,) = verdicts
-    assert denied is not None and "cash_floor 100" in denied
+    assert denied is not None and "cash_floor 270" in denied
 
 
 def test_the_guard_leaves_out_its_own_thread_bid(dealer_buy):
@@ -88,7 +100,7 @@ def test_the_guard_leaves_out_its_own_thread_bid(dealer_buy):
 
 
 def test_it_refuses_to_open_when_our_open_offers_already_hold_the_cash(dealer_buy):
-    client = Client(210, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
+    client = Client(380, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
     result, verdicts = dealer_buy(client)
-    assert result.exit_code == 1 and verdicts is None  # 210 - 110 - 6 < cash_floor 100: no thread opened
+    assert result.exit_code == 1 and verdicts is None  # 380 - 110 - 6 < cash_floor 270: no thread opened
     assert "guardrails refuse to open this thread" in result.output

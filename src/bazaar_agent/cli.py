@@ -17,7 +17,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import flags_cli, intel, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -27,6 +27,7 @@ from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -93,9 +94,9 @@ def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTI
     style = "bold yellow" if settings.simulator else "dim"
     banner = console if os.environ.get("RAILWAY_ENVIRONMENT") else err_console
     banner.print(f"[{style}]{settings.target_line()}[/{style}]", highlight=False)
-    # Warnings (e.g. Phoenix unreachable) go to stdout with the console lines: a container platform
-    # such as Railway files stderr as errors. A no-op when logging is already configured.
-    logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    # Warnings (e.g. Phoenix or Postgres unreachable) follow the banner: stdout on Railway, which files stderr
+    # as errors, stderr elsewhere so `--json` stdout stays JSON. A no-op when logging is already configured.
+    logging.basicConfig(stream=log_stream(), level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if tm.init_tracing("bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
@@ -108,9 +109,14 @@ def _events(live: bool) -> list[Event]:
     window = public_client(settings).feed_window(DEFAULT_WINDOW) if live else None
     events = load_events(store, window)
     if not events:
-        console.print("[yellow]no captured feed yet: reading the live window[/yellow]")
+        err_console.print("[yellow]no captured feed yet: reading the live window[/yellow]")  # stdout stays JSON
         events = load_events(store, public_client(settings).feed_window(DEFAULT_WINDOW))
     return events
+
+
+def log_stream(env: Any = None) -> Any:
+    """Where warnings go: stdout on Railway (it files stderr as errors), stderr elsewhere (`--json` stays JSON)."""
+    return sys.stdout if (os.environ if env is None else env).get("RAILWAY_ENVIRONMENT") else sys.stderr
 
 
 def _fail(message: str) -> None:
@@ -137,6 +143,41 @@ def _ledger(source: str, live: bool = False) -> Any:
         )
     except LedgerNotShared as e:
         _fail(f"refusing to trade: {e}")
+
+
+def _tactic_book(
+    rules: Any, store: Any, us: str | None, log: Callable[[str], None], off_reason: str | None = None
+) -> Any:
+    """The words' bluff tactics (N16), learned per counterparty in the N3 store (`store` None: memory only).
+    Tactic lessons are read once here, before the first tick; later reads happen after each tick's sends. The
+    tie-break seed is secret per process unless BAZAAR_BLUFF_SEED fixes it (a reproducible simulator run)."""
+    from bazaar_agent.agents.bluff import TacticBook, default_seed
+
+    book = TacticBook(store=store, us=us, rules=rules, log=log, seed=default_seed(), off_reason=off_reason)
+    on, why = book.enabled()
+    loaded = book.load()
+    log(f"bluff tactics {'on' if on else 'OFF (' + why + ')'} · {loaded} tactic lesson(s) loaded")
+    return book
+
+
+FEED_READ_TIMEOUT_S = 2.0  # the bluff book's keyless feed read: short, never retried, it must not stall a tick
+
+
+def _feed_reader(settings: Any) -> Callable[[int], list[Event]]:
+    """`feed_window(limit)` without a key, a 2 s timeout and no retry: for the loops without a feed of their own."""
+    from bazaar_agent.sdk import PublicBazaar
+
+    return PublicBazaar(settings.bazaar_url, timeout=FEED_READ_TIMEOUT_S, retries=0).feed_window
+
+
+def _learning_store(app: str, log: Callable[[str], None]) -> Any:
+    """A `LearningStore` on the shared Postgres (short connect timeout), connected now, never inside a tick."""
+    from bazaar_agent import db
+    from bazaar_agent.learn.store import LearningStore
+
+    store = LearningStore(lambda: db.connect(app=app, connect_timeout_s=3), log)
+    store.open()
+    return store
 
 
 # ---------------------------------------------------------------- public views (no key)
@@ -226,6 +267,320 @@ def teams(
     theirs, ours = intel.split_us(flows, us, lambda f: f.team)
     console.print(render.teams_table(theirs))
     console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
+
+
+def _payload_file(path: str) -> Any:
+    """A captured payload: a bare body, a fixture (`{"body": ...}`) or a feed event (`{"payload": ...}`)."""
+    from pathlib import Path
+
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("body"), dict):
+        return data["body"]
+    if isinstance(data, dict) and isinstance(data.get("payload"), dict) and "type" in data:
+        return data["payload"]
+    return data
+
+
+def _history(events_file: str | None, live: bool) -> list[Event]:
+    """The whole feed history, as the agents read it: the shared `feed_events` table when Postgres answers
+    (the monitor writes it), else this machine's capture, merged with the live window when `live`. A
+    `--events` JSONL file wins. A fresh worktree has no capture: the DB is what holds Friday."""
+    if events_file:
+        return _events_file(events_file)
+    from bazaar_agent.agents.runtime import MarketFeed
+
+    settings = load_settings()
+    window = public_client(settings).feed_window if live else (lambda limit: [])
+    feed = MarketFeed(window, FeedStore(settings.feed_dir), _db_connect("bazaar-intel"), err_console.print)
+    events = feed.events()
+    if not events:  # notes go to stderr: `affinity --json` / `trade-plan --json` keep stdout pure JSON
+        err_console.print("[yellow]no feed history (no DB, no capture): reading the live window[/yellow]")
+        return _events(live=True)
+    return events
+
+
+def _events_file(path: str) -> list[Event]:
+    """Feed events from a JSONL file (one event per line, e.g. a `feed_events` export)."""
+    from pathlib import Path
+
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+@app.command()
+def affinity(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file (the multiset); else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    beta: float = typer.Option(0.5, help="Weight of one unit of (damped) interest per sd of the multiplier"),
+    as_json: bool = typer.Option(False, "--json", help="Print the map as JSON"),
+) -> None:
+    """Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    events = _history(events_file, live)
+    us = str(me.get("id") or "") or None
+    amap = af.affinity_map(
+        events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, af.ModelParams(beta=beta), [us or ""]
+    )
+    if as_json:
+        typer.echo(json.dumps({t: asdict(a) for t, a in amap.teams.items()}, indent=2, default=str))
+        return
+    console.print(render.affinity_table(amap))
+    for s in af.catalog_sets(catalog):
+        console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
+
+
+@app.command("trade-plan")
+def trade_plan(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    venue: str = typer.Option("rastro", help="Venue to post on (its fee prices every trade)"),
+    share: float = typer.Option(0.25, min=0.01, max=1.0, help="No counterparty above this share of planned volume"),
+    listings: int = typer.Option(12, min=0, help="Listings (one tick: offers_per_team_per_tick)"),
+    threads: int = typer.Option(3, min=0, help="Direct proposals (swaps in a team thread)"),
+    split: float = typer.Option(0.5, min=0.05, max=1.0, help="The most of the expected pie we ask for"),
+    page_set: str = typer.Option("LAV", help="The set whose page buy list is drawn up"),
+    cash_budget: int | None = typer.Option(
+        None, min=0, help="The most bids and cash legs may promise (default: all the cash above cash_floor)"
+    ),
+    out: str = typer.Option(".local/night", help="Where trade-plan.json and trade-plan.md are written"),
+) -> None:
+    """Dry-run trade plan for the next opening, fair by construction; sends nothing.
+
+    Listings and direct proposals priced on the rival affinity map, every one with surplus for us, no
+    counterparty above `--share` of the planned volume, checked through the guardrails."""
+    from pathlib import Path
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.market import venues_from
+
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and venues_file) else public_client(load_settings())
+    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    where = next((v for v in venues if v.id == venue), None)
+    if where is None:
+        _fail(f"venue {venue!r} is not in /api/venues")
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cash_budget=cash_budget)
+    rules = _rules().rules
+    offers: list[dict[str, Any]] = []
+    spent = 0
+    if not me_file:  # live inputs: what our open offers and this game hour's spend already promise
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        offers = _my_offers(_team_client())
+        spent = _ledger("trade-plan").spent_since(now.t_hours - 1.0)
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, where, offers, spent)
+    folder = Path(out) if Path(out).is_absolute() else REPO_ROOT / out
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "trade-plan.json").write_text(json.dumps(td.plan_dict(plan, venue), indent=2, default=str) + "\n")
+    (folder / "trade-plan.md").write_text(td.plan_markdown(plan, pp))
+    floor = plan.expected_at(pp.friday_public_fill, pp.friday_addressed_fill)
+    console.print(
+        f"{len(plan.listings)} listing(s) + {len(plan.threads)} proposal(s), expected {plan.expected:+.1f} P "
+        f"if each fills when its counterparty values it ({floor:+.1f} P at Friday's fill rates; without the "
+        f"share rule {plan.unconstrained:+.1f} P), largest share {max(plan.shares.values(), default=0):.0%} "
+        f"(worst case {plan.worst_share:.0%}), {len(plan.checks)} check(s) failing · written to {folder}"
+    )
+    for check_line in plan.checks:
+        console.print(f"[red]{check_line}[/red]")
+    for line in plan.what_if:
+        console.print(f"[yellow]if the cap were on: {line}[/yellow]")
+
+
+@app.command()
+def swaps(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    threads: int = typer.Option(4, min=1, help="Swaps to plan"),
+    as_json: bool = typer.Option(False, "--json", help="Print the swaps as JSON"),
+) -> None:
+    """Read-only: the swaps the taker's team desk would propose in team threads (N17), sends nothing.
+
+    Each planned swap (the trade desk's, on the rival affinity map) with its ladder from the anchor to the
+    even split, our gain and theirs at each step, and the fairness verdict (`swaps.judge`)."""
+    from bazaar_agent import affinity as af
+    from bazaar_agent import swaps as sw
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.team_desk import spare_copy
+
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
+    events, us, rules = _history(events_file, live), str(me.get("id") or ""), _rules().rules
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    rastro = next((v for v in venues if v.id == "rastro"), None)
+    pp = td.PlanParams(listings=0, threads=threads, max_share=1.0)  # as the desk plans (team_desk._trades)
+    offers = _my_offers(_team_client()) if not me_file else []  # what our open offers already promise
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, rastro, offers)
+    ladder, rows = sw.Ladder(), []
+    for t in plan.threads:
+        if spare_copy(me, offers, us, t.refs[0]) is None:
+            continue  # the desk gives only a free duplicate (team_desk.spare_copy)
+        steps = [sw.cash_at(t, k, ladder) for k in range(ladder.steps)]
+        verdicts = [sw.judge(t, c, 0, rules) for c in steps]
+        rows.append(
+            {
+                "team": t.counterparty,
+                "give": t.refs[0],
+                "asset": t.asset_id,
+                "want": t.refs[1],
+                "cash_steps": steps,  # + they add, - we add
+                "ours": [round(v.ours, 1) for v in verdicts],
+                "theirs": [round(v.theirs, 1) for v in verdicts],
+                "fair": [v.ok for v in verdicts],
+                "p_fill": t.p_fill,
+                "first_offer": sw.offer_terms(t, steps[0]),
+            }
+        )
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        console.print("no swap planned (no team known to hold a card we miss and to want one of our copies)")
+    for r in rows:
+        console.print(
+            f"{r['team']}: our {r['give']} (#{r['asset']}) for their {r['want']} · cash {r['cash_steps']} · "
+            f"ours {r['ours']} · theirs {r['theirs']} · fair {r['fair']} · P(fill) {r['p_fill']:.0%}"
+        )
+
+
+def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
+    """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
+    from bazaar_agent.agents.market import venues_from
+
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and venues_file) else public_client(load_settings())
+    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    return me, catalog, venues
+
+
+@app.command()
+def rivals(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file (the multiset); else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    as_json: bool = typer.Option(False, "--json", help="Print the profiles as JSON"),
+) -> None:
+    """Rival behaviour profiles: pricing against the tape and own value, fills, takes, reprices."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import rivals as rv
+
+    me = _payload_file(me_file) if me_file else _team_me()[1]
+    catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    found = rv.profiles(rv.listings(events), events, amap, catalog, exclude=[us])
+    if as_json:
+        rows = {t: {**asdict(p), "tags": p.tags} for t, p in found.items()}
+        typer.echo(json.dumps(rows, indent=2, default=str))
+        return
+    console.print(render.rivals_table(list(found.values())))
+
+
+@app.command()
+def opportunities(
+    live: bool = typer.Option(
+        False, help="Read the venue boards now (public reads); else the board rebuilt from the feed"
+    ),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    replay_day: bool = typer.Option(False, "--replay", help="Also score every offer the feed ever showed"),
+    min_surplus: float = typer.Option(0.0, help="Only offers worth more than this to us"),
+    as_json: bool = typer.Option(False, "--json", help="Print the opportunities as JSON"),
+) -> None:
+    """Read-only scanner: standing offers ranked by what accepting them gains us, guardrails checked."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent import opportunities as op
+    from bazaar_agent import rivals as rv
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.market import board_offers, tradable_venues
+    from bazaar_agent.agents.seller import committed_context, open_commitments, trade_book
+    from bazaar_agent.strategy import build_market
+
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    rules, params = _rules().rules, _strategy().params
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    m = build_market(me, catalog, events, [])
+    rows = rv.listings(events)
+    last = max((int(e.get("tick") or 0) for e in events), default=0)
+    if live:
+        public, makers = public_client(load_settings()), intel.listed_makers(events)
+        offers = []
+        for v in tradable_venues(venues, us):
+            offers += [replace(o, maker=makers.get(o.id, o.maker)) for o in board_offers(public.board(v.id), v.id, us)]
+    else:
+        offers = op.offers_from(rv.board_at(rows, last), us)
+    # Our open offers (their cash, cards and exposure) whenever /me comes from the API: never check blind.
+    mine = _my_offers(_team_client()) if not me_file else []
+    held: dict[str, int] = {}
+    for a in me.get("assets") or []:
+        if a.get("kind") == "card":
+            held[str(a.get("ref"))] = held.get(str(a.get("ref")), 0) + 1
+    base = gr.Context(int(me.get("cash") or 0), held, last, 0.0)
+    if not me_file:  # with our key: the shared ledger's spend this game hour, as the taker sees it
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        base = gr.context_from(me, now.tick, now.t_hours, _ledger("opportunities"), rules)
+    book = intel.book_values(catalog)
+    ctx = replace(
+        committed_context(base, open_commitments(mine, us)),
+        trades=trade_book(mine, us, intel.settled_volume(events, us, book), book),
+    )
+    by_id = {v.id: v for v in venues}
+    rastro = by_id.get("rastro")
+    plan = td.build_plan(me, catalog, events, amap, params, rules, td.PlanParams(), rastro, mine)
+    found = op.scan(
+        offers,
+        m,
+        me,
+        params,
+        rules,
+        amap,
+        by_id,
+        ctx,
+        events,
+        catalog,
+        [*plan.listings, *plan.threads],
+        min_surplus,
+        unavailable=open_commitments(mine, us).listed,
+    )
+    if as_json:
+        typer.echo(json.dumps([asdict(o) for o in found], indent=2, default=str))
+    else:
+        where = "the live boards" if live else f"the board rebuilt from the feed at tick {last}"
+        console.print(render.opportunities_table(found, f"Opportunities on {where} ({len(offers)} offers)"))
+    if replay_day:
+        rp = op.replay(rows, m, me, params, rules, amap, by_id, ctx, events, min_surplus)
+        latency = sorted(rp.latency)
+        console.print(
+            f"replay: {rp.offers} offers by other teams, {len(rp.worth_it)} worth it to us (+{rp.surplus} P, one"
+            f" per offer); {rp.taken_by_others} taken by others (ticks {latency}, by {rp.takers}); "
+            f"{rp.left_open} left untaken (+{rp.left_surplus} P)"
+        )
 
 
 @app.command()
@@ -390,13 +745,14 @@ def dealer_buy(
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("dealer-buy", live=True)
+    values = OfficialValues.of(client)  # every bid and accept capped at GET /api/me/value (Day-2 hint 1)
 
     def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
         """/me + the shared ledger + every open offer of ours (the maker's bids, the taker's dealer threads),
         except this command's own thread, whose bid the next move replaces."""
         me = client.me()
         offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
-        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules)
+        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules, values)
         return committed_context(base, open_commitments(offers, str(me.get("id") or "")))
 
     clock_now = Clock.model_validate(client.clock())
@@ -425,14 +781,7 @@ def dealer_buy(
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
-        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        try:
-            if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
-                return False
-        except LedgerUnavailable as e:  # no slot without the shared ledger: hold, never accept or walk
-            raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
-        tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
-        return True
+        return _reserve_accept(ledger, rules, item, move, c)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         try:
@@ -443,6 +792,11 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
+    us = _our_team_id(client)
+    shared = ledger.where.startswith("postgres")
+    store = _learning_store("bazaar-dealer-buy", console.print) if shared else None
+    # Without our team id a strike for us cannot be recognised: no tactics then, today's words only.
+    bluff = _tactic_book(rules, store, us, console.print, None if us else "our team id is unknown")
     inspector = _offer_inspector(settings, dealer, topic, rules)  # S1: one flag book across reopens
     for attempt in range(1 + DEALER_REOPENS):
         with traces.trace_negotiation(dealer, topic, plan) as observer:
@@ -461,6 +815,8 @@ def dealer_buy(
                 reserve=reserve,
                 kill_switch=lambda: gr.kill_switch(rules),
                 **inspector,
+                bluff=bluff,
+                events=_feed_reader(settings),
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
@@ -476,12 +832,157 @@ def dealer_buy(
     )
 
 
+@dealer_app.command("sell")
+def dealer_sell(
+    ref: str = typer.Argument(help="Card ref we sell, e.g. MAL-02 (the copy we lose least by selling)"),
+    floor: int = typer.Option(..., "--min", min=1, help="Hard floor: never sell below this (≥ the copy's your_value)"),
+    start: int = typer.Option(..., help="Opening ask"),
+    step: int = typer.Option(1, min=1, help="Drop per tick (small steps earn small steps)"),
+    dealer: str = typer.Option(
+        "abuela", help="Dealer id: abuela, chato, pilar, ... (its menu must buy this rarity and set)"
+    ),
+    live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
+) -> None:
+    """Sell one duplicate to a dealer (a ladder deal): falling distinct asks, hard floor, never at her opening bid."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.dealer import Hold
+    from bazaar_agent.agents.dealer_sell import (
+        AskPlan,
+        SellRefused,
+        ask_schedule,
+        check_floor,
+        copy_to_sell,
+        dealer_refusal,
+        negotiate_sell,
+        only_copy,
+        sell_topic,
+    )
+    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
+    from bazaar_agent.decisions import DecisionLog, Status
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules = _rules().rules
+    settings = load_settings()
+    client, me = _team_me()  # album first: the copy, its your_value and how many we hold, from /api/me
+    mine = open_commitments(_my_offers(client), str(me.get("id") or ""))  # copies our asks give
+    try:
+        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed)
+        your_value = float(asset["your_value"])
+        check_floor(floor, your_value)
+        plan = AskPlan(start, step, floor)
+    except (SellRefused, ValueError) as e:
+        _fail(str(e))
+    rarity, asset_id = asset.get("rarity"), int(asset["id"])
+    personas = public_client(settings).dealers().get("personas") or []
+    if refusal := dealer_refusal(dealer, personas, me, asset):
+        _fail(refusal)
+    topic = sell_topic(asset_id)
+    if not live:
+        console.print(
+            f"[yellow]dry run[/yellow] {dealer} {topic} ({ref}, your_value {your_value:g}): asks "
+            f"{ask_schedule(plan)}; take her bid once she came up from her opening and it meets our next ask, "
+            f"never below {floor}. Add --live to trade."
+        )
+        return
+    ledger = _ledger("dealer-sell", live=True)
+
+    def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
+        """/me + the shared ledger + every open offer of ours except this thread's own ask."""
+        me_now = client.me()
+        offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
+        base = gr.context_from(me_now, c.tick, c.t_hours, ledger, rules)
+        return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
+
+    def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
+        return gr.Action(kind, ref, rarity, price, your_value=your_value)
+
+    def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
+        """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
+        verdict = gr.check(action(kind, price), ctx, rules)
+        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
+            why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
+            return gr.Verdict(False, (*verdict.violations, why))
+        return verdict
+
+    try:
+        pre = checked("sell", floor, committed(Clock.model_validate(client.clock())))
+    except LedgerUnavailable as e:
+        _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
+    if not pre.allowed:
+        tm.guardrail_refusal("dealer.open", ref, pre.violations)
+        _fail(f"guardrails refuse to open this thread: {pre}")
+
+    def guard(move: Any, thread_id: int) -> str | None:
+        """A ledger failure holds the move (nothing sent, decided again next tick), never a walk."""
+        try:
+            ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
+        except LedgerUnavailable as e:
+            raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
+        verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
+        return None if verdict.allowed else "; ".join(verdict.violations)
+
+    decisions = DecisionLog(
+        settings.data_dir, _db_connect("bazaar-dealer-sell") if ledger.where.startswith("postgres") else None
+    )
+    rec = Recorder("dealer-sell", decisions, True, lambda line: None)  # negotiate_sell prints its own lines
+
+    def on_move(move: Any, tick: int, outcome: str) -> None:
+        """One decision row per move we decided to send (or that a guard stopped)."""
+        kind = {"bid": "dealer_ask", "accept": "dealer_accept", "walk": "dealer_walk"}.get(move.kind, "dealer_wait")
+        denied = outcome.startswith("denied")
+        status: Status = {"sent": "done", "held": "approved"}.get(outcome, "rejected" if denied else "failed")  # type: ignore[assignment]
+        decisions.begin_tick(tick)
+        rec.decide(
+            tick,
+            kind,
+            f"{dealer} {ref} {move.kind} {move.price or ''}",
+            inputs={"dealer": dealer, "ref": ref, "asset": asset_id, "floor": floor, "your_value": your_value},
+            reason=move.reason,
+            guardrail=outcome if denied else "allowed",
+            chosen=True,
+            status=status,
+            move={"kind": move.kind, "price": move.price, "offer": move.offer_id},
+        )
+
+    def on_deal(price: int, tick: int, t_hours: float) -> None:
+        tm.event("dealer.sold", {"dealer": dealer, "ref": ref, "price": price, "tick": tick})
+
+    try:
+        out = negotiate_sell(
+            client,
+            dealer,
+            asset_id,
+            plan,
+            log=lambda line: console.print(escape(line)),  # server and counterparty words: never markup
+            max_ticks=rules.dealer_max_ticks_per_thread,
+            guard=guard,
+            reserve=lambda move, c: _reserve_accept(ledger, rules, ref, move, c),
+            kill_switch=lambda: gr.kill_switch(rules),
+            on_deal=on_deal,
+            on_move=on_move,
+            **_offer_inspector(settings, dealer, topic, rules),
+        )
+    finally:
+        decisions.close()
+    colour = "green" if out.status == "deal" else "red"
+    console.print(
+        f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} asks {list(out.bids)} "
+        f"in {out.ticks} ticks"
+    )
+    if out.status == "deal":  # album first: re-read what we hold after every deal
+        console.print(f"cash now {client.me().get('cash')} P")
+
+
 def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: Any) -> dict[str, Any]:
     """`negotiate`'s offer inspector (S1): the would-flag log on every thread read and the accept gate.
     No flag is sent from here; with `inspect_accepts` false only the older structure check runs."""
     from rich.markup import escape
 
     from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
     try:
@@ -490,6 +991,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
         cards = CardIndex.from_catalog({})
     book = FlagBook.from_rules(rules)
+    tags = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)
 
     def log(line: str) -> None:
         console.print(escape(f"inspector: {line}"))
@@ -497,6 +999,8 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     def on_thread(thread: dict[str, Any]) -> None:
         guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
         flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+        mid, text = latest_message(thread, dealer)
+        tags.tag(dealer, mid, text, None, log)  # `negotiate` keeps the tick; the row needs no more
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
@@ -560,10 +1064,13 @@ def duel_run(
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from contextlib import suppress
+
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.accept_gate import DuelRereads, Gate, duel_accept_check
+    from bazaar_agent.agents.bluff import message_id
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
@@ -571,13 +1078,18 @@ def duel_run(
         DuelMove,
         append_jsonl,
         duel_action,
+        duel_choice,
         duel_deadline,
         duel_id,
         duel_move,
+        observe_duel,
+        our_duel_messages,
+        rival_offer,
         rival_text,
         template_duel_words,
     )
-    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
+    from bazaar_agent.agents.runtime import Recorder, cost_nothing
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
@@ -615,6 +1127,15 @@ def duel_run(
     # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
+    injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
+    us = _our_team_id(client)
+    shared = ledger.where.startswith("postgres")
+    say = lambda m: console.print(escape(m))  # noqa: E731
+    # v2's words are plain templates (no persuasion, as D1 measured it): tactics only under v1.
+    off = "duel_policy v2 sends template words only" if v2 else None
+    book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say, off)
+    chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -625,20 +1146,32 @@ def duel_run(
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
+                step = max(sent.get(did, 0), our_duel_messages(d))  # a restarted runner still knows the step
+                choice = duel_choice(book, d, did, move, step)  # the text only (N16)
+                if choice is not None:
+                    chosen[did] = choice
                 budget = max(0.0, send_by - time.monotonic())
                 request = WordsRequest(f"duel:{did}", move.price, sent.get(did, 0), None, rival_text(d), budget)
-                said = duel_words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
+                words = choice.words(duel_words) if choice is not None else duel_words
+                said = words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
                 if time.monotonic() > send_by:
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
                     return "expired"
                 with duel_traces.tool(did, "duel_say"):
-                    client.duel_say(did, said, price=move.price, days=move.days)
+                    body = client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
+                if choice is not None:
+                    price, offer = rival_offer(d)
+                    book.sent(choice, their_price=price, their_offer=offer, tick=c.tick, message=message_id(body))
+                    console.print(f"  duel {did}: words tactic {choice.tactic or 'none'} ({escape(choice.reason)})")
             duel_traces.sent(did, move, said)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            if move.kind == "accept" and cost_nothing(e.code, e.status):  # a 4xx: it cost nothing (RULES.md)
+                with suppress(LedgerUnavailable):  # unreachable: the slot stays taken (fail closed)
+                    ledger.release_accept(c.tick, f"duel:{did}")
             duel_traces.refused(did, e)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
             return "failed"
@@ -661,6 +1194,10 @@ def duel_run(
             inputs = {**inputs, "inspector": gate.as_inputs()}
         if pick is not None and pick.days is not None:
             inputs = {**inputs, "jev_days": pick.days.as_dict()}
+        row_id = duel_id(d)
+        tactic = chosen.pop(row_id, None) if row_id is not None else None
+        if tactic is not None:
+            inputs = {**inputs, **tactic.inputs()}  # private keys (N16)
         rec.decide(
             tick,
             f"duel_{move.kind}",
@@ -704,13 +1241,18 @@ def duel_run(
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
             return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
-        store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
+        finished = [d for d in duel_list(data) if d.get("status") != "live"]
+        for d in finished:
+            if (did := duel_id(d)) is not None:
+                observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
+        store.save(tick, finished)
         observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
         rereads.new_tick()
         decisions.begin_tick(c.tick)
+        book.begin_tick(c.tick, c.round, us)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
             data = client.duels()
@@ -727,6 +1269,9 @@ def duel_run(
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
                 first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
+        for d in duels:  # memory only: the rival's new offer scores our last tactic message
+            if (seen_id := duel_id(d)) is not None:
+                observe_duel(book, d, seen_id, c.tick)
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
         try:  # another process may have taken it already
@@ -755,6 +1300,12 @@ def duel_run(
             if did is None:
                 return
             gate: Gate | None = None
+            try:  # S1: tagged, never obeyed; a tagger bug never costs a duel its move
+                offer = d.get("rival_offer")
+                key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
+                injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
+            except Exception as e:  # noqa: BLE001 - calibration only
+                console.print(f"  duel {did}: injection tagging failed ({type(e).__name__}); the move goes on")
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
                 pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
@@ -896,6 +1447,9 @@ def duel_run(
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if store.read_finished(duels):
             save_finished(c.tick)
+        if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
+            book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
+        book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
         evals.after_tick(c.tick)  # last: a background pass every N ticks, never on the tick's path
 
     every = evals_default(evals_every, play)
@@ -911,6 +1465,15 @@ def duel_run(
 
 
 MISSED_TICKS_CAP = 2  # v2 accepts at most this many ticks earlier after a gap in the duel loop
+
+
+def _our_team_id(client: Any) -> str | None:
+    """Our team id for the tactic lessons (one /me read at start); None when it cannot be read: the lessons then
+    bind no team, and the duel loop never waits on it."""
+    try:
+        return str(client.me().get("id") or "") or None
+    except Exception:
+        return None
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -1070,7 +1633,7 @@ def rules_check(
     settings = load_settings()
     client = team_client(settings)
     c = Clock.model_validate(client.clock())
-    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
+    ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules, OfficialValues.of(client))
     try:
         action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
     except ValueError as e:
@@ -1373,6 +1936,43 @@ def db_load(live: bool = typer.Option(True, help=LIVE_HELP)) -> None:
     console.print(f"[green]loaded[/green] {counts}")
 
 
+@db_app.command("readonly-user")
+def db_readonly_user(
+    password_stdin: bool = typer.Option(False, "--password-stdin", help="Read the password from stdin (one line)"),
+) -> None:
+    """Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL.
+
+    Generates a strong password unless --password-stdin; prints its connection URL once."""
+    import getpass
+
+    import psycopg
+    from rich.markup import escape
+
+    from bazaar_agent import pgconn
+    from bazaar_agent import readonly_user as ro
+
+    raw = ro.generate_password()
+    if password_stdin:  # a terminal gets a prompt that does not echo; a pipe is read as one line
+        raw = getpass.getpass("password: ") if sys.stdin.isatty() else sys.stdin.readline().rstrip("\r\n")
+    try:
+        password = ro.check_password(raw)
+        url = load_settings().require_database_url()
+        target = pgconn.describe(url)
+    except (ro.PasswordError, ConfigError, pgconn.DatabaseUrlError) as e:
+        _fail(escape(str(e)))
+    if target.host.endswith(".railway.internal"):
+        err_console.print("DATABASE_URL is Railway's private host: teammates need the public proxy URL", markup=False)
+    try:
+        with pgconn.connect(url, app="bazaar-readonly-user") as conn:
+            ro.apply(conn, password)
+    except psycopg.Error as e:
+        detail = (pgconn.redact(str(e), url).strip().splitlines() or ["?"])[0]  # first line: never the CONTEXT
+        _fail(escape(f"cannot apply {ro.ROLE} on {target}: {detail}"))
+    err_console.print(f"{ro.ROLE} ready on {target.host}:{target.port}/{target.dbname} (SELECT only)", markup=False)
+    err_console.print("connection URL (shown once; share it privately, never in git or chat):", markup=False)
+    console.print(ro.connection_url(target, password), markup=False, highlight=False, soft_wrap=True)
+
+
 @db_app.command("tables")
 def db_tables() -> None:
     """Every table with its row count."""
@@ -1421,15 +2021,22 @@ def _team_me() -> tuple[Any, dict[str, Any]]:
     raise typer.Exit(1)
 
 
-def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
-    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
-    from bazaar_agent.agents.seller import offers_in, open_commitments
+def _my_offers(client: Any) -> list[dict[str, Any]]:
+    """Our open offers; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in
 
     try:
-        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+        return offers_in(client.my_offers())
     except BazaarError as e:
         console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
     raise typer.Exit(1)
+
+
+def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, Any]] | None = None) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import open_commitments
+
+    return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
 def _pack_judge(settings: Any, timeout_s: float) -> Any:
@@ -1498,23 +2105,69 @@ def strategy(
 
 sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
 app.add_typer(sell_app, name="sell")
+app.add_typer(flags_cli.flags_app, name="flags")
 EXPIRES_HELP = "Ticks the offer stays open"
 POST_HELP = "Actually post. Without it: dry run, nothing is sent"
+TO_HELP = "Address the offer to one team (t05): only it may accept. Default: anyone on the venue"
 
 
-def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+def _team_to(to: str | None) -> str | None:
+    if to is not None and not intel.TEAM_ID.match(to):
+        _fail(f"--to takes a team id like t05, not {to!r}")
+    return to
+
+
+def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> bool:
+    """Claim the team's accept slot for a dealer accept. False: the slot is taken this tick (the dealer bids
+    her ask instead). The shared ledger cannot answer: `Hold`, so the dealer holds the tick and sends nothing
+    (fail closed: never a bid whose spend the ledger could not book, never a walk)."""
+    from bazaar_agent.agents.dealer import Hold
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+    try:
+        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+            return False
+    except LedgerUnavailable as e:  # no slot without the shared ledger: hold, never accept or walk
+        raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
+    tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
+    return True
+
+
+def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any, Any, Any]:
+    """(rules, ledger, guardrail context, commitments) for a write from the CLI: /me, the shared ledger, our
+    open offers and, with `max_counterparty_share` on, our team-to-team volume from the whole feed history
+    (`_history`: the shared DB first, as the maker and the taker read it; the live window too when `live`)."""
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.seller import post
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     rules = _rules().rules
     ledger = _ledger("sell", live=live)
     now = Clock.model_validate(client.clock())
     try:
-        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
+        ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules, OfficialValues.of(client))
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
-    commitments = _open_commitments(client, me)
+    offers = _my_offers(client)
+    commitments = _open_commitments(client, me, offers)
+    if rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        from bazaar_agent.agents.seller import trade_book
+
+        us = str(me.get("id") or "")
+        try:
+            book = intel.book_values(public_client(load_settings()).catalog())
+            settled = intel.settled_volume(_history(None, live=live), us, book)
+        except BazaarError as e:
+            _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
+        ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
+    return rules, ledger, ctx, commitments
+
+
+def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+    from bazaar_agent.agents.seller import post
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1524,6 +2177,36 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
         return
     except LedgerUnavailable as e:  # only after the offer went out: the bid's spend is not counted
         _fail(f"offer posted, but the shared ledger did not record its spend ({e})")
+    _hands_off(ledger, ctx, out, listing.price)
+    _report_post(out)
+
+
+def _hands_off(ledger: Any, ctx: Any, out: Any, price: int) -> None:
+    """A live hand post is booked as a `HANDS_OFF` listing in the shared ledger: the maker (which owns our
+    board offers, on any machine) never cancels or reprices it, and the listing counts toward this tick's."""
+    from bazaar_agent.guardrails import HANDS_OFF
+
+    offer_id = (out.offer or {}).get("id") if out.sent else None
+    if not isinstance(offer_id, int):
+        return
+    try:
+        ledger.record("listing", ctx.tick, ctx.t_hours, price, f"{HANDS_OFF}{offer_id}")
+    except Exception as e:  # the offer is out: say so, never fail the command after the send
+        console.print(
+            f"[red]offer {offer_id} is posted but NOT booked hands-off ({type(e).__name__}): "
+            f"the maker may cancel it; pause the maker or repost[/red]"
+        )
+        return
+    if str(getattr(ledger, "where", "")).startswith("file"):
+        console.print(
+            f"[yellow]offer {offer_id} booked hands-off in this machine's ledger only ({ledger.where}): "
+            f"a maker on another machine does not see it[/yellow]"
+        )
+    else:
+        console.print(f"[dim]offer {offer_id} booked hands-off in the shared ledger: the maker leaves it alone[/dim]")
+
+
+def _report_post(out: Any) -> None:
     colour = "green" if out.verdict.allowed else "red"
     console.print(f"[{colour}]{out.message}[/{colour}]")
     if not out.verdict.allowed:
@@ -1536,6 +2219,7 @@ def sell_list(
     price: int = typer.Option(..., min=1, help="Cash we want for it"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md)."""
@@ -1543,7 +2227,7 @@ def sell_list(
 
     client, me = _team_me()
     try:
-        listing = sell_listing(me, target, price, venue)
+        listing = sell_listing(me, target, price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return
@@ -1556,6 +2240,7 @@ def sell_bid(
     price: int = typer.Option(..., min=1, help="Cash we offer"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold."""
@@ -1563,11 +2248,75 @@ def sell_bid(
 
     client, me = _team_me()
     try:
-        listing = bid_listing(ref, _rarity_of(ref), price, venue)
+        listing = bid_listing(ref, _rarity_of(ref), price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return
     _post_offer(client, me, listing, live, expires)
+
+
+@sell_app.command("swap")
+def sell_swap(
+    target: str = typer.Argument(help="The copy we give: asset id (15) or card ref (the copy we lose least by)"),
+    want: str = typer.Option(..., "--for", help="The card we want for it, any copy (e.g. MAL-08)"),
+    to: str = typer.Option(..., "--to", help="The team we propose it to (t08): only it may accept"),
+    give_cash: int = typer.Option(0, min=0, help="Cash we add"),
+    want_cash: int = typer.Option(0, min=0, help="Cash we ask them to add"),
+    venue: str = typer.Option("rastro", help="Venue id"),
+    expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    live: bool = typer.Option(False, help=POST_HELP),
+) -> None:
+    """Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked.
+
+    The copy leaves at what we receive (the card's worth to us plus their cash), never below its
+    your_value; cash we add is checked as a bid (its price cap, the cash floor, the spend cap); both count
+    toward the team's share when the counterparty cap is on."""
+    from bazaar_agent.agents.seller import OfferError, Swap, find_copy, post_swap
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.strategy import build_market, buy_case
+
+    client, me = _team_me()
+    team_to = _team_to(to)
+    try:
+        asset = find_copy(me, target)
+    except OfferError as e:
+        _fail(str(e))
+        return
+    if not isinstance(asset.get("your_value"), int | float):
+        _fail(f"asset {asset['id']} has no your_value in /api/me: not pricing it blind")
+    catalog = public_client(load_settings()).catalog()
+    m = build_market(me, catalog, [], [])
+    card = m.cards.get(want)
+    if card is None or team_to is None:
+        _fail(f"unknown card {want!r}")
+        return
+    book = intel.book_values(catalog)
+    swap = Swap(
+        int(asset["id"]),
+        str(asset.get("ref")),
+        asset.get("rarity"),
+        float(asset["your_value"]),
+        want,
+        card.rarity,
+        buy_case(m, card, _strategy().params).value,
+        venue,
+        team_to,
+        give_cash,
+        want_cash,
+        max(give_cash + want_cash, round(book.get(str(asset.get("ref")), 0.0) + book.get(want, 0.0))),
+    )
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
+    try:
+        out = post_swap(
+            client, swap, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
+        )
+    except BazaarError as e:
+        _fail(f"offer refused: {e.code} ({e.message[:80]})")
+        return
+    except LedgerUnavailable as e:  # only after the offer went out: the swap's cash leg is not counted
+        _fail(f"offer posted, but the shared ledger did not record its spend ({e})")
+    _hands_off(ledger, ctx, out, swap.give_cash or swap.want_cash)
+    _report_post(out)
 
 
 @sell_app.command("offers")
@@ -1743,6 +2492,7 @@ def _run_agent(
     from bazaar_agent.decisions import DecisionLog
     from bazaar_agent.ledger_pg import LedgerNotShared, ledger_health, open_ledger
     from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+    from bazaar_agent.supply_db import ScanStore
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
@@ -1764,7 +2514,8 @@ def _run_agent(
     except LedgerNotShared as e:
         _fail(f"{name}: refusing to trade: {e}")
     decisions = DecisionLog(settings.data_dir, connect, log)
-    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, archive=learn)
+    scans = ScanStore(settings.data_dir / "supply", connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, scans, archive=learn)
     extra: dict[str, Any] = {}
     if learn:
         from bazaar_agent.learn.live import LiveLearner
@@ -1840,6 +2591,9 @@ def agent_taker(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     threads: int = typer.Option(3, min=0, max=6, help="Dealer conversations at once (one per dealer)"),
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
+    accept_bids: bool = typer.Option(
+        False, "--accept-bids", help="Also sell into standing bids that beat our value by sell_min_surplus"
+    ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
@@ -1862,15 +2616,20 @@ def agent_taker(
     from bazaar_agent.learn.jev_context import offer_situation, with_lessons
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        rules = kw["rules"]
+        rules, log = kw["rules"], kw["log"]
+        # Its own store (own memory and connection): thousands of tactic lessons must never trim the feed
+        # reader's blockers out of the LiveLearner's memory, which the taker reads before its sends.
+        shared = kw["ledger"].where.startswith("postgres")
+        bluff = _tactic_book(rules, _learning_store("bazaar-taker-bluff", log) if shared else None, None, log)
         return Taker(
             team,
             public,
+            bluff=bluff,
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads),
+            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             **kw,
         )
 
@@ -1901,7 +2660,13 @@ def agent_maker(
         market = _venue_keeper(team, settings, kw) if venue else None
         notices = VenueNotices(kw["log"]) if learn else None
         jev_ = _maker_jev(settings, kw["rules"]) if jev else None
-        return Maker(team, public, jev=jev_, market=market, notices=notices, **kw)
+        sell_market = None  # the dealer sell desk's dealers and curves: Postgres when shared, else API + feed
+        if kw["ledger"].where.startswith("postgres"):
+            from bazaar_agent import db
+            from bazaar_agent.agents.dealer_sell_data import db_loader
+
+            sell_market = db_loader(lambda: db.connect(app="bazaar-maker-sell", connect_timeout_s=3), kw["log"])
+        return Maker(team, public, jev=jev_, market=market, notices=notices, sell_market=sell_market, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 
@@ -1913,7 +2678,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
     """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
     from bazaar_agent import db
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.venue_keeper import VenueKeeper
+    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_GAME_HOURS, VenueKeeper
 
     return VenueKeeper(
         team,
@@ -1926,6 +2691,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
+        announce_every_game_hours=ANNOUNCE_EVERY_GAME_HOURS,
     )
 
 
@@ -2151,6 +2917,7 @@ def broker_run(
 
 llm_cli.register(app)
 evals_cli.register(app)
+supply_cli.register(app)
 learn_cli.register(app)
 dealer_finals.register(dealer_app)
 

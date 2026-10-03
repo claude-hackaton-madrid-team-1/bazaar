@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook
+from bazaar_agent.agents.tactics import Side, private_numbers
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.guardrails import Action, duel_days_ok
 
@@ -198,7 +200,49 @@ def rival_text(duel: dict[str, Any]) -> str | None:
     return None
 
 
+def rival_offer(duel: dict[str, Any]) -> tuple[int | None, int | None]:
+    """(price, offer id) of the rival's standing offer, read defensively."""
+    offer = duel.get("rival_offer")
+    if not isinstance(offer, dict):
+        return None, None
+    oid = offer.get("id")
+    return _rival_price(duel), oid if isinstance(oid, int) and not isinstance(oid, bool) else None
+
+
+def our_duel_messages(duel: dict[str, Any]) -> int:
+    """How many messages we already sent in this duel, from the duel's own list (`from: "you"`)."""
+    messages = duel.get("messages")
+    return (
+        sum(1 for m in messages if isinstance(m, dict) and m.get("from") == "you") if isinstance(messages, list) else 0
+    )
+
+
+def duel_choice(book: TacticBook | None, duel: dict[str, Any], did: int, move: DuelMove, step: int) -> Choice | None:
+    """The bluff tactic for an OFFER's text (N16). An accept or a hold gets none: an accept that is already good
+    is sent as it is, never delayed or replaced by a bluff. The price and days stay the move's own."""
+    role = duel.get("role")
+    if book is None or move.kind != "offer" or move.price is None or role not in ("seller", "buyer"):
+        return None
+    private = private_numbers(duel.get("your_limit"), duel.get("your_days_weight"))
+    side: Side = "sell" if role == "seller" else "buy"
+    cp, their = Counterparty.rival(duel.get("rival"), did), _rival_price(duel)
+    return book.choose(cp, side, f"duel:{did}", step, move.price, avoid=private, their_price=their)
+
+
+def observe_duel(book: TacticBook | None, duel: dict[str, Any], did: int, tick: int) -> None:
+    """Score our last duel tactic: the rival's next offer, or the duel's end (deal / no deal)."""
+    if book is None:
+        return
+    if duel_done(duel):
+        status = duel.get("status")
+        book.ended(f"duel:{did}", status=status if isinstance(status, str) else None, closed_reason=None, tick=tick)
+        return
+    price, offer_id = rival_offer(duel)
+    book.observe(f"duel:{did}", their_price=price, their_offer=offer_id, tick=tick)
+
+
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n")
+        # ASCII-escaped: a rival's text with a lone surrogate must never stop the duel loop
+        handle.write(json.dumps(record, separators=(",", ":")) + "\n")
