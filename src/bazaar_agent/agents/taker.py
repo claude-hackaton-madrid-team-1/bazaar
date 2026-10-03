@@ -405,7 +405,9 @@ class Taker:
             )
             return
         if self.learner is not None:
-            run.blocks = self.learner.blocks(snap.events, snap.us, clock)
+            known: dict[str, Any] = {str(d.get("id")): "dealer" for d in snap.dealers if d.get("id")}
+            known.update({v.id: "venue" for v in snap.venues})
+            run.blocks = self.learner.blocks(snap.events, snap.us, clock, known)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)

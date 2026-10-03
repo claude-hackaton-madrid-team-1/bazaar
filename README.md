@@ -597,11 +597,28 @@ already reads the shared `feed_events` table plus the public 500-event window ev
 that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
 keeps growing while the laptop sleeps, with no new service and no extra game call.
 
+**The LLM pass (free text only, opt-in).** Off until RUNTIME.md `llm_read_feed = true` (it spends the same
+subscription or key as everything else). Then dealer words, organiser notices, venue notices, a dealer's update
+note and a level's teaser go, as quoted data in one JSON array, to the model Jev picks for `read_feed` (capped
+at Haiku or Sonnet unless a model is pinned), on a background thread inside the taker: one bounded call (8
+texts of ONE kind, 1,500 tokens, 25 s) at most every `read_feed_every_ticks` (10) ticks, doubled after each
+failure, organiser notices first, never while `.local/PAUSE` exists, never in a tick. Our code keeps only a
+learning about the text's own speaker (an organiser notice may also name a dealer or venue we know), with a
+plausible expiry, confidence capped at 0.7, stored as its own `source: llm` row, bound to nobody: **an LLM
+reading never blocks a dealer** and never takes a place in the blocker recall. `--no-llm-read` (or
+`BAZAAR_LLM_READ=0`, declared `preserve()` on Railway) turns it off for one process.
+
+**The maker reads fee notices.** A venue owner may announce a fee from a later tick ("v04 will charge 0% from
+T161"). The maker (`--learn`, default on, `BAZAAR_LEARN=0` turns it off) scores each venue at the worse of its
+fee now and a fee announced to take effect within a listing's life (40 ticks), and leaves out a venue that is
+closing, from the events it already reads: no database and no extra call.
+
 ```sh
 uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
 uv run bazaar learnings --all --subject v04 --json
 uv run bazaar learnings --kind cooloff --kind quota --tick 180
 uv run bazaar learnings --save             # also upsert them into the shared learnings table
+uv run bazaar learnings --llm 24           # also read the newest 24 free texts with the runtime LLM
 ```
 
 ### Learner (auto-evolve): lessons from outcomes and the hybrid recall (N3)
@@ -1120,7 +1137,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool; PR 3 🔵: our dealer threads + `closed_reason` into `threads`/`messages` from the answers the taker already reads (0 extra requests) |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 🔵: LLM pass over free text (background thread in the taker, Jev's `read_feed` model, never blocks), maker fee notices; embeddings, `trader_behaviors`, Jev/words context and the MCP tool moved to N3; PR 3 🔵: our dealer threads + `closed_reason` into `threads`/`messages` from the answers the taker already reads (0 extra requests) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
@@ -1204,6 +1221,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
 | [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
@@ -1215,7 +1233,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | Sat 06:07 | `26c40fd` |
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
-| [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
 
 ### Open pull requests
 
