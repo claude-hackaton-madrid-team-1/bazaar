@@ -414,7 +414,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duel_days import effective_rules, latch, real_game
+    from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
@@ -507,6 +507,24 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
+    def observe_days(rows: list[dict[str, Any]]) -> None:
+        before = days_switch.verdict
+        days_switch.observe(rows, real)
+        if days_switch.verdict != before:
+            console.print(
+                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
+            )
+
+    def read_done_days(tick: int) -> None:
+        """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
+        while the verdict is unknown or signed (r1: a text latch keeps its cross-check against the score)."""
+        if tick % done_every_ticks or not reads_done(rules, days_switch, real):
+            return
+        try:
+            observe_days([d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
+        except BazaarError as e:
+            console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
         decisions.begin_tick(c.tick)
@@ -520,18 +538,7 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
-        verdict_before = days_switch.verdict
-        finished: list[dict[str, Any]] = []
-        if real and days_switch.verdict == "unknown" and c.tick % done_every_ticks == 0:  # a scored deal is proof
-            try:
-                finished = [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)]
-            except BazaarError as e:
-                console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
-        days_switch.observe([*duels, *finished], real)
-        if days_switch.verdict != verdict_before:
-            console.print(
-                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
-            )
+        observe_days(duels)
         rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
@@ -646,6 +653,7 @@ def duel_run(
             except Exception as e:
                 console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
         duel_traces.end_tick(duel_id(d) for d in duels)
+        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):

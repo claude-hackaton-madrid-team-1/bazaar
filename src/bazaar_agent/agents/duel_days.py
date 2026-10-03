@@ -17,8 +17,12 @@ It persists to a small JSON file, so a restart keeps the verdict. The caller pas
 `Settings.simulator`), and decides whether the latch may switch anything on (a guardrail, default off).
 
 The rival's days. Whatever the sign convention, the days a rival puts in its own offers show which end it
-prefers. `rival_days` reads that preference (and a rough per-day weight when its price and days move together).
+prefers. `rival_days` reads that preference.
 A rival that always sends 0 may simply not handle days, so a 0 preference counts for less than a 10.
+
+The latch is a local file. On Railway, `duel run` and the runtime are separate services: without a shared volume
+each keeps its own, and a redeploy re-arms it. There, set `duel_days_signed` by hand once a person has read the
+first real payload.
 
 Our days. Worst case: always 0, as #60 (every day may cost us). Signed: the end that maximises our weight plus
 the rival's estimated one, priced so OUR value stays where the policy put it (`reprice`), never outside our limit.
@@ -40,12 +44,19 @@ from urllib.parse import urlparse
 Verdict = Literal["signed", "reversed", "cost", "unknown", "conflict"]
 DAYS_MAX = 10  # RULES.md: delivery day 0 to 10
 PRIOR_WEIGHT = 2.0  # E|weight| when weights are uniform on -4..4 (the simulator's draw): a rival's unknown magnitude
-_GAIN, _LOSS = r"(?:gain|earn)\w*", r"(?:lose|loss|cost|pay)\w*"
+_GAIN = r"\b(?:gain|gains|gained|earn|earns|earned)\b"
+_LOSS = r"\b(?:lose|loses|lost|loss|losses|cost|costs)\b"
 _PLUS = r"\(\s*\+\s*\)"
-PLUS_GAIN = re.compile(rf"{_GAIN}\s*{_PLUS}|positive\W+(?:\w+\W+){{0,3}}?{_GAIN}", re.IGNORECASE)
-PLUS_LOSS = re.compile(rf"{_LOSS}\s*{_PLUS}|positive\W+(?:\w+\W+){{0,3}}?{_LOSS}", re.IGNORECASE)
+PLUS_GAIN = re.compile(rf"{_GAIN}\s*{_PLUS}|\bpositive\W+(?:\w+\W+){{0,3}}?{_GAIN}", re.IGNORECASE)
+PLUS_LOSS = re.compile(rf"{_LOSS}\s*{_PLUS}|\bpositive\W+(?:\w+\W+){{0,3}}?{_LOSS}", re.IGNORECASE)
 LOSS = re.compile(_LOSS, re.IGNORECASE)
 GAIN = re.compile(_GAIN, re.IGNORECASE)
+YOU = re.compile(r"\b(?:you|your|yours)\b", re.IGNORECASE)  # it must speak of OUR weight
+OTHER = re.compile(
+    r"\b(?:buyer|buyers|seller|sellers|rival|rivals|counterparty|opponent|other side|other party|they|their|them)\b",
+    re.IGNORECASE,
+)
+NEGATION = re.compile(r"\b(?:not|no|never|without|neither|nor)\b|n't\b", re.IGNORECASE)
 
 
 def _number(value: object) -> float | None:
@@ -68,11 +79,14 @@ def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     signed    a gain is tied to "(+)" or "positive" ("gain (+) or lose (-)", the simulator's words)
     reversed  a cost or loss is tied to "(+)" or "positive": the opposite convention, so the switch stays off
     cost      only a cost or loss, no gain: every day costs, the worst case is the truth
-    unknown   anything else, including a gain and a loss with no sign tied to either
+    unknown   anything else: a gain and a loss with no sign tied to either, a text that does not speak of "you",
+              names the other side (buyer, seller, rival...) or negates (r1's review)
     """
     text = duel.get("days_meaning")
     if not real_game or not two_issue(duel) or not isinstance(text, str) or not text.strip():
         return "unknown"
+    if not YOU.search(text) or OTHER.search(text) or NEGATION.search(text):
+        return "unknown"  # not about OUR weight, about the other side's, or negated: never read a sign from it
     plus_gain, plus_loss = bool(PLUS_GAIN.search(text)), bool(PLUS_LOSS.search(text))
     if plus_gain != plus_loss:
         return "signed" if plus_gain else "reversed"
@@ -140,6 +154,8 @@ class DaysSwitch:
             raw = json.loads(path.read_text())
         except (OSError, ValueError):
             return cls(path=path)
+        if not isinstance(raw, dict):
+            return cls(path=path)
         verdicts: dict[str, Verdict] = {
             "signed": "signed",
             "reversed": "reversed",
@@ -206,11 +222,22 @@ def latch(data_dir: Path) -> DaysSwitch:
 
 
 def effective_rules(rules: Any, switch: DaysSwitch) -> Any:
-    """The rules a duel tick runs with: `duel_days_signed` turned on when `duel_days_auto` allows it AND a real
-    payload confirmed the sign; otherwise the very same rules. One object for the policy and the guard alike."""
+    """The rules a duel tick runs with, one object for the policy and the guard alike:
+    - `duel_days_signed` on when `duel_days_auto` allows it AND a real payload confirmed the sign;
+    - `duel_days_signed` OFF, even when set by hand, once real evidence says otherwise (reversed, cost, conflict);
+    - otherwise the very same rules."""
+    if switch.verdict in ("reversed", "cost", "conflict"):
+        return rules.model_copy(update={"duel_days_signed": False}) if rules.duel_days_signed else rules
     if rules.duel_days_signed or not switch.signed(bool(getattr(rules, "duel_days_auto", False))):
         return rules
     return rules.model_copy(update={"duel_days_signed": True})
+
+
+def reads_done(rules: Any, switch: DaysSwitch, real: bool) -> bool:
+    """Whether `duel run` reads `?done=true` for scored evidence: only on the real game, only for v2 with
+    `duel_days_auto`, and while the verdict can still change (unknown) or still needs its cross-check (signed)."""
+    v2 = getattr(rules, "duel_policy", "v1") == "v2"
+    return real and v2 and bool(getattr(rules, "duel_days_auto", False)) and switch.verdict in ("unknown", "signed")
 
 
 # ---------------------------------------------------------------- the rival's days
@@ -219,34 +246,29 @@ def effective_rules(rules: Any, switch: DaysSwitch) -> Any:
 @dataclass(frozen=True)
 class RivalDays:
     prefers: int | None  # the end it leans to: 10 or 0; None without evidence (or when it sits in the middle)
-    weight: float | None  # a rough |weight| (P per day) from price and days moving together; None if not seen
     confidence: float  # 0..1
     offers: int
 
 
 def rival_days(duel: Mapping[str, Any]) -> RivalDays:
     """The rival's preferred end of 0-10 from its own priced offers. A 0 counts half: a rival that does not
-    handle days may send 0 whatever its weight."""
+    handle days may send 0 whatever its weight. (No weight estimate: its price moves mix concession with days.)"""
     rival = duel.get("rival")
-    offers = [
-        (int(m["tick"]), float(p), int(d))
+    days = [
+        d
         for m in duel.get("messages") or []
         if m.get("from") == rival
-        and (p := _number(m.get("price"))) is not None
+        and _number(m.get("price")) is not None
         and isinstance(d := m.get("days"), int)
         and not isinstance(d, bool)
     ]
-    if not offers:
-        return RivalDays(None, None, 0.0, 0)
-    mean = statistics.fmean(d for _, _, d in offers)
+    if not days:
+        return RivalDays(None, 0.0, 0)
+    mean = statistics.fmean(days)
     prefers = DAYS_MAX if mean >= 7 else 0 if mean <= 3 else None
-    side = [d for _, _, d in offers if (d >= 7 if prefers == DAYS_MAX else d <= 3)] if prefers is not None else []
-    confidence = min(1.0, len(offers) / 3) * (len(side) / len(offers)) * (0.5 if prefers == 0 else 1.0)
-    trades = [
-        abs((p2 - p1) / (d2 - d1)) for (_, p1, d1), (_, p2, d2) in zip(offers, offers[1:], strict=False) if d2 != d1
-    ]
-    weight = statistics.median(trades) if trades else None
-    return RivalDays(prefers, weight, round(confidence, 3), len(offers))
+    side = [d for d in days if (d >= 7 if prefers == DAYS_MAX else d <= 3)] if prefers is not None else []
+    confidence = min(1.0, len(days) / 3) * (len(side) / len(days)) * (0.5 if prefers == 0 else 1.0)
+    return RivalDays(prefers, round(confidence, 3), len(days))
 
 
 # ---------------------------------------------------------------- our days
@@ -269,8 +291,8 @@ def inside(duel: Mapping[str, Any], worth: float) -> bool:
 
 
 def choose_days(duel: Mapping[str, Any], signed: bool, rival: RivalDays, prior: float = PRIOR_WEIGHT) -> int | None:
-    """Our delivery day. Worst case: 0. Signed: the end where our weight plus the rival's (its preference, at its
-    estimated magnitude or the prior, scaled by our confidence in it) is larger. None in a price-only duel."""
+    """Our delivery day. Worst case: 0. Signed: the end where our weight plus the rival's (its preference, at the
+    prior magnitude, scaled by our confidence in it) is larger. None in a price-only duel."""
     if not two_issue(duel):
         return None
     weight = _number(duel.get("your_days_weight"))
@@ -278,7 +300,7 @@ def choose_days(duel: Mapping[str, Any], signed: bool, rival: RivalDays, prior: 
         return 0
     theirs = 0.0
     if rival.prefers is not None:
-        size = (rival.weight if rival.weight is not None else prior) * rival.confidence
+        size = prior * rival.confidence
         theirs = size if rival.prefers == DAYS_MAX else -size
     return DAYS_MAX if weight + theirs > 0 else 0
 
