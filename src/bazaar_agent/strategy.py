@@ -5,7 +5,8 @@ there is no network here, so every number is testable offline. Strategy proposes
 each move carries the exact CLI command, and `guarded()` shows what GUARDRAILS.md would say first.
 
 Supply is finite: a card exists only once a pack or a dealer mints it (print runs 300/90/30/9/3), so
-a card with zero minted copies is never a buy, only a pull or a wait.
+a card with zero minted copies is only a pull or a wait, unless `dealer_mints_unminted` lets a dealer that
+sells its rarity for its released set mint it (then it is a dealer buy, and not scarce).
 """
 
 from __future__ import annotations
@@ -43,7 +44,8 @@ Availability = Literal["dealer", "teams", "packs", "none"]
 
 
 class StrategyParams(BaseModel):
-    """Every `` - `param` = value — why `` line of STRATEGY.md. All required: the file is the source."""
+    """Every `` - `param` = value — why `` line of STRATEGY.md. All required (the file is the source), except the
+    switches with a default that keeps the old behaviour (`dealer_mints_unminted`)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -249,18 +251,22 @@ def supply_of(m: Market, card: Card, params: StrategyParams) -> Supply:
     ours = m.held.get(card.ref, 0)
     mintable = card.minted < card.print_run
     where: Availability
-    dealer_sells = card.set_code in m.released and quote_for(m, card) is not None and mintable
-    if card.minted == 0 and not (params.dealer_mints_unminted and dealer_sells):
-        where = "packs" if mintable and card.rarity in pack_rarities(m) else "none"
-    elif dealer_sells:
+    dealer_sells = card.set_code in m.released and mintable and quote_for(m, card) is not None
+    if dealer_sells and (card.minted > 0 or params.dealer_mints_unminted):
         where = "dealer"
+    elif card.minted == 0:
+        where = "packs" if mintable and card.rarity in pack_rarities(m) else "none"
     elif card.minted > ours:
         where = "teams"
     else:
         where = "none"
-    return Supply(
-        card.ref, card.rarity, card.minted, card.print_run, ours, card.minted <= params.scarce_minted_max, where
-    )
+    scarce = card.minted <= params.scarce_minted_max and not on_demand(card, where)
+    return Supply(card.ref, card.rarity, card.minted, card.print_run, ours, scarce, where)
+
+
+def on_demand(card: Card, where: Availability) -> bool:
+    """A card nobody holds yet that a dealer mints when sold: zero copies, but not scarce."""
+    return card.minted == 0 and where == "dealer"
 
 
 def supply_view(m: Market, params: StrategyParams) -> list[Supply]:
@@ -338,9 +344,12 @@ class Move:
     ladder: tuple[int, int, int] | None = None  # dealer buys and packs: (start, max, step) of the bid ladder
 
 
-def urgency_of(card: Card, chasers: int, params: StrategyParams) -> float:
-    """Mean of scarcity (1 at or below scarce_minted_max copies) and competitor demand."""
-    scarcity = min(1.0, params.scarce_minted_max / card.minted) if card.minted else 1.0
+def urgency_of(card: Card, chasers: int, params: StrategyParams, minted_on_demand: bool = False) -> float:
+    """Mean of scarcity (1 at or below scarce_minted_max copies; 0 for a card a dealer mints on demand) and
+    competitor demand."""
+    scarcity = 1.0 if card.minted == 0 else min(1.0, params.scarce_minted_max / card.minted)
+    if minted_on_demand:
+        scarcity = 0.0
     demand = chasers / (chasers + 1)
     return round((scarcity + demand) / 2, 3)
 
@@ -458,11 +467,12 @@ def buy_case(m: Market, card: Card, params: StrategyParams) -> BuyCase:
     value = card.book * aff + share
     chasers = m.chasers.get(card.set_code, ())
     note = f"{card.minted}/{card.print_run} minted" + (", chased by " + ", ".join(chasers) if chasers else "")
+    supply = supply_of(m, card, params)
     return BuyCase(
         card,
-        supply_of(m, card, params),
+        supply,
         value,
-        urgency_of(card, len(chasers), params),
+        urgency_of(card, len(chasers), params, on_demand(card, supply.availability)),
         f"{card.book:g}×{aff:g} + bonus share {share:.1f} = {value:.1f}",
         note,
         chasers,

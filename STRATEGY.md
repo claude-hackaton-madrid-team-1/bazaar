@@ -14,7 +14,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 
 ## Strategies the runtime implements
 - complete_pages: buy missing page cards of our highest-affinity sets first; each missing card also carries its share of the page bonus.
-- scarcity_first: the fewer copies exist, the sooner we act and the higher we value it; a card with zero minted copies cannot be bought yet, only pulled or waited for.
+- scarcity_first: the fewer copies exist, the sooner we act and the higher we value it; a card with zero minted copies cannot be bought yet, only pulled or waited for (unless `dealer_mints_unminted`: then a dealer that sells its rarity mints it, and it is not scarce).
 - sell_to_need: sell duplicates and low-affinity cards to the teams that chase their set, priced at what the card is worth to them, never below our own value.
 - dealer_floor: buy plentiful commons and uncommons from dealers at their learned fill price, not from teams.
 - pack_value: buy a pack only when its expected value to us (given what we already hold) beats its learned price, a pack slot is left this game hour (`max_packs_per_game_hour` in GUARDRAILS.md and each dealer's `per_team_per_hour`), and Jev (`spend_pack_slot_now`, `questions/packs.json`) decides yes; `no` or `undecided` keeps the slot.
@@ -40,4 +40,4 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `rare_fallback_price` = 70 — expected price of a rare when the tape has none for that card.
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.
-- `dealer_mints_unminted` = false — true: a card with zero minted copies is still a dealer buy when a dealer sells its rarity for its released set (dealers mint: Friday, Chato sold LAV-09 serials 2–4 and Abuela LAV-04 serials 15–16 without buying them first). Matters the hour a set is released (RET Saturday, CHA Sunday), when every card of it has zero copies.
+- `dealer_mints_unminted` = false — true: a card with zero minted copies is still a dealer buy when a dealer sells its rarity for its released set (dealers mint: Friday, Chato sold LAV-09 serials 2–4 and Abuela LAV-04 serials 15–16 without buying them first). Matters most the hour a set is released (RET Saturday, CHA Sunday), when every card of it has zero copies; it also covers old-set cards nobody has pulled when a dealer sells their rarity (e.g. a rare at Chato). A dealer-minted card is never treated as scarce. Serial-1 dealer sales were not observed on Friday.
