@@ -132,6 +132,7 @@ So listings go public wherever the cap allows. Direct proposals use a team threa
 3. Swap cash legs route around the price caps. The caps apply to cash only, so "LAT-09 + 59 P for a rare" passes. Decide whether to cap swaps by value.
 4. Split the 83 P above the floor between the trade desk (bids) and W3's ladder (`--cash-budget`).
 5. At 09:00, run `uv run bazaar trade-plan --live`. It reads the feed history from the shared DB plus the live window, and our `/me`, open offers and this hour's spend; it sends nothing. Then post the plan (`sell bid`, `sell list --to`) or hand it to the maker.
+6. Set `chaser_min_p` = 0.5 in STRATEGY.md (default 0 = today) so the maker's buyers and its `to` candidates come from the map. On Friday's feed the map names MAL = t12 where team flows said t13/t15/t17, and LAT = t15/t18 where flows said t18 only.
 
 Code review (`/code-review high`, 10 findings, all fixed in ec28ab1):
 - the search crashed on pools of 1,100+ candidates (RecursionError);
@@ -142,6 +143,4 @@ Code review (`/code-review high`, 10 findings, all fixed in ec28ab1):
 - the taker counted the fee as volume;
 - the CLI and runtime made repeated reads.
 
-Not done:
-- #14's `/api/me/value` validation, which needs live calls.
-- Wiring the affinity map into `strategy.chasers`, which still uses `team_flows`.
+Not done: #14's `/api/me/value` validation, which needs live calls.
