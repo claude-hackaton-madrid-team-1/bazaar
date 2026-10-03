@@ -50,7 +50,7 @@ derived from tick 0 ≈ 20:21. From it the tool puts the practice duels at 22:20
 | # | Lever | Window | Saturday round pts | Final pts | Cash | Basis |
 |---|---|---|---|---|---|---|
 | 1 | **bazaar-duels up and inside the limit** for Duels I and II | 2 × up to 96 min | up to 12.5 (each duel ≈ 0.12 at the top-3 level) | up to 5.0 | 0 | weight assumed |
-| 2 | **Market Test: something of ours scores each session** | 8 × 8 min | 7.5 at stall level (0.94 per session); a venue adds only ~+0.45 if the free stall already scores for us | 3.0 (+0.19, B2) | 270 P locked | weight assumed; G3 decides |
+| 2 | **Market Test: something of ours scores each session** | 8 × 8 min (under resume, the 09:21 one counts in Friday's round: 7 in Saturday's) | 7.5 at stall level (0.94 per session); a venue adds only ~+0.45 if the free stall already scores for us | 3.0 (+0.19, B2) | 270 P locked | weight assumed; G3 decides |
 | 3 | **Ladder best three at Abuela** (~0.95 share) | any time. Under resume, 09:00–10:21 also counts for Friday's round | restart per round: **10.7** at Friday's top-3 mean (1.11), **7.9** at 1.5 (likelier, with Chato and maybe level 3 all day); carry-over: +2.44 (0.733 → 0.95). Under resume, also +2.44 Friday round points (+0.49 final) | 3.2–4.3 / 1.0 | ~54 P | fitted; G2 decides |
 | 4 | `duel_policy = v2` (#86) | before Duels I | +3.6 if v1 sits at 0.70 of the top-3 (W2 lift 1.42×) | 1.4 | 0 | lift measured in sim, weight assumed |
 | 5 | Three Chato uncommons at 0.5 share | after the cap decision (G5) | +2.82 (carry-over) | 1.1 | ~87 P | fitted level weight 0.5 |
