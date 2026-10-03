@@ -99,7 +99,7 @@ def test_a_stalled_rival_gets_one_counter_then_an_accept():
 def test_the_endgame_takes_any_offer_strictly_inside_the_limit_and_never_on_it():
     assert duel_plan(duel(rival=[(100, 101)], ours=[(100, 160)]), 110, 100).move.kind == "accept"
     on_limit = duel_plan(duel(rival=[(100, 100)], ours=[(100, 160)]), 110, 100).move
-    assert on_limit.kind == "hold"
+    assert (on_limit.kind, on_limit.price) == ("offer", 105)  # never accepts 100: says our floor once more
     buyer = duel(role="buyer", rival=[(100, 99)], ours=[(100, 40)])
     assert duel_plan(buyer, 110, 100).move.kind == "accept"
 

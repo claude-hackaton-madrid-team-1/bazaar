@@ -284,10 +284,12 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         return send(target, "the rival has not priced: our offers cost no round yet")
     if quiet(duel, tick, params.stall_ticks) and ours < params.free_offers and left > params.endgame_ticks + 1:
         return send(target, "the rival went quiet: step down for free")
+    if 2 <= left <= params.endgame_ticks + 1:  # the rival's last chances to take a deal from us: no deal scores 0
+        # Said twice (D − 3 and D − 2) so it is still the rival's freshest offer in its endgame, whichever of us
+        # moves first within a tick; it costs a round only in a duel that would otherwise score nothing.
+        return send(our_target(limit, str(role), 1.0, params.anchor, params.floor), "last offer at our floor")
     if endgame:
         return wait
-    if left == params.endgame_ticks + 1:  # the rival's last chance to take a deal from us: no deal scores 0
-        return send(our_target(limit, str(role), 1.0, params.anchor, params.floor), "last offer at our floor")
     spare = params.max_own_offers - rounds_spent(duel)
     if spare <= 0:
         return wait
