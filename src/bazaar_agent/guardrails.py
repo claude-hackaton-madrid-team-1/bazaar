@@ -238,6 +238,7 @@ class Guardrails(BaseModel):
     watchdog_max_swaps_per_team: int = Field(default=3, ge=1)
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
+    dealer_sell_breaker_reset_ticks: int = Field(default=40, ge=0, le=2000)  # 0: only a human resets it
     watchdog_refusal_storm: int = Field(default=50, ge=1)
     # Buy targets (`buy_targets.py`): a human's buy approval of an off-page card becomes a card the agents pursue.
     buy_targets_enabled: bool = False
@@ -373,7 +374,7 @@ ENFORCED_BY: dict[str, str] = {
     "protect_page_exceptions": "guardrails.protects + check (every sale >= MIN) + maker ask floors (maker_jev, relist)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
-    "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, this process)",
+    "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, shared ledger `taller:` rows)",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
@@ -429,6 +430,7 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
+    "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
 }
@@ -570,6 +572,7 @@ class LedgerStore(Protocol):
     def packs_since(self, t_hours: float) -> Counter[str]: ...
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int: ...  # rows after `t_hours`
     def accept_items(self, tick: int) -> list[str]: ...
     def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
@@ -618,6 +621,13 @@ class Ledger:
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
+
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int:
+        return sum(
+            1
+            for e in self.entries()
+            if e.get("kind") == kind and e["t_hours"] > t_hours and str(e.get("item") or "").startswith(prefix)
+        )
 
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
@@ -836,6 +846,8 @@ class Context:
     # How we got each copy and k (`impact_board`). None: read this process's board for `tick` (fail closed).
     impact: move_impact.Facts | None = None
     taller_last_hour: int = 0  # Workshop crafts in the last game hour (`max_taller_per_game_hour`, this process)
+    # Why no Workshop craft may go this tick: an accept still settling hands over a copy we cannot name.
+    taller_hold: str | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -994,6 +1006,8 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if ctx.taller_hold:  # `agents.taller.unnamed_settling`
+        v.append(ctx.taller_hold)
     if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
         named = [c.ref if (c := ctx.cards.copy(a)) is not None else None for a in action.assets]
         if named != refs:
@@ -1005,7 +1019,8 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
 
 def _taller_impact(action: Action, refs: list[str], ctx: Context, rules: Guardrails) -> list[str]:
     """`max_score_loss_per_move` for a craft: each copy given away at 0 and no ladder deal (`move_impact`: a copy a
-    team trade brought us costs its your_value in neg_points). Fails closed: unread origins count as team copies,
+    team trade brought us costs its your_value in neg_points). The card a craft brings is credited nothing: a pull is
+    luck and never scores (RULES.md), so it adds no neg_points. Fails closed: unread origins count as team copies,
     and copies not named one by one, or with no value, refuse."""
     from bazaar_agent import impact_board
 

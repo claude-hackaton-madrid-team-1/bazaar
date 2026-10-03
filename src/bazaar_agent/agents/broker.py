@@ -42,6 +42,7 @@ from pydantic import ValidationError
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents.bench_capture import BenchBooks
 from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge_plan, expiries_in
+from bazaar_agent.agents.bench_match_probe import PROBE_ENV, PROBE_MODES, pick_probe
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.bench_probe import BenchProbe
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
@@ -68,6 +69,9 @@ class BrokerConfig:
     # non-crossing bench pairs priced between their quotes (`agents/bench_probe.py`).
     bench_policy: BenchPolicy = "exact"
     bench_guard_margin: float = DEFAULT_GUARD_MARGIN
+    # BAZAAR_BENCH_MATCH_PROBE=once: after the exact matches, ONE request ever for a pair whose quotes do not cross
+    # (`agents/bench_match_probe.py`); needs `probe_claim` on the agent, else nothing is sent.
+    match_probe: bool = False
 
 
 BenchPolicy = Literal["exact", "edge", "probe"]
@@ -131,6 +135,11 @@ def bench_config_from_env(
             )
         else:
             config = replace(config, bench_guard_margin=margin)
+    value = (env.get(PROBE_ENV) or "").strip().lower()
+    if value in PROBE_MODES:
+        config = replace(config, match_probe=True)
+    elif value:
+        say(f"broker: IGNORED {PROBE_ENV} ({len(value)} chars; once); the match probe stays off")
     for name in NOT_WIRED:
         if (env.get(name) or "").strip():
             say(f"broker: IGNORED {name}: not wired in this broker (quote-crossing pairs only, normal priors)")
@@ -292,6 +301,10 @@ class BrokerAgent:
         self.pairs_seen: set[frozenset[str]] = set()
         self.done: set[str] = set()  # offer ids the venue accepted in a match: never proposed again
         self.history: list[TickStats] = []
+        # The one-time claim of the match probe (`KeyVault.claim_once`): None means no durable ledger, so no probe.
+        self.probe_claim: Callable[[str, int], bool] | None = None
+        self.probed = False  # this process already spent the probe: never asks twice
+        self.probe_retry_tick = 0  # a claim not taken (held elsewhere, or unreadable) is asked again from this tick
 
     def on_tick(
         self,
@@ -330,10 +343,81 @@ class BrokerAgent:
         run = _Run(clock, window, stats)
         for m in plan:
             self._match(run, m)
+        self._probe(run, quotes, plan, Fee(book.fee_bps, book.fee_per_card))
         self.pairs_seen |= run.pairs
         self.books.record(clock.tick, book.bench_offers, book.fee_bps, book.fee_per_card)  # after the sends, no request
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
+
+    def _probe(self, run: _Run, quotes: Quotes, plan: list[Match], fee: Fee) -> None:
+        """The one match probe, after the tick's exact matches went out (so it can never cost one). Never raises."""
+        if not self.config.match_probe or self.probed or not self.live or run.clock.tick < self.probe_retry_tick:
+            return
+        if not run.window.open():
+            return
+        tick = run.clock.tick
+        try:
+            used = {str(q.id) for m in plan for q in (m.sell, m.buy)}
+            ages = {r: tick - s.first_tick for r, s in self.sessions.open.items()}
+            found = pick_probe(quotes.quotes, used, fee, run_age=ages)
+            if found is None:
+                return
+            self._send_probe(run, found.match, found.gap)
+        except Exception as e:  # the probe is an extra: never lose the tick to it
+            self.log(f"tick {tick} broker: match probe failed ({type(e).__name__}); nothing sent")
+
+    def _send_probe(self, run: _Run, m: Match, gap: int) -> None:
+        tick = run.clock.tick
+        verdict = check(Action("broker_match"), broker_context(self.rules, run.clock), self.rules)
+        if not verdict.allowed:
+            return  # held by the guardrails: the claim stays free for a later tick
+        if self.probe_claim is None or not self.probe_claim("bench_match_probe", tick):
+            self.log(f"tick {tick} broker: match probe not sent (no durable claim: taken, or the ledger is unreadable)")
+            self.probe_retry_tick = tick + 5  # not our claim, or Postgres is down: ask again later, never send
+            return
+        self.probed = True  # claimed: whatever the answer, this is the only one
+        request = {"sell": m.sell.id, "buy": m.buy.id, "price": m.price}
+        line = (
+            f"PROBE sell {m.sell.id} (ask {m.sell.price}) x buy {m.buy.id} (bid {m.buy.price}) at {m.price}, "
+            f"quotes {gap} short of crossing"
+        )
+        did = self.rec.decide(
+            tick,
+            "bench_probe",
+            line,
+            inputs={"ask": m.sell.price, "bid": m.buy.price, "fee": m.fee, "gap": gap, "bench": True, **request},
+            reason="one live probe: does the server match on hidden limits when the quotes do not cross?",
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            move=request,
+        )
+        if not run.window.open():
+            self.rec.decisions.settle(did, "expired")
+            self.log(f"tick {tick} broker: match probe claimed but the tick window closed; the one probe is spent")
+            return
+        answer = self.rec.send(did, tick, "broker_match_probe", request, lambda: self.broker.match(**request))
+        err = self.rec.last_error
+        outcome = {
+            "accepted": answer is not None,
+            "status": self.rec.last_status,
+            "code": self.rec.last_code,
+            "message": (err.message[:200] if err is not None else None),
+            "extra": (err.extra if err is not None else None),
+            "body": answer,
+        }
+        self.rec.decide(
+            tick,
+            "bench_probe",
+            f"probe answer: {'ACCEPTED' if answer is not None else 'turned down'} "
+            f"{json.dumps(outcome, default=str)[:300]}",
+            inputs={**request, "answer": outcome},
+            reason="the server's full answer to the one match probe",
+            guardrail="allowed",
+            chosen=False,
+            status="done",
+            move=request,
+        )
 
     def _plan(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook) -> list[Match]:
         """Today's exact matching of everything or, with `bench_policy = "edge"`, the edge's bench plan (the exact

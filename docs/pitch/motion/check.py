@@ -38,14 +38,11 @@ def check_static():
     html = (ROOT / "index.html").read_text()
     deck = DeckParser()
     deck.feed(html)
-    assert [s[0] for s in deck.slides] == [
-        "hook", "voice", "infra", "safe", "results", "memory", "close"
-    ]
+    assert [s[0] for s in deck.slides] == ["hook", "voice", "infra", "safe", "results", "memory", "close"]
     assert sum(s[1] for s in deck.slides) == 165
     assert not deck.external, "Offline deck must not depend on a network resource"
     assert len(deck.images) == 2 and all(
-        i["src"].startswith("data:image/png;base64,") and i.get("alt")
-        for i in deck.images
+        i["src"].startswith("data:image/png;base64,") and i.get("alt") for i in deck.images
     )
     assert len(re.findall(r'data-node="\d"', html)) == 7
     for value in ("15", "15.02", "27"):
@@ -54,9 +51,13 @@ def check_static():
     assert not re.search(r"postgres(?:ql)?://|Bearer\s+[A-Za-z0-9_-]{12,}|tk-[A-Za-z0-9-]{8,}", html)
     script = (ROOT / "script-3min.md").read_text()
     counts = {}
-    for language, segment in zip(("English", "Spanish"), script.split("## English\n")[1].split("## Spanish\n")):
+    for language, segment in zip(
+        ("English", "Spanish"), script.split("## English\n")[1].split("## Spanish\n"), strict=True
+    ):
         segment = segment.split("## Rehearsal controls")[0]
-        paragraphs = [p for p in segment.split("\n\n") if p.strip() and not p.startswith(("###", "Cue:", "Sources:", "Source:"))]
+        paragraphs = [
+            p for p in segment.split("\n\n") if p.strip() and not p.startswith(("###", "Cue:", "Sources:", "Source:"))
+        ]
         counts[language] = sum(len(re.findall(r"\b[\w'-]+\b", p)) for p in paragraphs)
     print(f"PASS: {len(deck.slides)} slides; 165 s; offline images; numeric source comments.")
     print("Spoken word counts:", json.dumps(counts))
@@ -85,10 +86,13 @@ def check_browser(session):
         time.sleep(0.85)
         check = evaluate("""(()=>{
           const s=document.querySelector('.slide.active'),b=s.getBoundingClientRect();
-          const out=[...s.querySelectorAll('h1,h2,p,img,.policy,.infra-caption,.stats,.node,.voice-route,.provider')].filter(e=>{
-            const r=e.getBoundingClientRect();return r.left<b.left-1||r.right>b.right+1||r.top<b.top-1||r.bottom>b.bottom+1;
+          const selector='h1,h2,p,img,.policy,.infra-caption,.stats,.node,.voice-route,.provider';
+          const out=[...s.querySelectorAll(selector)].filter(e=>{
+            const r=e.getBoundingClientRect();
+            return r.left<b.left-1||r.right>b.right+1||r.top<b.top-1||r.bottom>b.bottom+1;
           }).map(e=>e.className||e.tagName);
-          return {current:deck.current,id:s.id,overflow:out,imagesLoaded:[...s.querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0),
+          return {current:deck.current,id:s.id,overflow:out,
+            imagesLoaded:[...s.querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0),
             sensitive:/(?:postgres(?:ql)?:\\/\\/|tk-[\\w-]{6,}|bk-[\\w-]{6,}|Bearer\\s+\\S+|[\\w.+-]+@[\\w.-]+\\.[a-z]{2,})/i.test(s.innerText)};
         })()""")
         assert check["current"] == index and check["id"] == name, check
@@ -96,10 +100,16 @@ def check_browser(session):
         if index == 2:
             architecture = []
             for node in range(7):
-                architecture.append(evaluate(f"deck.revealNode({node});({{count:document.querySelectorAll('.node.revealed').length,caption:document.querySelector('#infra-caption').textContent}})"))
+                architecture.append(
+                    evaluate(
+                        f"deck.revealNode({node});({{count:document.querySelectorAll('.node.revealed').length,caption:document.querySelector('#infra-caption').textContent}})"
+                    )
+                )
                 assert architecture[-1]["count"] == node + 1
             check["architecture"] = architecture
-            evaluate("""document.querySelector('#infra-caption').innerHTML='<!-- Source: vendor/bazaar-kit/RULES.md, Fair play. --><span class="budget">5 req/s</span> shared';true""")
+            evaluate("""document.querySelector('#infra-caption').innerHTML=
+                '<!-- Source: vendor/bazaar-kit/RULES.md, Fair play. -->' +
+                '<span class="budget">5 req/s</span> shared';true""")
             time.sleep(1.1)
         run("screenshot", str(ROOT / "preview" / f"{index + 1:02}-{name}.png"))
         report["slides"].append(check)

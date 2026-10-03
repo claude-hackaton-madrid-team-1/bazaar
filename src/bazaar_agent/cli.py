@@ -24,6 +24,7 @@ from bazaar_agent import (
     deploy_guard,
     flags_cli,
     impact_cli,
+    injection_cli,
     intel,
     persona_cli,
     render,
@@ -1242,6 +1243,7 @@ def duel_run(
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
 
+    from bazaar_agent import db as _db
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.accept_gate import DuelRereads, Gate, duel_accept_check
     from bazaar_agent.agents.bluff import message_id
@@ -1304,6 +1306,15 @@ def duel_run(
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
     injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
+    injection_log = (  # the same words kept as proofs in Postgres, after the sends (`bazaar injections`)
+        _injection_log(
+            settings,
+            lambda: _db.connect(app="bazaar-duels", connect_timeout_s=3),
+            lambda m: console.print(f"[dim]{escape(m)}[/dim]"),
+        )
+        if ledger.where.startswith("postgres")
+        else None
+    )
     us = _our_team_id(client)
     shared = ledger.where.startswith("postgres")
     say = lambda m: console.print(escape(m))  # noqa: E731
@@ -1660,6 +1671,9 @@ def duel_run(
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
+        if injection_log is not None:  # the rivals' words with an injection shape, kept with their duel id
+            injection_log.note_duels(duels)  # never raises; each message is scanned once
+            injection_log.flush(c.tick)  # bounded; a failure only logs and retries in a few ticks
         read = store.read_finished(duels) and save_finished(c.tick)
         if not read:  # one ?done=true read per tick at most (r1, #159): the days latch reuses the store's
             read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
@@ -1690,6 +1704,18 @@ def _our_team_id(client: Any) -> str | None:
         return str(client.me().get("id") or "") or None
     except Exception:
         return None
+
+
+def _injection_log(settings: Settings, connect: Callable[[], Any] | None, log: Callable[[str], None]) -> Any:
+    """The injection-attempt recorder (`injection_log.py`): buffered in the tick, written after the sends."""
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.injection_log import InjectionLog
+    from bazaar_agent.runtime.tools import secrets_of
+
+    recorder = InjectionLog(connect, scope_of(settings).world, secrets_of(settings), log)
+    if connect is not None:
+        recorder.open()  # connect and create the table now, never inside a tick
+    return recorder
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -2381,16 +2407,26 @@ def taller_cmd(
 ) -> None:
     """The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`).
 
-    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
-    hourly cap counts the taker's crafts only). Dry run by default."""
+    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch, the
+    hourly cap shared with every process (the shared ledger, booked before the send) and the hold on an accept still
+    settling that cannot name its copy. Unlike the taker it does not wait for a duel deadline or a Market Test
+    (`bazaar deploy-guard` says when). Dry run by default."""
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents import taller as tl
 
     client, me = _team_me()
-    rules, _, ctx, commitments = _sell_context(client, me, live)
-    busy = set(commitments.listed)
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
+    try:  # the taker's busy set: offers, sell threads, accepts of this and the last tick (no team-desk memory here)
+        threads = (client.my_threads("open") or {}).get("threads") or []
+        busy = set(commitments.listed) | tl.busy_copies(me, _my_offers(client), threads, ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    except BazaarError as e:
+        _fail(f"our offers or threads could not be read ({escape(str(e.code))}): nothing sent")
     public = public_client(load_settings())
     catalog = public.catalog()
     if not assets:
@@ -2407,14 +2443,23 @@ def taller_cmd(
     if len(rarities) != 1:
         _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
     action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
-    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    try:  # the shared ledger: every process's crafts this hour, and accepts still settling (fail closed)
+        done, hold = tl.crafts_last_hour(ledger, ctx.t_hours), tl.unnamed_settling(ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    verdict = gr.check(
+        action, replace(ctx, sellable=tl.free_counts(me, busy), taller_last_hour=done, taller_hold=hold), rules
+    )
     console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
     if not verdict.allowed or not live:
         if verdict.allowed:
             console.print("[dim]dry run: nothing sent (add --live)[/dim]")
         return
     try:
+        tl.book_craft(ledger, ctx.tick, ctx.t_hours, refs)  # before the send: the shared hourly cap
         answer = tl.craft(client, assets)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
     except BazaarError as e:
         _fail(f"refused: {escape(str(e.code))} ({escape(tl.pulled({'card': str(e.message)[:80]}))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
@@ -2429,6 +2474,7 @@ app.add_typer(breaker_cli.breaker_app, name="breaker")
 app.command("approve")(approval_cli.approve)
 app.command("approvals")(approval_cli.approvals_list)
 app.command("impact")(impact_cli.impact)
+app.command("injections")(injection_cli.injections)
 app.command("deploy-guard", help="Is it safe to merge to main (which redeploys the duels)? Exit 1 = no.")(
     deploy_guard.deploy_guard_cmd
 )
@@ -2906,6 +2952,8 @@ def _run_agent(
 
         extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
         extra["thread_store"].open()  # connect now, never inside a tick
+        if name == "taker":  # injection attempts in the words the taker already reads (feed, team and dealer threads)
+            extra["injection_log"] = _injection_log(settings, connect_learnings, log)
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)

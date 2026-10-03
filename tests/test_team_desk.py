@@ -1052,3 +1052,24 @@ def test_a_refused_read_while_checking_a_refund_never_counts_as_seeing_the_threa
     d.proposals(view([bare], tick=TICK + 5))
     d.converse(view([bare], tick=TICK + 5), set())
     assert team.sent == [("thread", 42)]  # one refused read, no second one, and nothing sent unseen
+
+
+def test_a_cancel_answered_offer_not_open_frees_the_thread_instead_of_repeating_every_tick(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class Lapsed(Team):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            raise BazaarError("offer_not_open", "offer is expired", 400)
+
+    team = Lapsed()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    first = d.talks[42].offer_id
+    reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    team.sent.clear()
+    for tick in (TICK + 1, TICK + 2):  # the lapsed offer is in no read: the old code cancelled it on both ticks
+        d.proposals(view([reply], tick=tick))
+        d.converse(view([reply], tick=tick), set())
+    assert [s[0] for s in team.sent] == ["cancel", "say"]  # one refused cancel, then the next proposal goes out
+    assert first in d.to_check  # its spend stays booked until a thread read says it is dead

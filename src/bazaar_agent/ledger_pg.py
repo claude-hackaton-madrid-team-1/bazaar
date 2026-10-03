@@ -176,6 +176,12 @@ class PgLedger:
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._one("select count(*) from ledger where kind = %s and tick = %s", (kind, tick))
 
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int:
+        return self._one(
+            "select count(*) from ledger where kind = %s and t_hours > %s and starts_with(item, %s)",
+            (kind, t_hours, prefix),
+        )
+
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         """True when this process got one of the tick's accepts (and it is recorded); False when spent.
 
@@ -257,6 +263,9 @@ class FallbackLedger:
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._use(lambda ledger: ledger.count_in_tick(kind, tick))
+
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int:
+        return self._use(lambda ledger: ledger.count_since(kind, t_hours, prefix))
 
     def accept_items(self, tick: int) -> list[str]:
         return self._use(lambda ledger: ledger.accept_items(tick))

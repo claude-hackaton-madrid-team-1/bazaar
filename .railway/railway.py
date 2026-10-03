@@ -284,7 +284,11 @@ def main(ctx=None):
     # BAZAAR_BENCH_POLICY=edge (set by hand; unset or exact: today's matching) has our venue's broker match the
     # Market Test with the bench edge (agents/bench_edge.py), behind BAZAAR_BENCH_GUARD_MARGIN (default 10; none =
     # unguarded). Both declared preserve() so an apply keeps the hand-set values.
-    bench_env = {"BAZAAR_BENCH_POLICY": preserve(), "BAZAAR_BENCH_GUARD_MARGIN": preserve()}
+    bench_env = {
+        "BAZAAR_BENCH_POLICY": preserve(),
+        "BAZAAR_BENCH_GUARD_MARGIN": preserve(),
+        "BAZAAR_BENCH_MATCH_PROBE": preserve(),  # once: ONE non-crossing match probe (agents/bench_match_probe.py)
+    }
     maker = agent("bazaar-maker", "agent maker", maker_data, bench_env)
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
