@@ -4,7 +4,7 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
 
 ## Verdict
 - **Build: GO, off by default.** With every `dealer_jitter_*` knob at 0, `decide()` sends today's ladder, byte for byte (tested).
-- **Invariants hold over 67.2 M conversations** (55.2 M model across two seeds, 12.1 M simulator):
+- **Invariants hold over 79.3 M conversations** (55.2 M model and 24.1 M simulator, two seeds each):
   - 0 repeated prices and 0 bids above max;
   - deals at her opening price: 534 at the recommended level against 544 with jitter off, all from replayed real threads.
 - **Invariant tests:** 51 tests, each property checked over 1,500 seeds.
@@ -12,7 +12,7 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
   - 47 of 377 levels pass all three evaluations. This is the least predictable of them.
   - Worst Abuela cell: 0.981 × today's share (model, 2 seeds) and 0.958 × (simulator). Mean 1.005 ×.
   - Cost in time: +0.9 ticks per deal at 2 ticks per round.
-  - A rival's exact-price hit rate on our bids drops from 1.00 to 0.72 (model) and 0.61 (simulator); on the opening bid alone, to 0.47.
+  - A rival's exact-price hit rate on our bids drops from 1.00 to 0.72 (model) and 0.62 (simulator); on the opening bid alone, to 0.47.
 - **Value: unquantified.** Each team has its own dealer allotment and each conversation its own secret limit, so a rival who predicts our dealer bids has no scored lever at the dealer. We measured the cost, not a gain. My call: leave it off unless Marius sees a rival learning from our bids (duels, team trades).
 
 ## What changed (all behind STRATEGY.md, defaults = today)
@@ -41,7 +41,7 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
 |---|---|---|---|---|---|---|---|---|
 | off (today) | 0 / 0 / 0 / – / – | 1.000 | 1.000 | 1.000 | +0.00 | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 |
 | band only, no time cost | 0 / 0 / 0.2 / 2 / 2 | 0.978 | 0.981 | 1.001 | +0.00 | 0.964 / 0.965 | 0.929 / 0.953 | 1.000 |
-| **recommended** | 1 / 0 / 0.35 / 2 / 3 | **0.981** | **0.958** | **1.005** | **+0.90** | 0.947 / 0.965 | **0.717 / 0.613** | 0.474 |
+| **recommended** | 1 / 0 / 0.35 / 2 / 3 | **0.981** | **0.958** | **1.005** | **+0.90** | 0.947 / 0.965 | **0.717 / 0.616** | 0.474 |
 | more margin in the sim | 1 / 0 / 0.2 / 2 / 3 | 0.971 | 0.966 | 1.003 | +0.93 | 0.947 / 0.980 | 0.745 / 0.631 | 0.474 |
 | spread 2 (fails on time) | 2 / 0.5 / 0.2 / 2 / 3 | 0.956 | 0.965 | 1.001 | +1.60 ✗ | 0.957 / 0.981 | 0.671 / 0.498 | 0.340 |
 | same without gap | 2 / 0.5 / 0.2 / 2 / 0 | 0.948 ✗ | 0.952 | 0.989 | +1.38 ✗ | 0.949 / 0.966 | 0.632 / 0.492 | 0.340 |
@@ -67,6 +67,6 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
 
 ## Risks
 - **In-sample:** the knobs were chosen on Friday's threads (Abuela 31 / 58 / 51, Chato 12 / 15) and on the simulator, whose Abuela is more patient than the real one. Re-run `scripts/dealer_jitter.py` on Saturday's feed before relying on the margins.
-- The rival model does not condition on her asks. With a band gap, a reader who does would predict a little better than 0.72.
+- A rival that also reads her asks (`predictability(..., train_asks=, test_asks=)`) predicts no better at the recommended level: 0.725 either way, because +1 stays the most likely raise. At a 90 % band share it would gain a lot (0.78 → 0.93), so keep `band_jump_share` under 0.5.
 - `dealer buy` now reads STRATEGY.md, so an invalid STRATEGY.md stops it unless `--no-jitter` is passed (the desk already needed STRATEGY.md).
 - `jump_max` is absolute. For a class whose base step is ≥ `jump_max` (Chato rare under the 2 % rule) there are no jumps, only the start spread.

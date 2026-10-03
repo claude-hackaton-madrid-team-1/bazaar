@@ -289,3 +289,21 @@ def test_a_below_start_jump_never_lands_on_or_near_her_ask():
         neg.see_ask(19)  # she came down under our start
         nxt = neg.next_bid()
         assert nxt is not None and nxt <= 17  # at most her ask − gap, never the start 21
+
+
+def test_a_rival_reading_her_asks_predicts_gap_gated_jumps_better():
+    plan = BidPlan(20, 1, 40)
+    level = Level("gap", band_jump_share=0.9, jump_max=2, band_gap=3)
+    rng = random.Random(5)
+    seqs, asks = [], []
+    for i in range(1200):
+        opening = rng.randint(30, 36)
+        ep = Episode(opening, rng.randint(22, 28), 9, rng.randint(1, 4), (1, 0, 2), True)
+        seen: list[int | None] = []
+        r = play_capped(level.plan(plan, i + 1), ep, 1, asks=seen)
+        seqs.append(("u", list(r.bids)))
+        asks.append(seen)
+        assert len(seen) == len(r.bids)
+    blind = predictability(seqs[:600], seqs[600:])
+    reader = predictability(seqs[:600], seqs[600:], train_asks=asks[:600], test_asks=asks[600:])
+    assert reader.hit_rate > blind.hit_rate + 0.05

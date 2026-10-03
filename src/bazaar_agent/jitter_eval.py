@@ -124,8 +124,17 @@ class StepCapped:
         return None
 
 
-def play_capped(plan: BidPlan, ep: Episode, min_step: int, *, max_ticks: int = 14, reply_lag: int = 0) -> Result:
-    """`ladder_replay.play` against a `StepCapped` dealer (same loop, same tick accounting)."""
+def play_capped(
+    plan: BidPlan,
+    ep: Episode,
+    min_step: int,
+    *,
+    max_ticks: int = 14,
+    reply_lag: int = 0,
+    asks: list[int | None] | None = None,
+) -> Result:
+    """`ladder_replay.play` against a `StepCapped` dealer (same loop, same tick accounting). `asks`, when
+    given, gets her standing ask (public in the feed) as each of our bids is sent."""
     neg, dealer = Negotiation(plan), StepCapped(ep, min_step)
     tick = 0
     while tick < max_ticks:
@@ -138,6 +147,8 @@ def play_capped(plan: BidPlan, ep: Episode, min_step: int, *, max_ticks: int = 1
         if move.kind == "walk":
             return Result(None, tick, tuple(neg.bids), ep.limit, ep.opening, "walk")
         if move.kind == "bid" and move.price is not None:
+            if asks is not None:
+                asks.append(dealer.ask)
             neg.bids.append(move.price)
             verdict = dealer.answer(move.price)
             tick += reply_lag
@@ -205,34 +216,52 @@ def _contexts(seq: Sequence[int]) -> Iterable[tuple[int, int, int]]:
         yield i, seq[i - 1], seq[i]
 
 
+def _gap(asks: Sequence[Sequence[int | None]] | None, thread: int, i: int, last: int) -> int | None:
+    """Her standing ask minus our last bid when bid `i` went out, capped at 6 (None: not read)."""
+    if asks is None:
+        return None
+    ask = asks[thread][i] if i < len(asks[thread]) else None
+    return -1 if ask is None else min(6, ask - last)
+
+
 def predictability(
-    train: Iterable[tuple[str, Sequence[int]]], test: Iterable[tuple[str, Sequence[int]]]
+    train: Sequence[tuple[str, Sequence[int]]],
+    test: Sequence[tuple[str, Sequence[int]]],
+    *,
+    train_asks: Sequence[Sequence[int | None]] | None = None,
+    test_asks: Sequence[Sequence[int | None]] | None = None,
 ) -> Predictability:
     """A rival learns, per price class, the next bid after (bid index, last bid) from `train` (our past
     threads in the feed), backing off to (last bid) and then to the most common step, and predicts every
     bid of `test`. That is the best a reader of our bids can do against a stationary policy; on a fixed
-    ladder it is always right."""
+    ladder it is always right. With `*_asks` (her standing ask as each bid went out, aligned with the
+    threads) the rival also conditions on how far her ask stood above our last bid, as a reader of the
+    whole feed can: a `band_gap` jitter jumps only when that gap is wide."""
+    by_ask: dict[tuple[str, int, int, int | None], Counter[int]] = defaultdict(Counter)
     by_full: dict[Key, Counter[int]] = defaultdict(Counter)
     by_last: dict[tuple[str, int], Counter[int]] = defaultdict(Counter)
     steps: dict[str, Counter[int]] = defaultdict(Counter)
     firsts: dict[str, Counter[int]] = defaultdict(Counter)
-    for cls, seq in train:
+    for t, (cls, seq) in enumerate(train):
         if seq:
             firsts[cls][seq[0]] += 1
         for i, last, nxt in _contexts(seq):
+            if train_asks is not None:
+                by_ask[(cls, i, last, _gap(train_asks, t, i, last))][nxt] += 1
             by_full[(cls, i, last)][nxt] += 1
             by_last[(cls, last)][nxt] += 1
             steps[cls][nxt - last] += 1
     hits = n = first_hits = first_n = 0
     err = 0.0
     entropies: list[float] = []
-    for cls, seq in test:
+    for t, (cls, seq) in enumerate(test):
         if not seq:
             continue
         first_n += 1
         first_hits += bool(firsts[cls]) and firsts[cls].most_common(1)[0][0] == seq[0]
         for i, last, nxt in _contexts(seq):
-            counts = by_full.get((cls, i, last)) or by_last.get((cls, last))
+            seen = by_ask.get((cls, i, last, _gap(test_asks, t, i, last))) if test_asks is not None else None
+            counts = seen or by_full.get((cls, i, last)) or by_last.get((cls, last))
             if counts:
                 guess = counts.most_common(1)[0][0]
             else:
