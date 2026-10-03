@@ -1219,3 +1219,11 @@ Two real bugs: (1) the taker runs BAZAAR_DECIDER=llm and `needed_budget_s` = 13 
 move would read "no tick budget for jev" (20 team opens already did at 30 s ticks); `decider()` now answers Jev below
 BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
 offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm, one duel retry
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it, and `sell_min_value_ratio`/`max_score_loss_per_move`/`protect_page_sets` still refuse such a sale. A duel
+message or accept answered `network` is sent once more in the same tick (>= 1.5 s left); `wait_for_tick` on the retry means the
+first landed (no third try); 4xx and 5xx are never retried. Two replay tests pinned today's cap value and were pinned to 26.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -19,6 +19,7 @@ from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook
 from bazaar_agent.agents.tactics import Side, private_numbers
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.guardrails import Action, duel_days_ok
+from bazaar_agent.sdk import BazaarError
 
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
 FLOOR_MARGIN = 0.05  # never settle closer than this to our limit (fraction), until the last ticks
@@ -165,6 +166,28 @@ def duel_move(
     if price < 1 or ours is None or not inside_limit(ours, limit, role):
         return DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
     return DuelMove("offer", price, days, reason=f"concede toward limit ({left} ticks left)")
+
+
+RETRY_MIN_LEFT_S = 1.5  # a retry needs this much of the tick left (a send is ~0.1-0.3 s, the SDK timeout is longer)
+
+
+def send_with_one_retry(call: Callable[[], Any], time_left: Callable[[], float]) -> tuple[Any, bool]:
+    """Send a duel message or accept; after a `network` error (no answer at all) send it once more in the same
+    tick, only while `time_left()` allows. Returns (answer, retried). Never retries a 4xx or a 5xx (the game may
+    have applied those). The game takes one message per side per tick, so a retry cannot double-send: if it is
+    answered `wait_for_tick` the first one landed and the send counts as made (answer None, no third try). Any
+    other failure of the retry raises the FIRST error, so the caller books it as a maybe-landed send."""
+    try:
+        return call(), False
+    except BazaarError as first:
+        if first.code != "network" or time_left() < RETRY_MIN_LEFT_S:
+            raise
+        try:
+            return call(), True
+        except BazaarError as second:
+            if second.code == "wait_for_tick":
+                return None, True
+            raise first from second
 
 
 def duel_action(duel: Mapping[str, Any], move: DuelMove) -> Action:
