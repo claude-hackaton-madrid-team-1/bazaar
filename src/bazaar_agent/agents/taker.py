@@ -750,7 +750,7 @@ class Taker:
                 self._accepts_stop = f"accept refused {self.rec.refusal}: no more accepts this tick"
             return False
         if body is None and not self.rec.maybe_landed:
-            return True  # the reserved slot stays spent: an accept that may have landed is never retried
+            return True  # `wait_for_tick`: the team's accept of this tick is already used, the slot stays spent
         # Accepted, or lost on the way back (a network error): booked as bought (fail safe for the caps).
         if p.desk is not None:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
