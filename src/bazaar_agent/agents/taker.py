@@ -423,7 +423,8 @@ class Taker:
         moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
-        moves = self._evolved(run, moves, busy)
+        room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        moves = self._evolved(run, moves, busy, max(0, room))
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
 
@@ -457,7 +458,9 @@ class Taker:
             )
         return kept
 
-    def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+    def _evolved(
+        self, run: _TickRun, moves: list[StrategyMove], busy: set[str], room: int | None = None
+    ) -> list[StrategyMove]:
         """The per-dealer plan (N14a, `dealer_plan.py`): the learned ladder per (dealer, price class) replaces the
         strategy's, never above its start nor its top, and a class priced above what we may pay is skipped (N3);
         with `dealer_final_lift` on, a final above the cap may close it (the patience play). Each plan is kept in
@@ -477,7 +480,8 @@ class Taker:
                 kept.append(mv)
                 continue
             key = (mv.source, cls)
-            plan = plan_dealer_buy(mv, policies.get(key), curves.get(key), self.rules, run.params.min_buy_surplus)
+            min_surplus = run.params.min_buy_surplus
+            plan = plan_dealer_buy(mv, policies.get(key), curves.get(key), self.rules, min_surplus, room)
             if plan.move is None:
                 if mv.source not in busy:
                     skipped.setdefault(key, (mv, plan.skip or "skip"))

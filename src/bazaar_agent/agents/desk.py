@@ -112,15 +112,16 @@ class Opening:
 def openings(moves: Iterable[StrategyMove], busy_dealers: set[str], busy_items: set[str], room: int) -> list[Opening]:
     """The best dealer buys whose dealer is free (one thread per dealer) and item is not in a thread yet."""
     out: list[Opening] = []
-    taken = set(busy_dealers)
+    taken, items = set(busy_dealers), set(busy_items)
     for mv in moves:
         if len(out) >= room:
             break
-        if mv.ladder is None or not mv.command or mv.source in taken or mv.ref in busy_items:
+        if mv.ladder is None or not mv.command or mv.source in taken or mv.ref in items:
             continue
         if mv.guardrail.startswith("denied"):
             continue
         start, top, step = mv.ladder
         out.append(Opening(mv.source, mv.ref, mv.rarity, mv.value, BidPlan(start, step, top), mv.reason, mv))
         taken.add(mv.source)
+        items.add(mv.ref)  # two dealers may sell one card (level_ladder): one thread per card
     return out

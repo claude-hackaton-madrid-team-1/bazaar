@@ -34,5 +34,18 @@ def test_finals_rows_per_lift_show_which_conversations_close_and_their_cash():
     assert by_lift[0.0].deals == () and by_lift[0.0].final_cap == 26
     assert by_lift[0.15].deals == ((253, 28),) and by_lift[0.15].final_cap == 29
     assert by_lift[0.25].deals == ((253, 28), (228, 31)) and by_lift[0.25].per_hour(150) == 5
-    # the patience play the taker would run: this curve's final came after 2 bids, so 2 + 2 bids up to 26
-    assert str(by_lift[0.15].ladder) == "23→26 step 1"
+    # the patience play the taker would run: at least 9 distinct bids up to 26
+    assert str(by_lift[0.15].ladder) == "18→26 step 1"
+
+
+def test_the_cli_prints_each_lift_and_the_deals_it_would_take(monkeypatch):
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+
+    monkeypatch.setattr(cli, "_events", lambda live: [{"id": 1}])
+    monkeypatch.setattr("bazaar_agent.intel.dealer_threads", lambda events, us=None: [T253, T228])
+    result = CliRunner().invoke(cli.app, ["dealer", "finals", "--lift", "0", "--lift", "0.25", "--threads"])
+    assert result.exit_code == 0, result.output
+    assert "lift 0.25 chato card:uncommon: thread 253 at 28, thread 228 at 31" in result.output
+    assert "lift 0 chato" not in result.output  # no deal at lift 0: nothing listed

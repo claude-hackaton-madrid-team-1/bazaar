@@ -31,7 +31,11 @@ from bazaar_agent.strategy import Move, dealer_command, final_reach
 
 __all__ = ["DealerPlan", "Note", "final_reach", "patience_ladder", "plan_dealer_buy"]
 
-PATIENCE_MARGIN = 2  # distinct bids beyond the dealer's patience before our top: the final comes first
+# Distinct bids beyond the dealer's median patience before our top, so the final comes first. Chato's finals on
+# Friday came after 4-8 bids (median 6) and Abuela's after 4-9; repeating our top price brought a final in only
+# 1 of 11 threads, so the ladder must be long enough rather than hold at the top.
+PATIENCE_MARGIN = 3
+MIN_PLAY_BIDS = 9  # at least this many distinct bids: Chato's slowest Friday final came after 8 (the simulator's: 9)
 MIN_OPEN_SHARE = 0.4  # never open below this share of the dealer's opening ask (t03 opened 13 of 33: answered)
 MIN_FINAL_SHARE = 0.2  # a learned skip is lifted only when this share of the fills sits at or under final_max
 Ladder3 = tuple[int, int, int]  # (start, top, step), as `strategy.Move.ladder`
@@ -71,12 +75,16 @@ def fmt(ladder: Ladder3) -> str:
     return f"{start}→{top} step {step}"
 
 
-def patience_ladder(ladder: Ladder3, patience: float | None, opening: float | None, silent: int | None) -> Ladder3:
+def patience_ladder(
+    ladder: Ladder3, patience: float | None, opening: float | None, silent: int | None, max_bids: int | None = None
+) -> Ladder3:
     """A ladder that lasts until the dealer's final: step 1, `patience + PATIENCE_MARGIN` distinct bids up to the
-    top, never starting below a bid the dealer ignored or `MIN_OPEN_SHARE` of its opening ask, and never above
-    the start we already had (a plan only lowers a start)."""
+    top (at least `MIN_PLAY_BIDS`, at most `max_bids`: the thread's tick limit), never starting below a bid the
+    dealer ignored or `MIN_OPEN_SHARE` of its opening ask, and never above the start we already had (a plan only
+    lowers a start)."""
     start, top, _ = ladder
-    need = math.ceil(patience or DEFAULT_PATIENCE) + PATIENCE_MARGIN
+    need = max(MIN_PLAY_BIDS, math.ceil(patience or DEFAULT_PATIENCE) + PATIENCE_MARGIN)
+    need = min(need, max_bids) if max_bids is not None else need
     floor = max(1, (silent + 1) if silent is not None else 1, math.ceil(opening * MIN_OPEN_SHARE) if opening else 1)
     return (min(start, max(floor, top - (need - 1))), top, 1)
 
@@ -95,11 +103,27 @@ def _patience_ref(cls: str, mv: Move, curve: CurveStats | None, policy: LadderPo
     return f"default patience for {mv.source} ({DEFAULT_PATIENCE:g} bids)", DEFAULT_PATIENCE
 
 
+def _reach(mv: Move, top: int, rules: Guardrails, min_surplus: float, room: int | None) -> int | None:
+    """`final_reach`, never above what we may still commit; None when that leaves nothing above our top."""
+    reach = final_reach(mv.rarity, mv.value, top, rules, min_surplus)
+    if reach is None or room is None:
+        return reach
+    return min(reach, room) if min(reach, room) > top else None
+
+
 def plan_dealer_buy(
-    mv: Move, policy: LadderPolicy | None, curve: CurveStats | None, rules: Guardrails, min_surplus: float
+    mv: Move,
+    policy: LadderPolicy | None,
+    curve: CurveStats | None,
+    rules: Guardrails,
+    min_surplus: float,
+    room: int | None = None,
 ) -> DealerPlan:
     """The strategy's dealer buy, evolved by its learned policy and, with `dealer_final_lift` on, by the patience
-    play. With the lift off and no policy, the move comes back unchanged (today's behaviour)."""
+    play. With the lift off and no policy, the move comes back unchanged (today's behaviour). `room`: the primas
+    the guardrails still let us commit (cash above the floor, the hour's spend left); a lifted final never goes
+    above it, and a lifted plan whose dealer fills above both it and our top is skipped (a thread slot and a
+    quota spent on a final we could not take)."""
     cls = price_class(mv.ref)
     if mv.ladder is None or cls is None:
         return DealerPlan(mv)
@@ -107,23 +131,26 @@ def plan_dealer_buy(
     if policy is not None:
         planned, why = policy.plan(ladder)
         if planned is None:
-            final_max = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus)
+            final_max = _reach(mv, ladder[1], rules, min_surplus, room)
             if final_max is None or policy.deal_share(final_max) < MIN_FINAL_SHARE:
                 return DealerPlan(None, skip=why)
             under = sum(1 for f in policy.fills if f <= final_max)
-            lifted = f"skip lifted: {under} of {len(policy.fills)} fills at or under the final cap {final_max}"
-            notes.append(Note("policy", _policy_ref(policy), lifted, policy.text()))
+            rescued = f"skip lifted: {under} of {len(policy.fills)} fills at or under the final cap {final_max}"
+            notes.append(Note("policy", _policy_ref(policy), rescued, policy.text()))
         else:
             if planned != ladder:
                 changed = f"ladder {fmt(ladder)} → {fmt(planned)}"
                 notes.append(Note("policy", _policy_ref(policy), changed, policy.text()))
             ladder = planned
             reasons.append(why)
-    final_max = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus)
+    final_max = _reach(mv, ladder[1], rules, min_surplus, room)
+    lifted = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus) is not None
+    if lifted and room is not None and mv.price > max(ladder[1], final_max or 0):
+        return DealerPlan(None, skip=f"cash: we may commit {room} P now, {mv.source} {cls} fills ~{mv.price:g}")
     if final_max is not None:
         ref, patience = _patience_ref(cls, mv, curve, policy)
         opening, silent = (curve.opening, curve.silent_below) if curve is not None else (None, None)
-        played = patience_ladder(ladder, patience, opening, silent)
+        played = patience_ladder(ladder, patience, opening, silent, max(1, rules.dealer_max_ticks_per_thread - 2))
         if played != ladder:
             notes.append(Note("curve", ref, f"ladder {fmt(ladder)} → {fmt(played)}"))
             ladder = played
