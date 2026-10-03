@@ -229,7 +229,8 @@ class FallbackLedger:
 
 
 LOCAL_HOSTS = ("localhost", "host.docker.internal", "gateway.docker.internal")  # this machine, seen from docker
-NUMERIC_HOST = re.compile(r"[0-9.]+|0x[0-9a-f]+")  # 127.1, 2130706433, 0x7f000001: libpq reads them as IPv4
+# 127.1, 2130706433, 0x7f000001, 0x7f.1, 0177.1: inet_aton forms that libpq dials as IPv4
+NUMERIC_HOST = re.compile(r"(?:0x[0-9a-f]*|[0-9]+)(?:\.(?:0x[0-9a-f]*|[0-9]+)){0,3}")
 
 
 def is_shared(target: Target) -> bool:
@@ -261,6 +262,8 @@ def _target(database_url: str) -> tuple[Target | None, str]:
         return unsafe
     if not PLAIN_HOST.fullmatch(target.host) or not target.port.isdigit() or "hostaddr" in extra:
         return unsafe
+    if any("@" in str(v) for k, v in extra.items() if k not in ("user", "password")):
+        return unsafe  # the real "@" landed past a password fragment that libpq took for the host
     return target, f"{target.host}:{target.port}"
 
 

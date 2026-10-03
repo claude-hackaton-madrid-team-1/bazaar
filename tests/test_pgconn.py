@@ -138,3 +138,10 @@ def test_cli_db_check_exits_nonzero_and_never_prints_the_password(monkeypatch):
     result = CliRunner().invoke(app, ["db", "check"])
     assert result.exit_code == 1
     assert PASSWORD not in result.output and "unreachable" in result.output
+
+
+def test_a_socket_that_stops_answering_is_bounded_by_default_and_the_url_still_wins():
+    from bazaar_agent.pgconn import connection_params
+
+    assert connection_params("postgresql://u:pw@db.example.com/x")["tcp_user_timeout"] == "10000"
+    assert connection_params("postgresql://u:pw@db.example.com/x?tcp_user_timeout=3000")["tcp_user_timeout"] == "3000"

@@ -143,6 +143,10 @@ def test_a_password_with_a_raw_at_sign_is_never_logged_and_never_counts_as_share
         "postgresql://u:pw@0x7f000001:5432/railway",
         "postgresql://u:pw@my-laptop.local:5432/railway",
         "postgresql://u:pw@postgres:5432/railway",  # a compose service name
+        "postgresql://u:pw@0x7f.1:5432/railway",
+        "postgresql://u:pw@0177.1:5432/railway",
+        "postgresql://u:ab@cd.FRAG/ef@x.proxy.rlwy.net/railway",  # "cd.FRAG" read as the host
+        "postgresql://u:ab@CDFRAG:9999/x@x.proxy.rlwy.net/railway",
     ],
 )
 def test_a_url_that_may_reach_this_machine_or_leak_its_password_is_never_shared(tmp_path, url):
@@ -150,7 +154,7 @@ def test_a_url_that_may_reach_this_machine_or_leak_its_password_is_never_shared(
 
     with pytest.raises(LedgerNotShared) as refused_live:
         open_ledger(tmp_path, source="taker", live=True, database_url=url, game_url=DEFAULT_URL, connect=refused)
-    assert "RETPW" not in str(refused_live.value) and "SEC" not in str(refused_live.value)
+    assert not any(part in str(refused_live.value) for part in ("RETPW", "SEC", "FRAG"))
 
 
 def test_railway_hosts_are_shared(tmp_path):
