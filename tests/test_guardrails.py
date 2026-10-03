@@ -129,3 +129,28 @@ def test_dealer_final_lift_still_meets_cash_floor_and_hourly_spend():
     assert "max_spend_per_game_hour" in str(gr.check(final, ctx(spent_last_hour=60), rules))
     with pytest.raises(gr.GuardrailsError):
         gr.parse_guardrails("- `dealer_final_lift` = 0.9 — too much")
+
+
+def duel_check(kind="duel_offer", price=105, limit=100, role="seller", days=None, weight=None, rules=REAL.rules):
+    action = gr.Action(kind, "9", None, price, limit=limit, role=role, days=days, days_weight=weight)
+    return gr.check(action, ctx(), rules)
+
+
+def test_a_duel_move_outside_our_limit_is_denied():
+    assert REAL.rules.duel_inside_limit
+    assert duel_check().allowed and duel_check(role="buyer", price=95).allowed
+    for kind in ("duel_offer", "duel_accept"):
+        assert "duel_inside_limit" in str(duel_check(kind, price=100))  # on the limit: no surplus
+        assert "duel_inside_limit" in str(duel_check(kind, price=99))
+        assert "duel_inside_limit" in str(duel_check(kind, price=101, role="buyer"))
+    # Two issues: days always cost us |weight| each (the sign is unverified).
+    assert "worth 95" in str(duel_check(price=105, days=5, weight=2.0))  # the bug: 105 with 5 days
+    assert "worth 64" in str(duel_check(price=54, limit=60, role="buyer", days=5, weight=-2.0))
+    assert duel_check(price=105, days=0, weight=2.0).allowed and duel_check(price=111, days=5, weight=-2.0).allowed
+    assert "your_days_weight" in str(duel_check(days=0))  # cannot value the days: denied
+    for days in (-5, 11, float("nan")):  # outside RULES.md's 0 to 10: -5 days would pass 95 as worth 105
+        assert "days" in str(duel_check(price=95, days=days, weight=2.0)), days
+    assert "cannot value" in str(duel_check(price=None)) and "cannot value" in str(duel_check(limit=None))
+    assert "cannot value" in str(duel_check(role=None))
+    off = gr.parse_guardrails("- `duel_inside_limit` = false — x").rules
+    assert duel_check(price=50, rules=off).allowed
