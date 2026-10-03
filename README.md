@@ -163,10 +163,10 @@ uv run bazaar status                      # our cash, level, score, cards (needs
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
 uv run bazaar agent taker                 # autonomous buyer, every tick: DRY RUN (logs WOULD-moves) until --live
-uv run bazaar agent maker                 # autonomous market maker (asks, bids, reprices): DRY RUN until --live
-uv run bazaar venue status                # our venue, the build-only switch, what our broker would match now
-uv run bazaar venue open --fee-bps 0      # open our board venue (250 P bond + 20 P): DRY RUN, build only
-uv run bazaar broker run                  # our venue's broker, every tick: exact max-surplus matches, DRY RUN
+uv run bazaar agent maker                 # market maker + our venue (opened at game hour 6.5, brokered): DRY RUN until --live
+uv run bazaar venue status                # our venue, the switch, what our broker would match now
+uv run bazaar venue open --fee-bps 0      # open our board venue by hand (250 P bond + 20 P): DRY RUN until --live
+uv run bazaar broker run                  # our venue's broker alone, every tick: exact max-surplus matches, DRY RUN
 
 uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgres + pgvector memory
 uv run bazaar db tables                   # every table with its row count
@@ -274,20 +274,21 @@ per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, 
 `touch .local/PAUSE` stops every write from every agent that reads that `.local/` (this checkout; each
 Railway service has its own: "Pause writes" under "Production on Railway").
 
-## Our venue and its broker (market making, build only)
+## Our venue and its broker (market making)
 
 Market making is 30 % of the score: the Market Test (every two hours every venue gets the same synthetic
 book; we score the share of possible gains our broker realises) and the value other teams create on our
-venue. The code is built and tested, but `allow_venue_open = false` in `GUARDRAILS.md` keeps it from
-opening, re-feeing, announcing or matching on a real venue, even with `--live`.
+venue. On Railway the **maker** opens our `board` venue (0 bps) by itself on the first tick at or past game
+hour 6.5 (`venue_open_after_game_hours`, ~11:30 Madrid, before the 12:00 Market Test), once, and then runs
+its broker every tick: exact maximum-surplus matching, bench first, ties in book order like the free stall
+(so never below it on the same book), never two offers of one maker, never ours. Until the venue is open
+every purchase keeps `cash_floor` + `venue_bond_reserve` (100 + 270) in cash. The broker key goes to the
+shared Postgres (`venue_keys`) and is never shown anywhere. Details, the key and how to stop it:
+[docs/services.md](docs/services.md#our-venue-opened-by-the-maker-at-game-hour-65).
 
 - `uv run bazaar venue status` shows the switch, our venue (if any) and what the broker would match now.
-- `uv run bazaar venue open|close|fee|announce ...` are dry runs; `--live` sends only when the switch is on,
-  the kill switch is off and the 250 P bond + 20 P fee leave cash at or above `cash_floor`.
-- `uv run bazaar broker run` reads our book every tick and proposes an exact maximum-surplus matching
-  (bench first, never two offers of one maker, never ours, midpoint price), logged to `decisions`.
-
-How to go live (opening the venue, the fee, the broker): [docs/services.md](docs/services.md#our-venue-from-build-only-to-live).
+- `uv run bazaar venue open|close|fee|announce ...` are dry runs; `--live` sends only when the switch is on.
+- `uv run python scripts/sim_market_test.py` proves it on an in-process simulator (ours vs the stall).
 
 ## Strategy (what to do next, ranked)
 
