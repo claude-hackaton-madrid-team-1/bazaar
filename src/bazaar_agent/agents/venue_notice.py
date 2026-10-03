@@ -69,7 +69,7 @@ def wanted_notice(plan: VenueSpec, venue: str, cards: Sequence[str], house: Venu
     )
     tail = "Post asks and bids here, public or addressed."
     for n in range(len(named), 0, -1):
-        text = clean(f"{head} Wanted now: {', '.join(named[:n])} (missed for a page by the most teams). {tail}")
+        text = clean(f"{head} Wanted now: {', '.join(named[:n])} (teams miss them for a page). {tail}")
         if len(text) > NOTICE_MAX_CHARS:
             continue
         if house is not None and _fee(house.fee_bps, house.fee_per_card, EXAMPLE_PRICE, 1) > _fee(

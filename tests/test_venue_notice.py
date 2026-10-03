@@ -81,7 +81,7 @@ def test_the_notice_names_our_venue_fee_and_the_wanted_cards_within_240_characte
     assert note is not None
     assert note.text == (
         "Team 1 market (v19): 0 % fee, 0 P a card, crossing bids and asks matched every tick at the midpoint. Wanted"
-        " now: LAV-04, RET-10, LAT-08, LAT-09 (missed for a page by the most teams). Post asks and bids here, public"
+        " now: LAV-04, RET-10, LAT-08, LAT-09 (teams miss them for a page). Post asks and bids here, public"
         " or addressed."
     )
     assert len(note.text) <= vnote.NOTICE_MAX_CHARS
@@ -206,7 +206,7 @@ def test_the_keeper_names_the_matrix_cards_and_falls_back_to_the_generic_notice(
     named = AnnouncingBroker()
     k = notice_keeper(tmp_path / "named", named, source=lambda tick: matrix(tick, DEMAND, ("t03", "t05")))
     run(k, 400)  # turn 40: the pool of 5 (LAV-04, RET-10, LAT-08, LAT-09, LAV-08) starts at 40 * 4 % 5 = 0
-    assert named.notes and "Wanted now: LAV-04, RET-10, LAT-08, LAT-09 (missed" in (named.notes[0])
+    assert named.notes and "Wanted now: LAV-04, RET-10, LAT-08, LAT-09 (teams" in named.notes[0]
     run(k, 410)  # the next turn starts 4 further on
     assert "Wanted now: LAV-08, LAV-04, RET-10, LAT-08 (" in named.notes[1]
     rows_ = [d for d in rows(tmp_path / "named") if d.get("kind") == "venue_announce"]
