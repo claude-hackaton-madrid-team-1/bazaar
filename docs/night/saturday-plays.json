@@ -82,7 +82,7 @@
       "when": "all day",
       "question": "Is this a safe moment to merge?",
       "check": "a merge to main touching src/**, GUARDRAILS.md, STRATEGY.md, RUNTIME.md, uv.lock, pyproject.toml, vendor/bazaar-kit/**, questions/** or .railway/** redeploys bazaar-duels, bazaar-taker and bazaar-maker (.railway/railway.py watchPatterns)",
-      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (now contains #61 + #68; merge commit, never #61 alone, close #68 by hand) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE); on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5)",
+      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (now contains #61 + #68; merge commit, never #61 alone, close #68 by hand) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE); on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5); X15 (r2): expired maker bids are reposted and their spend booked again, filling max_spend_per_game_hour; the stopgap offer_ttl_ticks ~1 game hour is a code change (merge inside a window), the proper fix is B14",
       "owner": "Marius"
     },
     {
@@ -305,6 +305,72 @@
       "who": "taker",
       "do": "Sunday allowance +150 P.",
       "points": 0
+    }
+  ],
+  "probes": [
+    {
+      "id": "P1",
+      "question": "t_hours: jump to 4.0 or resume at 2.65?",
+      "probe": "GET /api/clock (`t_hours`, `tick`) + GET /api/schedule: `uv run bazaar clock`, `uv run bazaar timeline --from-api --compare docs/night/saturday-schedule.json`",
+      "when": "08:55, again at 09:01",
+      "decides": "G0: the column for the day",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P2",
+      "question": "What does a closed clock carry (`next_tick_in`, `next_opens`)?",
+      "probe": "`uv run bazaar clock` before 09:00",
+      "when": "08:55",
+      "decides": "r2's B13 fix for the 300 s wake-up (X4)",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P3",
+      "question": "Do our dealer-thread bids appear in /api/me/offers?",
+      "probe": "GET /api/me/offers (key, read) with one dealer thread open: `uv run bazaar sell offers`",
+      "when": "first dealer thread (resume 09:00 ladder / jump 09:03)",
+      "decides": "every cash-floor guard for thread bids (X7)",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P4",
+      "question": "Is the tick-T accept already settled in /api/me read at T+1?",
+      "probe": "/api/me (`uv run bazaar status`) on the tick after our first accept",
+      "when": "first accept",
+      "decides": "X18 duplicate buys",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P5",
+      "question": "Which fee settles when a venue.fee_announced takes effect at T+1?",
+      "probe": "the settlement's `fee` in the feed / `uv run bazaar tape` around a rival's fee change",
+      "when": "first venue.fee_announced",
+      "decides": "X8",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P6",
+      "question": "Do duel accepts count against accepts_per_team_per_tick?",
+      "probe": "Duels I: does a second duel accept in the same tick get refused? (the duel log)",
+      "when": "Duels I first wave (resume 12:51 / jump 11:30)",
+      "decides": "X5-B3: if not, our 1 accept per tick on duels is self-imposed and costs deals",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P7",
+      "question": "Duels II: the sign of `your_days_weight`, and is `issues` present?",
+      "probe": "the first Duels II payload (`uv run bazaar duel done`, the duels log)",
+      "when": "Duels II start (resume 19:21 / jump 18:00)",
+      "decides": "G4: #60's worst case vs B8's signed days",
+      "source": "_night/BITES.md (r2)"
+    },
+    {
+      "id": "P8",
+      "question": "Does Railway overlap two instances on a redeploy?",
+      "probe": "the deploy log of the first redeploy (two `tick` lines from different instances for the same tick)",
+      "when": "first merge inside a window",
+      "decides": "X16",
+      "source": "_night/BITES.md (r2)"
     }
   ]
 }
