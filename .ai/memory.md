@@ -1059,11 +1059,24 @@ range; the SG1 ladder probe plans nothing until fills drop or a card's official 
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
 
+### [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
+Same questions plus `risk_posture: aggressive`: decided keep_50 (0.79), keep_0 lift (0.93) and keep_v19 (0.75,
+v19 stays open for the benches). Undecided, so kept: dealer_sell_enabled (0.41), max_price_uncommon (0.51),
+duplicates_reserve (list_duplicates 0.60, was 0.87 in a looser earlier ask), podium_venue_rule (avoid_unless_2x
+0.74, one hundredth under the bar). Strategy gates: ladder_probe 0.36, dealer_sell 0.70 (leaning yes). A verdict is
+asked once and applied as given; re-asking until it says yes would launder the bar.
+
 ### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
 7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
 and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
 third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
+### [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
+Each `TacticBook` in `duel run` draws `secrets.randbits(64)` as its tie-break seed, and 25 of 400 seeds give that test's
+rival the `plain` arm, whose duel words carry no number, so `price in numbers_in(text)` fails (seeds 14 and 23 fail on
+an untouched export of HEAD as well; the 400 picks hash the same with and without the #212 r2 fixes). Rerun it, or pin
+`BAZAAR_BLUFF_SEED` in that test.
 
 ### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
 Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read
@@ -1071,6 +1084,35 @@ refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused 
 Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
 service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
 429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.
+
+### [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
+`db.init_schema` in that schema fails (`column "set_code" does not exist`): the fixture's `cards (id, name)` is
+not schema.sql's. Drop it before applying the schema there (AF1's read-only test does).
+
+### [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
+symptom: every Postgres test on the laptop (all worktrees) hung in `init_schema`, then failed with lock timeouts →
+root cause: a pytest killed mid-test left a backend `idle in transaction` after schema.sql (docker's port proxy keeps
+the dead client's TCP connection open), holding the schema's advisory xact lock → fix: find it (`select pid, state,
+client_port from pg_stat_activity where application_name = 'bazaar-pytest'`), check no live process owns its client
+port (`lsof -nP -iTCP:<port>`), then `select pg_terminate_backend(<pid>)` on the LOCAL docker DB only.
+
+### [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+Sessions 1-3 (ticks 201-217, 441-457, 681-697): `bench.finished` comes on the TEAM stream only (not the public
+feed) as `{venue, session, efficiency, auto_baseline, matches}`: 0.899/0.899 (v08, the stall), 0.967/0.967 and
+0.769/0.769 (v19, our exact broker, 4 and 5 matches). `bench.started` (public) carries `{name, ticks: 16, venues,
+session, start_tick}` and NO run id, so `BenchSessions` opens sessions from the book only. A match answers
+`{"queued": true, "settles_at_tick": tick + 1}`. Matched ids: buyers b35-4..9, b52-0..5; sellers b35-13..17,
+b52-13..19 (ten a side?). On `bazaar_sim.bench`, exact equals the stall on every book; #84's edge without a guard
+realises less than the stall on 2-26 % of books (mean below it with 20 traders); `scripts/bench_edge_proof.py`.
+
+### [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
+`scripts/bench_edge_proof.py --seeds 2000` (14 regimes × 6 policies; points under 4 readings of the unpublished curve):
+on #77's reading (field at the stall, 0.5 × eff/stall below) the unguarded edge earns the most points in every regime
+(normal ×20 traders: 0.604 vs guard 10 0.544 vs exact 0.500), even when its mean efficiency is below the stall; only a
+harsh reading (rivals +0.10, 0 points at −0.05) with wrong priors makes exact best. Worst regret: margin 5 0.045,
+unguarded 0.072, margin 10 0.110, exact 0.252. Per book, any deviation from the stall can lose: a guard that deviates
+only when the edge wins at the worst corner of every limit band still loses 0.4-8.7 % of books, because the trader the
+edge pairs now is the one the stall would have matched to a better late arrival (path effect, not estimate error).
 
 ### [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
 SAL-07 (asset 438) came from t02 at tick 320 for 23 and completed Salamanca (/me your_value 118.6). Sold to Pilar

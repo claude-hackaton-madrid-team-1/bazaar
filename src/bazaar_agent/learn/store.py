@@ -78,6 +78,11 @@ def _from_row(row: tuple[Any, ...]) -> Learning | None:
         return None
 
 
+def _in_force(learning: Learning, now: int) -> bool:
+    """A blocker that has not expired at `now` (`until_tick` >= now): memory never trims it for a newer row."""
+    return learning.blocking and learning.until_tick is not None and learning.until_tick >= now
+
+
 def matches(
     learning: Learning,
     *,
@@ -183,11 +188,15 @@ class LearningStore:
     # ---------------------------------------------------------------- write
 
     def remember(self, learnings: Iterable[Learning]) -> dict[str, Learning]:
-        """Into this process's memory only (no I/O), trimmed to the newest MEMORY_MAX facts."""
+        """Into this process's memory only (no I/O), trimmed to MEMORY_MAX facts: every blocker still in force
+        first, then the newest. A flood of newer rows (one steered dealer text made 60) never evicts a live
+        cooloff, which would send us back to a dealer that refuses us (#212 security r2)."""
         batch = {lr.key(): lr for lr in learnings}
         self.memory.update(batch)
         if len(self.memory) > MEMORY_MAX:
-            self.memory = dict(sorted(self.memory.items(), key=lambda kv: kv[1].tick)[-MEMORY_MAX:])
+            now = self._tick if self._tick is not None else max(lr.tick for lr in self.memory.values())
+            kept = sorted(self.memory.items(), key=lambda kv: (_in_force(kv[1], now), kv[1].tick))
+            self.memory = dict(kept[-MEMORY_MAX:])
         return batch
 
     def record(self, learnings: Iterable[Learning]) -> int:

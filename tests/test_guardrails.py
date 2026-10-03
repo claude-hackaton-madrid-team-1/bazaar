@@ -51,7 +51,7 @@ def test_kill_switch_accept_quota_sells_and_flags():
     assert not gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), off).allowed
     assert "accept(s) already" in str(gr.check(gr.Action("duel_accept", "7"), ctx(accepts_this_tick=1), rules))
     assert "your_value" in str(gr.check(gr.Action("sell", "LAT-09", "rare", 30, your_value=35.0), ctx(), rules))
-    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(), rules).allowed
+    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 2}), rules).allowed
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))
 
 

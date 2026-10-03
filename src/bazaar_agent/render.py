@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -128,6 +129,31 @@ def affinity_table(amap: Any, title: str = "Rival affinity map · P(set holds th
             f"{a.confidence:.2f}",
             f"{second} {a.p_top.get(second, 0):.2f}" if second != "-" else "-",
             *(f"{a.p_top[s]:.2f}" for s in sets),
+        )
+    return t
+
+
+def team_affinity_table(
+    rows: list[dict[str, Any]], title: str = "Team multipliers · said in a thread vs inferred"
+) -> Table:
+    """`team_affinity` rows, one line per team and set: the stated multiplier (words, untrusted) beside ours."""
+    t = Table(title=title)
+    for col in ("team", "set", "said", "conf", "tick", "inferred", "P", "quote"):
+        t.add_column(col, justify="left" if col in ("team", "set", "quote") else "right")
+    board: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for r in rows:
+        board.setdefault((str(r["team"]), str(r["set_code"])), {})[str(r["source"])] = r
+    for (team, set_code), by in sorted(board.items(), key=lambda kv: (len(kv[0][0]), kv[0])):
+        said, inferred = by.get("said"), by.get("inferred")
+        t.add_row(
+            escape(team),
+            escape(set_code),
+            f"×{float(said['multiplier']):.1f}" if said else "-",
+            f"{float(said['confidence'] or 0):.2f}" if said else "-",
+            str(said["tick"]) if said else "-",
+            f"×{float(inferred['multiplier']):.1f}" if inferred else "-",
+            f"{float(inferred['confidence'] or 0):.2f}" if inferred else "-",
+            escape(str(said.get("quote") or "")[:60]) if said else "",
         )
     return t
 

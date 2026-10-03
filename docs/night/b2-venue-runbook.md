@@ -2,6 +2,13 @@
 
 Night backlog item B2, 4 Oct 2026. Branch `night/b2-venue-runbook`, draft PR #92, stacked on #84 (W1b), which is stacked on #71.
 
+> **As merged by #218 (BE1, Sat 3 Oct afternoon) — read this before the steps below.** Two switches are wired on
+> `bazaar-maker`: `BAZAAR_BENCH_POLICY` (`exact` default | `edge`) and `BAZAAR_BENCH_GUARD_MARGIN` (estimated P,
+> default 10; `none` = unguarded, #84 as it was). `BAZAAR_BENCH_CROSS` and `BAZAAR_BENCH_PRESET` are **not wired**: set,
+> the maker logs `IGNORED`, and no limit probe is ever sent. With `edge` the maker's start line is
+> `venue keeper: broker bench edge (guard margin 10 P)` (or `(unguarded, as #84)`), and the keeper's
+> `broker on for vNN (LIVE), bench ...` line repeats it. Proof and points tables: `scripts/bench_edge_proof.py`, PR #218.
+
 **Rewritten at 03:50 for the new #71** (e82ba8d at 03:14–03:23, then e489449 at ~03:50: the venue opens once across restarts, a venue closed by hand is never reopened). It now opens our board venue from the **maker's venue keeper** at game hour 6.5 (11:30 if the clock jumps, 12:51 if it resumes) with an exact broker, keeps the broker key in Postgres, and sets `allow_venue_open = true`, `cash_floor = 100`, `venue_bond_reserve = 270` and `venue_open_after_game_hours = 6.5`. Nothing here touched the live game. Every guardrail change below is a **proposal against #71's values**.
 
 > **Reconciled proposal: #118 (W1a, B20)** merges this runbook with #71. Two differences, both endorsed here:
