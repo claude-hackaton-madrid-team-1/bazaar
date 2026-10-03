@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | `chore/iac-live-show-db` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday (PARTIAL: story, Q&A, demo; decisions log + charts pending) | `night/b29-pitch-kit` |
 | [#134](../../pull/134) | B28: taker go-live counterfactual (Friday replayed through the current taker), stacked on #125 | `night/b28-taker-counterfactual` |
 | [#133](../../pull/133) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (B16, bite X18) | `night/b16-unsettled-accepts` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 | [#117](../../pull/117) | Night B8: Duels II days readiness: sign latch on real evidence, rival days, zoo numbers | `night/b8-days` |
 | [#116](../../pull/116) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (B18, bites X20 X6 X2) | `night/b18-rate-limits` |
-| [#115](../../pull/115) | fix(duels): v1 forced endgame accepts are booked and sent before Jev (B15, r2 X17) | `night/b15-duels-first` |
 
 <!-- BAZAAR:ACTIVITY:END -->
