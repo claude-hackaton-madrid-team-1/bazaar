@@ -963,6 +963,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
 | [#93](../../pull/93) | feat(personas): L3–L5 prep: Trickster inspector, high-precision flag policy (off), persona plans (B3, stacked on #81) | `night/b3-personas` |
 | [#92](../../pull/92) | feat(market): venue go-live runbook + Saturday bench simulation (B2, stacked on #84) | `night/b2-venue-runbook` |
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | `ogarciarevett/feat-evals-in-agents` |
