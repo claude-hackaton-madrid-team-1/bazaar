@@ -210,3 +210,31 @@ def test_cli_from_api_reads_the_two_public_bodies(monkeypatch):
     data = json.loads(out.stdout)
     assert sorted(calls) == ["clock", "schedule"] and data["source"] == "api"
     assert [(a["name"], a["t_hours"]) for a in data["anchors"]] == [("resume", 2.65), ("jump", 4.0)]
+
+
+def test_compare_lists_what_the_organisers_moved():
+    committed = json.loads(Path("docs/night/saturday-schedule.json").read_text(encoding="utf-8"))
+    assert tl.schedule_changes(committed, committed) == []
+    live = json.loads(json.dumps(committed))
+    duels_1 = next(e for e in live["events"] if e["name"] == "Duels I")
+    duels_1["at_hours"] = 7.85  # the organisers re-time instead of jumping the clock
+    live["events"] = [e for e in live["events"] if e["name"] != "Practice duels"]
+    live["events"].append({"action": "bench", "name": "The Market Test", "at_hours": 23.5})
+    assert tl.schedule_changes(committed, live) == [
+        "removed: duels Practice duels #1 (was h2)",
+        "added: bench The Market Test #11 at h23.5",
+        "moved: duels Duels I #1 h6.5 -> h7.85",
+    ]
+    out = CliRunner().invoke(
+        app,
+        [
+            "timeline",
+            "--frozen-at",
+            "2.65",
+            "--at",
+            "2026-10-03T08:55",
+            "--compare",
+            "docs/night/saturday-schedule.json",
+        ],
+    )
+    assert out.exit_code == 0 and "no event added, removed or re-timed" in out.output

@@ -129,6 +129,9 @@ def timeline_cmd(
     at: str | None = typer.Option(None, "--at", help="The wall time to plan from (ISO 8601; default: now)"),
     teams: int = typer.Option(18, "--teams", help="Teams in the duel round-robin"),
     plays: str | None = typer.Option(None, "--plays", help="A plays JSON to attach (docs/night/saturday-plays.json)"),
+    compare: str | None = typer.Option(
+        None, "--compare", help="A committed timeline JSON (docs/night/saturday-schedule.json): list what moved"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print the timeline as JSON"),
 ) -> None:
     """Every scheduled event in game hours and Madrid time: `resume` and `jump` columns while closed, `live` open.
@@ -157,6 +160,12 @@ def timeline_cmd(
     events, days = tl.parse_events(sched_doc), tl.parse_days(clock_doc)
     found = tl.anchors(clock_doc, events, now)
     rows = tl.timeline(events, days, found, teams)
+    if compare:
+        changes = tl.schedule_changes(
+            json.loads(Path(compare).read_text(encoding="utf-8")), tl.as_dict(rows, found, "")
+        )
+        typer.echo("\n".join(changes) if changes else f"no event added, removed or re-timed against {compare}")
+        return
     if as_json:
         doc = tl.as_dict(rows, found, source)
         if plays:

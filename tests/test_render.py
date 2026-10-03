@@ -58,3 +58,10 @@ def test_every_table_renders_real_rows():
     assert "LAV-01" in text(render.cards_table(me))
     shown = text(render.status_table(me, "target: SIMULATOR https://bazaar-sim.example (BAZAAR_SIM, key sim-...)"))
     assert "target" in shown and "SIMULATOR https://bazaar-sim.example" in shown
+
+
+def test_status_shows_the_score_parts_the_saturday_gates_read():
+    me = {"cash": 353, "level": 2, "score": {"score": 8.34, "ladder_points": 0.058, "bench_points": None}}
+    shown = text(render.status_table(me))
+    assert "ladder_points" in shown and "0.058" in shown and "bench_points" in shown
+    assert "duel_points" not in shown  # only the parts /me sends

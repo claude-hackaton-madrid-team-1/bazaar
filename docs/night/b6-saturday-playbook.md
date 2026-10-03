@@ -48,7 +48,7 @@ The feed has them at tick 120 = 22:20:48.
 |---|---|---|---|
 | Duels I + II at the top-3 level | 12.5 | 5.0 | weight assumed; 0.12 per duel (0.18 / 0.09 if sessions weigh equally) |
 | 8 Market Tests at stall level | 7.5 | 3.0 | if the free stall does not score for us; otherwise a venue adds ~+0.19 final (B2) |
-| Abuela best three at 0.95 | 10.7 if the ladder restarts per round, +2.44 if it carries over | 4.3 / 1.0 | ~54 P; under resume also +0.49 final in Friday's round |
+| Abuela best three at 0.95 | 10.7 (7.9 at a top-3 mean of 1.5) if the ladder restarts per round, +2.44 if it carries over | 3.2–4.3 / 1.0 | ~54 P; under resume also +0.49 final in Friday's round |
 | `duel_policy` v2 | +3.6 if v1 sits at 0.70 of the top-3 | 1.4 | W2's 1.42× lift |
 | Three Chato uncommons at 0.5 | +2.82 | 1.1 | ~87 P, needs the cap |
 | W4's trades (+80 P) | +1.3 to +4.0 | 0.5–1.6 | 82 P |
@@ -60,7 +60,7 @@ The feed has them at tick 120 = 22:20:48.
 | The tool reproduces a real Friday event time | **GO**: 11 s off on the practice duels |
 | Every command in the playbook exists, with the PR it needs | **GO**: taken from the PR diffs, not from memory |
 | Points per action from #78 without new formulas | **GO**: `component_points`, `ladder_marginals`, `final_points_per_round_point` |
-| The clock column is known | **NO-GO until 08:55**: gate G0 (`uv run bazaar clock`) |
+| The clock column is known | **NO-GO until 08:55–09:05**: gate G0 (`uv run bazaar clock`, `bazaar timeline --from-api --compare …`, then the feed) |
 
 ## Risks
 - **Weights.** Four of the five component weights are assumed (W5), and so is the duel split between sessions.

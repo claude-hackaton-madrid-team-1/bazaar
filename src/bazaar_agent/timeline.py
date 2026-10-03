@@ -311,3 +311,29 @@ def with_plays(doc: Mapping[str, Any], plays: Mapping[str, Any]) -> dict[str, An
         events.append({**e, "play": {k: v for k, v in hit.items() if k != "match"}} if hit else dict(e))
     out["events"] = events
     return out
+
+
+def schedule_changes(committed: Mapping[str, Any], live: Mapping[str, Any]) -> list[str]:
+    """What moved between a committed timeline JSON and a fresh one: events added, removed or re-timed.
+
+    Keyed by (action, name) in order of appearance, so two Market Tests stay two. Empty = the plan's tables hold.
+    """
+
+    def keyed(doc: Mapping[str, Any]) -> dict[tuple[str, str, int], float]:
+        seen: dict[tuple[str, str], int] = {}
+        out = {}
+        for e in doc.get("events") or []:
+            base = (str(e.get("action")), str(e.get("name")))
+            seen[base] = seen.get(base, 0) + 1
+            out[(*base, seen[base])] = float(e.get("at_hours", 0.0))
+        return out
+
+    old, new = keyed(committed), keyed(live)
+    lines = [f"removed: {a} {n} #{i} (was h{old[(a, n, i)]:g})" for a, n, i in old if (a, n, i) not in new]
+    lines += [f"added: {a} {n} #{i} at h{new[(a, n, i)]:g}" for a, n, i in new if (a, n, i) not in old]
+    lines += [
+        f"moved: {a} {n} #{i} h{old[(a, n, i)]:g} -> h{new[(a, n, i)]:g}"
+        for a, n, i in new
+        if (a, n, i) in old and abs(new[(a, n, i)] - old[(a, n, i)]) > 1e-6
+    ]
+    return lines

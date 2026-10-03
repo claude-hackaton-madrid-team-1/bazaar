@@ -208,7 +208,24 @@ def status_table(me: dict, target: str | None = None) -> Table:
         ("rank", score.get("rank")),
     ]:
         t.add_row(k, "-" if v is None else str(v))
+    # The components the Saturday gates read (docs/night/saturday-playbook.md): the ladder restarts per round
+    # when ladder_points drops to 0 (G2); bench_points with no venue of ours says the free stall scores (G3).
+    for k in SCORE_PARTS:
+        if k in score:
+            t.add_row(f"  {k}", "-" if score[k] is None else str(score[k]))
     return t
+
+
+SCORE_PARTS = (
+    "negotiating",
+    "ladder_points",
+    "duel_points",
+    "market",
+    "bench_points",
+    "bench_efficiency",
+    "bench_venue",
+    "mm_points",
+)
 
 
 def cards_table(me: dict) -> Table:
