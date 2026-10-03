@@ -144,6 +144,41 @@ def _ledger(source: str, live: bool = False) -> Any:
         _fail(f"refusing to trade: {e}")
 
 
+def _tactic_book(
+    rules: Any, store: Any, us: str | None, log: Callable[[str], None], off_reason: str | None = None
+) -> Any:
+    """The words' bluff tactics (N16), learned per counterparty in the N3 store (`store` None: memory only).
+    Tactic lessons are read once here, before the first tick; later reads happen after each tick's sends. The
+    tie-break seed is secret per process unless BAZAAR_BLUFF_SEED fixes it (a reproducible simulator run)."""
+    from bazaar_agent.agents.bluff import TacticBook, default_seed
+
+    book = TacticBook(store=store, us=us, rules=rules, log=log, seed=default_seed(), off_reason=off_reason)
+    on, why = book.enabled()
+    loaded = book.load()
+    log(f"bluff tactics {'on' if on else 'OFF (' + why + ')'} · {loaded} tactic lesson(s) loaded")
+    return book
+
+
+FEED_READ_TIMEOUT_S = 2.0  # the bluff book's keyless feed read: short, never retried, it must not stall a tick
+
+
+def _feed_reader(settings: Any) -> Callable[[int], list[Event]]:
+    """`feed_window(limit)` without a key, a 2 s timeout and no retry: for the loops without a feed of their own."""
+    from bazaar_agent.sdk import PublicBazaar
+
+    return PublicBazaar(settings.bazaar_url, timeout=FEED_READ_TIMEOUT_S, retries=0).feed_window
+
+
+def _learning_store(app: str, log: Callable[[str], None]) -> Any:
+    """A `LearningStore` on the shared Postgres (short connect timeout), connected now, never inside a tick."""
+    from bazaar_agent import db
+    from bazaar_agent.learn.store import LearningStore
+
+    store = LearningStore(lambda: db.connect(app=app, connect_timeout_s=3), log)
+    store.open()
+    return store
+
+
 # ---------------------------------------------------------------- public views (no key)
 
 
@@ -755,6 +790,11 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
+    us = _our_team_id(client)
+    shared = ledger.where.startswith("postgres")
+    store = _learning_store("bazaar-dealer-buy", console.print) if shared else None
+    # Without our team id a strike for us cannot be recognised: no tactics then, today's words only.
+    bluff = _tactic_book(rules, store, us, console.print, None if us else "our team id is unknown")
     inspector = _offer_inspector(settings, dealer, topic, rules)  # S1: one flag book across reopens
     for attempt in range(1 + DEALER_REOPENS):
         with traces.trace_negotiation(dealer, topic, plan) as observer:
@@ -773,6 +813,8 @@ def dealer_buy(
                 reserve=reserve,
                 kill_switch=lambda: gr.kill_switch(rules),
                 **inspector,
+                bluff=bluff,
+                events=_feed_reader(settings),
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
@@ -880,6 +922,7 @@ def duel_run(
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.accept_gate import DuelRereads, Gate, duel_accept_check
+    from bazaar_agent.agents.bluff import message_id
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
@@ -887,9 +930,13 @@ def duel_run(
         DuelMove,
         append_jsonl,
         duel_action,
+        duel_choice,
         duel_deadline,
         duel_id,
         duel_move,
+        observe_duel,
+        our_duel_messages,
+        rival_offer,
         rival_text,
         template_duel_words,
     )
@@ -933,6 +980,14 @@ def duel_run(
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
     injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
+    us = _our_team_id(client)
+    shared = ledger.where.startswith("postgres")
+    say = lambda m: console.print(escape(m))  # noqa: E731
+    # v2's words are plain templates (no persuasion, as D1 measured it): tactics only under v1.
+    off = "duel_policy v2 sends template words only" if v2 else None
+    book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say, off)
+    chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -943,15 +998,24 @@ def duel_run(
                 if duel_jev is not None:
                     duel_jev.outcomes.accepted(did, int(move.price or 0))
             elif move.price is not None:
+                step = max(sent.get(did, 0), our_duel_messages(d))  # a restarted runner still knows the step
+                choice = duel_choice(book, d, did, move, step)  # the text only (N16)
+                if choice is not None:
+                    chosen[did] = choice
                 budget = max(0.0, send_by - time.monotonic())
                 request = WordsRequest(f"duel:{did}", move.price, sent.get(did, 0), None, rival_text(d), budget)
-                said = duel_words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
+                words = choice.words(duel_words) if choice is not None else duel_words
+                said = words(replace(request, tick=c.tick, tick_seconds=c.tick_seconds))
                 if time.monotonic() > send_by:
                     console.print(f"  duel {did}: the words took the rest of the tick, offering next tick")
                     return "expired"
                 with duel_traces.tool(did, "duel_say"):
-                    client.duel_say(did, said, price=move.price, days=move.days)
+                    body = client.duel_say(did, said, price=move.price, days=move.days)
                 sent[did] = sent.get(did, 0) + 1
+                if choice is not None:
+                    price, offer = rival_offer(d)
+                    book.sent(choice, their_price=price, their_offer=offer, tick=c.tick, message=message_id(body))
+                    console.print(f"  duel {did}: words tactic {choice.tactic or 'none'} ({escape(choice.reason)})")
             duel_traces.sent(did, move, said)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "move": move.__dict__})
             return "done"
@@ -979,6 +1043,10 @@ def duel_run(
             inputs = {**inputs, "inspector": gate.as_inputs()}
         if pick is not None and pick.days is not None:
             inputs = {**inputs, "jev_days": pick.days.as_dict()}
+        row_id = duel_id(d)
+        tactic = chosen.pop(row_id, None) if row_id is not None else None
+        if tactic is not None:
+            inputs = {**inputs, **tactic.inputs()}  # private keys (N16)
         rec.decide(
             tick,
             f"duel_{move.kind}",
@@ -1022,13 +1090,18 @@ def duel_run(
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
             return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
-        store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
+        finished = [d for d in duel_list(data) if d.get("status") != "live"]
+        for d in finished:
+            if (did := duel_id(d)) is not None:
+                observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
+        store.save(tick, finished)
         observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
         rereads.new_tick()
         decisions.begin_tick(c.tick)
+        book.begin_tick(c.tick, c.round, us)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
             data = client.duels()
@@ -1045,6 +1118,9 @@ def duel_run(
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
                 first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
+        for d in duels:  # memory only: the rival's new offer scores our last tactic message
+            if (seen_id := duel_id(d)) is not None:
+                observe_duel(book, d, seen_id, c.tick)
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
         try:  # another process may have taken it already
@@ -1217,6 +1293,9 @@ def duel_run(
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if store.read_finished(duels):
             save_finished(c.tick)
+        if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
+            book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
+        book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
         evals.after_tick(c.tick)  # last: a background pass every N ticks, never on the tick's path
 
     every = evals_default(evals_every, play)
@@ -1232,6 +1311,15 @@ def duel_run(
 
 
 MISSED_TICKS_CAP = 2  # v2 accepts at most this many ticks earlier after a gap in the duel loop
+
+
+def _our_team_id(client: Any) -> str | None:
+    """Our team id for the tactic lessons (one /me read at start); None when it cannot be read: the lessons then
+    bind no team, and the duel loop never waits on it."""
+    try:
+        return str(client.me().get("id") or "") or None
+    except Exception:
+        return None
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -2335,10 +2423,15 @@ def agent_taker(
     from bazaar_agent.learn.jev_context import offer_situation, with_lessons
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        rules = kw["rules"]
+        rules, log = kw["rules"], kw["log"]
+        # Its own store (own memory and connection): thousands of tactic lessons must never trim the feed
+        # reader's blockers out of the LiveLearner's memory, which the taker reads before its sends.
+        shared = kw["ledger"].where.startswith("postgres")
+        bluff = _tactic_book(rules, _learning_store("bazaar-taker-bluff", log) if shared else None, None, log)
         return Taker(
             team,
             public,
+            bluff=bluff,
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,

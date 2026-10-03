@@ -103,6 +103,7 @@ class Guardrails(BaseModel):
     flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
     flag_dealers: str = "none"  # opt-in: the only dealer ids a flag may be SENT to (none: no dealer)
     inspect_accepts: bool = True
+    bluff_enabled: bool = True
 
     @field_validator("flag_trusted_dealers", "flag_dealers")
     @classmethod
@@ -228,6 +229,7 @@ ENFORCED_BY: dict[str, str] = {
     "team_swap_min_surplus": "swaps.judge (every proposal and accept)",
     "team_swap_max_their_share": "swaps.judge (every proposal and accept)",
     "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
+    "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
 }
 
 
