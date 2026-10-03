@@ -17,7 +17,9 @@ mechanics. Stop-building rule in force: this is the one lever, no matching chang
    (`team_matrix.Cell.missing_for_page`, the matrix the taker stores and the maker reads through `LatestMatrix`),
    our venue id, name and 0 % fee, what the broker does, and the house market's fee when dearer.
 2. At most 240 characters (the feed clips there); printable ASCII only; card ids only when they match the catalog
-   shape; no team, value, multiplier or cash; a card only podium rivals (`Summary.rival`) miss is left out.
+   shape (`[A-Z]{2,4}-[0-9]{2}`); no team, value, multiplier or cash; a card only podium rivals (`Summary.rival`)
+   miss is left out; only cards we hold a copy of (/api/me assets), never one we miss ourselves: a public "wanted"
+   would raise its asks to us and send its sellers to a venue our key cannot trade on. An empty /me names nothing.
 3. No matrix, a stale one (`LatestMatrix.current`, 30 ticks) or no card that fits: the existing generic notice.
    A process's first notice waits up to `MATRIX_GRACE_TICKS` (3) for the matrix's first read.
 4. Cadence: one notice every `ANNOUNCE_EVERY_TICKS` (24) and at most `ANNOUNCE_MAX_PER_GAME_HOUR` (5) per game

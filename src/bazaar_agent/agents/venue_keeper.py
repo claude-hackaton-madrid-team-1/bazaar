@@ -421,7 +421,7 @@ class VenueKeeper:
         """Every `announce_every` ticks after our last notice, the one this process sent or the newest the feed
         shows for our venue (a restart, or a notice from a laptop), and never sooner than a game hour allows."""
         if self.announced_tick is not None and clock.tick < self.announced_tick:  # a simulator reset: start over
-            self.announced_tick, self.announced_at, self.announce_after = None, None, 0
+            self.announced_tick, self.announced_at, self.announce_after, self._first_try = None, None, 0, None
         if clock.tick < self.announce_after or self.announce_every is None:
             return False
         feed = _last_notice(venue, snap.events if snap is not None else (), clock.tick)

@@ -228,3 +228,14 @@ def test_a_feed_notice_from_the_future_or_a_clock_that_went_back_never_silences_
     assert len(broker.notes) == 2
     run(k, 51, [{"type": "venue.announcement"}, "not an event"])  # odd rows are skipped, never raise
     assert len(broker.notes) == 2
+
+
+def test_after_a_clock_reset_the_generic_notice_waits_only_the_grace_again(tmp_path):
+    broker = AnnouncingBroker()
+    k = notice_keeper(tmp_path, broker, source=lambda tick: None)  # a matrix wired, none read yet
+    for tick in range(400, 400 + vk.MATRIX_GRACE_TICKS + 1):
+        run(k, tick)
+    assert len(broker.notes) == 1
+    for tick in range(5, 5 + vk.MATRIX_GRACE_TICKS + 1):  # a simulator reset
+        run(k, tick)
+    assert len(broker.notes) == 2
