@@ -170,9 +170,11 @@ TOOLS: tuple[ToolSpec, ...] = (
              "for a situation, with relevance scores, and the learned dealer ladders (start, step, walk point, "
              "or skip) with their evidence. Our own data, written by code from prices.", LearningsArgs, False,
              lambda b, a: be.learnings(b, a.query, a.dealer, a.limit)),
-    ToolSpec("dealer_buy", "Buy one card or pack from a dealer: rising distinct bids from `start`, accept at "
-             "our next bid, walk above `max_price`. Live, it starts `bazaar dealer buy --live`, which plays "
-             "one move per tick." + DRY, ac.DealerBuyArgs, True, _write("dealer_buy")),
+    ToolSpec("dealer_buy", "Buy one card or pack from a dealer: rising distinct bids from `start`, never above "
+             "`max_price`. It takes her ask only once she came down from her opening ask (a deal at her opening "
+             "price scores nothing and unlocks nothing), counters below an opening ask, and if she holds it, "
+             "walks and reopens once with a lower first bid. Live, it starts `bazaar dealer buy --live`, which "
+             "plays one move per tick." + DRY, ac.DealerBuyArgs, True, _write("dealer_buy")),
     ToolSpec("sell_list", "List one of our cards for cash on a venue, never below its your_value." + DRY,
              ac.SellListArgs, True, _write("sell_list")),
     ToolSpec("sell_bid", "Bid cash for any copy of a card on a venue (how we buy cards only teams hold)." + DRY,
