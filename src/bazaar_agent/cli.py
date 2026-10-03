@@ -341,6 +341,60 @@ def trade_plan(
         console.print(f"[yellow]if the cap were on: {line}[/yellow]")
 
 
+@app.command()
+def swaps(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    threads: int = typer.Option(4, min=1, help="Swaps to plan"),
+    as_json: bool = typer.Option(False, "--json", help="Print the swaps as JSON"),
+) -> None:
+    """Read-only: the swaps the taker's team desk would propose in team threads (N17), sends nothing.
+
+    Each planned swap (the trade desk's, on the rival affinity map) with its ladder from the anchor to the
+    even split, our gain and theirs at each step, and the fairness verdict (`swaps.judge`)."""
+    from bazaar_agent import affinity as af
+    from bazaar_agent import swaps as sw
+    from bazaar_agent import trade_desk as td
+
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
+    events, us, rules = _history(events_file, live), str(me.get("id") or ""), _rules().rules
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    rastro = next((v for v in venues if v.id == "rastro"), None)
+    pp = td.PlanParams(listings=0, threads=threads, max_share=1.0)  # as the desk plans (team_desk._trades)
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, rastro)
+    ladder, rows = sw.Ladder(), []
+    for t in plan.threads:
+        steps = [sw.cash_at(t, k, ladder) for k in range(ladder.steps)]
+        verdicts = [sw.judge(t, c, 0, rules) for c in steps]
+        rows.append(
+            {
+                "team": t.counterparty,
+                "give": t.refs[0],
+                "asset": t.asset_id,
+                "want": t.refs[1],
+                "cash_steps": steps,  # + they add, - we add
+                "ours": [round(v.ours, 1) for v in verdicts],
+                "theirs": [round(v.theirs, 1) for v in verdicts],
+                "fair": [v.ok for v in verdicts],
+                "p_fill": t.p_fill,
+                "first_offer": sw.offer_terms(t, steps[0]),
+            }
+        )
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        console.print("no swap planned (no team known to hold a card we miss and to want one of our copies)")
+    for r in rows:
+        console.print(
+            f"{r['team']}: our {r['give']} (#{r['asset']}) for their {r['want']} · cash {r['cash_steps']} · "
+            f"ours {r['ours']} · theirs {r['theirs']} · fair {r['fair']} · P(fill) {r['p_fill']:.0%}"
+        )
+
+
 def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
     """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
     from bazaar_agent.agents.market import venues_from

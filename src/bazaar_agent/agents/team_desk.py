@@ -490,7 +490,10 @@ class TeamDesk:
                 v.events, af.catalog_sets(v.catalog), af.multipliers_from(v.me), v.catalog, exclude=[v.us]
             )
             rastro = next((x for x in v.venues if x.id == HOUSE_VENUE), None)
-            pp = PlanParams(listings=0, threads=max(1, self.rules.team_threads_max_open * 2))
+            # Swaps only, one thread at a time: the plan-wide share rule (25 % of a plan's volume per team) would
+            # refuse any plan of fewer than four teams. Fairness here is per deal (`swaps.judge`) and, when it
+            # is on, the cumulative `max_counterparty_share` in every guardrail check.
+            pp = PlanParams(listings=0, threads=max(1, self.rules.team_threads_max_open * 2), max_share=1.0)
             spent = v.ctx(None).spent_last_hour
             plan = build_plan(v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent)
             m = build_market(v.me, v.catalog, v.events, [])

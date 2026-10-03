@@ -281,3 +281,68 @@ def test_the_taker_never_takes_a_counter_while_the_desk_is_off(tmp_path):
     t.team_desk._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0})
     t.on_tick(clock())
     assert not [s for s in team.sent if s[0] in ("accept", "say", "open_thread", "close_thread")]
+
+
+def test_the_desk_plans_swaps_from_the_trade_desk_without_the_plan_wide_share_rule(tmp_path, monkeypatch):
+    # A swaps-only plan of one or two teams can never meet the trade desk's 25 % plan share: the desk plans
+    # with max_share 1.0 and keeps fairness per deal (swaps.judge) and in the guardrail cap.
+    from bazaar_agent import affinity as af
+    from tests.test_trade_desk import AMAP, EVENTS
+
+    monkeypatch.setattr(af, "affinity_map", lambda *a, **k: AMAP)
+    d, _ = desk(tmp_path, Team())
+    d._plan = None
+    v = view()
+    v = DeskView(**{**v.__dict__, "events": EVENTS})
+    trades = d._trades(v)
+    assert {(t.counterparty, t.refs) for t in trades} == {("t09", ("LAT-09", "LAV-09")), ("t05", ("LAT-03", "LAV-02"))}
+    assert d._plan is not None and d._plan.worth["LAV-02"] > 0
+
+
+def test_bazaar_swaps_prints_the_ladder_as_json_from_files(tmp_path, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import cli
+    from tests.test_trade_desk import AMAP, EVENTS
+
+    monkeypatch.setattr(af, "affinity_map", lambda *a, **k: AMAP)
+    (tmp_path / "feed.jsonl").write_text("\n".join(json.dumps(e) for e in EVENTS))
+    (tmp_path / "me.json").write_text(json.dumps({"body": ME}))
+    (tmp_path / "catalog.json").write_text(json.dumps({"body": CATALOG}))
+    (tmp_path / "venues.json").write_text(json.dumps({"body": {"venues": [RASTRO]}}))
+    args = ["swaps", "--events", str(tmp_path / "feed.jsonl"), "--me", str(tmp_path / "me.json")]
+    args += ["--catalog", str(tmp_path / "catalog.json"), "--venues", str(tmp_path / "venues.json"), "--json"]
+    out = CliRunner().invoke(cli.app, args)
+    assert out.exit_code == 0, out.output
+    rows = json.loads(out.stdout)  # stdout is pure JSON (notes go to stderr)
+    t05 = next(r for r in rows if r["team"] == "t05")
+    assert (t05["give"], t05["want"], len(t05["cash_steps"])) == ("LAT-03", "LAV-02", 3)
+    assert t05["cash_steps"][-1] == -8 and all(t05["fair"])  # the plan's even split is the last step
+
+
+def test_words_persuade_but_never_change_the_structured_offer(tmp_path):
+    # N16's tactic bank plugs in as `words`: whatever it writes (a bluff, a price in the text, markup), the
+    # offer that binds is the one the ladder computed.
+    seen: list = []
+
+    class Talky(Team):
+        def say(self, tid, text="", price=None, offer=None, topic=None):
+            seen.append(text)
+            return super().say(tid, text, price, offer, topic)
+
+    team = Talky()
+    d, _ = desk(tmp_path, team)
+    requests: list = []
+
+    def bluff(req):
+        requests.append(req)
+        return "Mi última oferta: te lo dejo por 1 P [/red]"
+
+    d.words = bluff
+    d.converse(view(), set())
+    assert says(team) == [("say", 42, offer_terms(trade(), cash_at(trade(), 0, Ladder())))]
+    assert seen == ["Mi última oferta: te lo dejo por 1 P [/red]"]
+    assert requests[0].counterparty == "team:t05" and requests[0].step == 0 and requests[0].item == "LAV-02"
