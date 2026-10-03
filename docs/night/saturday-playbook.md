@@ -119,13 +119,15 @@ numbers in force; the feed announces every change.
 **Order under resume (today's GUARDRAILS):** ladder → G3 → grant → venue → trades.
 
 W7 (03:27) proposes the reverse for the 83 P: W4's trades first, the ladder after the grant. B6 keeps the ladder first:
-- **Trades are a flow.** A trade settled before 10:21 counts in Friday's round, which weighs half. The same trade
+- **Trades are a flow** (assumed: a trade scores in the round it settles in). A trade settled before 10:21 counts in Friday's round, which weighs half. The same trade
   after 10:21 counts in Saturday's round at full weight.
 - **The best three are a level.** If the ladder carries over (G2), deals done before 10:21 count in Friday's round
   and in Saturday's. If it restarts, they still lift Friday's round by +2.44 round points, and Saturday's best three
   are redone after the grant.
-- **The maker cancels hand-posted board bids** (r2 X19), so W4's morning board posts need the maker in dry run anyway. Opening the venue at 09:00 would leave 33 P above a
-50 P floor, and the ladder's best three would wait until 10:24. That is when they stop counting for Friday's round.
+- **The maker cancels hand-posted board bids** (r2 X19), so W4's morning board posts need the maker in dry run anyway.
+
+A venue at 09:00 under resume (B2's floor 50) would leave only 33 P above the floor. The ladder's best three would
+then wait until 10:24, the point where they stop counting for Friday's round.
 
 ## 6. Gates (each one is a question with a check)
 
