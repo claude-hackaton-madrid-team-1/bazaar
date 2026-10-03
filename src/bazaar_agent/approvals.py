@@ -276,7 +276,7 @@ def denials(conn: psycopg.Connection, since_tick: int) -> list[tuple[str, str, i
     return [(str(r[0]), str(r[1]), int(r[2])) for r in out if r[2] is not None]
 
 
-def record(conn: psycopg.Connection, kind: str, tick: int, inputs: dict[str, Any]) -> None:
+def record(conn: psycopg.Connection, kind: str, tick: int | None, inputs: dict[str, Any]) -> None:
     """A `decisions` row (agent `guard`) for an approve or a revoke. Best effort: logged, never raised."""
     from bazaar_agent.decisions import scrubbed
 

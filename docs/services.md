@@ -199,13 +199,15 @@ password or URL. Add it to Claude Code: README, "The tools as a remote MCP serve
 request that also sends `X-Approver-Token: <BAZAAR_APPROVER_TOKEN>`. Such a request sees ONLY these three tools (an
 approver connection is its own MCP entry and never reads counterparty text); the bearer alone neither lists nor runs
 them (`unknown tool`); a wrong or empty approver token is `403 {"error": "forbidden"}` and a WARN line, never a
-lockout. No agent tool set has them (`runtime/human_tools.py`). `approve`
+lockout. An approver request has its own rate buckets (5 req/s burst 20, 30 calls/min), so no bearer holder can
+drain the human's budget. No agent tool set has them (`runtime/human_tools.py`). `approve`
 `{card, side: buy|sell, price: 1..1000, ttl_ticks: 1..480 (240), reason?, via?}` answers `{"status": "approved",
 "max_price"|"min_price", "until_tick", "by": "human:<via|mcp>"}` or `{"status": "refused", "reasons": [...]}` when an
 approval could only loosen a hard cap (rarity cap, hourly spend, official value), sell a page's last copy or sell
 below our value. A sell approval also releases a sale `max_score_loss_per_move` holds. `revoke` `{card, side,
-reason?, via?}` answers `revoked`, or `denied` (there was none); either way the request reads denied. Approves and
-revokes run one at a time, so a revoke sent right after an approve lands after it. `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
+reason?, via?}` answers `revoked`, or `denied` (there was none); either way the request reads denied. A revoke
+never waits for a game read (it works with the clock unreadable, its row then has no tick), and an approve of the
+same card and side still checking when it comes in is refused ("approve again"). `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
 impact, the cap, who asked) and the active approvals. At most 10 approval writes a minute; each is a `decisions` row
 (agent `guard`, kind `approval_granted|refused|revoked|denied`). Spec: `.ai/specs/HA2-spec.md`.
 

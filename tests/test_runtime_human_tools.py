@@ -16,7 +16,7 @@ from bazaar_agent.runtime import human_tools as ht
 from bazaar_agent.runtime import mcp_server as ms
 from bazaar_agent.runtime import tools as tl
 from bazaar_agent.runtime.hooks import Guard
-from tests.runtime_fakes import TOKEN, Team, backend
+from tests.runtime_fakes import TOKEN, Public, Team, backend
 from tests.test_runtime_hooks import denied, models_of, pre
 from tests.test_runtime_mcp_server import HEADERS, MCP_TOKEN, Clock
 
@@ -233,7 +233,7 @@ def test_no_answer_and_no_stored_reason_carries_a_token(tmp_path):
     assert APPROVER not in stored and MCP_TOKEN not in stored and "[redacted]" in stored
 
 
-def test_a_revoke_sent_while_an_approve_is_still_checking_lands_after_it(tmp_path):
+def test_a_revoke_never_waits_for_an_approve_still_checking_and_that_approve_is_refused(tmp_path):
     entered, release = threading.Event(), threading.Event()
 
     class Slow(Valued):
@@ -250,19 +250,62 @@ def test_a_revoke_sent_while_an_approve_is_still_checking_lands_after_it(tmp_pat
             approve=run("approve", b, store, {"card": "LAV-09", "side": "buy", "price": 90})[0]
         )
     )
-    revoke = threading.Thread(
-        target=lambda: answers.update(revoke=run("revoke", b, store, {"card": "LAV-09", "side": "buy"})[0])
-    )
     approve.start()
-    assert entered.wait(5)
-    revoke.start()
-    revoke.join(0.3)
-    assert revoke.is_alive()  # waits for the approve still reading /api/me/value
+    assert entered.wait(5)  # the approve is inside its /api/me/value read
+    gone, _ = run("revoke", b, store, {"card": "LAV-09", "side": "buy"})  # answers at once, no game read waited for
     release.set()
     approve.join(5)
-    revoke.join(5)
-    assert answers["approve"]["status"] == "approved" and answers["revoke"]["status"] == "revoked"
+    assert gone["status"] == "denied"
+    assert answers["approve"]["status"] == "refused"
+    assert answers["approve"]["reasons"] == ["LAV-09 buy was revoked while this approval was checked: approve again"]
     assert store.approvals == {}
+    assert [k for k, _, _ in store.records] == ["approval_denied", "approval_refused"]
+
+
+def test_a_revoke_works_while_the_clock_is_unreadable(tmp_path):
+    class NoClock(Public):
+        def clock(self):
+            raise RuntimeError("clock down")
+
+    store = Store()
+    b = human_backend(tmp_path)
+    run("approve", b, store, {"card": "LAV-09", "side": "buy", "price": 90})
+    b._public = NoClock()
+    gone, failed = run("revoke", b, store, {"card": "LAV-09", "side": "buy"})
+    assert not failed and gone["status"] == "revoked" and gone["tick"] is None and store.approvals == {}
+
+
+def test_a_revoke_never_waits_long_for_a_hung_clock(tmp_path, monkeypatch):
+    hung = threading.Event()
+
+    class HungClock(Public):
+        def clock(self):
+            hung.wait(5)
+            return super().clock()
+
+    monkeypatch.setattr(ht, "REVOKE_CLOCK_BUDGET_S", 0.2)
+    store = Store()
+    b = human_backend(tmp_path)
+    run("approve", b, store, {"card": "LAV-09", "side": "buy", "price": 90})
+    b._public = HungClock()
+    gone, failed = run("revoke", b, store, {"card": "LAV-09", "side": "buy"})
+    hung.set()
+    assert not failed and gone["status"] == "revoked" and gone["tick"] is None and store.approvals == {}
+
+
+def test_a_bearer_holder_draining_the_shared_budget_never_keeps_the_human_from_a_revoke(tmp_path):
+    now = Clock()
+    store = Store()
+    with client(human_backend(tmp_path), store, calls_per_minute=30, now=now) as c:
+        ok, _ = tool(c, "approve", {"card": "LAV-09", "side": "buy", "price": 90})
+        assert ok["status"] == "approved"
+        for i in range(5):  # the bearer's tool-call burst
+            rpc(c, "tools/call", {"name": "clock", "arguments": {}}, rid=10 + i)
+        assert tool(c, "clock", {}, approver=None, rid=20)[0].startswith("rate limited")
+        codes = [rpc(c, "tools/list", rid=30 + i).status_code for i in range(ms.HTTP_BURST + 2)]
+        assert codes[-1] == 429  # the bearer's HTTP bucket is empty too
+        gone, failed = tool(c, "revoke", {"card": "LAV-09", "side": "buy"}, rid=40)
+    assert not failed and gone["status"] == "revoked" and store.approvals == {}
 
 
 # ---------------------------------------------------------------- approve: what an approval may cover

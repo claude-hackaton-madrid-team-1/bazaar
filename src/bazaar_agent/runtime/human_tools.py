@@ -17,8 +17,8 @@ accepts), always strictly below our value (`off_page_min_surplus`); the answer s
 sell below `sell_min_value_ratio` × our value. Reads fail closed: an unreadable /me, catalog or official value
 refuses. Every call that changes something writes a `decisions` row (agent `guard`): approval_granted,
 approval_refused, approval_revoked or approval_denied. `by` is "human:mcp", or "human:<via>" when the caller names its
-relay (a slug: one approver token, so the relay's name is the caller's word, never free text). Approves and revokes
-run one at a time in this process, so a revoke sent right after an approve always lands after it.
+relay (a slug: one approver token, so the relay's name is the caller's word, never free text). A revoke never waits
+for a game read: an approve still checking when a revoke of its card and side comes in is refused at its write.
 """
 
 from __future__ import annotations
@@ -48,7 +48,9 @@ PRICE_MIN, PRICE_MAX = 1, 1000
 TTL_MIN, TTL_MAX = 1, 480
 VIA = r"^[a-z][a-z0-9-]{0,23}$"  # who relays the human's click (bazaar-live): part of `by`, never free text
 STATEMENT_TIMEOUT_MS = 3000
-_WRITES = threading.Lock()  # one approve or revoke at a time: a revoke never overtakes an approve still checking
+REVOKE_CLOCK_BUDGET_S = 2.0  # a revoke needs the tick only for its audit row: it never waits longer for the game
+_WRITES = threading.Lock()  # held only around the store writes, never across a game read
+_REVOKES: dict[tuple[str, str], int] = {}  # (card, side) -> revokes in this process: an approve checks it last
 
 
 class ApprovalsArgs(ac.Args):
@@ -83,7 +85,7 @@ class ApprovalStore(Protocol):
         """Write the approval and its `approval_granted` row on one connection."""
         ...
 
-    def revoke(self, card: str, side: str, tick: int, by: str, reason: str) -> bool:
+    def revoke(self, card: str, side: str, tick: int | None, by: str, reason: str) -> bool:
         """Remove the approval and write `approval_revoked`, or `approval_denied` when there was none (the reason
         defaults to "revoked" / "denied")."""
         ...
@@ -122,7 +124,7 @@ class PgApprovalStore:
             approvals.record(conn, "approval_granted", tick, audit)
             return a
 
-    def revoke(self, card: str, side: str, tick: int, by: str, reason: str) -> bool:
+    def revoke(self, card: str, side: str, tick: int | None, by: str, reason: str) -> bool:
         with self._conn() as conn:
             was = approvals.revoke(conn, card, side)
             kind = "approval_revoked" if was else "approval_denied"
@@ -319,23 +321,29 @@ def read_approvals(b: Backend, store: ApprovalStore) -> dict[str, Any]:
 
 
 def grant(b: Backend, store: ApprovalStore, args: ApproveArgs, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    """Approve one card on one side, after every check an approval can never lift; refused with the reasons."""
+    """Approve one card on one side, after every check an approval can never lift; refused with the reasons. The
+    checks read the game outside the lock; a revoke of the same card and side meanwhile refuses the write."""
+    key = (args.card, args.side)
     with _WRITES:
-        tick, by = b.clock().tick, _by(args.via)
-        rarity = b.rarity_of(args.card, tick)
-        base = {"card": args.card, "side": args.side, "price": args.price}
-        if rarity is None:
-            reasons = [f"{args.card} is not in the catalog"]
+        revokes = _REVOKES.get(key, 0)
+    tick, by = b.clock().tick, _by(args.via)
+    rarity = b.rarity_of(args.card, tick)
+    base = {"card": args.card, "side": args.side, "price": args.price}
+    if rarity is None:
+        reasons = [f"{args.card} is not in the catalog"]
+    else:
+        me = b.me_now().me  # album first; an unreadable /me raises: the tool fails, nothing is written
+        if args.side == "buy":
+            reasons = buy_refusals(b, args.card, args.price, rarity, tick, me)
         else:
-            me = b.me_now().me  # album first; an unreadable /me raises: the tool fails, nothing is written
-            if args.side == "buy":
-                reasons = buy_refusals(b, args.card, args.price, rarity, tick, me)
-            else:
-                reasons = sell_refusals(b, args.card, args.price, rarity, me)
+            reasons = sell_refusals(b, args.card, args.price, rarity, me)
+    reason = safe_text(args.reason.strip(), secrets) or f"approved by {by}"
+    with _WRITES:
+        if not reasons and _REVOKES.get(key, 0) != revokes:
+            reasons = [f"{args.card} {args.side} was revoked while this approval was checked: approve again"]
         if reasons:
             store.record("approval_refused", tick, {**base, "by": by, "reason": "; ".join(reasons)})
             return {"status": "refused", **base, "reasons": reasons}
-        reason = safe_text(args.reason.strip(), secrets) or f"approved by {by}"
         a = store.approve(args.card, args.side, args.price, tick, tick + args.ttl_ticks, by, reason)
     notes = []
     threshold = b.rules.human_approval_above
@@ -356,11 +364,30 @@ def grant(b: Backend, store: ApprovalStore, args: ApproveArgs, secrets: Iterable
     }
 
 
+def _tick_within(b: Backend, budget_s: float) -> int | None:
+    """The game tick, or None when the public clock fails or does not answer within `budget_s` (its SDK retries a
+    429 for 15 s). The read goes on in a daemon thread; nobody waits for it."""
+    out: list[int] = []
+
+    def read() -> None:
+        with contextlib.suppress(Exception):
+            out.append(b.clock().tick)
+
+    reader = threading.Thread(target=read, name="revoke-clock", daemon=True)
+    reader.start()
+    reader.join(budget_s)
+    return out[0] if out else None
+
+
 def withdraw(b: Backend, store: ApprovalStore, args: RevokeArgs, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    """Remove the approval of a card on a side; with none, record a denial. Either way its request reads denied."""
+    """Remove the approval of a card on a side; with none, record a denial. Either way its request reads denied,
+    and an approve of the same card and side still checking is refused."""
+    by, reason, key = _by(args.via), safe_text(args.reason.strip(), secrets), (args.card, args.side)
+    tick = _tick_within(b, REVOKE_CLOCK_BUDGET_S)
+    if tick is None:  # the veto never waits for the game: the approval goes, its row has no tick
+        b.log(f"bazaar-mcp: revoke without a tick (no clock within {REVOKE_CLOCK_BUDGET_S:g} s)")
     with _WRITES:
-        tick, by = b.clock().tick, _by(args.via)
-        reason = safe_text(args.reason.strip(), secrets)
+        _REVOKES[key] = _REVOKES.get(key, 0) + 1
         was = store.revoke(args.card, args.side, tick, by, reason)
     return {"status": "revoked" if was else "denied", "card": args.card, "side": args.side, "tick": tick, "by": by}
 

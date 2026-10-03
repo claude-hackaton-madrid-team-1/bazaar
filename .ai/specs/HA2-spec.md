@@ -27,8 +27,10 @@ CLI, and no agent of ours can ever approve its own trade.
   the official value of one more copy (`/api/me/value`, unreadable → refused), or of a rarity with no cap; a sell
   of a card we do not hold, of a page's last copy (`protect_page_sets`), or below `sell_min_value_ratio` × our value
   of the copy (unreadable → refused). /me unreadable: the tool fails and writes nothing.
-- Writes capped at 10 per minute (server-wide), on top of the per-token tool-call bucket. Approves and revokes run
-  one at a time (a revoke never overtakes an approve still checking), each with its audit row on one connection;
+- Writes capped at 10 per minute (server-wide), on top of the tool-call bucket; an approver request has its own
+  HTTP and tool-call buckets (keyed on the approver digest), so a bearer holder cannot starve the human's revoke.
+  A revoke never waits for a game read; an approve still checking when a revoke of its card and side comes in is
+  refused at its write. Each change writes its audit row on the same connection;
   a stored reason is scrubbed of our secrets. A revoke (or a deny) marks the card+side's requests denied. A sell
   approval also releases a sale `max_score_loss_per_move` (MI1) holds.
 - Every approve, refusal, revoke and denial writes a `decisions` row (agent `guard`, kinds `approval_granted`,
