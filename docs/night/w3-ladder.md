@@ -26,13 +26,14 @@ Share = (opening − price) / (opening − that conversation's limit); no deal =
 | abuela uncommon | today 17→26 | 0.840 | 0.946 | 0.919 | 0.134 | 0.800 / 0.854 | 0.838 |
 | abuela uncommon | **W3 21→25** | **0.945** | 0.994 | 0.994 | 0.847 | **0.973** / 0.888 | 0.838 |
 | abuela common | today 7→12 | 0.984 | 1.000 | 1.000 | 0.906 | 0.960 / 0.959 | 0.960 |
-| abuela common | W3 8→12 | 0.975 | 1.000 | 1.000 | 0.994 | 0.960 / 0.943 | 0.960 |
+| abuela common | W3 8→11 | 0.975 | 0.994 | 0.994 | 0.994 | 0.960 / 0.943 | 0.960 |
 | abuela pack | today 17→20 | 0.421 | 0.432 | 0.432 | 0.325 | 0.118 / 0.603 | 0.647 |
 | abuela pack | W3 uncapped 20→24 | 0.901 | 0.959 | 0.959 | 0.818 | 0.933 / 0.838 | 0.647 |
 | chato uncommon | W3 uncapped 27→31 | 0.690 | 0.832 | 0.832 | 0.676 | 0.833 / 0.560 | 1.000 (n 6) |
 | chato rare | W3 uncapped 89→93 | 0.756 | 0.997 | 0.997 | 0.975 | 0.948 / 0.618 | 0.889 (n 9) |
 
-- The gain is in uncommons: share +0.105 in the model and +0.173 on the replays, and the 21→25 ladder still settles within 8 ticks when replies are slow (85 % against 13 %).
+- The gain is in uncommons: share +0.105 in the model, and on the replays +0.173 at the top of each limit bracket (0.800 → 0.973) and +0.034 at its bottom (0.854 → 0.888). The 21→25 ladder also still settles within 8 ticks when replies are slow (85 % against 13 %).
+- A plan never goes up to the dealer's opening ask: a bid there would close at her opening price, which captures nothing. So commons stop at 11.
 - Commons are already at the ceiling.
 - Repeated prices: 0 in every row.
 - Grid over start and max: floor ± 2 is within 0.01 of the best on every Abuela class.
@@ -41,12 +42,13 @@ Share = (opening − price) / (opening − that conversation's limit); no deal =
 ## Simulator (#55, local merge, never pushed)
 | class | plan | sim limits | share | deal | fill ≤ 8 | repeats |
 |---|---|---|---|---|---|---|
-| abuela common / uncommon | 8→12 / 21→25 | 7–9 / 21–22 | 0.952 / 0.967 | 1.00 | 1.00 | 0 |
+| abuela common / uncommon | 8→12 / 21→25 (before the opening cap) | 7–9 / 21–22 | 0.952 / 0.967 | 1.00 | 1.00 | 0 |
 | chato uncommon / rare (uncapped) | 27→31 / 89→93 | 27–30 / 86–92 | 1.000 / 0.907 | 1.00 | 1.00 | 0 |
 
 - **`bazaar dealer buy --live` against an in-process simulator:** 7 of 7 deals, 6 at exactly the secret limit.
 - **The desk (`agent taker --live`), with `ladder_floor_quantile` 0.5:** it opens uncommons at 21 through `Move.ladder` (7 deals, share 0.95).
 - **The desk at 0:** it opens at 17 (8 deals, share 1.00).
+- The harnesses for these runs are in `scripts/sim_e2e/`. They need the #55 branch.
 - **Caveat:** the simulator's Abuela waits 10 rounds before her final, so starting low is free there. Friday's real Abuela waited 5, which is what costs 17→26 its 0.10–0.17. The simulator's pack floor (17–18) is also below the real one (21).
 
 ## The 09:00–10:30 plan (`docs/night/ladder_plan*.json`)
@@ -54,9 +56,10 @@ Inputs: cash 353 at the open plus the 150 grant at 09:03, `cash_floor` 270, and 
 
 | file | slots | reserved / expected spend |
 |---|---|---|
-| `ladder_plan.json` (classes only) | 3 commons first (best three), then commons and uncommons alternating: 8 slots 09:00–09:21, 6 slots 10:00–10:15 | 233 / 193 P (the cash floor binds) |
-| `ladder_plan.page_cards.json` (W7's page cards, #87) | SAL-02 and SAL-05 at 09:00 and 09:03; LAV-08, SAL-07, SAL-08, MAL-06, MAL-07 from 09:06 to 09:18; MAL-08 at 10:03 | 174 / 151 P |
-| `ladder_plan.what_if_chato_31.json` | Chato and Abuela both start at 09:00: 5 + 5 slots | 228 / 199 P |
+| `ladder_plan.json` (classes only) | 3 commons first (best three), then commons and uncommons alternating: 8 slots 09:00–09:21, 6 slots 10:00–10:15 | 224 / 193 P |
+| `ladder_plan.what_if_chato_31.json` | Chato and Abuela both start at 09:00: 5 + 5 slots | 224 / 199 P |
+
+The committed plans carry no card refs, because our chase cards would reveal our affinities. Generate the ref plan in the morning with `--refs` (runbook). With W7's page cards (#87), it put 2 commons and 6 uncommons between 09:00 and 10:03 for about 151 P.
 
 When Abuela takes our bid, the team's accept slot is not used. Blocked, each with its numbers: the Chato uncommon, Chato rare and Chato silver pack, and the Abuela pack.
 

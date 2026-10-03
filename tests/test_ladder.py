@@ -150,6 +150,8 @@ def test_plan_is_floor_minus_two_to_floor_plus_two_under_the_cap():
     choice = plan_for(row([21, 22, 23, 24, 25]), cap=26)
     assert choice.plan == BidPlan(21, 1, 25)
     assert plan_for(row([21, 22, 23, 24, 25]), cap=24).plan == BidPlan(21, 1, 24)
+    commons = FloorRow("abuela", "card:common", 12, 5, 5, (9, 10, 10, 10, 10), 5, None, 2.0)
+    assert plan_for(commons, cap=12).plan == BidPlan(8, 1, 11)  # never up to her opening ask (no share)
 
 
 def test_no_plan_when_the_cap_sits_below_most_limits():

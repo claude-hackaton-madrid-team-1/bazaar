@@ -343,7 +343,8 @@ def plan_for(
     if floor is None or row.closed < min_closed:
         return PlanChoice(row, None, floor, cap, f"{row.closed} closed conversations: fewer than {min_closed}")
     p25 = row.floor(0.25) or floor
-    top = floor + width if cap is None else min(floor + width, cap)
+    top = min(floor + width, row.opening - 1)  # a bid at its opening ask would close at its opening price
+    top = top if cap is None else min(top, cap)
     if top < p25:
         return PlanChoice(row, None, floor, cap, f"cap {cap} below market: 3 in 4 limits seen are above {p25 - 1}")
     start = max(1, min(floor - width, top))

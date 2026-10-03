@@ -128,7 +128,7 @@ def test_plan_document_for_saturday_morning(real):
     doc = plan_document(real, floor_table(real), RULES, cash=353, grants=[Grant(6, 150)], runs=300)
     assert doc["window"]["ticks"] == 180 and doc["budget"]["grants"][0]["wall"] == "09:03:00"
     first = doc["schedule"][0]
-    assert (first["wall"], first["dealer"], first["plan"]) == ("09:00:00", "abuela", {"start": 8, "step": 1, "max": 12})
+    assert (first["wall"], first["dealer"], first["plan"]) == ("09:00:00", "abuela", {"start": 8, "step": 1, "max": 11})
     assert {b["dealer"] for b in doc["blocked"]} == {"abuela", "chato"}
     for hour in doc["per_game_hour"].values():
         assert hour["reserved"] <= RULES.max_spend_per_game_hour
@@ -194,3 +194,15 @@ def test_with_a_dealer_cap_chato_gets_its_best_three_and_abuela_the_rest_cheaper
         ("abuela", "SAL-06"),  # Abuela plans uncommons cheaper (21→25) than Chato (27→31)
         ("abuela", "SAL-06"),  # a ref listed twice is two buys
     ]
+
+
+def test_a_rolling_cap_with_nothing_to_age_out_gives_up_instead_of_raising(plans):
+    zero_packs = {"abuela": DealerQuota("abuela", 1, 8, {"sobre_barrio": 0})}
+    loose = Guardrails(max_price_pack=30)
+    real = from_rows(json.loads(FIXTURE.read_text())["rows"])
+    pack_plans = class_plans(real, floor_table(real), loose, runs=10)
+    assert pack_plans[("abuela", "pack:sobre_barrio")].choice.plan is not None
+    sched = schedule(pack_plans, [Target("abuela", "pack:sobre_barrio")], zero_packs, loose, cash=1000)
+    assert sched.slots == ()
+    spent = schedule(plans, [Target("abuela", "card:uncommon")], DEFAULT_QUOTAS, RULES, cash=1000, spent_this_hour=140)
+    assert spent.slots == () and spent.notes  # 140 spent before the window: no 25 P slot fits the first hour

@@ -266,7 +266,10 @@ def schedule(
                     break
                 tick = next_hour_tick
             else:  # a rolling-hour cap: try again when the oldest slot in it ages out
-                tick = min(s.tick + hour_ticks for s in slots if s.tick + hour_ticks > tick)
+                later = [s.tick + hour_ticks for s in slots if s.tick + hour_ticks > tick]
+                if not later:  # nothing ages out (a 0 quota, or spend from before the window): give up
+                    break
+                tick = min(later)
         if not placed:
             unplaced[key] = unplaced.get(key, 0) + 1
     notes += [f"{n} more {d} {c} did not fit the window's budget or quotas" for (d, c), n in unplaced.items()]
