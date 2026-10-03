@@ -58,6 +58,7 @@ class CurveStats:
     concession: float | None  # median drop of the dealer's ask per team bid, after its opening ask
     silent_below: int | None  # highest first bid the dealer never answered (no ask at all)
     thread_ids: tuple[int, ...]  # the evidence
+    first_bid_fills: int = 0  # fills where the dealer took the team's FIRST bid: only an upper bound on its limit
 
     @property
     def opening(self) -> float | None:
@@ -115,6 +116,9 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
             for t in members
             if t.side == "buy" and t.team_prices and not t.dealer_prices and t.fill_price is None
         ]
+        first_bid = sum(
+            1 for t in members if t.fill_price is not None and t.team_prices and t.team_prices[0] == t.fill_price
+        )
         out[(dealer, cls)] = CurveStats(
             dealer=dealer,
             price_class=cls,
@@ -126,5 +130,6 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
             concession=float(median(drops)) if drops else None,
             silent_below=max(silent) if silent else None,
             thread_ids=tuple(sorted(t.thread for t in members)),
+            first_bid_fills=first_bid,
         )
     return out

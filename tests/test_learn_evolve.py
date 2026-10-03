@@ -429,3 +429,24 @@ def test_any_strategy_writes_its_outcome_back_and_asks_by_mechanic_and_features(
     assert (
         recall.search(Query("seller rival azul", where=(("mechanic", "duel"),), min_score=-9)).hits[0].learning == duel
     )
+
+
+def test_fills_that_took_our_first_bid_make_the_learner_probe_lower():
+    """The simulator's trap: with no fills yet the strategy bids 25 straight, Abuela takes it, and 25 becomes
+    "the floor". First-bid fills only bound the limit from above, so the learner starts lower and climbs by 1."""
+    first = [thread(800 + i, "LAT-06", [25], [], 25) for i in range(5)]
+    stats = curve_stats(first)[("abuela", "card:uncommon")]
+    assert stats.first_bid_fills == 5
+    ladder, why = target_ladder(stats, 26, first)
+    assert ladder == Ladder(20, 1, 25) and why.startswith("probe: 5 of 5 fills took the first bid")
+    countered = [thread(810 + i, "LAT-06", [20, 21, 22], [29, 26, 24], 22) for i in range(5)]
+    mixed = curve_stats(first + countered)[("abuela", "card:uncommon")]
+    assert target_ladder(mixed, 26, first + countered)[1].startswith("probe")  # half are still first-bid fills
+    learned = curve_stats(countered)[("abuela", "card:uncommon")]
+    assert not target_ladder(learned, 26, countered)[1].startswith("probe")  # countered fills: the replay search
+
+
+def test_probing_never_starts_below_an_ignored_bid_or_half_the_opening():
+    ignored = [thread(820, "LAT-06", [21], [])] + [thread(821 + i, "LAT-06", [25], [], 25) for i in range(5)]
+    stats = curve_stats(ignored)[("abuela", "card:uncommon")]
+    assert target_ladder(stats, 26, ignored)[0] == Ladder(22, 1, 25)

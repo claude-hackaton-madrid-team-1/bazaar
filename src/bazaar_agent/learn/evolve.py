@@ -31,6 +31,7 @@ START_Q = 0.10
 MAX_SEARCH_THREADS = 200  # the newest conversations of a class the search replays (bounded cost; follows drift)
 WALK_Q = 0.90
 MIN_FILLS = 5  # fewer fills than this: no learned ladder (today's strategy keeps the thread)
+PROBE_RATIO = 0.8  # how far below the lowest first-bid fill a probing ladder starts
 MIN_SKIP_EVIDENCE = 3  # conversations (fills + walks at the cap) before a class may be skipped
 MIN_DEAL_SHARE = 0.2  # skip a class when fewer than this share of its fills sit at or under our walk point
 DEFAULT_PATIENCE = 5.0  # bids before a final when no final has been seen (Abuela: ~5)
@@ -202,6 +203,8 @@ def target_ladder(
     assert lo is not None and mid is not None and hi is not None
     walk_cap = math.ceil(hi) if cap is None else min(cap, fills[-1])
     patience = stats.patience or DEFAULT_PATIENCE
+    if stats.first_bid_fills * 2 >= len(fills):
+        return probe(stats, walk_cap)
     if threads:
         found = search(stats, threads, walk_cap, patience)
         if found is not None:
@@ -232,6 +235,25 @@ def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread
         f"skip: {closable} of {evidence} {stats.dealer} {stats.price_class} conversations closed at or under the "
         f"cap {cap} ({seen}; {len(walked)} walked after bidding the cap)"
     )
+
+
+def probe(stats: CurveStats, walk_cap: int) -> tuple[Ladder, str]:
+    """Most fills took the team's first bid, so they only bound the limit from above (we may have overpaid):
+    start below the lowest fill and climb by 1, so the next conversations show where the dealer counters.
+    Never below a bid it ignored, nor below half its opening ask."""
+    floor = stats.fills[0]
+    start = math.floor(floor * PROBE_RATIO)
+    if stats.silent_below is not None:
+        start = max(start, stats.silent_below + 1)
+    if stats.opening is not None:
+        start = max(start, math.ceil(stats.opening * 0.5))
+    walk = max(1, walk_cap)
+    start = max(1, min(start, walk))
+    why = (
+        f"probe: {stats.first_bid_fills} of {len(stats.fills)} fills took the first bid "
+        f"(lowest {floor}): start lower to find the dealer's limit"
+    )
+    return Ladder(start, 1, walk), why
 
 
 def search(
