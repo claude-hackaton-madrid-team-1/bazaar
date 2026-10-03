@@ -40,7 +40,7 @@ def test_no_ids_lists_the_ranked_triples_and_sends_nothing(taller_cli):
     team, cli, ledger = taller_cli
     result = CliRunner().invoke(cli.app, ["taller", "--live"])
     assert result.exit_code == 0, result.output
-    assert "2 3 5" in result.stdout and crafts(team) == [] and ledger.entries() == []
+    assert "5 2 3" in result.stdout and crafts(team) == [] and ledger.entries() == []
 
 
 def test_three_ids_dry_run_records_the_check_and_sends_nothing(taller_cli, tmp_path):

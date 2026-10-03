@@ -111,7 +111,7 @@ def test_a_craft_that_takes_cash_stops_the_taker_crafting(tmp_path):
         tmp_path, news=News(LEVELS), team=team, ticks=2, taller_enabled=True, max_taller_per_game_hour=5
     )
     assert len(crafts(team)) == 1
-    assert any("Workshop cash 100 -> 95" in line for line in lines)
+    assert any("Workshop craft took cash (400 -> 395)" in line for line in lines)
 
 
 class OddAnswer(Team):
@@ -125,13 +125,17 @@ def test_an_answer_of_any_shape_is_recorded_and_never_raises(tmp_path):
     assert len(crafts(team)) == 1 and any("Workshop crafted" in line for line in lines)
 
 
-def test_rares_never_go_in_and_cards_held_more_than_max_copies_kept_go_first():
+def test_rares_never_go_in_and_max_copies_kept_free_copies_of_each_card_stay():
     rares = me(card(1, "LAV-09", 5.0), card(2, "LAV-09", 5.0), card(3, "LAV-09", 5.0), card(4, "LAV-09", 5.0))
     assert tl.rank_triples(rares, CATALOG, DEALERS) == []
     rules = Guardrails(taller_enabled=True)
     verdict = check(tl.craft_action(tl.triple_from_ids(rares, CATALOG, [2, 3, 4])), ctx_for(rares, rules), rules)
     assert "commons or uncommons only" in str(verdict)
-    assert tl.rank_triples(me(*FREE), CATALOG, DEALERS, crowded=2)[0].asset_ids == [2, 3, 5]  # LAV-01 x3 first
+    ours = me(*FREE)  # LAV-01 x3, SAL-01 x2
+    assert tl.rank_triples(ours, CATALOG, DEALERS, keep=2) == []  # LAV-01 gives one spare, SAL-01 none
+    two = Guardrails(taller_enabled=True, max_copies_kept=2)
+    verdict = check(tl.craft_action(tl.triple_from_ids(ours, CATALOG, [5, 2, 3])), ctx_for(ours, two), two)
+    assert "leaves fewer than 2 (max_copies_kept)" in str(verdict)
 
 
 def test_the_score_impact_rule_prices_each_given_copy_at_zero():
@@ -182,3 +186,28 @@ def test_the_maker_posts_no_new_ask_for_a_spare_common_and_no_uncommon_right_aft
     assert [t.ref for t in taller_stock(targets, standing, on)] == ["LAT-04", "LAT-09", "LAT-10", "LAV-08"]
     assert [t.ref for t in taller_stock(targets, standing, on, converted=True)] == ["LAT-04", "LAT-10", "LAV-08"]
     assert taller_stock(targets, [], Guardrails(taller_enabled=False)) == targets
+
+
+class SwapAcceptedAndDropped(Team):
+    """Our swap offer (it gives SAL-01 #4) stands until tick 99; at 100 t07 has accepted it and /api/me/offers
+    no longer lists it, while /me still shows #4 until the settlement."""
+
+    def my_offers(self):
+        out = super().my_offers()
+        if self.now.tick < TICK:
+            give = {"cash": 0, "assets": [{"id": 4, "kind": "card", "ref": "SAL-01"}]}
+            out["offers"].append({"id": 900, "maker": "t01", "to": "t07", "thread": 77, "status": "open", "give": give})
+        return out
+
+
+def test_a_copy_an_offer_of_ours_gave_in_the_last_ticks_stays_busy_after_the_offer_drops_out(tmp_path):
+    team, _ = run_taker(tmp_path, news=News(LEVELS), team=SwapAcceptedAndDropped(me=me(*FREE)), taller_enabled=True)
+    assert crafts(team) == []  # #4 may be settling to t07: SAL-01 #5 is our last free copy
+
+
+def test_a_blocked_guard_waits_for_its_next_safe_tick_and_says_why_once(tmp_path):
+    team = Team(me=me(*FREE))
+    team.live_duels = [{"duel": 7, "status": "live", "deadline_tick": TICK + 2}]
+    team, lines = run_taker(tmp_path, news=News(LEVELS), team=team, ticks=4, taller_enabled=True)
+    assert team.reads.count("duels") == 2  # ticks 100 (blocked until 103) and 103: no request in between
+    assert len([line for line in lines if "Workshop waits" in line]) == 1 and len(crafts(team)) == 1

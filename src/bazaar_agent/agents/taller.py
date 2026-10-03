@@ -103,12 +103,12 @@ def cards_of(catalog: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
 
 
 def free_spares(
-    me: Mapping[str, Any], catalog: Mapping[str, Any], busy: Iterable[int] = (), crowded: int | None = None
+    me: Mapping[str, Any], catalog: Mapping[str, Any], busy: Iterable[int] = (), keep: int = 1
 ) -> dict[str, list[Spare]]:
     """rarity -> our free spare copies, cheapest to give up first. `busy`: copies an open offer of ours gives (or
-    a recent sell may still take): never free. Per card one free copy always stays (a page never loses its last
-    copy, whatever the set), and a copy whose card or value we cannot read is never a spare. `crowded`
-    (`max_copies_kept`): copies of a card we hold more often than this go first."""
+    a recent sell may still take): never free. Per card `keep` free copies always stay, the most valued (at least
+    one: a page never loses its last copy, whatever the set; `max_copies_kept` 2 also covers one give-away we
+    cannot see yet), and a copy whose card or value we cannot read is never a spare."""
     cards, taken = cards_of(catalog), set(busy)
     free: dict[str, list[Spare]] = {}
     for a in me.get("assets") or []:
@@ -122,16 +122,10 @@ def free_spares(
         free.setdefault(str(a["ref"]), []).append(Spare(int(a["id"]), str(a["ref"]), str(card.get("rarity")), value))
     out: dict[str, list[Spare]] = {}
     for copies in free.values():
-        kept = sorted(copies, key=lambda s: (-s.your_value, s.asset_id))[0]  # the copy we keep: the most valued
-        for s in copies:
-            if s is not kept:
-                out.setdefault(s.rarity, []).append(s)
-    held = Counter(str(a.get("ref")) for a in me.get("assets") or [] if isinstance(a, Mapping))
-
-    def order(s: Spare) -> tuple[bool, float, str, int]:
-        return (crowded is not None and held[s.ref] <= crowded, s.your_value, s.ref, s.asset_id)
-
-    return {r: sorted(v, key=order) for r, v in out.items()}
+        ranked = sorted(copies, key=lambda s: (-s.your_value, s.asset_id))  # the copies we keep: the most valued
+        for s in ranked[max(1, keep) :]:
+            out.setdefault(s.rarity, []).append(s)
+    return {r: sorted(v, key=lambda s: (s.your_value, s.ref, s.asset_id)) for r, v in out.items()}
 
 
 def free_counts(me: Mapping[str, Any], busy: Iterable[int] = ()) -> dict[str, int]:
@@ -180,13 +174,13 @@ def rank_triples(
     catalog: Mapping[str, Any],
     dealers: Iterable[Any],
     busy: Iterable[int] = (),
-    crowded: int | None = None,
+    keep: int = 1,
 ) -> list[Triple]:
     """One triple per rarity with three free spares (the three we lose least by), best first: one whose pull may
     fill a missing page slot, then the highest dealer level that buys the result (the ladder weighs higher levels
     more), then the cheapest to give up. A triple worth more to us than the result's book value is never made, and
     only commons and uncommons go in (`guardrails.TALLER_RARITIES`)."""
-    order, spares = rarity_order(catalog), free_spares(me, catalog, busy, crowded)
+    order, spares = rarity_order(catalog), free_spares(me, catalog, busy, keep)
     books = catalog.get("rarities") or {}
     dealer_list = list(dealers)
     out = []

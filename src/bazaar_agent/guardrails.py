@@ -159,7 +159,7 @@ class Guardrails(BaseModel):
     open_sealed_packs: bool = False
     taller_enabled: bool = False
     max_taller_per_game_hour: int = Field(default=2, ge=0, le=20)
-    max_copies_kept: int = Field(default=2, ge=1, le=10)
+    max_copies_kept: int = Field(default=1, ge=1, le=10)  # 1: SA1 as built (GUARDRAILS.md keeps 2)
     card_release_boost_enabled: bool = False
     card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
@@ -311,7 +311,7 @@ ENFORCED_BY: dict[str, str] = {
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch) "
     "+ agents.maker (no new ask for a spare common)",
     "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, shared ledger `taller:` rows)",
-    "max_copies_kept": "agents.taller.free_spares (copies of cards held more often than this go in first)",
+    "max_copies_kept": "guardrails.check (taller) + agents.taller.free_spares (the free copies a craft leaves)",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
@@ -929,10 +929,14 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     refs = [r.strip() for r in action.item.split(",") if r.strip()]
     if len(refs) != 3:
         v.append(f"the Workshop takes three copies, not {len(refs)}")
-    free = ctx.held if ctx.sellable is None else ctx.sellable
+    free, keep = (ctx.held if ctx.sellable is None else ctx.sellable), max(1, rules.max_copies_kept)
     for ref, n in sorted(Counter(refs).items()):
-        if free.get(ref, 0) - n < 1:
-            v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+        if free.get(ref, 0) - n < keep:
+            v.append(
+                f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves fewer than {keep} (max_copies_kept)"
+            )
+    if ctx.cash < effective_cash_floor(rules, ctx):  # the cost is unpublished: no craft below the floor either
+        v.append(f"cash {ctx.cash} < {floor_text(rules, ctx)}")
     if str(action.rarity or "") not in TALLER_RARITIES:
         v.append(f"the Workshop takes commons or uncommons only, not {action.rarity!r}")
     if ctx.taller_hold:  # an accept still settling hands over a copy we cannot name (`agents.taller.settling`)

@@ -31,17 +31,19 @@ copy at 0. TL1 hardens it after the #236 reviews.
 ## Acceptance criteria
 1. Only FREE copies go in: our open offers (board and thread, read again right before the craft) and the accepts
    still settling (`settling`: `sell:<asset>`, a plain ref takes one copy, an unnamed `team:<thread>` holds every
-   craft that tick) are never free; one copy of every card always stays, on any set; commons and uncommons only.
+   craft that tick) and, in the taker, copies our offers gave in the last UNSETTLED_TICKS ticks are never free;
+   `max_copies_kept` (2) free copies of every card always stay, on any set; commons and uncommons only; never below
+   `cash_floor`.
 2. One hourly cap for every process: shared ledger rows (kind `spend`, price 0, item `taller:<refs>`; the table
    takes no other kind), booked before the send; `max_taller_per_game_hour` = 1 until a first real answer is seen.
 3. The taker: at most one craft per tick, after its other sends, never the accept slot; never on a short tick, at
    the cap (no request), near a duel deadline or a Market Test (`deploy_guard.verdict`); a craft not sent waits 10
-   ticks; a cash drop stops crafting in that process.
+   ticks (a blocked guard: until its next safe tick); a cash drop trips the `taller` breaker for every process.
 4. `bazaar taller`: no ids lists the ranked triples; three ids go through the same `craft_one` path (dry run unless
    `--live`), with the same holds.
 5. The maker posts no new ask for a spare common, nor for an uncommon in the two ticks after a craft; open asks are
    never cancelled for it.
-6. `max_copies_kept`: copies of cards held more often go first.
+6. No craft in a process's first UNSETTLED_TICKS ticks (it has not seen our offers yet).
 7. Tests with no network for each of the above, including the shared ledger's kind check on the Postgres path.
 
 ## Out of scope / follow-ups

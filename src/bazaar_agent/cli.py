@@ -2355,7 +2355,8 @@ def taller_cmd(
     """The Workshop (SA1, TL1): three spare copies of one rarity become one card of the next (`POST /api/taller`).
     The taker's path (`agents.taller.craft_one`): the guardrails (`taller_enabled`, one free copy of each card kept,
     accepts still settling, the shared hourly cap, the kill switch, the score impact), a decisions row, and the
-    ledger row before the send. No ids: the ranked triples, nothing sent. Dry run by default."""
+    ledger row before the send. No ids: the ranked triples, nothing sent. Dry run by default. Unlike the taker it
+    has no memory of offers a counterparty may have accepted since: `max_copies_kept` 2 covers one such copy."""
     from rich.markup import escape
 
     from bazaar_agent import db
@@ -2385,7 +2386,7 @@ def taller_cmd(
     if not assets:
         dealers = public.dealers()
         rows = dealers.get("personas") if isinstance(dealers, dict) else dealers
-        triples = tl.rank_triples(me, catalog, rows or [], busy, rules.max_copies_kept)
+        triples = tl.rank_triples(me, catalog, rows or [], busy, rules.max_copies_kept)  # keep that many of each
         for t in triples:
             console.print(f"{' '.join(str(a) for a in t.asset_ids)}  {escape(', '.join(t.refs))}  {escape(t.reason())}")
         if not triples:
@@ -2415,7 +2416,9 @@ def taller_cmd(
     if done.answer is None:
         _fail(f"the Workshop refused: {escape(rec.last_code or 'no answer')}; the hourly cap counts it (fail safe)")
         return
-    console.print(json.dumps(done.answer, indent=2, default=str), markup=False, highlight=False)
+    from bazaar_agent.decisions import scrubbed
+
+    console.print(json.dumps(scrubbed(done.answer), indent=2, default=str), markup=False, highlight=False)
     console.print(f"crafted: {escape(tl.pulled(done.answer))}")
 
 

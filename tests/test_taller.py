@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from bazaar_agent import move_impact
 from bazaar_agent.agents import taller as tl
+from bazaar_agent.agents.seller import UNSETTLED_TICKS
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check, load_guardrails
 from bazaar_agent.level_watch import LevelWatch
@@ -44,7 +45,7 @@ def card(aid, ref, value):
 def me(*assets, unlocked=("abuela", "chato", "picaros", "banco")):
     return {
         "id": "t01",
-        "cash": 100,
+        "cash": 400,  # above the code's cash_floor 270 (a craft keeps the floor too)
         "unlocked": list(unlocked),
         "album": {"pages": [{"set": "LAV"}, {"set": "SAL"}]},
         "assets": list(assets),
@@ -130,7 +131,7 @@ def test_pulled_reads_the_card_whatever_the_answer_shape():
 
 
 def ctx(**kw):
-    base = Context(cash=100, held={"LAV-01": 3, "SAL-01": 2}, tick=10, t_hours=7.5, stops=())
+    base = Context(cash=400, held={"LAV-01": 3, "SAL-01": 2}, tick=10, t_hours=7.5, stops=())
     return replace(base, **kw)
 
 
@@ -145,7 +146,7 @@ def test_check_refuses_a_craft_while_taller_enabled_is_false():
 def test_check_keeps_one_free_copy_of_every_card_of_any_set():
     assert check(Action("taller", "LAV-01,LAV-01,SAL-01", "common"), ctx(), ON).allowed
     last = check(Action("taller", "LAV-01,LAV-01,LAV-01", "common"), ctx(), ON)
-    assert not last.allowed and "LAV-01: giving 3 of our 3 free copies leaves none" in last.violations[0]
+    assert not last.allowed and "LAV-01: giving 3 of our 3 free copies leaves fewer than 1" in last.violations[0]
     listed = check(Action("taller", "LAV-01,LAV-01,SAL-01", "common"), ctx(sellable={"LAV-01": 2, "SAL-01": 2}), ON)
     assert not listed.allowed  # one LAV-01 sits in an open ask of ours: two given would leave no free copy
 
@@ -212,7 +213,7 @@ def run_taker(tmp_path, *, news, live=True, ticks=1, team=None, **rules):
     kw = parts(tmp_path, **rules)
     t = Taker(team, public, live=live, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
               config=TakerConfig(max_dealer_threads=0), news=news, **kw)  # fmt: skip
-    for i in range(ticks):
+    for i in range(-UNSETTLED_TICKS, ticks):  # a process crafts only once it saw our offers for a while
         team.now = clock(tick=100 + i)
         t.on_tick(team.now)
     return team, lines
@@ -224,11 +225,11 @@ def crafts(team):
 
 def test_the_taker_crafts_free_spares_once_the_level_is_active(tmp_path):
     team, lines = run_taker(tmp_path, news=News(LEVELS), taller_enabled=True, max_taller_per_game_hour=2)
-    assert crafts(team) == [("call", "POST", "/api/taller", {"assets": [2, 3, 5]})]  # LAV-01 x3 > max_copies_kept
+    assert crafts(team) == [("call", "POST", "/api/taller", {"assets": [5, 2, 3]})]
     row = next(r for r in rows(tmp_path) if r.get("kind") == "taller")
     assert row["chosen"] and row["inputs"]["fills"] == ["LAV-07"] and row["inputs"]["buyer"] == "picaros"
-    assert any("Workshop crafted LAV-01, LAV-01, SAL-01 into LAV-07 Samosas" in line for line in lines)
-    assert [e["item"] for e in Ledger(tmp_path / "ledger.jsonl").entries()] == ["taller:LAV-01,LAV-01,SAL-01"]
+    assert any("Workshop crafted SAL-01, LAV-01, LAV-01 into LAV-07 Samosas" in line for line in lines)
+    assert [e["item"] for e in Ledger(tmp_path / "ledger.jsonl").entries()] == ["taller:SAL-01,LAV-01,LAV-01"]
 
 
 def test_no_craft_before_the_sentinel_saw_the_level_active_or_with_the_switch_off(tmp_path):
@@ -267,3 +268,8 @@ def test_a_copy_in_an_open_offer_of_ours_is_never_crafted(tmp_path):
 
 def test_the_shared_fixture_me_has_no_triple():
     assert tl.rank_triples(ME, CATALOG, DEALERS) == []
+
+
+def test_a_craft_keeps_the_cash_floor():
+    verdict = check(Action("taller", "LAV-01,LAV-01,SAL-01", "common"), ctx(cash=200), ON)
+    assert not verdict.allowed and "cash_floor" in str(verdict)
