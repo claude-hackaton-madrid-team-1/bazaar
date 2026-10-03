@@ -886,6 +886,11 @@ bonus; a wrong one costs points.
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
 `docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
 
+### [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates
+Friday feed, 104 sell threads (`{"sell": {"assets": [id]}}`): Abuela bids `give.cash` and moves up when the
+team moves down (commons 5→6, uncommons 12→16, 20→23), then a `final`. The simulator modelled a buyer that
+never moved; it now raises one prima per move of ours up to `buy_ceiling` (Abuela 0.65 of book). A sale is a
+ladder deal: `dealer sell` never closes at her opening bid. Private sim: LAT-04 sold at 6 (her opening 5).
 ### [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 Day-2 hint 1: `GET /api/me/value?card=` = our value of ONE more copy (book × affinity × copy marginal), the value the
 score counts trades at. Our model adds a page-bonus share and lands higher (MAL-06 official 27.5 vs ours 36, SAL-07
