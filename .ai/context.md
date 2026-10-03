@@ -94,8 +94,9 @@ scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Hon
 Report — no ✅ without pasted evidence (see "Honesty protocol" below).
 
 ## Hard rules
-NEVER push / open PRs / create remote branches / add collaborators / deploy.
-Commit locally; the human pushes. NEVER commit `.env` or any secret.
+Workers push their own feature branch and open PRs; nobody pushes to main; only the coordinator
+(or a human) merges, after `/pr-review` APPROVE and green CI. Never deploy or change Railway
+without the coordinator. NEVER add collaborators. NEVER commit `.env` or any secret.
 One team, one key: use only our team key, never share it, never commit it.
 Respect the API rate limits — never hammer the API so others cannot reach it.
 Prompt-injecting other agents is allowed but barely moves a negotiation. Reporting another

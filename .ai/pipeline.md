@@ -36,15 +36,15 @@ Repeat per task until the backlog is clear.
    reviewers as parallel Claude Code sub-agents (or an Agent Team; see "Parallel work" below).
    Structure the panel + synthesis with the `six-thinking-hats` skill (⚫/⚪ Black+White audit → 🟡/🟢 Yellow+Green synthesis → 🔵 Blue verdict).
 7. `/code-simplify` — apply reviewer findings (Chesterton's Fence).
-8. `/ship` — Conventional, atomic commits ONLY. NEVER push, NEVER open a PR,
-   NEVER touch a remote. Print `git log`, clean tree, and a ready-to-paste PR body.
+8. `/ship` — Conventional, atomic commits ONLY. Print `git log`, clean tree, and a
+   ready-to-paste PR body. Pushing and PRs follow the Hard rules in `.ai/context.md`.
 9. `/acceptance` (custom) — write `.ai/specs/99-acceptance.md`: per-requirement
    traceability matrix (requirement → file:line → test → ✅/⚠️/❌), aggregating each task's
    Honest Implementation Report (per the Honesty protocol), evidence, gaps, one-line verdict.
    ✅ requires BOTH implementation AND a passing test — with the proving output pasted.
 10. `/goal` (built-in completion loop — the closer) — keep working across turns until
     acceptance holds; do NOT author a `goal.md`. Completion is local commits + green
-    acceptance, never a push.
+    acceptance, never a push to main.
 
 ## Continuous evolution (OPTIONAL)
 11. `/evolve` (skill: evolve) — periodically, or after a big feature, scan the repo and

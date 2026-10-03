@@ -96,8 +96,9 @@ scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Hon
 Report — no ✅ without pasted evidence (see "Honesty protocol" below).
 
 ## Hard rules
-NEVER push / open PRs / create remote branches / add collaborators / deploy.
-Commit locally; the human pushes. NEVER commit `.env` or any secret.
+Workers push their own feature branch and open PRs; nobody pushes to main; only the coordinator
+(or a human) merges, after `/pr-review` APPROVE and green CI. Never deploy or change Railway
+without the coordinator. NEVER add collaborators. NEVER commit `.env` or any secret.
 One team, one key: use only our team key, never share it, never commit it.
 Respect the API rate limits — never hammer the API so others cannot reach it.
 Prompt-injecting other agents is allowed but barely moves a negotiation. Reporting another
@@ -220,15 +221,15 @@ Repeat per task until the backlog is clear.
    reviewers as parallel Claude Code sub-agents (or an Agent Team; see "Parallel work" below).
    Structure the panel + synthesis with the `six-thinking-hats` skill (⚫/⚪ Black+White audit → 🟡/🟢 Yellow+Green synthesis → 🔵 Blue verdict).
 7. `/code-simplify` — apply reviewer findings (Chesterton's Fence).
-8. `/ship` — Conventional, atomic commits ONLY. NEVER push, NEVER open a PR,
-   NEVER touch a remote. Print `git log`, clean tree, and a ready-to-paste PR body.
+8. `/ship` — Conventional, atomic commits ONLY. Print `git log`, clean tree, and a
+   ready-to-paste PR body. Pushing and PRs follow the Hard rules in `.ai/context.md`.
 9. `/acceptance` (custom) — write `.ai/specs/99-acceptance.md`: per-requirement
    traceability matrix (requirement → file:line → test → ✅/⚠️/❌), aggregating each task's
    Honest Implementation Report (per the Honesty protocol), evidence, gaps, one-line verdict.
    ✅ requires BOTH implementation AND a passing test — with the proving output pasted.
 10. `/goal` (built-in completion loop — the closer) — keep working across turns until
     acceptance holds; do NOT author a `goal.md`. Completion is local commits + green
-    acceptance, never a push.
+    acceptance, never a push to main.
 
 ## Continuous evolution (OPTIONAL)
 11. `/evolve` (skill: evolve) — periodically, or after a big feature, scan the repo and
