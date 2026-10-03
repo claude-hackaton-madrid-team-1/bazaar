@@ -2,7 +2,7 @@
 
 Night shift of 3–4 Oct 2026. Branch `night/w2a-duel-zoo`, draft PR #80, stacked on #55 (`ogarciarevett/feat-bazaar-sim`).
 Refs #5, #7. Every number below is in [w2a-duel-zoo-tables.md](w2a-duel-zoo-tables.md), except where marked (n = 200; v1 = PR #60's `duel_move`,
-v2 = W2b's `duel_v2` @ 1d7cc26: `plan_moves` where duels share accepts, `single_duel_move` elsewhere). Offline only: nothing touched the live game.
+v2 = W2b's `duel_v2` @ 1d7cc26: `plan_moves` where duels share accepts, `single_duel_move` elsewhere; the gate reads the same 1.420 / 1.550 at bb3f30d). Offline only: nothing touched the live game.
 
 ## What it is
 
