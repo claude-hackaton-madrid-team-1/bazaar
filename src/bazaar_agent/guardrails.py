@@ -306,7 +306,7 @@ ENFORCED_BY: dict[str, str] = {
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
-    "taller_enabled": "guardrails.check (taller) + agents.taker._taller (needs the level active: level_watch)",
+    "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
     "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, this process)",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
@@ -675,6 +675,7 @@ class Action:
     gives_value: float = 0.0  # a swap: our copy given, net of their cash; the official value cap adds it to `price`
     scope: str | None = None  # the circuit breaker this write answers to (`breaker_scope`); None: by kind
     asset: int | None = None  # a sale: the asset id of the copy that leaves (None: the worst copy of `item` we hold)
+    assets: tuple[int, ...] = ()  # the Workshop: the three copies we give, in the order of `item`'s refs
 
 
 @dataclass(frozen=True)
@@ -912,7 +913,31 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if not v and rules.max_score_loss_per_move > 0 and not ctx.ranking:
+        v.extend(_taller_impact(action, refs, ctx, rules))
     return v
+
+
+def _taller_impact(action: Action, refs: list[str], ctx: Context, rules: Guardrails) -> list[str]:
+    """`max_score_loss_per_move` for a craft: each copy given away at 0 and no ladder deal (`move_impact`: a copy a
+    team trade brought us costs its your_value in neg_points). Fails closed: unread origins count as team copies,
+    and copies not named one by one, or with no value, refuse."""
+    from bazaar_agent import impact_board
+
+    if len(action.assets) != len(refs):
+        return ["the Workshop's copies are not named one by one: their score impact cannot be estimated"]
+    facts = ctx.impact if ctx.impact is not None else impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
+    total = 0.0
+    for asset, ref in zip(action.assets, refs, strict=True):
+        impact = move_impact.sell_impact(
+            ctx.cards, ref, action.rarity, 0, None, facts, rules.score_per_neg_point_fallback, 0.0, asset
+        )
+        if impact.score is None:
+            return [f"score impact of giving {ref} #{asset} cannot be estimated (max_score_loss_per_move)"]
+        total += impact.score
+    if total < -rules.max_score_loss_per_move:
+        return [f"score impact {total:+.2f} < -{rules.max_score_loss_per_move:g} (max_score_loss_per_move)"]
+    return []
 
 
 def breaker_scope(action: Action) -> str | None:

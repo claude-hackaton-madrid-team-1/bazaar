@@ -2378,7 +2378,7 @@ def taller_cmd(
     rarities = {str((tl.cards_of(catalog).get(ref) or {}).get("rarity")) for ref in refs}
     if len(rarities) != 1:
         _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
-    action = gr.Action("taller", ",".join(refs), rarities.pop())
+    action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
     verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
     console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
     if not verdict.allowed or not live:

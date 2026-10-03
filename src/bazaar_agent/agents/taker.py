@@ -983,7 +983,7 @@ class Taker:
             return
         t = triples[0]
         ctx = replace(self._ctx(run), sellable=free_counts(run.snap.me, busy), taller_last_hour=len(self._crafts))
-        verdict = check(Action("taller", action_item(t), t.rarity), ctx, self.rules)
+        verdict = check(Action("taller", action_item(t), t.rarity, assets=tuple(t.asset_ids)), ctx, self.rules)
         status: Status = "approved" if verdict.allowed else "rejected"
         if status == "approved" and not run.window.open():
             status = "expired"

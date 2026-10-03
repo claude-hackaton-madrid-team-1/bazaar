@@ -616,6 +616,15 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
   tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
 
+### SA1 — Sentinel autonomy: the Workshop, dealer sells on news, levels to agents ([spec](SA1-spec.md))
+- Step 1 — `level_watch.py` in the news sentinel: a learnings row per level going active / open to all; the taker
+  asks `active("taller")` · **Acceptance:** tests/test_level_watch.py.
+- Step 2 — dealer sell desk readiness (ladder level ranking, trickster finals, busy thread copies; switch stays
+  off) · **Acceptance:** tests/test_dealer_sell_readiness.py.
+- Step 3 — the Workshop: `agents/taller.py`, `guardrails.check` action `taller` (`taller_enabled` false,
+  `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
+  **Acceptance:** tests/test_taller.py; full gate + sim smoke.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

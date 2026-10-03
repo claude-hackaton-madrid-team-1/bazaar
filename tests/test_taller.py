@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from bazaar_agent import move_impact
 from bazaar_agent.agents import taller as tl
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.guardrails import Action, Context, Guardrails, check, load_guardrails
@@ -159,6 +160,19 @@ def test_check_holds_the_hourly_cap_and_three_copies_exactly():
 def test_the_kill_switch_halts_a_craft():
     verdict = check(Action("taller", "LAV-01,LAV-01,SAL-01", "common"), ctx(stops=("paused",)), ON)
     assert not verdict.allowed and verdict.halted
+
+
+def test_a_craft_of_copies_a_team_trade_brought_us_answers_to_the_score_impact_rule():
+    rules = ON.model_copy(update={"max_score_loss_per_move": 0.2})
+    cards = move_impact.our_cards(SPARES)
+    action = Action("taller", "SAL-01,LAV-01,LAV-01", "common", assets=(5, 2, 3))
+    ours = move_impact.Facts(team="t01", origins={})  # no settlement brought them: starting stock or packs
+    assert check(action, ctx(cards=cards, impact=ours), rules).allowed
+    bought = move_impact.Facts(team="t01", origins={2: move_impact.Origin("team", "t07", 3, 50)})
+    refused = check(action, ctx(cards=cards, impact=bought), rules)  # LAV-01 #2 (4.0) came from t07: -4 × 0.053
+    assert not refused.allowed and "max_score_loss_per_move" in refused.violations[0]
+    unnamed = check(Action("taller", "SAL-01,LAV-01,LAV-01", "common"), ctx(cards=cards, impact=ours), rules)
+    assert not unnamed.allowed and "not named one by one" in unnamed.violations[0]
 
 
 def test_guardrails_md_ships_the_workshop_off():
