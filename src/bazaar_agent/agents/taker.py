@@ -50,7 +50,7 @@ from bazaar_agent.agents.runtime import (
     read_snapshot,
     window_for,
 )
-from bazaar_agent.agents.seller import OfferError, find_copy, offers_in, open_commitments, trade_book
+from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
@@ -461,20 +461,47 @@ class Taker:
         """`accept_bids`: standing bids for cards we hold that pay at least `sell_min_surplus` over what
         selling our least valuable copy costs us (fee and page bonus included). A copy already in one of
         our open offers is never sold twice."""
+        clock = run.snap.clock
         listed = open_commitments(run.offers, run.snap.us).listed
+        # An accept settles at the next tick: a copy sold last tick may still be in /me. Never sell it again.
+        sold = {
+            int(item[5:])
+            for t in (clock.tick - 1, clock.tick)
+            for item in self.ledger.accept_items(t)
+            if item.startswith("sell:") and item[5:].isdigit()
+        }
+        ours = {m.id for m in run.mine}
         ctx, out = self._ctx(run), []
         for o in offers:
-            if o.side != "bid" or o.id in {m.id for m in run.mine}:
+            if o.side != "bid" or o.id in ours:
                 continue
-            op = score_offer(o, market, run.snap.me, run.params, self.rules, AffinityMap(), venues.get(o.venue), ctx)
-            if op is None or op.ours < run.params.sell_min_surplus:
+            copies = sorted(
+                (
+                    a
+                    for a in run.snap.me.get("assets") or []
+                    if a.get("ref") == o.ref
+                    and isinstance(a.get("id"), int)
+                    and isinstance(a.get("your_value"), int | float)
+                    and int(a["id"]) not in listed | sold
+                ),
+                key=lambda a: (float(a["your_value"]), -int(a["id"])),
+            )
+            if not copies:
                 continue
-            try:
-                copy = find_copy(run.snap.me, o.ref)
-            except OfferError:
-                continue
-            if int(copy["id"]) not in listed:
-                out.append(bid_proposal(op, int(copy["id"])))
+            copy_id = int(copies[0]["id"])  # the free copy we lose least by
+            op = score_offer(
+                o,
+                market,
+                run.snap.me,
+                run.params,
+                self.rules,
+                AffinityMap(),
+                venues.get(o.venue),
+                ctx,
+                asset_id=copy_id,
+            )
+            if op is not None and op.ours >= run.params.sell_min_surplus:
+                out.append(bid_proposal(op, copy_id))
         return out
 
     # ------------------------------------------------------------ (b) the dealer desk
@@ -784,7 +811,16 @@ class Taker:
         your_value = next(
             (float(a["your_value"]) for a in run.snap.me.get("assets") or [] if a.get("id") == p.asset_id), None
         )
-        action = Action("accept_sell", p.ref, p.rarity, op.price, your_value, counterparty=op.maker)
+        # The sell floor sees what we net (the fee comes out of the bid); the maker's share counts the bid.
+        action = Action(
+            "accept_sell",
+            p.ref,
+            p.rarity,
+            op.price - op.fee,
+            your_value=your_value,
+            counterparty=op.maker,
+            volume=op.price,
+        )
         verdict = check(action, self._ctx(run), self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
@@ -801,7 +837,7 @@ class Taker:
             run.window = TickWindow(clock.tick, 0.0, self.now)
             self._skip(run, p, "the tick ended before the send", "expired")
             return False
-        if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, p.ref, limit):
+        if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, f"sell:{p.asset_id}", limit):
             self._skip(run, p, "another process took the team's accept this tick", "rejected")
             return False
         did = self.rec.decide(
