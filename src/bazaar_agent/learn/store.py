@@ -10,7 +10,7 @@ Postgres is retried at most once per tick, and memory keeps serving recall meanw
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Sequence
 from typing import Any
 
 import psycopg
@@ -21,7 +21,7 @@ from bazaar_agent.learn.model import Learning
 STATEMENT_TIMEOUT_MS = 1500  # a recall or a write must never eat the tick
 RETRY_EVERY = 5  # ticks between Postgres retries once it failed (a connect may take seconds)
 MEMORY_MAX = 5000
-SCOPES = {"dealer": "trader", "team": "trader", "venue": "market", "organiser": "market"}
+SCOPES = {"dealer": "trader", "team": "trader", "venue": "market", "organiser": "market", "rival": "duel"}
 COLUMNS = "subject_kind, subject, kind, created_tick, until_tick, team, evidence, confidence, claim, source, stats"
 
 
@@ -110,6 +110,7 @@ class LearningStore:
         self._tried_tick: int | None = None
         self._init_tried = False
         self._disabled = False  # the table lacks a column we need: memory only for this process
+        self._has_vectors: bool | None = None  # learnings.embedding exists (pgvector), read once per connection
         self.memory: dict[str, Learning] = {}
 
     # ---------------------------------------------------------------- connection (DecisionLog's pattern)
@@ -142,7 +143,7 @@ class LearningStore:
             return None
         if self._down:
             self._log("learnings: Postgres back")
-        self._conn, self._down = conn, False
+        self._conn, self._down, self._has_vectors = conn, False, None
         return conn
 
     def open(self) -> str:
@@ -263,6 +264,102 @@ class LearningStore:
             return []
         return [lr for row in rows if (lr := _from_row(row)) is not None]
 
+    # ---------------------------------------------------------------- vectors (N3: the hybrid recall)
+
+    def _vectors_on(self, conn: psycopg.Connection) -> bool:
+        """Whether `learnings.embedding` exists (it does only where pgvector is installed)."""
+        if self._has_vectors is None:
+            row = conn.execute(
+                "select 1 from information_schema.columns where table_schema = current_schema() "
+                "and table_name = 'learnings' and column_name = 'embedding'"
+            ).fetchone()
+            self._has_vectors = row is not None
+        return self._has_vectors
+
+    def vector_rank(
+        self,
+        vector: Sequence[float],
+        *,
+        kinds: Collection[str] | None,
+        tick: int | None,
+        subject_kind: str | None,
+        team: str | None,
+        subjects: Collection[str] | None,
+        limit: int,
+    ) -> list[tuple[str, float]]:
+        """(dedupe key, cosine similarity) of the embedded learnings nearest `vector`, under the same hard
+        filters as `recall()`. Empty without pgvector, without a connection, or on any error."""
+        conn = self._db()
+        if conn is None:
+            return []
+        query = (
+            "select dedupe_key, 1 - (embedding <=> %(v)s::vector) from learnings "
+            "where embedding is not null and dedupe_key is not null and superseded_by is null "
+            "and (%(kinds)s::text[] is null or kind = any(%(kinds)s)) "
+            "and (%(subjects)s::text[] is null or subject = any(%(subjects)s)) "
+            "and (%(sk)s::text is null or subject_kind = %(sk)s) "
+            "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
+            "and (%(team)s::text is null or team is null or team = %(team)s) "
+            "order by embedding <=> %(v)s::vector limit %(limit)s"
+        )
+        params = {
+            "v": vector_literal(vector),
+            "kinds": sorted(kinds) if kinds is not None else None,
+            "subjects": sorted(subjects) if subjects is not None else None,
+            "sk": subject_kind,
+            "tick": tick,
+            "team": team,
+            "limit": limit,
+        }
+        try:
+            if not self._vectors_on(conn):
+                return []
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                rows = conn.execute(query, params).fetchall()  # type: ignore[arg-type]
+        except psycopg.Error as e:
+            self._failed("vector search", e)
+            return []
+        return [(str(key), float(cos)) for key, cos in rows if key is not None and cos is not None]
+
+    def embed_missing(self, embed: Callable[[list[str]], list[list[float]] | None], limit: int = 64) -> int:
+        """Embed the learnings whose text changed since they were embedded (or never were). Returns how
+        many were written; 0 without pgvector, without models or on any error (retried next pass)."""
+        conn = self._db()
+        if conn is None:
+            return 0
+        try:
+            if not self._vectors_on(conn):
+                return 0
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                rows = conn.execute(
+                    "select id, claim from learnings where claim is not null and dedupe_key is not null "
+                    "and (embedding is null or embedded_hash is distinct from md5(claim)) order by id limit %s",
+                    (limit,),
+                ).fetchall()
+            if not rows:
+                return 0
+            vectors = embed([str(claim) for _, claim in rows])
+            if not vectors or len(vectors) != len(rows):
+                return 0
+            with conn.transaction():
+                conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "update learnings set embedding = %s::vector, embedded_hash = md5(claim) where id = %s",
+                        [(vector_literal(v), rid) for (rid, _), v in zip(rows, vectors, strict=True)],
+                    )
+        except psycopg.Error as e:
+            self._failed("embedding write", e)
+            return 0
+        return len(rows)
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
+
+
+def vector_literal(vector: Sequence[float]) -> str:
+    """pgvector's text form: '[0.1,0.2,...]' (no pgvector Python adapter needed)."""
+    return "[" + ",".join(f"{float(x):.6g}" for x in vector) + "]"
