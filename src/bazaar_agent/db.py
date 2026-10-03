@@ -84,13 +84,32 @@ def jsonb_safe(value: Any) -> Any:
     return value
 
 
+INT4 = 2**31 - 1
+INT8 = 2**63 - 1
+
+
 def _event_row(e: Event) -> tuple[Any, ...]:
     """One feed_events row; raises (ValueError, TypeError, ...) for an event Postgres would refuse."""
     tick = e.get("tick")
-    if not isinstance(e["id"], int) or not (tick is None or isinstance(tick, int)):
-        raise ValueError(f"event {e.get('id')!r}: id and tick must be integers")
+    if not isinstance(e["id"], int) or not 0 <= e["id"] <= INT8:
+        raise ValueError(f"event {e.get('id')!r}: the id must be a bigint")
+    if tick is not None and (not isinstance(tick, int) or not -INT4 <= tick <= INT4):
+        raise ValueError(f"event {e['id']}: the tick must be an int")
+    if not all(v is None or isinstance(v, str) for v in (e.get("type"), e.get("actor"))):
+        raise ValueError(f"event {e['id']}: type and actor must be text")
     payload = json.dumps(jsonb_safe(e.get("payload")), allow_nan=False)  # NaN / Infinity: jsonb refuses them
     return (e["id"], tick, jsonb_safe(e.get("type")), jsonb_safe(e.get("actor")), payload)
+
+
+def _storable(p: Print) -> Print:
+    """A tape print Postgres accepts: ints in range, no NUL in its text (raises ValueError otherwise)."""
+    if any(not -INT4 <= value <= INT4 for value in (p.tick, p.price, p.fee)):
+        raise ValueError("a tape number out of range")
+    if not 0 <= p.settlement <= INT8:
+        raise ValueError("a settlement id out of range")
+    if any("\x00" in str(v) for v in (p.venue, p.persona, p.buyer, p.seller, p.ref)):
+        raise ValueError("NUL in a tape field")
+    return p
 
 
 def _usable(events: Iterable[Event]) -> tuple[list[tuple[Any, ...]], list[Print]]:
@@ -100,7 +119,7 @@ def _usable(events: Iterable[Event]) -> tuple[list[tuple[Any, ...]], list[Print]
     for e in events:
         try:
             row = _event_row(e)
-            printed = tape([e])
+            printed = [_storable(p) for p in tape([e])]
         except (ValueError, TypeError, KeyError, AttributeError):
             continue
         rows.append(row)

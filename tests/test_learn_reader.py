@@ -264,3 +264,10 @@ def test_an_llm_unlock_never_lifts_a_lock():
     locked = from_refusal("rata", "locked", "", {}, US, HOUR, "MAL-09")
     unlock = one(read_all(), evidence=(20014,)).model_copy(update={"source": "llm"})
     assert blocks_for([locked, unlock], US, 177).stops("rata") == locked
+
+
+def test_a_blocker_learned_in_the_future_is_not_believed():
+    future = from_refusal("abuela", "cooloff", "", {"until_tick": 1_000_050}, US, GameHour(1_000_000, 4.1), None)
+    assert not blocks_for([future], US, 600)
+    feedline = from_refusal("abuela", "cooloff", "", {"until_tick": 190}, US, HOUR, None)
+    assert not blocks_for([feedline.model_copy(update={"detail": {"origin": "feed\n"}})], US, 180)

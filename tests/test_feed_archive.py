@@ -182,3 +182,26 @@ def test_the_taker_archives_after_its_sends_and_never_on_ctrl_c(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         t.on_tick(clock())
     assert order == []
+
+
+@pytest.mark.integration
+def test_server_fields_out_of_range_skip_only_their_event(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    item = {"to": "t01", "frm": "abuela", "ref": "LAV-03", "kind": "card"}
+    events = [
+        {"id": 1, "tick": 1, "type": "announcement", "actor": "", "payload": {"text": "ok"}},
+        {"id": 2, "tick": 2**31, "type": "announcement", "actor": "", "payload": {}},
+        {"id": 2**63, "tick": 1, "type": "announcement", "actor": "", "payload": {}},
+        {"id": 3, "tick": 1, "type": {"x": 1}, "actor": "", "payload": {}},
+        {"id": 4, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "price": 2**40}},
+        {"id": 5, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "venue": "v\x0004"}},
+        {"id": 6, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [item], "price": 9}},
+    ]
+    with open_in(database_url, schema) as conn, conn.cursor() as cur:
+        counts = db.insert_events(cur, events)
+        conn.commit()
+        stored = [r[0] for r in conn.execute("select id from feed_events order by id").fetchall()]
+    assert counts == {"feed_events": 2, "tape": 1} and stored == [1, 6]
