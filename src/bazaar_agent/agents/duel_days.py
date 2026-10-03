@@ -34,6 +34,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 Verdict = Literal["signed", "reversed", "cost", "unknown", "conflict"]
 DAYS_MAX = 10  # RULES.md: delivery day 0 to 10
@@ -127,6 +128,27 @@ class DaysSwitch:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {k: v for k, v in asdict(self).items() if k != "path"}
         self.path.write_text(json.dumps(record, ensure_ascii=False))
+
+
+LATCH_FILE = Path("duels") / "days_sign.json"  # under Settings.data_dir (.local, never committed)
+REAL_HOST = "bazaar.causaprima.ai"  # config.DEFAULT_URL: the official game
+
+
+def real_game(base_url: str) -> bool:
+    """True only against the official game's host: a simulator, local or deployed, is never evidence."""
+    return urlparse(base_url).hostname == REAL_HOST
+
+
+def latch(data_dir: Path) -> DaysSwitch:
+    return DaysSwitch.load(data_dir / LATCH_FILE)
+
+
+def effective_rules(rules: Any, switch: DaysSwitch) -> Any:
+    """The rules a duel tick runs with: `duel_days_signed` turned on when `duel_days_auto` allows it AND a real
+    payload confirmed the sign; otherwise the very same rules. One object for the policy and the guard alike."""
+    if rules.duel_days_signed or not switch.signed(bool(getattr(rules, "duel_days_auto", False))):
+        return rules
+    return rules.model_copy(update={"duel_days_signed": True})
 
 
 # ---------------------------------------------------------------- the rival's days
