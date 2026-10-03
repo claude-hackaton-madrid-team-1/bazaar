@@ -545,6 +545,37 @@ prices, bid ladders, surplus, cash, limits or reasons (`docs/services.md`, "Publ
 on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
 
+### Live-feed reader: learnings and dealer blockers (N12)
+
+The taker reads the live feed the way a person reads the "On air · Live feed" panel of the game's
+homepage (that panel is `GET /api/feed` plus the public SSE stream, one line per event type) and keeps
+what it learns in the `learnings` table (`src/bazaar_agent/learn/`). Deterministic first: a field the
+server set is a fact, free text is kept as quoted data and never acted on.
+
+| Read from | Learned |
+|---|---|
+| `persona.cooloff` (team, `until_tick`), our thread's `closed_reason` (`cooloff`, `persona_quota`, `sold_out`), an `open_thread` refusal (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, `locked`) | a **blocker** for that dealer (or that item), expiring at its tick or at the end of the game hour; `locked` is rechecked after 10 ticks and lifted by `level.unlocked` / `persona.open_to_all` |
+| `persona.strike`, another team's unlock, duel outcomes per item | behaviour |
+| `venue.fee_announced` / `fee_changed` (with the tick it takes effect), venue opened / suspended / notices | fee changes and venue news |
+| `clock.changed`, `day.opened` / `day.closed`, rounds, `announcement`, `level.*` | rule changes and announcements |
+
+Before it opens a dealer thread, the taker recalls the blockers in force **for our team** and skips that
+dealer (a `dealer_skip` decision row) so the thread goes to the next dealer instead of a refusal. A
+blocker only ever removes a send; any learner or database error leaves the taker exactly as it was.
+`bazaar agent taker --no-learn` turns it off.
+
+**Where the feed comes from on Railway.** `bazaar-monitor` runs on a laptop only, so the taker (which
+already reads the shared `feed_events` table plus the public 500-event window every tick) also writes
+that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
+keeps growing while the laptop sleeps, with no new service and no extra game call.
+
+```sh
+uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
+uv run bazaar learnings --all --subject v04 --json
+uv run bazaar learnings --kind cooloff --kind quota --tick 180
+uv run bazaar learnings --save             # also upsert them into the shared learnings table
+```
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
@@ -953,7 +984,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
@@ -1014,11 +1045,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
 - [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
 - [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
+- [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
+- [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
 - [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
 - [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
 - [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
-- [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
-- [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1031,6 +1062,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | Sat 06:26 | `edee568` |
+| [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | Sat 06:24 | `d4b243e` |
 | [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | Sat 06:15 | `90191ec` |
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | Sat 06:07 | `26c40fd` |
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
@@ -1041,8 +1074,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#136](../../pull/136) | chore(iac): preserve the show's read-only DB URL and SHOW_DUELS on bazaar-live | Sat 04:57 | `a8da058` |
 | [#124](../../pull/124) | docs: backlog in repo specs (issues migrated), Saturday deadlines, status 05:00 | Sat 04:54 | `c6f7ad9` |
 | [#121](../../pull/121) | fix: public /state and /events must not reveal our limits (#69 follow-up) | Sat 04:30 | `6547531` |
-| [#104](../../pull/104) | docs: Bazaar Live deployed, URL on the status page and services guide | Sat 03:41 | `e7434a6` |
-| [#99](../../pull/99) | chore: pr-reviewer enforces the pipeline artifacts (spec, plan, honest report) | Sat 03:24 | `67df458` |
 
 ### Open pull requests
 
@@ -1061,12 +1092,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | `ogarciarevett/takeover-duelsv2` |
 | [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | `ogarciarevett/feat-dealer-threads-store` |
 | [#146](../../pull/146) | feat(safety): offer inspector before every accept — dealer, board, duel (S1 part A, takes over #93) | `ogarciarevett/s1-inspector` |
-| [#145](../../pull/145) | feat(strategy): new pages ranked the tick they appear, their cards never sold (N14b, part 1) | `ogarciarevett/feat-n14b-new-pages` |
 | [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
 | [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
 | [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
+| [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 
 <!-- BAZAAR:ACTIVITY:END -->

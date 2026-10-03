@@ -137,6 +137,10 @@
           "text": "monitor: CLI only (service removed)"
         },
         {
+          "text": "taker archives the feed window",
+          "mark": "✓"
+        },
+        {
           "text": "bazaar-mcp ✓ · bazaar-sim ✓ (#55)",
           "mark": "✓"
         },
@@ -244,14 +248,26 @@
     },
     "db_learnings": {
       "title": "DB · learnings",
-      "status": "wip",
+      "status": "part",
       "lines": [
+        {
+          "text": "feed reader: blockers, fees, notices",
+          "mark": "✓"
+        },
+        {
+          "text": "taker skips blocked dealers",
+          "mark": "✓"
+        },
+        {
+          "text": "LLM pass: PR 2 (#111)",
+          "note": true
+        },
         {
           "text": "learner N3 approved (#96), 09:30 window",
           "note": true
         }
       ],
-      "mark": "◑"
+      "mark": "◐"
     },
     "also_stored": {
       "title": "Also stored",
