@@ -885,3 +885,8 @@ bonus; a wrong one costs points.
 `docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
 `docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
+
+### [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
+`app._clock_loop` had no try/except: a raising rival (or a failed world save) killed the background task, the world
+froze at that tick and every health check still answered ok. #178 holds a raising rival for the tick and makes the loop
+log a failed tick or save and go on (the tick counter moves first, so a failure never retries in a hot loop).

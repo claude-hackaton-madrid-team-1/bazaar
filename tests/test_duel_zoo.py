@@ -504,6 +504,7 @@ def test_the_price_cap_never_pushes_a_seller_onto_its_own_limit():
 
 
 def test_a_broken_rival_is_logged_once_with_its_traceback(monkeypatch, caplog):
+    monkeypatch.setattr(duels, "_warned", set())  # an earlier test may have logged this style already
     monkeypatch.setenv(duels.STYLES_ENV, "convex")
     monkeypatch.setitem(duels.LIVE_RIVALS, "convex", lambda view: 1 / 0)
     m = manual_world(duel_first_tick=1, duel_ticks=6)

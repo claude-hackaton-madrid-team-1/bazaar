@@ -1296,6 +1296,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
 - [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 - [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 - [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
@@ -1303,7 +1304,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
 - [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
 - [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
-- [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
 
 <!-- BAZAAR:STATUS:END -->
 
