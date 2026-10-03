@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from bazaar_agent.agents.words import WordsFn, WordsRequest
-from bazaar_agent.llm.chooser import MoveSituation, injection_flags
+from bazaar_agent.llm.chooser import MoveSituation, format_folds, injection_flags
 from bazaar_agent.llm.models import UnknownModelError
 from bazaar_agent.llm.providers import SUBSCRIPTION, LLMError, TextRequest
 from bazaar_agent.llm.runtime import LLMRuntime
@@ -100,13 +100,15 @@ def guard_text(text: str, max_chars: int) -> str | None:
     """The reply cleaned for sending, or None when it must not be sent (the template is used instead).
 
     NFKC first, so superscript, fullwidth and circled digits become digits the check can see, and
-    format characters (zero-width spaces) are dropped so they cannot split a word or a number.
+    format characters (zero-width spaces) are dropped so they cannot split a word or a number; the checks
+    also read them as spaces, so a soft hyphen cannot glue two words ("deal\u00addone") past them.
     """
-    folded = "".join(ch for ch in unicodedata.normalize("NFKC", text) if unicodedata.category(ch) != "Cf")
+    folded, spaced = format_folds(text)
     cleaned = _SPACES.sub(" ", _MARKUP.sub("", folded)).strip().strip(_QUOTES).strip()
     if not cleaned or not _latin_only(cleaned):
         return None
-    if any(pattern.search(cleaned) for pattern in (_DIGIT, _NUMBER_WORDS, _ROMAN, _COMMITMENTS, _RUDE)):
+    checks = (_DIGIT, _NUMBER_WORDS, _ROMAN, _COMMITMENTS, _RUDE)
+    if any(pattern.search(cleaned) or pattern.search(spaced) for pattern in checks):
         return None
     return cleaned if len(cleaned) <= max_chars else _trim(cleaned, max_chars)
 

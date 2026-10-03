@@ -195,7 +195,7 @@ def test_the_cancel_cap_is_off_by_default():
     assert MakerConfig().max_cancels_per_tick is None  # today: every stale offer is cancelled in one tick
 
 
-def test_capped_cancels_wait_for_the_next_tick_and_are_logged_as_held(tmp_path):
+def test_capped_cancels_wait_for_the_next_tick_with_one_held_line_per_tick(tmp_path):
     stale = [our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(7)]  # copies the strategy no longer lists
     team = NoAccept(offers=stale)
     m, lines = capped(tmp_path, team, 3)
@@ -207,10 +207,12 @@ def test_capped_cancels_wait_for_the_next_tick_and_are_logged_as_held(tmp_path):
         team.offers = [o for o in team.offers if o["id"] not in done]  # the server drops what we cancelled
         assert len(cancels(team)) <= 3
     assert done == [100, 101, 102, 103, 104, 105, 106]  # 3 + 3 + 1, in plan order, none lost
-    held = [r for r in rows(tmp_path) if r.get("kind") == "cancel_ask" and r.get("chosen") is False]
-    assert len(held) == 4 + 1  # 4 held on the first tick, 1 on the second
-    assert {r["status"] for r in held} == {"rejected"}
-    assert all("max_cancels_per_tick 3" in r["guardrail"] for r in held)
+    held = [line for line in lines if "held: max_cancels_per_tick 3 reached" in line]
+    assert held == [
+        f"tick {TICK} maker: 4 cancel(s)/reprice(s) held: max_cancels_per_tick 3 reached, next tick",
+        f"tick {TICK + 1} maker: 1 cancel(s)/reprice(s) held: max_cancels_per_tick 3 reached, next tick",
+    ]
+    assert not [r for r in rows(tmp_path) if r.get("kind") == "cancel_ask" and r.get("chosen") is False]
 
 
 def test_a_reprice_holds_its_price_when_the_cancel_cap_is_spent(tmp_path):
@@ -219,7 +221,16 @@ def test_a_reprice_holds_its_price_when_the_cancel_cap_is_spent(tmp_path):
     m.on_tick(clock())
     assert cancels(team) == [2]  # the stale bid goes first; the ask is never cancelled without its repost
     assert not any(s[0] == "list_offer" and s[1] == {"assets": [5]} for s in team.sent)
-    assert any("keep LAT-09 at 90: max_cancels_per_tick 1 reached" in line for line in lines)
+    assert any("1 cancel(s)/reprice(s) held: max_cancels_per_tick 1 reached" in line for line in lines)
+
+
+def test_under_the_cap_stale_bids_are_cancelled_before_stale_asks(tmp_path):
+    """A stale bid can still buy (cash, a duplicate); a stale ask can only sell: the bid goes first."""
+    stale_asks = [our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(2)]
+    team = NoAccept(offers=[*stale_asks, bid(2, "LAV-02", 9)])
+    m, _ = capped(tmp_path, team, 2)
+    m.on_tick(clock())
+    assert cancels(team) == [2, 100]
 
 
 def test_the_cancel_cap_holds_in_a_dry_run_too(tmp_path):

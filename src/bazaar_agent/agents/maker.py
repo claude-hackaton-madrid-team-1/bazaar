@@ -155,6 +155,7 @@ class _MakerRun:
     listings_left: int
     spent: int = 0  # bid cash committed this tick (posted or would-be), counted against the spend cap
     cancels: int = 0  # cancels sent (or would-be) this tick, against `max_cancels_per_tick`
+    held: int = 0  # cancels and reprices held for the next tick by `max_cancels_per_tick`
     posted: list[str] = field(default_factory=list)
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
 
@@ -218,8 +219,13 @@ class Maker:
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
         actions = plan_offers(targets, mine, clock.tick, self.config)
+        if self.config.max_cancels_per_tick is not None:
+            # Capped: a stale bid can still buy (cash, a duplicate), a stale ask only sells: bids go first.
+            actions.sort(key=lambda a: a.kind != "cancel" or (a.offer is not None and a.offer.side != "bid"))
         for action in actions:
             self._do(run, action)
+        if run.held:
+            self.log(f"tick {clock.tick} maker: {run.held} cancel(s)/reprice(s) held: {self._cancel_cap_note()}")
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"
@@ -237,10 +243,12 @@ class Maker:
         if action.kind == "cancel" and action.offer is not None:
             self._cancel(run, action.offer, action.why)
         elif action.kind == "reprice" and action.target is not None and action.offer is not None:
-            if run.listings_left <= 0 or self._cancels_spent(run):
+            if run.listings_left <= 0:
                 offer = action.offer
-                why = "no listing left" if run.listings_left <= 0 else self._cancel_cap_note()
-                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: {why}")
+                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: no listing left")
+                return
+            if self._cancels_spent(run):
+                run.held += 1
                 return
             hold, advice = self._jev_hold(run, action.offer, action.target)
             if hold:
@@ -268,19 +276,8 @@ class Maker:
             "price": offer.price,
             "venue": offer.venue,
         }
-        if self._cancels_spent(run):
-            self.rec.decide(
-                tick,
-                f"cancel_{offer.side}",
-                f"keep {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: "
-                f"{self._cancel_cap_note()}",
-                inputs=inputs,
-                reason=why,
-                guardrail=self._cancel_cap_note(),
-                chosen=False,
-                status="rejected",
-                move={"cancel": offer.id},
-            )
+        if self._cancels_spent(run):  # held, not refused: it is planned again next tick
+            run.held += 1
             return False
         status: Status = "approved" if run.window.open() else "expired"
         did = self.rec.decide(

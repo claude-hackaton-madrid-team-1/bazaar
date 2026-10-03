@@ -275,3 +275,11 @@ def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lo
     assert two.failed == 1
     staggered = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.SDK_RETRIES)
     assert staggered.failed == 0
+
+
+def test_budget_refuses_a_cancel_cap_without_the_ceiling():
+    from bazaar_agent import cli
+
+    result = CliRunner().invoke(cli.app, ["budget", "--max-cancels", "5"])
+    assert result.exit_code == 1 and "add --ceiling" in result.output
+    assert CliRunner().invoke(cli.app, ["budget", "--ceiling", "--max-cancels", "5"]).exit_code == 0

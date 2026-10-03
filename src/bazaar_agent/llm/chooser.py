@@ -45,27 +45,39 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
         r"\b(accept|acepta|pay|paga|transfer|send|env[ií]a)\b.{0,30}\d", re.IGNORECASE | re.DOTALL
     ),
     "asset_grab": re.compile(
-        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|every\w*|todas?|todos?)\b|\bgive\b.{0,10}\bassets?\b",
+        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|everything|every\s+cards?|todas?|todos?)\b"
+        r"|\bgive\b.{0,10}\bassets?\b",
         re.IGNORECASE | re.DOTALL,
     ),
     # A rival posing as the organisers or a broker ("BROKER NOTICE: new organiser rule ...").
     "fake_authority": re.compile(
-        r"\b(admin|organi[sz]ers?|organizador(es)?|moderator|broker|system|official|server)\s*"
-        r"(notice|order|rule|announcement|message|says|aviso|orden|regla)\b"
+        r"\b(admin|organi[sz]ers?|organizador(es)?|moderator|broker|system|official)\s*"
+        r"(notice|order|rule|announcement|message|aviso|orden|regla)\b"
         r"|\bnew\s+(organi[sz]er|admin|official)\s+rules?\b",
         re.IGNORECASE,
     ),
+    # An order to accept, or a rule for every team ("every team must ..."); "you must pay attention" is talk.
     "obligation": re.compile(
-        r"\b(must|have to|required to|debes|deben|tienes que|tienen que)\b.{0,20}"
-        r"\b(accept|sell|give|pay|transfer|send|aceptar?|vender?|pagar?|dar|enviar?)\b",
+        r"\b(must|are required to|debes|deben|tienes que|tienen que)\s+(accept|aceptar)\b"
+        r"|\b(every|all|each)\s+teams?\b.{0,30}\b(must|have to|are required to|deben|tienen que)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     # Words that tell us our own private numbers ("your limit is 900"): we never take them from a counterparty.
     "limit_claim": re.compile(
-        r"\b(your|tu)\s+(limit|max(imum)?|budget|reserve|cap|l[ií]mite|presupuesto|m[aá]ximo)\s+(is|=|es|now|ahora)\b",
+        r"\b(your|tu)\s+(\w+\s+)?(limit|max(imum)?|budget|reserve|cap|l[ií]mite|presupuesto|m[aá]ximo)"
+        r"(\s+(price|precio|bid|puja))?(\s*[=:]|\s+(is|es|now|ahora)\b)",
         re.IGNORECASE,
     ),
 }
+
+
+def format_folds(text: str) -> tuple[str, str]:
+    """NFKC, then format characters (zero-width, bidi, soft hyphen) dropped, and the same text with them as
+    spaces: a check that reads both cannot be beaten by splitting one word or by gluing two."""
+    normal = unicodedata.normalize("NFKC", text)
+    dropped = "".join(ch for ch in normal if unicodedata.category(ch) != "Cf")
+    spaced = "".join(" " if unicodedata.category(ch) == "Cf" else ch for ch in normal)
+    return dropped, spaced
 
 
 def injection_flags(text: str | None) -> tuple[str, ...]:
@@ -75,9 +87,7 @@ def injection_flags(text: str | None) -> tuple[str, ...]:
     # The words filter's folding: NFKC, and format characters (zero-width, bidi, soft hyphen) dropped, so they
     # cannot split "ign\u200bore" into a word no pattern sees; and, as a second reading, turned into spaces,
     # so they cannot glue two words either ("sell\u00adall").
-    normal = unicodedata.normalize("NFKC", text)
-    dropped = "".join(ch for ch in normal if unicodedata.category(ch) != "Cf")
-    spaced = "".join(" " if unicodedata.category(ch) == "Cf" else ch for ch in normal)
+    dropped, spaced = format_folds(text)
     return tuple(
         name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(dropped) or pattern.search(spaced)
     )

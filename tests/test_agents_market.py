@@ -176,7 +176,7 @@ def test_the_maker_command_caps_its_cancels_when_asked(agent_cli, monkeypatch):
     team.offers = [our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(5)]
     capped = CliRunner().invoke(cli.app, ["agent", "maker", "--max-ticks", "1", "--no-jev", "--max-cancels", "2"])
     assert capped.exit_code == 0, capped.output
-    assert capped.output.count("max_cancels_per_tick 2 reached") == 3
+    assert "3 cancel(s)/reprice(s) held: max_cancels_per_tick 2 reached" in capped.output
     uncapped = CliRunner().invoke(cli.app, ["agent", "maker", "--max-ticks", "1", "--no-jev"])
     assert "max_cancels_per_tick" not in uncapped.output and team.sent == []  # dry run either way
 

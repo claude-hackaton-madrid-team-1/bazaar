@@ -152,6 +152,8 @@ def evals_run(
 ) -> None:
     """Score every settled duel, dealer thread, team trade and Market Test; upsert into `outcomes`."""
     if every_ticks <= 0:
+        if tick_offset is not None:
+            console.print("[yellow]--tick-offset only applies with --every-ticks: one pass now[/yellow]")
         with _connect() as conn:
             _pass(conn, since_tick, phoenix, as_json)
         return

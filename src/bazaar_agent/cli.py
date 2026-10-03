@@ -864,6 +864,9 @@ def budget(
 
     from bazaar_agent import rate_budget as rb
 
+    if max_cancels is not None and not ceiling:
+        _fail("--max-cancels models the maker's worst tick: add --ceiling (a steady tick cancels 2 at most)")
+        return
     if ceiling:
         plan = rb.saturday_plan(dealer_children=dealer_children, maker_max_cancels=max_cancels)
     else:
