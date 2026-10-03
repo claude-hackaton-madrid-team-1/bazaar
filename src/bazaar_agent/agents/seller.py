@@ -148,6 +148,7 @@ class Swap:
                 your_value=self.your_value,
                 counterparty=self.to,
                 volume=self.notional,
+                scope="team_swap",
             ),
         ]
         gives = self.your_value - self.want_cash  # the official value cap: the copy we give, net of their cash
@@ -160,6 +161,7 @@ class Swap:
                 counterparty=self.to,
                 volume=self.notional,
                 gives_value=gives,
+                scope="team_swap",
             )
         )
         return out

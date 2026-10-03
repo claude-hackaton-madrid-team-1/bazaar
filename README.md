@@ -1173,6 +1173,31 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - Agent contract for every AI tool: [`AGENTS.md`](AGENTS.md) (generated from `.ai/context.md`)
 - How the agent harness works: [`docs/agent-harness.md`](docs/agent-harness.md)
 
+## Before you merge to main
+
+A merge to `main` redeploys `bazaar-duels` (and taker, maker, MCP) on Railway, and a duel left unanswered at its
+deadline scores 0 for both sides. Merge through the guard:
+
+```bash
+scripts/merge_safe.sh 123          # runs the guard, then `gh pr merge 123 --merge` only when it says SAFE
+uv run bazaar deploy-guard         # the guard alone: exit 0 safe, 1 not; --json for scripts
+```
+
+It reads `/api/clock`, our live `/api/duels` and `/api/schedule` (three GETs, no writes) and says DO NOT MERGE while
+a live duel of ours is within `deploy_guard_duel_ticks` (4) of its deadline, or a Market Test bench runs or any
+scheduled event starts within `deploy_guard_bench_ticks` (10) ticks (GUARDRAILS.md "Live guard"). It prints the next
+safe tick and window. A read it cannot make, or a payload it cannot parse, means DO NOT MERGE.
+
+### Circuit breakers and the live watchdog
+
+`uv run bazaar breaker list|trip <scope> --reason "..."|reset <scope>` stops one kind of write in every process
+(`duel_accept`, `team_swap`, `dealer_buy`, `board_accept`, `maker_post`, `dealer_sell`) from its next tick, through
+`guardrails.check()`; cancels and closes are never stopped. The table is read once per tick with a 1 s budget and
+fails OPEN (the ledger already fails closed). The taker's watchdog (`live_watchdog_enabled`) reads Postgres after its
+sends and trips a scope on a buy above value or a sell below it, a bad team swap, or price spam (timed trip); a duel
+about to lapse with an acceptable offer is logged CRITICAL and a refusal storm WARN, never tripped. Every trip is a
+WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
+
 ## Working as a team (humans and agents)
 
 - **Team memory is public:** `.ai/memory.md` is committed. Append findings, gotchas and build
@@ -1307,6 +1332,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
 - [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 - [2026-10-03] finding — the published traits predict Friday's dealer limits within 5 % (N19)
@@ -1314,7 +1340,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
 - [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
-- [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
 
 <!-- BAZAAR:STATUS:END -->
 

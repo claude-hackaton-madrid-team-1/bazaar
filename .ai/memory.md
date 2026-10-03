@@ -1001,3 +1001,8 @@ in the same tick: `wait_for_tick` = shared) can. The simulator's shared slot is 
 accepts (GUARDRAILS.md `max_accepts_per_tick`). The same day, none of the taker's 528 rejections was a lost slot:
 all were `cash_floor`, `max_spend_per_game_hour` or `max_price_*` (PR #201).
 
+### [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
+`bazaar deploy-guard` at tick 556 (session live): DO NOT MERGE, duel 2481 one tick from its deadline, safe only
+ticks 558–560 before duel 2496 enters its 4-tick guard. Merge through `scripts/merge_safe.sh <pr>`. A read-only
+replay of the watchdog rules on the shared DB (windows ending ticks 300/400/480/555) tripped nothing; its storms were
+real (SAL-07 refused 86×, SAL-08 53×). Breakers fail OPEN with one read per tick and a 15 s backoff after a failure.

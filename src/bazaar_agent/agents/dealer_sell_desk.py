@@ -536,7 +536,9 @@ def standard_hooks(
             ctx = replace(context(), accepts_this_tick=0)
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
-        action = Action(action_kind(kind), cand.ref, cand.rarity, price, your_value=cand.your_value)
+        action = Action(
+            action_kind(kind), cand.ref, cand.rarity, price, your_value=cand.your_value, scope="dealer_sell"
+        )
         verdict = check(action, ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 

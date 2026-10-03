@@ -164,6 +164,17 @@ class Guardrails(BaseModel):
     dealer_sell_rounds: int = Field(default=5, ge=1, le=20)
     buyer_rank_enabled: bool = False
     buyer_rank_fallback_ticks: int = Field(default=6, ge=1, le=40)
+    # Live guard: off-by-default values here, so code built without GUARDRAILS.md behaves as before.
+    deploy_guard_duel_ticks: int = Field(default=4, ge=0, le=100)
+    deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
+    breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
+    live_watchdog_enabled: bool = False
+    watchdog_window_ticks: int = Field(default=120, ge=1, le=2000)
+    watchdog_swap_cash_per_hour: int = Field(default=40, ge=0)
+    watchdog_max_swaps_per_team: int = Field(default=3, ge=1)
+    watchdog_repeat_price_max: int = Field(default=3, ge=1)
+    watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
+    watchdog_refusal_storm: int = Field(default=50, ge=1)
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -274,6 +285,16 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_rounds": "agents.dealer_sell_desk.plan_for (steps from the opening ask to the typical fill)",
     "buyer_rank_enabled": "agents.maker._address (the addressee of an ask the maker already decided to post)",
     "buyer_rank_fallback_ticks": "agents.maker._with_fallbacks (an addressed ask unfilled this long goes public)",
+    "deploy_guard_duel_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
+    "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
+    "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
+    "live_watchdog_enabled": "agents.taker → watchdog.run (after the tick's sends)",
+    "watchdog_window_ticks": "watchdog.run (every rule's window)",
+    "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
+    "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
+    "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
+    "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
+    "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
 }
 
 
@@ -590,6 +611,7 @@ class Action:
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
     days_weight: float | None = None  # two-issue duels: `your_days_weight`
     gives_value: float = 0.0  # a swap: our copy given, net of their cash; the official value cap adds it to `price`
+    scope: str | None = None  # the circuit breaker this write answers to (`breaker_scope`); None: by kind
 
 
 @dataclass(frozen=True)
@@ -666,6 +688,8 @@ class Context:
     trades: TradeBook | None = None
     values: OfficialValues | None = None  # GET /api/me/value reads: every card buy capped; None refuses them all
     ranking: bool = False  # a ranking or plan check: no official value read; the send's own check caps the buy
+    # Tripped circuit breakers (`breakers.py`). None: read this process's board for `tick` (once per tick, fail open).
+    breakers: frozenset[str] | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -788,9 +812,40 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
+    v.extend(_breaker_violations(action, ctx, rules))
     if buying and not v and not ctx.ranking:  # last, so /api/me/value is read only for a buy every rule allows
         v.extend(_official_value_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
+
+
+def breaker_scope(action: Action) -> str | None:
+    """The circuit breaker a write answers to. Cancels, closes and other writes that make us more careful have
+    none: a tripped breaker never stops us from stepping back."""
+    if action.scope is not None:
+        return action.scope
+    if action.kind == "duel_accept":
+        return "duel_accept"
+    if action.kind in ("accept_buy", "accept_sell"):
+        return "board_accept"
+    if action.kind == "dealer_sell":
+        return "dealer_sell"
+    if action.kind == "sell" or (action.kind == "bid" and action.counterparty is not None):
+        return "maker_post"
+    if action.kind in ("buy", "bid"):
+        return "dealer_buy"
+    return None
+
+
+def _breaker_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    scope = breaker_scope(action)
+    if scope is None:
+        return []
+    from bazaar_agent import breakers
+
+    tripped = ctx.breakers
+    if tripped is None:
+        tripped = breakers.board(rules.breaker_read_timeout_s).tripped(ctx.tick)
+    return [f"circuit breaker {scope} is tripped (`bazaar breaker list`)"] if scope in tripped else []
 
 
 def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:

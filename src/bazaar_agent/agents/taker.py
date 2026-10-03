@@ -137,6 +137,7 @@ from bazaar_agent.strategy import (
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
+from bazaar_agent.watchdog import Watchdog
 
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
 THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
@@ -540,6 +541,8 @@ class Taker:
         self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
+        # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
+        self.watchdog: Any = Watchdog(getattr(decisions, "_connect", None), log)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -582,6 +585,11 @@ class Taker:
         if self.cards is not None:
             self.cards.flush(tick)
         self.feed.archive_pending()
+        if self.rules.live_watchdog_enabled and self.live:
+            try:
+                self.watchdog.tick(tick, self.rules)  # Postgres only, bounded; it never raises by design
+            except Exception as e:  # noqa: BLE001 — a watchdog bug must never cost the tick
+                self.log(f"tick {tick} taker: watchdog failed ({type(e).__name__}); the tick goes on")
 
     def _card_boost(self, tick: int) -> dict[str, float]:
         """The cards heartbeat's rank multipliers; any failure is "no boost" (today's order), never a failed tick."""

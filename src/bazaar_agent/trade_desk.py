@@ -574,7 +574,7 @@ def _action(t: Trade, your_value: dict[int, float], to: str) -> Action | None:
     if t.kind == "bid":
         return Action("bid", t.refs[0], t.rarity, t.price, counterparty=to, volume=t.volume)
     if t.price < 0:  # a swap where we add cash: the cash floor and the spend cap see it as a bid
-        return Action("bid", t.refs[1], t.rarity, -t.price)
+        return Action("bid", t.refs[1], t.rarity, -t.price, scope="team_swap")
     return None  # a swap with no cash from us: only its counterparty's share applies
 
 
