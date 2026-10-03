@@ -447,6 +447,27 @@ def test_two_issue_sessions_refuse_a_price_without_days_and_score_a_deal():
     assert w.team(US).duel_points == done["result"]["points"]
 
 
+def test_duel_accepts_share_the_teams_one_accept_per_tick(monkeypatch):
+    # RULES.md "Per tick": the team may accept ONE offer per tick, duels included (#151 review P2: the live sim
+    # used to allow one accept per duel, so six duels on one deadline could all be accepted in one tick).
+    monkeypatch.setenv("SIM_DUEL_PAIRS", "2")
+    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    w = m.world
+    m.step(2)
+    open_offers = [d for d in duels.duels_view(w, US, False)["duels"] if d["rival_offer"] is not None]
+    assert len(open_offers) >= 2
+    duels.accept(w, US, open_offers[0]["duel"])
+    err = refused("wait_for_tick", duels.accept, w, US, open_offers[1]["duel"])
+    assert err.status == 429 and err.extra["next_tick"] == w.tick + 1
+    card = [a.id for a in w.holdings(THEM) if a.kind == "card"][0]
+    offer = market.offer_from_input(w, THEM, {"give": {"assets": [card]}, "want": {"cash": 5}})
+    refused("wait_for_tick", market.accept, w, US, offer.id, {})  # the market shares the same slot
+    m.step()
+    later = [d for d in duels.duels_view(w, US, False)["duels"] if d["rival_offer"] is not None]
+    if later:
+        duels.accept(w, US, later[0]["duel"])  # a new tick, a new slot
+
+
 def test_a_duel_without_a_deal_closes_at_its_deadline():
     m = manual_world(duel_first_tick=1, duel_ticks=4)
     m.step(6)

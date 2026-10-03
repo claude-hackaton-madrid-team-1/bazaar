@@ -9,7 +9,12 @@ import pytest
 
 from bazaar_sim import duel_zoo as zoo
 from bazaar_sim import duels
+from bazaar_sim.world import LIMITS
 from tests.simkit import manual_world
+
+# These tests compare each live duel with the offline engine's single duel, so the team's one accept per tick
+# (shared across duels in the live sim, as in the real game) is lifted here: it is not what they measure.
+PARITY_LIMITS = {**LIMITS, "accepts_per_team_per_tick": 12}
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evals" / "duels_done.json"
 US = "t01"
@@ -177,7 +182,7 @@ def test_no_rival_ever_offers_or_accepts_outside_its_own_limit():
 
 
 def test_the_sim_style_replays_the_simulators_own_bot_message_for_message():
-    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    m = manual_world(duel_first_tick=1, duel_ticks=12, limits=PARITY_LIMITS)
     m.step()
     w = m.world
     mine = sorted((d for d in w.state.duels.values() if d.team == US), key=lambda d: d.duel)
@@ -268,7 +273,7 @@ def test_a_no_show_rival_never_speaks_in_the_live_simulator(monkeypatch):
 def test_live_zoo_rivals_play_like_the_offline_engine(monkeypatch, style):
     monkeypatch.setenv(duels.STYLES_ENV, style)
     monkeypatch.setenv(duels.DECAY_ENV, "0.1")
-    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    m = manual_world(duel_first_tick=1, duel_ticks=12, limits=PARITY_LIMITS)
     m.step()
     mine = drive(m, countering)
     for d in mine:
@@ -456,7 +461,7 @@ def test_a_days_blind_rival_always_sends_its_fixed_day_but_values_days_by_its_we
 def test_more_pairs_per_session_and_exploiters_in_the_live_simulator(monkeypatch):
     monkeypatch.setenv(duels.PAIRS_ENV, "3")
     monkeypatch.setenv(duels.STYLES_ENV, "squeezer,oracle_squeezer")
-    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    m = manual_world(duel_first_tick=1, duel_ticks=12, limits=PARITY_LIMITS)
     m.step()
     mine = [d for d in m.world.state.duels.values() if d.team == US]
     assert len(mine) == 6 and len({d.deadline_tick for d in mine}) == 1

@@ -930,6 +930,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — bazaar-sim duels now score like the real game and share the team's one accept per tick
 - [2026-10-03] gotcha — public /state: "sent" needs `chosen`, and only sent rows are published at all
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
@@ -937,7 +938,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
 - [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
 - [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 
 <!-- BAZAAR:STATUS:END -->
 
