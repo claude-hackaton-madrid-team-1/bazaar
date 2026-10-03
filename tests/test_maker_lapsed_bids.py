@@ -133,14 +133,51 @@ def test_a_bid_from_before_a_restart_is_refunded_at_the_conservative_date(tmp_pa
     assert refund["tick"] == T0 - 10 and refund["t_hours"] <= at(T0 - 10).t_hours
 
 
-def test_the_kill_switch_does_not_stop_the_bookkeeping(tmp_path, monkeypatch):
+def test_a_bid_gone_under_the_kill_switch_is_not_refunded(tmp_path, monkeypatch):
+    """The runbook is PAUSE, then `bazaar flatten`, which cancels our bids and books their refunds: under the
+    switch a bid seen gone is never refunded again (a true lapse then over-counts, fail safe; review of #142)."""
     team = Listing()
     m, _ = maker(tmp_path, team, live=True)
     run(m, team, [T0])
     team.offers.remove(posted_bid(team))
     monkeypatch.setattr("bazaar_agent.agents.maker.kill_switch", lambda rules, path=None: ("trading_enabled = false",))
     run(m, team, [T0 + TTL, T0 + TTL + 1])
-    assert [e["price"] for e in spend_rows(m)] == [65, -65]  # refunded, nothing reposted while held
+    assert [e["price"] for e in spend_rows(m)] == [65]  # nothing reposted while held, nothing refunded twice
+
+
+def test_a_bid_someone_else_cancelled_in_its_last_ticks_is_refunded_once(tmp_path):
+    """`bazaar flatten` (or the desk) cancels the bid at E-1 and books its refund; the feed shows the cancel, so
+    the maker's lapse check does not refund it again (review of #142: the hour read -65)."""
+    from bazaar_agent.guardrails import refund_row
+    from tests.test_strategy import EVENTS
+
+    team = Listing()
+    events = list(EVENTS)
+    m, _ = maker(tmp_path, team, live=True)
+    m.feed = MarketFeed(lambda n: list(events))
+    run(m, team, [T0])
+    o = posted_bid(team)
+    run(m, team, [T0 + TTL - 2])
+    team.offers.remove(o)
+    c = at(T0 + TTL - 1)
+    m.ledger.record(*refund_row(65, "LAV-09", o["created_tick"], c.tick, c.t_hours, c.max_tick_seconds))
+    cancel = {"offer": o["id"], "venue": "rastro"}
+    events.append({"id": 99_997, "tick": T0 + TTL - 1, "type": "offer.cancelled", "actor": "", "payload": cancel})
+    run(m, team, [T0 + TTL, T0 + TTL + 1, T0 + TTL + 2])
+    assert [e["price"] for e in spend_rows(m) if e["price"] < 0] == [-65]
+
+
+def test_a_settlement_event_with_an_odd_tick_does_not_stop_the_lapse_check(tmp_path):
+    from tests.test_strategy import EVENTS
+
+    team = Listing()
+    events = list(EVENTS) + [{"id": 99_998, "tick": "abc", "type": "settlement", "payload": {"items": []}}]
+    m, _ = maker(tmp_path, team, live=True)
+    m.feed = MarketFeed(lambda n: list(events))
+    run(m, team, [T0])
+    team.offers.remove(posted_bid(team))
+    run(m, team, [T0 + TTL, T0 + TTL + 1])
+    assert -65 in [e["price"] for e in spend_rows(m)]  # the lapse was refunded; the odd event was skipped
 
 
 def test_a_dry_run_books_nothing(tmp_path):

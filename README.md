@@ -1011,6 +1011,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
 - [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
 - [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
 - [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)

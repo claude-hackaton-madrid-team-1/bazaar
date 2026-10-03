@@ -492,3 +492,9 @@ scrubber keeps: `decisions.writer()` stores a short hash (`w` + 10 hex) of `RAIL
 attempt: on one key shared by every process that fills the 5 req/s bucket further. `TeamBazaar` (B18) never
 re-sends a refusal or a write. RULES.md's "a refused request costs nothing" is about a `4xx`: a 5xx (or an edge
 502/504) may come after the game applied it, so it keeps the team's accept slot and books the spend (#141 review).
+
+### [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
+A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed or been cancelled by `bazaar
+flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
+a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
+emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.

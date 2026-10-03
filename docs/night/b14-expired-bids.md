@@ -75,3 +75,18 @@ the taker's board accepts and dealer bids were refused too.
   settle are unverified; Friday's feed has no expiry events. Either way the one-tick confirmation and the card / feed
   checks keep the spend when in doubt.
 - The stopgap from the backlog (`offer_ttl_ticks` ≈ one game hour) is not needed with this fix.
+
+## Takeover review fixes (#142, 2026-10-03)
+
+Both reviewers reproduced a double refund: `bazaar flatten` (the runbook: PAUSE, then flatten), the desk's
+`sell_cancel` or a cancel in a bid's last tick or two books its refund, and the maker then saw the bid gone at
+or after its expiry and refunded it again (the hour read −65 while nothing was committed). Fixed:
+
+- A bid whose cancel shows in the feed (`offer.cancelled` with its offer id; the live server emits none for an
+  expiry, the simulator marks one `reason: "expired"`) is never refunded by the lapse check.
+- Under the kill switch a bid seen gone is not refunded at all: a true lapse then over-counts (fail safe).
+- The maker's own cancel forgets the bid only after `_refunded`, so the tick's estimate uses the exact date.
+- A settlement event with an odd tick, or an expiry tick that is not a number, no longer stops the maker's tick.
+
+Left as is (reply on the PR): two live makers on one ledger would each refund a lapse (only one maker runs);
+`/api/me/offers` is trusted to list only our offers.
