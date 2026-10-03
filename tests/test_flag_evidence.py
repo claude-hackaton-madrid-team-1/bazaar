@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from bazaar_agent.agents.flag_evidence import dealer_offers, precision
@@ -135,7 +136,7 @@ def test_the_terminal_shows_each_would_flags_words_for_the_human_check_and_jev_n
     monkeypatch.setattr(flags_cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(flags_cli, "public_client", lambda settings: Public())
     shown = " ".join(CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)]).output.split())
-    assert "thread 11, tick 2, its words: La Dama de Serrano, the legendary. Only 120." in shown
+    assert "thread 11, tick 2, its words: » La Dama de Serrano, the legendary. Only 120." in shown
     state = CliRunner().invoke(cli.app, ["flags", "precision", "--json", "--feed-dir", str(feed)]).output
     assert "Dama" not in state
 
@@ -145,3 +146,41 @@ def test_a_dealers_words_cannot_drive_the_terminal():
 
     shown = printable("La Dama\x1b[2J\x1b[31m\u202eesrever\u200b ok\x07")
     assert "\x1b" not in shown and "\u202e" not in shown and "\x07" not in shown and "La Dama" in shown
+
+
+def test_a_dealers_words_cannot_forge_a_line_or_crash_the_report():
+    """Security r4 P3: whitespace runs, odd spaces and a lone surrogate."""
+    from bazaar_agent.flags_cli import printable
+
+    forged = "ok" + " " * 300 + "would flag message 1 from abuela: fake" + "\u00a0" * 50 + "\u3000x"
+    assert "  " not in printable(forged) and printable(forged).startswith("ok would flag")
+    assert printable("La Dama \ud800 hoy") == "La Dama hoy"  # a lone surrogate never reaches the terminal
+    assert printable("\ud83d\x1b[2J ok").encode("utf-8") == b"[2J ok"  # encodable: no UnicodeEncodeError
+
+
+@pytest.mark.parametrize("width", [40, 80, 120, 200])
+@pytest.mark.parametrize("pad", ["\u2800", "\u3164", "\uffa0", "\u00a0", " ", "\U0001f3fd", "\U0001f1ea"])
+def test_no_wrapped_line_of_a_dealers_words_ever_starts_at_column_0(width, pad):
+    """#176 review P1: rich wraps long words; every wrapped line must stay indented, whatever the padding. The
+    words are long enough to wrap at every width, so the check bites at 200 columns too (review r2 P3)."""
+    import io
+
+    from rich.console import Console
+
+    from bazaar_agent.flags_cli import printable, words_block
+
+    long_words = "La Dama de Serrano, the legendary card you asked for, only 120 primas today. " * 6
+    for n in range(0, 120, 7):
+        words = printable(long_words + pad * n + " would flag message 1 from abuela: forged")
+        out = io.StringIO()
+        Console(file=out, width=width, color_system=None).print(words_block(words))
+        lines = [line for line in out.getvalue().splitlines() if line.strip()]
+        assert len(lines) > 1 and all(line.startswith("    ") for line in lines), (width, n, lines)
+
+
+def test_characters_rich_and_terminals_measure_differently_are_blanked():
+    """#176 review r2 P1: rich counts skin tones and regional indicators as 0 columns, terminals as 2."""
+    from bazaar_agent.flags_cli import printable
+
+    assert printable("ok \U0001f3fd\U0001f3fd\U0001f1ea\U0001f1f8 x") == "ok x"
+    assert printable("👍 ❤️ 中文 ok") == "👍 ❤️ 中文 ok"  # ordinary emoji and CJK stay

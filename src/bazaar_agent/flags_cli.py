@@ -13,19 +13,21 @@ Read-only: public reads only, no key, nothing is sent.
 from __future__ import annotations
 
 import json
-import unicodedata
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.padding import Padding
 from rich.table import Table
+from rich.text import Text
 
 from bazaar_agent.agents.flag_evidence import dealer_offers, precision
 from bazaar_agent.agents.inspector import CardIndex
 from bazaar_agent.config import load_settings
 from bazaar_agent.feed import DEFAULT_WINDOW, FeedStore, load_events
 from bazaar_agent.guardrails import GuardrailsError, load_guardrails
+from bazaar_agent.llm.chooser import HIDING_MARKS
 from bazaar_agent.sdk import BazaarError, public_client
 
 WORDS_SHOWN = 1_200  # a would-flag's words in full (the server's cap), for the human who decides on flag_dealers
@@ -35,9 +37,25 @@ err_console = Console(stderr=True)
 
 
 def printable(text: str) -> str:
-    """A counterparty's words safe for a terminal: no control, format or direction characters (no escape
-    sequence can move the cursor or reverse the line); rich markup is escaped by the caller."""
-    return "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in text)
+    """A counterparty's words safe for a terminal: only printable characters (no escape sequence, direction
+    mark or lone surrogate), the invisible "printable" blanks (braille blank, Hangul fillers) blanked too, and
+    whitespace runs collapsed. `words_block` then indents EVERY wrapped line, so nothing can sit at column 0."""
+    kept = "".join(ch if ch.isprintable() and ch not in HIDING_MARKS and not _mismeasured(ch) else " " for ch in text)
+    return " ".join(kept.split())
+
+
+# Characters rich measures as 0 columns while terminals draw them 2 wide (skin-tone modifiers, regional
+# indicators): the terminal would wrap the row itself and put the rest at column 0 (#176 review r2).
+MISMEASURED = ((0x1F3FB, 0x1F3FF), (0x1F1E6, 0x1F1FF))
+
+
+def _mismeasured(ch: str) -> bool:
+    return any(low <= ord(ch) <= high for low, high in MISMEASURED)
+
+
+def words_block(words: str) -> Padding:
+    """A dealer's words as literal text (never markup), dimmed, every wrapped line indented by 4 columns."""
+    return Padding(Text("» " + words, style="dim"), (0, 0, 0, 4))
 
 
 @flags_app.command("precision")
@@ -77,7 +95,8 @@ def flags_precision(
         console.print(f"would flag message {i.message_id} from {escape(i.dealer)}: {escape(i.reason)}")
         said = printable(source.text or "(no words)")
         words = said[:WORDS_SHOWN] + ("…" if len(said) > WORDS_SHOWN else "")
-        console.print(f"  thread {source.thread}, tick {source.tick}, its words: [dim]{escape(words)}[/dim]")
+        console.print(f"  thread {source.thread}, tick {source.tick}, its words:")
+        console.print(words_block(words))  # every line indented: never a line of ours
     skipped = evidence.offers - evidence.known_topic - evidence.unreadable
     console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")
     console.print(f"flag_dealers = {', '.join(sorted(rules.flag_dealer_ids)) or 'none'} (GUARDRAILS.md opt-in)")
