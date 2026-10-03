@@ -18,7 +18,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import flags_cli, intel, render, traces
+from bazaar_agent import flags_cli, intel, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -2322,6 +2322,7 @@ def _run_agent(
     from bazaar_agent.decisions import DecisionLog
     from bazaar_agent.ledger_pg import LedgerNotShared, ledger_health, open_ledger
     from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+    from bazaar_agent.supply_db import ScanStore
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
@@ -2343,7 +2344,8 @@ def _run_agent(
     except LedgerNotShared as e:
         _fail(f"{name}: refusing to trade: {e}")
     decisions = DecisionLog(settings.data_dir, connect, log)
-    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, archive=learn)
+    scans = ScanStore(settings.data_dir / "supply", connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, scans, archive=learn)
     extra: dict[str, Any] = {}
     if learn:
         from bazaar_agent.learn.live import LiveLearner
@@ -2738,6 +2740,7 @@ def broker_run(
 
 llm_cli.register(app)
 evals_cli.register(app)
+supply_cli.register(app)
 learn_cli.register(app)
 dealer_finals.register(dealer_app)
 

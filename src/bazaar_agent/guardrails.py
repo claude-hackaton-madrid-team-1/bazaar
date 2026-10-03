@@ -131,6 +131,7 @@ class Guardrails(BaseModel):
         return _dealer_ids(self.flag_dealers)
 
     protect_page_sets: str = "none"
+    open_sealed_packs: bool = False
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
     team_threads_enabled: bool = False
@@ -219,6 +220,7 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",
@@ -500,7 +502,7 @@ def duel_days_ok(days: float) -> bool:
 
 
 # `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
-# kill switch applies to them.
+# kill switch applies to them. `open_pack` moves no cash either; it also needs `open_sealed_packs`.
 ActionKind = Literal[
     "buy",
     "sell",
@@ -512,6 +514,7 @@ ActionKind = Literal[
     "flag",
     "cancel",
     "close_thread",
+    "open_pack",
     "venue_open",
     "venue_close",
     "venue_fee",
@@ -721,6 +724,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(refusal)
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind == "open_pack" and not rules.open_sealed_packs:
+        v.append("open_sealed_packs = false")
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
         v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))

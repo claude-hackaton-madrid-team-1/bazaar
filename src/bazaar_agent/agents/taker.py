@@ -113,6 +113,7 @@ from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
+from bazaar_agent.pack_open import choose, sealed_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import (
     Market,
@@ -467,6 +468,8 @@ class Taker:
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
+        self._pack_notes: set[tuple[int, str]] = set()  # (asset, verdict) already recorded and not sent
+        self._pack_refused: set[int] = set()  # sealed packs the server refused to open: never sent again
         self._dry_accepts: dict[int, int] = {}
         self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
         self._flag_rows: dict[int, tuple[int, bool]] = {}  # message id -> (its flag row, approved): a 429 reuses it
@@ -532,8 +535,6 @@ class Taker:
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         self._unsettled = unsettled_accepts(snap.me, self.ledger, clock.tick)  # read once per tick
-        if fresh := self.pages.new(snap.me):
-            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
@@ -548,6 +549,8 @@ class Taker:
                 f"{len(self.convs)} dealer thread(s) stay open): {'; '.join(stops)}"
             )
             return
+        if fresh := self.pages.new(snap.me):  # after the hold: a page seen while holding is said when we act
+            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         if self.learner is not None:
             known: dict[str, Any] = {str(d.get("id")): "dealer" for d in snap.dealers if d.get("id")}
             known.update({v.id: "venue" for v in snap.venues})
@@ -555,8 +558,8 @@ class Taker:
         if self.bluff is not None:  # memory only before the sends: a cooloff, strike or flag after a tactic
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
-        market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
+        market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan)
         self._open(run, book, threads)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]
@@ -575,6 +578,7 @@ class Taker:
             return []
 
         self._team_desk("converse", converse)
+        self._open_pack(run, market)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
@@ -748,6 +752,52 @@ class Taker:
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
         return out
+
+    # ------------------------------------------------------------ (c) sealed packs we hold
+
+    def _open_pack(self, run: _TickRun, market: Market) -> None:
+        """Open at most one sealed pack a tick when its cards are worth more to us than any sealed price
+        (`pack_open.choose`), behind `open_sealed_packs`. The next tick re-reads /me (album first)."""
+        packs = [p for p in sealed_packs(run.snap.me) if p.asset_id not in self._pack_refused]
+        if not packs:
+            return
+        tick = run.snap.clock.tick
+        choices = [choose(market, p, run.params) for p in packs]
+        choice = next((c for c in choices if c.verdict == "open"), choices[0])
+        verdict = check(Action("open_pack", choice.pack.pack, "pack"), self._ctx(run), self.rules)
+        status: Status = "approved" if verdict.allowed and choice.verdict == "open" else "rejected"
+        if status == "approved" and not run.window.open():
+            status = "expired"
+        note = (choice.pack.asset_id, f"{choice.verdict} {verdict}")
+        if status != "approved" and note in self._pack_notes:
+            return  # a pack kept sealed (or the switch off) is said once, not every tick
+        self._pack_notes.add(note)
+        did = self.rec.decide(
+            tick,
+            "pack_open",
+            f"{choice.verdict} sealed {choice.pack.pack} #{choice.pack.asset_id} · guardrails {verdict}",
+            inputs={"pack": choice.pack.pack, "asset_id": choice.pack.asset_id, "ev": round(choice.ev, 1)},
+            reason=choice.reason,
+            guardrail=str(verdict),
+            chosen=status == "approved",
+            status=status,
+            move={"open_pack": choice.pack.asset_id},
+        )
+        if status != "approved" or not self.live:
+            return
+        body = self.rec.send(
+            did,
+            tick,
+            "open_pack",
+            {"asset": choice.pack.asset_id},
+            lambda: self.team.open_pack(choice.pack.asset_id),
+        )
+        if body is None:  # refused (asset_locked, not_owner, a network blip, ...): never re-sent by this process
+            self._pack_refused.add(choice.pack.asset_id)
+            self.log(f"tick {tick} taker: {choice.pack.pack} #{choice.pack.asset_id} stays sealed until a restart")
+        pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
+        if pulled:
+            self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")
 
     # ------------------------------------------------------------ (b) the dealer desk
 
