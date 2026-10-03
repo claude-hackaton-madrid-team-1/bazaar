@@ -328,6 +328,20 @@ def trade_plan(
         console.print(f"[yellow]if the cap were on: {line}[/yellow]")
 
 
+@arb_app.command("watch-log")
+def arb_watch_log(
+    path: str | None = typer.Argument(None, help="The monitor's opportunities.jsonl (default: in the data dir)"),
+    since_tick: int | None = typer.Option(None, help="Only opportunities first seen at or after this tick"),
+) -> None:
+    """Summarise the monitor's opportunity log: per kind, how many, how long they stood, what the taker would take."""
+    from pathlib import Path
+
+    from bazaar_agent import opp_watch
+
+    where = Path(path) if path else load_settings().data_dir / opp_watch.LOG_FILE
+    typer.echo(opp_watch.render_summary(opp_watch.summarise(opp_watch.read_rows(where), since_tick), where))
+
+
 @arb_app.command("study")
 def arb_study_cmd(
     stream: str | None = typer.Argument(
@@ -1137,6 +1151,18 @@ def monitor(
         True, "--stream/--no-stream", help="Hold ONE live SSE stream (6 per team key, shared by laptops and tabs)"
     ),
     show_events: bool = typer.Option(False, help="Print every streamed event as it lands, timestamped"),
+    opportunities: bool = typer.Option(
+        False, help="Also scan the boards (public reads) for arbitrage, duplicates and B4's buys/sells: alert + log"
+    ),
+    opp_every: int = typer.Option(1, min=1, help="Scan the boards once every N ticks"),
+    arb_alert_net: float | None = typer.Option(
+        None, help="Alert a crossing netting at least this (default: arb_min_net_spread)"
+    ),
+    dup_alert_surplus: float | None = typer.Option(
+        None, help="Alert a duplicate with this surplus (default: dup_min_surplus)"
+    ),
+    opp_alert_surplus: float = typer.Option(5.0, help="Alert a B4 buy/sell opportunity worth at least this to us"),
+    opp_log_floor: float = typer.Option(0.0, help="Log every opportunity whose value reaches this"),
 ) -> None:
     """The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts."""
     from bazaar_agent.agents.monitoring import MonitorLoop, Options
@@ -1153,12 +1179,26 @@ def monitor(
     store = FeedStore(settings.feed_dir)
     watcher = Watcher(store, ours, FeedStore(settings.feed_dir, TEAM_EVENTS_FILE))
     options = Options(db_enabled, notify, refresh_every, show_events)
-    loop = MonitorLoop(public, team, watcher, settings.data_dir, options, console.print)
+    scanner = None
+    if opportunities:
+        from bazaar_agent import opp_watch
+
+        rules = _rules().rules
+        params = opp_watch.WatchParams(
+            opp_every,
+            rules.arb_min_net_spread if arb_alert_net is None else arb_alert_net,
+            rules.dup_min_surplus if dup_alert_surplus is None else dup_alert_surplus,
+            opp_alert_surplus,
+            opp_log_floor,
+        )
+        scanner = opp_watch.Scanner(params, rules, _strategy().params)
+    loop = MonitorLoop(public, team, watcher, settings.data_dir, options, console.print, scanner=scanner)
     inbox = Inbox()
     loop.stream = open_stream(settings, inbox.put) if stream else None
     console.print(
         f"monitor: feed → {store.path}, alerts → {loop.alerts_path}, db {'on' if db_enabled else 'off'}, "
         f"stream {'on (1 of the 6 per team key)' if stream else 'off: poll only'}, "
+        f"opportunities {f'on → {loop.opportunities_path}' if scanner else 'off'}, "
         f"us = {ours or 'unknown (set BAZAAR_TEAM_ID or BAZAAR_KEY)'}"
     )
     try:

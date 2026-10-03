@@ -18,7 +18,7 @@ from typing import Any
 
 from rich.markup import escape
 
-from bazaar_agent import db, traces
+from bazaar_agent import db, opp_watch, traces
 from bazaar_agent import monitor as mon
 from bazaar_agent import telemetry as tm
 from bazaar_agent.feed import DEFAULT_WINDOW, CaptureResult, Event
@@ -55,6 +55,7 @@ class MonitorLoop:
         options: Options,
         say: Callable[[str], None],
         stream: EventStream | None = None,
+        scanner: opp_watch.Scanner | None = None,
     ) -> None:
         self.public, self.team, self.watcher = public, team, watcher
         self.data_dir, self.options, self.say, self.stream = data_dir, options, say, stream
@@ -65,6 +66,10 @@ class MonitorLoop:
         self.ticks = 0
         self.streamed_since_tick = 0
         self.pg = Reconnector(self._open_pg, lambda m: say(f"[yellow]{m}[/yellow]"))
+        # Opportunity alerts (B23, `--opportunities`): None keeps today's monitor, which reads no board
+        self.scanner = scanner
+        self.tracker = opp_watch.Tracker(scanner.params) if scanner is not None else None
+        self.opportunities_path = data_dir / opp_watch.LOG_FILE
 
     @property
     def stream_state(self) -> str:
@@ -92,6 +97,8 @@ class MonitorLoop:
     def _stream_events(self, events: list[Event]) -> None:
         ingested = self.watcher.from_stream(events)
         self.streamed_since_tick += len(ingested.fresh)
+        if self.scanner is not None:
+            self.scanner.learn(ingested.fresh)
         traces.stream_batch(len(events), ingested, self.stream_state)
         if self.options.show_events:
             for e in ingested.fresh + ingested.private:
@@ -127,11 +134,39 @@ class MonitorLoop:
         traces.trader_changes({**self.dealers, **self.teams_seen}, {**dealers_after, **teams_now})
         self.dealers, self.levels, self.teams_seen = dealers_after, levels_after, teams_now
         me = self._read_me(c)
+        if self.scanner is not None and me is not None:
+            alerts += self._opportunities(c, me, ingested.fresh, history)
         self._write(lambda cx: self._store_tick(cx, c.tick, ingested.fresh, alerts, history, me), f"tick {c.tick}")
         self.raise_alerts(alerts, "poll")
         traces.monitor_summary(len(ingested.fresh), len(dealers_after), len(teams_now), len(levels_after), me)
         self.say(self._tick_line(c, result, lead, me))
         self.streamed_since_tick = 0
+
+    def _opportunities(self, c: Clock, me: dict[str, Any], fresh: list[Event], history: Any) -> list[mon.Alert]:
+        """Every `every_ticks`: read the boards (public, keyless), score them with W8's and B4's scanners, log
+        every opportunity's life, alert once per opportunity. A failure is reported and never stops the loop."""
+        assert self.scanner is not None and self.tracker is not None
+        self.scanner.learn(fresh)
+        if (self.ticks - 1) % self.scanner.params.every_ticks:
+            return []
+        try:
+            if history is not None or not self.scanner.catalog:
+                events = history if history is not None else list(self.watcher.store.events())
+                self.scanner.refresh(self.public.catalog(), events, str(me.get("id") or ""), me)
+            seen, reads = self.scanner.scan(self.public, me, c.tick)
+        except Exception as e:  # a refused read or a bad payload: no opportunities this tick, the monitor runs on
+            self.say(
+                f"[yellow]tick {c.tick}: opportunity scan failed ({type(e).__name__}: {escape(str(e)[:80])})[/yellow]"
+            )
+            tm.fail_current(e)
+            return []
+        alerts, rows = self.tracker.update(c.tick, seen)
+        opp_watch.append_rows(self.opportunities_path, rows)
+        standing = len(self.tracker.open)
+        self.say(
+            f"tick {c.tick}: {standing} opportunit{'y' if standing == 1 else 'ies'} standing ({reads} board reads)"
+        )
+        return alerts
 
     def _store_tick(
         self, cx: Any, tick: int, fresh: list[Event], alerts: list[mon.Alert], history: Any, me: Any
