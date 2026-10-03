@@ -259,6 +259,7 @@ def test_the_plan_is_fair_and_every_trade_pays_us():
     assert trades and plan.checks == () and plan.proven
     assert all(t.ours > 0 and t.theirs > 0 for t in trades)
     assert max(plan.shares.values()) <= 0.25 and len(plan.shares) >= 4
+    assert plan.worst_share <= 0.25  # even if one team took every listing posted for anyone
     assert sum(td._cash_out(t) for t in trades) <= plan.cash_room == 150
     assert plan.unconstrained >= plan.expected > 0
     assert len({i for t in trades for i in td._items(t)}) == sum(len(td._items(t)) for t in trades)  # each once
@@ -280,7 +281,7 @@ def test_verify_names_every_broken_promise():
     )
     plan = td.TradePlan(1, 300, 30, (bad,), (), (), {"t02": 1.0}, (), 1)
     problems = td.verify(plan, td.PlanParams(), Guardrails())
-    assert len(problems) == 5
+    assert len(problems) == 6 and any("could take 100%" in p for p in problems)
     assert any("no surplus for us" in p for p in problems) and any("nothing left for them" in p for p in problems)
     assert any("above max_price_rare 80" in p for p in problems) and any("100%" in p for p in problems)
     assert any("> 30 above cash_floor" in p for p in problems)
@@ -439,3 +440,16 @@ def test_without_a_file_the_feed_comes_from_the_db_then_the_capture_then_the_liv
     monkeypatch.setattr(cli, "_db_connect", lambda app: down)
     monkeypatch.setattr(cli, "_events", lambda live: [{"id": 1, "tick": 0, "type": "clock", "payload": {}}])
     assert [e["id"] for e in cli._history(None, live=False)] == [1]  # nothing captured: the live window
+
+
+def test_public_listings_count_against_every_team_in_the_plan():
+    me = {**ME, "cash": 1000}
+    refs = ["LAV-02", "LAV-08", "LAV-10", "LAT-10"]
+    bids = [
+        trade(t, 25, 5, ref, "bid", 25, "uncommon") for t, ref in zip(["t02", "t03", "t04", "t05"], refs, strict=True)
+    ]
+    # 4 × 25 planned, 25 % each: one public listing leaves room for nobody else to be addressed
+    posted, problems = td.post_as(bids, me, td.Start(), Guardrails(), share=0.25)
+    assert problems == [] and [t.to for t in posted] == ["t02", "t03", "t04", "t05"]
+    loose, _ = td.post_as(bids, me, td.Start(), Guardrails(), share=1.0)
+    assert [t.to for t in loose] == [None] * 4  # today's posting: the cap off, everything public

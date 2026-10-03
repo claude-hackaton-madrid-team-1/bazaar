@@ -51,6 +51,10 @@ class PlanParams:
     per_item: int = 4  # candidates kept per copy or wanted card (the best by expected surplus)
     max_pool: int = 120  # candidates the search sees (it recurses once per candidate)
     swaps_per_team: int = 5  # swap candidates kept per team (the best by expected surplus)
+    # Friday's base rates (B4's offer lifecycles): the share of copies listed for anyone, and to one team,
+    # that sold. A floor for a plan whose P(fill) only asks whether the counterparty values the price.
+    friday_public_fill: float = 0.20
+    friday_addressed_fill: float = 0.06
     cash_budget: int | None = None  # the most our bids and cash legs may promise (None: all the cash above the floor)
 
 
@@ -540,9 +544,10 @@ def choose(
 
 def _action(t: Trade, your_value: dict[int, float], to: str) -> Action | None:
     if t.kind == "ask":
-        return Action("sell", t.refs[0], t.rarity, t.price, your_value.get(t.asset_id or -1), to)
+        value = your_value.get(t.asset_id or -1)
+        return Action("sell", t.refs[0], t.rarity, t.price, your_value=value, counterparty=to, volume=t.volume)
     if t.kind == "bid":
-        return Action("bid", t.refs[0], t.rarity, t.price, None, to)
+        return Action("bid", t.refs[0], t.rarity, t.price, counterparty=to, volume=t.volume)
     if t.price < 0:  # a swap where we add cash: the cash floor and the spend cap see it as a bid
         return Action("bid", t.refs[1], t.rarity, -t.price)
     return None  # a swap with no cash from us: only its counterparty's share applies
@@ -566,16 +571,20 @@ def post_as(
     rules: Guardrails,
     tick: int = 0,
     t_hours: float = 0.0,
+    share: float = 1.0,
 ) -> tuple[list[Trade], list[str]]:
     """Each trade as it would be posted, in order, through `guardrails.check()` with what the earlier ones
     promise (cash out, cards wanted, our team-to-team exposure). A swap always goes in a thread with its
     team. A listing goes for anyone when it can (on Friday 20 % of the copies listed for anyone sold, 6 %
     of those addressed to one team), but an offer anyone may take counts against every team's share: so as many listings
-    as possible, in order, go public while every trade still passes; the rest are addressed. (trades with
-    `to` set, every refusal of the best such posting.)"""
+    as possible, in order, go public while every trade still passes; the rest are addressed. With `share`
+    below 1 a listing also goes public only while no team could pass `share` of the planned volume by
+    taking every public listing on top of what is addressed to it (the guardrail's worst case, applied to
+    the plan): all addressed always meets it when the plan's own shares do. (trades with `to` set, every
+    refusal of the best such posting.)"""
     best: tuple[list[Trade], list[str]] | None = None
     for public_first in range(len(trades), -1, -1):
-        posted, problems = _posting(trades, me, start, rules, tick, t_hours, public_first)
+        posted, problems = _posting(trades, me, start, rules, tick, t_hours, public_first, share)
         if not problems:
             return posted, problems
         if best is None or len(problems) < len(best[1]):
@@ -592,8 +601,11 @@ def _posting(
     tick: int,
     t_hours: float,
     public_first: int,
+    share: float = 1.0,
 ) -> tuple[list[Trade], list[str]]:
     """`post_as` with only the first `public_first` trades tried for anyone (a swap never is)."""
+    planned = sum(t.volume for t in trades)
+    planned_public, planned_to = 0, Counter[str]()
     your_value = {
         int(a["id"]): float(a["your_value"])
         for a in me.get("assets") or []
@@ -619,6 +631,10 @@ def _posting(
         for to in options:
             action = _action(t, your_value, to)
             reasons = [] if action is None else list(check(action, ctx(), rules).violations)
+            if share < 1:  # the plan's worst case: one team takes every public listing too
+                mine = planned_to.get(to, 0) if to != ANY_TEAM else max(planned_to.values(), default=0)
+                if planned_public + mine + t.volume > share * planned + 1e-9:
+                    reasons.append(f"a team could take {planned_public + mine + t.volume} of {planned} P planned")
             if t.kind == "swap":  # cards for cards: its share counts the notional, not the cash leg
                 book = TradeBook(dict(settled), dict(addressed), public)
                 reasons += [r for r in [counterparty_refusal(book, to, t.volume, rules)] if r]
@@ -635,11 +651,12 @@ def _posting(
         spent += cash_out
         if t.kind in ("bid", "swap"):
             held[t.refs[-1]] += 1
-        exposure = max(abs(t.price), 0) if t.kind != "swap" else t.volume
-        if chosen == ANY_TEAM:
-            public += exposure
+        if chosen == ANY_TEAM:  # the notional, as `trade_book` and `settled_volume` count it
+            public += t.volume
+            planned_public += t.volume
         else:
-            addressed[chosen] += exposure
+            addressed[chosen] += t.volume
+            planned_to[chosen] += t.volume
         out.append(replace(t, to=None if chosen == ANY_TEAM else chosen))
     return out, problems
 
@@ -730,6 +747,23 @@ class TradePlan:
     what_if: tuple[str, ...] = ()  # the cap is off in GUARDRAILS.md: how the plan would post with it on
     dropped: tuple[str, ...] = ()  # trades the guardrails refused, replaced by the next best plan
 
+    def expected_at(self, public_fill: float, addressed_fill: float) -> float:
+        """Expected surplus if each trade fills at a base rate on top of P(fill): `public_fill` for one
+        posted for anyone, `addressed_fill` for one addressed to its team (swaps included)."""
+        trades = (*self.listings, *self.threads)
+        return round(sum(t.expected * (public_fill if t.to is None else addressed_fill) for t in trades), 2)
+
+    @property
+    def worst_share(self) -> float:
+        """The largest share of the planned volume one team could take: what is addressed to it plus every
+        listing posted for anyone."""
+        trades = (*self.listings, *self.threads)
+        total = sum(t.volume for t in trades)
+        public = sum(t.volume for t in trades if t.to is None)
+        teams = {t.counterparty for t in trades} | {t.to for t in trades if t.to}
+        worst = max((sum(t.volume for t in trades if t.to == c) for c in teams), default=0)
+        return round((public + worst) / total, 4) if total else 0.0
+
     @property
     def expected(self) -> float:
         return round(sum(t.expected for t in (*self.listings, *self.threads)), 2)
@@ -758,6 +792,8 @@ def verify(plan: TradePlan, pp: PlanParams, rules: Guardrails) -> tuple[str, ...
     for team, s in plan.shares.items():
         if s > pp.max_share + 1e-9:
             problems.append(f"{team} takes {s:.0%} of planned volume (max {pp.max_share:.0%})")
+    if plan.worst_share > pp.max_share + 1e-9:
+        problems.append(f"one team could take {plan.worst_share:.0%} of planned volume with the public listings")
     cash_out = sum(t.price for t in plan.listings if t.kind == "bid") + sum(max(0, -t.price) for t in plan.threads)
     if cash_out > plan.cash_room:
         problems.append(f"bids promise {cash_out} > {plan.cash_room} above cash_floor")
@@ -804,7 +840,7 @@ def build_plan(
             keep, [t for t in swaps if (t.kind, t.counterparty, t.refs) not in banned], pp, cash_room
         )
         # Threads first: they are addressed, and a public listing counts against every team's share.
-        posted, refused = post_as([*threads, *listings], me, start, rules, m.tick or 0)
+        posted, refused = post_as([*threads, *listings], me, start, rules, m.tick or 0, share=pp.max_share)
         if not refused:
             break
         banned |= {(t.kind, t.counterparty, t.refs) for t in posted if _refused(t, refused)}
@@ -812,20 +848,18 @@ def build_plan(
     posted = [t for t in posted if not _refused(t, refused)]
     what_if: tuple[str, ...] = ()
     if rules.max_counterparty_share >= 1:
-        what_if = tuple(
-            f"with max_counterparty_share {pp.max_share:g} and counterparty_cap_base {base}: "
-            f"{len(problems)} of {len(posted)} trade(s) refused"
-            for base in pp.what_if_bases
-            for _, problems in [
-                post_as(
-                    posted,
-                    me,
-                    start,
-                    rules.model_copy(update={"max_counterparty_share": pp.max_share, "counterparty_cap_base": base}),
-                    m.tick or 0,
-                )
-            ]
-        )
+        lines = []
+        for base in pp.what_if_bases:
+            on = rules.model_copy(update={"max_counterparty_share": pp.max_share, "counterparty_cap_base": base})
+            again, problems = post_as(posted, me, start, on, m.tick or 0, share=pp.max_share)
+            moved = sum(1 for a, b in zip(posted, again, strict=True) if a.to is None and b.to is not None)
+            lines.append(
+                f"with max_counterparty_share {pp.max_share:g} and counterparty_cap_base {base}: "
+                f"{len(problems)} of {len(posted)} trade(s) refused, {moved} public listing(s) addressed instead "
+                f"(on Friday 6 % of addressed copies sold against 20 % of public ones: the expected surplus, "
+                f"which assumes a listing fills when its counterparty values it, is optimistic for them)"
+            )
+        what_if = tuple(lines)
     page = page_list(m, amap, copies, events, params, rules, pp.page_set)
     plan = TradePlan(
         m.tick,
@@ -878,6 +912,20 @@ def listing_request(t: Trade, venue: str = "rastro", expires_in_ticks: int = 40)
     return body
 
 
+def command(t: Trade, venue: str = "rastro") -> str:
+    """The guarded CLI write for one planned trade (`guardrails.check()` again at send time; dry run until
+    `--live`). A swap is proposed as an addressed board offer (`sell swap`), the path other teams used on
+    Friday; `thread_proposal` is the team-thread alternative."""
+    to = f" --to {t.to}" if t.to else ""
+    where = "" if venue == "rastro" else f" --venue {venue}"
+    if t.kind == "bid":
+        return f"uv run bazaar sell bid {t.refs[0]} --price {t.price}{to}{where}"
+    if t.kind == "ask":
+        return f"uv run bazaar sell list {t.asset_id} --price {t.price}{to}{where}"
+    cash = f" --give-cash {-t.price}" if t.price < 0 else f" --want-cash {t.price}" if t.price > 0 else ""
+    return f"uv run bazaar sell swap {t.asset_id} --for {t.refs[1]} --to {t.counterparty}{cash}{where}"
+
+
 def plan_dict(plan: TradePlan, venue: str = "rastro") -> dict[str, Any]:
     from dataclasses import asdict
 
@@ -887,9 +935,13 @@ def plan_dict(plan: TradePlan, venue: str = "rastro") -> dict[str, Any]:
         "if_all_fill": plan.if_all_fill,
         "volume": plan.volume,
         "listings": [
-            {**asdict(t), "expected": t.expected, "request": listing_request(t, venue)} for t in plan.listings
+            {**asdict(t), "expected": t.expected, "request": listing_request(t, venue), "command": command(t, venue)}
+            for t in plan.listings
         ],
-        "threads": [{**asdict(t), "expected": t.expected, "requests": thread_proposal(t, venue)} for t in plan.threads],
+        "threads": [
+            {**asdict(t), "expected": t.expected, "command": command(t, venue), "requests": thread_proposal(t, venue)}
+            for t in plan.threads
+        ],
         "held_back": [{**asdict(t), "expected": t.expected} for t in plan.held_back],
         "page": [asdict(r) for r in plan.page],
     }
@@ -933,6 +985,16 @@ def plan_markdown(plan: TradePlan, pp: PlanParams) -> str:
         "## Share of planned volume per counterparty",
         "",
         " · ".join(f"{team} {s:.0%}" for team, s in plan.shares.items()) or "-",
+        "",
+        f"Worst case (one team takes every listing posted for anyone too): {plan.worst_share:.0%}. "
+        f"{sum(1 for t in (*plan.listings, *plan.threads) if t.to is None)} of "
+        f"{len(plan.listings) + len(plan.threads)} trade(s) posted for anyone. At Friday's base rates "
+        f"({pp.friday_public_fill:.0%} of public copies sold, {pp.friday_addressed_fill:.0%} of addressed ones): "
+        f"{plan.expected_at(pp.friday_public_fill, pp.friday_addressed_fill):+.1f} P expected.",
+        "",
+        "## Commands (guarded, dry run until --live)",
+        "",
+        *(f"- `{command(t)}`" for t in (*plan.listings, *plan.threads)),
         "",
         "## Checks",
         "",
