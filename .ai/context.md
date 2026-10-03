@@ -128,7 +128,8 @@ parallel when the diff touches money, keys or public surfaces). Fix every P0 and
 says APPROVE; the merge request lists each P0/P1 with its fixing commit. Authors resolve their own conflicts.
 **Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
 `guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
-to validate. `touch .local/PAUSE` stops every write at once.
+to validate. `touch .local/PAUSE` stops every write of the processes that share that `.local/` (one
+laptop checkout, or one Railway service's volume: pause each, README "Pause writes").
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 The lifecycle in `.ai/pipeline.md` runs once PER TASK — one task = one trip through

@@ -268,7 +268,8 @@ dropped, not sent late. A `429` means wait for the tick it names.
 [`GUARDRAILS.md`](GUARDRAILS.md) holds every limit: cash floor, spend per game hour, price caps
 per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, the kill switch.
 `uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
-`touch .local/PAUSE` stops every write from every agent at once.
+`touch .local/PAUSE` stops every write from every agent that reads that `.local/` (this checkout; each
+Railway service has its own: "Pause writes" under "Production on Railway").
 
 ## Strategy (what to do next, ranked)
 
@@ -763,6 +764,7 @@ PHOENIX_API_KEY=<your key>
 ```sh
 railway link --project heartfelt-warmth --environment production   # once per clone
 uv run --group infra railway config plan    # preview what .railway/railway.py would change
+# apply ONLY when the plan says "0 to destroy" (a delete you did not ask for means: stop and ask)
 uv run --group infra railway config apply   # apply it (a partial: it never touches Postgres)
 railway logs --service bazaar-duels        # `tick N` lines and one line per duel move
 railway redeploy --service bazaar-duels --yes   # a fresh container of the current build
@@ -782,11 +784,13 @@ then redeploy `bazaar-duels`.
   Sat 2026-10-03 01:45 Madrid** (`BAZAAR_LIVE=1` set by hand on both; nothing trades before the doors
   open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
   `railway config apply` keeps whatever is set by hand.
-  - **Stop one:** `railway variable delete BAZAAR_LIVE --service bazaar-taker` (or `bazaar-maker`): it
-    redeploys in dry run; `/health` then says `mode: dry` (if it still says `live`, `railway redeploy
-    --service bazaar-taker --yes`). To stop a service's writes without a redeploy, its kill switch:
-    `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE` (`rm` it to resume). PAUSE lives on
-    each service's own volume: "Pause writes" above pauses all of them.
+  - **Stop one:** first its kill switch, which holds at once with no redeploy:
+    `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE` (PAUSE lives on each service's own
+    volume: "Pause writes" above pauses all of them). Then make it a dry run:
+    `railway variable delete BAZAAR_LIVE --service bazaar-taker` (or `bazaar-maker`), check
+    `railway variable list --service bazaar-taker` no longer lists it, and that `/health` says
+    `mode: dry` after the redeploy (if it still says `live`, `railway redeploy --service bazaar-taker
+    --yes`). `rm` the PAUSE file once the dry run is confirmed.
   - **Neither withdraws our open offers.** A dry run sends nothing (no cancels) and PAUSE holds by design,
     so up to 30 asks and bids the maker posted stay on the board and can still fill. To withdraw them:
     `uv run bazaar sell offers`, then `uv run bazaar sell cancel <offer_id> --live` for each.
