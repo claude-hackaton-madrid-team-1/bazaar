@@ -132,3 +132,10 @@ def test_a_write_stores_one_row_per_duel() -> None:
     assert store.save(160, [DONE, {"duel": 86, "status": "live"}], finished=False) == 2
     assert [r[0] for r in conn.rows] == [85, 86]
     assert store.save(160, [DONE], finished=True) == 1 and conn.rows[-1][2] == 156  # finished: its deadline
+
+
+def test_a_rivals_lone_surrogate_is_stored_as_jsonb_postgres_accepts() -> None:
+    # #173 review P2: Postgres rejects a lone surrogate in jsonb, raw or escaped ("\ud83d"), so the row must hold none.
+    payload = _row({**DONE, "rival_offer": {"price": 110, "text": "deal \ud83d"}}, None)[-1]
+    payload.encode("utf-8")  # writable as text
+    assert "\\ud83d" not in payload and json.loads(payload)["rival_offer"]["text"].startswith("deal ")

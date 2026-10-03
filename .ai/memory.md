@@ -886,6 +886,13 @@ bonus; a wrong one costs points.
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
 `docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
 
+### [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
+An emoji cut in half by a JS/TS string slice reaches us as a lone surrogate (`"\ud83d"` in JSON). `json.dumps(...,
+ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Postgres jsonb rejects it raw or escaped.
+`duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
+move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
+owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.
+
 ### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
 Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
 practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted

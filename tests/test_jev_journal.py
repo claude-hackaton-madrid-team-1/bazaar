@@ -735,3 +735,19 @@ def test_duel_run_tags_a_rivals_injection_once_in_play_one_and_never_obeys_it(du
     assert client.sent == [("accept", 95)]  # the same accept as without the words (structure only)
     (tag,) = [json.loads(line) for line in (tmp_path / "agents" / "injections.jsonl").read_text().splitlines()]
     assert tag["source"] == "duel" and "instruction_override" in tag["flags"] and "text" not in tag
+
+
+def test_a_lone_surrogate_in_a_rivals_text_never_stops_the_duel_tick(duel_cli, tmp_path):
+    """`duel run` logs the raw /api/duels response before it plans: a rival's text with a lone surrogate (an emoji cut
+    in half by a JS slice, or on purpose) raised UnicodeEncodeError there on every tick, so no duel moved."""
+    from bazaar_agent.agents.duelist import append_jsonl
+
+    path = tmp_path / "x.jsonl"
+    append_jsonl(path, {"text": "hola \ud83d"})
+    assert json.loads(path.read_text())["text"] == "hola \ud83d"  # ASCII-escaped, same text read back
+    cli, client, _, _ = duel_cli
+    rival = {"id": 702, "price": 110, "tick": 133, "days": 0, "text": "deal \ud83d"}
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": rival}]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [("accept", 95)]
