@@ -310,3 +310,60 @@ def test_negotiate_reads_the_switch_again_after_writing_the_words():
     )
     assert any("before sending bid: kill switch on: holding" in line for line in lines)
     assert client.sent == [6, 7, 8] and not client.closed and (out.status, out.price) == ("deal", 9)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",  # an editor truncated the file mid-save
+        "# Guardrails\n- `cash_floor` = 270 — the floor.\n",  # the trading_enabled line was deleted
+    ],
+)
+def test_a_guardrails_file_without_trading_enabled_holds(switch, text):
+    switch.file.write_text(text, encoding="utf-8")
+    (stop,) = gr.kill_switch(gr.Guardrails(pause_file=str(switch.pause)))
+    assert "holding" in stop
+
+
+def test_a_guardrails_file_with_a_stray_byte_holds_instead_of_raising(switch):
+    switch.file.write_bytes(switch.file.read_bytes() + b"\xff\xfe")
+    (stop,) = gr.kill_switch(gr.Guardrails(pause_file=str(switch.pause)))
+    assert stop == "GUARDRAILS.md is invalid (UnicodeDecodeError): holding"
+
+
+def test_negotiate_opens_no_thread_while_the_switch_is_on():
+    client = FakeDealerClient(asks=[12])
+    opened: list[str] = []
+    client.open_thread = lambda dealer, topic: opened.append(dealer) or {"id": 85}
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        kill_switch=lambda: ("pause file .local/PAUSE exists",),
+    )
+    assert opened == [] and (out.thread, out.status) == (None, "held")
+
+
+def test_the_taker_reads_the_switch_again_before_an_accept(tmp_path, switch):
+    # Jev and the duel grace may take seconds: a pause that lands meanwhile holds the accept.
+    from tests.agent_fakes import ask
+    from tests.test_taker import JevAdvice
+
+    def jev_then_pause(state):
+        switch.paused(True)
+        return JevAdvice("yes", 0.9)
+
+    team = FakeTeam()
+    t, lines, _ = taker(
+        tmp_path,
+        team,
+        FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}),
+        live=True,
+        jev=jev_then_pause,
+        pause_file=str(switch.pause),
+    )
+    t.on_tick(clock())
+    assert writes(team, "accept") == [] and any("kill switch on: holding" in line for line in lines)

@@ -174,9 +174,13 @@ def _file_stop(path: Path) -> str | None:
     if cached is not None and cached[0] == key:
         return cached[1]
     try:
-        stop = None if load_guardrails(path).rules.trading_enabled else "trading_enabled = false"
-    except (GuardrailsError, OSError) as e:
-        stop = f"{path.name} is invalid ({e}): holding"
+        loaded = load_guardrails(path)
+        if "trading_enabled" not in {line.rule_id for line in loaded.lines}:  # empty or truncated mid-save
+            stop: str | None = f"{path.name} has no trading_enabled line: holding"
+        else:
+            stop = None if loaded.rules.trading_enabled else "trading_enabled = false"
+    except (GuardrailsError, OSError, ValueError) as e:  # UnicodeDecodeError is a ValueError
+        stop = f"{path.name} is invalid ({type(e).__name__}): holding"
     _SWITCH_CACHE[path] = (key, stop)
     return stop
 

@@ -378,3 +378,14 @@ def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():
     huge = {"blob": "y" * (tl.MAX_ANSWER_CHARS + 10)}
     text, failed = tl.fitted(huge)
     assert failed and json.loads(text)["error"] == "answer too large"
+
+
+def test_cancelling_a_dealer_thread_bid_books_no_refund(tmp_path):
+    # A thread bid is never booked as spend (it counts while open, via open_commitments): a refund for it
+    # would take 60 off the hour's real spend and let 60 more through the cap (security audit #72, P2).
+    from tests.agent_fakes import bid
+
+    team = Team(offers=[bid(92, "LAV-09", 60, thread=85, created=40)])
+    b = backend(tmp_path, live=True, team=team)
+    assert run(b, "sell_cancel", {"offer_id": 92})[0]["status"] == "done"
+    assert Ledger(tmp_path / "ledger.jsonl").entries() == []
