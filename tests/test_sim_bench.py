@@ -308,3 +308,40 @@ def test_a_typo_in_the_bench_settings_fails_at_boot():
         SimConfig(bench_preset="hardest")
     with pytest.raises(ValueError):
         replace(SimConfig(), bench_match_rule="mid")
+
+
+# ---------------------------------------------------------------- the kit's own broker over real HTTP
+
+
+def test_the_kits_starter_broker_runs_the_market_test_over_http_and_scores_what_the_stall_scores():
+    from bazaar_sdk import Bazaar, BazaarError
+
+    from tests.simkit import QUIET, running_sim
+
+    config = replace(QUIET, bench_first_tick=1, bench_preset="hard", seed=11)
+    with running_sim(config, run_clock=False) as (url, sim):
+        w = sim.world
+        with w.lock:
+            w.team(US).unlocked.append("chato")
+        team = Bazaar(url, "sim-team1", wait_on_tick=False, retries=1)
+        brk = team.broker(team.open_venue("Uno", fee_bps=0, rules={"mechanism": "board"})["broker_key"])
+        seen: dict[str, int] = {}
+        accepted = 0
+        for _ in range(16):
+            w.advance()
+            book = brk.book()
+            for o in book["bench_offers"]:
+                seen.setdefault(o["id"], book["tick"])
+            for sell, buy, price in starter_broker.bench_plan(book):
+                accepted += bool(brk.match(sell, buy, price)["ok"])
+        gone = [i for i in seen if i not in {o["id"] for o in brk.book()["bench_offers"]}]
+        assert accepted >= 1 and gone
+        sells = [i for i in gone if any(t.id == i and t.side == "sell" for t in w.state.bench[-1].traders)]
+        buys = [i for i in gone if i not in sells]
+        assert sells and buys
+        with pytest.raises(BazaarError) as e:
+            brk.match(sells[0], buys[0], 50)  # out of the book (matched or departed): refused at any price
+        assert e.value.code == "invalid"
+        w.advance()
+        done = next(e for e in w.state.events if e.type == "bench.finished")
+        assert team.me()["score"]["bench_efficiency"] == done.payload["stall_efficiency"]
