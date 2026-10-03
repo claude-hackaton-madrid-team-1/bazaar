@@ -52,8 +52,9 @@ UPSERT = (
     "evidence = excluded.evidence, support_n = excluded.support_n, "
     "confidence = greatest(learnings.confidence, excluded.confidence), "
     "created_tick = greatest(learnings.created_tick, excluded.created_tick), updated_at = now() "
-    # an LLM row never rewrites a rules row; a rules fact always wins its row (even over an older LLM row)
-    "where learnings.source is not distinct from excluded.source or excluded.source = 'rules'"
+    # an LLM row never rewrites another source's row; a rules fact takes back only a row an older LLM reading held
+    "where learnings.source is not distinct from excluded.source "
+    "or (excluded.source = 'rules' and learnings.source = 'llm')"
 )
 
 

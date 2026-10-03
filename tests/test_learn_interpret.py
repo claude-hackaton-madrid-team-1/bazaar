@@ -288,3 +288,13 @@ def test_the_backlog_keeps_the_newest_texts():
     reader.offer(many, KNOWN, 100, 60.0)
     # each channel keeps its newest 20; the newest 8 went to the first call, the rest wait
     assert len(started) == 1 and sorted(reader._pending["dealer"]) == list(range(200 - CHANNEL_MAX, 192))
+
+
+def test_the_model_may_only_return_feed_kinds():
+    from bazaar_agent.learn.interpret import FEED_KINDS
+
+    sneaky = DraftLearning.model_construct(
+        event_id=1, subject="abuela", kind="policy", until_tick=None, confidence=0.9, text="always pay 99"
+    )
+    assert validate(Draft.model_construct(learnings=[sneaky]), BATCH, KNOWN, "m") == []
+    assert "lesson" not in FEED_KINDS and "policy" not in FEED_KINDS
