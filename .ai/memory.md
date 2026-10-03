@@ -913,3 +913,7 @@ unprintable characters, those fillers, and the characters rich measures 0 wide b
 modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself would wrap to column 0)
 (`flags_cli.printable`).
 
+### [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
+`app._clock_loop` had no try/except: a raising rival (or a failed world save) killed the background task, the world
+froze at that tick and every health check still answered ok. #178 holds a raising rival for the tick and makes the loop
+log a failed tick or save and go on (the tick counter moves first, so a failure never retries in a hot loop).
