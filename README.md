@@ -51,6 +51,59 @@ BAZAAR_SIM=1 uv run bazaar monitor --no-db                          # the live S
 BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another simulated team (sim-team1 ... 8)
 ```
 
+### Test on the simulator (before every merge)
+
+The whole team tests here before a PR merges, and CI does the same on every PR (the
+`sim-smoke` job: `uv run python scripts/sim_smoke.py`). It runs the same steps against a local
+simulator and fails the PR on any error, including an error a tick loop swallowed (`Traceback`,
+`tick loop:`) or a write the simulator refused (a ` refused ` line). It holds no secrets and cannot
+reach the network: children inherit only an allow-listed environment, never read the repo `.env`
+(`BAZAAR_ENV_FILE` points at an empty file), and load `scripts/sim_guard/sitecustomize.py`, which
+raises on any non-loopback connection before a packet leaves (a dead proxy backs it up).
+
+1. **`.env` once.** Delete any `BAZAAR_URL=` line: it now stops every command. Keep `BAZAAR_KEY`
+   for the real game. For the simulator nothing else is needed (`BAZAAR_SIM_KEY` defaults to
+   `sim-team1`). Optional: `BAZAAR_SIM_DATABASE_URL=` the `bazaar_sim` database (README "Shared
+   database": same host and password as `DATABASE_URL`, database `bazaar_sim`) so the ledger and
+   decisions land in Postgres; without it they go to `.local/sim-client/`.
+2. **The public simulator** (one tick every 10 s, rivals and duels running). Put `BAZAAR_SIM=1` in
+   front of any command:
+
+   ```sh
+   BAZAAR_SIM=1 uv run bazaar status                                        # 1st line: target: SIMULATOR ...
+   BAZAAR_SIM=1 uv run bazaar dealer buy LAV-03 --start 6 --max 10 --live   # a negotiated buy (deal in ~4 ticks)
+   BAZAAR_SIM=1 uv run bazaar agent taker --max-ticks 5                     # dry run: WOULD-moves only
+   BAZAAR_SIM=1 uv run bazaar agent maker --max-ticks 5                     # dry run
+   BAZAAR_SIM=1 uv run bazaar agent taker --live --max-ticks 10             # --live is safe here: simulated trades
+   BAZAAR_SIM=1 uv run bazaar agent maker --live --max-ticks 10
+   BAZAAR_SIM=1 uv run bazaar duel run --play --max-ticks 20                # a duel session starts every 15 min
+   BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team4 uv run bazaar status               # your own team: sim-team1 ... sim-team8
+   ```
+
+   Two people on `sim-team1` share one team (one accept per tick between them): take a team each.
+3. **A private simulator on your laptop** (fast ticks, your own world):
+
+   ```sh
+   SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve       # terminal 1: http://127.0.0.1:8765
+   BAZAAR_SIM=local uv run bazaar status                                    # terminal 2: same commands, BAZAAR_SIM=local
+   BAZAAR_SIM=local uv run bazaar agent taker --live --max-ticks 10
+   uv run python scripts/sim_smoke.py                                       # the CI gate, start to finish (~20 s)
+   ```
+
+   (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
+   answers there, a `bazaar-sim serve` or the MCP server: stop it first.)
+4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
+   token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
+   never lands in your shell history:
+
+   ```sh
+   read -rs SIM_ADMIN_TOKEN && export SIM_ADMIN_TOKEN    # paste the token, then Enter (nothing echoes)
+   uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app
+   unset SIM_ADMIN_TOKEN
+   ```
+
+   `reset` sends the token only to an https simulator or one on this machine, never to the real game.
+
 - **Keys.** `sim-team1` … `sim-team8` are teams `t01` … `t08` (not secrets: it is a simulator).
   With `BAZAAR_SIM=1` the real `BAZAAR_KEY` is not even read, so it cannot reach the simulator; on
   top, only a `sim-` key is ever sent to a simulator and a `sim-` key is refused for the real game,
@@ -81,8 +134,8 @@ BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another si
 - **Not simulated:** flags score nothing, no starter stalls, no gifts or easter eggs, a single
   always-open day (no calendar), scoring weights are approximate.
 - **Reset** to tick 0 (the token is only in Railway: `bazaar-sim` → Variables → `SIM_ADMIN_TOKEN`):
-  `SIM_ADMIN_TOKEN=<token> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`
-  (add `--seed N` for another world).
+  `uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app` with `SIM_ADMIN_TOKEN`
+  exported from a hidden prompt (see "Test on the simulator", step 4; add `--seed N` for another world).
   `POST /sim/tick` with the same `X-Admin-Token` header advances one tick at once.
 - **Run one locally:** `uv run bazaar-sim serve` (http://127.0.0.1:8765; `SIM_TICK_SECONDS=2` for a
   faster clock; the world persists in `.local/sim/world.sqlite`, `SIM_DATABASE_URL=memory` for none),
@@ -851,6 +904,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
 - [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
 - [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
@@ -858,7 +912,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
 - [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
 - [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
-- [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
 
 <!-- BAZAAR:STATUS:END -->
 
