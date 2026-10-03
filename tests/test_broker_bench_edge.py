@@ -51,6 +51,8 @@ def test_the_edge_policy_matches_the_bench_first_then_the_public_book(tmp_path):
     )
     agent(tmp_path, broker, live=True, bench_policy="edge").on_tick(clock())
     assert broker.sent == [("b5-0", "b5-1", 35), (1, 2, 25)]
+    reasons = [d["reason"] for d in rows(tmp_path) if "reason" in d]
+    assert reasons[0].startswith("bench edge") and reasons[1].startswith("maximum-surplus matching (exact)")
 
 
 def test_the_edge_respects_the_tick_cap_bench_first(tmp_path):
@@ -105,6 +107,10 @@ def test_a_refused_limit_probe_is_remembered_by_the_edge(tmp_path):
     ((sell, buy, price),) = broker.sent
     assert (sell, buy) == ("b5-0", "b5-1") and not 58 >= price >= 62
     assert a.edge.refused == {("b5-0", "b5-1"): [price]} and a.edge.probes.refused == 1
+    (decision,) = [d for d in rows(tmp_path) if "reason" in d]
+    assert decision["reason"].startswith("limit probe")
+    stats = a.history[-1]
+    assert (stats.probes, stats.proposed_surplus, stats.refused) == (1, 0, 1)
 
 
 def test_quote_mode_never_sends_a_non_crossing_bench_pair(tmp_path):

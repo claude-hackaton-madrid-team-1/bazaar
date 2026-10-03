@@ -32,7 +32,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in, is_probe
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
@@ -103,6 +103,7 @@ class TickStats:
     pairs_so_far: int = 0  # distinct maker pairs since the broker started
     skipped: int = 0  # book rows the venue cannot cross (or malformed)
     ours: int = 0  # book offers dropped because they are ours
+    probes: int = 0  # bench pairs proposed outside their quotes (`bench_cross = "limit"`); no quoted surplus counted
 
 
 class BenchSessions:
@@ -160,7 +161,7 @@ class BenchSessions:
             session.refused += 1
         elif (key := (str(m.sell.id), str(m.buy.id))) not in session.matched:
             session.matched.add(key)
-            session.pairs, session.surplus = session.pairs + 1, session.surplus + m.surplus
+            session.pairs, session.surplus = session.pairs + 1, session.surplus + max(0, m.surplus)
 
 
 # ---------------------------------------------------------------- the agent
@@ -317,13 +318,16 @@ class BrokerAgent:
 
     def _match(self, run: _Run, m: Match) -> None:
         tick, stats = run.clock.tick, run.stats
+        probe = is_probe(m)
+        surplus = 0 if probe else m.surplus  # a probe's quotes do not cross: its quoted surplus is negative
         stats.proposed += 1
-        stats.proposed_surplus += m.surplus
+        stats.probes += probe
+        stats.proposed_surplus += surplus
         # checked per match, not per tick: a pause file touched mid-tick stops the very next send
         verdict = check(Action("broker_match"), broker_context(self.rules, run.clock), self.rules)
         status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
         chosen = status == "approved"
-        what = "bench" if m.sell.bench else m.sell.item
+        what = ("bench probe" if probe else "bench") if m.sell.bench else m.sell.item
         line = (
             f"match {what}: sell {m.sell.id} (ask {m.sell.price}) × buy {m.buy.id} (bid {m.buy.price}) "
             f"at {m.price} + fee {m.fee}, surplus {m.surplus}"
@@ -343,7 +347,7 @@ class BrokerAgent:
                 "surplus": m.surplus,
                 **request,
             },
-            reason="maximum-surplus matching (exact), midpoint price",
+            reason=self._reason(m, probe),
             guardrail=str(verdict),
             chosen=chosen,
             status=status,
@@ -374,10 +378,17 @@ class BrokerAgent:
             return
         stats.sent += 1
         if m.sell.bench:
-            stats.surplus_bench += m.surplus
+            stats.surplus_bench += surplus
         else:
             stats.surplus_public += m.surplus
             run.pairs.add(m.makers)
+
+    def _reason(self, m: Match, probe: bool) -> str:
+        if not m.sell.bench or self.config.bench_policy != "edge":
+            return "maximum-surplus matching (exact), midpoint price"
+        if probe:
+            return "limit probe: quotes do not cross, price most likely inside both estimated limits"
+        return "bench edge: maximum estimated true surplus (limit bands from quotes), midpoint price"
 
     def _tick_done(self, stats: TickStats) -> None:
         self.history.append(stats)

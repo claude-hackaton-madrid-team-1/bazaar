@@ -76,6 +76,11 @@ def _run(quote: Quote) -> str:
     return quote.item.removeprefix("bench:")
 
 
+def is_probe(m: Match) -> bool:
+    """A match whose price is not inside the quotes (`ask ≤ price`, `price + fee ≤ bid`): a limit probe."""
+    return not (m.sell.price <= m.price and m.price + m.fee <= m.buy.price)
+
+
 def expiries_in(bench_offers: Iterable[Mapping[str, Any]], tick: int) -> dict[str, int]:
     """Offer id -> last tick, for the bench offers that say when they leave."""
     out = {}
@@ -134,7 +139,7 @@ class BenchEdge:
     def note_sent(self, m: Match, accepted: bool) -> None:
         """The server's answer to a match. A refused non-crossing pair remembers its price: the next try for that
         pair is priced on what is left of the limit bands (`_best_price`)."""
-        if m.sell.price <= m.price and m.price + m.fee <= m.buy.price:
+        if not is_probe(m):
             return  # a crossing pair: a refusal only means it was taken or gone, nothing to learn
         self.probes.record(accepted, self.chances.pop((str(m.sell.id), str(m.buy.id), m.price), self.config.min_accept))
         if not accepted:
