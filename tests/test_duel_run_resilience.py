@@ -269,3 +269,24 @@ def test_a_lone_surrogate_in_rival_text_never_stops_the_tick(duel_cli, monkeypat
     client.payload = [{**ENDGAME, "rival_offer": hostile, "messages": [{"from": "Rival Noche", "text": "\udfff"}]}]
     run_one_tick(cli)
     assert client.sent == [("accept", 95)]
+
+
+# ---------------------------------------------------------------- 3. a refused send keeps the server's code
+
+
+def test_a_refused_duel_accept_records_the_server_code_in_its_decision_row(duel_cli, monkeypatch):  # noqa: F811
+    # The 22 `failed` duel rows in Postgres carried no code: a 429 (`rate_limited`, `wait_for_tick`) was invisible.
+    from bazaar_agent.sdk import BazaarError
+
+    cli, client, _, tmp_path = duel_cli
+    client.payload = [ENDGAME]
+
+    def refuse(did):
+        client.sent.append(("accept", did))
+        raise BazaarError("rate_limited", "over 5 requests per second", 429)
+
+    client.duel_accept = refuse
+    run_one_tick(cli)
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "failed")
+    assert row["reason"].endswith("; refused rate_limited")

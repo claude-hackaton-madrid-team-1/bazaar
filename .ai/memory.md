@@ -1145,3 +1145,10 @@ for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at ti
 it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
 (ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
 (MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
+v2's free offers to a rival that never priced ran `our_target(elapsed / total)`, and the runner never sends on the
+deadline tick, so the floor (progress 1.0) was never sent: in Duels I our last silent offer (D − 1) stayed ~9 % off
+our limit. Compressing the curve to end earlier (#215 first cut) also lowered D − 3/D − 2, the ticks every Duels I
+silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
+`duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.

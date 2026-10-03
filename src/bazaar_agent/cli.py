@@ -1301,6 +1301,7 @@ def duel_run(
     off = "duel_policy v2 sends template words only" if v2 else None
     book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say, off)
     chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    refused: dict[int, str] = {}  # duel id -> the server's refusal code this tick (for its decision row)
     feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
@@ -1335,6 +1336,7 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            refused[did] = str(e.code)
             if move.kind == "accept":  # a 4xx cost nothing (RULES.md): the slot is the team's again
                 release_refused_accept(ledger, c.tick, f"duel:{did}", e.code, e.status)
             duel_traces.refused(did, e)
@@ -1368,7 +1370,9 @@ def duel_run(
             f"duel_{move.kind}",
             f"duel {duel_id(d)} {move.kind} {move.price or ''}",
             inputs=inputs,
-            reason=move.reason + (f"; {pick.why}" if pick is not None else ""),
+            reason=move.reason
+            + (f"; {pick.why}" if pick is not None else "")
+            + (f"; refused {code}" if row_id is not None and (code := refused.pop(row_id, None)) else ""),
             guardrail=guardrail,
             chosen=move.kind != "hold" and status in ("approved", "done"),
             status=status,
