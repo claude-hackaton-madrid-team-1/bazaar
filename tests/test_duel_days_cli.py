@@ -116,3 +116,47 @@ def test_one_done_read_per_tick_when_the_store_already_read_the_finished_duels(d
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
     assert result.exit_code == 0, result.output
     assert client.clock()["tick"] % 10 == 0 and client.done_calls == 1
+
+
+def test_a_refused_store_read_is_not_retried_by_the_days_latch_in_the_same_tick(duel_cli, monkeypatch):  # noqa: F811
+    """#194 review P2: a 429 on the store's ?done=true read waits for a later tick; the latch never re-reads."""
+    from bazaar_agent import duel_store
+    from bazaar_agent.sdk import BazaarError
+
+    class RefusingDone(DoneClient):
+        def duels(self, done=False):
+            if done:
+                self.done_calls += 1
+                raise BazaarError("rate_limited", "slow down", 429)
+            return super().duels(done)
+
+    cli, _, _, _ = duel_cli
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    monkeypatch.setattr(duel_store.DuelStore, "read_finished", lambda self, duels: True)
+    client = RefusingDone([{**LIVE}], [])
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert client.clock()["tick"] % 10 == 0 and client.done_calls == 1
+
+
+def test_a_malformed_done_body_never_breaks_the_duel_loop(duel_cli, monkeypatch):  # noqa: F811
+    """#194 review P3: a ?done=true body that is not an object is logged, and the tick still finishes."""
+    from bazaar_agent import duel_store
+
+    cli, _, _, _ = duel_cli
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    monkeypatch.setattr(duel_store.DuelStore, "read_finished", lambda self, duels: False)  # the latch reads alone
+
+    class ListBody(DoneClient):
+        def duels(self, done=False):
+            if done:
+                self.done_calls += 1
+                return ["not", "an", "object"]
+            return super().duels(done)
+
+    client = ListBody([{**LIVE}], [])
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert client.done_calls == 1 and "the days sign waits" in result.output

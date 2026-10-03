@@ -1292,15 +1292,18 @@ def duel_run(
             observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+            console.print(f"  /api/duels?done=true failed ({type(e).__name__}): the days sign waits")
 
     def save_finished(tick: int) -> bool:
         """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result.
-        True when the read went through (the days latch then needs no read of its own this tick)."""
+        True when the read was answered or refused (the days latch then needs no read of its own this tick: a
+        refusal such as a 429 waits for a later tick, never a second try in this one)."""
         try:
             data = client.duels(done=True)
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
-            return False
+            return True
         except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
             return False
