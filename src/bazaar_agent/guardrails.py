@@ -24,6 +24,7 @@ from typing import Any, Literal, Protocol, cast, get_args
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from bazaar_agent.config import REPO_ROOT
+from bazaar_agent.intel import TEAM_ID
 
 GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
@@ -113,6 +114,16 @@ class Guardrails(BaseModel):
         return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
 
     protect_page_sets: str = "none"
+    max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
+    counterparty_cap_base: int = Field(default=200, ge=0)
+    team_threads_enabled: bool = False
+    team_threads_max_open: int = Field(default=2, ge=0, le=6)
+    team_threads_dealer_reserve: int = Field(default=3, ge=0, le=6)
+    team_thread_max_messages: int = Field(default=12, ge=1, le=100)
+    team_thread_idle_ticks: int = Field(default=3, ge=1)
+    team_swap_min_surplus: float = Field(default=3.0, ge=0)
+    team_swap_max_their_share: float = Field(default=0.6, gt=0, le=1)
+    team_swap_max_our_share: float = Field(default=0.85, gt=0, le=1)
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -190,6 +201,16 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
+    "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
+    "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",
+    "team_threads_max_open": "agents.team_desk (openings)",
+    "team_threads_dealer_reserve": "agents.team_desk (openings leave these conversation slots to dealers)",
+    "team_thread_max_messages": "agents.team_desk (walks after this many of our messages)",
+    "team_thread_idle_ticks": "agents.team_desk (closes a silent thread)",
+    "team_swap_min_surplus": "swaps.judge (every proposal and accept)",
+    "team_swap_max_their_share": "swaps.judge (every proposal and accept)",
+    "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
 }
 
 
@@ -308,6 +329,14 @@ def is_pack(item: str) -> bool:
 
 
 LedgerKind = Literal["spend", "accept", "listing"]
+# A listing a person posted by hand (`bazaar sell ... --live`) is booked with this item prefix and its offer id:
+# the maker, which owns our board offers, never cancels or reprices it.
+HANDS_OFF = "hands-off:"
+
+
+def hands_off_id(item: str) -> int | None:
+    rest = item[len(HANDS_OFF) :] if item.startswith(HANDS_OFF) else ""
+    return int(rest) if rest.isdigit() else None
 
 
 class LedgerStore(Protocol):
@@ -325,6 +354,7 @@ class LedgerStore(Protocol):
     def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
     def release_accept(self, tick: int, item: str) -> None: ...
+    def hands_off_ids(self) -> set[int]: ...
 
 
 RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
@@ -386,6 +416,11 @@ class Ledger:
                 if gone is not None:
                     del rows[gone]
         return rows
+
+    def hands_off_ids(self) -> set[int]:
+        """Offer ids a person posted by hand (`HANDS_OFF` listing rows)."""
+        ids = (hands_off_id(str(e.get("item") or "")) for e in self.entries() if e.get("kind") == "listing")
+        return {i for i in ids if i is not None}
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         """Count and record an accept under one file lock: two processes cannot both take the last slot."""
@@ -465,6 +500,8 @@ ActionKind = Literal[
     "broker_match",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
+TEAM_TRADES = ("buy", "sell", "accept_buy", "accept_sell", "bid")  # the kinds a counterparty cap applies to
+ANY_TEAM = "*"  # the counterparty of an offer anyone may take: the worst case is the team we trade most with
 
 
 @dataclass(frozen=True)
@@ -474,6 +511,10 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    # Team-to-team trades: the other team (ANY_TEAM for an offer anyone may take). None: not a team trade
+    # (a dealer), and `max_counterparty_share` does not apply.
+    counterparty: str | None = None
+    volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
     final: bool = False  # a dealer's final offer (take it or it walks): its cap is `final_cap_for` (N14a)
     limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
     role: str | None = None  # duels: "seller" | "buyer"
@@ -492,6 +533,51 @@ class Verdict:
 
 
 @dataclass(frozen=True)
+class TradeBook:
+    """Our team-to-team volume in primas: settled with each counterparty, and what our open board offers
+    could still add (`addressed` to one team, or `public`: anyone may take those, so the worst case is that
+    one team takes them all)."""
+
+    settled: dict[str, int] = field(default_factory=dict)
+    addressed: dict[str, int] = field(default_factory=dict)
+    public: int = 0
+
+    @property
+    def total(self) -> int:
+        return sum(self.settled.values())
+
+    def exposure(self, team: str) -> int:
+        """The most `team` may have traded with us once every open offer it can take fills."""
+        if team == ANY_TEAM:
+            teams = set(self.settled) | set(self.addressed)
+            return max((self.exposure(t) for t in teams), default=self.public)
+        return self.settled.get(team, 0) + self.addressed.get(team, 0) + self.public
+
+
+def counterparty_refusal(trades: TradeBook | None, team: str, price: int, rules: Guardrails) -> str | None:
+    """Why a trade of `price` with `team` would break `max_counterparty_share`; None when it passes or the
+    cap is off (1.0). The cap is `share × max(our settled volume + price, counterparty_cap_base)`: the base
+    lets the first trades through. Fails closed when our volume was not read, or when the counterparty is
+    not a team id (a board pseudonym the feed did not resolve: its volume with us is unknown)."""
+    share = rules.max_counterparty_share
+    if share >= 1:
+        return None
+    if trades is None:
+        return "max_counterparty_share is on but our team-to-team volume was not read"
+    if team != ANY_TEAM and not TEAM_ID.match(team):
+        return f"counterparty {team!r} is not a known team: its share of our volume is unknown"
+    cap = share * max(trades.total + price, rules.counterparty_cap_base)
+    exposure = trades.exposure(team)
+    if exposure + price <= cap:
+        return None
+    who = "any team (public offer)" if team == ANY_TEAM else team
+    return (
+        f"counterparty {who}: {exposure} + {price} > max_counterparty_share {share:g} × "
+        f"max(volume {trades.total + price}, {rules.counterparty_cap_base}) = {cap:.0f}"
+    )
+
+
+@dataclass(frozen=True)
 class Context:
     cash: int
     held: dict[str, int]  # card ref -> copies we hold (from /api/me)
@@ -506,6 +592,8 @@ class Context:
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
     sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
+    # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
+    trades: TradeBook | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -608,6 +696,10 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
+    team_trade = action.kind in TEAM_TRADES and action.counterparty is not None and action.price is not None
+    volume = action.volume if action.volume is not None else action.price or 0
+    if team_trade and (refusal := counterparty_refusal(ctx.trades, str(action.counterparty), volume, rules)):
+        v.append(refusal)
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:

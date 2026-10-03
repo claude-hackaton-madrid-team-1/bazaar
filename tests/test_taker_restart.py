@@ -506,3 +506,19 @@ def test_a_trail_thread_that_can_never_be_adopted_stops_costing_reads(tmp_path):
     t.rec.decisions.thread_trails = counted
     _ticks(t, team, TICK, 60)
     assert n["trails"] == 40 and t._restart_checked  # restart_lookback_ticks
+
+
+def test_a_deal_the_restart_wrap_up_books_re_reads_the_album(tmp_path):
+    """Album first after every deal, the restart wrap-up's too: /me is re-read once the spend is booked (#105)."""
+    from bazaar_agent.agents.taker import TakerConfig
+    from tests.test_holdings import spied_taker
+
+    log = DecisionLog(tmp_path)
+    _started(log, TICK - 2)
+    log.decide(_bid_row(99, TICK - 1, 18))  # the old process bid 18 in thread 99, then died
+    team = FakeTeam()
+    dealer_took_our_bid(team, 99, 991, "LAV-08", 18)
+    t, spy, _ = spied_taker(tmp_path, team, FakePublic(), True, TakerConfig(max_dealer_threads=3))
+    t.on_tick(at(team, TICK))
+    assert t.ledger.spent_since(0) == 18
+    assert "deal in thread 99 from before the restart" in spy.deals
