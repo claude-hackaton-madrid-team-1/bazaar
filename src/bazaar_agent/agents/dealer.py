@@ -307,12 +307,15 @@ def negotiate(
     observer: Observer | None = None,
     words_fn: WordsFn = template_words,
     reserve: Reserve | None = None,
+    on_thread: Callable[[dict[str, Any]], None] | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
     always the structured `price` of the message, set here. `reserve` claims the team's accept slot on
-    the same tick the accept is sent; a slot already taken means try next tick, never walk.
+    the same tick the accept is sent; a slot already taken means try next tick, never walk. `on_thread`
+    sees each tick's thread payload first (the offer inspector and its flag policy); it never changes
+    the move, and its failures are logged, not raised.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -334,6 +337,11 @@ def negotiate(
         state["ticks"] += 1
         thread = client.thread(tid)
         obs.thread_read(thread)
+        if on_thread is not None:
+            try:
+                on_thread(thread)
+            except Exception as e:  # inspection must never change or break the negotiation
+                log(f"tick {clock.tick}: offer inspection failed ({type(e).__name__}); negotiation continues")
         state["status"] = thread.get("status", "open")
         if state["status"] != "open":
             log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")

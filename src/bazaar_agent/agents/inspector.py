@@ -19,7 +19,7 @@ one (the requested card, a dearer card, or a higher rarity). Any structural mism
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -287,3 +287,54 @@ def summarise(inspections: Iterable[Inspection]) -> dict[str, int]:
     for i in inspections:
         counts[i.verdict] += 1
     return counts
+
+
+Guard = Callable[[Inspection], str | None]  # a deny reason (GUARDRAILS.md allow_flags, kill switch), or None
+Send = Callable[[int, str], Any]  # POST /api/flags (message_id, reason)
+
+FLAG_REASON_CHARS = 300  # the reason is ours to write: keep it short and structural
+
+
+def flag_step(
+    thread: Mapping[str, Any],
+    dealer: str,
+    cards: CardIndex,
+    book: FlagBook,
+    *,
+    guard: Guard,
+    send: Send | None,
+    log: Callable[[str], None],
+    topic: Mapping[str, Any] | None = None,
+) -> Inspection | None:
+    """Inspect the dealer's newest offer in a thread payload and flag it when it is a certain trickster,
+    the flag book has room and `guard` allows it. A flag is decided once per message, sent or not: a
+    denied one (allow_flags = false) is logged as `would flag`. `send` None is a dry run. Returns the
+    inspection (None when the dealer has no standing offer)."""
+    from bazaar_agent.agents.dealer import newest_dealer_offer
+
+    newest = newest_dealer_offer(dict(thread), dealer)  # the standing offer, else the newest one it sent
+    if newest is None:
+        sent = [
+            m.get("offer") for m in thread.get("messages") or [] if isinstance(m, dict) and m.get("sender") == dealer
+        ]
+        newest = next((o for o in reversed(sent) if isinstance(o, dict)), None)
+    if newest is None:
+        return None
+    mid, text = message_for_offer(thread, newest.get("id"))
+    inspection = inspect_offer(newest, topic or thread.get("topic") or {}, text, cards, dealer=dealer, message_id=mid)
+    if not book.wants(inspection) or mid is None:
+        return inspection
+    book.record(inspection)
+    reason = inspection.reason[:FLAG_REASON_CHARS]
+    denied = guard(inspection)
+    if denied:
+        log(f"would flag message {mid} from {dealer} ({denied}): {reason}")
+    elif send is None:
+        log(f"dry run: would flag message {mid} from {dealer}: {reason}")
+    else:
+        try:
+            send(mid, reason)
+            log(f"flagged message {mid} from {dealer}: {reason}")
+        except Exception as e:  # a refused flag must never break the negotiation
+            log(f"flag of message {mid} refused ({type(e).__name__}: {str(e)[:80]})")
+    return inspection

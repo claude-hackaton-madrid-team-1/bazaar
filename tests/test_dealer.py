@@ -385,3 +385,26 @@ def test_negotiate_replays_lav03_and_takes_the_welcome_when_no_room_is_left():
     )
     assert client.sent == [6] and (client.accepted, out.status, out.price) == ([501], "deal", 7)
     assert any("→ accept 7 (no room left between our 6 and her 7)" in line for line in logs)
+
+
+def test_on_thread_sees_every_read_and_a_failing_inspector_never_breaks_the_deal():
+    from bazaar_agent.agents.dealer import negotiate
+
+    seen, lines = [], []
+
+    def inspector(thread):
+        seen.append(thread["status"])
+        raise RuntimeError("boom")
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        on_thread=inspector,
+    )
+    assert (out.status, out.price) == ("deal", 9) and len(seen) >= 4
+    assert any("offer inspection failed (RuntimeError)" in line for line in lines)

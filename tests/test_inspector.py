@@ -6,6 +6,7 @@ import pytest
 from bazaar_agent.agents.inspector import (
     CardIndex,
     FlagBook,
+    flag_step,
     inspect_offer,
     inspect_thread,
     message_for_offer,
@@ -155,3 +156,43 @@ def test_the_flag_book_flags_a_message_once_and_stops_at_its_limit():
     assert not book.wants(i)  # once per message
     other = inspect_thread({**THREAD, "messages": [{**THREAD["messages"][1], "message": 902}]}, "trile", CARDS)[0]
     assert not book.wants(other)  # the limit
+
+
+# ---------------------------------------------------------------- flag_step: guard, dry run, send
+
+
+def step(guard_reason=None, send=True):
+    sent, lines = [], []
+    i = flag_step(
+        THREAD,
+        "trile",
+        CARDS,
+        FlagBook(),
+        guard=lambda _: guard_reason,
+        send=(lambda mid, reason: sent.append((mid, reason))) if send else None,
+        log=lines.append,
+    )
+    return i, sent, lines
+
+
+def test_allow_flags_false_logs_would_flag_and_sends_nothing():
+    i, sent, lines = step(guard_reason="denied: allow_flags = false")
+    assert i is not None and i.verdict == "flag" and sent == []
+    assert lines == [f"would flag message 901 from trile (denied: allow_flags = false): {i.reason}"]
+
+
+def test_an_allowed_flag_is_sent_once_with_a_structural_reason():
+    i, sent, lines = step()
+    assert sent == [(901, i.reason)] and lines[0].startswith("flagged message 901")
+    _, dry, dry_lines = step(send=False)
+    assert dry == [] and dry_lines[0].startswith("dry run: would flag message 901")
+
+
+def test_a_clean_or_blocked_offer_is_never_flagged():
+    honest = {
+        **THREAD,
+        "messages": [{**THREAD["messages"][1], "offer": {"id": 77, "give": {"types": ["card:SAL-12"]}}}],
+    }
+    sent: list = []
+    i = flag_step(honest, "trile", CARDS, FlagBook(), guard=lambda _: None, send=lambda *a: sent.append(a), log=print)
+    assert i is not None and i.verdict == "clean" and sent == []

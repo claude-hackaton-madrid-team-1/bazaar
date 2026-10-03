@@ -343,6 +343,7 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
+    on_thread = _flag_policy(client, dealer, topic, rules, ledger)
     with traces.trace_negotiation(dealer, topic, plan) as observer:
         out = negotiate(
             client,
@@ -357,12 +358,45 @@ def dealer_buy(
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             reserve=reserve,
+            on_thread=on_thread,
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
         f"in {out.ticks} ticks"
     )
+
+
+def _flag_policy(client: Any, dealer: str, topic: dict[str, Any], rules: Any, ledger: Any) -> Any:
+    """The offer inspector on every thread read; a certain trickster is flagged only when GUARDRAILS.md
+    allows flags (`allow_flags`, default false: logged as `would flag`)."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
+
+    cards = CardIndex.from_catalog(public_client(load_settings()).catalog())
+    book = FlagBook()
+
+    def guard(inspection: Any) -> str | None:
+        c = Clock.model_validate(client.clock())
+        ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
+        verdict = gr.check(gr.Action("flag", str(inspection.message_id)), ctx, rules)
+        return None if verdict.allowed else str(verdict)
+
+    def on_thread(thread: dict[str, Any]) -> None:
+        flag_step(
+            thread,
+            dealer,
+            cards,
+            book,
+            guard=guard,
+            send=client.flag,
+            log=lambda m: console.print(escape(m)),
+            topic=topic,
+        )
+
+    return on_thread
 
 
 def _rules() -> Any:

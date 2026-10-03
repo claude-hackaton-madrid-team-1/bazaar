@@ -30,6 +30,7 @@ from bazaar_agent.agents.desk import (
     plan_conversation,
     topic_for,
 )
+from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.market import BoardOffer, OpenOffer, Venue, board_offers, our_open_offers, tradable_venues
 from bazaar_agent.agents.runtime import (
     JevAdvice,
@@ -289,6 +290,7 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
+        self.flags = FlagBook()  # the offer inspector's flags (GUARDRAILS.md allow_flags decides if any is sent)
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -427,6 +429,7 @@ class Taker:
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
             conv.ticks += 1
+            self._inspect(run, conv, thread)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread, run.snap.clock.tick)
             if dm.status != "open":
                 self._finished(run, conv, thread)
@@ -436,6 +439,23 @@ class Taker:
                 self.log(f"tick {run.snap.clock.tick} taker: {dealer} offer ignored: {dm.ignored}")
             out.append((self._jev_early(run, dm), thread))
         return out
+
+    def _inspect(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
+        """The offer inspector on the dealer's newest offer: a certain trickster is flagged when
+        GUARDRAILS.md allows flags (allow_flags, default false: logged as `would flag`)."""
+        tick = run.snap.clock.tick
+
+        def guard(i: Inspection) -> str | None:
+            verdict = check(Action("flag", str(i.message_id)), self._ctx(run), self.rules)
+            return None if verdict.allowed else str(verdict)
+
+        try:
+            cards = CardIndex.from_catalog(run.snap.catalog)
+            send = self.team.flag if self.live else None
+            log = lambda m: self.log(f"tick {tick} taker: {m}")  # noqa: E731
+            flag_step(thread, conv.dealer, cards, self.flags, guard=guard, send=send, log=log, topic=conv.topic)
+        except Exception as e:  # inspection must never break the desk
+            self.log(f"tick {tick} taker: offer inspection failed ({type(e).__name__}); desk continues")
 
     def _jev_early(self, run: _TickRun, dm: DeskMove) -> DeskMove:
         """Jev may accept a dealer's ask early (still inside our max); it never lifts the limit."""

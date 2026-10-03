@@ -342,3 +342,32 @@ def test_a_pack_thread_opens_only_on_jevs_yes_with_time_to_ask(tmp_path):
     t2.pack_judge = judge
     t2.on_tick(clock(next_tick_in=5.0))  # 3 s of budget: no time for Jev, so no pack
     assert asked == ["sobre_barrio"] and not [s for s in late.sent if s[0] == "open_thread"]
+
+
+def test_the_desk_flags_a_trickster_only_when_guardrails_allow_flags(tmp_path):
+    trick = {
+        "id": 802,
+        "maker": "abuela",
+        "status": "open",
+        "final": False,
+        "give": {"types": ["card:LAV-01"]},  # a common, for the LAV-08 uncommon we asked
+        "want": {"cash": 21},
+    }
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    payload = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    for allow in (False, True):
+        team = FakeTeam()
+        root = tmp_path / str(allow)
+        root.mkdir()
+        t, lines, _ = taker(
+            root, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=allow
+        )
+        t.on_tick(clock())
+        team.thread_payloads[5000] = payload
+        t.on_tick(at(team, TICK + 1))
+        flags = [s for s in team.sent if s[0] == "flag"]
+        assert ("accept", 802) not in team.sent  # never accepted, flag or not
+        if allow:
+            assert [f[:2] for f in flags] == [("flag", 9001)] and "instead of exactly [LAV-08]" in flags[0][2]
+        else:
+            assert flags == [] and any("would flag message 9001" in line and "allow_flags" in line for line in lines)
