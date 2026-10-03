@@ -424,7 +424,11 @@ def team_checks(as_json: bool = typer.Option(False, "--json", help="Print the an
             conn.read_only = True  # SELECTs only: any write raises
             cur = conn.execute("select sdk_method, error_code, tick from executions where error_code is not null")
             refusals = [{"sdk_method": m, "error_code": c, "tick": t} for m, c, t in cur.fetchall()]
-            cur = conn.execute("select id, thread_id, maker, status from offers where thread_id is not null")
+            # Our thread offers as #148's thread store keeps them (the `offers` table is not written by the agents).
+            cur = conn.execute(
+                "select (m.offer->>'id')::bigint, m.thread_id, m.offer->>'maker', m.offer->>'status' from messages m"
+                " join threads t on t.id = m.thread_id where t.ours and m.offer is not null"
+            )
             offers = [{"id": i, "thread_id": t, "maker": m, "status": st} for i, t, m, st in cur.fetchall()]
     except Exception as e:  # noqa: BLE001 — never the URL: a connect error can echo it (.ai/memory.md)
         err_console.print(f"[yellow]no database ({type(e).__name__}): the feed alone answers[/yellow]")
@@ -434,7 +438,7 @@ def team_checks(as_json: bool = typer.Option(False, "--json", help="Print the an
         typer.echo(json.dumps({"answers": [asdict(a) for a in found], "go_no_go": verdict, "why": why}, indent=2))
         return
     for a in found:
-        console.print(f"{a.q} [{a.verdict}] {a.question} · {escape(a.evidence)}", highlight=False)
+        console.print(f"{a.q} · {a.verdict} · {a.question} · {escape(a.evidence)}", highlight=False)  # no [..]: markup
     console.print(f"team_threads_enabled: {verdict} · {why}")
 
 
