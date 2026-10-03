@@ -148,6 +148,24 @@ def test_a_later_dealer_bid_above_the_official_value_is_refused(tmp_path):
     assert any("price 19 > official value 18.5 of LAV-08" in line for line in lines)
 
 
+def test_a_failed_value_read_holds_the_dealer_thread_for_the_tick_and_never_walks(tmp_path):
+    # Review #177 P1-2: value 40, her ask 24, one failed read: hold the tick (no close_thread), bid the next.
+    team = ValuedTeam(values={"LAV-08": 40.0})
+    t, lines = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
+    t.on_tick(clock())
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    her_ask(team, 5000, 800, 24)
+    team.fail = True
+    t.on_tick(at(team, TICK + 1))
+    assert not [s for s in team.sent if s[0] == "close_thread"]
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    assert any("hold" in line and "could not be read" in line for line in lines)
+    team.fail = False
+    t.on_tick(at(team, TICK + 2))
+    assert not [s for s in team.sent if s[0] == "close_thread"]
+    assert [s for s in team.sent if s[0] == "say"][-1] == ("say", 5000, 19)
+
+
 # ---------------------------------------------------------------- 3. maker: board bids
 
 
@@ -167,6 +185,22 @@ def test_the_maker_posts_the_bid_when_the_official_value_covers_it(tmp_path):
     bids = [s for s in team.sent if s[0] == "list_offer" and s[1].get("cash")]
     assert bids == [("list_offer", {"cash": 65}, {"cards": ["LAV-09"]}, "rastro")]
     assert "LAV-09" in team.value_calls and not {"LAT-09", "LAT-03"} & set(team.value_calls)  # asks read nothing
+
+
+def test_a_standing_bid_above_the_official_value_is_cancelled(tmp_path):
+    # Review #177 P2: a bid posted before the cap (or the cap moved) never stays open above the official value.
+    team = ValuedTeam(values={"LAV-09": 50.0}, offers=[bid(2, "LAV-09", 65)])
+    m, lines = maker(tmp_path, team)
+    m.on_tick(clock())
+    assert ("cancel", 2) in team.sent
+    assert not [s for s in team.sent if s[0] == "list_offer" and s[1].get("cash")]
+    assert any("official value 50" in line for line in lines)
+
+
+def test_a_standing_bid_under_the_official_value_stays(tmp_path):
+    team = ValuedTeam(values={"LAV-09": 100.0}, offers=[bid(2, "LAV-09", 65)])
+    maker(tmp_path, team)[0].on_tick(clock())
+    assert ("cancel", 2) not in team.sent
 
 
 # ---------------------------------------------------------------- 4. reads: once per card per tick, fail closed

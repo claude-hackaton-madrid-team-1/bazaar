@@ -111,7 +111,7 @@ from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
-from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.official_values import OfficialValues, unread_only
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.pack_open import choose, sealed_packs
@@ -1233,6 +1233,10 @@ class Taker:
             if check(action, ctx, self.rules).allowed:
                 self.log(f"tick {tick} taker: {conv.dealer} wait (guardrail with unsettled accepts: {verdict})")
                 return
+        if not verdict.allowed and move.kind == "bid" and unread_only(verdict.violations):
+            # No official value this tick (a failed read): hold, the thread stays open (review #177 P1-2).
+            self.log(f"tick {tick} taker: {conv.dealer} hold on thread {conv.thread_id} ({verdict})")
+            return
         if not verdict.allowed:
             move = Move("walk", reason=f"guardrail: {verdict}")
         choice = self._tactic(conv, move, dm.ask)

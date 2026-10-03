@@ -108,16 +108,33 @@ def _card_specific(e: Exception) -> bool:
     return isinstance(status, int) and 400 <= status < 500 and status != 429
 
 
+UNREAD = "(GET /api/me/value): buying it is not allowed"  # ends every not-read / could-not-be-read refusal
+
+
+def unread_only(violations: tuple[str, ...]) -> bool:
+    """Refused only because the official value could not be read: hold for the tick, never walk on it."""
+    return bool(violations) and all(v.endswith(UNREAD) for v in violations)
+
+
+def over_cap(price: int, ref: str, values: OfficialValues, tick: int, held: int, margin: float) -> str | None:
+    """Why a standing bid of ours is above the official value now (cancel it); None when it is not, or when the
+    value cannot be read this tick (a standing bid is left as it is on an outage)."""
+    official = values.value(ref, tick, held)
+    if official is None or price <= official - margin + 1e-9:
+        return None
+    return f"bid {price} > official value {official:g} of {ref} (GET /api/me/value)"
+
+
 def cap_violations(
     ref: str, price: int, gives_value: float, values: OfficialValues | None, tick: int, held: int, rules: _Margin
 ) -> list[str]:
     """A card buy's price (fee included) plus what else it gives (a swap's copy) must stay at or under the official
     value of one more copy minus `official_value_margin`. No value book, or an unreadable value: refused."""
     if values is None:
-        return [f"official value of {ref} not read (GET /api/me/value): buying it is not allowed"]
+        return [f"official value of {ref} not read {UNREAD}"]
     official = values.value(ref, tick, held)
     if official is None:
-        return [f"official value of {ref} could not be read (GET /api/me/value): buying it is not allowed"]
+        return [f"official value of {ref} could not be read {UNREAD}"]
     margin = rules.official_value_margin
     if price + gives_value <= official - margin + 1e-9:
         return []
