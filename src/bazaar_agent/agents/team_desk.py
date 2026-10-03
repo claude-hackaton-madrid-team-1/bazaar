@@ -222,7 +222,8 @@ class TeamNegotiation:
     thread_id: int | None = None
     ours: list[Terms] = field(default_factory=list)  # our offers, newest last
     seen: set[int] = field(default_factory=set)  # their offer ids already judged
-    accepted: int | None = None  # the offer id we accepted (settles next tick)
+    accepted: int | None = None  # the tick count at which we accepted their offer (it settles next tick)
+    agreed: Terms | None = None  # the terms we accepted (theirs), for booking the deal
     ticks: int = 0
 
     @property
@@ -430,3 +431,294 @@ def assets_for_accept(t: Terms, me: Mapping[str, Any], listed: Sequence[int] = (
         if copies:
             out.append(int(copies[0]["id"]))
     return out
+
+
+# ---------------------------------------------------------------- the runner (one move per thread per tick)
+
+
+ACCEPT_SETTLE_TICKS = 2  # an accept settles at the next tick; after this many ticks it is given up on
+
+
+class TeamDesk:
+    """Every tick, one move per team negotiation: open, counter, accept or walk. Reads first (album, our
+    offers, the thread); every write passes the guardrails with the live context and is a dry run unless
+    `live`. While the kill switch is on it holds: no opens, offers, accepts or closes."""
+
+    def __init__(
+        self,
+        team: Any,
+        public: Any,
+        *,
+        rules: Guardrails,
+        params: Callable[[int], StrategyParams],
+        ledger: Any,
+        decisions: Any,
+        feed: Any,
+        live: bool,
+        log: Callable[[str], None],
+        plans: Sequence[TeamPlan],
+        now: Callable[[], float] | None = None,
+        hub: Any = None,
+    ) -> None:
+        import time
+
+        from bazaar_agent.agents.runtime import Recorder
+
+        self.team, self.public, self.rules, self.params = team, public, rules, params
+        self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
+        self.now = now or time.monotonic
+        self.rec = Recorder("team-desk", decisions, live, log, hub)
+        self.negs = [TeamNegotiation(p) for p in plans]
+        self.done: list[tuple[TeamPlan, str]] = []
+
+    def on_tick(self, clock: Any) -> None:
+        from bazaar_agent.agents.runtime import read_snapshot, window_for
+        from bazaar_agent.ledger_pg import LedgerUnavailable
+        from bazaar_agent.sdk import BazaarError
+
+        window = window_for(clock, self.now(), self.now)
+        self.rec.decisions.begin_tick(clock.tick)
+        try:
+            snap = read_snapshot(self.team, self.public, self.feed, clock)
+            self._tick(snap, window)
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} team-desk: read refused {e.code} ({e.message[:80]}); nothing sent")
+        except LedgerUnavailable as e:
+            self.log(f"tick {clock.tick} team-desk: {e}; no write this tick (fail closed)")
+
+    # ------------------------------------------------------------ one tick
+
+    def _tick(self, snap: Any, window: Any) -> None:
+        from bazaar_agent.guardrails import kill_switch
+
+        clock = snap.clock
+        stops = kill_switch(self.rules)
+        if stops:
+            self.log(f"tick {clock.tick} team-desk: kill switch on: holding {len(self.negs)} negotiation(s)")
+            return
+        from bazaar_agent.strategy import build_market
+
+        m = build_market(snap.me, snap.catalog, snap.events, [])
+        cards = CardIndex.from_catalog(snap.catalog)
+        params = self.params(clock.tick)
+        venues = {v.id: v for v in snap.venues}
+        for neg in list(self.negs):
+            neg.ticks += 1
+            self._step(neg, snap, window, m, cards, params, venues.get(neg.plan.venue))
+
+    def _ctx(self, snap: Any, skip_thread: int | None) -> Context:
+        """The live guardrail context: /me, the ledger, our open offers (but this thread's own, which the
+        deal replaces), and our team-to-team volume when the counterparty cap is on."""
+        from bazaar_agent.agents.runtime import guard_context
+        from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
+        from bazaar_agent.intel import book_values, settled_volume
+
+        offers = [o for o in offers_in(snap.offers) if skip_thread is None or o.get("thread") != skip_thread]
+        ctx = guard_context(snap, self.ledger, self.rules, open_commitments(offers, snap.us))
+        if self.rules.max_counterparty_share < 1:
+            book = book_values(snap.catalog)
+            ctx = replace(ctx, trades=trade_book(offers, snap.us, settled_volume(snap.events, snap.us, book), book))
+        return ctx
+
+    def _step(
+        self,
+        neg: TeamNegotiation,
+        snap: Any,
+        window: Any,
+        m: Market,
+        cards: CardIndex,
+        params: StrategyParams,
+        venue: Venue | None,
+    ) -> None:
+        from bazaar_agent.intel import book_values
+
+        tick, plan = snap.clock.tick, neg.plan
+        thread: dict[str, Any] = {}
+        if neg.thread_id is not None and self.live:
+            thread = self.team.thread(neg.thread_id) or {}
+            status = str(thread.get("status") or "open")
+            if status != "open":
+                return self._finished(neg, snap, status, thread)
+        if neg.accepted is not None:
+            if neg.ticks - neg.accepted < ACCEPT_SETTLE_TICKS:
+                return
+            neg.accepted = None  # it never settled: negotiate on
+        their = newest_offer_from(thread, plan.team) if thread else None
+        inspection = None
+        if their is not None:
+            inspection = inspect_team_offer(their, text_for_offer(thread, their.get("id")), cards, snap.me)
+            if isinstance(their.get("id"), int) and their["id"] not in neg.seen:
+                neg.seen.add(int(their["id"]))
+                self.log(
+                    f"tick {tick} team-desk: {plan.team} offer {their['id']}: {inspection.verdict}"
+                    + (f" ({'; '.join(inspection.findings)})" if inspection.findings else "")
+                )
+        ctx = self._ctx(snap, neg.thread_id)
+        book = book_values(snap.catalog)
+
+        def accepted_value(t: Terms) -> Value:
+            return value_of(t, m, snap.me, params, venue, we_accept=True)
+
+        def offered_value(t: Terms) -> Value:
+            return value_of(t, m, snap.me, params, venue, we_accept=False)
+
+        def guard(t: Terms, theirs: Mapping[str, Any] | None) -> str | None:
+            v = value_of(t, m, snap.me, params, venue, we_accept=theirs is not None)
+            if v.problems:
+                return "; ".join(v.problems)
+            return guard_deal(t, m, snap.me, plan.team, ctx, self.rules, notional_of(t, book, snap.me), v.received)
+
+        move = decide(neg, their, inspection, accepted_value, offered_value, guard)
+        if move.kind == "wait":
+            return
+        if move.kind == "walk":
+            self._walk(neg, tick, move, window)
+        elif move.kind == "accept" and move.terms is not None and move.offer_id is not None:
+            self._accept(neg, snap, move, window, guard(move.terms, their))
+        elif move.terms is not None:
+            refused = guard(move.terms, None)
+            self._offer(neg, snap, move, window, cards, refused, offered_value(move.terms))
+
+    # ------------------------------------------------------------ the writes
+
+    def _offer(
+        self,
+        neg: TeamNegotiation,
+        snap: Any,
+        move: TeamMove,
+        window: Any,
+        cards: CardIndex,
+        refused: str | None,
+        value: Value,
+    ) -> None:
+        tick, plan, terms = snap.clock.tick, neg.plan, move.terms
+        assert terms is not None
+        offer = terms.offer()
+        what = (
+            f"{move.kind} {plan.team} on {plan.venue}: {words_for(move.kind, terms, cards)} (ours {value.surplus:+.1f})"
+        )
+        status = "rejected" if refused else "approved" if window.open() else "expired"
+        did = self.rec.decide(
+            tick,
+            f"team_{move.kind}",
+            f"{what} · guardrails {'denied: ' + refused if refused else 'allowed'}",
+            inputs={"team": plan.team, "offer": offer, "surplus": value.surplus, "thread": neg.thread_id},
+            reason=move.reason,
+            guardrail=f"denied: {refused}" if refused else "allowed",
+            chosen=status == "approved",
+            status=status,  # type: ignore[arg-type]
+            thread_id=neg.thread_id,
+            move={"kind": move.kind, **offer},
+        )
+        if status != "approved":
+            if refused and move.kind == "open":
+                self.negs.remove(neg)
+                self.done.append((plan, f"not opened: {refused}"))
+            return
+        if move.kind == "open":
+            topic = {"deal": {"give": [str(a) for a in terms.give_assets], "want": list(terms.get_refs)}}
+            if self.live:
+                body = self.rec.send(
+                    did,
+                    tick,
+                    "open_thread",
+                    {"with": plan.team, "venue": plan.venue, "topic": topic},
+                    lambda: self.team.open_thread(plan.team, topic=topic, venue=plan.venue),
+                )
+                if not body or not isinstance(body.get("id"), int):
+                    return
+                neg.thread_id = int(body["id"])
+            else:
+                neg.thread_id = -1  # a dry run pretends the thread opened
+        text = words_for(move.kind, terms, cards)
+        if self.live and neg.thread_id is not None and neg.thread_id > 0:
+            tid = neg.thread_id
+            sent = self.rec.send(
+                did, tick, "say", {"thread": tid, "offer": offer}, lambda: self.team.say(tid, text, offer=offer)
+            )
+            if sent is None and not self.rec.maybe_landed:
+                return
+        neg.ours.append(terms)
+
+    def _accept(self, neg: TeamNegotiation, snap: Any, move: TeamMove, window: Any, refused: str | None) -> None:
+        from bazaar_agent.agents.runtime import accept_limit
+        from bazaar_agent.agents.seller import offers_in, open_commitments
+
+        clock, plan, terms = snap.clock, neg.plan, move.terms
+        assert terms is not None and move.offer_id is not None
+        listed = sorted(open_commitments(offers_in(snap.offers), snap.us).listed)
+        assets = assets_for_accept(terms, snap.me, listed)
+        limit = accept_limit(clock, self.rules)
+        why = refused
+        if why is None and len(assets) != len(terms.give_assets) + len(terms.give_refs):
+            why = "no free copy to hand over"
+        if why is None and not window.open():
+            why = "tick budget spent"
+        if (
+            why is None
+            and self.live
+            and not self.ledger.reserve_accept(
+                clock.tick, clock.t_hours, terms.give_cash, f"team:{move.offer_id}", limit
+            )
+        ):
+            why = f"accept quota {limit}/tick used"
+        inputs = {"team": plan.team, "offer_id": move.offer_id, "assets": assets, "thread": neg.thread_id}
+        did = self.rec.decide(
+            clock.tick,
+            "team_accept",
+            f"accept {plan.team}'s offer {move.offer_id} handing over {assets or 'no card'} ({move.reason})"
+            + (f": {why}" if why else ""),
+            inputs=inputs,
+            reason=move.reason,
+            guardrail=f"denied: {why}" if why else "allowed",
+            chosen=why is None,
+            status="rejected" if why else "approved",
+            thread_id=neg.thread_id,
+            move={"accept": move.offer_id, "assets": assets},
+        )
+        if why is not None:
+            return
+        if self.live:
+            oid = move.offer_id
+            body = self.rec.send(
+                did,
+                clock.tick,
+                "accept",
+                {"offer": oid, "assets": assets},
+                lambda: self.team.accept(oid, assets=assets),
+            )
+            if body is None and not self.rec.maybe_landed:
+                return
+        neg.accepted, neg.agreed = neg.ticks, terms
+
+    def _walk(self, neg: TeamNegotiation, tick: int, move: TeamMove, window: Any) -> None:
+        plan = neg.plan
+        did = self.rec.decide(
+            tick,
+            "team_walk",
+            f"walk from {plan.team} ({move.reason})",
+            inputs={"team": plan.team, "thread": neg.thread_id},
+            reason=move.reason,
+            guardrail="allowed",
+            chosen=True,
+            status="approved",
+            thread_id=neg.thread_id,
+            move={"close_thread": neg.thread_id},
+        )
+        if self.live and neg.thread_id is not None and neg.thread_id > 0:
+            tid = neg.thread_id
+            self.rec.send(did, tick, "close_thread", {"thread": tid}, lambda: self.team.close_thread(tid))
+        self.negs.remove(neg)
+        self.done.append((plan, "walked"))
+
+    def _finished(self, neg: TeamNegotiation, snap: Any, status: str, thread: Mapping[str, Any]) -> None:
+        clock = snap.clock
+        deal = neg.agreed or neg.current  # what we accepted, else our own offer they accepted
+        if status == "deal" and deal.give_cash:
+            self.ledger.record("spend", clock.tick, clock.t_hours, deal.give_cash, f"team:{neg.plan.team}")
+        self.log(
+            f"tick {clock.tick} team-desk: thread {neg.thread_id} with {neg.plan.team} {status}"
+            f" ({thread.get('closed_reason') or '-'})"
+        )
+        self.negs.remove(neg)
+        self.done.append((neg.plan, status))

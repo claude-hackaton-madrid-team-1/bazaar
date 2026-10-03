@@ -1814,6 +1814,38 @@ def agent_taker(
     _run_agent("taker", live, max_ticks, build, port, host)
 
 
+@agent_app.command("team")
+def agent_team(
+    plan_file: str = typer.Option(
+        ".local/night/trade-plan.json", "--plan", help="bazaar trade-plan's JSON: its swaps become team threads"
+    ),
+    listings: bool = typer.Option(False, help="Also negotiate the plan's listings in threads (default: swaps only)"),
+    floor: float = typer.Option(2.0, help="Our least surplus on a deal (P): never accepted or offered below"),
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
+    max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
+    port: int | None = typer.Option(None, help=PORT_HELP),
+    host: str | None = typer.Option(None, help=HOST_HELP),
+) -> None:
+    """Every tick: negotiate the trade plan's direct deals in team threads, structured offers only."""
+    from pathlib import Path
+
+    from bazaar_agent.agents.team_desk import TeamDesk, plan_from_trade
+
+    path = Path(plan_file) if Path(plan_file).is_absolute() else REPO_ROOT / plan_file
+    if not path.is_file():
+        _fail(f"{path} is missing: run `uv run bazaar trade-plan --live` first")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    trades = list(data.get("threads") or []) + (list(data.get("listings") or []) if listings else [])
+    plans = [plan_from_trade(t, floor=floor) for t in trades if t.get("kind") in ("swap", "ask", "bid")]
+    if not plans:
+        _fail(f"{path} has no deal to negotiate")
+
+    def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
+        return TeamDesk(team, public, plans=plans, **kw)
+
+    _run_agent("team", live, max_ticks, build, port, host)
+
+
 @agent_app.command("maker")
 def agent_maker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
