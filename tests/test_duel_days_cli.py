@@ -30,9 +30,9 @@ class DoneClient(DuelClient):
 
 
 def scored_cost_deal():
-    """A finished real two-issue deal the game scored as a COST (weight +2, 5 days): 120 - 100 - 2 × 5 = 10."""
+    """A finished real two-issue deal the game scored as a COST (weight +2, 3 days): 120 - 100 - 2 × 3 = 14."""
     return {**LIVE, "duel": 900, "status": "deal", "issues": ["price", "days"], "role": "seller", "your_limit": 100,
-            "your_days_weight": 2.0, "price": 120, "days": 5, "rounds": 0, "decay_per_round": 0.08, "result": 10.0,
+            "your_days_weight": 2.0, "price": 120, "days": 3, "rounds": 0, "decay_per_round": 0.08, "result": 14.0,
             "days_meaning": None}  # fmt: skip
 
 

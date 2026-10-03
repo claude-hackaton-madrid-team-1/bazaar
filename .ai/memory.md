@@ -946,3 +946,9 @@ and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms +
 Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
 sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
 measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
+
+### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
+practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
+team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
+(a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
