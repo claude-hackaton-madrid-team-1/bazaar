@@ -983,9 +983,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 | [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 | [#135](../../pull/135) | night(B29): pitch kit for Sunday (PARTIAL: story, Q&A, demo; decisions log + charts pending) | `night/b29-pitch-kit` |
-| [#134](../../pull/134) | B28: taker go-live counterfactual (Friday replayed through the current taker), stacked on #125 | `night/b28-taker-counterfactual` |
 | [#131](../../pull/131) | feat: strategic bluffing in the words, learned per counterparty (N16) | `ogarciarevett/feat-bluff-tactics` |
-| [#129](../../pull/129) | night(B26): new sets mid-game robustness (dealer_mints_unminted) + Sunday playbook and decisions | `night/b26-sunday` |
 | [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
+| [#123](../../pull/123) | feat(N17): team-to-team swap threads in the taker (off by default) + simulator rivals that swap | `ogarciarevett/feat-team-threads` |
+| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
