@@ -194,10 +194,19 @@ class Duel(Model):
 
 
 class BenchTrader(Model):
+    """One synthetic trader of a Market Test. The defaults are the old static trader (there all run, never relaxes)."""
+
     id: str
     side: Literal["sell", "buy"]
     limit: int  # hidden: a seller's cost or a buyer's value
-    quote: int  # shaded away from the limit
+    quote: int  # the opening quote, shaded away from the limit (`bench.quote_at` gives the current one)
+    arrive: int = 0  # the run-relative tick it shows up in the book
+    life: int = 1_000  # ticks it stays (1 = only its arrival tick); unmatched, it then leaves
+    relax: float = 0.0  # share of its shade given up by its last tick (0 = firm, 1 = quotes its limit at the end)
+
+    @property
+    def firm(self) -> bool:
+        return self.relax <= 0.0
 
 
 class BenchRun(Model):
@@ -207,6 +216,8 @@ class BenchRun(Model):
     traders: list[BenchTrader]
     matched: dict[str, list[list[str]]] = Field(default_factory=dict)  # venue -> [[sell id, buy id], ...]
     scored: bool = False
+    preset: str = "static"
+    rule: str = "quote"  # "quote" or "limit": what a broker's match must cross at (`bench.check_match`)
 
 
 class Event(Model):

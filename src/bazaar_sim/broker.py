@@ -4,8 +4,9 @@ From level 2 a team may open a venue (bond 250 P + 20 P, fees capped at 10 % and
 It gets a broker key once (`simbk-...`; only its SHA-256 is kept). A broker sees its venue's book
 (makers as pseudonyms) and pairs crossing offers: ask <= price and price + fee <= bid. On an `auto`
 venue the engine crosses its best bid and ask every tick itself. Every `bench_every_ticks` every
-venue gets the same synthetic book (`bench_offers`); the share of the possible gains a venue
-realises is its efficiency.
+venue gets the same synthetic book (`bench_offers`; traders, presets and the match rule live in
+`bench.py`); the share of the possible gains a venue realises is its efficiency, and the free stall
+replayed on the same book sets the half-points mark.
 """
 
 from __future__ import annotations
@@ -14,9 +15,9 @@ import hashlib
 import secrets
 from typing import Any
 
-from bazaar_sim import catalog, validate
+from bazaar_sim import bench, catalog, validate
 from bazaar_sim.errors import SimError, invalid, not_found
-from bazaar_sim.models import BenchRun, BenchTrader, Offer, Venue
+from bazaar_sim.models import BenchRun, BenchTrader, Offer, Team, Venue
 from bazaar_sim.views import offer_view
 from bazaar_sim.world import World
 
@@ -26,8 +27,8 @@ MAX_FEE_BPS = 1000
 MAX_FEE_PER_CARD = 5
 FEE_NOTICE_TICKS = 2
 CLOSE_COOLDOWN_TICKS = 10
-BENCH_TRADERS = 10
-BENCH_REF = "BENCH"
+BENCH_TRADERS = bench.NORMAL.traders
+BENCH_REF = bench.BENCH_REF
 
 
 def broker_digest(key: str) -> str:
@@ -141,31 +142,23 @@ def _bench_run(w: World) -> BenchRun | None:
     return next((r for r in w.state.bench if r.start_tick <= w.tick <= r.end_tick and not r.scored), None)
 
 
-def _bench_offer(t: BenchTrader, run: int) -> dict[str, Any]:
-    if t.side == "sell":
-        return {
-            "id": t.id,
-            "run": run,
-            "give": {"assets": [{"kind": "card", "ref": BENCH_REF}]},
-            "want": {"cash": t.quote},
-        }
-    return {"id": t.id, "run": run, "give": {"cash": t.quote}, "want": {"types": [f"card:{BENCH_REF}"]}}
-
-
-def _bench_open(run: BenchRun, vid: str) -> list[BenchTrader]:
+def _bench_open(w: World, run: BenchRun, vid: str) -> list[BenchTrader]:
+    """The run's traders in this venue's book now: arrived, not gone, not matched on this venue."""
     used = {i for pair in run.matched.get(vid, []) for i in pair}
-    return [t for t in run.traders if t.id not in used]
+    return [t for t in run.traders if t.id not in used and bench.present(t, w.tick - run.start_tick)]
 
 
 def book(w: World, venue: Venue) -> dict[str, Any]:
     offers = [o for o in w.state.offers.values() if o.venue == venue.venue and o.status == "open" and o.thread is None]
     run = _bench_run(w)
-    bench = [_bench_offer(t, run.run) for t in _bench_open(run, venue.venue)] if run else []
+    bench_offers = (
+        [bench.offer(t, w.tick - run.start_tick, run.run) for t in _bench_open(w, run, venue.venue)] if run else []
+    )
     tape = [e.payload for e in w.state.events if e.type == "settlement" and e.payload.get("venue") == venue.venue]
     return {
         "venue": venue.venue,
         "offers": [offer_view(w, o, masked=True) for o in sorted(offers, key=lambda o: o.id)],
-        "bench_offers": bench,
+        "bench_offers": bench_offers,
         "fee_bps": venue.fee_bps,
         "fee_per_card": venue.fee_per_card,
         "settlements": tape[-50:],
@@ -222,12 +215,12 @@ def _bench_match(w: World, venue: Venue, sell: str, buy: str, price: int) -> dic
     run = _bench_run(w)
     if run is None:
         raise invalid("no Market Test is running")
-    open_ids = {t.id: t for t in _bench_open(run, venue.venue)}
+    open_ids = {t.id: t for t in _bench_open(w, run, venue.venue)}
     s, b = open_ids.get(sell), open_ids.get(buy)
     if s is None or b is None or s.side != "sell" or b.side != "buy":
         raise invalid("sell and buy must be open bench offers of the running test")
-    fee = round(price * venue.fee_bps / 10_000) + venue.fee_per_card
-    if not s.quote <= price or price + fee > b.quote:
+    fee = bench.fee_of(price, venue.fee_bps, venue.fee_per_card)
+    if bench.refusal(s, b, price, fee, w.tick - run.start_tick, run.rule) is not None:
         raise invalid(f"needs ask <= price and price + fee <= bid (fee {fee})")
     run.matched.setdefault(venue.venue, []).append([s.id, b.id])
     return {"ok": True, "sell": sell, "buy": buy, "price": price, "fee": fee}
@@ -342,18 +335,13 @@ def _auto_cross(w: World, venue: Venue) -> None:
             _queue_match(w, venue, s, b, price, fee, by="auto")
     run = _bench_run(w)
     if run is not None:
-        _auto_bench(venue, run)
+        _auto_bench(w, venue, run)
 
 
-def _auto_bench(venue: Venue, run: BenchRun) -> None:
-    fee_of = lambda p: round(p * venue.fee_bps / 10_000) + venue.fee_per_card  # noqa: E731
-    while True:
-        open_now = _bench_open(run, venue.venue)
-        asks = sorted((t for t in open_now if t.side == "sell"), key=lambda t: t.quote)
-        bids = sorted((t for t in open_now if t.side == "buy"), key=lambda t: -t.quote)
-        if not asks or not bids or asks[0].quote + fee_of(asks[0].quote) > bids[0].quote:
-            return
-        run.matched.setdefault(venue.venue, []).append([asks[0].id, bids[0].id])
+def _auto_bench(w: World, venue: Venue, run: BenchRun) -> None:
+    fee = lambda p: bench.fee_of(p, venue.fee_bps, venue.fee_per_card)  # noqa: E731
+    for s, b, _ in bench.cross_by_quote(_bench_open(w, run, venue.venue), w.tick - run.start_tick, fee):
+        run.matched.setdefault(venue.venue, []).append([s, b])
 
 
 def bench_tick(w: World) -> None:
@@ -367,44 +355,50 @@ def bench_tick(w: World) -> None:
     w.state.bench = w.state.bench[-10:]
 
 
+def bench_preset(w: World, run_id: int) -> bench.BenchPreset:
+    """The preset of the `run_id`-th Market Test: `SIM_BENCH_PRESET`, and every `SIM_BENCH_HARD_EVERY`-th run hard."""
+    cfg = w.config
+    hard = cfg.bench_hard_every > 0 and run_id % cfg.bench_hard_every == 0
+    return (bench.HARD if hard else bench.preset(cfg.bench_preset)).with_ticks(cfg.bench_ticks)
+
+
 def _start_bench(w: World) -> None:
-    rng = w.rng("bench")
     run_id = w.next_id("bench")
-    traders = []
-    for k in range(BENCH_TRADERS):
-        if k % 2 == 0:
-            cost = rng.randint(20, 60)
-            traders.append(
-                BenchTrader(id=f"b{run_id}-{k}", side="sell", limit=cost, quote=round(cost * rng.uniform(1.05, 1.3)))
-            )
-        else:
-            value = rng.randint(40, 95)
-            traders.append(
-                BenchTrader(id=f"b{run_id}-{k}", side="buy", limit=value, quote=round(value * rng.uniform(0.75, 0.95)))
-            )
+    p = bench_preset(w, run_id)
+    traders = bench.make_traders(w.rng("bench"), p, run_id)
     w.state.bench.append(
-        BenchRun(run=run_id, start_tick=w.tick, end_tick=w.tick + w.config.bench_ticks - 1, traders=traders)
+        BenchRun(
+            run=run_id,
+            start_tick=w.tick,
+            end_tick=w.tick + p.ticks - 1,
+            traders=traders,
+            preset=p.name,
+            rule=w.config.bench_match_rule,
+        )
     )
-    w.emit("bench.started", {"run": run_id, "ticks": w.config.bench_ticks, "traders": BENCH_TRADERS})
-
-
-def possible_gains(traders: list[BenchTrader]) -> int:
-    sells = sorted(t.limit for t in traders if t.side == "sell")
-    buys = sorted((t.limit for t in traders if t.side == "buy"), reverse=True)
-    return sum(max(0, b - s) for s, b in zip(sells, buys, strict=False))
+    w.emit("bench.started", {"run": run_id, "ticks": p.ticks, "traders": len(traders)})
 
 
 def _score_bench(w: World, run: BenchRun) -> None:
     by_id = {t.id: t for t in run.traders}
-    best = possible_gains(run.traders) or 1
+    best = bench.possible_gains(run.traders) or 1
+    ticks = run.end_tick - run.start_tick + 1
+    stall = round(bench.run_stall(run.traders, ticks, run=run.run).realised() / best, 3)
+    scored: list[tuple[Team, Venue, float]] = []
     for team in w.state.teams.values():
         venue = w.state.venues.get(team.venue) if team.venue else None
         if venue is None or venue.status != "open":
             continue
         pairs = run.matched.get(venue.venue, [])
-        realised = sum(max(0, by_id[b].limit - by_id[s].limit) for s, b in pairs)
-        efficiency = round(realised / best, 3)
+        realised = sum(bench.gain(by_id[s], by_id[b]) for s, b in pairs)
+        scored.append((team, venue, round(realised / best, 3)))
+    top = sorted((e for _, _, e in scored), reverse=True)[:3]
+    top3 = round(sum(top) / len(top), 3) if top else 0.0
+    for team, venue, efficiency in scored:
         team.bench_efficiency, team.bench_venue = efficiency, venue.venue
         team.mm_points = round(team.mm_points + 10 * efficiency, 2)
     run.scored = True
-    w.emit("bench.finished", {"run": run.run, "possible": best})
+    w.emit(
+        "bench.finished",
+        {"run": run.run, "possible": best, "preset": run.preset, "stall_efficiency": stall, "top3_efficiency": top3},
+    )

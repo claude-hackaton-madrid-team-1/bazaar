@@ -4,6 +4,7 @@ uv run bazaar-sim serve                      # http://127.0.0.1:8765, one tick e
 SIM_TICK_SECONDS=2 uv run bazaar-sim serve   # faster
 BAZAAR_SIM=local uv run bazaar status       # our CLI against it (BAZAAR_SIM=1: the public one)
 SIM_ADMIN_TOKEN=... uv run bazaar-sim reset --url https://<sim host>
+uv run bazaar-sim bench --seeds 1000           # the Market Test offline: the stall and the oracle per preset
 """
 
 from __future__ import annotations
@@ -72,6 +73,36 @@ def reset(
     except urllib.error.HTTPError as e:
         typer.echo(f"reset refused: {e.code} {e.read().decode()[:200]}", err=True)
         raise typer.Exit(1) from None
+
+
+@app.command()
+def bench(
+    seeds: int = typer.Option(1000, help="Seeded books per preset and rule"),
+    presets: str = typer.Option("normal,hard", help="Comma-separated presets (normal, hard, static)"),
+    rules: str = typer.Option("quote,limit", help="Comma-separated match rules (quote, limit)"),
+    fee_bps: int = typer.Option(0, help="The venue fee the oracle must cover (the stall charges none)"),
+) -> None:
+    """The Market Test offline: the free stall and the oracle (the best any broker could do) on seeded books."""
+    import statistics
+
+    from bazaar_sim import bench as b
+
+    def q(xs: list[float]) -> str:
+        deciles = statistics.quantiles(xs, n=10)
+        return f"{deciles[0]:.3f} {statistics.median(xs):.3f} {statistics.fmean(xs):.3f}"
+
+    typer.echo(f"{seeds} books each · efficiency = realised ÷ the possible gains at the true limits (p10 p50 mean)")
+    typer.echo(f"{'preset':8} {'rule':6} {'stall':>19}   {'oracle':>19}   {'oracle - stall':>19}")
+    for name in presets.split(","):
+        p = b.preset(name.strip())
+        for rule in rules.split(","):
+            stall, oracle = [], []
+            for seed in range(seeds):
+                r = b.simulate(lambda _book: [], p, seed, rule=rule.strip(), fee_bps=fee_bps)
+                stall.append(r.stall)
+                oracle.append(r.oracle)
+            gap = [o - s for o, s in zip(oracle, stall, strict=True)]
+            typer.echo(f"{p.name:8} {rule.strip():6} {q(stall)}   {q(oracle)}   {q(gap)}")
 
 
 @app.command()
