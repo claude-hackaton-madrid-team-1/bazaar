@@ -14,7 +14,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import median
 from typing import Any, Literal
@@ -34,6 +34,7 @@ from bazaar_agent.guardrails import (
     parse_md_config,
 )
 from bazaar_agent.guardrails import validated as validated_model
+from bazaar_agent.ladder import FloorRow, conversations, floor_table, main_rows, plan_for
 
 STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
 BASIC_PACK = "sobre_barrio"  # the pack `pack_price_estimate` prices (STRATEGY.md)
@@ -56,6 +57,7 @@ class StrategyParams(BaseModel):
     rare_fallback_price: int = Field(ge=1)
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
+    ladder_floor_quantile: float = Field(default=0.0, ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,7 @@ class Market:
     holders: dict[str, tuple[str, ...]]
     chasers: dict[str, tuple[str, ...]]
     tick: int | None
+    floors: dict[tuple[str, str], FloorRow] = field(default_factory=dict)  # (dealer, price class) → limits seen
 
 
 def is_team(party: str | None) -> bool:
@@ -216,6 +219,7 @@ def build_market(
         holders=likely_holders(events, us),
         chasers={k: tuple(sorted(v)) for k, v in chasers.items()},
         tick=me.get("tick"),
+        floors=main_rows(floor_table(conversations(events))),
     )
 
 
@@ -403,6 +407,17 @@ def bid_range(
     return max(1, min(start, top)), top
 
 
+def floor_range(row: FloorRow, value: float, cap: int | None, min_surplus: float, q: float) -> tuple[int, int] | None:
+    """(start, max) from the floor table (`bazaar ladder floors`): open 2 under the q-quantile of the
+    limits every team's conversations closed at, stop 2 over it, never above the cap or our value minus
+    the minimum surplus. None when that leaves no room (the caller keeps the lowest-fill ladder then)."""
+    choice = plan_for(row, cap, q=q)
+    if choice.plan is None:
+        return None
+    top = min(choice.plan.max_price, math.floor(value - min_surplus))
+    return (choice.plan.start, top) if top >= choice.plan.start else None
+
+
 def opening_ratio(m: Market) -> float | None:
     """The lowest fill / list price any dealer has accepted (e.g. Abuela: a 26 P pack at 17 → 0.65)."""
     rarity_of = _rarity_of(m)
@@ -475,6 +490,11 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     same = [float(p.price) for p in fills if rarity_of.get(p.ref) == card.rarity]
     cap = rules.max_price_for(card.rarity)
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
+    row = m.floors.get((quote.dealer, f"card:{card.rarity}")) if params.ladder_floor_quantile > 0 else None
+    if row is not None and (
+        floored := floor_range(row, case.value, cap, params.min_buy_surplus, params.ladder_floor_quantile)
+    ):
+        plan = floored
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
     if plan[1] < est.price:

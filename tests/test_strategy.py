@@ -479,3 +479,22 @@ def test_ladder_steps_fit_the_thread_and_openings_follow_the_ratio():
     assert strategy.bid_range([], 77, 145.6, 80, 2) == (77, 77)  # nothing learned anywhere: list price
     steps = (strategy.ladder_step(50, 77, 14), strategy.ladder_step(8, 9, 14), strategy.ladder_step(5, 5, 1))
     assert steps == (3, 1, 1)
+
+
+def test_ladder_floor_quantile_opens_dealer_card_buys_from_the_floor_table():
+    from dataclasses import replace as dc_replace
+    from pathlib import Path
+
+    from bazaar_agent.ladder import floor_table, from_rows, main_rows
+
+    rows = json.loads((Path(__file__).parent / "fixtures" / "evals" / "dealer_threads.json").read_text())["rows"]
+    m = dc_replace(market(), floors=main_rows(floor_table(from_rows(rows))))
+
+    def lav08(params):
+        moves, _ = strategy.buy_moves(m, params, RULES)
+        return next(mv for mv in moves if mv.ref == "LAV-08").ladder
+
+    assert lav08(PARAMS) == (18, 22, 1)  # today: the lowest fill seen up to the highest anyone paid
+    assert lav08(PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})) == (21, 25, 1)  # floor 23 ± 2
+    assert strategy.floor_range(m.floors[("abuela", "card:uncommon")], 24.0, 26, 2, 0.5) == (21, 22)  # our value
+    assert strategy.floor_range(m.floors[("chato", "card:rare")], 200.0, 80, 2, 0.5) is None  # cap below market
