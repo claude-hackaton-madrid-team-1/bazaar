@@ -14,44 +14,43 @@ from typing import Any
 
 import psycopg
 
-from bazaar_agent.supply import SupplyMap
+from bazaar_agent.supply import SupplyMap, valid_scan
 
 SCAN_FILE = "scan.jsonl"
 PREVIOUS_SCAN_FILE = "scan.prev.jsonl"
 RELOAD_EVERY = 30  # ticks between re-reads of the stored scan (it changes when someone rescans)
+DB_BACKOFF = 10  # reloads to wait before asking Postgres again after it failed (a connect can take 10 s)
 
 
 def read_scan_file(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
-            row = json.loads(line)
+            rows.append(json.loads(line))
         except json.JSONDecodeError:
             continue  # a torn last line: the rest of the scan still counts
-        if isinstance(row, dict) and isinstance(row.get("id"), int):
-            rows.append(row)
-    return rows
+    return valid_scan(rows)
 
 
 def write_scan_file(folder: Path, rows: Iterable[Mapping[str, Any]]) -> Path:
-    """The new scan replaces the latest; the latest becomes the previous (for `scan_diff`)."""
+    """The new scan replaces the latest; the latest becomes the previous (for `scan_diff`). The new file is
+    written in full first, so a failed write leaves the latest scan in place."""
     folder.mkdir(parents=True, exist_ok=True)
     latest = folder / SCAN_FILE
+    tmp = folder / f"{SCAN_FILE}.tmp"
+    tmp.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in valid_scan(rows)), encoding="utf-8")
     if latest.is_file():
         latest.replace(folder / PREVIOUS_SCAN_FILE)
-    tmp = folder / f"{SCAN_FILE}.tmp"
-    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     tmp.replace(latest)
     return latest
 
 
 def save_scan(conn: psycopg.Connection, rows: Iterable[Mapping[str, Any]], tick: int) -> int:
     data = [
-        (int(r["id"]), str(r.get("ref") or ""), str(r.get("kind") or "card"), json.dumps(dict(r)), tick)
-        for r in sorted(rows, key=lambda r: int(r["id"]))
-        if isinstance(r.get("id"), int)
+        (int(r["id"]), str(r["ref"]), str(r["kind"]), json.dumps(r, allow_nan=False), tick)
+        for r in sorted(valid_scan(rows), key=lambda r: int(r["id"]))
     ]
     with conn.cursor() as cur:
         cur.executemany(
@@ -67,7 +66,7 @@ def save_scan(conn: psycopg.Connection, rows: Iterable[Mapping[str, Any]], tick:
 
 def load_scan(conn: psycopg.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("select scanned from supply_assets where scanned is not null order by id").fetchall()
-    return [r[0] for r in rows if isinstance(r[0], dict)]
+    return valid_scan(r[0] for r in rows)
 
 
 def save_map(conn: psycopg.Connection, sm: SupplyMap, tick: int) -> int:
@@ -126,7 +125,8 @@ def save_map(conn: psycopg.Connection, sm: SupplyMap, tick: int) -> int:
 
 class ScanStore:
     """The latest stored scan for the agents: Postgres when it answers, else this machine's file. Re-read
-    every RELOAD_EVERY ticks; an error keeps the last rows (or none) and never ends a tick."""
+    every RELOAD_EVERY ticks; an error keeps the last rows (or none) and never ends a tick, and a failed
+    Postgres is asked again only after DB_BACKOFF reloads."""
 
     def __init__(
         self,
@@ -138,24 +138,30 @@ class ScanStore:
         self.folder, self._connect, self._log, self.every = folder, connect, log, every
         self._rows: list[dict[str, Any]] = []
         self._read_tick: int | None = None
+        self._db_after: int | None = None  # the tick from which a failed Postgres is asked again
 
     def rows(self, tick: int) -> list[dict[str, Any]]:
         if self._read_tick is not None and tick - self._read_tick < self.every:
             return self._rows
         self._read_tick = tick
-        rows = self._from_db()
-        self._rows = rows if rows is not None else read_scan_file(self.folder / SCAN_FILE)
+        rows = self._from_db(tick)
+        if rows is None:
+            rows = read_scan_file(self.folder / SCAN_FILE)
+        if rows:  # an empty answer (an outage, no file) never drops the scan we already hold
+            self._rows = rows
         return self._rows
 
-    def _from_db(self) -> list[dict[str, Any]] | None:
-        if self._connect is None:
+    def _from_db(self, tick: int) -> list[dict[str, Any]] | None:
+        if self._connect is None or (self._db_after is not None and tick < self._db_after):
             return None
         try:
             with self._connect() as conn:
                 return load_scan(conn)
         except psycopg.errors.UndefinedTable:  # nobody stored a scan yet: ask again at the next reload
             return None
-        except Exception as e:  # down or unreachable: the file serves from now on
-            self._log(f"supply: stored scan unavailable in Postgres ({type(e).__name__}); using {SCAN_FILE}")
-            self._connect = None  # a connect can take 10 s: never again in this process
+        except Exception as e:  # down or unreachable: the last rows (or the file) serve until the back-off ends
+            self._db_after = tick + self.every * DB_BACKOFF
+            self._log(
+                f"supply: stored scan unavailable in Postgres ({type(e).__name__}); retry at tick {self._db_after}"
+            )
             return None

@@ -214,6 +214,29 @@ def test_with_the_switch_on_one_pack_is_opened_live(tmp_path):
     assert "tick 100 taker: opened sobre_barrio #6: RET-01, LAV-02" in lines
 
 
+class RefusingTeam(PackTeam):
+    def open_pack(self, asset_id):
+        self.sent.append(("open_pack", asset_id))
+        raise BazaarError("asset_locked", "the pack is in an open offer", 409)
+
+
+def test_a_refused_open_is_never_sent_again(tmp_path):
+    team = RefusingTeam()
+    t, _ = opener(tmp_path, team, live=True, open_sealed_packs=True)
+    for tick in (100, 101, 102):
+        t.on_tick(clock(tick=tick))
+    assert [s for s in team.sent if s[0] == "open_pack"] == [("open_pack", 6)]
+
+
+def test_a_kept_pack_does_not_hide_the_next_one(tmp_path):
+    me = deepcopy(ME)
+    me["assets"] = [{"id": 5, "kind": "pack", "ref": "sobre_misterio"}, *me["assets"]]  # unknown: kept
+    team = PackTeam(me=me)
+    t, _ = opener(tmp_path, team, live=True, open_sealed_packs=True)
+    t.on_tick(clock(tick=100))
+    assert [s for s in team.sent if s[0] == "open_pack"] == [("open_pack", 6)]
+
+
 def test_a_dry_run_only_says_it_would_open(tmp_path):
     team = PackTeam()
     t, _ = opener(tmp_path, team, live=False, open_sealed_packs=True)
@@ -259,7 +282,7 @@ def test_scan_files_rotate_and_a_torn_line_is_skipped(tmp_path):
     assert [r["id"] for r in read_scan_file(tmp_path / SCAN_FILE)] == [47, 200, 5]
 
 
-def test_the_scan_store_falls_back_to_the_file_and_never_retries_a_dead_database(tmp_path):
+def test_the_scan_store_falls_back_to_the_file_and_backs_off_a_dead_database(tmp_path):
     write_scan_file(tmp_path, SCAN)
     attempts: list[int] = []
 
@@ -269,10 +292,37 @@ def test_the_scan_store_falls_back_to_the_file_and_never_retries_a_dead_database
 
     logs: list[str] = []
     store = ScanStore(tmp_path, connect, logs.append, every=10)
-    assert len(store.rows(100)) == 3 and len(attempts) == 1 and "using scan.jsonl" in logs[0]
+    assert len(store.rows(100)) == 3 and len(attempts) == 1 and "retry at tick 200" in logs[0]
     write_scan_file(tmp_path, SCAN[:1])
     assert len(store.rows(105)) == 3  # cached until 10 ticks have passed
-    assert len(store.rows(110)) == 1 and len(attempts) == 1
+    assert len(store.rows(110)) == 1 and len(attempts) == 1  # the file, Postgres still backing off
+    store.rows(200)
+    assert len(attempts) == 2  # asked again after DB_BACKOFF reloads
+
+
+def test_an_outage_never_drops_the_scan_we_hold(tmp_path):
+    answers = [SCAN, OSError("down")]
+
+    class Conn:
+        def __enter__(self):
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            self.rows = answer
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql):
+            return self
+
+        def fetchall(self):
+            return [(r,) for r in self.rows]
+
+    store = ScanStore(tmp_path, Conn, every=10)  # no file on this machine (Railway)
+    assert len(store.rows(100)) == 3
+    assert len(store.rows(110)) == 3  # Postgres failed, no file: the last good scan stays
 
 
 def test_a_missing_table_is_asked_again_at_the_next_reload(tmp_path):
@@ -286,6 +336,30 @@ def test_a_missing_table_is_asked_again_at_the_next_reload(tmp_path):
 
     store = ScanStore(tmp_path, connect, every=10)
     assert store.rows(100) == [] and store.rows(110) == [] and len(attempts) == 2
+
+
+POISON = [{"id": 48, "ref": "LAV-10", "history": 3}, {"id": "x", "ref": "LAV-01"}, ["not", "a", "row"], {"id": 49}]
+
+
+def test_malformed_scan_rows_are_dropped_at_the_boundary():
+    # #155 security P2: a row with "history": 3 failed every taker and maker tick.
+    assert [r["id"] for r in supply.valid_scan([*POISON, *SCAN])] == [47, 200, 5]
+    assert supply.supply_map(CATALOG, ME, FEED, [*POISON, *SCAN]).scanned == 3
+
+
+def test_a_poisoned_stored_scan_never_stops_a_tick(tmp_path):
+    team = PackTeam()
+    t, lines = opener(tmp_path, team, live=False)
+    t.feed.scans = type("Store", (), {"rows": lambda self, tick: [*POISON, *SCAN]})()
+    t.on_tick(clock(tick=100))
+    assert any(line.startswith("tick 100 taker:") and "accept candidate" in line for line in lines)
+
+
+def test_a_failed_write_keeps_the_latest_scan(tmp_path):
+    write_scan_file(tmp_path, SCAN)
+    with pytest.raises(ValueError):
+        write_scan_file(tmp_path, [{**SCAN[0], "luck": float("nan")}])
+    assert [r["id"] for r in read_scan_file(tmp_path / SCAN_FILE)] == [47, 200, 5]
 
 
 def test_a_feed_without_a_scan_store_gives_no_scan():

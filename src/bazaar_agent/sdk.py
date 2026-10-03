@@ -71,13 +71,14 @@ def public_client(settings: Settings) -> PublicBazaar:
     return PublicBazaar(settings.bazaar_url)
 
 
-def team_client(settings: Settings, *, track: bool = True) -> Bazaar:
+def team_client(settings: Settings, *, track: bool = True, retries: int = TEAM_RETRIES) -> Bazaar:
     """wait_on_tick=False: our tick loop owns timing, so a refused send never blocks a process. `track`:
-    every send bumps the shared holdings epoch (`holdings.process_tracker`), for every process alike."""
+    every send bumps the shared holdings epoch (`holdings.process_tracker`), for every process alike.
+    `retries=0`: the first refusal (a 429 too) is raised at once, for loops that must stop on one."""
     from bazaar_agent import holdings
 
     hook = holdings.process_tracker(settings) if track else None
     key = settings.require_team_key()
     return TrackedBazaar(
-        settings.bazaar_url, key, on_write=hook, wait_on_tick=False, retries=TEAM_RETRIES, timeout=TEAM_TIMEOUT_S
+        settings.bazaar_url, key, on_write=hook, wait_on_tick=False, retries=retries, timeout=TEAM_TIMEOUT_S
     )

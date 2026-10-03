@@ -313,6 +313,7 @@ class Taker:
         self.cooling: dict[tuple[str, str], float] = {}
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._pack_notes: set[tuple[int, str]] = set()  # (asset, verdict) already recorded and not sent
+        self._pack_refused: set[int] = set()  # sealed packs the server refused to open: never sent again
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -412,11 +413,12 @@ class Taker:
     def _open_pack(self, run: _TickRun, market: Market) -> None:
         """Open at most one sealed pack a tick when its cards are worth more to us than any sealed price
         (`pack_open.choose`), behind `open_sealed_packs`. The next tick re-reads /me (album first)."""
-        packs = sealed_packs(run.snap.me)
+        packs = [p for p in sealed_packs(run.snap.me) if p.asset_id not in self._pack_refused]
         if not packs:
             return
         tick = run.snap.clock.tick
-        choice = choose(market, packs[0], run.params)
+        choices = [choose(market, p, run.params) for p in packs]
+        choice = next((c for c in choices if c.verdict == "open"), choices[0])
         verdict = check(Action("open_pack", choice.pack.pack, "pack"), self._ctx(run), self.rules)
         status: Status = "approved" if verdict.allowed and choice.verdict == "open" else "rejected"
         if status == "approved" and not run.window.open():
@@ -445,6 +447,8 @@ class Taker:
             {"asset": choice.pack.asset_id},
             lambda: self.team.open_pack(choice.pack.asset_id),
         )
+        if body is None:  # refused (asset_locked, not_owner, ...): logged by send, never retried
+            self._pack_refused.add(choice.pack.asset_id)
         pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
         if pulled:
             self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")

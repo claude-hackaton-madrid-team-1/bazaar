@@ -20,11 +20,37 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 Event = dict[str, Any]
 HANDS = 18
 HAND_SIZE = 15
 START_ASSETS = HANDS * HAND_SIZE  # ids 1–270: the starting hands, dealt in blocks of 15
 PAGE_RARITIES = ("common", "uncommon", "rare")
+
+
+class ScanRow(BaseModel):
+    """One `GET /api/cards/{id}` body, checked at the boundary: a stored scan is read back by every agent each
+    30 ticks, so a malformed row is dropped here instead of failing their ticks."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: int = Field(ge=1, le=10_000_000)
+    ref: str = Field(min_length=1, max_length=40)
+    kind: str = Field(default="card", max_length=20)
+    owner: str | None = Field(default=None, max_length=40)
+    history: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
+
+
+def valid_scan(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    """The rows that pass `ScanRow`, as plain dicts; any other row is dropped."""
+    out = []
+    for row in rows:
+        try:
+            out.append(ScanRow.model_validate(row).model_dump())
+        except ValidationError:
+            continue
+    return out
 
 
 def team_id(n: int) -> str:
@@ -66,11 +92,10 @@ def scan_holder(row: Mapping[str, Any]) -> str | None:
 
 def assets_from_scan(scan: Iterable[Mapping[str, Any]]) -> dict[int, Asset]:
     out = {}
-    for row in scan:
-        if isinstance(row.get("id"), int) and row.get("ref"):
-            aid = int(row["id"])
-            origin = "start" if aid <= START_ASSETS else "scan"
-            out[aid] = Asset(aid, str(row["ref"]), str(row.get("kind") or "card"), scan_holder(row), origin, None)
+    for row in valid_scan(scan):
+        aid = int(row["id"])
+        origin = "start" if aid <= START_ASSETS else "scan"
+        out[aid] = Asset(aid, str(row["ref"]), str(row.get("kind") or "card"), scan_holder(row), origin, None)
     return out
 
 
@@ -213,7 +238,7 @@ def supply_map(
     scan: Iterable[Mapping[str, Any]] = (),
 ) -> SupplyMap:
     us = str(me.get("id") or "")
-    scan_rows = list(scan)
+    scan_rows = valid_scan(scan)
     assets = asset_map(scan_rows, events, me)
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [] if isinstance(a, dict) and a.get("kind") == "card")
     cards = card_supply(catalog, assets, us, held)

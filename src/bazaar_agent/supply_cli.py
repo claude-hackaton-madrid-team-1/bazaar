@@ -22,12 +22,13 @@ from rich.table import Table
 
 from bazaar_agent.config import load_settings
 from bazaar_agent.sdk import BazaarError, public_client, team_client
-from bazaar_agent.supply import START_ASSETS, SupplyMap, scan_diff, supply_map
+from bazaar_agent.supply import START_ASSETS, SupplyMap, scan_diff, supply_map, valid_scan
 from bazaar_agent.supply_db import SCAN_FILE, ScanStore, read_scan_file, save_map, save_scan, write_scan_file
 
 supply_app = typer.Typer(help="Supply map: who holds each card, and how many complete pages can exist")
 console = Console()
 UNKNOWN = ("unknown_asset", "not_found")  # an id beyond the last asset
+MAX_RATE = 2.0  # requests a second: the taker, maker and duels share the key's 5 req/s while the doors are open
 
 
 def register(app: typer.Typer) -> None:
@@ -134,31 +135,37 @@ def scan_ids(
                 continue
             return rows, f"refused at id {aid}: {e.code} ({e.status}); not retried"
         misses = 0
-        if isinstance(body, dict) and isinstance(body.get("id"), int):
-            rows.append(body)
+        rows += valid_scan([body])
     return rows, f"reached --max-id {max_id}"
 
 
 @supply_app.command("scan")
 def scan_cmd(
-    rate: float = typer.Option(1.0, help="Requests per second (the key's 5 req/s is shared by all our processes)"),
+    rate: float = typer.Option(1.0, help="Requests per second, at most 2 (the key's 5 req/s is shared by all of us)"),
     from_id: int = typer.Option(1, help="First id; ids below it are kept from the previous scan"),
     max_id: int = typer.Option(3000, help="Never read past this id"),
     gap: int = typer.Option(5, help="Stop after this many unknown ids in a row past id 270"),
     save: bool = typer.Option(False, "--save", help="Also store the scan in Postgres (supply_assets)"),
 ) -> None:
     """Scan GET /api/cards/{id}: every card's ref and history (the supply map's starting hands)."""
-    if not 0 < rate <= 4:
-        console.print("[red]--rate must be in (0, 4]: the key's 5 req/s is shared[/red]")
+    if not 0 < rate <= MAX_RATE:
+        console.print(f"[red]--rate must be in (0, {MAX_RATE:g}]: the key's 5 req/s is shared[/red]")
         raise typer.Exit(2)
     settings = load_settings()
     folder = settings.data_dir / "supply"
     previous = read_scan_file(folder / SCAN_FILE)
     kept = [r for r in previous if int(r["id"]) < from_id]
     console.print(f"scanning from id {from_id} at {rate:g} req/s (~{START_ASSETS / rate:.0f} s for 270 ids)")
-    team = team_client(settings)
-    tick = int(team.clock().get("tick") or 0)
+    team = team_client(settings, retries=0)  # a 429 stops the scan: the SDK must not retry it either
+    try:
+        tick = int(team.clock().get("tick") or 0)
+    except BazaarError as e:
+        console.print(f"[red]/api/clock refused: {escape(e.code)} ({e.status}); nothing scanned[/red]")
+        raise typer.Exit(1) from None
     rows, why = scan_ids(team.card, from_id, max_id=max_id, gap=gap, pause_s=1.0 / rate, sleep=time.sleep)
+    if not rows:
+        console.print(f"nothing read ({escape(why)}): {SCAN_FILE} and Postgres are left as they were")
+        raise typer.Exit(1)
     scan = sorted(kept + rows, key=lambda r: int(r["id"]))
     path = write_scan_file(folder, scan)
     diff = scan_diff(previous, scan)
@@ -166,9 +173,9 @@ def scan_cmd(
         f"{len(rows)} assets read ({escape(why)}); {len(scan)} in {path.name}; "
         f"{len(diff['added'])} new ids, {len(diff['moved'])} changed hands since the last scan"
     )
-    if save:
+    if save:  # only what this run read: older rows from this laptop's file never overwrite a newer scan
         from bazaar_agent import db
 
         with db.connect_ready("bazaar-supply") as conn:
-            n = save_scan(conn, scan, tick)
+            n = save_scan(conn, rows, tick)
         console.print(f"stored {n} assets in Postgres (supply_assets)")
