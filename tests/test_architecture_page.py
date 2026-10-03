@@ -56,6 +56,17 @@ DATA = {
     "being_built": [{"status": "wip", "label": "worker", "title": "Evals", "body": "Online."}],
     "not_started": [{"status": "part", "label": "gap", "title": "Learner", "body": "Fills tables."}],
     "links": [{"name": "Taker", "urls": ["https://a.example", "wss://a.example/events"]}],
+    "roadmap": [
+        {
+            "when": "Sat 09:00-13:00",
+            "title": "Morning",
+            "events": ["09:21 Market Test <1>"],
+            "items": [
+                {"priority": "P0", "status": "wip", "text": "Fix `#61` <now>", "owner": "Marius"},
+                {"priority": "P2", "status": "done", "text": "Sim gate"},
+            ],
+        }
+    ],
 }
 
 
@@ -111,3 +122,37 @@ def test_check_detects_a_stale_page(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 def test_committed_page_is_current() -> None:
     assert ap.main(["--check"]) == 0
+
+
+def test_roadmap_renders_each_slot_with_priority_status_and_owner() -> None:
+    page = ap.render_page(DATA, PLAN, TEMPLATE)
+    assert "Sat 09:00-13:00" in page and "<b>Morning</b>" in page
+    assert '<p class="events">⏱ 09:21 Market Test &lt;1&gt;</p>' in page
+    assert '<span class="prio P0">P0</span><span class="pill p-wip">doing</span>' in page
+    assert "Fix <code>#61</code> &lt;now&gt;" in page and " · Marius" in page
+    assert '<span class="pill p-done">done</span><span>Sim gate</span>' in page  # no owner, no separator
+
+
+def test_every_roadmap_field_is_escaped() -> None:
+    evil = "<script>x</script>"
+    phase = {
+        "when": evil,
+        "title": evil,
+        "events": [evil],
+        "items": [{"priority": "P1", "status": "todo", "text": evil, "owner": evil}],
+    }
+    out = ap.render_roadmap([phase])
+    assert "<script>" not in out and out.count("&lt;script&gt;") == 5
+
+
+def test_roadmap_events_must_be_a_list() -> None:
+    with pytest.raises(SystemExit):
+        ap.render_roadmap([{"when": "x", "title": "y", "events": "09:00 open", "items": []}])
+
+
+def test_roadmap_is_optional_and_rejects_unknown_priorities() -> None:
+    without = {k: v for k, v in DATA.items() if k != "roadmap"}
+    assert "No roadmap yet" in ap.render_page(without, PLAN, TEMPLATE)
+    bad = {"when": "x", "title": "y", "items": [{"priority": "P9", "status": "todo", "text": "z"}]}
+    with pytest.raises(SystemExit):
+        ap.render_roadmap([bad])
