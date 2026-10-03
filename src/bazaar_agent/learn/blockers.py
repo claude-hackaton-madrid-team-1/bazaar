@@ -26,9 +26,11 @@ CAP_TICKS = {
 
 
 def in_force(lr: Learning, tick: int) -> bool:
-    """Still blocking at `tick`: before its `until_tick`, and within its kind's cap from when it was learned."""
+    """Still blocking at `tick`: before its `until_tick`, and within its kind's cap from when it was learned.
+    A fact learned "in the future" (a tick counter reset, simulator rows) is not believed (one tick of slack
+    for an event that lands just before the clock read)."""
     cap = CAP_TICKS.get(lr.kind)
-    return lr.active(tick) and (cap is None or tick < lr.tick + cap)
+    return lr.active(tick) and (cap is None or lr.tick <= tick + 1 < lr.tick + cap + 1)
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ def blocks_for(learnings: Iterable[Learning], us: str | None, tick: int) -> Bloc
     for lr in pool:
         if not lr.blocking or lr.subject_kind != "dealer" or lr.team != us or not in_force(lr, tick):
             continue
-        if lr.source != "rules" or not ORIGIN_THAT_BLOCKS.match(str(lr.detail.get("origin", ""))):
+        if lr.source != "rules" or not ORIGIN_THAT_BLOCKS.fullmatch(str(lr.detail.get("origin", ""))):
             continue
         if lr.kind == "blocker" and unlocked.get(lr.subject, -1) >= lr.tick:
             continue
