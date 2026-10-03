@@ -3,6 +3,7 @@ the taker's board accepts and dealer threads, the maker's board bids, the reads 
 Fakes only, no network: the fake team answers `value(card)` like `GET /api/me/value?card=<ref>`."""
 
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
@@ -10,6 +11,7 @@ from bazaar_agent.agents.maker import Maker
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
+from tests.test_strategy import ME
 
 pytestmark = pytest.mark.official_values
 
@@ -268,3 +270,26 @@ def test_selling_into_a_standing_bid_never_reads_the_official_value(tmp_path):
     t.on_tick(clock())
     assert team.sent == [("accept", 77, [5])]
     assert team.value_calls == [] and t.values.reads == 0
+
+
+def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tmp_path):
+    # UB1: a rung refused only for cash bids the most we may still commit (a distinct step up), re-checked in full
+    # (official value included); with nothing left above our last bid, the guardrail walk rests on the card.
+    team = ValuedTeam(me={**ME, "cash": 290})  # floor 270: room 20
+    t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
+    t.on_tick(clock())
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)  # the next rung is 22
+    her_ask(team, 5000, 800, 30)
+    t.on_tick(at(team, TICK + 1))
+    assert [s[2] for s in team.sent if s[0] == "say"] == [18, 20]  # 22 would leave 268 < 270
+    bid = [r for r in rows(tmp_path) if r.get("kind") == "dealer_bid"][-1]
+    assert bid["guardrail"] == "allowed" and "above our cash room 20" in bid["reason"]
+    assert "LAV-08" in team.value_calls  # the substituted bid passed the full check, official value included
+    her_ask(team, 5000, 801, 29)
+    t.on_tick(at(team, TICK + 2))  # 24 refused, no step left above 20: walk and rest
+    assert team.sent[-1] == ("close_thread", 5000)
+    team.thread_payloads.pop(5000)
+    t.on_tick(at(team, TICK + 3))
+    opened = [s[2] for s in team.sent if s[0] == "open_thread"]
+    assert opened.count({"buy": {"card": "LAV-08"}}) == 1

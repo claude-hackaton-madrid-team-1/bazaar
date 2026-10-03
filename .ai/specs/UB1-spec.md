@@ -15,7 +15,7 @@ agent does anything, something is wrong." No settlement of ours from tick 1099 t
   still answers to the price caps. Evidence: the live refusal "cash 58 - 67 < cash_floor 5" (MAL-09, ticks 1095-1166).
 - [ ] 2. A later rung refused ONLY for cash or the hour's spend bids the most we may still commit when that is a
   distinct step above our last bid; any other refusal walks as before; never below the plan's start.
-- [ ] 3. A walk because the next rung passes the official value rests on that card for an hour (no reopen loop:
+- [ ] 3. A guardrail walk (the next rung passes the official value, or our cash room) rests on that card for an hour (no reopen loop:
   RET-09/RET-10 with Los Pícaros, ticks 1205-1227).
 - [ ] 4. The refusals of the last 600 ticks are ranked (count, value blocked) with a keep/fix verdict each; clear fixes
   land, judgement calls go to the coordinator.

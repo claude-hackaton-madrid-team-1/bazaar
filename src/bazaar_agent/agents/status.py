@@ -3,7 +3,7 @@
     GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, ledger, tick, last_tick_at}
                  ledger: shared | down (a live agent sends nothing until it answers) | local file
                  taker only, once its activity check ran (`activity.py`): activity ok|stalled|idle|unknown,
-                 stalled_for_ticks, idle_reason, top_blocker (a coarse rule id; /state carries the same four)
+                 stalled_for_ticks, idle_reason (/state carries the same three; never the blocker: it names our limit)
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
@@ -69,7 +69,7 @@ MOVE_FIELDS = frozenset(
 REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
 # Our venue's broker sees a private book (pseudonyms, the Market Test's bench): its rows show only that a match
 # or an opening happened and how it ended, never an offer id, a quote, a maker or a price.
-ACTIVITY_LABELS = frozenset({"activity", "idle_reason", "top_blocker"})  # plus stalled_for_ticks (an int)
+ACTIVITY_LABELS = frozenset({"activity", "idle_reason"})  # plus stalled_for_ticks (an int)
 ACTIVITY_LABEL = re.compile(r"[a-z0-9_]{1,40}")
 PRIVATE_KINDS = frozenset({"broker_match", "venue_open"})
 PRIVATE_METHODS = frozenset({"broker_match", "open_venue"})

@@ -1159,4 +1159,4 @@ cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 
 "none affordable". A ladder is now ranked at its first rung (caps still at its top); each rung is checked when sent,
 and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
 1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
-a walk at the official-value top now rests on the card for an hour (`official_values.over_value_only`).
+every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).

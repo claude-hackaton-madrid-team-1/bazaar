@@ -297,19 +297,20 @@ class ActivityReport:
     agents: tuple[AgentActivity, ...] = ()
 
     def public(self) -> dict[str, Any]:
-        """What /health and /state carry: the state and a coarse rule id, never a price, card or limit."""
+        """What /health and /state carry: the state, how long and the idle label. Never the blocker, not even its rule
+        id: `top_blocker: max_price_rare` or `cash_floor` on a public URL tells a rival which limit binds us (#248
+        reviews; the #121 rule for /state). The blocker stays in the WARN line, the decisions row and the learning."""
+        return {"activity": self.activity, "stalled_for_ticks": self.stalled_for_ticks, "idle_reason": self.idle_reason}
+
+    def coarse_blocker(self) -> str | None:
         rule = self.top_blocker.rule if self.top_blocker is not None else None
-        return {
-            "activity": self.activity,
-            "stalled_for_ticks": self.stalled_for_ticks,
-            "idle_reason": self.idle_reason,
-            "top_blocker": rule if rule is None or PUBLIC_RULE.fullmatch(rule) else "other",
-        }
+        return rule if rule is None or PUBLIC_RULE.fullmatch(rule) else "other"
 
     def summary(self) -> dict[str, Any]:
         """The private summary for the `activity_stall` decisions row and the learning."""
         return {
             **self.public(),
+            "top_blocker": self.coarse_blocker(),
             "window_ticks": self.window,
             "top_blocker_text": self.top_blocker.line() if self.top_blocker is not None else None,
             "agents": {

@@ -128,7 +128,7 @@ from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.news import NewsSentinel
-from bazaar_agent.official_values import OfficialValues, over_value_only, unread_only
+from bazaar_agent.official_values import OfficialValues, unread_only
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.pack_open import choose, sealed_packs
@@ -1736,13 +1736,6 @@ class Taker:
             action = Action("close_thread", str(conv.thread_id))
         ctx = self._ctx(run, skip_thread=conv.thread_id)
         verdict = check(action, ctx, self.rules)
-        floor, cap = effective_cash_floor(self.rules, ctx), self.rules.max_spend_per_game_hour
-        room = min(ctx.cash - floor, cap - ctx.spent_last_hour)
-        if move.kind == "bid" and (lower := affordable_rung(verdict.violations, conv.neg.bids, room)) is not None:
-            # UB1: only this rung is unaffordable: bid the most we may still commit instead of walking the thread.
-            move = replace(move, price=lower, reason=f"{move.reason}; rung {move.price} above our cash room {room}")
-            action = replace(action, price=lower, final=False)
-            verdict = check(action, ctx, self.rules)
         verdict_text = str(verdict)
         if verdict.halted:  # the kill switch went on this tick: hold, the thread stays open
             self.log(f"tick {tick} taker: kill switch on: holding {move.kind} on thread {conv.thread_id} ({verdict})")
@@ -1758,8 +1751,20 @@ class Taker:
             # No official value this tick (a failed read): hold, the thread stays open (review #177 P1-2).
             self.log(f"tick {tick} taker: {conv.dealer} hold on thread {conv.thread_id} ({verdict})")
             return
-        if not verdict.allowed:  # at our official-value top: rest on this item, never replay the same ladder (UB1)
-            move = Move("walk", reason=f"guardrail: {verdict}", rest=over_value_only(verdict.violations))
+        if not verdict.allowed and move.kind == "bid" and not action.final:
+            # UB1: only this rung is unaffordable: bid the most we may still commit instead of walking the thread
+            # (never on a meet of her final: a lower bid there is no answer to it).
+            floor, cap = effective_cash_floor(self.rules, ctx), self.rules.max_spend_per_game_hour
+            room = min(ctx.cash - floor, cap - ctx.spent_last_hour)
+            if (lower := affordable_rung(verdict.violations, conv.neg.bids, room)) is not None:
+                move = replace(move, price=lower, reason=f"{move.reason}; rung {move.price} above our cash room {room}")
+                action = replace(action, price=lower)
+                verdict = check(action, ctx, self.rules)
+                verdict_text = str(verdict)
+        if not verdict.allowed:
+            # A guardrail walk RESTS on the item (UB1): the next tick would reopen it and replay the same ladder up to
+            # the same refused rung (RET-10 at its official value, Sat ticks 1205-1227; or our cash room).
+            move = Move("walk", reason=f"guardrail: {verdict}", rest=True)
         choice = self._tactic(conv, move, dm.ask)
         inputs = {
             "dealer": conv.dealer,

@@ -115,13 +115,6 @@ def _card_specific(e: Exception) -> bool:
 UNREAD = "(GET /api/me/value): buying it is not allowed"  # ends every not-read / could-not-be-read refusal
 
 
-def over_value_only(violations: tuple[str, ...]) -> bool:
-    """Refused only because the price passes the official value of one more copy: our top for that card is reached,
-    so a dealer thread walks and RESTS on it (UB1, Sat ticks 1205-1227: Los Pícaros asked 64-73 for RET-10, worth 49
-    to us, and the taker reopened and replayed 48, 49 every 3 ticks)."""
-    return bool(violations) and all("> official value " in v and v.endswith("(GET /api/me/value)") for v in violations)
-
-
 def unread_only(violations: tuple[str, ...]) -> bool:
     """Refused only because the official value, the human approvals or our sales (`no_buyback_ticks`) could not be
     read: hold for the tick, never walk on it."""

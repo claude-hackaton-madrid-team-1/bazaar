@@ -174,8 +174,8 @@ def test_rule_categories_are_coarse_ids():
 def test_the_public_part_carries_no_price_card_or_text():
     refusals = [denied("taker", TICK, "price 90 > max_price_rare 80", ref="LAT-10", price=90)]
     public = act.assess(TICK, 1, 60, [], refusals).public()
-    assert public == {"activity": "stalled", "stalled_for_ticks": None, "idle_reason": None,
-                      "top_blocker": "max_price_rare"}  # fmt: skip
+    assert public == {"activity": "stalled", "stalled_for_ticks": None, "idle_reason": None}
+    assert act.assess(TICK, 1, 60, [], refusals).summary()["top_blocker"] == "max_price_rare"  # private row only
     assert "LAT-10" not in str(public) and "90" not in str(public)
 
 
@@ -285,16 +285,16 @@ def test_the_pace_is_remembered_when_a_tick_has_no_clock():
 # ---------------------------------------------------------------- /health and /state
 
 
-def test_health_and_state_carry_only_the_four_coarse_fields():
+def test_health_and_state_carry_only_the_three_coarse_fields_never_the_blocker():
     hub = StatusHub("taker", True)
     report = act.assess(TICK, 1, 60, [], [denied("taker", TICK, "price 90 > max_price_rare 80", ref="LAT-10")])
     hub.activity({**report.public(), "top_blocker_text": "LAT-10 at 90", "stalled_for_ticks": True})
     health, state = hub.health(), hub.state()
     for view in (health, state):
-        assert view["activity"] == "stalled" and view["top_blocker"] == "max_price_rare"
+        assert view["activity"] == "stalled" and "top_blocker" not in view
         assert "top_blocker_text" not in view and "stalled_for_ticks" not in view  # a bool is not a tick count
-    hub.activity({"activity": "stalled", "top_blocker": "cash 300 < 270"})  # not a coarse id: dropped
-    assert "top_blocker" not in hub.health()
+    hub.activity({"activity": "stalled", "top_blocker": "cash_floor"})  # the rule id names our limit: dropped
+    assert "top_blocker" not in hub.health() and "top_blocker" not in hub.state()
     hub.activity(None)
     assert "activity" not in hub.state()
 
@@ -319,6 +319,6 @@ def test_the_live_taker_runs_the_check_after_its_sends_and_publishes_it(tmp_path
     t.rec.hub = None
     t.on_tick(fake_clock(tick=TICK))
     assert any("WARN activity: taker STALLED" in line for line in t.activity.lines)
-    assert published and published[-1]["activity"] == "stalled" and published[-1]["top_blocker"] == "cash_floor"
+    assert published and published[-1]["activity"] == "stalled" and "top_blocker" not in published[-1]
     assert [r["kind"] for r in rows(tmp_path) if r.get("kind") == "activity_stall"] == ["activity_stall"]
     assert all(" refused " not in line for line in lines)
