@@ -265,3 +265,30 @@ def test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept
     assert client.sent == [] and len(calls) == 3
     findings = [r["inputs"]["inspector"]["findings"][0] for r in decision_rows(tmp_path)]
     assert "moved against us" in findings[0] and "90 is not inside our limit" in findings[1]
+
+
+def test_duel_run_forgets_a_failed_re_read_at_every_tick_even_a_repeated_tick_number(duel_cli, monkeypatch):
+    """Review r4 P3: `rereads.new_tick()` in duel_run (ticks 134 → 135 → 134 after a world reset)."""
+    from bazaar_agent import ticks
+    from bazaar_agent.sdk import BazaarError
+
+    cli, client, asked, tmp_path = duel_cli
+    calls: list[int] = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # tick 134's re-read
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(client.payload)}
+
+    def clock():
+        tick = 134 if len(calls) < 2 else (135 if len(calls) < 4 else 134)
+        return {"tick": tick, "next_tick_in": 40.0, "tick_seconds": 60.0, "t_hours": 2.2}
+
+    client.duels, client.clock = duels, clock
+    fast = ticks.run_per_tick
+    monkeypatch.setattr(cli, "run_per_tick", lambda *a, **k: fast(*a, **{**k, "sleep": lambda _: None}))
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "3"])
+    assert result.exit_code == 0, result.output
+    # 134: refused (429); 135: re-read, accepted; 134 again: the old failure is forgotten, re-read, accepted
+    assert client.sent == [("accept", 95), ("accept", 95)] and len(calls) == 6
