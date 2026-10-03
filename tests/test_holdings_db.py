@@ -86,6 +86,15 @@ def test_the_stored_row_never_holds_the_broker_key(opener):
     assert "starter_broker_key" not in reader(opener, game, "maker").me(clock(tick=TICK)).me
 
 
+def test_a_row_from_a_reset_world_never_hides_the_current_tick(opener):
+    game = Game(tick=19)
+    reader(opener, game).me(clock(tick=19))  # a simulator world that was later reset
+    game.payload["tick"] = 1
+    reader(opener, game).me(clock(tick=1))  # the new world's tick 1
+    found = reader(opener, game, "maker").me(clock(tick=1))
+    assert (found.source, found.tick, game.calls) == ("db", 1, 2)
+
+
 def test_a_snapshot_from_an_older_tick_is_never_used(opener):
     game = Game(tick=TICK)
     reader(opener, game).me(clock(tick=TICK))

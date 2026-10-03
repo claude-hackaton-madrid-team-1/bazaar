@@ -13,6 +13,7 @@ import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -176,12 +177,13 @@ class Backend:
         with self._build:
             if self._holdings is None:
                 from bazaar_agent import holdings as hd
-                from bazaar_agent.identity import resolve_team_id
+                from bazaar_agent.identity import remember_team_id, resolve_team_id
 
                 team = resolve_team_id(self.settings.team_id, self.settings.data_dir, None)
                 if self._shared_holdings:
                     hd.name_process("mcp" if self.server else "runtime")
-                    self._holdings = hd.for_process(lambda: self.team.me(), self.rules, team=team)
+                    remember = partial(remember_team_id, self.settings.data_dir)
+                    self._holdings = hd.for_process(lambda: self.team.me(), self.rules, team=team, on_team=remember)
                 else:
                     reader = "mcp" if self.server else "runtime"
                     self._holdings = hd.Holdings(

@@ -123,6 +123,15 @@ def test_no_key_shaped_field_is_ever_answered():
     assert "bk_live_SECRET_000" not in str(read.me) and read.me["cash"] == ME["cash"]
 
 
+def test_a_live_read_names_our_team_and_corrects_a_stale_id():
+    learned = []
+    h = Holdings(Reads(), SharedDb(None), reader="cli", rules=Guardrails(), team="t09", on_team=learned.append)
+    h.me(clock())
+    assert h.team == "t01" and learned == ["t01"]  # /api/me is the authority; the cache is told once
+    h.me(clock())
+    assert learned == ["t01"]
+
+
 def test_a_refused_me_read_is_raised_not_hidden():
     def refused():
         raise BazaarError("rate_limited", "slow down", 429)

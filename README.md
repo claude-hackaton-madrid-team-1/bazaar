@@ -264,7 +264,7 @@ payload). The others answer from that row **only while it is provably current**:
 
 | Rule | The stored snapshot is used only when | Else |
 |---|---|---|
-| tick | it was read in the reader's current game tick (the server's `tick` in `/me`) | live read |
+| tick | it was read in the reader's current game tick (the server's `tick` in `/me`, exactly) | live read |
 | epoch | no send of ours, from any process, started or finished since it was read: every request that can move cards or cash bumps `holdings_state.epoch` before it goes and after it returns (`sdk.TrackedBazaar`, in every `team_client()`; duel moves and flags move nothing) | live read |
 | calm | no thread message of ours went out this tick (a dealer may still answer and accept, and that settles at once) | live read |
 | age | it is younger than `holdings_max_age_s` (GUARDRAILS.md, 5 s): the backstop for what we cannot see coming | live read |

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 import typer
@@ -21,7 +22,7 @@ from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
-from bazaar_agent.identity import resolve_team_id
+from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
@@ -258,7 +259,8 @@ def _holdings_read(settings: Settings, from_db: bool = True) -> Any:
     team_id = resolve_team_id(settings.team_id, settings.data_dir, None)
     if not from_db:
         return hd.Holdings(team.me, SharedDb(None), reader="cli", rules=_rules().rules).me(clock)
-    return hd.for_process(team.me, _rules().rules, team=team_id).me(clock)
+    remember = partial(remember_team_id, settings.data_dir)
+    return hd.for_process(team.me, _rules().rules, team=team_id, on_team=remember).me(clock)
 
 
 def _team_read(read: Callable[[Any], Any]) -> Any:
@@ -1360,7 +1362,12 @@ def _run_agent(
         log=log,
         settings=settings,
         hub=hub,
-        holdings=hd.for_process(team.me, rules, team=resolve_team_id(settings.team_id, settings.data_dir, None)),
+        holdings=hd.for_process(
+            team.me,
+            rules,
+            team=resolve_team_id(settings.team_id, settings.data_dir, None),
+            on_team=partial(remember_team_id, settings.data_dir),
+        ),
     )
     log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
     try:

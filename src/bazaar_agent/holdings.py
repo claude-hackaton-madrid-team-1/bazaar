@@ -5,7 +5,7 @@ after every deal. The taker, the maker, the MCP server and the CLI share one key
 process that needs `/me` in a tick reads it and upserts `me_snapshots`; the others answer from that row
 while it is provably current. A stored snapshot is a decision input only when ALL of these hold:
 
-1. tick  — it was read in the reader's current game tick or later (the server's `tick` in /me);
+1. tick  — it was read in the reader's current game tick (the server's `tick` in /me);
 2. epoch — no state-changing send of ours, from any process, started or finished since it was read
            (`holdings_state.epoch`, bumped before AND after every such send by `sdk.TrackedBazaar`);
 3. calm  — no thread message of ours went out this tick: a dealer may still answer and accept it,
@@ -199,13 +199,14 @@ class Stored:
 
 
 def stored(conn: psycopg.Connection, team: str, tick: int, into_tick_s: float) -> Stored | None:
-    """The newest snapshot of `team` from tick `tick` or later, with the state it is judged against."""
+    """The snapshot of `team` at exactly `tick`, with the state it is judged against. Exactly: a row from a
+    higher tick is a simulator world that was reset, or a reader whose clock lags (then it reads live)."""
     row = conn.execute(
         "select s.tick, s.epoch, s.digest, s.read_by, s.me, "
         "extract(epoch from clock_timestamp() - s.read_at)::float8, coalesce(h.epoch, 0), "
         "coalesce(h.thread_message_at > clock_timestamp() - make_interval(secs => %s), false) "
         "from me_snapshots s left join holdings_state h on h.scope = %s "
-        "where s.team = %s and s.tick >= %s order by s.tick desc, s.epoch desc, s.read_at desc limit 1",
+        "where s.team = %s and s.tick = %s",
         (into_tick_s, SCOPE, team, tick),
     ).fetchone()
     return Stored(*row) if row else None
@@ -378,10 +379,17 @@ def process_tracker() -> WriteTracker:
     return tracker  # type: ignore[no-any-return]
 
 
-def for_process(read_me: Callable[[], dict[str, Any]], rules: Guardrails, team: str | None = None) -> Holdings:
-    """The reader for this process, on the same connection as its write tracker, writing the catalog too."""
+def for_process(
+    read_me: Callable[[], dict[str, Any]],
+    rules: Guardrails,
+    team: str | None = None,
+    on_team: Callable[[str], None] | None = None,
+) -> Holdings:
+    """The reader for this process, on the same connection as its write tracker, writing the catalog too.
+    `team`: our id when known (BAZAAR_TEAM_ID or `.local/team_id`); `on_team` caches one a live read learns."""
     shared = process_db()
-    return Holdings(read_me, shared, reader=str(_PROCESS["name"]), rules=rules, team=team, catalog=catalog_sync(shared))
+    name = str(_PROCESS["name"])
+    return Holdings(read_me, shared, reader=name, rules=rules, team=team, catalog=catalog_sync(shared), on_team=on_team)
 
 
 def catalog_sync(shared: SharedDb) -> CatalogSync:
@@ -421,11 +429,13 @@ class Holdings:
         rules: Guardrails,
         team: str | None = None,
         catalog: CatalogSync | None = None,
+        on_team: Callable[[str], None] | None = None,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._read_me, self.shared, self.reader, self.rules, self._now = read_me, shared, reader, rules, now
         self.team = valid_team_id(team)
         self.catalog = catalog
+        self.on_team = on_team  # called when a live read names our team (first time, or a corrected id)
         self.counts: Counter[str] = Counter()  # "db" (calls saved), "live" (calls made), "live:<why>"
 
     def me(self, clock: Clock | None, *, clock_read_at: float | None = None, live_because: str | None = None) -> MeRead:
@@ -542,8 +552,13 @@ class Holdings:
 
     def _as_read(self, raw: dict[str, Any], clock: Clock | None, epoch: int | None, why: str) -> MeRead:
         me = parse_me(raw)
-        if me is not None and self.team is None:
-            self.team = me.id  # /api/me is the authority on which team our key is
+        if me is not None and me.id != self.team:  # /api/me is the authority on which team our key is
+            self.team = me.id
+            if self.on_team is not None:
+                try:
+                    self.on_team(me.id)
+                except Exception as e:  # a read-only data dir: the id is still known in this process
+                    log.warning("holdings: team id not cached (%s)", type(e).__name__)
         tick = me.tick if me is not None and me.tick is not None else (clock.tick if clock is not None else None)
         self.counts[f"live:{why}"] += 1
         return MeRead(raw, "live", tick, 0.0, epoch, digest(me) if me is not None else "?", self.reader, why)
