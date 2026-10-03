@@ -6,7 +6,7 @@ Draft PR on `night/b24-team-negotiator`, stacked on #98 (`night/b4-rival-scanner
 
 `bazaar agent team --plan .local/night/trade-plan.json` (dry run unless `--live`) carries W4's direct deals through TEAM threads, one move per thread per tick:
 
-1. **Open:** a thread with the team on a venue, with our structured proposal (W4's swap: our copy, plus cash when the plan adds some, for any copy of their card).
+1. **Open:** a thread with the team on the venue the plan priced, with our structured proposal (W4's swap: our copy, plus cash when the plan adds some, for any copy of their card). The proposal is opened only if it clears `floor` and the guardrails. After a restart, our thread still open with that team is adopted rather than opening a second one. A new thread waits while we hold the open-thread cap minus the 3 threads left for the dealer desk, or the open-offer cap.
 2. **Read:** the team's newest open standing offer in the thread.
 3. **Decide:** accept, counter (one message per tick) or walk.
    - **Accept** only when all of these hold:
@@ -15,8 +15,8 @@ Draft PR on `night/b24-team-negotiator`, stacked on #98 (`night/b4-rival-scanner
      - the inspector finds it clean;
      - every guardrail passes;
      - the team's accept slot is free.
-   - **Counter** on our own cash leg only, in 2 P steps, never past the point where our surplus drops below `floor`.
-   - **Walk** after `max_rounds` of our offers.
+   - **Counter** on our own cash leg only, in 2 P steps, never past the point where our surplus drops below `floor`. We concede only when they answer our newest offer, never against ourselves. Before each counter or accept, our previous standing offer in the thread is withdrawn, so two offers of ours can never both fill.
+   - **Walk** after `patience` ticks (6) without an answer, or once our last move (`max_rounds`, or our limit) has stood that long without a deal.
 
 ## Words never bind (the safety properties, each tested)
 
@@ -35,7 +35,7 @@ Draft PR on `night/b24-team-negotiator`, stacked on #98 (`night/b4-rival-scanner
   - The deal's notional counts toward `max_counterparty_share`, and the kill switch holds everything.
   - Our accept takes the team's shared accept slot (ledger item `team:<offer id>`). A deal that settles books the cash we gave as spend.
 
-## Tests (26, `tests/test_team_desk.py`)
+## Tests (30, `tests/test_team_desk.py`)
 
 | Group | Cases |
 |---|---|
@@ -44,9 +44,22 @@ Draft PR on `night/b24-team-negotiator`, stacked on #98 (`night/b4-rival-scanner
 | Blocked structures | "any copy" given, an asset of ours we do not hold, nothing given |
 | Policy | open; accept a clean paying offer; refuse bait; hostile text gives the same counter; floor and guardrail refusals; concede then wait at the limit; walk after the rounds |
 | Runner on fakes | live open → accept the named copy → deal; dry run sends nothing; bait gets a structured counter, never an accept; cash floor; a duplicate card; the accept quota taken by a duel; the counterparty share; the kill switch |
-| Whole negotiations | a haggler closes on **our** offer at 4 P (it asked 10 P); a bait sender and a stonewaller are walked from after `max_rounds`, with no accept and no offer past our limit |
+| Whole negotiations | a haggler closes on **our** offer at 4 P (it asked 10 P); a bait sender and a stonewaller are walked from once our last offer has stood `patience` ticks, with no accept and no offer past our limit |
+| Code-review fixes | our previous offer withdrawn before a counter; an open thread adopted after a restart; a gone thread (404) dropped without stopping the others; a copy in another offer of ours never handed over; their cash counted once in the sale floor; the plan's venue |
 
-The full suite passes (862). The only failure is `test_status`'s timing test under machine load; it passes on its own.
+The full suite passes (867); `test_status`'s timing test sometimes fails under machine load and passes on its own.
+
+`/code-review high` found 10 issues, all fixed:
+- earlier offers were left standing, and the guardrails could not see them;
+- their cash counted twice in the sale floor;
+- stale agreed terms were booked when an accept never settled;
+- the desk conceded without an answer, then walked one tick after its last offer;
+- the opening was not checked against the floor;
+- one thread's read error stopped every negotiation;
+- a copy listed elsewhere could be handed over;
+- a restart opened duplicate threads;
+- the plan's venue was ignored;
+- the thread and offer caps were not respected.
 
 ## Verdict
 
