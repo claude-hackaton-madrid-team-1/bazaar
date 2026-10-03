@@ -27,6 +27,23 @@ DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unr
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def may_have_landed(e: Any) -> bool:
+    """A refused write that may have reached the game anyway: MAYBE_LANDED, or a 5xx (a gateway timeout can
+    follow a request the game processed)."""
+    return e.code in MAYBE_LANDED or int(getattr(e, "status", 0) or 0) >= 500
+
+
+def keeps_the_accept(e: Any) -> bool:
+    """A refused accept that still used the team's accept of the tick (KEEPS_THE_ACCEPT, or a 5xx)."""
+    return e.code in KEEPS_THE_ACCEPT or may_have_landed(e)
+
+
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -301,7 +318,7 @@ class Recorder:
         try:
             response = call()
         except BazaarError as e:
-            self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
+            self.maybe_landed, self.last_code = may_have_landed(e), e.code
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})
