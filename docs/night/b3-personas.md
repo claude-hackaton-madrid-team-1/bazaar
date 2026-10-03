@@ -46,6 +46,12 @@ How a level arrives (Friday's El Chato):
   - A denied or failed flag is re-checked on the next read, so allowing flags mid-run still sends it.
   - `flag_trusted_dealers` (abuela, chato) are never flagged.
   - The catalog is read lazily inside the guarded hook, so an inspection failure never changes or breaks a negotiation.
+  - End to end in the simulator over real HTTP (`scripts/sim_e2e/test_b3_trickster.py`), with its Abuela patched into a trickster:
+    - `dealer buy --live` never accepts the swapped card;
+    - with flags off it logs `would flag message N` for every offer;
+    - with flags on it flags the first 2 messages, and the rest are logged as over the limit.
+
+    Each trickster message is its own flag. Whether one per thread is wiser depends on how the server scores repeated flags (unknown).
   - Unverified: a real thread message's id key. The openapi says `message`; the code falls back to `id`.
 
 ## Selling to dealers (`agents/dealer_sell.py`, `bazaar dealer sell`)

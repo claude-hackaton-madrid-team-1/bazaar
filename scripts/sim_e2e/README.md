@@ -11,3 +11,4 @@ run them with pytest. The numbers in `docs/night/w3-ladder.md` came from these r
 
 `W3_MERGED` is a public feed capture (JSONL), loaded so the desk has Friday's floors.
 - `test_b3_sell.py`: `bazaar dealer sell --live` of two duplicates to Abuela. Run: `W3_OUT=…`.
+- `test_b3_trickster.py`: the simulator's Abuela patched into a trickster (a common for the uncommon asked, while the words name the asked card). `dealer buy --live` never accepts it; it logs `would flag` with `allow_flags = false`, and flags 2 messages when it is true. Run: `W3_OUT=…`.
