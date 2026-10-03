@@ -264,3 +264,16 @@ def test_the_ring_guard_rests_each_team_not_only_each_pair(tmp_path):
     t2, _, _ = taker(tmp_path / "nocool", team2, public, live=True, **{**ARB, "arb_party_cooldown_ticks": 0})
     t2.on_tick(at(team2, TICK + 1))
     assert team2.sent == [("accept", 5)]
+
+
+def test_a_resting_sellers_cheaper_ask_does_not_take_the_bid_from_an_eligible_one(tmp_path):
+    # t03 rests (it was in our last arbitrage) and asks less than t06: the bid must still pair with t06's ask
+    team = FakeTeam()
+    boards = {
+        "rastro": [ask(1, "LAV-01", 5, maker="t03"), ask(4, "LAV-01", 7, asset=904, maker="t06")],
+        "v02": [bid(2, "LAV-01", 16, venue="v02", maker="t17")],
+    }
+    t, _, _ = taker(tmp_path, team, FakePublic(boards=boards), live=True, **ARB)
+    t._arb_pairs[frozenset(("t02", "t03"))] = TICK - 1
+    t.on_tick(at(team, TICK))
+    assert team.sent == [("accept", 4)]

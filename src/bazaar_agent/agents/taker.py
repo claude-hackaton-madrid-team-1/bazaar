@@ -195,17 +195,16 @@ def arb_candidates(
         return []
     value = next_copy_values(m)
     found = crossings(offers, venues, exclude=ours, min_net=rules.arb_min_net_spread, value=value, known_makers=True)
-    out = []
-    for c in best_per_ask(found):
-        card = m.cards.get(c.ref)
-        floor = (c.value or 0.0) * rules.sell_min_value_ratio
+
+    def eligible(c: Crossing) -> bool:
         ring = c.ask.maker in recent_parties or c.bid.maker in recent_parties
-        if card is None or c.value is None or c.ask.asset_id is None or c.ref in busy_refs or ring:
-            continue
-        if not standing_at(c.bid, tick + 1):
-            continue
-        if c.proceeds < floor:
-            continue
+        if c.ref not in m.cards or c.value is None or c.ask.asset_id is None or c.ref in busy_refs or ring:
+            return False
+        return standing_at(c.bid, tick + 1) and c.proceeds >= c.value * rules.sell_min_value_ratio
+
+    out = []
+    for c in best_per_ask(c for c in found if eligible(c)):  # filter first: an ineligible pair never takes a bid
+        card = m.cards[c.ref]
         reason = (
             f"arbitrage: buy {c.ask.price} + fee on {c.ask.venue} ({c.ask.maker}) = {c.cost}, sell into "
             f"{c.bid.price} − fee on {c.bid.venue} ({c.bid.maker}) = {c.proceeds}: net {c.net:+d}"

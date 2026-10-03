@@ -52,7 +52,7 @@ rare at under a quarter of its usual price. Flip `dup_buy_enabled` only if the s
 dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_price_for` has no cap for them, so
 `check()` refuses every epic buy.
 
-## What shipped (all off by default; existing tests unchanged; 867 tests green)
+## What shipped (all off by default; existing tests unchanged; 868 tests green)
 
 - **GUARDRAILS.md** (no existing value changed): `arb_enabled` false, `arb_min_net_spread` 3, `arb_max_inventory_p` 60,
   `arb_party_cooldown_ticks` 240, `dup_buy_enabled` false, `dup_min_surplus` 3, `dup_max_spend_per_hour` 40.
@@ -88,9 +88,12 @@ dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_pri
 | the same, the bid cancelled after tick 0 | bought | re-read: bid gone → the card is left to the maker | −7 |
 | ask 6, bid 10 (net below 3) | nothing | nothing | 0 |
 | duplicate: LAV-08 (one more worth 4.38) asked at 1, switch off / on | nothing / bought for 3 | | 0 / −2 |
+| two bids (t03 16, t05 14); at tick 2 resting t03 asks 5, fresh t06 asks 7 (`w8_sim_two_bids.py`) | t02's copy → t03; then t06's copy → t05 (t03 skipped) | | **+15** |
 
 The taker's value of one more copy equals the sim's `/api/me/value` (4.38). The sim rounds fees where the real tape
-rounds up, so our cost estimate (8) was 1 P above the sim's charge (7): conservative.
+rounds up, so our cost estimate (8) was 1 P above the sim's charge (7): conservative. The two-bid run caught a bug the
+unit tests had missed. The one-card-one-bid pairing ran before the ring filter, so a resting team's cheaper ask took
+the bid and left the eligible ask unpaired. Now the filters run first, with a regression test.
 
 ## Risks and open questions
 
