@@ -38,6 +38,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
+from bazaar_agent.agents.bench_capture import BenchBooks
 from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge_plan, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
@@ -262,6 +263,7 @@ class BrokerAgent:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
+        books: BenchBooks | None = None,
     ) -> None:
         self.broker, self.team, self.us, self.rules = broker, team, us, rules
         self.live, self.log, self.events, self.now, self.sleep = live, log, events, now, sleep
@@ -269,6 +271,7 @@ class BrokerAgent:
         self.edge = BenchEdge(PRIORS["normal"])  # used only with bench_policy = "edge"
         self.edge_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that come from the edge itself
         self.stats_dir = stats_dir
+        self.books = books if books is not None else BenchBooks(None, stats_dir, self.log)  # JSONL only
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.sessions = BenchSessions(self._session_closed)
         self.pairs_seen: set[frozenset[str]] = set()
@@ -308,6 +311,7 @@ class BrokerAgent:
         for m in plan:
             self._match(run, m)
         self.pairs_seen |= run.pairs
+        self.books.record(clock.tick, book.bench_offers, book.fee_bps, book.fee_per_card)  # after the sends, no request
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
 
