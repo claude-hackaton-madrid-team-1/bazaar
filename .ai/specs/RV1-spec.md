@@ -2,7 +2,7 @@
 
 - Task id: RV1 (coordinator brief, 2026-10-03: Omar asked for a Rivals view with "the weakness and strength of the
   rivals, statistics of what they want vs what we have, and a live strategy to negotiate")
-- Status: 🔵 PR #224 (this repo) + bazaar-live #46 (the screen)
+- Status: 🔵 v2 merged in #224; v4 (review rounds 3-4) in the follow-up PR from feat/rival-board; the screen is bazaar-live #46
 - Backlog source: local (`.ai/specs`). Indexed in: [`02-plan.md`](./02-plan.md)
 
 ## Goal

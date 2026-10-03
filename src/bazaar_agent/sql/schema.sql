@@ -424,7 +424,7 @@ end $$;
 -- every change; new columns go last (`create or replace view` only appends).
 do $do$
 declare
-  board_version constant int := 3;
+  board_version constant int := 4;
   stored int := coalesce(substring(obj_description(to_regclass(format('%I.rival_board', current_schema())), 'pg_class')
                                    from '^rival_board v(\d{1,9})$')::int, 0);
 begin
@@ -461,7 +461,7 @@ with lb as (
 ), cancelled as (
   select distinct case when jsonb_typeof(c.payload -> 'offer') = 'number' then (c.payload ->> 'offer')::numeric end as offer_id
     from feed_events c cross join now_tick n
-   where c.type = 'offer.cancelled' and c.tick >= n.tick - 60
+   where c.type = 'offer.cancelled' and c.tick >= n.tick - 300
 ), listing as (
   select e.id, e.tick, o ->> 'maker' as team,
          case when jsonb_typeof(o -> 'id') = 'number' then (o ->> 'id')::numeric end as offer_id,
@@ -472,9 +472,14 @@ with lb as (
          case when jsonb_typeof(o -> 'want' -> 'types') = 'array' then o -> 'want' -> 'types' else '[]'::jsonb end as wants,
          case when jsonb_typeof(o -> 'give' -> 'cash') = 'number' then (o -> 'give' ->> 'cash')::numeric end as give_cash,
          case when jsonb_typeof(o -> 'want' -> 'cash') = 'number' then (o -> 'want' ->> 'cash')::numeric end as want_cash,
-         -- what agents/market.py's parse_offer also refuses: a listing wanting a given asset or a card list, or giving types
+         -- what agents/market.py's parse_offer also refuses: a listing wanting a given asset or a card list, giving types,
+         -- or carrying any other key on either side (packs, ...)
          coalesce(o -> 'want' -> 'assets', '[]'::jsonb) = '[]'::jsonb and coalesce(o -> 'want' -> 'cards', '[]'::jsonb) = '[]'::jsonb
-           and coalesce(o -> 'give' -> 'types', '[]'::jsonb) = '[]'::jsonb as plain
+           and coalesce(o -> 'give' -> 'types', '[]'::jsonb) = '[]'::jsonb
+           and case when jsonb_typeof(o -> 'give') = 'object' and jsonb_typeof(o -> 'want') = 'object'
+                    then not exists (select 1 from jsonb_object_keys(o -> 'give') k where k not in ('cash', 'types', 'assets'))
+                         and not exists (select 1 from jsonb_object_keys(o -> 'want') k where k not in ('cash', 'types', 'assets', 'cards'))
+                    else false end as plain
     from feed_events e
    cross join lateral (select e.payload -> 'offer' as o) x
    where e.type = 'offer.listed' and jsonb_typeof(x.o) = 'object' and e.tick >= (select tick from now_tick) - 60
@@ -518,10 +523,10 @@ with lb as (
   select l.team, substr(t.ref, 6) as ref, max(l.tick) as tick,
          (array_agg(l.give_cash order by l.tick desc, l.id desc)
             filter (where l.live and l.plain and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
-                      and l.give_cash > 0))[1] as price,
+                      and l.give_cash > 0 and coalesce(l.want_cash, 0) = 0))[1] as price,
          (array_agg(l.bid_fee order by l.tick desc, l.id desc)
             filter (where l.live and l.plain and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
-                      and l.give_cash > 0))[1] as fee
+                      and l.give_cash > 0 and coalesce(l.want_cash, 0) = 0))[1] as fee
     from listed l cross join lateral jsonb_array_elements_text(l.wants) t(ref)
    where t.ref like 'card:%'
    group by l.team, substr(t.ref, 6)
@@ -533,10 +538,10 @@ with lb as (
   select l.team, a ->> 'ref' as ref, max(l.tick) as tick,
          (array_agg(l.want_cash order by l.tick desc, l.id desc)
             filter (where l.live and l.plain and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
-                      and l.want_cash > 0))[1] as price,
+                      and l.want_cash > 0 and coalesce(l.give_cash, 0) = 0))[1] as price,
          (array_agg(l.ask_fee order by l.tick desc, l.id desc)
             filter (where l.live and l.plain and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
-                      and l.want_cash > 0))[1] as fee
+                      and l.want_cash > 0 and coalesce(l.give_cash, 0) = 0))[1] as fee
     from listed l cross join lateral jsonb_array_elements(l.gives) a
    where jsonb_typeof(a) = 'object'
    group by l.team, a ->> 'ref'
