@@ -82,8 +82,54 @@ By role (0.08):
 | x-v2b11s price only | 49 | 0.76 | 0 | 0.322 | 0.455 | 1.16 | 5 |
 | x-v2b11s two-issue | 48 | 0.75 | 0 | 0.395 | 0.588 | 1.67 | 6 |
 
+## The Duels II shape (16-tick duels, decay 0.08, 6 concurrent), seeds 21 and 22
+The real schedule (`/api/schedule`) gives Duels II 16-tick duels, decay 0.08, at most 6 concurrent, price + days; the
+runs above used 12-tick duels. 16 more runs, 14 sessions each (`--duel-ticks 16 --sessions 14`), same policies.
+
+Seed 21:
+| run | duels | deal rate | outside limit | mean score | share per deal | rounds/deal | no deal, inside |
+|---|---|---|---|---|---|---|---|
+| h-v1 (exit 0, crash markers 0) | 84 | 0.81 | 0 | 0.308 | 0.618 | 7.35 | 0 |
+| h-v1 two-issue | 42 | 0.81 | 0 | 0.364 | 0.714 | 7.35 | 0 |
+| h-v2 (exit 0, crash markers 0) | 84 | 0.81 | 0 | 0.456 | 0.615 | 1.18 | 0 |
+| h-v2 two-issue | 42 | 0.81 | 0 | 0.514 | 0.704 | 1.38 | 0 |
+| h-v2b11 (exit 0, crash markers 0) | 84 | 0.77 | 0 | 0.458 | 0.644 | 1.11 | 3 |
+| h-v2b11 two-issue | 42 | 0.79 | 0 | 0.512 | 0.717 | 1.30 | 1 |
+| h-v2b11s (exit 0, crash markers 0) | 84 | 0.79 | 0 | 0.470 | 0.638 | 1.00 | 2 |
+| h-v2b11s two-issue | 42 | 0.81 | 0 | 0.536 | 0.704 | 1.09 | 0 |
+| x-v1 (exit 0, crash markers 0) | 84 | 0.69 | 0 | 0.164 | 0.389 | 9.98 | 19 |
+| x-v1 two-issue | 42 | 0.67 | 0 | 0.158 | 0.420 | 10.79 | 7 |
+| x-v2 (exit 0, crash markers 0) | 84 | 0.82 | 0 | 0.270 | 0.372 | 2.03 | 0 |
+| x-v2 two-issue | 42 | 0.81 | 0 | 0.289 | 0.406 | 2.15 | 0 |
+| x-v2b11 (exit 0, crash markers 0) | 84 | 0.80 | 0 | 0.324 | 0.459 | 2.06 | 10 |
+| x-v2b11 two-issue | 42 | 0.71 | 0 | 0.324 | 0.515 | 2.13 | 5 |
+| x-v2b11s (exit 0, crash markers 0) | 84 | 0.85 | 0 | 0.374 | 0.491 | 1.94 | 8 |
+| x-v2b11s two-issue | 42 | 0.81 | 0 | 0.424 | 0.574 | 1.88 | 3 |
+
+Seed 22 (same columns):
+| h-v1 (exit 0, crash markers 0) | 84 | 0.82 | 0 | 0.266 | 0.539 | 7.39 | 0 |
+| h-v1 two-issue | 42 | 0.76 | 0 | 0.246 | 0.540 | 7.00 | 0 |
+| h-v2 (exit 0, crash markers 0) | 84 | 0.83 | 0 | 0.433 | 0.564 | 1.26 | 0 |
+| h-v2 two-issue | 42 | 0.79 | 0 | 0.432 | 0.590 | 1.18 | 0 |
+| h-v2b11 (exit 0, crash markers 0) | 84 | 0.81 | 0 | 0.444 | 0.592 | 1.16 | 1 |
+| h-v2b11 two-issue | 42 | 0.76 | 0 | 0.455 | 0.633 | 1.06 | 0 |
+| h-v2b11s (exit 0, crash markers 0) | 84 | 0.81 | 0 | 0.444 | 0.591 | 1.13 | 1 |
+| h-v2b11s two-issue | 42 | 0.76 | 0 | 0.455 | 0.632 | 1.00 | 0 |
+| x-v1 (exit 0, crash markers 0) | 86 | 0.72 | 0 | 0.183 | 0.386 | 9.31 | 17 |
+| x-v1 two-issue | 42 | 0.74 | 0 | 0.192 | 0.420 | 9.65 | 4 |
+| x-v2 (exit 0, crash markers 0) | 86 | 0.84 | 0 | 0.254 | 0.342 | 1.93 | 1 |
+| x-v2 two-issue | 42 | 0.76 | 0 | 0.271 | 0.401 | 1.97 | 0 |
+| x-v2b11 (exit 0, crash markers 0) | 86 | 0.85 | 0 | 0.338 | 0.443 | 1.89 | 5 |
+| x-v2b11 two-issue | 42 | 0.76 | 0 | 0.357 | 0.515 | 1.78 | 2 |
+| x-v2b11s (exit 0, crash markers 0) | 86 | 0.87 | 0 | 0.365 | 0.461 | 1.83 | 4 |
+| x-v2b11s two-issue | 42 | 0.81 | 0 | 0.411 | 0.548 | 1.65 | 1 |
+
+Mean of both seeds (168-172 finished duels per cell): honest zoo v1 0.287, v2 0.444 (1.55×), v2 + B11 0.451,
++ signed days 0.457; exploiters v1 0.174, v2 0.262 (1.51×), v2 + B11 0.331 (1.91×), + signed 0.370.
+0 of 1,352 finished duels outside our limit.
+
 ## Findings
-- **0 deals outside our limit in 1,552 finished duels** (16 runs), both roles, both issue sets. No crash, no traceback.
+- **0 deals outside our limit in 2,904 finished duels** (32 runs, both duel lengths), both roles, both issue sets. No crash, no traceback.
   The `duel_inside_limit` guard never had to deny a v2 move; under v1 it denied only second accepts in one tick.
 - **v2 beats v1 at both decays**: honest 1.36× (0.08) and 1.44× (0.10); against exploiters 1.53× and 1.52×. v2 spends
   about 1 round per deal where v1 spends 5-7, which is where the decay goes.
