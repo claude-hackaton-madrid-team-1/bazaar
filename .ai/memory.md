@@ -1145,3 +1145,10 @@ for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at ti
 it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
 (ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
 (MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+Every copy of a card in /me carries the same `your_value`, so the team desk's `desk_copy` (cheapest, then lowest id)
+and the Workshop's kept copy (most valued, then lowest id) are the same asset: a swap posted in the tick gives #1 while
+the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
+every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
+crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.

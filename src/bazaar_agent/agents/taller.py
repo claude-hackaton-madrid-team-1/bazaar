@@ -13,6 +13,7 @@ the level's own `how` above, sent through the team client's `call` (one request,
 
 from __future__ import annotations
 
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -121,6 +122,20 @@ def free_counts(me: Mapping[str, Any], busy: Iterable[int] = ()) -> dict[str, in
     )
 
 
+def sell_thread_assets(threads: Iterable[Any]) -> set[int]:
+    """Our copies a sell thread of ours is about (topic `{"sell": {"assets": [id]}}`, `/api/me/threads`): the dealer
+    may take our ask with words only, so such a copy is never free."""
+    out: set[int] = set()
+    for t in threads:
+        topic = t.get("topic") if isinstance(t, Mapping) else None
+        sell = topic.get("sell") if isinstance(topic, Mapping) else None
+        for a in (sell.get("assets") if isinstance(sell, Mapping) else None) or []:
+            aid = a.get("id") if isinstance(a, Mapping) else a
+            if isinstance(aid, int) and not isinstance(aid, bool):
+                out.add(aid)
+    return out
+
+
 def missing_slots(me: Mapping[str, Any], catalog: Mapping[str, Any], rarity: str) -> tuple[str, ...]:
     """Page cards of `rarity` in our released album pages that we hold no copy of."""
     released = {str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, Mapping)}
@@ -185,7 +200,14 @@ def craft(client: Any, asset_ids: Sequence[int]) -> Any:
 
 
 def pulled(answer: Any) -> str:
-    """What the answer says we pulled (its shape is not documented: a card object or ref, top level or nested)."""
+    """What the answer says we pulled (its shape is not documented: a card object or ref, top level or nested), as
+    one printable line: the game's text never reorders or breaks a log line."""
+    raw = _pulled(answer)
+    return " ".join("".join(ch if ch.isprintable() and not unicodedata.category(ch).startswith("C") else " "
+                            for ch in raw).split()) or "?"  # fmt: skip
+
+
+def _pulled(answer: Any) -> str:
     if not isinstance(answer, Mapping):
         return "?"
     for key in ("card", "asset", "result"):

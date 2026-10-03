@@ -1361,7 +1361,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | `uv run bazaar db readonly-user` | Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL. |
 | `uv run bazaar db tables` | Every table with its row count. |
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
-| `uv run bazaar taller` | The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The |
+| `uv run bazaar taller` | The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`). |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell swap` | Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked. |
@@ -1380,6 +1380,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
 - [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
 - [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 - [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
@@ -1387,7 +1388,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
 - [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
-- [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
 
 <!-- BAZAAR:STATUS:END -->
 
