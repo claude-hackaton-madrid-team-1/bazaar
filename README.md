@@ -967,6 +967,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#154](../../pull/154) | docs(night): salvage the reports of Marius's closed night PRs, with an index of findings and decisions | `docs/night-salvage` |
 | [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
 | [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | `ogarciarevett/takeover-duelsv2` |
@@ -986,6 +987,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#132](../../pull/132) | B25: morning assumption verifier (bazaar verify) and the timed 09:00–11:30 checklist | `night/b25-verify` |
 | [#131](../../pull/131) | feat: strategic bluffing in the words, learned per counterparty (N16) | `ogarciarevett/feat-bluff-tactics` |
 | [#129](../../pull/129) | night(B26): new sets mid-game robustness (dealer_mints_unminted) + Sunday playbook and decisions | `night/b26-sunday` |
-| [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
 
 <!-- BAZAAR:ACTIVITY:END -->
