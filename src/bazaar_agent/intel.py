@@ -8,6 +8,7 @@ Observed shapes (2026-10-02): `settlement` carries parties, items (frm/to) and p
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from statistics import median
 from typing import Any
 
 Event = dict[str, Any]
+TEAM_ID = re.compile(r"^t\d+$")
 
 
 # ---------------------------------------------------------------- us vs the competition
@@ -104,6 +106,23 @@ def tape(events: Iterable[Event]) -> list[Print]:
             )
         )
     return prints
+
+
+def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | None = None) -> dict[str, int]:
+    """Primas we settled with each other team: the cash of every team-to-team settlement we are a party to (a
+    swap without cash counts the book value of the cards that moved). Dealers are not counterparties."""
+    out: Counter[str] = Counter()
+    for e in events:
+        p = e.get("payload") or {}
+        if e.get("type") != "settlement" or p.get("persona") or us not in (p.get("parties") or []):
+            continue
+        others = {str(x) for x in p.get("parties") or [] if x != us and TEAM_ID.match(str(x))}
+        if len(others) != 1:
+            continue
+        items = p.get("items") or []
+        cash = int(p.get("price") or 0) or round(sum((book or {}).get(str(i.get("ref")), 0.0) for i in items))
+        out[others.pop()] += cash
+    return dict(out)
 
 
 # ---------------------------------------------------------------- dealer threads (quotes)

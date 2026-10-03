@@ -57,6 +57,8 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
+    counterparty_cap_base: int = Field(default=200, ge=0)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -90,6 +92,8 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
+    "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
 }
 
 
@@ -297,6 +301,8 @@ ActionKind = Literal[
     "buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag", "cancel", "close_thread"
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
+TEAM_TRADES = ("buy", "sell", "accept_buy", "accept_sell", "bid")  # the kinds a counterparty cap applies to
+ANY_TEAM = "*"  # the counterparty of an offer anyone may take: the worst case is the team we trade most with
 
 
 @dataclass(frozen=True)
@@ -306,6 +312,9 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    # Team-to-team trades: the other team (ANY_TEAM for an offer anyone may take). None: not a team trade
+    # (a dealer), and `max_counterparty_share` does not apply.
+    counterparty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +325,48 @@ class Verdict:
 
     def __str__(self) -> str:
         return "allowed" if self.allowed else "denied: " + "; ".join(self.violations)
+
+
+@dataclass(frozen=True)
+class TradeBook:
+    """Our team-to-team volume in primas: settled with each counterparty, and what our open board offers
+    could still add (`addressed` to one team, or `public`: anyone may take those, so the worst case is that
+    one team takes them all)."""
+
+    settled: dict[str, int] = field(default_factory=dict)
+    addressed: dict[str, int] = field(default_factory=dict)
+    public: int = 0
+
+    @property
+    def total(self) -> int:
+        return sum(self.settled.values())
+
+    def exposure(self, team: str) -> int:
+        """The most `team` may have traded with us once every open offer it can take fills."""
+        if team == ANY_TEAM:
+            teams = set(self.settled) | set(self.addressed)
+            return max((self.exposure(t) for t in teams), default=self.public)
+        return self.settled.get(team, 0) + self.addressed.get(team, 0) + self.public
+
+
+def counterparty_refusal(trades: TradeBook | None, team: str, price: int, rules: Guardrails) -> str | None:
+    """Why a trade of `price` with `team` would break `max_counterparty_share`; None when it passes or the
+    cap is off (1.0). The cap is `share × max(our settled volume + price, counterparty_cap_base)`: the base
+    lets the first trades through. Fails closed when our volume was not read."""
+    share = rules.max_counterparty_share
+    if share >= 1:
+        return None
+    if trades is None:
+        return "max_counterparty_share is on but our team-to-team volume was not read"
+    cap = share * max(trades.total + price, rules.counterparty_cap_base)
+    exposure = trades.exposure(team)
+    if exposure + price <= cap:
+        return None
+    who = "any team (public offer)" if team == ANY_TEAM else team
+    return (
+        f"counterparty {who}: {exposure} + {price} > max_counterparty_share {share:g} × "
+        f"max(volume {trades.total + price}, {rules.counterparty_cap_base}) = {cap:.0f}"
+    )
 
 
 @dataclass(frozen=True)
@@ -331,6 +382,8 @@ class Context:
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
+    # Our team-to-team volume (`TradeBook`), for `max_counterparty_share`. None: not read.
+    trades: TradeBook | None = None
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -389,6 +442,9 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
+    team_trade = action.kind in TEAM_TRADES and action.counterparty is not None and action.price is not None
+    if team_trade and (refusal := counterparty_refusal(ctx.trades, str(action.counterparty), action.price or 0, rules)):
+        v.append(refusal)
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
     return Verdict(not v, tuple(v), halted)
