@@ -135,7 +135,7 @@ class Base:
 
 def _base(b: Backend, clock: Clock, read_at: float) -> Base:
     me, offers = b.holdings.me(clock, clock_read_at=read_at).me, b.my_offers()
-    ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
+    ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules, b.values)
     if b.rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
         us = str(me.get("id") or "")
         book = book_values(b.catalog(clock.tick))

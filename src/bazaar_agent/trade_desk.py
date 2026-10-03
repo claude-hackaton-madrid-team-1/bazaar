@@ -635,7 +635,8 @@ def _posting(
 
     def ctx() -> Context:
         book = TradeBook(dict(settled), dict(addressed), public)
-        return Context(cash, dict(held), tick, t_hours, spent_last_hour=spent, trades=book)
+        # A plan: the official value of each card is read by the send's own check (`ranking`), not per trade.
+        return Context(cash, dict(held), tick, t_hours, spent_last_hour=spent, trades=book, ranking=True)
 
     for i, t in enumerate(trades):
         options = [t.counterparty] if t.kind == "swap" or i >= public_first else [ANY_TEAM, t.counterparty]

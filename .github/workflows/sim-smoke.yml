@@ -15,10 +15,10 @@ on:
 jobs:
   sim-smoke:
     name: simulator smoke (status, dealer buy, taker, maker, duel, monitor)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           persist-credentials: false  # the PR's code and build backends never see the token in .git/config
       - uses: astral-sh/setup-uv@v6

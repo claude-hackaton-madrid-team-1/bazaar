@@ -349,6 +349,9 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
   a flag flips only on a yes, in its own commit.
 - Step 5 — `/pr-review` (pr-reviewer + security-auditor) on both PRs; every P0/P1 fixed with a failing-first test;
   Marius's PRs closed with a pointer once ours are open. · **Acceptance:** APPROVE on both, merge asked, never done by us.
+- Step 6 (emergency, #173) — a rival's lone surrogate never freezes the duel loop: the per-tick duel log is ASCII-escaped
+  JSON and the duels table stores `db.jsonb_safe` payloads. · **Acceptance:** a `--play` tick with such a rival text
+  still sends the endgame accept (failed on main); the stored payload holds no lone surrogate.
 - Step 7 — the simulator after #151 (merged Sat 10:42): #178 holds a rival that raises (the shared sim clock stopped
   for good), caps exploiter asks at the game's price cap, and the clock loop logs a failed tick or save and goes on.
   · **Acceptance:** each test fails without its fix; seeded worlds are byte-identical when no rival raises.
