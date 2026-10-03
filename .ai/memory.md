@@ -774,6 +774,14 @@ Twice on Sat morning (load from ~10 parallel review agents), `uv run pytest` end
 "Extension modules: psycopg_binary.pq, …" dump instead; the same commit passed on an immediate rerun (1127 and
 1172 passed). Rerun before blaming the change; a crash that repeats on an idle machine is real.
 
+### [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
+Private sim, 16-tick sessions: v2 held while the sim's rival conceded every tick, then accepted at D − 3 and D − 2
+(94 and 88, 0 rounds, 56–58 % of the pie). The old 3-tick smoke step saw no move, so `scripts/sim_smoke.py` now runs
+`duel run --play` to the session's deadline (SIM_DUEL_TICKS 24) and needs every duel closed as a deal inside our
+limit. Two-issue session, `duel_days_signed` false: v2 valued the rival's 74 at 10 days as 36 (cost 40), offered 42 at
+0 days and made 2 of a 63 pie; the sim's scoring put the 74 offer at +72. After the rival took our 42, v2 sent the second
+"last offer" and the sim refused it (`duel_closed`): no cost, but a step that has a " refused " marker fails the smoke.
+
 ### [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
 symptom: the duel CLI tests exited 1 with `AttributeError: 'DuelClient' object has no attribute 'me'` → root
 cause: the new bluff book reads our team id once at start and only caught `BazaarError` → fix: `_our_team_id`

@@ -202,7 +202,7 @@ def duel_cli(monkeypatch, tmp_path):
 
     from bazaar_agent import cli, db
     from bazaar_agent.config import Settings
-    from tests.test_jev_journal import DuelClient
+    from tests.test_jev_journal import DuelClient, use_policy
 
     def down(*args, **kwargs):
         raise psycopg.OperationalError("no database in unit tests")
@@ -227,6 +227,7 @@ def duel_cli(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_feed_reader", lambda settings: Feed().feed_window)
     # Stands in for the shared ledger a live run needs (#162), as tests/test_jev_journal.py does.
     monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
+    use_policy(monkeypatch, cli, "v1")  # duel tactics run under v1 only (GUARDRAILS.md runs v2): v2 tests pin v2
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
     client.feed = Feed
@@ -260,13 +261,11 @@ def test_duel_run_bluffs_in_the_text_only_and_the_kill_switch_restores_todays_wo
 
 
 def test_duel_run_under_v2_keeps_its_template_words_and_no_tactic(duel_cli, monkeypatch):
-    from dataclasses import replace
+    from tests.test_jev_journal import use_policy
 
     cli, client, tmp_path = duel_cli
     monkeypatch.setenv(ENV, "1")
-    loaded = cli._rules()
-    v2 = replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
-    monkeypatch.setattr(cli, "_rules", lambda: v2)
+    use_policy(monkeypatch, cli, "v2")
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "bluff tactics OFF (duel_policy v2 sends template words only)" in " ".join(result.output.split())
