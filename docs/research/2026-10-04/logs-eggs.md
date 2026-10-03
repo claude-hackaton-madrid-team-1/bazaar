@@ -160,9 +160,13 @@ when it first saw a level.
 
   Why I think the first column is the plan (inferred, not confirmed): at 16:52 the same entries said `day_opens sun`
   14.083 and `day_closes sun` 20.083 (RULES_AUDIT news #4). Now they say 16.65 and 22.65. Both moved by the same
-  +2.567 h, and the close now lands exactly on the score freeze at the Sunday close. In the second column the Grand
-  Final and the freeze never happen, which no organiser would plan. What is open is how the clock gets there and what
-  happens to the two benches at 14.65 and 15.0.
+  +2.567 h, so the two wall-pinned entries moved together, and the close now lands exactly on the score freeze:
+  16.65 → 22.65 is 6 h, which is 09:00 → 15:00. The clock, though, is paused at 13.367, so getting there needs a
+  **+3.28 h** jump at 09:00 (or another re-plan). The server's own `at_hours` for `day_opens sun` was 14.078 at 19:52
+  and 13.368 at 20:58 (taker `schedule:` lines), and 16.65 at 00:19. So the change happened between 20:58 and 00:19;
+  the server restart at ~23:06 (`uptime_s`) is the likely moment. In the second column the Grand Final and the freeze
+  never happen, which no organiser would plan. What is open is how the clock gets there and what happens to the two
+  benches at 14.65 and 15.0.
   **Consequence:** KNOWLEDGE_SAT_EVENING §1.6 (round 3 ~11:34, Duels III ~13:34, the finale after the close) and
   RULES_AUDIT TL;DR 8 ("Sun 09:00–11:34 still counts for Saturday's round") are probably obsolete.
 - **The server was restarted after the close:** `/api/health` → `uptime_s` 4408 at 00:20, so it started at about
