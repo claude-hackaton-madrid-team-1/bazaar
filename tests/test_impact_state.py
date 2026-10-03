@@ -167,3 +167,14 @@ def test_the_dealer_sell_guard_holds_when_only_the_approvals_were_unreadable(tmp
     monkeypatch.setattr(gr, "check", lambda action, ctx, rules: gr.Verdict(False, ("sell price 20 < 1.0 × 30",)))
     other, _ = talk(tmp_path, FakeTeam(), floor=14)  # the guard binds `check` when it is built
     assert other.hooks.guard("dealer_sell", 20) == "sell price 20 < 1.0 × 30"  # any other refusal still walks
+
+
+def test_a_hold_before_the_thread_opens_ends_the_talk_unopened(tmp_path, monkeypatch):
+    from bazaar_agent import approvals
+
+    unread = gr.Verdict(False, (f"needs human approval: LAV-08 sell 20 {approvals.UNREAD}",))
+    monkeypatch.setattr(gr, "check", lambda action, ctx, rules: unread)
+    team = FakeTeam()
+    t, _ = talk(tmp_path, team, floor=14)
+    t.step(clock(5))
+    assert t.status == "refused" and t.tid is None  # never a talk left `new`, asking again every tick

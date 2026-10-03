@@ -295,8 +295,13 @@ class SellTalk:
         return self.status
 
     def _open(self, clock: Any) -> None:
+        from bazaar_agent.agents.dealer import Hold
+
         c = self.cand
-        denied = self.hooks.guard("dealer_sell", self.plan.start)
+        try:
+            denied = self.hooks.guard("dealer_sell", self.plan.start)
+        except Hold as e:  # no thread yet: nothing to hold open, so a hold ends the talk unopened (#227 review)
+            denied = str(e)
         if denied:
             self.status = "refused"
             self.hooks.log(f"tick {clock.tick} dealer_sell: guardrails refuse to open: {denied}")
