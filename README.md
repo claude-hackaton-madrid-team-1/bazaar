@@ -1447,6 +1447,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#270](../../pull/270) | docs: correct the Sunday schedule | Sun 01:47 | `cd5ab1c` |
 | [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | Sun 01:35 | `36a6bef` |
 | [#265](../../pull/265) | feat: Sunday guardrails (uncommon 30, rare 105, dealer_sell reset after 40 ticks) | Sun 01:13 | `e0f3ca6` |
 | [#263](../../pull/263) | feat(broker): one live non-crossing match probe in the Market Test (off by default) | Sun 00:41 | `19457c9` |
@@ -1458,13 +1459,11 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#258](../../pull/258) | fix(guardrails): no_buyback_ticks skips unread sales on a simulator; a stale tape fails closed | Sun 00:13 | `deca8e7` |
 | [#260](../../pull/260) | docs: SAL-07 loss is price - your_value (measured); tag round rule [audit] | Sun 00:08 | `fc9cd61` |
 | [#230](../../pull/230) | docs: sync the repo with the rules audit (scoring, rounds, venue on, floor 5, hard rules) | Sun 00:02 | `9e4acc5` |
-| [#256](../../pull/256) | batch: Saturday close | Sat 23:54 | `6267eca` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#270](../../pull/270) | docs: correct the Sunday schedule | `docs/sunday-times` |
 | [#269](../../pull/269) | feat: calibrated Sunday scenario for bazaar-sim | `feat/sim-sunday` |
 | [#268](../../pull/268) | docs: 3-minute motion pitch deck | `docs/pitch-motion` |
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
