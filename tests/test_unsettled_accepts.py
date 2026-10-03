@@ -33,13 +33,37 @@ def test_unsettled_accepts_counts_what_me_does_not_show_yet(tmp_path):
     assert (c.cash, c.wanted) == (39, ("LAV-08",))
 
 
-def test_what_me_shows_is_settled_and_counted_once(tmp_path):
+def test_a_card_me_shows_is_settled_and_counted_once(tmp_path):
     ledger = Ledger(tmp_path / "ledger.jsonl")
     ledger.reserve_accept(99, 1.45, 22, "LAV-08", 1)
-    ledger.reserve_accept(98, 1.4, 17, "sobre_barrio", 1)
-    me = {"cash": 361, "assets": [_card("LAV-08"), {"id": 5, "kind": "pack", "ref": "sobre_barrio"}]}
+    me = {"cash": 378, "assets": [_card("LAV-08")]}
     c = unsettled_accepts(me, ledger, 100)
     assert (c.cash, c.wanted) == (0, ())
+
+
+def test_a_pack_accept_always_counts_an_older_pack_never_hides_it(tmp_path):
+    """Nothing opens our packs: an older unopened pack in /api/me must not pass a new unsettled one as settled
+    (review of #143: cash 305, pack bought for 17, then LAV-08 at 22 ended at 266 < floor 270)."""
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    ledger.reserve_accept(99, 1.45, 17, "sobre_barrio", 1)
+    me = {"cash": 305, "assets": [{"id": 5, "kind": "pack", "ref": "sobre_barrio"}]}
+    c = unsettled_accepts(me, ledger, 100)
+    assert (c.cash, c.wanted) == (17, ())
+
+
+def test_an_accept_price_below_zero_never_adds_cash(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    ledger.record("accept", 99, 1.45, -500, "LAV-08")
+    ledger.record("accept", 99, 1.45, "12.5", "LAV-09")  # type: ignore[arg-type]  (a hand-edited row)
+    c = unsettled_accepts({"cash": 300, "assets": []}, ledger, 100)
+    assert c.cash == 0 and ledger.accepts_in_tick(99) == 2
+
+
+def test_another_process_accept_earlier_this_tick_counts(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    ledger.reserve_accept(100, 1.5, 22, "LAV-08", 1)
+    c = unsettled_accepts({"cash": 400, "assets": []}, ledger, 100)
+    assert (c.cash, c.wanted) == (22, ("LAV-08",))
 
 
 def test_duel_rows_and_released_accepts_do_not_count(tmp_path):

@@ -282,7 +282,8 @@ class Ledger:
             if e.get("tick") != tick:
                 continue
             if e.get("kind") == "accept":
-                rows.append((item, int(e.get("price") or 0)))
+                price = e.get("price")
+                rows.append((item, price if isinstance(price, int) and not isinstance(price, bool) else 0))
             elif e.get("kind") == RELEASE:
                 gone = next((n for n, (it, _) in enumerate(rows) if it == item), None)
                 if gone is not None:

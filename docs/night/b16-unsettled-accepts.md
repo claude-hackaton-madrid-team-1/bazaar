@@ -51,3 +51,15 @@ worth 0.25× to us, bought at full price. The shared ledger already holds the ac
   over-counted for one tick). This is rare and fail-safe.
 - The spend cap is unchanged: board accepts were already booked at accept time. A dealer-thread accept is booked when
   its deal shows; until then `_commit` counts it inside the tick.
+
+## Takeover review fixes (#143, 2026-10-03)
+
+- **A pack accept always counts** (pr-reviewer P1): nothing opens our packs, so an older unopened `sobre_barrio`
+  in `/api/me` passed each new unsettled one as settled and dropped its cash (cash 305, pack bought for 17, then
+  LAV-08 at 22 ended at 266, under the 270 floor). Its cash may now count twice for a tick or two (fail safe).
+- **An accept price below 0 counts 0**, and an unreadable JSONL price reads 0 instead of stopping the tick
+  (security-auditor P2/P3: a negative row loosened the cash floor).
+- **This tick's accepts count too**: another process's accept earlier in the tick is seen by the maker.
+
+Left as follow-ups (reply on the PR): `bazaar dealer buy` and the MCP desk tools still build their context from
+`/api/me` and open offers only.
