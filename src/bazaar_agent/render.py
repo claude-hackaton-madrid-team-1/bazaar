@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.table import Table
 from rich.text import Text
 
@@ -107,6 +109,104 @@ def threads_table(threads: list, limit: int) -> Table:
             " ".join(map(str, d.dealer_prices)) or "-",
             _n(d.final_price),
             _n(d.fill_price),
+        )
+    return t
+
+
+def affinity_table(amap: Any, title: str = "Rival affinity map · P(set holds the team's top multiplier)") -> Table:
+    t = Table(title=title)
+    sets = next(iter(amap.teams.values())).sets if amap.teams else ()
+    for col in ("team", "signals", "top set", "P", "runner-up", *sets):
+        t.add_column(col, justify="left" if col in ("team", "top set", "runner-up") else "right")
+    for a in amap.teams.values():
+        ranked = [s for s in sorted(a.p_top, key=lambda s: -a.p_top[s]) if s != a.top_set]
+        second = ranked[0] if ranked else "-"
+        t.add_row(
+            a.team,
+            str(a.signals),
+            a.top_set if a.signals else "- (no signal)",
+            f"{a.confidence:.2f}",
+            f"{second} {a.p_top.get(second, 0):.2f}" if second != "-" else "-",
+            *(f"{a.p_top[s]:.2f}" for s in sets),
+        )
+    return t
+
+
+def rivals_table(profiles: list[Any], title: str = "Rival behaviour · board offers from the feed") -> Table:
+    t = Table(title=title)
+    cols = (
+        "team",
+        "top set",
+        "asks",
+        "fill",
+        "ask/tape",
+        "ask/own",
+        "sold<own",
+        "bids",
+        "bid/tape",
+        "takes",
+        "take ticks",
+        "reprices",
+        "step",
+        "tags",
+    )
+    for col in cols:
+        t.add_column(col, justify="left" if col in ("team", "top set", "tags") else "right")
+
+    def n(x: Any, fmt: str = "{:.2f}") -> str:
+        return "-" if x is None else fmt.format(x)
+
+    for p in profiles:
+        t.add_row(
+            p.team,
+            f"{p.top_set} {p.p_top:.2f}" if p.top_set else "-",
+            str(p.asks),
+            n(p.ask_fill_rate),
+            n(p.median_ask_vs_tape),
+            n(p.median_ask_vs_own),
+            str(p.sold_below_own),
+            str(p.bids),
+            n(p.median_bid_vs_tape),
+            str(p.takes),
+            n(p.median_take_latency, "{:g}"),
+            str(p.reprices),
+            n(p.median_reprice_step, "{:+.0%}"),
+            ", ".join(p.tags) or "-",
+        )
+    return t
+
+
+def opportunities_table(rows: list[Any], title: str) -> Table:
+    t = Table(title=title)
+    for col in (
+        "offer",
+        "we",
+        "card",
+        "price",
+        "fee",
+        "maker",
+        "ours",
+        "theirs",
+        "tag",
+        "guardrails",
+        "plan",
+        "expires",
+    ):
+        t.add_column(col, justify="right" if col in ("offer", "price", "fee", "ours", "theirs", "expires") else "left")
+    for o in rows:
+        t.add_row(
+            str(o.offer_id),
+            o.kind,
+            o.ref,
+            str(o.price),
+            str(o.fee),
+            o.maker,
+            f"{o.ours:+.1f}",
+            "-" if o.theirs is None else f"{o.theirs:+.1f}",
+            o.tag or "-",
+            "[green]allowed[/green]" if o.allowed else f"[red]{o.verdict}[/red]",
+            o.plan or "-",
+            str(o.expires_tick or "-"),
         )
     return t
 

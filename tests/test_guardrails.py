@@ -106,14 +106,21 @@ def test_the_committed_file_keeps_our_venue_off_and_holds_no_bond_reserve():
     the floor every writer sees is `cash_floor` alone (guardrails.effective_cash_floor zeroes the reserve)."""
     rules = REAL.rules
     assert rules.allow_venue_open is False
-    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (100, 270, 6.5)
+    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (
+        270,
+        270,
+        6.5,
+    )  # Omar: keep 270 for a venue
     for has_venue in (False, True):
         c = ctx(cash=400, has_venue=has_venue)
         assert gr.effective_cash_floor(rules, c) == rules.cash_floor
         assert gr.floor_text(rules, c) == f"cash_floor {rules.cash_floor}"
-    # a buy that leaves cash_floor + 1 is allowed: it would be refused if the 270 reserve were applied
-    leaves_101 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=161), rules)
-    assert leaves_101.allowed, leaves_101
+    # a buy that leaves cash_floor + 1 is allowed: it would be refused if the 270 reserve were applied on top
+    leaves_271 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=331), rules)
+    assert leaves_271.allowed, leaves_271
+    # Omar's rule (Sat 3 Oct): a buy that would leave less than the 270 needed to open a venue is refused
+    leaves_269 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=329), rules)
+    assert not leaves_269.allowed and "cash_floor 270" in str(leaves_269), leaves_269
     assert gr.Guardrails().allow_venue_open is False  # the model's default stays off too
 
 
@@ -269,13 +276,33 @@ def test_a_duel_move_outside_our_limit_is_denied():
     assert "worth 95" in str(duel_check(price=105, days=5, weight=2.0))  # the bug: 105 with 5 days
     assert "worth 64" in str(duel_check(price=54, limit=60, role="buyer", days=5, weight=-2.0))
     assert duel_check(price=105, days=0, weight=2.0).allowed and duel_check(price=111, days=5, weight=-2.0).allowed
-    assert "your_days_weight" in str(duel_check(days=0))  # cannot value the days: denied
+    v1 = REAL.rules.model_copy(update={"duel_policy": "v1"})
+    assert "your_days_weight" in str(duel_check(days=0, rules=v1))  # v1 cannot value the days: denied
     for days in (-5, 11, float("nan")):  # outside RULES.md's 0 to 10: -5 days would pass 95 as worth 105
         assert "days" in str(duel_check(price=95, days=days, weight=2.0)), days
     assert "cannot value" in str(duel_check(price=None)) and "cannot value" in str(duel_check(limit=None))
     assert "cannot value" in str(duel_check(role=None))
     off = gr.parse_guardrails("- `duel_inside_limit` = false — x").rules
     assert duel_check(price=50, rules=off).allowed
+
+
+def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
+    """v2 lets 0 days through without a weight (they cost nothing under either sign, B2c); everything else holds."""
+    v2 = REAL.rules.model_copy(update={"duel_policy": "v2"})
+    assert duel_check(rules=v2).allowed and duel_check(role="buyer", price=95, rules=v2).allowed
+    for kind in ("duel_offer", "duel_accept"):
+        assert "duel_inside_limit" in str(duel_check(kind, price=100, rules=v2))  # on the limit: no surplus
+        assert "duel_inside_limit" in str(duel_check(kind, price=99, rules=v2))
+        assert "duel_inside_limit" in str(duel_check(kind, price=101, role="buyer", rules=v2))
+        assert "duel_inside_limit" in str(duel_check(kind, price=100, days=0, rules=v2))  # 0 days: still the limit
+    assert duel_check(days=0, rules=v2).allowed  # 0 days without a weight: free
+    assert "your_days_weight" in str(duel_check(days=5, rules=v2))  # days > 0 without a weight: still denied
+    assert "worth 95" in str(duel_check(price=105, days=5, weight=2.0, rules=v2))  # unsigned: the worst case
+    for days in (-5, 11, float("nan")):
+        assert "days" in str(duel_check(price=95, days=days, weight=2.0, rules=v2)), days
+    assert "cannot value" in str(duel_check(price=None, rules=v2)) and "cannot value" in str(
+        duel_check(role=None, rules=v2)
+    )
 
 
 @pytest.mark.parametrize("value", ["abuela;chato", "Abuela", "abuela, ,chato"])

@@ -35,9 +35,12 @@ STEP_TIMEOUT_S = 180
 # to another loopback port when several workers' simulators share one laptop.
 PORT = int(os.environ.get("BAZAAR_SIM_PORT") or 8765)
 SIM = f"http://127.0.0.1:{PORT}"
-# Duel budget: the session opens at tick 2 and lasts SIM_DUEL_TICKS ticks of 2 s. The duel step starts
-# ~10 s in, so 60 ticks (120 s) leaves room for steps added before it.
-DUEL_TICKS = "60"
+# Duel budget: the session opens at tick 2 and lasts SIM_DUEL_TICKS ticks of 2 s, and the duel step plays it to
+# its deadline. duel_policy v2 holds while the sim's rival concedes and accepts at D - 3 / D - 2, so the step
+# lasts until then. It starts ~10 s in (tick ~5): 24 ticks (deadline 26) leaves ~40 s for steps added before it,
+# and a step that starts too late fails with "raise DUEL_TICKS" instead of a missing move.
+DUEL_TICKS = "24"
+DUEL_MIN_TICKS_LEFT = 5  # v2 needs D - 3 and D - 2 for the session's two accepts, plus a tick to start
 CRASH_MARKERS = ("Traceback (most recent call last)", "tick loop:", " refused ", "SmokeNetworkError")
 DEAD_PROXY = "http://127.0.0.1:9"  # nothing listens there: any non-local request fails at once
 NOWHERE_DB = "postgresql://smoke:smoke@127.0.0.1:9/bazaar_sim_smoke"  # unreachable: ledgers fall back to JSONL
@@ -166,9 +169,48 @@ def missing_common() -> str:
     fail("team t01 already holds every common")
 
 
-def our_duel_moves() -> int:
-    duels = get("/api/duels?done=true", keyed=True)["duels"]
-    return sum(1 for d in duels for m in d["messages"] if m["from"] == "you")
+def duel_ticks_left() -> tuple[list[int], int]:
+    """The live session's duels and the ticks left before its earliest deadline (fails when too few remain)."""
+    live = get("/api/duels", keyed=True)["duels"]
+    if not live:
+        fail("no live duel when the duel step starts: raise DUEL_TICKS")
+    deadline, tick = min(d["deadline_tick"] for d in live), get("/api/clock")["tick"]
+    if deadline - tick < DUEL_MIN_TICKS_LEFT:
+        fail(
+            f"the duel session ends at tick {deadline}, {deadline - tick} tick(s) after the duel step: raise DUEL_TICKS"
+        )
+    return [d["duel"] for d in live], deadline - tick
+
+
+def closed_duels(ids: list[int]) -> list[dict]:
+    """Our duels in `ids` once none is live any more (an accept settles at the next tick: wait up to 3 ticks)."""
+    deadline = time.monotonic() + 6
+    while True:
+        duels = [d for d in get("/api/duels?done=true", keyed=True)["duels"] if d["duel"] in ids]
+        if all(d["status"] != "live" for d in duels) or time.monotonic() > deadline:
+            return duels
+        time.sleep(0.5)
+
+
+def check_duel_deals(ids: list[int], output: str) -> None:
+    """Every duel of the session closed as a deal strictly inside our limit. A deal needs a move of ours (our accept,
+    or our priced offer the rival took), so this also proves duel run --play sent one, under either duel_policy."""
+    duels = closed_duels(ids)
+    if len(duels) != len(ids):
+        fail(f"duel run --play: {len(ids)} duel(s) in the session, {len(duels)} found after it", output)
+    for d in duels:
+        gain = (d.get("result") or {}).get("your_gain")
+        if d["status"] != "deal" or not isinstance(gain, int | float) or gain <= 0:
+            fail(
+                f"duel run --play: duel {d['duel']} ended {d['status']} (gain {gain}), not a deal inside our limit",
+                output,
+            )
+        ours = sum(1 for m in d["messages"] if m["from"] == "you")
+        print(
+            f"ok  duel {d['duel']} {d['role']} limit {d['your_limit']}: deal at {d['price']}, gain {gain:g}, "
+            f"rounds {d['rounds']}, {ours} priced message(s) of ours",
+            flush=True,
+        )
 
 
 def run_smoke(env: dict[str, str]) -> None:
@@ -194,12 +236,18 @@ def run_smoke(env: dict[str, str]) -> None:
         lambda: bazaar(env, "agent", "maker", "--live", "--no-jev", "--max-ticks", "2"),
         lambda o: "target: SIMULATOR" in o and o.count("action(s)") == 2 and "· LIVE" in o,
     )
-    step(
-        "duel run --play, three ticks", lambda: bazaar(env, "duel", "run", "--play", "--max-ticks", "3"), lambda o: True
+    step(  # N17: the team desk's plan over HTTP, read-only (the desk itself is off: team_threads_enabled)
+        "swaps --json (team-thread plan, read-only)",
+        lambda: bazaar(env, "swaps", "--json"),
+        lambda o: o.lstrip().startswith("["),  # stdout first: pure JSON, notes on stderr
     )
-    if our_duel_moves() < 1:
-        fail("duel run --play sent no duel move")
-    print("ok  the simulator holds our duel moves", flush=True)
+    ids, left = duel_ticks_left()
+    duel_out = step(
+        f"duel run --play, {left} ticks to the deadline",
+        lambda: bazaar(env, "duel", "run", "--play", "--max-ticks", str(left)),
+        lambda o: True,
+    )
+    check_duel_deals(ids, duel_out)
     step(
         "monitor with the live SSE stream, one tick",
         lambda: bazaar(env, "monitor", "--no-db", "--max-ticks", "1"),

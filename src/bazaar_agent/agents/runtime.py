@@ -267,7 +267,7 @@ def read_snapshot(
         offers=offers,
         catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
-        venues=venues_from(public.venues()),
+        venues=venues_from(public.venues(), clock.tick),
         events=feed.events(),
         holdings=read,
         scan=feed.scan(clock.tick),
@@ -305,6 +305,7 @@ class Recorder:
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_status = 0  # the HTTP status of the last refused send (0: none, or no answer)
         self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
@@ -410,7 +411,7 @@ class Recorder:
         from bazaar_agent.sdk import BazaarError
 
         self.last_error = None
-        self.maybe_landed, self.last_code = False, None
+        self.maybe_landed, self.last_code, self.last_status = False, None, 0
         try:
             with tm.tool_span(method, {"bazaar.agent": self.agent, "bazaar.decision.id": decision_id}):
                 response = call()
@@ -418,6 +419,7 @@ class Recorder:
             self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
             self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
+            self.last_status = int(getattr(e, "status", 0) or 0)  # 4xx: refused for sure; 5xx or 0: unknown
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

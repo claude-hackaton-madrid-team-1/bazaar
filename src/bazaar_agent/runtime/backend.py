@@ -241,6 +241,30 @@ class Backend:
             self.holdings.observe_catalog(tick, cached[1])
         return cached[1]
 
+    def settled_volume(self, us: str, tick: int) -> dict[str, int]:
+        """`intel.settled_volume` for `max_counterparty_share` over the whole feed history (`history`), read
+        once per game tick: too slow for every tool call."""
+        from bazaar_agent.intel import book_values, settled_volume
+
+        cached = getattr(self, "_settled", None)
+        if cached is None or cached[0] != (us, tick):
+            cached = ((us, tick), settled_volume(self.history(), us, book_values(self.catalog(tick))))
+            self._settled = cached
+        return dict(cached[1])
+
+    def history(self) -> list[Event]:
+        """The whole feed history as the maker and the taker read it (`MarketFeed`): the shared DB first,
+        else the capture, with the live window merged. `events()` (capture + window) can miss days."""
+        from bazaar_agent import db
+        from bazaar_agent.agents.runtime import MarketFeed
+
+        feed = getattr(self, "_feed", None)
+        if feed is None:
+            store = FeedStore(self.settings.feed_dir)
+            feed = MarketFeed(self.public.feed_window, store, lambda: db.connect(app="bazaar-runtime"), self.log)
+            self._feed = feed
+        return feed.events()
+
     def events(self) -> list[Event]:
         """The captured feed merged with the live window (the window alone when nothing was captured)."""
         try:
