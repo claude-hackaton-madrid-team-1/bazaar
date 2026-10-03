@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
@@ -69,6 +70,7 @@ from bazaar_agent.intel import book_values, listed_makers, settled_volume
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
@@ -83,6 +85,9 @@ class TakerConfig:
     jev_min_budget_s: float = 4.0  # ask Jev only with this much of the tick left (a call takes ~0.3 s, max 3 s)
     max_jev_calls_per_tick: int = 3
     duel_grace_s: float = 2.0  # duels own the first seconds of a tick (capped at 15 % of the tick)
+    # Also accept standing BIDS for cards we hold when the bid, less the fee, beats what selling our least
+    # valuable copy costs us by `sell_min_surplus` (`opportunities.score_offer`). Off: today's taker.
+    accept_bids: bool = False
 
 
 # ---------------------------------------------------------------- (a) standing asks on the boards
@@ -152,10 +157,12 @@ class AcceptProposal:
     inputs: dict[str, Any]
     candidate: AskCandidate | None = None
     desk: DeskMove | None = None
+    sell: Opportunity | None = None  # a standing bid we would sell into (`accept_bids`)
+    asset_id: int | None = None  # sells: the copy we hand over
 
     @property
     def surplus(self) -> float:
-        return self.value - self.price
+        return self.sell.ours if self.sell is not None else self.value - self.price
 
     @property
     def scarce(self) -> bool:
@@ -164,6 +171,34 @@ class AcceptProposal:
     @property
     def score(self) -> float:
         return self.candidate.score if self.candidate is not None else self.surplus
+
+
+def bid_proposal(op: Opportunity, asset_id: int) -> AcceptProposal:
+    inputs = {
+        "offer_id": op.offer_id,
+        "venue": op.venue,
+        "maker": op.maker,
+        "ref": op.ref,
+        "rarity": op.rarity,
+        "bid": op.price,
+        "fee": op.fee,
+        "surplus": op.ours,
+        "asset_id": asset_id,
+        "tag": op.tag,
+    }
+    return AcceptProposal(
+        "board",
+        op.ref,
+        op.rarity,
+        op.offer_id,
+        op.price,
+        op.price - op.ours,
+        False,
+        op.reason,
+        inputs,
+        sell=op,
+        asset_id=asset_id,
+    )
 
 
 def rank_accepts(proposals: Iterable[AcceptProposal]) -> list[AcceptProposal]:
@@ -377,7 +412,10 @@ class Taker:
         self._open(run, book, threads)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm) for dm, _ in desk if dm.move.kind == "accept"]
-        proposals += [board_proposal(c) for c in self._board(run, market)]
+        board, board_venues = self._board_offers(run)
+        proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
+        if self.config.accept_bids:
+            proposals += self._bids(run, market, board, board_venues)
         self._accept(run, proposals)
         self._converse(run, desk)
         if self.hub is not None:
@@ -439,7 +477,8 @@ class Taker:
 
     # ------------------------------------------------------------ (a) boards
 
-    def _board(self, run: _TickRun, market: Market) -> list[AskCandidate]:
+    def _board_offers(self, run: _TickRun) -> tuple[list[BoardOffer], dict[str, Venue]]:
+        """Every plain standing offer on the venues we may trade on, makers named when the cap needs them."""
         venues = {v.id: v for v in tradable_venues(run.snap.venues, run.snap.us)}
         offers: list[BoardOffer] = []
         for venue in venues.values():
@@ -450,8 +489,63 @@ class Taker:
         if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
             makers = listed_makers(run.snap.events)
             offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
+        return offers, venues
+
+    def _board(
+        self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
+    ) -> list[AskCandidate]:
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+
+    def _bids(
+        self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
+    ) -> list[AcceptProposal]:
+        """`accept_bids`: standing bids for cards we hold that pay at least `sell_min_surplus` over what
+        selling our least valuable copy costs us (fee and page bonus included). A copy already in one of
+        our open offers is never sold twice."""
+        clock = run.snap.clock
+        listed = open_commitments(run.offers, run.snap.us).listed
+        # An accept settles at the next tick: a copy sold last tick may still be in /me. Never sell it again.
+        sold = {
+            int(item[5:])
+            for t in (clock.tick - 1, clock.tick)
+            for item in self.ledger.accept_items(t)
+            if item.startswith("sell:") and item[5:].isdigit()
+        }
+        ours = {m.id for m in run.mine}
+        ctx, out = self._ctx(run), []
+        for o in offers:
+            if o.side != "bid" or o.id in ours:
+                continue
+            copies = sorted(
+                (
+                    a
+                    for a in run.snap.me.get("assets") or []
+                    if a.get("kind") == "card"
+                    and a.get("ref") == o.ref
+                    and isinstance(a.get("id"), int)
+                    and isinstance(a.get("your_value"), int | float)
+                    and int(a["id"]) not in listed | sold
+                ),
+                key=lambda a: (float(a["your_value"]), -int(a["id"])),
+            )
+            if not copies:
+                continue
+            copy_id = int(copies[0]["id"])  # the free copy we lose least by
+            op = score_offer(
+                o,
+                market,
+                run.snap.me,
+                run.params,
+                self.rules,
+                AffinityMap(),
+                venues.get(o.venue),
+                ctx,
+                asset_id=copy_id,
+            )
+            if op is not None and op.ours >= run.params.sell_min_surplus:
+                out.append(bid_proposal(op, copy_id))
+        return out
 
     # ------------------------------------------------------------ (b) the dealer desk
 
@@ -625,7 +719,7 @@ class Taker:
 
     def _converse(self, run: _TickRun, desk: list[tuple[DeskMove, dict[str, Any]]]) -> None:
         taken = {p.desk.conv.dealer for p in run.accepted if p.desk is not None}
-        bought = {p.ref for p in run.accepted if p.desk is None}  # from a board: the dealer thread is moot
+        bought = {p.ref for p in run.accepted if p.desk is None and p.sell is None}  # a board buy: thread moot
         for dm, thread in desk:
             if dm.conv.item in bought:
                 dm = replace(dm, move=Move("walk", reason=f"bought {dm.conv.item} on a board this tick"))
@@ -783,7 +877,7 @@ class Taker:
             self._dry_accepts = {clock.tick: used}
 
     def _skip(self, run: _TickRun, p: AcceptProposal, why: str, status: Status, jev: JevAdvice | None = None) -> None:
-        kind = "accept_ask" if p.source == "board" else "dealer_accept"
+        kind = "accept_bid" if p.sell is not None else "accept_ask" if p.source == "board" else "dealer_accept"
         verb = "" if status == "expired" else "skip "
         self.rec.decide(
             run.snap.clock.tick,
@@ -798,6 +892,8 @@ class Taker:
         )
 
     def _accept_one(self, run: _TickRun, p: AcceptProposal, limit: int) -> bool:
+        if p.sell is not None:
+            return self._accept_bid(run, p, p.sell, limit)
         clock = run.snap.clock
         skip_thread = p.desk.conv.thread_id if p.desk else None
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
@@ -876,6 +972,79 @@ class Taker:
             self.log(f"tick {tick} taker: /me re-read after {what} failed ({code}); the next tick reads it")
             return
         self.log(f"tick {tick} taker: {what}: {run.snap.holdings.line() if run.snap.holdings else '/me re-read'}")
+
+    def _accept_bid(self, run: _TickRun, p: AcceptProposal, op: Opportunity, limit: int) -> bool:
+        """Sell our least valuable copy into a standing bid (`accept_bids`): the same gates as a buy (the
+        guardrails with this tick's commitments, the duel grace, the shared accept quota), then
+        `accept(offer, assets=[copy])`. Nothing is booked as spend: the bid's cash comes in."""
+        clock = run.snap.clock
+        your_value = next(
+            (float(a["your_value"]) for a in run.snap.me.get("assets") or [] if a.get("id") == p.asset_id), None
+        )
+        # The sell floor sees what we net (the fee comes out of the bid); the maker's share counts the bid.
+        action = Action(
+            "accept_sell",
+            p.ref,
+            p.rarity,
+            op.price - op.fee,
+            your_value=your_value,
+            counterparty=op.maker,
+            volume=op.price,
+        )
+        verdict = check(action, self._ctx(run), self.rules)
+        if not verdict.allowed:
+            self._skip(run, p, str(verdict), "rejected")
+            return False
+        if self.live:
+            self._duel_grace(run)
+        if any(item.startswith("duel:") for item in self.ledger.accept_items(clock.tick)):
+            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected")
+            return False
+        if not run.window.open():
+            self._skip(run, p, "tick budget spent, not sent late", "expired")
+            return False
+        if self.live and not self._fresh_tick(clock):
+            run.window = TickWindow(clock.tick, 0.0, self.now)
+            self._skip(run, p, "the tick ended before the send", "expired")
+            return False
+        if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, f"sell:{p.asset_id}", limit):
+            self._skip(run, p, "another process took the team's accept this tick", "rejected")
+            return False
+        did = self.rec.decide(
+            clock.tick,
+            "accept_bid",
+            f"sell {p.ref} #{p.asset_id} into {op.maker}'s bid {op.offer_id} on {op.venue} for {op.price} "
+            f"(fee {op.fee}, surplus {op.ours:.1f}) · guardrails {verdict}",
+            inputs=p.inputs,
+            reason=p.reason,
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            move={"accept": op.offer_id, "assets": [p.asset_id]},
+        )
+        if self.live:
+            body = self.rec.send(
+                did,
+                clock.tick,
+                "accept",
+                {"offer": op.offer_id, "assets": [p.asset_id]},
+                lambda: self.team.accept(op.offer_id, assets=[p.asset_id]),
+            )
+            if body is None and not self.rec.maybe_landed:
+                return True  # the reserved slot stays spent, as for a buy
+        # This tick's later checks: the copy is promised and the maker's share counts the sale.
+        run.offers.append(
+            {
+                "id": -1,
+                "status": "open",
+                "maker": run.snap.us,
+                "give": {"assets": [{"id": p.asset_id, "ref": p.ref}]},
+                "want": {"cash": op.price},
+                "to": op.maker,
+                "notional": op.price,
+            }
+        )
+        return True
 
     def _duel_grace(self, run: _TickRun) -> None:
         """Duels own the first `duel_grace_s` of a tick: the duel player decides right after the tick lands
