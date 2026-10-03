@@ -15,7 +15,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - Pause holds, it never flattens. To empty the book (before the doors close overnight, after a bad run) pause first, then run `uv run bazaar flatten --live`: it cancels every open offer of ours (add `--threads` to also close our open threads, a walk dealers remember). Its cancels and closes are the only writes sent while the kill switch is on; one paced pass that stops on a 429 and says what is left.
 
 ## Money
-- `cash_floor` = 100 — never let a purchase take cash below this; while our planned venue is not open yet, `venue_bond_reserve` is added on top (see "Our venue").
+- `cash_floor` = 270 — Omar's rule (Sat 3 Oct, live): always keep 270 in cash (venue bond 250 + opening fee 20) so a custom market can be opened whenever it is needed. If `allow_venue_open` is ever turned on, lower this back to 100 in the same change (the reserve below then covers the bond). Never let a purchase take cash below this; while our planned venue is not open yet, `venue_bond_reserve` is added on top (see "Our venue").
 - `max_spend_per_game_hour` = 150 — total primas we may commit to purchases in one game hour, across all processes.
 - `max_price_common` = 12 — never pay more for a common card.
 - `max_price_uncommon` = 26 — never pay more for an uncommon card.
