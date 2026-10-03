@@ -128,6 +128,43 @@ Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, ev
 
 ## Per-task steps (Phase 0 in detail; later tasks get theirs at `/plan` time)
 
+### N17 — Team-to-team swap threads (spec: [`N17-spec.md`](./N17-spec.md); coordinator task `task_a3927baba1ba`)
+Phase 1 (done in this PR): triage of Marius's #79 / #98 / #101 with `/pr-review` + `security-auditor`, the
+spec, these steps. Phase 2 starts on the coordinator's "go" after #72 merges; one thin slice per step,
+each green before the next. Re-read `vendor/bazaar-kit/RULES.md` and `README.md` before each step.
+- N17-0 — Base: rebase on `main` with #72; take the coordinator's verdict on #79 (keep → reuse `Swap`,
+  `TradeBook`, `counterparty_refusal`, the affinity map and `hands-off:` rows; close → step N17-3 ports the
+  minimal pieces). · **Acceptance:** gate green on the rebased branch.
+- N17-1 — Simulator gaps (`bazaar_sim/rivals.py`, `threads.py`): rival bots accept and counter swaps at
+  their private values, the 200-message cap (`message_cap`), one rival that opens an inbound thread and
+  goes silent. · **Acceptance:** sim unit tests; existing sim tests and `scripts/sim_smoke.py` unchanged and green.
+- N17-2 — Pure planner `swaps.py`: duplicates and missing cards from `/api/me` (album first), needers
+  (bids, chasers, affinity) and holders (`likely_holders`, asks, probes), our and their values, shapes
+  A/B/C, the concession ladder, the fairness check. · **Acceptance:** spec criteria 1–3 (table tests).
+- N17-3 — Guard: swap actions through `guardrails.check()` (duplicate as a sale at what we receive, cash
+  added as a bid), the per-counterparty cap, `team:` reservations in the ledger, the new GUARDRAILS
+  rules validated by `uv run bazaar rules`. · **Acceptance:** spec criterion 4.
+- N17-4 — Team desk in the taker's tick: inbound first, then our threads, then at most one opening;
+  house venue and generic topic; one standing offer per thread and per wanted card (cancel before
+  replace); message, thread, listing and request budgets; idle closes; kill flags. · **Acceptance:**
+  spec criteria 5 and 7 (fake clock + fake client).
+- N17-5 — Accept path: rank a counter against board asks in the taker's `_accept`, `reserve_accept`
+  after duels, structure-only reading, copy picking, `/api/me` re-read, ledger + eval + lesson rows.
+  · **Acceptance:** spec criterion 6.
+- N17-6 — Words: `WordsRequest` for `team:<id>`, template words, N16 tactic-bank hook behind
+  `BAZAAR_BLUFF`, untrusted text escaped. · **Acceptance:** spec criterion 8.
+- N17-7 — `bazaar swaps` (read-only plan, `--json`), decisions kinds, `/state` allow-list unchanged.
+  · **Acceptance:** spec criterion 10.
+- N17-8 — Simulator end to end: `tests/test_team_threads_sim.py` (one swap settled, one feeding offer
+  refused, the inbound idle thread closed) and a team-threads step in `scripts/sim_smoke.py`; docs
+  (GUARDRAILS.md, STRATEGY.md, RUNTIME.md, `docs/architecture.status.json`), `.ai/memory.md`,
+  `BAZAAR_TEAM_THREADS: preserve()` in `.railway/railway.py` (the coordinator applies). · **Acceptance:**
+  spec criteria 9 and 11.
+- N17-9 — `/review`, `/pr-review` until APPROVE (+ `security-auditor`: money paths), Honest
+  Implementation Report at the end of the PR body.
+- N17-10 (coordinator + Omar, after merge) — answer the spec's Q1–Q6 read-only at the first live tick,
+  then flip `team_threads_enabled` (Railway variable and GUARDRAILS change by the coordinator only).
+
 ### #21 — Feed capture ⟸ start here (no key needed)
 Files: `src/bazaar_agent/collector.py`, `tests/test_collector.py`
 - Step 1 — Poll `/api/feed?limit=1000` once per tick (from `/api/clock.next_tick_in`), append new
