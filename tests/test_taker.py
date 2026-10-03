@@ -504,3 +504,33 @@ def test_a_rate_limited_walk_sends_nothing_more_this_tick(tmp_path):
     t.on_tick(at(team, TICK + 1))
     assert team.reads[before:].count("thread 5000") == 1  # the tick's own read only: no re-read after the 429
     assert set(t.convs) == {"abuela"}  # kept: the walk is decided again next tick
+
+
+def test_a_walk_answered_with_a_deal_books_it(tmp_path):
+    # Security audit #72 round 4 (P2): our simulator answers a close on an ended thread 200 {"status": "deal"}.
+    class CloseSaysDeal(FakeTeam):
+        def close_thread(self, tid):
+            her(self, tid, {"maker": "t01", "status": "settled", "give": {"cash": 18}}, status="deal")
+            self.sent.append(("close_thread", tid))
+            return {"ok": True, "thread": tid, "status": "deal"}
+
+    team = CloseSaysDeal()
+    t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    her(team, 5000, dealer_ask(800, 19))
+    t.on_tick(at(team, TICK + 1))
+    assert t.convs == {} and t.reopen_at == {} and ledger.spent_since(0) == 18
+
+
+def test_a_dealer_who_stops_answering_rests_the_item_for_a_game_hour(tmp_path):
+    # pr-reviewer #72 round 4 (P2): without a rest, a silent dealer made the taker open, bid and walk on the
+    # same item every few ticks (8 opens in 30 ticks).
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens 5000 and bids 18; she never answers
+    for n in range(1, 4):
+        t.on_tick(at(team, TICK + n))
+    assert ("close_thread", 5000) in team.sent and t.cooling == {("abuela", "LAV-08"): 1.5 + 1.0}
+    opens = [s for s in team.sent if s == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})]
+    t.on_tick(at(team, TICK + 4))
+    assert [s for s in team.sent if s == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})] == opens

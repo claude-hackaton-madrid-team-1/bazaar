@@ -1,6 +1,6 @@
 """Negotiate with a dealer (Abuela first), one move per tick, inside a hard price limit.
 
-`decide()` holds every rule (its only side effect is noting the dealer's asks on the negotiation);
+`decide()` holds every rule (its only side effects are on the negotiation: her asks, and our waits);
 `negotiate()` runs it against the live thread. Rules learned from the feed (see `bazaar curves`): the
 dealer only moves when we move, the same price twice earns nothing, small steps earn small steps, and
 a `final` offer is take-it-or-walk. The ladder score is the share of the dealer's range we capture, and
@@ -53,6 +53,7 @@ class Move:
     offer_id: int | None = None
     reason: str = ""
     reopen: bool = False  # a walk because she held her opening ask: try a new thread, lower (`reopen_start`)
+    rest: bool = False  # a walk because she stopped answering: leave this item with her for a while
 
 
 @dataclass
@@ -161,7 +162,7 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     neg.see_ask(ask)
     if ask is None and neg.bids and neg.opening_ask is None:  # a second bid before her first ask is blind
         wait = patient(neg, True, "waiting for her first ask")
-        return wait or Move("walk", reason=f"no ask from her after {MAX_WAITS} ticks")
+        return wait or Move("walk", reason=f"no ask from her after {MAX_WAITS} ticks", rest=True)
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
         if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
@@ -252,13 +253,13 @@ def see_history(neg: Negotiation, thread: dict[str, Any], dealer: str, item: str
     ask answers our first bid and lapses 2 ticks later: a hold (or two failed reads) can hide it from the
     standing offers, and `bid_cap` must still know it. An offer that is not our plain buy is skipped."""
     messages = [m for m in thread.get("messages") or [] if isinstance(m, dict)]
+    # The real API lists a slow reply AFTER our next bid (thread 187): order by message id when every one has it.
+    if all(isinstance(m.get("id"), int) for m in messages):
+        messages = sorted(messages, key=lambda m: int(m["id"]))
     for m in messages:
         o = m.get("offer")
         if isinstance(o, dict) and o.get("maker") == dealer and offer_terms_problem(o, item) is None:
             neg.see_ask(offer_cash(o))
-    # The real API lists a slow reply AFTER our next bid (thread 187): order by message id when every one has it.
-    if all(isinstance(m.get("id"), int) for m in messages):
-        messages = sorted(messages, key=lambda m: int(m["id"]))
     senders = [m.get("sender") for m in messages if m.get("sender")]
     neg.awaiting_reply = bool(senders) and senders[-1] != dealer
 
@@ -450,6 +451,7 @@ def negotiate(
         "held": 0,
         "accepted": False,
         "reopen": None,
+        "clock": None,
     }
 
     def holding(when: str) -> bool:
@@ -477,7 +479,39 @@ def negotiate(
                 on_deal(int(state["price"]), clock.tick, clock.t_hours)
         return True
 
+    def reread(clock: Clock) -> None:
+        """One more read of our thread, outside a tick's flow: a deal that landed is booked. Nothing here may
+        crash the caller: an unreadable thread or a failed booking is said loudly, with the thread id."""
+        try:
+            thread = client.thread(tid)
+        except BazaarError as e:
+            log(f"thread {tid} unreadable ({e.code}): check it by hand, a deal there would be unbooked")
+            return
+        try:
+            ended(thread, clock)
+        except Exception as e:  # on_deal's ledger write failed: the deal is done, its spend is not booked
+            log(f"thread {tid}: deal at {state['price']} P done but NOT booked ({type(e).__name__}): book it by hand")
+
+    def close(outcome: str, clock: Clock) -> str:
+        """Close our thread; the status it ends in. A refused close, or one answered with an ended thread (our
+        simulator answers 200 {"status": "deal"}), may hide a "Deal!" that landed since our last read: read
+        the thread again and book it. A rate limit sends nothing more now: the thread stays open."""
+        try:
+            answer = client.close_thread(tid)
+        except BazaarError as e:
+            log(f"tick {clock.tick}: close of thread {tid} refused ({e.code})")
+            if e.code in ("rate_limited", "wait_for_tick", "too_many_requests"):
+                return "open"
+        else:
+            status = answer.get("status") if isinstance(answer, dict) else None
+            if status in (None, "closed", "walked", outcome):
+                return outcome
+            log(f"tick {clock.tick}: close of thread {tid} answered {status}: reading it again")
+        reread(clock)
+        return str(state["status"])
+
     def on_tick(clock: Clock) -> None:
+        state["clock"] = clock
         if state["status"] != "open":
             return
         state["ticks"] += 1
@@ -548,9 +582,9 @@ def negotiate(
                 client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
             elif move.kind == "walk":
-                client.close_thread(tid)
-                state["status"] = "walked"
-                state["reopen"] = reopen_start(neg) if move.reopen else None
+                state["status"] = close("walked", clock)
+                if state["status"] in ("walked", "closed"):
+                    state["reopen"] = reopen_start(neg) if move.reopen else None
         except BazaarError as e:
             obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
@@ -567,15 +601,26 @@ def negotiate(
         run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
             state["status"] = "accepted_pending"
-    if state["status"] == "open" and holding(f"after {max_ticks} ticks"):
-        state["status"] = "held"  # the kill switch is on: the thread stays open, never closed
-    elif state["status"] == "open":
+    last: Clock | None = state["clock"]  # on_deal's tick and game hour: the last tick we handled
+    if last is None:
         try:
-            client.close_thread(tid)
-            state["status"] = "timeout"
-        except BazaarError as e:  # her "Deal!" may have landed since our last read: never leave it unbooked
-            log(f"timeout close of thread {tid} refused ({e.code}): reading it again")
-            ended(client.thread(tid), Clock.model_validate(client.clock()))
+            last = Clock.model_validate(client.clock())
+        except BazaarError:
+            last = Clock(tick=0)
+    if state["status"] == "open" and holding(f"after {max_ticks} ticks"):
+        reread(last)  # a "Deal!" may have landed while we held: book it; the thread stays open otherwise
+        state["status"] = "held" if state["status"] == "open" else state["status"]
+    elif state["status"] == "open":
+        state["status"] = close("timeout", last)
+        if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the next tick
+
+            def close_again(clock: Clock) -> None:
+                state["status"] = close("timeout", clock)
+
+            run_per_tick(client.clock, close_again, max_ticks=1, sleep=sleep)
+        if state["status"] == "open":
+            standing = neg.bids[-1] if neg.bids else "-"
+            log(f"thread {tid} is still open with our bid {standing} standing: close it by hand")
     outcome = Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]), state["reopen"])
     obs.finished(outcome)
     return outcome

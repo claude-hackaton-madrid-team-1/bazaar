@@ -602,3 +602,106 @@ def test_a_refused_timeout_close_books_a_deal_that_landed_first():
         on_deal=lambda price, tick, t_hours: booked.append(price),
     )
     assert (out.status, out.price, booked) == ("deal", 8, [8])
+
+
+class CloseSaysDeal(FakeDealerClient):
+    """Her "Deal!" lands just before our close, and the close is answered 200 with the ended thread, as our
+    simulator does (bazaar_sim/threads.py close_thread): security audit #72 round 4, P2."""
+
+    def close_thread(self, tid):
+        self.status = "deal"
+        return {"ok": True, "thread": tid, "status": "deal"}
+
+    def thread(self, tid):
+        if self.status == "deal":
+            return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 8}}}]}
+        return super().thread(tid)
+
+
+def test_a_timeout_close_answered_with_a_deal_books_it():
+    from bazaar_agent.agents.dealer import negotiate
+
+    booked: list[int] = []
+    out = negotiate(
+        CloseSaysDeal(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=3,
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert (out.status, out.price, booked) == ("deal", 8, [8])
+
+
+def test_a_close_that_fails_and_a_thread_that_cannot_be_read_never_crash_dealer_buy():
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class Down(FakeDealerClient):
+        def close_thread(self, tid):
+            self.down = True
+            raise BazaarError("network", "connection reset", 0)
+
+        def thread(self, tid):
+            if getattr(self, "down", False):
+                raise BazaarError("network", "connection reset", 0)
+            return super().thread(tid)
+
+    lines: list[str] = []
+    out = negotiate(
+        Down(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=3,
+    )
+    assert out.status == "open" and any("check it by hand" in line for line in lines)
+
+
+def test_a_failed_booking_after_a_late_deal_is_said_loudly_never_raised():
+    from bazaar_agent.agents.dealer import negotiate
+
+    def ledger_down(price, tick, t_hours):
+        raise RuntimeError("ledger write failed (Postgres unreachable)")
+
+    lines: list[str] = []
+    out = negotiate(
+        CloseSaysDeal(asks=[30] * 20),
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=3,
+        on_deal=ledger_down,
+    )
+    assert out.status == "deal" and any("NOT booked" in line for line in lines)
+
+
+def test_a_late_deal_while_the_switch_holds_is_booked_on_the_way_out():
+    from bazaar_agent.agents.dealer import negotiate
+
+    class LateDealWhileHeld(FakeDealerClient):
+        def thread(self, tid):
+            if len(self.sent) >= 2 and self.reads > 40:  # her "Deal!" to our 7 lands during the hold
+                return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 7}}}]}
+            return super().thread(tid)
+
+    client = LateDealWhileHeld(asks=[30] * 20)
+    booked: list[int] = []
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+        kill_switch=lambda: ("pause",) if len(client.sent) >= 2 and client.reads <= 40 else (),
+        on_deal=lambda price, tick, t_hours: booked.append(price),
+    )
+    assert out.status in ("deal", "held") and (booked == [7]) == (out.status == "deal")

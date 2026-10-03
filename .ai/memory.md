@@ -371,3 +371,10 @@ Several sessions run `scripts/sim_smoke.py` / `bazaar-sim serve` on this laptop,
 fails to bind (`[Errno 48] address already in use` in its log), every `BAZAAR_SIM=local` command you run next
 writes to another session's simulator (and can break its smoke). Before any write: check your server's log
 says it is serving, or `lsof -iTCP:8765 -sTCP:LISTEN` shows a process whose cwd is your worktree.
+
+### [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
+Real thread 187 (Chato): ids `1145 t01, 1159 t01, 1153 chato, 1169 chato, 1176 t01, …`, so a slow reply is listed
+AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last must be read by message id
+(`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
+`200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
+as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).

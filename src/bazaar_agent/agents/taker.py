@@ -588,12 +588,17 @@ class Taker:
             closed = self.rec.send(
                 did, tick, "close_thread", {"thread": conv.thread_id}, lambda: self.team.close_thread(conv.thread_id)
             )
-            if closed is None:  # refused: her "Deal!" may have landed first; a deal is never dropped unbooked
+            ended_as = closed.get("status") if isinstance(closed, dict) else None
+            if closed is None or ended_as not in (None, "closed", "walked"):
+                # Refused, or answered with an ended thread (our simulator says 200 {"status": "deal"}): her
+                # "Deal!" may have landed first, and a deal is never dropped unbooked.
                 self._after_refused_walk(run, conv, move)
                 return
             self.convs.pop(conv.dealer, None)
             if move.reopen:
                 self._held_opening(run, conv)
+            elif move.rest:  # she stopped answering: do not open, bid and walk on this item every few ticks
+                self.cooling[(conv.dealer, conv.item)] = run.snap.clock.t_hours + 1.0
             return
         price = int(move.price or 0)
         text = bid_words(
