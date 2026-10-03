@@ -176,9 +176,10 @@ def test_a_craft_of_copies_a_team_trade_brought_us_answers_to_the_score_impact_r
     assert not unnamed.allowed and "not named one by one" in unnamed.violations[0]
 
 
-def test_guardrails_md_ships_the_workshop_off():
+def test_guardrails_md_ships_the_workshop_on_and_capped():
+    # Omar, Sat 3 Oct ~22:15: the Workshop is on; the taker's own crafts stay capped per game hour
     rules = load_guardrails().rules
-    assert rules.taller_enabled is False and rules.max_taller_per_game_hour == 2
+    assert rules.taller_enabled is True and rules.max_taller_per_game_hour == 2
 
 
 # ---------------------------------------------------------------- the taker's step
