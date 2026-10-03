@@ -817,8 +817,38 @@ resolution; `git rerere forget <path>` drops a bad one.
 use that tree for the merge commit (`git merge --no-commit origin/main`, then `git read-tree --reset -u <tree>`).
 Under `duel_policy = v2` the duel words stay main's plain templates, so N16 tactics are off for duels there.
 
-### [2026-10-03] finding — bazaar-sim duels now score like the real game and share the team's one accept per tick
-After #151: a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
+### [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
+symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squashed onto #72's round-3 head: thread
+40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that
+is not answered yet, and the adopted `Negotiation` started with `waits = 0` → fix: `_adopt` starts it with
+`waits = MAX_WAITS` (her answer already had `orphan_after_ticks` ≥ `MAX_WAITS` ticks to come in).
+
+### [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
+A quiet thread is not an orphan: a laptop `bazaar dealer buy` paused by its own `.local/PAUSE` stops bidding,
+and the Railway taker cannot see that pause. The taker now owns a thread only when its decisions log names it
+(`dealer_opened` rows carry the thread id); it adopts those on sight, because a fresh bid's "Deal!" can land
+a tick after the new process starts. A `process_started` row marks the first process that writes
+`dealer_closed`: earlier threads are never booked again (their process booked them silently).
+
+### [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
+`DecisionLog` writes `inputs` through `telemetry.scrub`, which redacts anything that looks like an internal host
+name (`Omars-MacBook-Pro.local` → `[redacted]`). An identity meant to be compared later must be a token the
+scrubber keeps: `decisions.writer()` stores a short hash (`w` + 10 hex) of `RAILWAY_SERVICE_ID` or the host name.
+
+### [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
+`bazaar_sdk._Http` re-sends a `rate_limited` call up to `retries` times, writes included, and waits 15 s per
+attempt: on one key shared by every process that fills the 5 req/s bucket further. `TeamBazaar` (B18) never
+re-sends a refusal or a write. RULES.md's "a refused request costs nothing" is about a `4xx`: a 5xx (or an edge
+502/504) may come after the game applied it, so it keeps the team's accept slot and books the spend (#141 review).
+
+### [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
+A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed or been cancelled by `bazaar
+flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
+a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
+emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
+
+### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+Once #151 merges (held for the 23:00 window; main's simulator does not have it yet): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
 practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
 team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
 (a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.

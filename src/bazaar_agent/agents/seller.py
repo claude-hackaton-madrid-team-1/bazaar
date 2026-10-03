@@ -274,6 +274,31 @@ def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return out + list(best.values())
 
 
+UNSETTLED_TICKS = 2  # an accept settles on the next tick; one still missing from /api/me after two never landed
+
+
+def unsettled_accepts(me: dict[str, Any], ledger: LedgerStore, tick: int) -> Commitments:
+    """The team's accepts of this tick and the last UNSETTLED_TICKS (any process, from the shared ledger) that
+    `/api/me` does not show yet: an accept settles on the next tick, and a read can land before that (bite
+    X18). Counted like an open offer (`committed_context`): the card as held, its cash as gone. A card copy
+    `/api/me` shows is settled (it already holds the card and paid the cash). A pack is always counted: an
+    older unopened pack would hide a new one (its cash then counts twice for a tick or two, fail safe). A
+    duel's accept moves no card; a price below 0 counts 0 (only a refund is negative, never an accept)."""
+    have = Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "card")
+    cash, wanted = 0, []
+    for t in range(tick - UNSETTLED_TICKS, tick + 1):
+        for item, price in ledger.accept_rows(t):
+            if not item or ":" in item:
+                continue
+            if not is_pack(item) and have[item] > 0:
+                have[item] -= 1
+                continue
+            cash += max(0, price)
+            if not is_pack(item):
+                wanted.append(item)
+    return Commitments(cash, tuple(wanted))
+
+
 def trade_book(
     offers: Iterable[dict[str, Any]], us: str, settled: dict[str, int], book: dict[str, float] | None = None
 ) -> TradeBook:
