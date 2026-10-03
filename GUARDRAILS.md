@@ -19,7 +19,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `max_spend_per_game_hour` = 150 — total primas we may commit to purchases in one game hour, across all processes.
 - `max_price_common` = 12 — never pay more for a common card.
 - `max_price_uncommon` = 26 — never pay more for an uncommon card.
-- `max_price_rare` = 80 — never pay more for a rare card.
+- `max_price_rare` = 95 — never pay more for a rare card. Raised from 80 on Sat (tick 425, Jev raise_95 0.95): Chato's rare finals were 82-93 on Friday, so no missing rare could close; the official-value cap still bounds every buy (SAL-09 177.1 completes Salamanca; MAL-09/10 stay capped at 77).
 - `max_price_pack` = 20 — never pay more for a sealed pack (Abuela's floor looks like 17).
 - `dealer_final_lift` = 0 — a dealer's FINAL offer on a card (its limit: take it or it walks) may be taken, or met with a bid at exactly that price, up to max_price_<rarity> × (1 + this), never above our value minus the minimum surplus; packs keep their cap and our own bids never pass it (N14a). 0 = today: Chato's uncommon finals 28-29 and rare finals 82-93 sit above the caps.
 - `official_value_margin` = 0 — every card buy (board accepts, dealer bids and finals, maker bids, swaps, the desk, `dealer buy`) pays at most the official value of one more copy (`GET /api/me/value?card=`, what the scorer counts: Day-2 hint 1) minus this, fee included, plus the copy a swap gives; read once per card per tick, only for a buy every other rule allows; a failed read refuses the buy. Our model still ranks; this only caps.
@@ -34,7 +34,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `protect_page_sets` = RET,CHA — never sell (list, or accept a bid with) our only copy of a page card of these sets: the new pages (El Retiro Saturday, Chamberí Sunday) need every card we pull, and nobody can price them yet; a duplicate may still be sold; `none` turns it off.
 
 ## Ticks and limits
-- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker never accepts).
+- `max_accepts_per_tick` = 1 — accepts per tick for the whole team, shared by every process on every machine through the Postgres ledger (duels first, then the taker; the maker accepts only on a dealer sell thread, `dealer_sell_enabled`).
 - `dealer_max_ticks_per_thread` = 14 — close a dealer conversation after this many ticks without a deal.
 
 ## Jev
@@ -66,7 +66,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 ## Flags
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
 - `max_flags_sent` = 2 — at most this many flags that may have landed, ever, per data dir (`agents/flags.jsonl`); a refused flag does not count, and no message is flagged twice (S1).
-- `flag_dealers` = none — opt-in: the only dealer ids a flag may be sent to, set after a human checked that dealer's `would flag` rows (an honest out-of-stock message can read like a trick); none = no dealer.
+- `flag_dealers` = none — opt-in: the only dealer ids a flag may be sent to, set after a human checked that dealer's `would flag` rows (an honest out-of-stock message can read like a trick); none = no dealer. Keep it none until per-message human confirmation lands (S1 follow-up in 98-nice-to-haves): an opted-in dealer's FUTURE messages are flagged without a human reading them.
 - `flag_trusted_dealers` = abuela,chato — dealers the offer inspector blocks but never flags (their structure matched the thread in 1,017 of 1,017 Friday offers).
 - `inspect_accepts` = true — kill flag (S1): every accept (dealer, board, duel) first passes the offer inspector, which refuses a structure that is not what we decided on; false = the older structure checks only.
 
@@ -88,6 +88,12 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `team_swap_min_surplus` = 3 — our least gain on a swap, at our private values, after the fee we pay.
 - `team_swap_max_their_share` = 0.6 — never hand a team more than this share of a swap's expected pie (no feeding, RULES.md fair play).
 - `team_swap_max_our_share` = 0.85 — a repeat deal with the same team never hands us more than this share of the pie either.
+
+## Selling to dealers
+- `dealer_sell_enabled` = false — the maker sells spare copies (a duplicate, or a set we hold no boost in; never a protected card) to a dealer that buys their rarity, one sell thread at a time, only with a dealer we have no open thread with: our ask starts above the dealer's observed fills and steps down, never below our value + `sell_min_surplus` (STRATEGY.md); a dealer's final is taken only at or above that floor, else we walk. False: the maker never opens a sell thread. `uv run bazaar dealer sell` (by hand) does not read it.
+- `dealer_sell_max_per_game_hour` = 4 — sell threads the maker opens per game hour in all (this process); each dealer is also held to its own `menu.deals_per_team_per_hour` (from `traders` / `/api/dealers`; that quota is shared with our buys, which are not counted here yet).
+- `dealer_sell_open_above_top` = 1.6 — our opening ask on a sell thread: this × the highest bid that dealer gave any team for that rarity (`dealer_curves`, sell rows); never below our floor.
+- `dealer_sell_rounds` = 5 — our asks reach that dealer's typical fill in about this many steps down (finals came after 4-7 dealer bids).
 
 ## Words (N16)
 - `bluff_enabled` = true — our messages may bluff in their TEXT (tactics learned per counterparty against a plain-words control; Abuela gets kindness, labeling and calibrated questions only); false, or BAZAAR_BLUFF set to anything but 1/true/on/yes on a service, sends today's words. A tactic never changes a structured price, days or accept.
