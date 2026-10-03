@@ -24,7 +24,9 @@ PR #60 and v2 therefore value every day at the worst case (|weight| against us) 
   - `unknown`: null, simulator text, or ambiguous; off;
   - `conflict`: real payloads disagree; off for good.
 
-  The verdict persists in `.local/duels/days_sign.json`, and `real_game` holds only for the official host.
+  - A finished real two-issue deal with days also counts (`scored_evidence`, W2b's review): its `result` shows how the game scored the days, and it disagrees with the text only as a `conflict`.
+
+  The verdict persists in `.local/duels/days_sign.json`, merged and replaced atomically so `duel run` and the runtime never undo each other. `real_game` holds only for the official host.
 - **New guardrail `duel_days_auto`**, default false, so today's behaviour holds. When true, a `signed` verdict turns `duel_days_signed` on for the tick.
   - The policy (`V2Params`) and the guard (`duel_inside_limit`) read the same rules object, so they always agree (#113).
   - v1 keeps #60's worst case in the guard.
