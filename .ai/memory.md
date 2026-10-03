@@ -1137,3 +1137,11 @@ Tick 1028: the desk put MAL-06 #468 into a swap counter to t05 seconds before a 
 t02 (cancelled next tick, no fill). `committed_context` subtracts the copies in our open offers as read by THAT
 command, so two writers posting in the same instant can still race; re-read `/api/me/offers` right before a hand post
 and keep one copy free per card. A shell check piped through `grep` returns grep's exit code, not the check's.
+
+### [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+SAL-07 (asset 438) came from t02 at tick 320 for 23 and completed Salamanca (/me your_value 118.6). Sold to Pilar
+for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at tick 948 (−89.6 = 29 − 118.6), board
+`negotiating` 20.75 → 16.48 at its next update (tick 950, updates every 10 ticks): 0.048 score per neg_point. Buying
+it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
+(ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
+(MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.

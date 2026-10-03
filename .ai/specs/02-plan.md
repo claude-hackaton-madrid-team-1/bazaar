@@ -134,6 +134,7 @@ negotiates well.
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [TL1](TL1-spec.md) (new) | El Taller (Omar's hard rule, Sat 19:37): the taker feeds three FREE spare copies of one rarity (commons first, never a last copy of any card) into `POST /api/taller` at most once per tick, behind `taller_enabled`, `max_copies_kept`, `max_taller_per_game_hour` and `guardrails.check()`; the maker posts no new ask for a spare common; `bazaar taller [ids] [--live]` | 0 | 🟡 PR (feat/taller) |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -607,6 +608,14 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   · **Acceptance:** tests/test_trickster_final.py.
 - SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
   opens, not when it is planned. ❌ not done yet.
+
+### MI1 — Move impact: score cost of a sale, swap or buy, and a guard on it ([spec](MI1-spec.md))
+- Step 1 — `move_impact.py` (pure: origins from the tape, k from our snapshots, the estimate) · **Acceptance:**
+  tests/test_move_impact.py (incident replay −4.7 ± 0.5).
+- Step 2 — `impact_board.py` + `guardrails.check()` rule `max_score_loss_per_move` (approval override, fail closed)
+  and `asset=` on every sale path · **Acceptance:** tests/test_impact_guard.py.
+- Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
+  tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
 
 ## Parallel-work notes
 

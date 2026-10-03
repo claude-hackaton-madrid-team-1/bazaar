@@ -9,6 +9,7 @@ key, and only the writer holding the oldest history rebuilds the history-derived
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -24,15 +25,26 @@ from bazaar_agent.pgconn import DatabaseUrlError, Target, describe, redact
 from bazaar_agent.pgconn import connect as connect
 
 Event = dict[str, Any]
+log = logging.getLogger(__name__)
 
 
 def init_schema(conn: psycopg.Connection) -> bool:
     """Apply the schema (idempotent, safe beside other sessions). True when pgvector is on."""
     sql = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
-    with conn.cursor() as cur:
-        cur.execute(sql)  # type: ignore[arg-type]  # trusted file shipped in the package
-    conn.commit()
+    conn.add_notice_handler(_log_schema_warning)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)  # type: ignore[arg-type]  # trusted file shipped in the package
+        conn.commit()
+    finally:
+        conn.remove_notice_handler(_log_schema_warning)
     return pgvector_version(conn) is not None
+
+
+def _log_schema_warning(diag: psycopg.errors.Diagnostic) -> None:
+    """A schema step that chose to go on (a view left as it was) says so in a WARNING; psycopg drops notices."""
+    if diag.severity_nonlocalized == "WARNING":
+        log.warning("schema: %s", diag.message_primary)
 
 
 def connect_ready(app: str, connect_timeout_s: int | None = None) -> psycopg.Connection:

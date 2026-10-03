@@ -1317,6 +1317,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [TL1](TL1-spec.md) (new) | El Taller (Omar's hard rule, Sat 19:37): the taker feeds three FREE spare copies of one rarity (commons first, never a last copy of any card) into `POST /api/taller` at most once per tick, behind `taller_enabled`, `max_copies_kept`, `max_taller_per_game_hour` and `guardrails.check()`; the maker posts no new ask for a spare common; `bazaar taller [ids] [--live]` | 0 | 🟡 PR (feat/taller) |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1380,6 +1381,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
 - [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 - [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
 - [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
@@ -1387,7 +1389,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
 - [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
 - [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
-- [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
 
 <!-- BAZAAR:STATUS:END -->
 
