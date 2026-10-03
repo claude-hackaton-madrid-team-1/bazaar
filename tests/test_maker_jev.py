@@ -240,3 +240,17 @@ def test_a_bug_in_the_jev_layer_keeps_todays_prices(tmp_path, monkeypatch):
     assert ("cancel", 1) in team.sent and asks(team) == {5: 68, 4: 10} and bids(team) == [65]
     assert any("jev price failed (RuntimeError)" in line for line in lines)
     assert any("jev reprice failed (RuntimeError)" in line for line in lines)
+
+
+def test_jev_never_picks_a_relist_price_under_the_relist_floor(tmp_path):
+    # PR #205 review P2: LAT-09 #5 lapsed unsold at 68; the relist steps to 65 with a floor of 0.9 × 68 = 62, so
+    # Jev's quick sale (50) and fair (58) are not legal any more.
+    from bazaar_agent.decisions import Decision
+
+    team = FakeTeam()
+    m, _ = maker(tmp_path, team, FakeJev("quick_sale", 0.8, probabilities=PROBS), live=True, relist_min_price_share=0.9)
+    m.rec.decisions.decide(
+        Decision("maker", TICK - 20, "post_ask", {"asset_id": 5, "price": 68}, "r", "allowed", True, "approved", False)
+    )
+    m.on_tick(clock())
+    assert asks(team)[5] == 65

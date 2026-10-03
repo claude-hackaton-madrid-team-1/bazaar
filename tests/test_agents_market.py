@@ -20,6 +20,62 @@ def test_a_zero_fee_venue_charges_nothing_and_venues_parse_their_mechanism():
     assert cheap.fee(500) == 0 and (rastro.mechanism, cheap.mechanism, cheap.owner) == ("board", "board", "t12")
 
 
+# B19 (bite X8): an announced fee change (`pending_fee`) is priced in once an accept now could settle under it.
+HIKE = {**CHEAP, "pending_fee": {"fee_bps": 1000, "fee_per_card": 5, "effective_tick": 101}}  # the RULES cap
+
+
+def test_an_announced_fee_effective_by_settlement_is_priced_in():
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=100)  # accept at 100 settles at 101 = effective tick
+    assert hiked.fee(10) == 6 and hiked.fee(65) == 12 and hiked.fee_bps == 0  # today's fee is still 0
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=101)  # the server still shows it pending
+    assert hiked.fee(10) == 6
+
+
+def test_an_announced_fee_effective_after_settlement_is_not_priced_in_yet():
+    (later,) = venues_from({"venues": [HIKE]}, tick=98)  # accept at 98 settles at 99, or 100 if it slips
+    assert later.fee(10) == 0 and later.pending_fee is None
+
+
+def test_an_announced_fee_two_ticks_out_is_priced_in():
+    """An accept that slips into the next tick settles a tick later (security review of #144)."""
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=99)
+    assert hiked.fee(10) == 6
+
+
+def test_an_announced_fee_without_a_tick_is_priced_in():
+    """No tick to compare with: assume the change can apply (the conservative side)."""
+    (hiked,) = venues_from({"venues": [HIKE]})
+    assert hiked.fee(10) == 6
+    no_effective = {**CHEAP, "pending_fee": {"fee_bps": 100, "fee_per_card": 0}}
+    assert venues_from({"venues": [no_effective]}, tick=100)[0].fee(200) == 2
+
+
+def test_an_announced_fee_cut_never_lowers_the_fee_before_it_applies():
+    cut = {**RASTRO, "pending_fee": {"fee_bps": 0, "fee_per_card": 0, "effective_tick": 101}}
+    (rastro,) = venues_from({"venues": [cut]}, tick=100)
+    assert rastro.fee(65) == 5  # the higher of today's 5 and the announced 0
+
+
+def test_an_unreadable_announced_fee_is_priced_at_the_rules_cap_and_none_is_the_old_shape():
+    """A rival owns its venue row: an announcement we cannot read is priced at the cap, never ignored."""
+    bad = {**CHEAP, "pending_fee": {"fee_bps": "lots", "effective_tick": 101}}
+    late = {**CHEAP, "pending_fee": {"fee_bps": 100, "effective_tick": "soon"}}  # effective unknown: priced in
+    inf = {**CHEAP, "pending_fee": {"fee_bps": float("inf"), "fee_per_card": 0, "effective_tick": 101}}
+    rows = venues_from({"venues": [bad, late, inf, {**CHEAP, "pending_fee": None}]}, 100)
+    assert [v.fee(100) for v in rows] == [15, 1, 15, 0]
+
+
+def test_a_missing_announced_per_card_fee_keeps_todays_and_huge_values_are_capped():
+    per_card = {**CHEAP, "fee_per_card": 5, "pending_fee": {"fee_bps": 1000, "effective_tick": 101}}
+    huge = {**CHEAP, "pending_fee": {"fee_bps": 10**400, "fee_per_card": 99, "effective_tick": 101}}
+    assert [v.fee(65) for v in venues_from({"venues": [per_card, huge]}, 100)] == [12, 12]
+
+
+def test_a_venue_row_we_cannot_read_is_skipped_not_raised():
+    rows = venues_from({"venues": [{**CHEAP, "fee_bps": float("inf")}, {**RASTRO}]}, 100)
+    assert [v.id for v in rows] == [RASTRO["venue"]]
+
+
 def test_only_plain_one_card_shapes_are_read():
     assert parse_offer(ask(1, "LAV-02", 10)).side == "ask"
     assert parse_offer(bid(2, "LAV-09", 70)).side == "bid" and parse_offer(bid(2, "LAV-09", 70)).ref == "LAV-09"
@@ -29,6 +85,28 @@ def test_only_plain_one_card_shapes_are_read():
     cash_and_card = {**ask(5, "LAV-02", 10), "give": {"cash": 5, "assets": [{"id": 9, "ref": "LAV-02"}]}}
     assert parse_offer(two_cards) is None and parse_offer(swap) is None and parse_offer(cash_and_card) is None
     assert parse_offer({"id": "x"}) is None
+
+
+def test_a_bid_that_also_wants_an_asset_or_hides_an_unknown_key_is_never_plain():
+    # security-auditor #98 P1: the bid branch never looked at want.assets, so a rival bid for "card:LAT-09"
+    # that also wants the id of our rare read as a plain LAT-09 bid. Words persuade, structure binds: any
+    # extra structure means it is not the shape we price, so it is skipped, never guessed at.
+    plain = bid(2, "LAT-09", 62)
+    trap = {**plain, "want": {**plain["want"], "assets": [77]}}
+    hidden_want = {**plain, "want": {**plain["want"], "packs": ["sobre_barrio"]}}
+    hidden_give = {**plain, "give": {**plain["give"], "debt": 5}}
+    ask_extra = {**ask(1, "LAV-02", 10), "want": {"cash": 10, "assets": [], "types": [], "cards": ["LAV-09"]}}
+    ask_hidden = {**ask(1, "LAV-02", 10), "want": {"cash": 10, "assets": [], "types": [], "bonus": [1]}}
+    assert parse_offer(plain) is not None and parse_offer(plain).side == "bid"
+    assert [parse_offer(o) for o in (trap, hidden_want, hidden_give, ask_extra, ask_hidden)] == [None] * 5
+    real = {  # an offer.listed payload from Friday's feed: zero cash and empty lists are plain
+        "id": 23,
+        "maker": "t07",
+        "venue": "rastro",
+        "give": {"cash": 0, "assets": [{"id": 100, "kind": "card", "ref": "LAT-03", "rarity": "common"}], "types": []},
+        "want": {"cash": 10, "assets": [], "types": []},
+    }
+    assert parse_offer(real) is not None and (parse_offer(real).side, parse_offer(real).price) == ("ask", 10)
 
 
 def test_board_offers_keep_only_open_offers_for_anyone_or_for_us():
@@ -118,8 +196,19 @@ def test_bazaar_agent_taker_is_a_dry_run_by_default(agent_cli):
     team, cli = agent_cli
     result = CliRunner().invoke(cli.app, ["agent", "taker", "--max-ticks", "1", "--no-jev", "--threads", "0"])
     assert result.exit_code == 0, result.output
-    assert "taker · DRY RUN: nothing is sent" in result.output and "ledger: Postgres unavailable" in result.output
+    assert (
+        "taker · DRY RUN: nothing is sent" in result.output
+        and "ledger: Postgres on localhost:5433 unavailable" in result.output
+    )
     assert "WOULD accept LAV-02 on rastro for 12" in result.output and team.sent == []
+
+
+def test_a_live_agent_refuses_to_start_without_the_shared_ledger(agent_cli, monkeypatch):
+    team, cli = agent_cli
+    monkeypatch.setenv("BAZAAR_LIVE", "1")  # how Railway turns an agent live; DATABASE_URL is the local default
+    result = CliRunner().invoke(cli.app, ["agent", "taker", "--max-ticks", "1", "--no-jev", "--threads", "0"])
+    assert result.exit_code == 1 and team.sent == []
+    assert "taker: refusing to trade: live trading needs the team's shared ledger" in " ".join(result.output.split())
 
 
 def test_bazaar_agent_maker_serves_its_status_when_asked(agent_cli):

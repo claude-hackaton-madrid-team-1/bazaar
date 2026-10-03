@@ -56,3 +56,37 @@ def no_shared_holdings_db():
     yield
     holdings._PROCESS.clear()
     holdings._PROCESS.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def no_real_models(monkeypatch):
+    """No test loads the real fastembed models: that would download ~150 MB from Hugging Face on a background
+    thread (a live network call) that can still be running native code when the interpreter exits."""
+    monkeypatch.setenv("BAZAAR_MODELS", "off")
+
+
+@pytest.fixture(autouse=True)
+def official_value_cap_off(request, monkeypatch):
+    """The official value cap (`guardrails._official_value_violations`, GET /api/me/value) is off in the tests that
+    predate it: their fake clients have no `value()` and their contexts no value book, so every card buy would be
+    refused (fail closed). A test marked `official_values` runs the real cap (tests/test_official_values.py and the
+    per-path tests)."""
+    if request.node.get_closest_marker("official_values") is not None:
+        return
+    from bazaar_agent import guardrails as gr
+
+    monkeypatch.setattr(gr, "_official_value_violations", lambda action, ctx, rules: [])
+
+
+@pytest.fixture(autouse=True)
+def no_shared_breakers():
+    """`guardrails.check()` reads the circuit breakers of this process's database once per tick: the suite reads an
+    empty board instead (no Postgres connect per test). Tests of the breakers build their own `BreakerBoard`."""
+    from bazaar_agent import breakers
+
+    old = breakers.install(breakers.BreakerBoard(None))
+    yield
+    if old is None:
+        breakers._BOARD.pop("board", None)
+    else:
+        breakers.install(old)

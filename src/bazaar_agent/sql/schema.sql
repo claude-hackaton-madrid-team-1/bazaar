@@ -107,6 +107,16 @@ create table if not exists ledger (
 create index if not exists ledger_kind_tick on ledger (kind, tick);
 create index if not exists ledger_kind_hours on ledger (kind, t_hours);
 
+-- Circuit breakers (breakers.py): a tripped scope makes guardrails.check() refuse that kind of write in every
+-- process. Set by hand (`bazaar breaker trip|reset`) or by the live watchdog; read once per tick, fail open.
+-- The same statement as breakers.DDL, which a writer runs before its first write.
+create table if not exists guard_breakers (scope text primary key, tripped bool not null default false, reason text, tick int, at timestamptz not null default now(), until_tick int, source text);
+
+-- Our venue's broker key (RULES.md "Your own market"), returned once by the opening: a SECRET like the team
+-- key. Written and read only by `venue.KeyVault` (the maker on Railway, `bazaar venue open`); no public route,
+-- view or eval reads this table. The vault runs the same statement before it writes (venue.VENUE_KEYS_DDL).
+create table if not exists venue_broker_keys (target text not null, venue text not null, broker_key text not null, opened_tick int, created_at timestamptz not null default now(), primary key (target, venue));
+
 -- Monitoring agent (bazaar monitor): the announcements and trader changes it saw.
 create table if not exists alerts (
   id bigserial primary key, tick int, kind text, subject text, detail text,
@@ -156,6 +166,24 @@ begin
       ('outcomes', 'annotated_at', 'timestamptz'),
       ('outcomes', 'annotation_tries', 'int'),
       ('outcomes', 'scored_at', 'timestamptz'),
+      -- Our own dealer threads as the taker reads them (N12 part 3, `bazaar_agent.learn.threads`).
+      ('threads', 'until_tick', 'int'),  -- a cooloff's end (from the thread's own answer)
+      ('threads', 'updated_tick', 'int'),  -- the tick of the newest answer stored (a lagging writer never rolls back)
+      ('messages', 'ours', 'boolean'),  -- our own message
+      ('messages', 'tactic', 'text'),  -- which of our tactics sent it (N16), when known
+      -- The live-feed reader (N12, `bazaar_agent.learn`): one structured fact per row, deduped by key.
+      ('learnings', 'subject_kind', 'text'),  -- dealer | venue | team | organiser
+      ('learnings', 'kind', 'text'),  -- blocker | cooloff | quota | sold_out | price_floor | behaviour | ...
+      ('learnings', 'until_tick', 'int'),  -- expiry, exclusive (null = no expiry)
+      ('learnings', 'team', 'text'),  -- whom it binds (null = everyone)
+      ('learnings', 'evidence', 'bigint[]'),  -- feed event ids
+      ('learnings', 'source', 'text'),  -- rules | llm
+      ('learnings', 'dedupe_key', 'text'),
+      ('learnings', 'updated_at', 'timestamptz'),
+      -- The outcome learner (N3, `learn.lessons` / `learn.recall`): md5 of the claim last embedded, so an
+      -- edited claim is embedded again; a per-move dedupe key so re-reading the feed adds no duplicate.
+      ('learnings', 'embedded_hash', 'text'),
+      ('trader_behaviors', 'dedupe_key', 'text'),
       ('messages', 'embedding', vec),
       ('trader_behaviors', 'embedding', vec),
       ('learnings', 'embedding', vec)) as c(tbl, name, type)
@@ -165,6 +193,21 @@ begin
   loop
     execute format('alter table %I add column %I %s', col.tbl, col.name, col.type);
   end loop;
+end $$;
+
+-- One row per learned fact, whoever read it first (the taker on Railway, a laptop's CLI).
+create unique index if not exists learnings_dedupe_key on learnings (dedupe_key);
+create index if not exists learnings_recall on learnings (subject_kind, subject, kind, until_tick);
+create unique index if not exists trader_behaviors_dedupe_key on trader_behaviors (dedupe_key);
+
+-- Cosine search for the hybrid recall (N3), only where pgvector made the embedding column.
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = current_schema()
+              and table_name = 'learnings' and column_name = 'embedding')
+     and to_regclass(format('%I.learnings_embedding_hnsw', current_schema())) is null then
+    execute 'create index learnings_embedding_hnsw on learnings using hnsw (embedding vector_cosine_ops)';
+  end if;
 end $$;
 
 -- One team accept per slot per tick, enforced by the database itself: two processes on two machines
@@ -278,3 +321,30 @@ create table if not exists me_snapshots (
 create table if not exists holdings_state (
   scope text primary key, epoch bigint not null default 0, written_at timestamptz,
   thread_message_at timestamptz, last_write text, last_writer text);
+
+-- Supply map (N14b, `bazaar supply`): the card scan (`GET /api/cards/{id}`: ids 1-270 are the starting
+-- hands, block k = team k; newer ids are pack pulls and dealer mints), and per card and per set who holds
+-- what and how many complete pages can exist. The agents read `supply_assets` back for valuation.
+create table if not exists supply_assets (
+  id int primary key, ref text, kind text, scanned jsonb, scanned_tick int);
+create table if not exists supply_cards (
+  ref text primary key, set_code text, rarity text, page bool, minted int, print_run int, ours int,
+  holders jsonb, others int, unplaced int, updated_tick int);
+create table if not exists supply_sets (
+  set_code text primary key, released bool, pages_possible int, bottleneck jsonb, our_have int,
+  page_cards int, packs_opened int, updated_tick int);
+
+-- Buyer ranking (`bazaar buyers --save`): per card, every other team as a buyer, best first (`position`),
+-- with the reasons (`buyers.rank_buyers`). A save replaces the rows of the cards it ranks.
+create table if not exists team_buyer_rank (
+  card text not null, team text not null, position int, rank int, willing numeric, interest numeric,
+  missing bool, expected numeric, rival text, blocked bool, why text, updated_tick int,
+  primary key (card, team));
+
+-- The public leaderboard, one row per team per news-sentinel window (`leaderboard_store.py`): the rank watch
+-- reloads its history from here after a restart. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
+create table if not exists leaderboard_snapshots (
+  world text not null, tick int not null, team text not null, rank int not null, score numeric,
+  negotiating numeric, market numeric, level int, pages int, deals int, venue text,
+  read_at timestamptz not null default now(),
+  primary key (world, tick, team));

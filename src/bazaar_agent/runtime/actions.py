@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,9 +31,11 @@ from bazaar_agent.agents.seller import (
     committed_context,
     post,
     sell_listing,
+    trade_book,
 )
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import Action, Context, Verdict, check, context_from
+from bazaar_agent.intel import book_values
 from bazaar_agent.llm.steering import SteerDelta
 from bazaar_agent.runtime.backend import Backend
 from bazaar_agent.ticks import Clock, action_budget_s
@@ -133,7 +135,11 @@ class Base:
 
 def _base(b: Backend, clock: Clock, read_at: float) -> Base:
     me, offers = b.holdings.me(clock, clock_read_at=read_at).me, b.my_offers()
-    ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
+    ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules, b.values)
+    if b.rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        us = str(me.get("id") or "")
+        book = book_values(b.catalog(clock.tick))
+        ctx = replace(ctx, trades=trade_book(offers, us, b.settled_volume(us, clock.tick), book))
     return Base(me, offers, ctx, b.commitments(me, offers))
 
 
@@ -166,8 +172,18 @@ def _plan_dealer(b: Backend, clock: Clock, read_at: float, args: DealerBuyArgs) 
     return Planned("dealer_buy", verdict, clock, read_at, action)
 
 
+def _started(b: Backend, duel: Mapping[str, Any], tick: int) -> int:
+    """v2: the duel's first tick from the payload; else the first tick this runtime read it (the live payload has no
+    start), so v2 sees the duel age between tool calls; never seen before: now (open at the anchor)."""
+    did = duel.get("duel", duel.get("id"))
+    seen = b.duel_first_seen.setdefault(did, tick) if isinstance(did, int) and not isinstance(did, bool) else tick
+    return int(duel.get("started_tick") or duel.get("created_tick") or seen)
+
+
 def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> Planned:
-    from bazaar_agent.agents.duelist import duel_id, duel_move
+    from bazaar_agent.agents.duel_days import effective_rules, latch, real_game
+    from bazaar_agent.agents.duel_v2 import V2Params, plan_moves
+    from bazaar_agent.agents.duelist import duel_action, duel_id, duel_move
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     duels = [d for d in b.team.duels().get("duels") or [] if isinstance(d, dict)]
@@ -177,10 +193,20 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
     if (args.duel_id, clock.tick) in b.duel_said:
         return Planned("duel_move", _denied(f"already moved in duel {args.duel_id} this tick"), clock, read_at)
     anchor, floor = steered_duel_params(b.rules, b.settings.data_dir / STEERING_FILE, clock.tick)
-    started = duel.get("started_tick") or duel.get("created_tick") or clock.tick  # unknown: open at the anchor
-    move = duel_move(
-        duel, clock.tick, int(started), anchor=anchor, floor=floor, endgame_ticks=b.rules.duel_endgame_ticks
-    )
+    switch = latch(b.settings.data_dir)  # the days sign, shared with `duel run` through its file (B8)
+    switch.observe(duels, real_game(b.settings.bazaar_url))
+    rules = effective_rules(b.rules, switch)  # one rules object for the policy and the guard
+    if b.rules.duel_policy == "v2":  # across every live duel, so the team's one accept goes where it is due
+        first_seen = {did: _started(b, d, clock.tick) for d in duels if (did := duel_id(d)) is not None}
+        limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
+        slots = max(0, limit - b.ledger.accepts_in_tick(clock.tick))  # the taker may have taken it already
+        params = V2Params.from_rules(rules, anchor, floor)
+        move = plan_moves(duels, clock.tick, first_seen, params, slots)[args.duel_id]
+    else:  # #60's v1, unchanged: a payload without a start opens at the anchor every call
+        started = duel.get("started_tick") or duel.get("created_tick") or clock.tick
+        move = duel_move(
+            duel, clock.tick, int(started), anchor=anchor, floor=floor, endgame_ticks=b.rules.duel_endgame_ticks
+        )
     if move.kind == "hold":
         return Planned("duel_move", Verdict(True), clock, read_at, None, {"duel": duel, "move": move})
     ctx = Context(
@@ -192,9 +218,9 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
         paused=(REPO_ROOT / b.rules.pause_file).exists(),
         stops=gr.kill_switch(b.rules),
     )
-    action = Action("duel_accept" if move.kind == "accept" else "duel_offer", str(args.duel_id))
+    action = duel_action(duel, move)  # the price and days we would agree to, with our limit and role
     detail = {"duel": duel, "move": move}
-    return Planned("duel_move", check(action, ctx, b.rules), clock, read_at, action, detail)
+    return Planned("duel_move", check(action, ctx, rules), clock, read_at, action, detail)
 
 
 def check_write(b: Backend, tool: str, args: BaseModel) -> Planned:
@@ -363,6 +389,7 @@ def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
 
 def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None) -> dict[str, Any]:
     from bazaar_agent.agents.duelist import DUEL_WORDS
+    from bazaar_agent.agents.runtime import release_refused_accept
 
     move = planned.detail["move"]
     request = {"duel": args.duel_id, "kind": move.kind, "price": move.price, "days": move.days, "reason": move.reason}
@@ -372,6 +399,16 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         return outcome(planned, "approved", dry_run=True, request=request, command="uv run bazaar duel run --play")
     from bazaar_agent.sdk import BazaarError
 
+    if move.kind == "accept" and b.rules.inspect_accepts:  # S1: re-read the duel before the slot is claimed
+        from bazaar_agent.agents.accept_gate import duel_accept_check
+
+        gate = duel_accept_check(b.team.duels, planned.detail["duel"], args.duel_id, move)
+        if not gate.allowed:
+            why = f"inspector {gate.verdict}: {gate.reason}"
+            return outcome(planned, "rejected", reason=why, request=request, inspector=gate.as_inputs())
+        if planned.budget_left() <= 0:  # the re-read took the rest of the tick: never send late
+            why = "the duel re-read took the rest of the tick"
+            return outcome(planned, "expired", reason=why, request=request, inspector=gate.as_inputs())
     limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
     if move.kind == "accept" and not b.ledger.reserve_accept(
         clock.tick, clock.t_hours, 0, f"duel:{args.duel_id}", limit
@@ -385,6 +422,8 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         else:
             response = b.team.duel_say(args.duel_id, DUEL_WORDS, price=move.price, days=move.days)
     except BazaarError as e:
+        if move.kind == "accept":  # a 4xx cost nothing (RULES.md): the slot is the team's again
+            release_refused_accept(b.ledger, clock.tick, f"duel:{args.duel_id}", e.code, e.status)
         return outcome(planned, "failed", method=method, request=request, error_code=e.code)
     return outcome(planned, "done", sent=True, method=method, request=request, response=response)
 
