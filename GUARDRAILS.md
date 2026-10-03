@@ -25,7 +25,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Album (check /api/me first)
 - `block_buying_held_cards` = true — never buy a page card we already hold; duplicates are worth 0.25× or less to us.
-- `holdings_from_db` = true — answer /api/me from the shared Postgres snapshot while it is provably current (same tick, no write of ours since, no thread message this tick, young enough); false: every reader calls /api/me itself (snapshots are still written).
+- `holdings_from_db` = false — true: answer /me from the shared Postgres snapshot while it is provably current (same tick, no write of ours since, no thread message this tick, young enough). Ships false (every reader calls /api/me itself; snapshots are still written) until 15+ minutes of live snapshots are proven fresh against /api/me; the flip to true is its own one-line PR.
 - `holdings_max_age_s` = 5.0 — a snapshot older than this is never a decision input, whatever else holds: it bounds what we cannot see coming (a dealer accepting our standing bid between two of our sends).
 
 ## Ticks and limits
