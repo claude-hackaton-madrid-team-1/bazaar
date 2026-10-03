@@ -1412,6 +1412,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
 - [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
 - [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
 - [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
@@ -1419,7 +1420,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
 - [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
 - [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
-- [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 
 <!-- BAZAAR:STATUS:END -->
 

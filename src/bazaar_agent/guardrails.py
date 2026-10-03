@@ -1125,16 +1125,36 @@ def _impact_facts(ctx: Context, rules: Guardrails) -> move_impact.Facts | None:
     return impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
 
 
+_TARGET: dict[str, bool] = {}
+
+
+def simulator_target() -> bool:
+    """This process trades against the simulator (`Settings.simulator`), read once: rules that guard the real game
+    against an unreadable shared database do not stop a simulator run, which has none by design."""
+    if "sim" not in _TARGET:
+        from bazaar_agent.config import load_settings
+
+        try:
+            _TARGET["sim"] = load_settings().simulator
+        except Exception:  # noqa: BLE001 — an unreadable config is never taken for the simulator
+            _TARGET["sim"] = False
+    return _TARGET["sim"]
+
+
 def _buyback_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
     """`no_buyback_ticks`: never buy (from a dealer, the board, or a swap) a card we sold or swapped away in the last
     that many ticks: a buy-back is not realistic trading (SAL-07: sold to Pilar at tick 948, bought back from Abuela
-    at 958). Our sales come from our settlements. Unread: a send is refused and holds; a ranking skips the rule."""
+    at 958). Our sales come from our settlements. Unread, or a tape that lags (`Facts.tape_current`: a recent sale may
+    be missing): a send to the real game is refused and holds; a ranking, or a simulator target (no shared database by
+    design, `scripts/sim_smoke.py`), skips the rule."""
     if rules.no_buyback_ticks <= 0 or action.rarity == "pack" or is_pack(action.item):
         return []
     facts = _impact_facts(ctx, rules)
     team = ctx.cards.team if ctx.cards is not None else None
-    if facts is None or (team is not None and facts.team != team):
-        return [] if ctx.ranking else [f"no_buyback_ticks: {action.item} not bought {move_impact.SALES_UNREAD}"]
+    if facts is None or (team is not None and facts.team != team) or not facts.tape_current:
+        if ctx.ranking or simulator_target():
+            return []
+        return [f"no_buyback_ticks: {action.item} not bought {move_impact.SALES_UNREAD}"]
     sold = facts.sold.get(action.item)
     if sold is None or ctx.tick - sold >= rules.no_buyback_ticks:
         return []

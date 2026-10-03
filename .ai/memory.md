@@ -1194,3 +1194,11 @@ at tick 948 (coordinator's decode of `/me`; score 28.25 → 23.98, rank 5 → 12
 "never score": the page cards we had bought from teams were revalued at the new `your_value`. Our reading (inferred, not in the audit): team-acquired cards are
 marked at the current `your_value`, not frozen at the trade. Lesson: a rules-text inference that touches the album gets
 checked against the live `/api/me` score before it is acted on. `protect_page_sets` lists every set (hard rule).
+
+
+### [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
+symptom: on main, `scripts/sim_smoke.py` failed at `dealer buy LAT-01` with "no_buyback_ticks ... (our sales
+unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the impact board cannot read our sales, and
+the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
+from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
+ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
