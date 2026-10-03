@@ -595,6 +595,18 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   the decider states of board and dealer accepts (taker), team swaps (team desk, plus the plan rows), and our asks
   (maker, from the stored matrix). No price or guardrail change. · **Acceptance:** `tests/test_team_matrix.py`.
 
+### RB1 / TF1 — rival blocklist for the team desk + a trickster's FINAL is not its limit (Sat 3 Oct, urgent)
+- RB1 — `team_desk_never_trade` (GUARDRAILS.md: t05,t10,t12,t13,t14,t17,t18): the team desk never plans, opens,
+  proposes to or accepts from these teams (Opus proposed SAL-03 to t17 at tick 814). · **Acceptance:**
+  tests/test_team_desk_blocklist.py.
+- TF1 — `agents/trickster.py`: a dealer of published kind `trickster` (Los Pícaros) has its FINAL read as a plain
+  ask; no accept at or above its list price, only at or under its lowest fill + `trickster_accept_fill_share` of its
+  fill range (none seen: only bid), on every accept path (decide, meet_ask, Jev early accept, restart adoption,
+  `dealer buy`). Abuela publishes strictness 0.1 but her FINAL is real: `trickster_max_strictness` ships at 0.
+  · **Acceptance:** tests/test_trickster_final.py.
+- SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
+  opens, not when it is planned. ❌ not done yet.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

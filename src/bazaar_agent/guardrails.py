@@ -36,6 +36,17 @@ OFF_PAGE_RARITIES = ("epic", "legendary")  # RULES.md: on top of the page; any o
 NO_SETS = ("", "none", "-")
 
 
+def team_ids(value: str) -> tuple[str, ...]:
+    """'t05,t10' -> ('t05', 't10'); 'none' -> (). An id that is not a team id (tNN) is refused."""
+    if value.strip().lower() in NO_SETS:
+        return ()
+    ids = tuple(t.strip().lower() for t in value.split(",") if t.strip())
+    bad = [t for t in ids if not TEAM_ID.fullmatch(t)]
+    if bad:
+        raise ValueError(f"not a team id: {', '.join(bad)} (use e.g. t05,t10 or none)")
+    return ids
+
+
 def set_codes(value: str) -> tuple[str, ...]:
     """'RET,CHA' -> ('RET', 'CHA'); 'none' -> (). A code that is not three capitals is refused."""
     if value.strip().lower() in NO_SETS:
@@ -70,6 +81,8 @@ class Guardrails(BaseModel):
     max_price_rare: int = 80
     max_price_pack: int = 20
     dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
+    trickster_max_strictness: float = Field(default=0.0, ge=0, le=1)  # 0: the published kind alone decides
+    trickster_accept_fill_share: float = Field(default=1 / 3, gt=0, le=1)
     official_value_margin: float = Field(default=0.0, ge=0)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
@@ -160,6 +173,7 @@ class Guardrails(BaseModel):
     team_swap_jev_gate: bool = True
     team_swap_jev_min_confidence: float = Field(default=0.75, ge=0.5, le=1)
     team_swap_max_cash_per_hour: int = Field(default=40, ge=0)
+    team_desk_never_trade: str = "none"  # GUARDRAILS.md sets the live list (code without the file: no list)
     dealer_sell_enabled: bool = False
     dealer_sell_max_per_game_hour: int = Field(default=4, ge=0, le=8)
     dealer_sell_open_above_top: float = Field(default=1.6, ge=1.0, le=5.0)
@@ -187,6 +201,16 @@ class Guardrails(BaseModel):
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
     watchdog_refusal_storm: int = Field(default=50, ge=1)
+
+    @field_validator("team_desk_never_trade")
+    @classmethod
+    def _known_team_ids(cls, value: str) -> str:
+        team_ids(value)
+        return value
+
+    def never_trades_with(self, team: str | None) -> bool:
+        """A team the team desk never opens, proposes to or accepts from (`team_desk_never_trade`)."""
+        return str(team or "").strip().lower() in team_ids(self.team_desk_never_trade)
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -228,6 +252,8 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "trickster_max_strictness": "agents.dealer.decide (a forgiving dealer's FINAL is not its limit)",
+    "trickster_accept_fill_share": "agents.dealer.decide (a forgiving dealer: accept only low in its fill range)",
     "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
     "official_value_margin": "guardrails.check (every card buy, official_values.OfficialValues: GET /api/me/value)",
     "max_packs_per_game_hour": "guardrails.check + ledger",
@@ -290,6 +316,7 @@ ENFORCED_BY: dict[str, str] = {
     "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
     "team_swap_jev_gate": "agents.team_desk.jev_gate (every swap proposal and accept; fail closed)",
     "team_swap_jev_min_confidence": "agents.team_desk.jev_gate (Jev team_swap_worth_it threshold)",
+    "team_desk_never_trade": "agents.team_desk (no open, proposal or accept with these teams)",
     "team_swap_max_cash_per_hour": "agents.team_desk (cash we add to swaps, `team:` spend rows in the ledger)",
     "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
     "dealer_sell_enabled": "agents.maker → agents.dealer_sell_desk.SellDesk (the maker only; not `dealer sell`)",
