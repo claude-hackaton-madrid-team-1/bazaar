@@ -44,7 +44,7 @@ secret limit, and a range learned across teams cannot see it).
 
 **Full ladder points (12.5) at Friday's top-3 mean (1.11; t03 1.16, t13 1.09, t14 1.08)** need, with our level-1
 best three at 0.73 (today), three Chato deals averaging 0.75 of his range; with level 1 at 0.85, Chato at 0.52; with
-level 1 at 1.0 (three deals at the best fill seen), Chato at 0.22. Level 1 is the cheaper lever (W3).
+level 1 at 1.0 (three deals at the best fill seen), Chato at 0.22. A share point at level 1 counts twice a Chato one (fitted weights 1 vs 0.5; W3).
 
 **Where Saturday's points are** (1 Saturday round point = 0.40 final game points; ladder weight fitted, the others
 assumed):
