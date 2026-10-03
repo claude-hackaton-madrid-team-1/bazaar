@@ -5,9 +5,10 @@ with `rounds = min(our priced messages, the rival's priced messages)`, and an ac
 every tick (7–8 rounds a deal, ~30 % of the surplus gone at 6 %). v2, behind `duel_policy` = v2 in GUARDRAILS.md:
 
   1. Anchor once (`duel_open_wait_ticks` after the start), then hold while the rival keeps conceding.
-  2. Send at most `duel_max_own_offers` priced messages: the anchor, a stall-counter when the rival has not moved
-     for `duel_stall_ticks` ticks, and a last offer at our floor before the endgame when nothing inside our limit
-     is on the table.
+  2. Spend at most `duel_max_own_offers` rounds: the anchor, a stall-counter when the rival has not moved for
+     `duel_stall_ticks` ticks, and a last offer at our floor before the endgame when nothing inside our limit is on
+     the table. A rival that never priced, or went quiet and ignores us, gets v1's descending offers for free
+     (they add a round only if it answers with a price), up to `duel_free_offers` messages.
   3. Accept a rival offer strictly inside our limit when it meets our target, when the rival has stalled and a
      counter is not worth one more round (`step × (1 − decay) < surplus × decay`), or in the endgame.
   4. The team accepts one offer per tick (RULES.md), shared by every duel: `plan_moves` gives the slot to the
@@ -126,13 +127,9 @@ def own_offers(duel: Mapping[str, Any]) -> int:
     return 1 if sent == 0 and isinstance(duel.get("your_offer"), dict) else sent
 
 
-def talking_offers(duel: Mapping[str, Any]) -> int:
-    """Our priced messages since the rival's first priced one: the ones `duel_max_own_offers` caps."""
-    rival: list[int] = [m["tick"] for m in _priced(duel, ours=False) if isinstance(m.get("tick"), int)]
-    if not rival:
-        return 0
-    first = min(rival)
-    return sum(1 for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int) and m["tick"] >= first)
+def rounds_spent(duel: Mapping[str, Any]) -> int:
+    """Rounds of decay so far: min(our priced messages, the rival's). What `duel_max_own_offers` caps."""
+    return min(own_offers(duel), len(_priced(duel, ours=False)))
 
 
 def ignored(duel: Mapping[str, Any]) -> bool:
@@ -140,6 +137,17 @@ def ignored(duel: Mapping[str, Any]) -> bool:
     ours = [m["tick"] for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int)]
     theirs = [m["tick"] for m in _priced(duel, ours=False) if isinstance(m.get("tick"), int)]
     return bool(ours) and bool(theirs) and max(ours) >= max(theirs)
+
+
+def quiet(duel: Mapping[str, Any], tick: int, silent_ticks: int) -> bool:
+    """We have priced at least as often as the rival, it has not answered our last offer, and it has priced
+    nothing for `silent_ticks`: our next offer adds a round only if it answers with a price (a listening
+    one-shot does not; a time-based rival that is merely slow to start would)."""
+    ours = [m["tick"] for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int)]
+    theirs = [m["tick"] for m in _priced(duel, ours=False) if isinstance(m.get("tick"), int)]
+    if not ours or not theirs or len(ours) < len(theirs) or not ignored(duel):
+        return False
+    return tick > max(ours) and tick - max(theirs) >= silent_ticks
 
 
 def rival_values(duel: Mapping[str, Any], signed: bool) -> list[tuple[int, float]]:
@@ -249,12 +257,15 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
             return plan(replace(acceptable, reason="rival still conceding, but slower than a round costs"))
         if on_table >= target_surplus:
             return plan(replace(acceptable, reason="rival stalled at or above our target"))
+        counter = _offer(duel, target, signed, "stall-counter: the rival stopped conceding")
+        free = quiet(duel, tick, params.stall_ticks) and ours < params.free_offers  # a round only if it answers
+        if free and counter is not None and _beats(duel, counter, on_table, signed):
+            return plan(replace(counter, reason="the rival went quiet: step down for free"))
         if ignored(duel):
             return plan(replace(acceptable, reason="rival stalled and ignored our last offer: take it"))
-        counter = _offer(duel, target, signed, "stall-counter: the rival stopped conceding")
         prior = params.answer_share * max(0.0, target_surplus - on_table)  # before the rival has shown a step
         worth_a_round = (on_table + max(step, prior, 1.0)) * (1 - decay) > on_table
-        spare = params.max_own_offers - talking_offers(duel)
+        spare = params.max_own_offers - rounds_spent(duel)
         if spare > 0 and counter is not None and _beats(duel, counter, on_table, signed) and worth_a_round:
             return plan(counter)
         return plan(replace(acceptable, reason="rival stalled: another round is not worth it"))
@@ -269,13 +280,17 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         if ours >= params.free_offers or (ours == 0 and elapsed < first):
             return wait
         return send(target, "the rival has not priced: our offers cost no round yet")
-    spare = params.max_own_offers - talking_offers(duel)
-    if spare <= 0 or endgame:
+    if quiet(duel, tick, params.stall_ticks) and ours < params.free_offers and left > params.endgame_ticks + 1:
+        return send(target, "the rival went quiet: step down for free")
+    if endgame:
+        return wait
+    if left == params.endgame_ticks + 1:  # the rival's last chance to take a deal from us: no deal scores 0
+        return send(our_target(limit, str(role), 1.0, params.anchor, params.floor), "last offer at our floor")
+    spare = params.max_own_offers - rounds_spent(duel)
+    if spare <= 0:
         return wait
     if ours == 0 and elapsed >= params.open_wait_ticks:
         return send(target, "anchor (once)")
-    if left <= params.endgame_ticks + 1:  # the rival's last chance to take a deal from us: our floor
-        return send(our_target(limit, str(role), 1.0, params.anchor, params.floor), "last offer at our floor")
     if stalled and spare > 1:  # keep the last offer for the last call
         return send(target, "stall-counter: the rival stopped conceding")
     return wait
@@ -295,10 +310,9 @@ def _acceptable(duel: Mapping[str, Any], signed: bool) -> tuple[DuelMove | None,
 
 
 def may_counter(duel: Mapping[str, Any], params: V2Params) -> bool:
-    """Whether one more priced message stays within v2's caps (`duel_free_offers`, `duel_max_own_offers`)."""
-    if not _priced(duel, ours=False):
-        return own_offers(duel) < params.free_offers
-    return talking_offers(duel) < params.max_own_offers
+    """Whether one more priced message stays within v2's caps: rounds spent below `duel_max_own_offers` and
+    our priced messages below `duel_free_offers`."""
+    return rounds_spent(duel) < params.max_own_offers and own_offers(duel) < params.free_offers
 
 
 def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2Params = DEFAULTS) -> DuelMove:

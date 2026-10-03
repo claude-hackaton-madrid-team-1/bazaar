@@ -6,7 +6,7 @@ from pathlib import Path
 from bazaar_agent import duel_arena as arena
 from bazaar_agent import guardrails as gr
 from bazaar_agent.agents.duel_jev import DuelJev, legal_moves
-from bazaar_agent.agents.duel_v2 import V2Params, counter_offer, duel_plan, plan_moves, talking_offers
+from bazaar_agent.agents.duel_v2 import V2Params, counter_offer, duel_plan, plan_moves, rounds_spent
 from bazaar_agent.agents.duelist import DuelMove, duel_action
 from bazaar_agent.agents.runtime import JevAdvice
 
@@ -60,14 +60,21 @@ def test_anchors_once_then_waits_for_the_rival():
     assert duel_plan(answered, 101, 100).move.kind == "hold"
 
 
-def test_never_more_than_duel_max_own_offers_once_the_rival_talks():
-    d = duel(rival=[(100, 70)], ours=[(100, 160), (103, 150)])
-    assert talking_offers(d) == 2
+def test_never_more_than_duel_max_own_offers_rounds_against_a_rival_that_answers():
+    answered = duel(rival=[(100, 70), (101, 72), (104, 74)], ours=[(100, 160), (103, 150)])  # it answers each offer
+    assert rounds_spent(answered) == 2
     two = V2Params(max_own_offers=2)
-    for tick in range(104, 112):
-        assert duel_plan(d, tick, 100, two).move.kind == "hold", tick
-    last_call = duel_plan(d, 109, 100).move  # the default third offer is kept for the last call
-    assert (last_call.kind, last_call.price) == ("offer", 105) and duel_plan(d, 104, 100).move.kind == "hold"
+    for tick in range(105, 109):
+        assert duel_plan(answered, tick, 100, two).move.kind == "hold", tick  # 2 rounds spent, it is not quiet
+    last_call = duel_plan(answered, 109, 100, two).move  # no deal scores 0: the floor goes out whatever the cap
+    assert (last_call.kind, last_call.price) == ("offer", 105)
+
+
+def test_a_quiet_rival_gets_free_descending_offers():
+    one_shot = duel(rival=[(100, 70)], ours=[(100, 160)])  # it priced once and has ignored our anchor since
+    move = duel_plan(one_shot, 103, 100, V2Params(max_own_offers=1)).move
+    assert move.kind == "offer" and move.price < 160 and "quiet" in move.reason  # rounds stay min(2, 1) = 1
+    assert duel_plan(one_shot, 102, 100).move.kind == "hold"  # silent only 2 ticks: it may still be conceding
 
 
 def test_a_silent_rival_gets_v1s_descending_offers_for_free():
@@ -138,10 +145,10 @@ def test_signed_days_reach_the_guardrail_only_under_v2():
 
 
 def test_jev_under_v2_may_not_take_the_accept_the_planner_gave_away_nor_pass_the_cap():
-    d = duel(rival=[(100, 120)], ours=[(100, 160), (103, 150)])
+    d = duel(rival=[(100, 120), (101, 121), (104, 122)], ours=[(100, 160), (103, 150)])  # 2 rounds spent
     held = DuelMove("hold", reason="accept queued")
     legal = legal_moves(d, 105, held, counter_offer(d, 105, 100), 2, V2Params(max_own_offers=2))
-    assert set(legal) == {"hold"}  # no accept (not this duel's slot) and no counter (2 offers spent)
+    assert set(legal) == {"hold"}  # no accept (not this duel's slot) and no counter (2 rounds spent)
     assert "accept" in legal_moves(d, 105, held, counter_offer(d, 105, 100), 2)  # v1 keeps its rules
 
 
