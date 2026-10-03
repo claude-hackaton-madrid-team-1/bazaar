@@ -1158,6 +1158,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — bazaar-sim duels now score like the real game and share the team's one accept per tick
 - [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
 - [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
 - [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
@@ -1165,7 +1166,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
 - [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
 - [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
-- [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
 
 <!-- BAZAAR:STATUS:END -->
 
