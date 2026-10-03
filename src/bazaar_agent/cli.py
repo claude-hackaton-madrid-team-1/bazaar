@@ -1836,7 +1836,16 @@ def agent_team(
         _fail(f"{path} is missing: run `uv run bazaar trade-plan --live` first")
     data = json.loads(path.read_text(encoding="utf-8"))
     trades = list(data.get("threads") or []) + (list(data.get("listings") or []) if listings else [])
-    plans = [plan_from_trade(t, floor=floor) for t in trades if t.get("kind") in ("swap", "ask", "bid")]
+
+    def venue_of(t: dict[str, Any]) -> str:  # the venue the trade plan priced it for (its fee)
+        requests = t.get("requests") or {}
+        return str(
+            (requests.get("open_thread") or {}).get("venue") or (t.get("request") or {}).get("venue") or "rastro"
+        )
+
+    plans = [
+        plan_from_trade(t, venue=venue_of(t), floor=floor) for t in trades if t.get("kind") in ("swap", "ask", "bid")
+    ]
     if not plans:
         _fail(f"{path} has no deal to negotiate")
 

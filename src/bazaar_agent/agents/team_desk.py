@@ -312,7 +312,9 @@ def decide(
         if neg.idle >= plan.patience:
             return TeamMove("walk", reason=f"no answer for {neg.idle} ticks; {why}")
         return TeamMove("wait", reason=f"waiting for their answer; {why}")
-    if last_round:
+    if last_round:  # no move left: our last offer stands for `patience` ticks, then we walk
+        if neg.idle >= plan.patience:
+            return TeamMove("walk", reason=f"our last offer stood {neg.idle} ticks without a deal; {why}")
         return TeamMove("wait", reason=f"our last offer stands; {why}")
     return TeamMove("counter", nxt, reason=why)
 

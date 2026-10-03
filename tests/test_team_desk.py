@@ -148,7 +148,12 @@ def test_we_concede_on_our_cash_leg_until_the_floor_then_wait_then_walk():
     tight = td.TeamPlan("t05", "rastro", td.Terms(give_assets=(3,), give_cash=48, get_refs=("LAV-08",)), floor=2.0)
     neg = td.TeamNegotiation(tight, thread_id=11, ours=[tight.opening])
     assert run(neg, None).kind == "wait"  # 2 P more would leave us below the floor: our last offer stands
-    assert run(opened(rounds=4), None).kind == "walk"  # max_rounds offers without a deal
+    spent = opened(rounds=4)  # max_rounds offers made: no answer yet, so our last offer stands
+    assert run(spent, None).kind == "wait"
+    spent.idle = PLAN.patience  # ... until patience runs out
+    assert run(spent, None).kind == "walk"
+    silent = opened()  # they never answered our first offer: no concession against ourselves
+    assert run(silent, None).kind == "wait"
 
 
 # ---------------------------------------------------------------- the runner
@@ -209,7 +214,8 @@ def test_dry_run_sends_nothing_and_logs_every_move(tmp_path):
     d.on_tick(clock(tick=101))
     assert team.sent == []
     kinds = [r["kind"] for r in rows(tmp_path) if r.get("chosen")]
-    assert kinds[:2] == ["team_open", "team_counter"] and all(r["dry_run"] for r in rows(tmp_path))
+    # a dry run reads no thread, so no answer comes: we open, then wait (never concede against ourselves)
+    assert kinds == ["team_open"] and all(r["dry_run"] for r in rows(tmp_path))
 
 
 def test_bait_and_hostile_text_get_a_structured_counter_never_an_accept(tmp_path):
@@ -230,7 +236,8 @@ def test_every_guardrail_still_holds(tmp_path, monkeypatch):
     team = Team(me={**ME, "cash": 280})
     d, lines = desk(tmp_path / "a", team, plans=(poor,))
     d.on_tick(clock())
-    assert team.sent == [] and d.done == [(poor, "not opened: cash 280 - 20 < cash_floor 270")]
+    assert team.sent == []
+    assert d.done == [(poor, "not opened: guardrails refuse our proposal (cash 280 - 20 < cash_floor 270)")]
     # a card we already hold is never bought: their "any copy of" our LAV-01 for their second LAV-01
     held = td.TeamPlan("t05", "rastro", td.Terms(give_assets=(3,), get_refs=("LAV-01",)))
     team = Team()
@@ -295,16 +302,19 @@ def test_the_cli_needs_a_plan_and_takes_its_swaps(tmp_path, monkeypatch):
 
     out = CliRunner().invoke(cli.app, ["agent", "team", "--plan", str(tmp_path / "none.json")])
     assert out.exit_code == 1 and "run `uv run bazaar trade-plan --live` first" in " ".join(out.output.split())
-    plan = {
-        "threads": [{"kind": "swap", "counterparty": "t08", "give": {"assets": [7]}, "want": {"cards": ["MAL-08"]}}]
-    }
+    swap = {"kind": "swap", "counterparty": "t08", "give": {"assets": [7]}, "want": {"cards": ["MAL-08"]}}
+    plan = {"threads": [{**swap, "requests": {"open_thread": {"with": "t08", "venue": "v02"}}}]}
     (tmp_path / "plan.json").write_text(json.dumps(plan))
     seen = {}
-    monkeypatch.setattr(
-        cli, "_run_agent", lambda name, live, max_ticks, build, port, host: seen.update(name=name, live=live)
-    )
+
+    def fake_run(name, live, max_ticks, build, port, host):
+        desk_ = build(FakeTeam(), FakePublic(), settings=None, live=live, log=print, **parts(tmp_path))
+        seen.update(name=name, live=live, venue=desk_.negs[0].plan.venue)
+
+    monkeypatch.setattr(cli, "_run_agent", fake_run)
     out = CliRunner().invoke(cli.app, ["agent", "team", "--plan", str(tmp_path / "plan.json")])
-    assert out.exit_code == 0 and seen == {"name": "team", "live": False}
+    assert out.exit_code == 0, out.output
+    assert seen == {"name": "team", "live": False, "venue": "v02"}  # the venue the plan was priced for
 
 
 # ---------------------------------------------------------------- whole negotiations against scripted teams
@@ -362,3 +372,57 @@ def test_whole_negotiations_end_inside_our_limits(tmp_path, style, outcome, acce
     assert len([s for s in team.sent if s[0] == "accept"]) == accepts
     if style == "bait":
         assert any("bait" in x for x in lines)
+
+
+# ---------------------------------------------------------------- code-review fixes
+
+
+class Reading(Team):
+    def __init__(self, threads=(), gone=False, **kw):
+        super().__init__(**kw)
+        self.open_threads, self.gone = list(threads), gone
+
+    def my_threads(self, status=None):
+        return {"threads": list(self.open_threads)}
+
+    def thread(self, tid):
+        if self.gone:
+            from bazaar_agent.sdk import BazaarError
+
+            raise BazaarError("not_found", "no such thread", 404)
+        return super().thread(tid)
+
+
+def test_our_previous_offer_is_withdrawn_before_a_counter(tmp_path):
+    team = Reading()
+    d, _ = desk(tmp_path, team)
+    d.on_tick(clock())
+    ours = {"id": 600, "maker": "t01", "status": "open", "give": {"assets": [3]}, "want": {"cards": ["LAV-08"]}}
+    worse = their(77, {"assets": [{"id": 801, "ref": "LAV-02"}]}, {"assets": [3, 5]})
+    team.thread_payloads[11] = {**thread(worse), "standing_offers": [worse, ours]}
+    d.on_tick(clock(tick=101))
+    calls = [s[0] for s in team.sent]
+    assert calls[-2:] == ["cancel", "say"] and ("cancel", 600) in team.sent
+
+
+def test_a_restart_adopts_our_open_thread_and_a_gone_thread_is_dropped(tmp_path):
+    team = Reading(threads=[{"id": 44, "with": "t05", "status": "open"}])
+    d, lines = desk(tmp_path, team)
+    d.on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "open_thread"] and d.negs[0].thread_id == 44
+    gone = Reading(threads=[{"id": 44, "with": "t05", "status": "open"}], gone=True)
+    d2, _ = desk(tmp_path / "b", gone)
+    d2.on_tick(clock())
+    assert d2.negs == [] and d2.done[0][1] == "thread gone (not_found)"
+
+
+def test_a_copy_in_another_offer_of_ours_is_never_handed_over():
+    t = td.their_terms(GOOD)
+    assert td.assets_for_accept(t, ME, listed=[3]) == []  # #3 sits in one of our board asks
+    v = td.value_of(t, M, ME, PARAMS, VENUE, we_accept=True, listed=frozenset({3}))
+    assert v.problems == ("asset 3 is already in another open offer of ours",)
+
+
+def test_the_cash_we_get_counts_once_in_the_sale_floor():
+    sale = td.deal_actions(td.Terms(give_assets=(3,), get_cash=12), M, "t05", 12, 12.0)
+    assert sale[0].price == 12  # not 24
