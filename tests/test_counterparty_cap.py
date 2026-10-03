@@ -98,6 +98,27 @@ def test_settled_volume_counts_team_trades_we_are_party_to():
     assert intel.settled_volume(events, "t01", {"LAV-08": 25.0}) == {"t05": 37, "t06": 70}
 
 
+def test_a_swap_counts_its_book_and_the_volume_of_an_action_can_differ_from_its_price():
+    swap_leg = settled(1, "t05", "t01", "LAV-08", 0)
+    assert intel.settled_volume(
+        [swap_leg], "t01", intel.book_values({"sets": [{"cards": [{"id": "LAV-08", "book": 25}]}]})
+    ) == {"t05": 25}
+    offer = {
+        "id": 9,
+        "maker": "t01",
+        "to": "t05",
+        "give": {"assets": [{"id": 3, "ref": "LAT-09"}]},
+        "want": {"cards": ["LAV-09"]},
+    }
+    assert trade_book([offer], "t01", {}, {"LAT-09": 70.0, "LAV-09": 70.0}).addressed == {"t05": 140}
+    unknown = {**bid(10, "LAV-02", 12), "maker": "m77"}  # not addressed to us: ours, whatever the maker says
+    assert trade_book([unknown], "t01", {}).public == 12
+    ctx = Context(cash=1000, held={}, tick=1, t_hours=0.1, trades=TradeBook({"t05": 40}))
+    accept = Action("accept_buy", "LAV-02", "common", 12, counterparty="t05")
+    assert not check(accept, ctx, CAP).allowed  # 40 + 12 > 50
+    assert check(Action("accept_buy", "LAV-02", "common", 12, counterparty="t05", volume=10), ctx, CAP).allowed
+
+
 def test_trade_book_reads_our_open_offers():
     offers = [
         bid(1, "LAV-09", 60),  # ours, public
@@ -191,7 +212,8 @@ def test_taker_refuses_a_board_ask_from_a_maker_at_its_cap(tmp_path):
     t, lines = taker(tmp_path, team, public, events, max_counterparty_share=0.25)
     t.on_tick(clock())
     assert team.sent == []
-    assert any("counterparty t14: 45 + 12 > max_counterparty_share 0.25" in line for line in lines)
+    # the maker's share counts the ask (10), not ask + fee (12)
+    assert any("counterparty t14: 45 + 10 > max_counterparty_share 0.25" in line for line in lines)
 
 
 def test_taker_accepts_from_a_maker_with_room_and_refuses_an_unknown_one(tmp_path):
@@ -255,5 +277,10 @@ def test_the_runtime_reads_our_volume_only_when_the_cap_is_on(tmp_path):
     from tests.runtime_fakes import backend
 
     assert actions._base(backend(tmp_path), clock()).ctx.trades is None
-    on = actions._base(backend(tmp_path / "on", rules=CAP), clock())
-    assert on.ctx.trades == TradeBook({}, {}, 0)
+    b = backend(tmp_path / "on", rules=CAP)
+    reads = []
+    real = b.events
+    b.events = lambda: reads.append(1) or real()  # type: ignore[method-assign]
+    on = actions._base(b, clock())
+    actions._base(b, clock())  # the same tick: the feed is not read again
+    assert on.ctx.trades == TradeBook({}, {}, 0) and reads == [1]

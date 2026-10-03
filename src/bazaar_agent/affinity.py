@@ -52,15 +52,6 @@ class Signal:
         return WEIGHTS[self.kind]
 
 
-def _book_of(catalog: dict[str, Any] | None) -> dict[str, float]:
-    return {
-        str(c["id"]): float(c.get("book") or 0)
-        for s in (catalog or {}).get("sets") or []
-        for c in s.get("cards") or []
-        if c.get("id")
-    }
-
-
 def _cards(side: dict[str, Any] | None) -> list[str]:
     side = side or {}
     refs = [str(t).split(":", 1)[-1] for t in (side.get("types") or []) + (side.get("cards") or [])]
@@ -75,7 +66,7 @@ def signals(events: Iterable[Event], catalog: dict[str, Any] | None = None) -> l
     """Every team's public trading signals, de-duplicated: one per settlement item, one bid per (team, card)
     at its highest price, one ask per (team, copy) at its lowest, one dealer topic per (team, card or set).
     A reprice is the same wish, so it does not count twice."""
-    book = _book_of(catalog)
+    book = intel.book_values(catalog)
     out: list[Signal] = []
     bids: dict[tuple[str, str], Signal] = {}
     asks: dict[tuple[str, int | str], Signal] = {}

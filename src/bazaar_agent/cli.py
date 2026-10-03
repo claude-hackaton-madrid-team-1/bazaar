@@ -242,7 +242,6 @@ def trade_plan(
     listings: int = typer.Option(12, min=0, help="Listings (one tick: offers_per_team_per_tick)"),
     threads: int = typer.Option(3, min=0, help="Direct proposals (swaps in a team thread)"),
     split: float = typer.Option(0.5, min=0.05, max=1.0, help="The most of the expected pie we ask for"),
-    cap_base: int = typer.Option(400, min=0, help="counterparty_cap_base the posting is checked with"),
     page_set: str = typer.Option("LAV", help="The set whose page buy list is drawn up"),
     cash_budget: int | None = typer.Option(
         None, min=0, help="The most bids and cash legs may promise (default: all the cash above cash_floor)"
@@ -267,8 +266,15 @@ def trade_plan(
     events = _events_file(events_file) if events_file else _events(live)
     us = str(me.get("id") or "")
     amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
-    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cap_base=cap_base, cash_budget=cash_budget)
-    plan = td.build_plan(me, catalog, events, amap, _strategy().params, _rules().rules, pp, where)
+    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cash_budget=cash_budget)
+    rules = _rules().rules
+    offers: list[dict[str, Any]] = []
+    spent = 0
+    if not me_file:  # live inputs: what our open offers and this game hour's spend already promise
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        offers = _my_offers(_team_client())
+        spent = _ledger("trade-plan").spent_since(now.t_hours - 1.0)
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, where, offers, spent)
     folder = Path(out) if Path(out).is_absolute() else REPO_ROOT / out
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "trade-plan.json").write_text(json.dumps(td.plan_dict(plan, venue), indent=2, default=str) + "\n")
@@ -280,6 +286,8 @@ def trade_plan(
     )
     for check_line in plan.checks:
         console.print(f"[red]{check_line}[/red]")
+    for line in plan.what_if:
+        console.print(f"[yellow]if the cap were on: {line}[/yellow]")
 
 
 @app.command()
@@ -1172,15 +1180,22 @@ def _team_me() -> tuple[Any, dict[str, Any]]:
     raise typer.Exit(1)
 
 
-def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
-    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
-    from bazaar_agent.agents.seller import offers_in, open_commitments
+def _my_offers(client: Any) -> list[dict[str, Any]]:
+    """Our open offers; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in
 
     try:
-        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+        return offers_in(client.my_offers())
     except BazaarError as e:
         console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
     raise typer.Exit(1)
+
+
+def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, Any]] | None = None) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import open_commitments
+
+    return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
 def _pack_judge(settings: Any, timeout_s: float) -> Any:
@@ -1265,13 +1280,19 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     ledger = _ledger("sell")
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
-    commitments = _open_commitments(client, me)
+    offers = _my_offers(client)
+    commitments = _open_commitments(client, me, offers)
     if rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
-        from bazaar_agent.agents.seller import offers_in, trade_book
+        from bazaar_agent.agents.seller import trade_book
 
         us = str(me.get("id") or "")
-        settled = intel.settled_volume(_events(live=True), us)
-        ctx = replace(ctx, trades=trade_book(offers_in(client.my_offers()), us, settled))
+        try:
+            book = intel.book_values(public_client(load_settings()).catalog())
+            settled = intel.settled_volume(_events(live=True), us, book)
+        except BazaarError as e:
+            _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
+            return
+        ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments

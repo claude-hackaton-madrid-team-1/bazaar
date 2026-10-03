@@ -12,8 +12,8 @@ across machines through the ledger): finals first, then the biggest surplus. Jev
 accept a dealer's ask early, and neither ever goes above a limit. Every accept, bid, walk and cancel
 passes `guardrails.check()` with the live context, which also counts what this tick already committed
 (an accept's cash, a new bid in place of its thread's old one). With `max_counterparty_share` on (#14) a
-board accept is refused when its maker (the real team id from the feed's `offer.listed`, else the board
-pseudonym) would pass its share of our team-to-team volume. While the kill switch is on the taker
+board accept is refused when its maker (the real team id from the feed's `offer.listed`; a pseudonym the
+feed never named is refused) would pass its share of our team-to-team volume. While the kill switch is on the taker
 HOLDS: it reads, sends nothing (no opens, accepts, bids, walks or cancels), and its dealer threads stay
 open and resume when the switch goes off. Dry run (the default) sends nothing and logs WOULD-moves.
 """
@@ -53,7 +53,7 @@ from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
-from bazaar_agent.intel import listed_makers, settled_volume
+from bazaar_agent.intel import book_values, listed_makers, settled_volume
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -320,7 +320,7 @@ class Taker:
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
         if self.rules.max_counterparty_share < 1:
-            run.settled = settled_volume(snap.events, snap.us)
+            run.settled = settled_volume(snap.events, snap.us, book_values(snap.catalog))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -356,19 +356,37 @@ class Taker:
             and (skip_offer is None or o.get("id") != skip_offer)
         ]
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
-        trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled)
+        book = book_values(run.snap.catalog)
+        trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
         return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
 
-    def _commit(self, run: _TickRun, cash: int, item: str, thread: int | None, to: str | None = None) -> None:
+    def _commit(
+        self,
+        run: _TickRun,
+        cash: int,
+        item: str,
+        thread: int | None,
+        to: str | None = None,
+        notional: int | None = None,
+    ) -> None:
         """An accept or bid this tick (sent, would-be, or maybe landed): every later check this tick sees its
         cash go out and the card as ours, as for an open offer (`/me` was read before it). In a thread it
         replaces our earlier bid there and counts as spend until the deal settles (`committed_context`).
-        A board accept counts toward its maker's share (`to`) until it settles."""
+        A board accept counts toward its maker's share (`to`) at its price without the fee (`notional`)."""
         if thread is not None:
             run.offers = [o for o in run.offers if o.get("thread") != thread]
         give, want = {"cash": cash}, {"types": [item]}
         run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "thread": thread, "give": give, "want": want, "to": to}
+            {
+                "id": -1,
+                "status": "open",
+                "maker": run.snap.us,
+                "thread": thread,
+                "give": give,
+                "want": want,
+                "to": to,
+                "notional": notional,
+            }
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
@@ -633,7 +651,9 @@ class Taker:
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
-        verdict = check(Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker), ctx, self.rules)
+        ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
+        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask)
+        verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
@@ -673,7 +693,7 @@ class Taker:
         )
         if not self.live:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
-            self._commit(run, p.price, p.ref, skip_thread, maker)
+            self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
         if body is None and not self.rec.maybe_landed:
@@ -685,7 +705,7 @@ class Taker:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
-        self._commit(run, p.price, p.ref, skip_thread, maker)
+        self._commit(run, p.price, p.ref, skip_thread, maker, ask)
         return True
 
     def _duel_grace(self, run: _TickRun) -> None:

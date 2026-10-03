@@ -108,6 +108,16 @@ def tape(events: Iterable[Event]) -> list[Print]:
     return prints
 
 
+def book_values(catalog: dict[str, Any] | None) -> dict[str, float]:
+    """card ref -> book value, from `/api/catalog`."""
+    return {
+        str(c["id"]): float(c.get("book") or 0)
+        for s in (catalog or {}).get("sets") or []
+        for c in s.get("cards") or []
+        if c.get("id")
+    }
+
+
 def settled_volume(events: Iterable[Event], us: str, book: dict[str, float] | None = None) -> dict[str, int]:
     """Primas we settled with each other team: the notional of every team-to-team settlement we are a party
     to, the larger of its cash and the book of the cards that moved (a swap has no cash). Dealers are not

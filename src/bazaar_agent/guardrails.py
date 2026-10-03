@@ -316,6 +316,7 @@ class Action:
     # Team-to-team trades: the other team (ANY_TEAM for an offer anyone may take). None: not a team trade
     # (a dealer), and `max_counterparty_share` does not apply.
     counterparty: str | None = None
+    volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
 
 
 @dataclass(frozen=True)
@@ -447,7 +448,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     team_trade = action.kind in TEAM_TRADES and action.counterparty is not None and action.price is not None
-    if team_trade and (refusal := counterparty_refusal(ctx.trades, str(action.counterparty), action.price or 0, rules)):
+    volume = action.volume if action.volume is not None else action.price or 0
+    if team_trade and (refusal := counterparty_refusal(ctx.trades, str(action.counterparty), volume, rules)):
         v.append(refusal)
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")

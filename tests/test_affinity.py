@@ -185,3 +185,16 @@ def test_the_cli_prints_the_map_from_files(tmp_path):
     assert set(data) == {"t05", "t07"} and data["t05"]["p_top"]["AAA"] > 0.4
     table = CliRunner().invoke(app, ["affinity", *args], env={"COLUMNS": "200"})
     assert table.exit_code == 0 and "AAA: chased by t05" in table.output
+
+
+def test_the_table_never_names_the_top_set_as_its_runner_up():
+    from rich.console import Console
+
+    from bazaar_agent.render import affinity_table
+
+    tie = af.TeamAffinity("t02", ("A", "B"), {"A": 0.5, "B": 0.5}, {}, {}, {}, 3)
+    assert tie.top_set == "B"
+    console = Console(width=200, record=True)
+    console.print(affinity_table(af.AffinityMap({"t02": tie})))
+    row = next(line for line in console.export_text().splitlines() if "t02" in line)
+    assert "│ B " in row and "│ A 0.50" in row

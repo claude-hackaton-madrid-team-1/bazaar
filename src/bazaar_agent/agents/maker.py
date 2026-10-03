@@ -70,12 +70,13 @@ from bazaar_agent.guardrails import (
     Guardrails,
     LedgerRow,
     LedgerStore,
+    TradeBook,
     check,
     context_from,
     kill_switch,
     refund_row,
 )
-from bazaar_agent.intel import settled_volume
+from bazaar_agent.intel import book_values, settled_volume
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
@@ -249,7 +250,11 @@ class Maker:
             total,
             max(0, clock.limits.offers_per_team_per_tick - listed),
             params=params,
-            settled=settled_volume(snap.events, snap.us) if self.rules.max_counterparty_share < 1 else None,
+            settled=(
+                settled_volume(snap.events, snap.us, book_values(snap.catalog))
+                if self.rules.max_counterparty_share < 1
+                else None
+            ),
         )
         targets = targets_from(book)
         if self.jev is not None:
@@ -272,7 +277,7 @@ class Maker:
     def _ctx(self, run: _MakerRun) -> Context:
         """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
         kill switch as it is now (it may go on mid-tick)."""
-        trades = None if run.settled is None else trade_book(run.offers, run.snap.us, run.settled)
+        trades = None if run.settled is None else self._trades(run)
         return replace(
             run.base,
             spent_last_hour=run.base.spent_last_hour + run.spent,
@@ -376,6 +381,9 @@ class Maker:
             return listing
         return bid_listing(t.ref, t.rarity, t.price, venue, to=t.to)
 
+    def _trades(self, run: _MakerRun) -> TradeBook:
+        return trade_book(run.offers, run.snap.us, run.settled or {}, book_values(run.snap.catalog))
+
     def _route(self, run: _MakerRun, t: Target, venue: str) -> Target:
         """With `max_counterparty_share` on: the offer for anyone when no team could pass its share by taking
         it, else addressed to the counterparty with the most room that passes. Unchanged when the cap is off
@@ -385,7 +393,7 @@ class Maker:
         denied = self._denied(run, t, venue)
         if denied is None or "counterparty" not in denied:
             return t
-        trades = trade_book(run.offers, run.snap.us, run.settled)
+        trades = self._trades(run)
         for team in sorted(t.counterparties, key=lambda c: (trades.exposure(c), c)):
             if team != run.snap.us and self._denied(run, replace(t, to=team), venue) is None:
                 return replace(t, to=team, reason=f"{t.reason}; addressed to {team} (max_counterparty_share)")

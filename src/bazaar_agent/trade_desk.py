@@ -30,6 +30,7 @@ from typing import Any, Literal
 from bazaar_agent import intel
 from bazaar_agent.affinity import AffinityMap, TeamAffinity
 from bazaar_agent.agents.market import Venue
+from bazaar_agent.agents.seller import open_commitments, trade_book
 from bazaar_agent.guardrails import ANY_TEAM, Action, Context, Guardrails, TradeBook, check, counterparty_refusal
 from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake, build_market, buy_case
 
@@ -46,7 +47,9 @@ class PlanParams:
     min_fill: float = 0.2  # skip a trade the counterparty values beyond its price with less than this probability
     page_set: str = "LAV"  # the set whose page buy list is drawn up
     min_swap_surplus: float = 2.0  # our least gain on a swap, after its cash leg (as `min_buy_surplus`)
-    cap_base: int = 400  # `counterparty_cap_base` the posting is checked with (GUARDRAILS.md default: 200)
+    what_if_bases: tuple[int, ...] = (200, 400)  # cap bases the posting is also tried with when the cap is off
+    per_item: int = 4  # candidates kept per copy or wanted card (the best by expected surplus)
+    max_pool: int = 120  # candidates the search sees (it recurses once per candidate)
     swaps_per_team: int = 5  # swap candidates kept per team (the best by expected surplus)
     cash_budget: int | None = None  # the most our bids and cash legs may promise (None: all the cash above the floor)
 
@@ -499,16 +502,32 @@ def _search(
     return best, nodes <= max_nodes
 
 
+def _pool(trades: Sequence[Trade], pp: PlanParams) -> list[Trade]:
+    """The candidates the search sees, best expected first: `per_item` per copy or wanted card, then at most
+    `max_pool` (the search recurses once per candidate, and every node scans what is left)."""
+    kept: Counter[str] = Counter()
+    pool = []
+    for t in sorted(trades, key=lambda t: (-t.expected, t.counterparty, t.refs)):
+        items = sorted(_items(t))
+        if t.expected <= 0 or any(kept[i] >= pp.per_item for i in items):
+            continue
+        kept.update(items)
+        pool.append(t)
+    return pool[: pp.max_pool]
+
+
 def choose(
     listings: Sequence[Trade], swaps: Sequence[Trade], pp: PlanParams, cash_room: int, max_nodes: int = 500_000
 ) -> tuple[list[Trade], list[Trade], list[Trade], bool]:
-    """(listings, threads, the plan without the share rule, proven best): the plan with the best expected
-    surplus in which no team passes `max_share` of the planned volume (`_search`, seeded by a greedy plan
-    repaired to meet it), each copy and wanted card once, our cash out within `cash_room`."""
-    pool = sorted([*listings, *swaps], key=lambda t: (-t.expected, t.counterparty, t.refs))
+    """(listings, threads, the plan without the share rule, proven best among the pool): the plan with the
+    best expected surplus in which no team passes `max_share` of the planned volume (`_search` over `_pool`,
+    seeded by a greedy plan repaired to meet it), each copy and wanted card once, our cash out within
+    `cash_room`."""
+    pool = _pool([*listings, *swaps], pp)
     free = _greedy(pool, pp, cash_room, math.inf)
     seed: list[Trade] = []
-    for budget in range(0, sum(t.volume for t in pool) + 5, 5):  # a fair plan to start from
+    total = sum(t.volume for t in pool)
+    for budget in range(0, total + 5, max(5, math.ceil(total / 100))):  # a fair plan to start from
         plan = _repair(_greedy(pool, pp, cash_room, pp.max_share * budget), pp.max_share)
         if sum(t.expected for t in plan) > sum(t.expected for t in seed) + 1e-9:
             seed = plan
@@ -529,10 +548,21 @@ def _action(t: Trade, your_value: dict[int, float], to: str) -> Action | None:
     return None  # a swap with no cash from us: only its counterparty's share applies
 
 
+@dataclass(frozen=True)
+class Start:
+    """What the guardrails see before the plan: our open offers (their cash, cards and exposure), the
+    spend the ledger booked this game hour, and our settled team-to-team volume."""
+
+    offers: tuple[dict[str, Any], ...] = ()
+    spent: int = 0
+    settled: dict[str, int] = field(default_factory=dict)
+    book: dict[str, float] = field(default_factory=dict)
+
+
 def post_as(
     trades: Sequence[Trade],
     me: dict[str, Any],
-    settled: dict[str, int],
+    start: Start,
     rules: Guardrails,
     tick: int = 0,
     t_hours: float = 0.0,
@@ -545,7 +575,7 @@ def post_as(
     `to` set, every refusal of the best such posting.)"""
     best: tuple[list[Trade], list[str]] | None = None
     for public_first in range(len(trades), -1, -1):
-        posted, problems = _posting(trades, me, settled, rules, tick, t_hours, public_first)
+        posted, problems = _posting(trades, me, start, rules, tick, t_hours, public_first)
         if not problems:
             return posted, problems
         if best is None or len(problems) < len(best[1]):
@@ -557,7 +587,7 @@ def post_as(
 def _posting(
     trades: Sequence[Trade],
     me: dict[str, Any],
-    settled: dict[str, int],
+    start: Start,
     rules: Guardrails,
     tick: int,
     t_hours: float,
@@ -569,9 +599,14 @@ def _posting(
         for a in me.get("assets") or []
         if isinstance(a.get("id"), int) and isinstance(a.get("your_value"), int | float)
     }
+    us = str(me.get("id") or "")
+    open_ = open_commitments(start.offers, us)
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [] if a.get("kind") == "card")
-    cash, spent = int(me.get("cash") or 0), 0
-    public, addressed = 0, Counter[str]()
+    held.update(open_.wanted)
+    cash, spent = int(me.get("cash") or 0) - open_.cash, start.spent + open_.thread_cash
+    already = trade_book(start.offers, us, {}, start.book)
+    settled = start.settled
+    public, addressed = already.public, Counter[str](already.addressed)
     out, problems = [], []
 
     def ctx() -> Context:
@@ -692,6 +727,8 @@ class TradePlan:
     checks: tuple[str, ...] = field(default_factory=tuple)
     unconstrained: float = 0.0  # expected surplus of the plan without the share rule
     proven: bool = False  # the search finished: no fair plan from these candidates beats this one
+    what_if: tuple[str, ...] = ()  # the cap is off in GUARDRAILS.md: how the plan would post with it on
+    dropped: tuple[str, ...] = ()  # trades the guardrails refused, replaced by the next best plan
 
     @property
     def expected(self) -> float:
@@ -738,22 +775,58 @@ def build_plan(
     rules: Guardrails,
     pp: PlanParams | None = None,
     venue: Venue | None = None,
+    offers: Sequence[dict[str, Any]] = (),
+    spent: int = 0,
 ) -> TradePlan:
+    """The plan, checked as GUARDRAILS.md is (`rules`), on top of our open `offers` and the `spent` the
+    ledger booked this game hour. A trade the guardrails would refuse is replaced by the next best plan
+    (up to 5 rounds); when the counterparty cap is off, `what_if` says how the plan would fare with it on."""
     pp = pp or PlanParams()
     m = build_market(me, catalog, events, [])
     copies = team_copies(holdings(events), m.us)
-    cash_room = max(0, min(m.cash - rules.cash_floor, rules.max_spend_per_game_hour))
+    book = intel.book_values(catalog)
+    start = Start(tuple(offers), spent, intel.settled_volume(events, m.us, book), book)
+    open_ = open_commitments(offers, m.us)
+    cash_room = min(m.cash - open_.cash - rules.cash_floor, rules.max_spend_per_game_hour - spent - open_.thread_cash)
+    cash_room = max(0, cash_room)
     if pp.cash_budget is not None:  # the cash above the floor is shared with the dealer ladder
         cash_room = min(cash_room, pp.cash_budget)
     ours, wanted = our_copies(m, me, params, rules), wanted_cards(m, params, rules, dealer_prices(events))
     asks = ask_trades(m, ours, amap, copies, pp, venue)
     bids = bid_trades(m, wanted, amap, copies, pp, venue)
     swaps = swap_trades(m, ours, wanted, amap, copies, pp, venue)
-    listings, threads, free, proven = choose([*asks, *bids], swaps, pp, cash_room)
-    # Posted as the guardrails would enforce the same share live (`max_counterparty_share` = max_share).
-    live = rules.model_copy(update={"max_counterparty_share": pp.max_share, "counterparty_cap_base": pp.cap_base})
-    # Threads first: they are addressed, and a public listing counts against every team's share.
-    posted, refused = post_as([*threads, *listings], me, intel.settled_volume(events, m.us), live, m.tick or 0)
+    refused: list[str] = []
+    dropped: list[str] = []
+    banned: set[tuple[str, str, tuple[str, ...]]] = set()
+    for _ in range(5):
+        keep = [t for t in (*asks, *bids) if (t.kind, t.counterparty, t.refs) not in banned]
+        listings, threads, free, proven = choose(
+            keep, [t for t in swaps if (t.kind, t.counterparty, t.refs) not in banned], pp, cash_room
+        )
+        # Threads first: they are addressed, and a public listing counts against every team's share.
+        posted, refused = post_as([*threads, *listings], me, start, rules, m.tick or 0)
+        if not refused:
+            break
+        banned |= {(t.kind, t.counterparty, t.refs) for t in posted if _refused(t, refused)}
+        dropped += refused
+    dropped += refused  # still refused after the last round: out of the plan
+    posted = [t for t in posted if not _refused(t, refused)]
+    what_if: tuple[str, ...] = ()
+    if rules.max_counterparty_share >= 1:
+        what_if = tuple(
+            f"with max_counterparty_share {pp.max_share:g} and counterparty_cap_base {base}: "
+            f"{len(problems)} of {len(posted)} trade(s) refused"
+            for base in pp.what_if_bases
+            for _, problems in [
+                post_as(
+                    posted,
+                    me,
+                    start,
+                    rules.model_copy(update={"max_counterparty_share": pp.max_share, "counterparty_cap_base": base}),
+                    m.tick or 0,
+                )
+            ]
+        )
     page = page_list(m, amap, copies, events, params, rules, pp.page_set)
     plan = TradePlan(
         m.tick,
@@ -767,8 +840,14 @@ def build_plan(
         len(asks) + len(bids) + len(swaps),
         unconstrained=round(sum(t.expected for t in free), 2),
         proven=proven,
+        what_if=what_if,
+        dropped=tuple(dropped),
     )
-    return replace(plan, checks=verify(plan, pp, rules) + tuple(refused))
+    return replace(plan, checks=verify(plan, pp, rules))
+
+
+def _refused(t: Trade, problems: Sequence[str]) -> bool:
+    return any(p.startswith(f"{t.kind} {'/'.join(t.refs)} to {t.counterparty}:") for p in problems)
 
 
 # ---------------------------------------------------------------- what to send, and the page to read
@@ -867,6 +946,16 @@ def plan_markdown(plan: TradePlan, pp: PlanParams) -> str:
             if not plan.checks
             else []
         ),
+        "",
+        "## Refused by the guardrails and replaced",
+        "",
+        *(f"- {d}" for d in dict.fromkeys(plan.dropped)),
+        *(["- none"] if not plan.dropped else []),
+        "",
+        "## If `max_counterparty_share` were on",
+        "",
+        *(f"- {w}" for w in plan.what_if),
+        *(["- it is on in GUARDRAILS.md: the checks above are with it"] if not plan.what_if else []),
         "",
         "## Held back by the share rule",
         "",

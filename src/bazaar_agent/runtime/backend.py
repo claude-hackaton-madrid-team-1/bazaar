@@ -185,6 +185,17 @@ class Backend:
             self._catalog = cached
         return cached[1]
 
+    def settled_volume(self, us: str, tick: int) -> dict[str, int]:
+        """`intel.settled_volume` for `max_counterparty_share`, read once per game tick: the feed history is a
+        file read plus a request, too slow for every tool call."""
+        from bazaar_agent.intel import book_values, settled_volume
+
+        cached = getattr(self, "_settled", None)
+        if cached is None or cached[0] != (us, tick):
+            cached = ((us, tick), settled_volume(self.events(), us, book_values(self.catalog(tick))))
+            self._settled = cached
+        return dict(cached[1])
+
     def events(self) -> list[Event]:
         """The captured feed merged with the live window (the window alone when nothing was captured)."""
         try:

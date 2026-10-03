@@ -143,16 +143,29 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
     return Commitments(cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs)
 
 
-def trade_book(offers: Iterable[dict[str, Any]], us: str, settled: dict[str, int]) -> TradeBook:
-    """Our team-to-team volume for `max_counterparty_share`: `settled` (`intel.settled_volume`) plus the cash
-    of our open offers another team could take, addressed to it or public (on a board, to anyone). Offers
-    to a dealer are not team trades; offers other teams addressed to us are theirs."""
+def trade_book(
+    offers: Iterable[dict[str, Any]], us: str, settled: dict[str, int], book: dict[str, float] | None = None
+) -> TradeBook:
+    """Our team-to-team volume for `max_counterparty_share`: `settled` (`intel.settled_volume`) plus the
+    notional of our open offers another team could take (the larger of the cash and the book of the cards
+    in it, as `settled_volume` counts a settlement), addressed to it or public (on a board, to anyone).
+    Offers to a dealer are not team trades; an offer counts as ours unless another team addressed it to us
+    (the rule of `open_commitments`: an unknown maker fails closed)."""
     addressed: dict[str, int] = {}
     public = 0
     for o in offers:
-        if o.get("status") not in (None, "open", "queued") or o.get("maker") not in (None, us):
+        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
             continue
-        cash = int((o.get("give") or {}).get("cash") or 0) or int((o.get("want") or {}).get("cash") or 0)
+        give, want = o.get("give") or {}, o.get("want") or {}
+        refs = [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
+        refs += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
+        cash = int(give.get("cash") or 0) + int(want.get("cash") or 0)
+        notional = o.get("notional")  # this tick's accept: the price without the fee
+        cash = (
+            int(notional)
+            if isinstance(notional, int)
+            else max(cash, round(sum((book or {}).get(r, 0.0) for r in refs)))
+        )
         to = o.get("to")
         if isinstance(to, str) and TEAM_ID.match(to):
             addressed[to] = addressed.get(to, 0) + cash

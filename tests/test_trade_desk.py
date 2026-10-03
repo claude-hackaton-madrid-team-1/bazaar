@@ -3,6 +3,7 @@
 import itertools
 import json
 import random
+from collections import Counter
 
 import pytest
 
@@ -197,15 +198,15 @@ def test_post_as_lists_for_anyone_until_a_team_could_pass_its_share():
     refs = ["LAV-02", "LAV-08", "LAV-10"]
     bids = [trade(t, 20, 5, ref, "bid", 20, "uncommon") for t, ref in zip(["t02", "t03", "t04"], refs, strict=True)]
     # t09 settled 30 with us: a public offer counts against it too, so 30 + 20 is the most public exposure
-    posted, problems = td.post_as(bids, me, {"t09": 30}, rules)
+    posted, problems = td.post_as(bids, me, td.Start(settled={"t09": 30}), rules)
     assert [t.to for t in posted] == [None, "t03", "t04"] and problems == []
-    posted, problems = td.post_as(bids[:1], me, {"t02": 45}, rules)  # neither way fits t02 any more
+    posted, problems = td.post_as(bids[:1], me, td.Start(settled={"t02": 45}), rules)  # neither way fits t02 any more
     assert posted[0].to == "t02" and len(problems) == 1 and "counterparty t02: 45 + 20" in problems[0]
 
 
 def test_post_as_refuses_what_the_cash_floor_refuses():
     bid = trade("t02", 20, 5, "LAV-08", "bid", 20, "uncommon")
-    _, problems = td.post_as([bid], {**ME, "cash": 280}, {}, Guardrails())
+    _, problems = td.post_as([bid], {**ME, "cash": 280}, td.Start(), Guardrails())
     assert problems and "cash_floor" in problems[0]
 
 
@@ -363,3 +364,47 @@ def test_a_cash_budget_keeps_the_plan_to_swaps_and_asks():
     plan = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), td.PlanParams(cash_budget=0), VENUE)
     assert plan.cash_room == 0 and plan.checks == ()
     assert all(td._cash_out(t) == 0 for t in (*plan.listings, *plan.threads))
+
+
+def test_our_open_offers_and_this_hours_spend_shrink_the_plan():
+    me, catalog, amap = rich_world()
+    free = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), td.PlanParams(), VENUE)
+    open_bid = {
+        "id": 70,
+        "maker": "t01",
+        "to": None,
+        "status": "open",
+        "give": {"cash": 100},
+        "want": {"cards": ["MAL-01"]},
+    }
+    busy = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), td.PlanParams(), VENUE, [open_bid], spent=20)
+    assert free.cash_room == 150 and busy.cash_room == 50  # min(420 - 100 - 270, 150 - 20)
+    assert sum(td._cash_out(t) for t in (*busy.listings, *busy.threads)) <= 50 and busy.checks == ()
+
+
+def test_what_if_reports_the_cap_and_refused_trades_leave_the_plan():
+    me, catalog, amap = rich_world()
+    off = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), td.PlanParams(), VENUE)
+    assert [w.split(":")[0] for w in off.what_if] == [
+        "with max_counterparty_share 0.25 and counterparty_cap_base 200",
+        "with max_counterparty_share 0.25 and counterparty_cap_base 400",
+    ]
+    on = Guardrails(max_counterparty_share=0.25, counterparty_cap_base=60)  # 15 P per team: most trades refused
+    plan = td.build_plan(me, catalog, EVENTS, amap, PARAMS, on, td.PlanParams(), VENUE)
+    assert plan.what_if == () and plan.dropped and plan.checks == ()
+    for t in (*plan.listings, *plan.threads):
+        assert not td._refused(t, plan.dropped)
+    assert "## Refused by the guardrails and replaced" in td.plan_markdown(plan, td.PlanParams())
+
+
+def test_a_large_pool_is_cut_before_the_search():
+    import time
+
+    rng = random.Random(7)
+    teams = [f"t{i:02d}" for i in range(2, 19)]
+    big = [trade(rng.choice(teams), rng.randint(5, 90), rng.randint(1, 40), f"C-{i % 60}") for i in range(1500)]
+    pool = td._pool(big, td.PlanParams())
+    assert len(pool) <= 120 and max(Counter(i for t in pool for i in td._items(t)).values()) <= 4
+    began = time.monotonic()
+    listings, _, _, _ = td.choose(big, [], td.PlanParams(threads=0), cash_room=0, max_nodes=50_000)
+    assert time.monotonic() - began < 30 and td._fair(listings, 0.25)
