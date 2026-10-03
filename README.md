@@ -279,8 +279,10 @@ less than 1 s from its tick's end, team id not known yet, a row that does not ma
 process whose bump was lost, a lock wait over 3 s. One reader at a time reads `/me` for the team
 (`pg_advisory_xact_lock`), so two agents that start a tick together make one call, not two. After a deal
 (our accept, or a dealer thread that ended in a deal) the acting agent books it, bumps the epoch and
-re-reads `/me`. **Nothing here delays a send**: the write tracker has its own connection, opened in a
-background thread, never inline, and waits at most 0.2 s for it (a lost bump is caught up by the next one).
+re-reads `/me`. **Nothing here holds up a send or a tick**: every Postgres call runs on one worker thread
+per connection; a send waits at most 0.2 s for its bump and a read at most 5 s, then reads `/me` live (a
+hung network costs a deadline, never a tick). A lost bump is caught up by the next one, when the
+connection reopens, or when the process exits.
 `holdings_from_db = false` in GUARDRAILS.md turns the shared answers off (snapshots are still written).
 
 ```sh

@@ -21,16 +21,19 @@ ours whose bump was lost, a lock wait that timed out, or `holdings_from_db = fal
 time reads `/me` for the team (`pg_advisory_xact_lock`), so two agents that start a tick together make one
 call, not two; every live read is upserted, so the table holds the newest view any of our processes saw.
 
-Nothing here may delay a send: the write tracker has its own connection, never opens one inline (a
-background thread does), and waits at most `HOOK_LOCK_TIMEOUT_S` for it; readers never hold it.
+Nothing here may hold up a send or a tick: every Postgres call runs on a worker thread per connection
+(`SharedDb.call`), the write tracker has its own connection and waits at most `HOOK_TIMEOUT_S` for a bump,
+and a read waits at most `READ_DEADLINE_S` before it reads `/me` live, whatever the network does.
 """
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import hashlib
 import json
 import logging
+import queue
 import re
 import threading
 import time
@@ -57,8 +60,11 @@ TICK_SLACK_S = 2.0  # a thread message this close before our clock's tick start 
 TICK_END_MARGIN_S = 1.0  # a clock this close to its tick's end is not trusted to name the current tick
 CONNECT_TIMEOUT_S = 3  # a laptop off the network answers live in 3 s, not the default 10
 RETRY_AFTER_S = 30.0  # Postgres unreachable: live reads only, for this long, before trying it again
-HOOK_LOCK_TIMEOUT_S = 0.2  # the write tracker never holds a send longer than this
-READ_LOCK_TIMEOUT_S = 1.0  # another thread of this process is reading /me: read it live instead
+HOOK_TIMEOUT_S = 0.2  # the write tracker never holds a send longer than this, whatever Postgres does
+READ_DEADLINE_S = 5.0  # a database read (lock wait 3 s + the leader's /me) past this: read /me live
+STUCK_AFTER_S = 5.0  # a worker busy this long is stuck: reads skip the database until it is free
+WRITER_RETRY_AFTER_S = 5.0  # the writer reconnects sooner: a lost bump is a lost invalidation
+EXIT_CATCH_UP_S = 2.0  # a one-shot command waits this long, at exit, to record a bump it lost
 NO_HOLDINGS_EFFECT = ("/api/duels", "/api/flags")  # sends that move no card and no cash
 
 Source = Literal["db", "live"]
@@ -323,24 +329,32 @@ def save(conn: psycopg.Connection, scope: Scope, me: MePayload, raw: dict[str, A
 
 
 class SharedDb:
-    """A lazy autocommit connection, reopened after a failure; None while Postgres is down or busy.
+    """One autocommit connection, reopened after a failure, used by ONE worker thread.
 
-    One lock serialises its use (the MCP server answers tools from several threads); `session(timeout)`
-    gives up after `timeout` and answers None. `inline=False`: the caller's thread never opens the
-    connection, a background thread does (`warm`), so no caller waits for a connect or the schema."""
+    `call(fn, timeout_s)` runs `fn(conn)` on the worker and waits at most `timeout_s`: Postgres I/O that hangs
+    (a black-holed proxy, a network change) costs the caller its deadline, never more. A call that overruns
+    marks the worker stuck; later calls answer at once (not ok) until it is free, except `queue_if_stuck`
+    ones (a bump must still land, late). `conn` is None while Postgres is down. `session()` is the direct,
+    synchronous access the worker (and tests) use; nothing else touches the connection."""
 
     def __init__(
         self,
         connect: Callable[[], psycopg.Connection] | None,
         now: Callable[[], float] = time.monotonic,
         *,
-        inline: bool = True,
+        retry_after_s: float = RETRY_AFTER_S,
+        name: str = "holdings-db",
     ) -> None:
-        self._connect, self._now, self.inline = connect, now, inline
+        self._connect, self._now, self.retry_after_s, self.name = connect, now, retry_after_s, name
         self._conn: psycopg.Connection | None = None
         self._down_until = 0.0
-        self._warming = False
         self.lock = threading.RLock()
+        self._jobs: queue.Queue[tuple[Callable[[psycopg.Connection | None], Any], dict[str, Any], threading.Event]]
+        self._jobs = queue.Queue()
+        self._worker: threading.Thread | None = None
+        self._starting = threading.Lock()  # never `lock`: a hung worker holds that one
+        self._busy_since: float | None = None
+        self.on_connect: Callable[[psycopg.Connection], None] | None = None  # runs on the worker, once per open
 
     @contextmanager
     def session(self, timeout_s: float | None = None) -> Iterator[psycopg.Connection | None]:
@@ -352,19 +366,58 @@ class SharedDb:
         finally:
             self.lock.release()
 
+    def call(
+        self, fn: Callable[[psycopg.Connection | None], Any], timeout_s: float, *, queue_if_stuck: bool = False
+    ) -> tuple[bool, Any]:
+        """(True, fn's answer) when the worker finished in time; (False, None) when it did not. An exception
+        `fn` raised (a refused `/me`) is raised here. Without a database, `fn(None)` runs in the caller."""
+        if self._connect is None:
+            return True, fn(None)
+        if self.stuck() and not queue_if_stuck:
+            return False, None
+        box: dict[str, Any] = {}
+        done = threading.Event()
+        self._start()
+        self._jobs.put((fn, box, done))
+        if not done.wait(timeout_s):
+            return False, None
+        if "error" in box:
+            raise box["error"]
+        return True, box.get("value")
+
+    def warm(self) -> None:
+        """Open the connection on the worker now; nobody waits for it."""
+        if self._connect is not None:
+            self.call(lambda conn: None, 0.0, queue_if_stuck=True)
+
+    def stuck(self) -> bool:
+        started = self._busy_since
+        return started is not None and self._now() - started > STUCK_AFTER_S
+
+    def _start(self) -> None:
+        with self._starting:
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._work, name=self.name, daemon=True)
+                self._worker.start()
+
+    def _work(self) -> None:
+        while True:
+            fn, box, done = self._jobs.get()
+            self._busy_since = self._now()
+            try:
+                with self.session() as conn:
+                    box["value"] = fn(conn)
+            except BaseException as e:  # handed to the caller, if it still waits
+                box["error"] = e
+            finally:
+                self._busy_since = None
+                done.set()
+
     def _get(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
             return self._conn
         if self._connect is None or self._now() < self._down_until:
             return None
-        if not self.inline:
-            self.warm()
-            return None
-        self._conn = self._open()
-        return self._conn
-
-    def _open(self) -> psycopg.Connection | None:
-        assert self._connect is not None
         try:
             conn = self._connect()
             conn.autocommit = True
@@ -372,42 +425,30 @@ class SharedDb:
             conn.execute(f"set idle_in_transaction_session_timeout = {IDLE_IN_TX_TIMEOUT_MS}")
         except Exception as e:  # unreachable, bad URL, schema lock timeout: live reads until it is back
             log.warning("holdings: Postgres unavailable (%s); /api/me is read live", type(e).__name__)
-            self._down_until = self._now() + RETRY_AFTER_S
+            self._down_until = self._now() + self.retry_after_s
             return None
+        self._conn = conn
+        if self.on_connect is not None:
+            try:
+                self.on_connect(conn)
+            except Exception as e:  # e.g. a catch-up bump that failed: the next send retries it
+                log.warning("holdings: on-connect step failed (%s)", type(e).__name__)
         return conn
-
-    def warm(self) -> None:
-        """Open the connection in a background thread, once at a time; nobody waits for it."""
-        if self._connect is None or self._warming or (self._conn is not None and not self._conn.closed):
-            return
-        self._warming = True
-        threading.Thread(target=self._warm, name="holdings-connect", daemon=True).start()
-
-    def _warm(self) -> None:
-        try:
-            conn = self._open()
-            with self.lock:
-                if conn is not None and (self._conn is None or self._conn.closed):
-                    self._conn, conn = conn, None
-            if conn is not None:
-                with contextlib.suppress(Exception):
-                    conn.close()
-        finally:
-            self._warming = False
 
     def failed(self, error: BaseException) -> None:
         log.warning("holdings: Postgres error (%s); reconnecting later", type(error).__name__)
         conn, self._conn = self._conn, None
-        self._down_until = self._now() + RETRY_AFTER_S
+        self._down_until = self._now() + self.retry_after_s
         if conn is not None:
             with contextlib.suppress(Exception):  # already gone
                 conn.close()
 
 
 class WriteTracker:
-    """`on_write` for `sdk.TrackedBazaar`: bumps the epoch before a send goes and after it returns. On its own
-    connection, never opened inline, waited for at most HOOK_LOCK_TIMEOUT_S. A lost bump sets `missed`: this
-    process's reader then reads live, and the next bump that goes through bumps once more first."""
+    """`on_write` for `sdk.TrackedBazaar`: bumps the epoch before a send goes and after it returns, on the
+    writer connection's worker, waiting at most HOOK_TIMEOUT_S. A bump that did not land in time sets
+    `missed`: this process's reader reads live until a later bump (or the connection opening, or the
+    process exiting) catches up with one more bump. A late bump still lands when the worker gets to it."""
 
     def __init__(self, shared: SharedDb, writer: str, world: str = REAL.world) -> None:
         self.shared, self.writer, self.world = shared, writer, world
@@ -419,24 +460,36 @@ class WriteTracker:
         kind = write_kind(method, path)
         if kind is None:
             return
-        with self.shared.session(HOOK_LOCK_TIMEOUT_S) as conn:
-            if conn is None:
-                self.failures, self.missed = self.failures + 1, True
-                return
-            try:
-                if self.missed:
-                    bump(conn, self.world, "trade", "catch-up: a bump of this process was lost", self.writer)
-                    self.missed = False
-                bump(conn, self.world, kind, f"{method.upper()} {path} ({phase})", self.writer)
-            except psycopg.Error as e:
-                self.failures, self.missed = self.failures + 1, True
-                self.shared.failed(e)
-                return
+        what = f"{method.upper()} {path} ({phase})"
+        ok, landed = self.shared.call(lambda conn: self._bump(conn, kind, what), HOOK_TIMEOUT_S, queue_if_stuck=True)
+        if not (ok and landed):
+            self.failures, self.missed = self.failures + 1, True
+
+    def catch_up(self, timeout_s: float = HOOK_TIMEOUT_S) -> None:
+        """One bump now if one was lost (the connection just opened, or the process exits)."""
+        if self.missed:
+            self.shared.call(lambda conn: self._bump(conn, None, "catch-up"), timeout_s, queue_if_stuck=True)
+
+    def _bump(self, conn: psycopg.Connection | None, kind: WriteKind | None, what: str) -> bool:
+        """On the worker. True when the bump (and a pending catch-up) landed."""
+        if conn is None:
+            return False
+        try:
+            if self.missed:
+                bump(conn, self.world, "trade", "catch-up: a bump of this process was lost", self.writer)
+                self.missed = False
+            if kind is not None:
+                bump(conn, self.world, kind, what, self.writer)
+        except psycopg.Error as e:
+            self.missed = True
+            self.shared.failed(e)
+            return False
         self.bumps += 1
+        return True
 
 
 # The per-process registry: one reader connection (schema applied once, `db.connect_ready`) and one writer
-# connection (plain `db.connect`) for the write tracker, both opened in the background.
+# connection (plain `db.connect`) for the write tracker, each with its own worker thread.
 _PROCESS: dict[str, Any] = {"name": "bazaar"}
 
 
@@ -448,15 +501,14 @@ def name_process(name: str) -> None:
         tracker.writer = name
 
 
-def process_db(inline: bool = False) -> SharedDb:
+def process_db() -> SharedDb:
     shared = _PROCESS.get("db")
     if shared is None:
         from bazaar_agent import db
 
-        shared = SharedDb(lambda: db.connect_ready(f"bazaar-holdings-{_PROCESS['name']}", CONNECT_TIMEOUT_S))
+        connect = lambda: db.connect_ready(f"bazaar-holdings-{_PROCESS['name']}", CONNECT_TIMEOUT_S)  # noqa: E731
+        shared = SharedDb(connect, name="holdings-reads")
         _PROCESS["db"] = shared
-    shared.inline = shared.inline and inline
-    if not shared.inline:
         shared.warm()
     return shared  # type: ignore[no-any-return]
 
@@ -469,11 +521,14 @@ def process_tracker(settings: Settings) -> WriteTracker:
             from bazaar_agent import db
 
             app = f"bazaar-writes-{_PROCESS['name']}"
-            shared = SharedDb(lambda: db.connect(app=app, connect_timeout_s=CONNECT_TIMEOUT_S), inline=False)
+            connect = lambda: db.connect(app=app, connect_timeout_s=CONNECT_TIMEOUT_S)  # noqa: E731
+            shared = SharedDb(connect, retry_after_s=WRITER_RETRY_AFTER_S, name="holdings-writes")
             _PROCESS["writer_db"] = shared
         tracker = WriteTracker(shared, str(_PROCESS["name"]), scope_of(settings).world)
-        shared.warm()  # open now, while the process reads: its first send finds the connection ready
+        shared.on_connect = lambda conn: tracker._bump(conn, None, "catch-up") if tracker.missed else None
         _PROCESS["tracker"] = tracker
+        shared.warm()  # open now, while the process reads: its first send finds the connection ready
+        atexit.register(tracker.catch_up, EXIT_CATCH_UP_S)  # a one-shot command that lost a bump says so
     return tracker  # type: ignore[no-any-return]
 
 
@@ -484,13 +539,12 @@ def for_process(
     *,
     team: str | None = None,
     on_team: Callable[[str], None] | None = None,
-    inline: bool = False,
 ) -> Holdings:
-    """The reader for this process: its own connection (opened inline only for a one-shot CLI command), the
-    write tracker's `missed` flag, the catalog writer when the scope may write `cards`.
+    """The reader for this process: its own connection and worker, the write tracker's `missed` flag, the
+    catalog writer when the scope may write `cards`.
     `team`: our id when known (BAZAAR_TEAM_ID or `.local/team_id`); `on_team` caches one a live read learns."""
     scope = scope_of(settings)
-    shared = process_db(inline)
+    shared = process_db()
     return Holdings(
         read_me,
         shared,
@@ -505,17 +559,22 @@ def for_process(
 
 
 def catalog_sync(shared: SharedDb) -> CatalogSync:
-    """`cards` written from a catalog this process already read; Postgres down = retried at the next read."""
+    """`cards` written from a catalog this process already read; Postgres down or slow = retried later."""
+
+    def save_now(conn: psycopg.Connection | None, catalog: dict[str, Any], tick: int) -> int | None:
+        if conn is None:
+            return None
+        try:
+            return save_catalog(conn, catalog, tick)
+        except psycopg.Error as e:
+            shared.failed(e)
+            return None
 
     def write(catalog: dict[str, Any], tick: int) -> int:
-        with shared.session(READ_LOCK_TIMEOUT_S) as conn:
-            if conn is None:
-                raise ConnectionError("postgres busy or not connected")
-            try:
-                return save_catalog(conn, catalog, tick)
-            except psycopg.Error as e:
-                shared.failed(e)
-                raise
+        ok, written = shared.call(lambda conn: save_now(conn, catalog, tick), READ_DEADLINE_S)
+        if not ok or written is None:
+            raise ConnectionError("postgres busy, slow or not connected")
+        return int(written)
 
     return CatalogSync(write)
 
@@ -560,20 +619,24 @@ class Holdings:
         reason = live_because or self._skip_reason(clock, self._now() - read_at)
         if reason is not None or clock is None:
             return self._live(clock, reason or "no clock")
-        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
-            if conn is None:
-                return self._plain(clock, "postgres busy or not connected")
-            return self._from_db(conn, clock, read_at)
+        ok, got = self.shared.call(lambda c: None if c is None else self._from_db(c, clock, read_at), READ_DEADLINE_S)
+        if ok and got is not None:
+            return got  # type: ignore[no-any-return]
+        return self._plain(clock, "postgres busy or not connected" if ok else "postgres too slow")
 
     def after_deal(self, clock: Clock | None, what: str) -> MeRead:
         """A deal of ours (sent, or seen settled): bump the epoch, so no process trusts an older snapshot,
         then re-read /me and store it (album first: re-read after every deal)."""
-        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
-            if conn is not None:
-                try:
-                    bump(conn, self.scope.world, "trade", f"deal: {what}", self.reader)
-                except psycopg.Error as e:
-                    self.shared.failed(e)
+
+        def mark(conn: psycopg.Connection | None) -> None:
+            if conn is None:
+                return
+            try:
+                bump(conn, self.scope.world, "trade", f"deal: {what}", self.reader)
+            except psycopg.Error as e:
+                self.shared.failed(e)
+
+        self.shared.call(mark, HOOK_TIMEOUT_S, queue_if_stuck=True)
         return self.me(clock, live_because=f"after {what}")
 
     def observe_catalog(self, tick: int, catalog: dict[str, Any]) -> None:
@@ -654,10 +717,10 @@ class Holdings:
         return read
 
     def _live(self, clock: Clock | None, why: str) -> MeRead:
-        with self.shared.session(READ_LOCK_TIMEOUT_S) as conn:
-            if conn is None:
-                return self._plain(clock, why)
-            return self._live_unlocked(conn, clock, why)
+        ok, got = self.shared.call(lambda c: None if c is None else self._live_unlocked(c, clock, why), READ_DEADLINE_S)
+        if ok and got is not None:
+            return got  # type: ignore[no-any-return]
+        return self._plain(clock, why if ok else f"{why}; postgres too slow")
 
     def _live_unlocked(self, conn: psycopg.Connection, clock: Clock | None, why: str) -> MeRead:
         """A live read stored under the epoch read BEFORE it (a send in between makes it stale at once)."""

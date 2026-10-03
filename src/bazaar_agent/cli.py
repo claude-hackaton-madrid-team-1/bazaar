@@ -261,7 +261,7 @@ def _holdings_read(settings: Settings, from_db: bool = True) -> Any:
     if not from_db:
         return hd.Holdings(team.me, SharedDb(None), reader="cli", rules=rules, scope=hd.scope_of(settings)).me(clock)
     remember = partial(remember_team_id, settings.data_dir)
-    return hd.for_process(team.me, rules, settings, team=team_id, on_team=remember, inline=True).me(clock)
+    return hd.for_process(team.me, rules, settings, team=team_id, on_team=remember).me(clock)
 
 
 def _team_read(read: Callable[[Any], Any]) -> Any:

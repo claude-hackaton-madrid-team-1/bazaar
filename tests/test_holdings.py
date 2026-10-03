@@ -273,59 +273,83 @@ def test_the_world_keeps_a_simulator_apart_from_the_game():
     assert own.shared_tables
 
 
-def test_the_write_tracker_never_waits_long_for_a_busy_connection():
+class HungConn:
+    """A connection whose every query hangs: a black-holed proxy that accepts but never answers."""
+
+    closed = False
+    autocommit = True
+
+    def __init__(self, release):
+        self.release = release
+
+    def execute(self, *args, **kwargs):
+        self.release.wait(10)
+        raise RuntimeError("released")
+
+    def close(self):
+        self.closed = True
+
+
+def hung_db(name):
     import threading
-    import time
 
-    shared = SharedDb(None)
-    held, release = threading.Event(), threading.Event()
-
-    def hold():
-        with shared.session():
-            held.set()
-            release.wait(5)
-
-    threading.Thread(target=hold, daemon=True).start()
-    held.wait(2)
-    tracker = hd.WriteTracker(shared, "mcp")
-    started = time.monotonic()
-    tracker("POST", "/api/offers/9/accept", "before")
-    waited = time.monotonic() - started
-    release.set()
-    assert waited < hd.HOOK_LOCK_TIMEOUT_S + 0.15 and tracker.missed
-
-
-def test_a_background_connection_is_never_opened_by_the_caller():
-    import threading
-    import time
-
-    opened_in = []
-    ready = threading.Event()
-
-    class Conn:
-        closed = False
-        autocommit = False
-
-        def execute(self, *a):
-            return None
+    release = threading.Event()
+    calls = []
 
     def connect():
-        opened_in.append(threading.current_thread().name)
-        ready.set()
-        return Conn()
+        calls.append(threading.current_thread().name)
+        return HungConn(release)
 
-    shared = SharedDb(connect, inline=False)
-    with shared.session(0.2) as first:
-        assert first is None  # the caller got no connection and did not wait for one
-    assert ready.wait(2)
-    second = None
-    for _ in range(100):  # the background thread hands the connection over
-        with shared.session(0.2) as conn:
-            second = conn
-        if second is not None:
-            break
-        time.sleep(0.02)
-    assert second is not None and opened_in == ["holdings-connect"]
+    return SharedDb(connect, name=name), release, calls
+
+
+def test_a_simulator_database_counts_as_its_own_only_when_it_is_not_the_real_one(monkeypatch, tmp_path):
+    from bazaar_agent.config import load_settings
+
+    env = tmp_path / "env"
+    env.write_text("")
+    monkeypatch.setenv("BAZAAR_ENV_FILE", str(env))
+    monkeypatch.setenv("BAZAAR_SIM", "local")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example:5433/bazaar")
+    monkeypatch.setenv("BAZAAR_SIM_DATABASE_URL", "postgresql://u:p@DB.example:5433/bazaar?sslmode=require")
+    assert not load_settings().sim_database  # the real database under another spelling
+    monkeypatch.setenv("BAZAAR_SIM_DATABASE_URL", "postgresql://u:p@db.example:5433/bazaar_sim")
+    assert load_settings().sim_database
+
+
+def test_a_send_never_waits_for_a_hung_database():
+    import time
+
+    shared, release, calls = hung_db("holdings-writes")
+    tracker = hd.WriteTracker(shared, "taker")
+    try:
+        started = time.monotonic()
+        tracker("POST", "/api/offers/9/accept", "before")
+        tracker("POST", "/api/offers/9/accept", "after")
+        waited = time.monotonic() - started
+    finally:
+        release.set()
+    assert waited < 2 * hd.HOOK_TIMEOUT_S + 0.2 and tracker.missed and tracker.failures == 2
+    assert calls == ["holdings-writes"]  # opened on the worker, never in the caller's thread
+
+
+def test_a_read_never_waits_longer_than_its_deadline_for_a_hung_database(monkeypatch):
+    import time
+
+    monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
+    monkeypatch.setattr(hd, "STUCK_AFTER_S", 0.3)
+    shared, release, _ = hung_db("holdings-reads")
+    reads = Reads()
+    h = Holdings(reads, shared, reader="taker", rules=Guardrails(), team="t01")
+    try:
+        started = time.monotonic()
+        first = h.me(clock())
+        second = h.me(clock())  # the worker is stuck: no second wait
+        waited = time.monotonic() - started
+    finally:
+        release.set()
+    assert (first.source, first.why, second.why) == ("live", "postgres too slow", "postgres too slow")
+    assert waited < 0.3 + 0.3 and reads.calls == 2
 
 
 # ---------------------------------------------------------------- the catalog

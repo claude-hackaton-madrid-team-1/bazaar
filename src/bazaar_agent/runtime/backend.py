@@ -338,17 +338,20 @@ def cards(b: Backend, set_code: str | None = None, rarity: str | None = None, re
     import psycopg
 
     from bazaar_agent import catalog_db
-    from bazaar_agent.holdings import READ_LOCK_TIMEOUT_S
+    from bazaar_agent.holdings import READ_DEADLINE_S
 
-    with b.holdings.shared.session(READ_LOCK_TIMEOUT_S) as conn:
-        if conn is not None:
-            try:
-                rows = catalog_db.read_cards(conn, set_code, rarity, ref)
-            except psycopg.Error as e:  # the catalog is public: the live read below still answers
-                b.holdings.shared.failed(e)
-                rows = []
-            if rows:
-                return {"source": "db", **_cut(rows, 80)}
+    def from_db(conn: Any) -> list[dict[str, Any]]:
+        if conn is None:
+            return []
+        try:
+            return catalog_db.read_cards(conn, set_code, rarity, ref)
+        except psycopg.Error as e:  # the catalog is public: the live read below still answers
+            b.holdings.shared.failed(e)
+            return []
+
+    ok, rows = b.holdings.shared.call(from_db, READ_DEADLINE_S)
+    if ok and rows:
+        return {"source": "db", **_cut(rows, 80)}
     now = b.clock().tick
     live = [
         r

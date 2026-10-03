@@ -382,3 +382,11 @@ BEFORE the `/me` re-read (a failed re-read once skipped the spend row), and snap
 pr-reviewer on #105: 27/27 replies to a team bid came one tick later, and 37/40 of those settlements landed
 at the boundary, before her message. A tick-start `/me` already sees the deal; the holdings' calm rule is
 conservative, not required.
+
+### [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
+symptom: behind a black-holed TCP proxy an `accept()` stayed blocked 20 s and a tick-start `/me` read 15 s,
+although the hook's lock wait was capped at 0.2 s → root cause: `statement_timeout` is server-side and TCP
+keepalives see a proxy that ACKs but never answers as alive; nothing bounded the client's wait → fix: every
+holdings Postgres call runs on a worker thread per connection (`SharedDb.call`), callers wait a deadline
+(send 0.2 s, read 5 s) and then go live; a stuck worker makes later reads skip the database at once.
+Second bug found by the test: the worker's starter took the lock the hung worker held (own lock now).
