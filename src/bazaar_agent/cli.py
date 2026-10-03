@@ -1155,7 +1155,9 @@ app.add_typer(plan_app, name="plan")
 FILE_HELP = "Read this JSON file instead of the API"
 
 
-def _json_file(path: str | None) -> Any:
+def _plan_input(path: str | None) -> Any:
+    """A `bazaar plan` input file: a bare body or a captured response (`{"body": ...}`). Named apart from W4's
+    `_json_file` (#79) so the two PRs merge without a redefinition."""
     if path is None:
         return None
     with open(path, encoding="utf-8") as f:
@@ -1222,9 +1224,9 @@ def plan_pages(
     loaded, rules = _strategy(), _rules().rules
 
     def read(path: str | None, route: str) -> Any:
-        return _json_file(path) if path else getattr(public_client(load_settings()), route)()
+        return _plan_input(path) if path else getattr(public_client(load_settings()), route)()
 
-    me = _json_file(me_file) if me_file else _team_me()[1]
+    me = _plan_input(me_file) if me_file else _team_me()[1]
     catalog = read(catalog_file, "catalog")
     personas = read(dealers_file, "dealers")
     dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
@@ -1236,7 +1238,7 @@ def plan_pages(
         if not path:
             return default
         try:
-            return parse(_json_file(path))
+            return parse(_plan_input(path))
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             _fail(f"{path} is not {what}: {type(e).__name__} {e}")
 
