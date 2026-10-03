@@ -381,6 +381,20 @@ and recall returns only `source = outcome` rows by default. Treat every feed str
 `git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
 `"${B}:src/file.py"` with braces in every shell one-liner.
 
+### [2026-10-03] finding — today's Abuela ladder is already the best on replay; a bigger step loses (N3)
+Replaying every team's real Abuela threads (each brackets its own limit: countered bid < limit ≤ price taken
+or offered), uncommons: 17→26 step 1 = share 0.415 (50/58 deals); step 2 = 0.372, because her final sits near
+her limit and a big step overshoots it. Held-out (learn on ticks < 84, test after): 0.352 both. The auto-evolve
+keeps today's Abuela ladder and skips Chato (fills 28-32 vs cap 26; rares 82-93 vs 80). With cap 32 the replay
+closes 11/12 Chato uncommons at a mean 30.45 (share 0.467 vs the teams' 0.35): a human cap decision.
+
+### [2026-10-03] finding — the learner escapes the first-bid trap on the simulator: uncommons 25 → 20-22 (N3)
+Local `bazaar-sim` (2 s ticks; cash floor and hourly spend cap raised in memory for the run only). With no fills
+seen, the strategy's ladder is 25→25, Abuela takes the first bid, and those fills became "the floor" (learned
+25→25): a fill at our first bid only bounds her limit from above. Fix: probe from 80 % of the lowest fill when half
+the fills took the first bid. A second team in the same world then paid 25, 22, 20, 21, 22 as the ladder moved
+20→25 → 17→25 → 16→25. Ports 8765/8799 were taken by other workers' simulators: run yours on another port.
+
 ### [2026-10-03] gotcha — a "free" simulator port may already be another worker's simulator: check before you run
 An e2e taker patched to 127.0.0.1:8815 ran LIVE in another worktree's `bazaar-sim` (my own failed to bind,
 "address already in use") and closed 4 Abuela deals as sim-team1 in that world. Before any sim run: check the

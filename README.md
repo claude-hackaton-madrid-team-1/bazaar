@@ -626,8 +626,62 @@ The two models add about 370 MB of RAM to the taker. Measured in Docker with 1 C
 - a rerank of 12: 57 ms;
 - a recall over 600 lessons: p50 222 ms, p95 252 ms.
 
-A failed model load (no network at boot) is retried every 20 passes. PR B passes the hits to Jev
-and the words model as quoted data (`Recalled.as_quoted()`), never as instructions.
+A failed model load (no network at boot) is retried every 20 passes.
+
+**Auto-evolve: the dealer ladder learns from outcomes (`learn/evolve.py`, `learn/replay.py`).** Every
+pass also learns one ladder (start, step, walk point) per dealer and price class:
+- **The target.** Each (start, step, walk) inside the GUARDRAILS cap is replayed on every team's real
+  conversations of that class. Each conversation brackets its own secret limit: a bid the dealer
+  countered is below it, and a price it took or offered is at or above it. The ladder with the best
+  mean share wins.
+- **The update.** The live policy moves toward the target by at most 3 P per parameter per pass (the
+  step by at most 1). It is logged with its previous values, the evidence threads, a short history and
+  the replay against today's ladder.
+- **The skip.** A class is skipped when at least 3 conversations show it does not close at or under
+  our cap: fills above the cap, or walks where the team already bid the cap. It needs no other team's
+  fills.
+- **In the taker.** The learned ladder replaces the strategy's, and is never above the strategy's own
+  top (value minus the minimum surplus, the cap). A skipped class gets a `dealer_skip` decision row,
+  and the dealer's slot goes to the next buy.
+- **Lessons into Jev and the words.** Lessons reach Jev's `offer_is_worth_accepting`, `duel_move` and
+  `list_price_choice` under `lessons_quoted_data`, labelled as our own data, never instructions. Dealer
+  bid words get them as `<our_past_lessons>`, quoted like counterparty text. A strategy can ask by
+  situation feature (`Query.where`, e.g. `mechanic`) and write its own outcome back
+  (`lessons.record_lesson`).
+
+On Friday's real threads, learned against today's ladder:
+
+| dealer · class | today | learned | replay share (today → learned) | deals | teams got |
+|---|---|---|---|---|---|
+| abuela · common | 7→12 step 1 | 7→12 step 1 | 0.471 → 0.471 | 30 → 30 of 31 | 0.400 |
+| abuela · uncommon | 17→26 step 1 | 17→26 step 1 | 0.415 → 0.415 | 50 → 50 of 58 | 0.261 |
+| abuela · pack | 17→20 step 1 | 17→20 step 1 | 0.065 → 0.065 | 4 → 4 of 51 | 0.238 |
+| chato · uncommon | 26→26 | **skip** | 0 → 0 (a thread and a quota saved) | 0 of 12 | 0.350 |
+| chato · rare | 80→80 | **skip** | 0 → 0 (a thread and a quota saved) | 0 of 15 | 0.253 |
+
+For Abuela, today's ladder is already the best the replay finds. A bigger step loses: 0.415 → 0.372
+at step 2, because her final sits near her limit and a big step overshoots it. So the learner keeps
+today's ladder. Chato's fills sit above our caps (uncommons 28–32 vs 26, rares 82–93 vs 80). With a
+human-raised cap of 32, the replay closes 11 of 12 Chato uncommons at a mean 30.45 (share 0.467). The
+learner never raises a cap.
+
+**End to end on the simulator.** The real taker CLI ran live against a local `bazaar-sim` with 2 s ticks.
+The cash floor and the hourly spend cap were raised in memory for the run only, since a simulator game
+hour is a real hour; the per-card caps were unchanged.
+- **The trap.** With no fills seen, today's strategy bids 25 straight for an uncommon. Abuela takes it,
+  and 25 becomes "the floor". Team t01 paid 25 five times.
+- **The fix.** The learner sees that those fills took our first bid, so they only bound her limit from
+  above. It probes lower: 20→25, step 1.
+- **The result.** A second team (t02), in the same world, learned that from the public threads. Its
+  uncommons went 25 (before its first pass) → 22 → 20 → 21 → 22 as the ladder moved 20→25 → 17→25 →
+  16→25, at most 3 P per pass. Commons closed at 7–8 on a learned 7→9.
+- **Blockers.** Abuela's hourly quota then stopped each team. The N12 blocker skipped her until the
+  quota's tick.
+
+```sh
+uv run bazaar learnings --policy            # learned ladders vs today's, with the replay on real threads
+```
+The MCP read tool `learnings` answers the same: recalled lessons and the learned ladders.
 
 ```sh
 uv run bazaar learnings --lessons                 # run one pass: lessons + dealer patterns (no write)
@@ -1033,7 +1087,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [D1](D1-spec.md) · was #4 | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
-| N3 (new) | **P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder `recall()`, learned ladder parameters inside GUARDRAILS | 1 | 🔵 PR A (stacked on #89): lessons + `trader_behaviors` + embeddings + hybrid `recall()` in the taker, `bazaar learnings --lessons/--query`; PR B ⬜: auto-evolved ladder (start/step/walk) per dealer × class, lessons into Jev + words, MCP read tool, replay + sim proof |
+| N3 (new) | **P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder `recall()`, learned ladder parameters inside GUARDRAILS | 1 | 🔵 PR A #96 (stacked on #89): lessons + `trader_behaviors` + embeddings + hybrid `recall()` in the taker · PR B (stacked on #96): auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (`offer_is_worth_accepting`, `duel_move`, `list_price_choice`) + words, `Query.where` + `record_lesson` for N14, MCP `learnings`, `bazaar learnings --policy` |
 | N5 · was #1 | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
 | [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check (#30, #31); `untrusted_text` (#59); public `/state` leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60) |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |

@@ -25,6 +25,7 @@ RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
 DIM = 384
 THREADS_ENV = "BAZAAR_MODEL_THREADS"  # onnxruntime threads per model (default 1: agents share the CPU)
 MODEL_DIR_ENV = "BAZAAR_MODEL_DIR"  # where the models are cached (default <data_dir>/models)
+MODELS_ENV = "BAZAAR_MODELS"  # "off": never load (tests, a host without network); recall stays BM25-only
 QUERY_CACHE = 256
 
 
@@ -53,6 +54,10 @@ def model_dir(data_dir: Path | None = None) -> Path:
 
 
 RETRY_AFTER_WARMS = 20  # a failed load is tried again after this many warm() calls (the learner warms per pass)
+
+
+def models_off() -> bool:
+    return os.environ.get(MODELS_ENV, "").strip().lower() in ("off", "0", "false", "no")
 
 
 def _threads_from_env() -> int:
@@ -93,7 +98,10 @@ class LocalModels:
 
     def warm(self) -> None:
         """Start loading the models in the background (idempotent). After a failed load (no network at
-        boot), every RETRY_AFTER_WARMS-th call tries again."""
+        boot), every RETRY_AFTER_WARMS-th call tries again. `BAZAAR_MODELS=off`: never."""
+        if models_off():
+            self._failed = "off (BAZAAR_MODELS=off)"
+            return
         if self._failed is not None and not self.ready and (self._loading is None or not self._loading.is_alive()):
             self._warms_since_failure += 1
             if self._warms_since_failure < RETRY_AFTER_WARMS:
@@ -108,6 +116,9 @@ class LocalModels:
         """Load both models now (blocking: the CLI and the background warm-up use it)."""
         if self.ready:
             return True
+        if models_off():
+            self._failed = "off (BAZAAR_MODELS=off)"
+            return False
         try:
             from fastembed import TextEmbedding
             from fastembed.rerank.cross_encoder import TextCrossEncoder

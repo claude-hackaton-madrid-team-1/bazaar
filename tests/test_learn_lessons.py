@@ -31,7 +31,19 @@ def thread(tid, item, team_prices, dealer_prices, fill=None, *, dealer="abuela",
         fill_price=fill,
         fill_tick=tick + len(team_prices) if fill else None,
         ours=team == US,
+        sequence=interleave(team_prices, dealer_prices),
     )
+
+
+def interleave(team_prices, dealer_prices):
+    """The feed order of a plain haggle: our bid, the dealer's answer, our next bid, ..."""
+    out = []
+    for i in range(max(len(team_prices), len(dealer_prices))):
+        if i < len(team_prices):
+            out.append(("team", team_prices[i]))
+        if i < len(dealer_prices):
+            out.append(("dealer", dealer_prices[i]))
+    return out
 
 
 OURS = [

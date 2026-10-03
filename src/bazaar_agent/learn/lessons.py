@@ -123,6 +123,7 @@ def dealer_lesson(o: Outcome, stats: CurveStats | None, us: str) -> Learning | N
     )
     detail: dict[str, Any] = {
         "outcome": o.subject,
+        "mechanic": "dealer",
         "target": "dealer",
         "item": item,
         "price_class": cls,
@@ -179,7 +180,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     role, limit = d.get("role"), d.get("limit")
     if role not in ("seller", "buyer") or not isinstance(limit, int | float) or o.tick is None:
         return None
-    who = rival or "an unknown rival"
+    who = slug(rival) if rival else "an unknown rival"  # the alias as a slug only: never raw text in a lesson
     best = d.get("rival_best")
     status = d.get("status")
     if status == "deal":
@@ -189,6 +190,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     text = f"Duel {d.get('duel')} as {role} (limit {limit:g}) vs {who}: {result}. {_duel_advice(d, o.score)}"
     detail = {
         "outcome": o.subject,
+        "mechanic": "duel",
         "target": "duel",
         "item": d.get("item"),
         "role": role,
@@ -206,7 +208,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     }
     return Learning(
         subject_kind="rival",
-        subject=slug(who) if rival else "duels",
+        subject=who if rival else "duels",
         kind="lesson",
         tick=max(0, int(o.tick)),
         team=us,
@@ -237,6 +239,7 @@ def trade_lesson(o: Outcome, us: str) -> Learning | None:
     text = f"Trade {o.subject}: we {verb} {ref} at {price} with {who or 'a team'}: {result}. {advice}"
     detail = {
         "outcome": o.subject,
+        "mechanic": "trade",
         "target": "trade",
         "item": ref,
         "side": side,
@@ -275,6 +278,7 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
         source="outcome",
         detail=clean(
             {
+                "mechanic": "dealer",
                 "pattern": "concession",
                 "price_class": stats.price_class,
                 "threads": stats.threads,
@@ -290,6 +294,47 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
                 "evidence_threads": list(stats.thread_ids[-20:]),
             }
         ),
+    )
+
+
+# ---------------------------------------------------------------- any strategy's own outcome (N14 writes back)
+
+MECHANICS = ("dealer", "duel", "trade", "pack", "market", "venue", "page", "grant")
+LESSON_TEXT = re.compile(r"[\w .,;:()%+\-→/'·]{1,300}")
+
+
+def record_lesson(
+    *,
+    mechanic: str,
+    subject_kind: str,
+    subject: str,
+    outcome: str,
+    tick: int,
+    team: str,
+    text: str,
+    features: Mapping[str, Any] | None = None,
+    confidence: float = 0.6,
+) -> Learning:
+    """A lesson any strategy writes back after its own outcome (then `store.record([...])`).
+
+    `outcome` is its identity ("pack:42", "venue:v04:fee"): the same outcome twice is one row. `features` are
+    the situation's numbers (item, price_class, price, ...), searchable and filterable with `Query.where`.
+    The text must be ours, built from structure: never a counterparty's words."""
+    if mechanic not in MECHANICS:
+        raise ValueError(f"unknown mechanic {mechanic!r} (one of {', '.join(MECHANICS)})")
+    if not LESSON_TEXT.fullmatch(text):  # quoted to Jev and the words model as our own: plain words and numbers only
+        raise ValueError("a lesson's text must be plain words, numbers and punctuation (no tags, no quotes)")
+    detail = {k: v for k, v in (features or {}).items() if isinstance(v, str | int | float | bool)}
+    return Learning(
+        subject_kind=subject_kind,  # type: ignore[arg-type]  # validated by the model
+        subject=subject,
+        kind="lesson",
+        tick=max(0, tick),
+        team=team,
+        confidence=confidence,
+        text=_cap(text),
+        source="outcome",
+        detail={**detail, "mechanic": mechanic, "outcome": outcome},
     )
 
 

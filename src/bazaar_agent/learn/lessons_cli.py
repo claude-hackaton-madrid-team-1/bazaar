@@ -39,6 +39,25 @@ def _lesson_table(rows: list[Learning]) -> Table:
     return table
 
 
+def _policy_table(rows: list[dict[str, Any]]) -> Table:
+    table = Table(title="learned dealer ladders vs today's (replayed on every team's real threads)")
+    for col in ("dealer", "class", "today", "learned", "replay share today → learned", "deals", "teams got", "why"):
+        table.add_column(col, overflow="fold")
+    for r in rows:
+        rp = r["replay"]
+        table.add_row(
+            r["dealer"],
+            r["class"],
+            str(rp.get("old", "-")),
+            r["ladder"],
+            f"{rp.get('old_share', '-')} → {rp.get('new_share', '-')}",
+            f"{rp.get('old_deals', '-')} → {rp.get('new_deals', '-')} of {rp.get('threads', '-')}",
+            str(rp.get("real_share", "-")),
+            escape(r["why"]),
+        )
+    return table
+
+
 def _hits_table(found: Recalled, query: str) -> Table:
     table = Table(title=f"recall: {query}")
     for col in ("score", "bm25", "vector", "cos", "kind", "lesson"):
@@ -63,6 +82,8 @@ def show(
     *,
     lessons: bool,
     query: str | None,
+    policy: bool = False,
+    rules: Any = None,
     save: bool,
     subject: str | None,
     limit: int,
@@ -83,8 +104,17 @@ def show(
     store = LearningStore(connect if save else None, err_console.print)
     out: dict[str, Any] = {"tick": tick, "us": us}
     result: PassResult | None = None
-    if lessons:
-        result = learn_once(connect, store, models if save else None, us, tick, err_console.print, save_moves=save)
+    if lessons or policy:
+        result = learn_once(
+            connect,
+            store,
+            models if save else None,
+            us,
+            tick,
+            err_console.print,
+            save_moves=save,
+            rules=rules if policy else None,
+        )
         out["pass"] = {
             "outcomes": result.outcomes,
             "lessons": result.lessons,
@@ -121,6 +151,18 @@ def show(
             ],
         }
         recall.close()
+    if result is not None and policy:
+        out["policies"] = [
+            {
+                "dealer": p.dealer,
+                "class": p.price_class,
+                "ladder": str(p.ladder) if p.ladder else "skip",
+                "previous": str(p.previous) if p.previous else None,
+                "why": p.reason,
+                "replay": dict(p.replay),
+            }
+            for p in sorted(result.policies.values(), key=lambda p: p.key)
+        ]
     if as_json:
         if result is not None and lessons:
             out["lessons"] = [lr.model_dump() for lr in result.learned]
@@ -135,6 +177,8 @@ def show(
         if lessons:
             rows = [lr for lr in result.learned if subject is None or lr.subject == subject]
             console.print(_lesson_table(rows))
+        if policy:
+            console.print(_policy_table(out["policies"]))
     if query:
         q = out["query"]
         console.print(f"recall {q['status']} in {q['elapsed_ms']} ms · {q['candidates']} candidates · legs {q['legs']}")
