@@ -736,6 +736,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar teams` | The competition: each team's flow (dealer bids, buys, sells, listings, inferred ×1.6 set). Us apart. |
 | `uv run bazaar affinity` | Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone. |
 | `uv run bazaar trade-plan` | Dry-run trade plan for the next opening, fair by construction; sends nothing. |
+| `uv run bazaar arb study` | Replay a captured feed: crossings across and within venues, tape exits, duplicate buys per tier. |
+| `uv run bazaar arb scan` | Live crossings and duplicate buys with the net after every fee. Read-only: sends nothing. |
 | `uv run bazaar book` | Live order book of a venue, with board pseudonyms resolved to team ids from the feed. Ours apart. |
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |

@@ -167,9 +167,22 @@ def dup_buys(
 class Scan:
     crossings: list[Crossing]  # one per ask and per bid, best net first
     dups: list[DupBuy]
-    keep: dict[str, float]  # card ref -> our value of the copy an arbitrage would hold in between
     boards: int  # venues read
     offers: int  # plain offers on them
+    near_crossings: list[Crossing]  # the closest pairs below min_net (how far the market is from paying)
+    near_dups: list[DupBuy]  # the closest duplicate asks below min_surplus
+    sell_ratio: float = 1.0  # sell_min_value_ratio: a resale below it is never taken
+
+
+def why_not(c: Crossing, sell_ratio: float) -> str:
+    """Why the taker would not take this crossing even with `arb_enabled` (empty: it would try)."""
+    if not (TEAM_ID.match(c.ask.maker) and TEAM_ID.match(c.bid.maker)):
+        return "maker unknown"
+    if c.value is not None and c.proceeds < c.value * sell_ratio:
+        return "worth more kept"
+    if c.ask.asset_id is None:
+        return "no asset id"
+    return ""
 
 
 def next_copy_values(market: Market) -> ValueFn:
@@ -190,13 +203,39 @@ def scan(
     ours: set[int] | frozenset[int],
     min_net: int,
     min_surplus: float,
+    near: int = 0,
+    sell_ratio: float = 1.0,
 ) -> Scan:
-    """Live crossings (net ≥ `min_net` after both fees) and duplicate buys (surplus ≥ `min_surplus`)."""
+    """Live crossings (net ≥ `min_net` after both fees) and duplicate buys (surplus ≥ `min_surplus`), and the
+    `near` closest of each below those bars."""
     value = next_copy_values(market)
-    found = best_per_ask(crossings(offers, venues, exclude=ours, min_net=min_net, value=value))
-    dups = dup_buys(offers, venues, market.held, value, min_surplus=min_surplus, exclude=ours)
-    keep = {c.ref: v for c in found if (v := value(c.ref)) is not None}
-    return Scan(found, dups, keep, len(venues), len(offers))
+    every = best_per_ask(crossings(offers, venues, exclude=ours, min_net=-(10**9), value=value))
+    all_dups = dup_buys(offers, venues, market.held, value, min_surplus=-(10.0**9), exclude=ours)
+    return Scan(
+        [c for c in every if c.net >= min_net],
+        [d for d in all_dups if d.surplus >= min_surplus],
+        len(venues),
+        len(offers),
+        [c for c in every if c.net < min_net][:near],
+        [d for d in all_dups if d.surplus < min_surplus][:near],
+        sell_ratio,
+    )
+
+
+def _crossing_rows(found: list[Crossing], sell_ratio: float) -> list[str]:
+    rows = [
+        "| card | buy (venue, maker) | cost | sell (venue, maker) | proceeds | net | legs at our values | taker |",
+        "|---|---|---:|---|---:|---:|---|---|",
+    ]
+    for c in found:
+        legs = c.legs
+        leg = "-" if legs is None else f"{legs[0]:+g} / {legs[1]:+g}" + ("" if c.both_legs_positive else " ⚠")
+        rows.append(
+            f"| {c.ref} | {c.ask.price} on {c.ask.venue} ({c.ask.maker}) | {c.cost} "
+            f"| {c.bid.price} on {c.bid.venue} ({c.bid.maker}) | {c.proceeds} | {c.net:+d} | {leg} "
+            f"| {why_not(c, sell_ratio) or 'would take'} |"
+        )
+    return rows
 
 
 def render_scan(s: Scan, tick: int | None, min_net: int, min_surplus: float) -> str:
@@ -209,19 +248,14 @@ def render_scan(s: Scan, tick: int | None, min_net: int, min_surplus: float) -> 
     ]
     if s.crossings:
         lines += [
-            "| card | buy (venue, maker) | cost | sell (venue, maker) | proceeds | net | legs at our values |",
-            "|---|---|---:|---|---:|---:|---|",
+            *_crossing_rows(s.crossings, s.sell_ratio),
+            "",
+            "⚠ a leg scores negative on its own: the net holds only if trades are not clipped one by one.",
         ]
-        for c in s.crossings:
-            legs = c.legs
-            leg = "-" if legs is None else f"{legs[0]:+g} / {legs[1]:+g}" + ("" if c.both_legs_positive else " ⚠")
-            lines.append(
-                f"| {c.ref} | {c.ask.price} on {c.ask.venue} ({c.ask.maker}) | {c.cost} "
-                f"| {c.bid.price} on {c.bid.venue} ({c.bid.maker}) | {c.proceeds} | {c.net:+d} | {leg} |"
-            )
-        lines += ["", "⚠ a leg scores negative on its own: the net holds only if trades are not clipped one by one."]
     else:
         lines.append("None.")
+    if s.near_crossings:
+        lines += ["", "Closest below the bar:", "", *_crossing_rows(s.near_crossings, s.sell_ratio)]
     lines += ["", f"## Duplicate buys (one more copy − ask − fee ≥ {min_surplus:g} P)", ""]
     if s.dups:
         lines += [
@@ -235,4 +269,16 @@ def render_scan(s: Scan, tick: int | None, min_net: int, min_surplus: float) -> 
         ]
     else:
         lines.append("None.")
+    if s.near_dups:
+        lines += [
+            "",
+            "Closest below the bar:",
+            "",
+            "| card | ask (venue) | cost | held | value of one more | surplus |",
+        ]
+        lines += ["|---|---|---:|---:|---:|---:|"]
+        lines += [
+            f"| {d.ask.ref} | {d.ask.price} on {d.ask.venue} | {d.cost} | {d.held} | {d.value:g} | {d.surplus:+g} |"
+            for d in s.near_dups
+        ]
     return "\n".join(lines) + "\n"

@@ -316,7 +316,10 @@ def trade_plan(
 
 @arb_app.command("study")
 def arb_study_cmd(
-    stream: str = typer.Argument(help="Feed events as JSONL (the monitor's stream.jsonl or a feed_events export)"),
+    stream: str | None = typer.Argument(
+        None, help="Feed events as JSONL (stream.jsonl or a feed_events export); default: the agents' feed history"
+    ),
+    live: bool = typer.Option(False, help=LIVE_HELP),
     min_net: int = typer.Option(
         3, help="Count crossings whose net after both fees is at least this (arb_min_net_spread)"
     ),
@@ -328,12 +331,15 @@ def arb_study_cmd(
         help="Our /api/me (or an agent.me event): also count duplicates at OUR values (private: console only)",
     ),
 ) -> None:
-    """Replay a captured feed: crossings across and within venues, tape exits, duplicate buys per tier."""
+    """Replay a captured feed: crossings across and within venues, tape exits, duplicate buys per tier.
+
+    Without a file it reads the feed history the agents read (the shared DB's feed table, read-only, else this
+    machine's capture), so Saturday can be studied as it happens."""
     from pathlib import Path
 
     from bazaar_agent import arb_study as st
 
-    events = st.load_events(Path(stream))
+    events = st.load_events(Path(stream)) if stream else _history(None, live)
     result = st.study(events, min_net=min_net, min_surplus=min_surplus)
     text = st.render(result, min_net=min_net, min_surplus=min_surplus)
     typer.echo(text)
@@ -362,6 +368,7 @@ def arb_scan(
     ),
     min_net: int | None = typer.Option(None, help="Least net spread (default: arb_min_net_spread)"),
     min_surplus: float | None = typer.Option(None, help="Least duplicate surplus (default: dup_min_surplus)"),
+    near: int = typer.Option(5, min=0, help="Also list this many of the closest ones below each bar"),
 ) -> None:
     """Live crossings and duplicate buys with the net after every fee. Read-only: sends nothing."""
     from pathlib import Path
@@ -394,7 +401,16 @@ def arb_scan(
     market = build_market(me, catalog, [], [])
     net = rules.arb_min_net_spread if min_net is None else min_net
     surplus = rules.dup_min_surplus if min_surplus is None else min_surplus
-    result = arb.scan(market, venues, offers, ours=ours, min_net=net, min_surplus=surplus)
+    result = arb.scan(
+        market,
+        venues,
+        offers,
+        ours=ours,
+        min_net=net,
+        min_surplus=surplus,
+        near=near,
+        sell_ratio=rules.sell_min_value_ratio,
+    )
     typer.echo(arb.render_scan(result, me.get("tick"), net, surplus))
     console.print(
         f"[dim]arb_enabled = {str(rules.arb_enabled).lower()}, dup_buy_enabled = {str(rules.dup_buy_enabled).lower()}: "

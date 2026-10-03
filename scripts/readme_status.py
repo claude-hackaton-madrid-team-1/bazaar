@@ -46,6 +46,7 @@ def _command_name(decorator: ast.expr, func: ast.FunctionDef) -> tuple[str, str]
         "rules_app": "rules ",
         "obs_app": "obs ",
         "sell_app": "sell ",
+        "arb_app": "arb ",
     }.get(decorator.func.value.id)
     if group is None:
         return None

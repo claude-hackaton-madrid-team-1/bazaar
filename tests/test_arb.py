@@ -239,3 +239,24 @@ def test_a_cancel_as_a_dict_one_offer_per_fill_and_a_closed_venue():
     assert (rows[10].how, rows[11].how) == ("filled", "open")
     fees = st.venues_by_tick(events, 5)
     assert "v02" in fees[3] and "v02" not in fees[4]
+
+
+def test_scan_lists_the_closest_below_each_bar_and_says_what_the_taker_would_do():
+    m = market(["LAV-09", "MAL-04", "MAL-04"])
+    offers = [
+        ask(1, "MAL-04", 1, venue="v02"),
+        bid(3, "MAL-04", 9),  # net +8: taken
+        ask(4, "LAV-01", 9, venue="v02", maker="m3950d43b"),
+        bid(5, "LAV-01", 12, maker="t18"),  # net +3 but the seller is a pseudonym
+        ask(6, "SAL-01", 10, venue="v02"),
+        bid(7, "SAL-01", 11, maker="t19"),  # net +1: below the bar
+        ask(8, "LAV-09", 30, venue="v02"),  # duplicate: 28 − 30 = −2, below the bar
+    ]
+    s = arb.scan(m, VENUES, offers, ours=set(), min_net=3, min_surplus=3, near=5)
+    assert [(c.ref, c.net) for c in s.crossings] == [("MAL-04", 8), ("LAV-01", 3)]
+    assert [(c.ref, c.net) for c in s.near_crossings] == [("SAL-01", 1)]
+    # LAV-09 at 30 against 28 (−2); MAL-04 held twice: a third copy at 1 P is worth 0.9 (−0.1)
+    assert [(d.ask.ref, d.surplus) for d in s.near_dups] == [("MAL-04", -0.1), ("LAV-09", -2.0)] and s.dups == []
+    assert [arb.why_not(c, 1.0) for c in s.crossings] == ["", "maker unknown"]
+    text = arb.render_scan(s, None, 3, 3)
+    assert "would take" in text and "maker unknown" in text and "Closest below the bar" in text
