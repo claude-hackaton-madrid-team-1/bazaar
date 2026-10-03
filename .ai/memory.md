@@ -293,3 +293,13 @@ symptom: PR #55's `test` job failed with no summary right after `test_bodies_are
 root cause: the 413 case's parameter (65 KB of "x") became the test id printed by `pytest -v`, and the
 log/step died there; locally and in a Linux container the suite passed → fix: `ids=[...]` short names.
 
+### [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+`railway config plan --file <main's railway.py>` (01:50): "Delete variable bazaar-taker.BAZAAR_LIVE",
+"...bazaar-maker.BAZAAR_LIVE" and "Delete service bazaar-sim". The named partial owns those services, so
+a variable set by hand but not declared is removed: the live agents would drop to dry run. Fix: declare
+it `preserve()` (no value in the file). PR #55 does that for BAZAAR_LIVE and keeps bazaar-sim declared.
+
+### [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+`BAZAAR_SIM=1 uv run bazaar status` talks to the simulator with `BAZAAR_SIM_KEY` (default sim-team1);
+unset is the real game with `BAZAAR_KEY`. `BAZAAR_URL` makes every command stop: delete it from `.env`.
+
