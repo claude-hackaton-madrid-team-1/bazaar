@@ -8,15 +8,16 @@ Cash is private: it appears only as "room above `cash_floor`" buckets.
 ## TL;DR
 
 1. **"Quiet" measured.** We had 29 settlements on Saturday, joint 13th of 17 active teams (median 46.5). The gap is dealer
-   deals: 16 against a median of ~29, and Abuela sales (1 against a median of 10). But **the number of trades does
+   deals: 16 against a median of ~29, and Abuela sales (1 against a median of 10 among the 11 teams that sold to her). But **the number of trades does
    not score** (RULES.md:122). t13 had 88 deals and finished 10th, t18 had 40 and finished 2nd, we had 33 and finished 9th.
    The quiet cost points only where it blocked a deal worth surplus. Those blocks are listed below.
 2. **Cause #1: the venue locked up our cash.** v19 opened at 10:20 (tick 262) for 270 P (bond 250 + fee 20), most of
-   our cash at the time. It earned **0 trades all day**, and its bench score was the free stall's 0.5 in all 5 sessions. Teams that
-   kept the free stall (t05, t07, t15, t18) also have market 7.5. From 10:20 to 20:15, cash sat less than 60 P above
+   our cash at the time. It earned **0 trades all day**, and its bench score was the free stall's 0.5 in all 5 sessions. Of the
+   teams that kept the free stall, t05, t07, t15 and t18 also have market 7.5, and t16 (10.16) and t17 (8.64) have
+   more, from organic trades on their stall. From 10:20 to 20:15, cash sat less than 60 P above
    the floor on 809 of 940 ticks. The guards logged 263 board skips for `cash_floor` and 27 dealer passes because
-   nothing was affordable. The one buy that measurably scored and was lost: MAL-10 from a team at 75
-   (ticks 504–584, about +38 neg_points at our values). We later bought it from a dealer instead, which adds no
+   nothing was affordable. The one buy that measurably scored and was lost: MAL-10 from a team
+   (ticks 504–584, about +40 neg_points at our values). We later bought it from a dealer instead, which adds no
    neg_points.
 3. **Cause #2 is structural: from ~17:30 nothing was worth its price to us.** All our missing cards were in our two
    lowest-affinity sets (LAT, RET) or were MAL-09. The board showed **0 buy candidates on 547 of 548 ticks** from 17:34 to 23:00,
@@ -100,9 +101,10 @@ counts from the `tick N maker: N action(s), N posted, N open offer(s)` lines.
 - At tick 164 the hourly spend cap (`max_spend_per_game_hour` 150) was reached: "spend 139 + 27 > 150". For the next
   hour every candidate was refused for the spend cap (264 lines), the uncommon price cap 26 (201), or the 1-accept
   quota (32).
-- 32 refused offers (23 + 7 + 2 by class), but **every card refused in A was bought later at the same or a lower
-  price**: SAL-07 at 21 against asks of 26–35, MAL-06 at 20 against 22–27, MAL-07 at 14 against 20–28, SAL-08 at 25
-  against 27–31 (`lost_by_ref.sql`). The cap delayed buys. It did not lose them.
+- 32 refused offers (23 + 7 + 2 by class), but **every card refused in A was in our album later, mostly cheaper**.
+  Bought on the board: SAL-07 at 21 against asks of 26–35, MAL-06 at 20 against 22–27, MAL-07 at 14 against 20–28,
+  SAL-08 at 25 against 27–31. MAL-08 (refused at 33) came out of the two packs we opened at ticks 285 and 312
+  (`lost_by_ref.sql`, `me_snapshots.cards`, `pack.opened`). The cap delayed buys. It did not lose them.
 - Maker: 9 asks. Duels: the practice session ended at tick 192.
 
 **B, 10:20–11:49 (262–440). The venue takes 270 P.**
@@ -110,6 +112,9 @@ counts from the `tick N maker: N action(s), N posted, N open offer(s)` lines.
   opened v19 at tick 262 for 270 P (`venue.opened` bond 250; cash dropped by exactly 270 on that tick). The free
   starter stall v08 closed (`venue.closed v08 replaced`).
 - For the next 57 ticks the room above the 100 floor was under 25 P: 187 board skips for `cash_floor`.
+- The lock had two halves: the 270 P bond, and the floor we kept after paying it (100, then 50 from 10:48, 20 from
+  16:39, 5 from 17:22). With the floor at 5 from 10:20, the room after the bond would have been about 110 P instead
+  of 19.
 - #174 (10:48) lowered the floor to 50. The taker bought MAL-07, SAL-07 and MAL-06 at once (ticks 311–321) and was
   stuck again. It sold SAL-10 to t06 (76) and LAT-09 to t16 (68) at ticks 376–386, then put 95 of that into SAL-09
   from Chato at tick 443.
@@ -140,8 +145,9 @@ simulator for ~2 min". It was all three services, for 1 h 50 min.
 - MAL-10 on the board at 98–104 was refused 71 times by `max_price_rare` 95. That was correct: its official value was
   ~77 (#248's table).
 - Swaps: 158 "jev not yes" lines in D, almost all before #213 (16:55) switched the taker's decider to the LLM. Before
-  #213 the gate said yes to 0 of 214 swap questions. After it, it said yes to 220 of 260 (mean 0.81); the rest were 18 "no
-  tick budget", 12 below the bar, 9 no and 1 timeout (`timeline.sql`, last query).
+  #213, Jev said yes to 0 of the taker's 214 questions (swap openings, swap offers and ladder probes). After it, the
+  LLM said yes to 220 of 260 (mean 0.81); the rest were 18 "no tick budget", 12 below the bar, 9 no and 1 timeout
+  (`timeline.sql`, last query).
 
 **E, 17:34–20:15 (898–1201). Nothing to buy and no money.**
 - **One** board candidate in 304 ticks.
@@ -173,14 +179,14 @@ simulator for ~2 min". It was all three services, for 1 h 50 min.
 
 | # | Cause | Lost activity (evidence) | Score effect | Status on main |
 |---|---|---|---|---|
-| 1 | **Venue bond: 270 P locked at 10:20.** v19 earned 0 trades all day and the same bench score as the free stall | cash room < 60 P on 809 of 940 ticks (10:20–20:15); 263 board skips for `cash_floor`; 27 dealer passes, none affordable; MAL-10 team buy missed (ticks 504–584) | MAL-10: about +38 neg_points at our values. Market gain from v19 over the stall: **0** (bench 0.5 in every session, 0 organic trades; t05/t07/t15/t18 on free stalls also have 7.5) | bond still posted (refundable 10 ticks after a close, as t13 did 3 times); `max_venues` = 2 allows a second hand-opened venue (another 270 P) |
+| 1 | **Venue bond: 270 P locked at 10:20**, together with the floor of 100/50 we kept after paying it. v19 earned 0 trades all day and the same bench score as the free stall | cash room < 60 P on 809 of 940 ticks (10:20–20:15); 263 board skips for `cash_floor`; 27 dealer passes, none affordable; MAL-10 team buy missed (ticks 504–584) | MAL-10: about +40 neg_points at our values. Market gain from v19 over the stall: **0** (bench 0.5 in every session, 0 organic trades; free-stall teams t05/t07/t15/t18 have 7.5, t16 10.16, t17 8.64) | bond still posted (refundable 10 ticks after a close, as t13 did 3 times); `max_venues` = 2 allows a second hand-opened venue (another 270 P) |
 | 2 | **No targets worth their price** (lowest-affinity sets + the official-value cap from #177, 11:12) | 0 board candidates on 547 of 548 ticks after 17:34; 17 Pícaros walks at the official value; about 400 P unspent for 2 h | none directly: by the rules, these buys would have lost neg_points. Indirect: no dealer-ladder deals to fill | by design; the round-3 plan must aim at deals that score (§4) |
 | 3 | **Team desk: no concession ever posted** (cancel answer misread, then a re-cancel loop) | 84 ladders, 0 step-1 offers; 7 successful cancels never followed by a new offer; 36 refused re-cancels (`offer_not_open`) | 0 swaps. Upper bound small: only 13 swaps settled market-wide on Saturday | **still on main** (§3.1) |
-| 4 | **Jev swap gate** (`team_swap_jev_gate`, bar 0.75) before #213 | 203 refused openings, ticks 576–805, mean confidence 0.35 | unknown, probably small (as #3) | after 16:55 the LLM decider said yes to 220 of 260; "no tick budget" 18 times at 30 s ticks |
-| 5 | **Opening spend cap 150/h + price caps** | 32 refused offers in window A; 39 lost to the 1-accept quota | ~0: every refused card was bought later at a lower price | cap now 250 |
+| 4 | **Jev swap gate** (`team_swap_jev_gate`, bar 0.75) before #213 | 203 refused openings, ticks 576–805, mean confidence 0.35 | unknown, probably small (as #3) | after 16:55 the LLM decider said yes to 220 of 260 taker questions (swaps and probes); "no tick budget" 18 times at 30 s ticks |
+| 5 | **Opening spend cap 150/h + price caps** | 32 refused offers in window A; 39 lost to the 1-accept quota | ~0: every refused card was in our album later (bought cheaper, or MAL-08 from packs) | cap now 250 |
 | 6 | **Human approval ≥ 60** (15:46–19:56) | 21 refused LAV-10 opens; MAL-09 at 63 refused (bought 4 h 20 min later at 61) | ~0 (delay only) | 250 now (#232) |
 | 7 | **UB1: dealer affordability checked at the ladder top** | MAL-09 never opened in ticks 1095–1166 (12 + 4 passes) | ~0 (bought at 1212) | fixed in #248 (merged after the close; not seen live yet) |
-| 8 | **Dealer sells: our floor of 7 above Abuela's finals of 5–6**, plus the 12:23–12:49 loop | 1 Abuela sale against a median of 10; 8 looped sell threads | small (level-1 ladder slots; we had 3 Abuela buys) | `dealer_sell_enabled = false` |
+| 8 | **Dealer sells: our floor of 7 above Abuela's finals of 5–6**, plus the 12:23–12:49 loop | 1 Abuela sale against a median of 10 (among the 11 teams that sold to her; 6 sold none); 8 looped sell threads | small (level-1 ladder slots; we had 3 Abuela buys) | `dealer_sell_enabled = false` |
 | 9 | Pícaros bait-and-switch | 27 ignored offers, threads walked | 0 (correct refusals) | — |
 
 Checked and found **not** to be a cause:
@@ -238,7 +244,7 @@ Checked and found **not** to be a cause:
 | 2 | **Fix the team-desk concession bug** (§3.1) before swaps run on Sunday | `team_desk.py:1038–1048`, `:1090–1094` | turns 0 concessions into real ladders. Upper bound small (13 swaps market-wide on Saturday), but each swap adds neg_points at our values | low: three branches, plus a test; merge only in a no-bench, no-duel window (one redeploy) |
 | 3 | **Spend on deals that score in round 3:** the grant (150 at ~11:34) plus carried cash goes to dealer-ladder deals (3 per dealer level, sales included; RULES_AUDIT #4) and team trades bought below our value. Not to idle cash | strategy/ops; `ladder_probe_min_share`, `min_buy_surplus` 2 → 4 (B28) | ladder +1.7 to +3 (RULES_AUDIT estimate, unverified); idle cash scores 0 ("Only deals score") | buying above our value loses neg_points; the official-value cap still applies |
 | 4 | **One merge batch, then freeze.** Every merge redeploys all three services. Merge only in 09:00–09:31 or after Duels III; never within 10 ticks of the hard Market Test (h14.65) or the Market Test (h15) | process | protects 3.75 per Sunday bench session plus Duels III clocks | none |
-| 5 | **Decider at 15 s ticks:** if `jev: no tick budget` exceeds ~20 % of the taker's swap/probe verdicts in the first 20 ticks, set `BAZAAR_DECIDER=jev` on bazaar-taker. Swaps would then stop (Jev said yes to 0 of 214), so decide which you prefer | Railway bazaar-taker env | small either way | LLM latency p50 ~2 s against a 15 s tick |
+| 5 | **Decider at 15 s ticks:** if `jev: no tick budget` exceeds ~20 % of the taker's swap/probe verdicts in the first 20 ticks, set `BAZAAR_DECIDER=jev` on bazaar-taker. Swaps would then stop (Jev said yes to 0 of 214 taker questions on Saturday), so decide which you prefer | Railway bazaar-taker env | small either way | LLM latency p50 ~2 s against a 15 s tick |
 
 ## 5. Sunday pre-flight checklist (09:00 doors, 15 s ticks)
 
@@ -265,7 +271,7 @@ Each line names the Saturday cause it would have caught. Read-only commands. A R
    not come back by itself.
 2. Who switched the three services to `BAZAAR_SIM` at 13:27, and was it on purpose (practice during the pause)? The
    check above catches it, but the step should be written down.
-3. Taker decider on Sunday: the LLM said yes to 220 of 260 swap questions after 16:55. Every resulting swap still
+3. Taker decider on Sunday: the LLM said yes to 220 of 260 taker questions (swaps and ladder probes) after 16:55. Every resulting swap still
    failed (bug #3), so that "yes" rate has never been tested against real fills. Keep `llm`, or go back to Jev?
 4. `no_buyback_ticks`: 4 game hours, or 480 ticks?
 5. Should the official-value cap stay a hard limit for round-3 dealer-ladder deals? A ladder deal scores by its share
@@ -276,7 +282,7 @@ Each line names the Saturday cause it would have caught. Read-only commands. A R
 - Railway variable values **during** Saturday: I read them at 00:30 Sunday. A change during the day (for example
   `BAZAAR_SIM` 13:27–15:17) shows only through the logs' `target:` line.
 - How the neg_points gain converts to board points. The only measured k (0.048) is from the loss side (#227). The
-  MAL-10 figure (+38 neg_points) is at our private values, not official.
+  MAL-10 figure (about +40 neg_points) is at our private values, not official.
 - Whether the starter stall returns after a venue close (question 1).
 - The deployments with 0 log lines (11 taker, 10 maker, 11 duels): either they were replaced within seconds or their logs are gone. Coverage
   still has no tick gap, because the surrounding deployments logged those ticks.
