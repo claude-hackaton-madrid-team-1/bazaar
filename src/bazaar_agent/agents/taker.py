@@ -9,8 +9,10 @@ Per tick, album first (`/api/me`), then:
 Accepts from (a) and (b) compete for the team's accept quota (`accepts_per_team_per_tick`, shared
 across machines through the ledger): finals first, then the biggest surplus. Jev's
 `offer_is_worth_accepting` is advisory: a decided `no` vetoes a board accept, a decided `yes` may
-accept a dealer's ask early, and neither ever goes above a limit. Every accept and bid passes
-`guardrails.check()` with the live context. Dry run (the default) sends nothing and logs WOULD-moves.
+accept a dealer's ask early, and neither ever goes above a limit. Every accept, bid, walk and cancel
+passes `guardrails.check()` with the live context. While the kill switch is on the taker HOLDS: it
+reads, sends nothing (no opens, accepts, bids, walks or cancels), and its dealer threads stay open and
+resume when the switch goes off. Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -311,6 +313,16 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        stops = kill_switch(self.rules)
+        if stops:
+            self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
+            if self.hub is not None:
+                self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
+            self.log(
+                f"tick {clock.tick} taker: kill switch on: holding (no opens, accepts, bids, walks or cancels; "
+                f"{len(self.convs)} dealer thread(s) stay open): {'; '.join(stops)}"
+            )
+            return
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
@@ -422,10 +434,14 @@ class Taker:
                 op.dealer, op.item, op.rarity, op.value, op.reason, Negotiation(op.plan), int(body["id"]), tick
             )
 
-    def _desk_moves(self, run: _TickRun) -> list[tuple[DeskMove, dict[str, Any]]]:
+    def _desk_moves(self, run: _TickRun, *, held: bool = False) -> list[tuple[DeskMove, dict[str, Any]]]:
+        """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped
+        up; an open one is left as it is, and the tick does not count toward its tick limit."""
         out = []
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
+            if held and str(thread.get("status") or "open") == "open":
+                continue
             conv.ticks += 1
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread, run.snap.clock.tick)
             if dm.status != "open":
@@ -477,16 +493,17 @@ class Taker:
 
     def _desk_send(self, run: _TickRun, dm: DeskMove, thread: dict[str, Any]) -> None:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
-        verdict_text = "allowed"
         if move.kind == "bid":
-            verdict = check(
-                Action("bid", conv.item, conv.rarity, move.price),
-                self._ctx(run, skip_thread=conv.thread_id),
-                self.rules,
-            )
-            verdict_text = str(verdict)
-            if not verdict.allowed:
-                move = Move("walk", reason=f"guardrail: {verdict}")
+            action = Action("bid", conv.item, conv.rarity, move.price)
+        else:  # a walk closes the thread: only the kill switch can refuse it
+            action = Action("close_thread", str(conv.thread_id))
+        verdict = check(action, self._ctx(run, skip_thread=conv.thread_id), self.rules)
+        verdict_text = str(verdict)
+        if verdict.halted:  # the kill switch went on this tick: hold, the thread stays open
+            self.log(f"tick {tick} taker: kill switch on: holding {move.kind} on thread {conv.thread_id} ({verdict})")
+            return
+        if not verdict.allowed:
+            move = Move("walk", reason=f"guardrail: {verdict}")
         inputs = {
             "dealer": conv.dealer,
             "thread": conv.thread_id,
@@ -654,15 +671,18 @@ class Taker:
     def _withdraw(self, run: _TickRun, bid: OpenOffer) -> None:
         """A cheaper ask filled the card our bid was waiting for: withdraw the bid, refund its spend."""
         clock = run.snap.clock
+        verdict = check(Action("cancel", str(bid.id)), self._ctx(run), self.rules)
         did = self.rec.decide(
             clock.tick,
             "cancel_bid",
-            f"cancel our bid {bid.id} for {bid.ref}: bought it cheaper",
+            f"cancel our bid {bid.id} for {bid.ref}: bought it cheaper · guardrails {verdict}",
             inputs={"offer_id": bid.id, "ref": bid.ref, "price": bid.price},
             reason="replaced",
-            guardrail="allowed",
-            chosen=True,
-            status="approved",
+            guardrail=str(verdict),
+            chosen=verdict.allowed,
+            status="approved" if verdict.allowed else "rejected",
         )
+        if not verdict.allowed:  # the kill switch holds: the bid stays open and its spend stays counted
+            return
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
             self.ledger.record("spend", clock.tick, clock.t_hours, -bid.price, bid.ref)

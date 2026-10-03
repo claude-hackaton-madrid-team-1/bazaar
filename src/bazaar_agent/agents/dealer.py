@@ -12,7 +12,7 @@ Words persuade, structure binds: we read only the structured offers, never the d
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -207,6 +207,7 @@ Advisor = Callable[[Negotiation, int | None, bool], str | None]
 Guard = Callable[[Move], str | None]  # returns a deny reason, or None when the move is allowed
 Reserve = Callable[[Move, Any], bool]  # (accept, the clock it is sent on) → True when the team's accept slot is ours
 DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a deal settles
+KillSwitch = Callable[[], Sequence[str]]  # why every write is refused right now (empty: off)
 
 
 def apply_advice(move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None) -> Move:
@@ -307,12 +308,17 @@ def negotiate(
     observer: Observer | None = None,
     words_fn: WordsFn = template_words,
     reserve: Reserve | None = None,
+    kill_switch: KillSwitch | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
     always the structured `price` of the message, set here. `reserve` claims the team's accept slot on
     the same tick the accept is sent; a slot already taken means try next tick, never walk.
+
+    `kill_switch` on means HOLD: reads go on, nothing is sent (no bid, accept, walk or close), the thread
+    stays open, and a held tick does not count toward `max_ticks`, so the negotiation resumes where it
+    was when the switch goes off. Any other guard denial still turns the move into a walk.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -326,7 +332,13 @@ def negotiate(
     tid = int(opened["id"])
     obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
-    state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
+    state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "held": 0, "accepted": False}
+
+    def holding(when: str) -> bool:
+        stops = kill_switch() if kill_switch is not None else ()
+        if stops:
+            log(f"{when}: kill switch on: holding, nothing sent, thread {tid} stays open ({'; '.join(stops)})")
+        return bool(stops)
 
     def on_tick(clock: Clock) -> None:
         if state["status"] != "open":
@@ -341,6 +353,9 @@ def negotiate(
                 state["price"] = state["price"] or (neg.bids[-1] if neg.bids else None)
                 if on_deal is not None and state["price"] is not None:
                     on_deal(int(state["price"]), clock.tick, clock.t_hours)
+            return
+        if holding(f"tick {clock.tick}"):
+            state["held"] += 1  # a held tick does not count toward max_ticks
             return
         if state["accepted"]:
             log(f"tick {clock.tick}: accepted, waiting for settlement")
@@ -364,9 +379,13 @@ def negotiate(
         if guard is not None and move.kind in ("accept", "bid"):
             denied = guard(move)
             obs.guardrail(move, denied)
+            if denied and holding(f"tick {clock.tick}"):  # the switch went on mid-tick: hold, never walk
+                return
             if denied:
                 log(f"tick {clock.tick}: GUARDRAIL denied {move.kind} {move.price}: {denied} → walk")
                 move = Move("walk", reason=f"guardrail: {denied}")
+        if move.kind == "walk" and holding(f"tick {clock.tick}"):
+            return
         send_by = 0.0  # monotonic deadline for the send, set when the clock is re-read
         if move.kind in ("accept", "bid"):
             fresh = Clock.model_validate(client.clock())  # the thread read and Jev may have used the tick
@@ -399,13 +418,20 @@ def negotiate(
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
 
     tick = obs.wrap_tick(on_tick)
-    run_per_tick(client.clock, tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)
+    run_per_tick(
+        client.clock,
+        tick,
+        stop=lambda: state["status"] != "open" or state["ticks"] - state["held"] >= max_ticks,
+        sleep=sleep,
+    )
     if state["status"] == "open" and state["accepted"]:
         # Our accept settles on the next tick: wait for it, never close an accepted deal as a timeout.
         run_per_tick(client.clock, tick, max_ticks=2, stop=lambda: state["status"] != "open", sleep=sleep)
         if state["status"] == "open":
             state["status"] = "accepted_pending"
-    if state["status"] == "open":
+    if state["status"] == "open" and holding(f"after {max_ticks} ticks"):
+        state["status"] = "held"  # the kill switch is on: the thread stays open, never closed
+    elif state["status"] == "open":
         client.close_thread(tid)
         state["status"] = "timeout"
     outcome = Outcome(tid, str(state["status"]), state["price"], tuple(neg.bids), int(state["ticks"]))

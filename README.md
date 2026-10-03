@@ -268,8 +268,11 @@ dropped, not sent late. A `429` means wait for the tick it names.
 [`GUARDRAILS.md`](GUARDRAILS.md) holds every limit: cash floor, spend per game hour, price caps
 per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, the kill switch.
 `uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
-`touch .local/PAUSE` stops every write from every agent that reads that `.local/` (this checkout; each
-Railway service has its own: "Pause writes" under "Production on Railway").
+`touch .local/PAUSE` (or `trading_enabled = false`, read every tick) holds every agent that reads that
+`.local/` (this checkout; each Railway service has its own: "Pause writes" under "Production on Railway"):
+reads go on, nothing is sent, not even cancels or closes, and open offers and threads stay as they are. To
+empty the book, pause and then `uv run bazaar flatten --live` (`--threads` also closes our threads): the one
+operator write that goes out while the kill switch is on.
 
 ## Strategy (what to do next, ranked)
 
@@ -921,7 +924,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
-| `uv run bazaar sell cancel` | Withdraw one of our open offers. |
+| `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
+| `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
