@@ -248,8 +248,10 @@ def trade_plan(
     ),
     out: str = typer.Option(".local/night", help="Where trade-plan.json and trade-plan.md are written"),
 ) -> None:
-    """Dry-run trade plan for the next opening: listings and direct proposals priced on the rival affinity
-    map, every one with surplus for us, no counterparty above `--share` of the planned volume. Sends nothing."""
+    """Dry-run trade plan for the next opening, fair by construction; sends nothing.
+
+    Listings and direct proposals priced on the rival affinity map, every one with surplus for us, no
+    counterparty above `--share` of the planned volume, checked through the guardrails."""
     from pathlib import Path
 
     from bazaar_agent import affinity as af
