@@ -32,7 +32,7 @@ from bazaar_agent.agents.duelist import DuelMove, duel_action, duel_id, duel_mov
 
 STYLES = ("linear", "convex", "oneshot", "titfortat", "noshow", "simbot")
 ROBUSTNESS = ("late", "stubborn")  # reported apart, outside the go/no-go: v2's worst cases
-EXPLOITERS = ("squeezer", "inferrer")  # B11: they read our limit and offer 1 P inside it at the end
+EXPLOITERS = ("oracle_squeezer", "curve_inferrer")  # B11 (names as W2a's PR #97 where they match)
 SQUEEZE = {3: 0.0, 2: 0.05, 1: 0.15}  # ticks left -> the exploiter's margin for us, as a share of its pie estimate
 OUR_FORMULA = (0.6, 0.05)  # the anchor and floor an inferrer assumes we use (today's GUARDRAILS.md defaults)
 ALIASES = ("Rival Azul", "Rival Verde", "Rival Oro", "Rival Rojo", "Rival Noche", "Rival Plata")
@@ -172,9 +172,10 @@ class Rival:
     # ---------------------------------------------------------------- exploiters (B11)
 
     def estimate(self, tick: int) -> int | None:
-        """Our limit as the exploiter sees it. `squeezer`: exactly (a mirror-duel learner: our limit here was its own
-        in the role-swapped duel). `inferrer`: our latest priced offer, inverted through today's concession curve."""
-        if self.s.style == "squeezer":
+        """Our limit as the exploiter sees it. `oracle_squeezer`: exactly (a mirror-duel learner: our limit here was
+        its own in the role-swapped duel). `curve_inferrer`: our latest priced offer, inverted through today's
+        concession curve."""
+        if self.s.style == "oracle_squeezer":
             return self.s.limit
         ours = [m for m in self.messages if m.get("from") == "you" and m.get("price") is not None]
         if not ours:

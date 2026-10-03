@@ -236,6 +236,10 @@ def test_a_squeeze_is_refused_before_the_last_ticks_and_our_last_offer_stays_fai
     guarded = V2Params(min_share=0.3, endgame_ticks=1)  # threshold 0.3 × max(1, 0.4 × 100) = 12 P
     move = duel_plan(squeeze, 110, 100, guarded).move
     assert (move.kind, move.price) == ("offer", 112)  # refuse; the rival can still take 112 at its last move
+    early = duel(rival=[(100, 60), (108, 101)], ours=[(100, 160)])
+    assert (
+        duel_plan(early, 109, 100, guarded).move.kind == "hold"
+    )  # one fair offer (at D − 2), not two: each is a round
     assert duel_plan(squeeze, 111, 100, guarded).move.kind == "accept"  # the true last tick: anything > 0
     fair = duel(rival=[(100, 60), (109, 130)], ours=[(100, 160)])
     assert duel_plan(fair, 110, 100, guarded).move.kind == "accept"  # 30 P is no squeeze

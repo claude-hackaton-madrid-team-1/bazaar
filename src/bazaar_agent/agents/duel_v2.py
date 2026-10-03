@@ -295,7 +295,8 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
     acceptable, on_table = _acceptable(duel, signed)
     threshold = squeeze_threshold(duel, history, params)
-    if acceptable is not None and on_table < threshold and left > params.endgame_ticks:
+    squeezed = acceptable is not None and on_table < threshold and left > params.endgame_ticks
+    if squeezed:
         acceptable, on_table = None, 0.0  # a squeeze (B11): wait; our last offer leaves the rival a fair way out
     if acceptable is not None:
         pace = recent_pace(history, tick, params.stall_ticks)
@@ -338,6 +339,8 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         return send(target, "the rival has not priced: our offers cost no round yet")
     if quiet(duel, tick, params.stall_ticks) and ours < params.free_offers and left > params.endgame_ticks + 1:
         return send(target, "the rival went quiet: step down for free")
+    if squeezed and left > 2:  # one fair offer at D − 2 is enough: against a squeezer each one costs a round
+        return wait
     if 2 <= left <= params.accept_margin + 2:  # the rival's last chances to take a deal from us: no deal scores 0
         # Said twice (D − 3 and D − 2) so it is still the rival's freshest offer in its endgame, whichever of us
         # moves first within a tick; it costs a round only in a duel that would otherwise score nothing. Never
