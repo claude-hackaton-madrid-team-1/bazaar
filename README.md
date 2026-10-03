@@ -1272,6 +1272,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
+| [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1334,6 +1335,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
 - [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
 - [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
 - [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
@@ -1341,7 +1343,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
 - [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
-- [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 
 <!-- BAZAAR:STATUS:END -->
 

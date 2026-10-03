@@ -348,3 +348,11 @@ create table if not exists leaderboard_snapshots (
   negotiating numeric, market numeric, level int, pages int, deals int, venue text,
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
+
+-- Prompt-injection attempts (`injection_log.py`): every counterparty text whose words carry an injection shape
+-- (`llm.chooser.injection_flags`), with the RAW text verbatim as the proof (our own secrets scrubbed only) and
+-- the ids that let anyone check it against the game (`proof`: the feed event, thread or duel endpoint). A record,
+-- never a report: nothing here is sent to the game. `severity` 'attempt' needs a strong shape (an override, a
+-- role tag or role play, an asset grab, hidden unicode); 'weak' is JSON, a URL or a priced verb alone. Ids that do
+-- not apply are 0, so the natural key dedupes. The same statement as injection_log.DDL.
+create table if not exists injection_attempts (id bigserial primary key, world text not null default 'real', tick int, source text not null check (source in ('feed','team_thread','duel','dealer_thread','offer_text')), event_id bigint not null default 0, thread_id bigint not null default 0, duel_id bigint not null default 0, message_id bigint not null default 0, from_team text, to_us bool not null default false, tags text[] not null, severity text not null check (severity in ('attempt','weak')), raw text not null, normalised text not null, our_response text not null, proof text not null, seen_at timestamptz not null default now(), unique (world, source, event_id, thread_id, duel_id, message_id, tags));

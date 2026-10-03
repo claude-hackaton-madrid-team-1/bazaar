@@ -111,6 +111,7 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
+from bazaar_agent.injection_log import InjectionLog, from_thread
 from bazaar_agent.intel import book_values, dealer_threads, listed_makers, settled_volume
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.curves import curve_stats
@@ -490,6 +491,7 @@ class Taker:
         personas: PersonaBook | None = None,
         strategy_gate: StrategyGate | None = None,
         strategy_jev: AskFn | None = None,
+        injection_log: InjectionLog | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.swap_jev = swap_jev  # Jev `team_swap_worth_it`: the team desk sends a swap only on its decided yes
@@ -503,6 +505,8 @@ class Taker:
         self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
+        self.injection_log = injection_log  # injection attempts in the words we read, written after the sends
+        self._inj_us: str | None = None  # our team id from this tick's snapshot (our own words are never recorded)
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
         self.cards = cards  # the catalog diffed each tick: new releases rank up (no request; logged and stored after)
         self.news = news  # Radio Rastro + the schedule: logged and stored after the sends; no behaviour change
@@ -570,6 +574,7 @@ class Taker:
                 parallel=self.rules.parallel_reads,
                 extra={"threads": lambda: self.team.my_threads("open")},
             )
+            self._inj_us = snap.us
             threads = [t for t in snap.extra["threads"].get("threads") or [] if isinstance(t, dict)]
             ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
             self._tick(snap, threads, window)
@@ -589,6 +594,7 @@ class Taker:
             self.learner.flush()
         if self.thread_store is not None:
             self.thread_store.flush(tick)
+        self._record_injections(tick)
         if self.bluff is not None:
             self.bluff.flush()
         if self.news is not None and self._news_view is not None and self._news_view[0] == tick:
@@ -617,6 +623,22 @@ class Taker:
         if self.thread_store is not None:
             tactics = getattr(conv, "tactics", None)  # N16: message id -> tactic, when the desk records one
             self.thread_store.saw(thread, snap.us, snap.clock.tick, tactics if isinstance(tactics, dict) else None)
+        if self.injection_log is not None and snap.us:  # buffered only: written after the sends
+            self.injection_log.note(from_thread(thread, snap.us, "dealer_thread", snap.clock.tick))
+
+    def _record_injections(self, tick: int) -> None:
+        """After the sends: the injection attempts in this tick's feed window and our team threads (no request;
+        the words were already read), then one bounded write. A failure only logs."""
+        log, us = self.injection_log, self._inj_us
+        if log is None or not us:
+            return
+        try:
+            log.note_feed(getattr(self.feed, "last_window", ()), us)
+            for payload in self.team_desk.payloads():
+                log.note(from_thread(payload, us, "team_thread", tick))
+        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+            self.log(f"tick {tick} taker: injection scan failed ({type(e).__name__})")
+        log.flush(tick)
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock

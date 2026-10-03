@@ -1058,3 +1058,11 @@ events are 10-12 while our official value of a missing RET common is 7 (LAT 5), 
 range; the SG1 ladder probe plans nothing until fills drop or a card's official value rises. Strategy gates on the
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
+
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
