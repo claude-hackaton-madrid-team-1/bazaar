@@ -1173,6 +1173,31 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - Agent contract for every AI tool: [`AGENTS.md`](AGENTS.md) (generated from `.ai/context.md`)
 - How the agent harness works: [`docs/agent-harness.md`](docs/agent-harness.md)
 
+## Before you merge to main
+
+A merge to `main` redeploys `bazaar-duels` (and taker, maker, MCP) on Railway, and a duel left unanswered at its
+deadline scores 0 for both sides. Merge through the guard:
+
+```bash
+scripts/merge_safe.sh 123          # runs the guard, then `gh pr merge 123 --merge` only when it says SAFE
+uv run bazaar deploy-guard         # the guard alone: exit 0 safe, 1 not; --json for scripts
+```
+
+It reads `/api/clock`, our live `/api/duels` and `/api/schedule` (three GETs, no writes) and says DO NOT MERGE while
+a live duel of ours is within `deploy_guard_duel_ticks` (4) of its deadline, or a Market Test bench runs or any
+scheduled event starts within `deploy_guard_bench_ticks` (10) ticks (GUARDRAILS.md "Live guard"). It prints the next
+safe tick and window. A read it cannot make, or a payload it cannot parse, means DO NOT MERGE.
+
+### Circuit breakers and the live watchdog
+
+`uv run bazaar breaker list|trip <scope> --reason "..."|reset <scope>` stops one kind of write in every process
+(`duel_accept`, `team_swap`, `dealer_buy`, `board_accept`, `maker_post`, `dealer_sell`) from its next tick, through
+`guardrails.check()`; cancels and closes are never stopped. The table is read once per tick with a 1 s budget and
+fails OPEN (the ledger already fails closed). The taker's watchdog (`live_watchdog_enabled`) reads Postgres after its
+sends and trips a scope on a buy above value or a sell below it, a bad team swap, or price spam (timed trip); a duel
+about to lapse with an acceptable offer is logged CRITICAL and a refusal storm WARN, never tripped. Every trip is a
+WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
+
 ## Working as a team (humans and agents)
 
 - **Team memory is public:** `.ai/memory.md` is committed. Append findings, gotchas and build
