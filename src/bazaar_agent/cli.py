@@ -1188,6 +1188,12 @@ def plan_pages(
     trades_file: str | None = typer.Option(
         None, "--trades", help="W4's trade-plan.json: its trades' cash is committed and their cards not bought twice"
     ),
+    affinity_file: str | None = typer.Option(
+        None, "--affinity", help="W4's `bazaar affinity --json`: chasers (P(top set) ≥ 0.5) and holders' multipliers"
+    ),
+    multipliers_file: str | None = typer.Option(
+        None, "--holder-multipliers", help="JSON {team: {set: expected multiplier}}: what each holder wants"
+    ),
     chasers_file: str | None = typer.Option(
         None, "--chasers", help="JSON {set: [team, ...]}: who chases each set (e.g. from `bazaar affinity`)"
     ),
@@ -1213,6 +1219,7 @@ def plan_pages(
     schedule = read(schedule_file, "schedule")
     events = _jsonl_file(feed_file) if feed_file else _events(live)
     ladder = pg.ladder_slots_from(_json_file(ladder_file)) if ladder_file else []
+    chasers, expected = pg.from_affinity_map(_json_file(affinity_file)) if affinity_file else (None, None)
     plan = pg.build_plan(
         me,
         catalog,
@@ -1226,7 +1233,8 @@ def plan_pages(
         trades=pg.trades_from(_json_file(trades_file)) if trades_file else [],
         venue_later=venue_later,
         what_if_floor=what_if_floor,
-        chasers=_json_file(chasers_file),
+        chasers=_json_file(chasers_file) if chasers_file else chasers,
+        expected=_json_file(multipliers_file) if multipliers_file else expected,
     )
     if as_json:
         typer.echo(json.dumps(pg.plan_dict(plan), indent=2, ensure_ascii=False))

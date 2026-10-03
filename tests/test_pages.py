@@ -368,3 +368,21 @@ def test_a_dealer_still_inside_our_best_three_scores_and_each_pick_uses_one_of_i
     assert sorted(w.source.source for w in wants) == ["chato", "chato", "teams"]  # the third deal would not score
     assert wants[-1].completes and wants[-1].source.source == "teams"  # the team leg completes the page
     assert pages.scoring_dealers(EVENTS, "t10", DEALERS) == {"abuela": 3, "chato": 2}  # t10 dealt once with chato
+
+
+def test_w4_affinity_map_gives_chasers_and_each_holders_expected_multiplier():
+    aff = {
+        "t07": {"p_top": {"LAV": 0.43, "LAT": 0.33}, "expected": {"LAV": 1.37, "LAT": 1.0}},
+        "t05": {"p_top": {"LAV": 0.78}, "expected": {"LAV": 1.53}},
+    }
+    chasers, expected = pages.from_affinity_map(aff)
+    assert chasers == {"LAV": ["t05"]}
+    assert expected["t07"]["LAV"] == 1.37
+    page = next(
+        p
+        for p in pages.page_economics(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES, chasers, expected)
+        if p.set_code == "LAV"
+    )
+    lav09 = by_source(missing(page, "LAV-09"), "teams")
+    assert lav09.sellers == ("t07",)  # 70 × 1.37 → 96, still below t05's 70 × 1.53 → 108
+    assert lav09.blocked == "max_price_rare 80 < team price 96"

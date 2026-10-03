@@ -26,6 +26,7 @@ from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.strategy import Card, Market, StrategyParams
 
 Channel = Literal["ladder", "trade"]
+Multipliers = Mapping[str, Mapping[str, float]]  # team -> set -> expected multiplier
 Verdict = Literal["finish", "blocked", "skip", "complete"]
 
 RASTRO_FEE_RATE = 0.05  # RULES.md: El Rastro charges 5 % plus 1 P per card
@@ -215,12 +216,17 @@ def dealer_sources(
     return out
 
 
-def reservation(m: Market, card: Card, team: str, paid: Mapping[str, int]) -> float:
-    """The least a holder plausibly sells for: what it paid, and at least the card's worth to it. Every team
-    holds the same multipliers (ours, shuffled): a team that chases the set holds the top one, any other
-    team is priced at their mean."""
+def reservation(
+    m: Market, card: Card, team: str, paid: Mapping[str, int], expected: Multipliers | None = None
+) -> float:
+    """The least a holder plausibly sells for: what it paid, and at least the card's worth to it. With
+    `expected` (team -> set -> expected multiplier, W4's affinity map) that is book × its expected multiplier.
+    Otherwise every team holds the same multipliers (ours, shuffled): a team that chases the set holds the
+    top one, any other team is priced at their mean."""
     mults = list(m.affinity.values()) or [1.0]
     mult = max(mults) if team in m.chasers.get(card.set_code, ()) else sum(mults) / len(mults)
+    if expected is not None and card.set_code in expected.get(team, {}):
+        mult = expected[team][card.set_code]
     return float(max(paid.get(team, 0), math.ceil(card.book * mult)))
 
 
@@ -231,6 +237,7 @@ def team_source(
     asks: Sequence[Ask],
     params: StrategyParams,
     rules: Guardrails,
+    expected: Multipliers | None = None,
 ) -> Source | None:
     """Another team on El Rastro, plus the fee. An open ask is a team willing to sell at its price. Without
     one, each likely holder is priced at the higher of the tape and its `reservation`, and the cheapest
@@ -259,7 +266,7 @@ def team_source(
         low = float(min(same)) if same else None
         price, basis, sellers = est.price, est.basis, holders
         if holders:
-            asking = {h: max(est.price, reservation(m, card, h, paid)) for h in holders}
+            asking = {h: max(est.price, reservation(m, card, h, paid, expected)) for h in holders}
             price = min(asking.values())
             sellers = tuple(h for h in holders if asking[h] == price)
             if price > est.price:
@@ -279,6 +286,19 @@ def team_source(
     elif not holders and not mine:
         note += ("; " if note else "") + "holder unknown: a public bid"
     return Source("teams", "trade", price + fee, low, f"{basis} + fee {fee}", top, sellers, blocked, note)
+
+
+def from_affinity_map(data: Mapping[str, Any], min_p: float = 0.5) -> tuple[dict[str, list[str]], dict[str, Any]]:
+    """W4's `bazaar affinity --json` ({team: {p_top: {set: p}, expected: {set: multiplier}}}) as (chasers:
+    set -> teams whose top set it is with probability ≥ `min_p`, expected: team -> set -> multiplier)."""
+    chasers: dict[str, list[str]] = defaultdict(list)
+    expected: dict[str, Any] = {}
+    for team, row in data.items():
+        for set_code, p in (row.get("p_top") or {}).items():
+            if p >= min_p:
+                chasers[set_code].append(team)
+        expected[team] = {k: float(v) for k, v in (row.get("expected") or {}).items()}
+    return dict(chasers), expected
 
 
 # ---------------------------------------------------------------- per card and per page
@@ -346,12 +366,13 @@ def card_economics(
     asks: Sequence[Ask],
     params: StrategyParams,
     rules: Guardrails,
+    expected: Multipliers | None = None,
 ) -> CardEconomics:
     aff = m.affinity.get(card.set_code, 1.0)
     share = strategy.bonus_shares(m, card.set_code).get(card.ref, 0.0) * params.page_bonus_weight
     value = card.book * aff
     sources: list[Source] = dealer_sources(m, card, value + share, table, params, rules)
-    team = team_source(m, card, value + share, asks, params, rules)
+    team = team_source(m, card, value + share, asks, params, rules, expected)
     if team is not None:
         sources.append(team)
     return CardEconomics(
@@ -433,9 +454,11 @@ def page_economics(
     params: StrategyParams,
     rules: Guardrails,
     chasers: Mapping[str, Sequence[str]] | None = None,
+    expected: Multipliers | None = None,
 ) -> list[PageEconomics]:
     """Every released page, best first: what is missing, from whom, at what price, and whether to finish it.
-    `chasers` (set -> teams) replaces the feed's top-set guess, e.g. with W4's affinity map."""
+    `chasers` (set -> teams) replaces the feed's top-set guess and `expected` (team -> set -> multiplier)
+    prices each holder, both e.g. from W4's affinity map."""
     m = refresh_minted(strategy.build_market(me, catalog, events, dealers), events, me.get("assets") or [])
     if chasers is not None:
         m = replace(m, chasers={k: tuple(v) for k, v in chasers.items()})
@@ -444,7 +467,9 @@ def page_economics(
     pages = []
     for set_code in m.released:
         page = strategy.page_cards(m, set_code)
-        missing = [card_economics(m, c, table, asks, params, rules) for c in page if m.held.get(c.ref, 0) == 0]
+        missing = [
+            card_economics(m, c, table, asks, params, rules, expected) for c in page if m.held.get(c.ref, 0) == 0
+        ]
         bonus = strategy.page_bonus_of(m, set_code) * params.page_bonus_weight
         verdict, why = page_verdict(missing, bonus)
         pages.append(
@@ -869,12 +894,13 @@ def build_plan(
     venue_later: int = 9,
     what_if_floor: int | None = None,
     chasers: Mapping[str, Sequence[str]] | None = None,
+    expected: Multipliers | None = None,
 ) -> PagePlan:
     """Pages, the buy order and the cash plan: the venue at the open, later, on Sunday or never (with W3's
     ladder slots and W4's trades as given), the no-venue plan with our planned sells, a consolidated plan
     (W3's best three only, then W4's trades, then pages), and the venue plans at a what-if cash floor."""
     dealers = list(dealers)
-    pages = page_economics(me, catalog, events, dealers, params, rules, chasers)
+    pages = page_economics(me, catalog, events, dealers, params, rules, chasers, expected)
     taken = {ref for t in trades for ref in t.refs_in}
     scoring = scoring_dealers(events, str(me.get("id") or ""), dealers, ladder)
     wants = buy_list(pages, params.min_buy_surplus, skip=taken, scoring=scoring)
