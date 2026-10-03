@@ -77,8 +77,19 @@ def finished_duels(env: dict[str, str]) -> list[dict[str, Any]]:
     return [d for d in json.loads(out.stdout or "{}").get("duels") or [] if isinstance(d, dict)]
 
 
+def mean_share(deals: list[dict[str, Any]], duels: int) -> float | None:
+    """Share of the pie after decay per duel, a no-deal counting 0 (the RULES.md duel score)."""
+    if not duels:
+        return None
+    kept = [
+        float(d["result"].get("share") or 0) * (1 - float(d.get("decay_per_round") or 0)) ** int(d.get("rounds") or 0)
+        for d in deals
+    ]
+    return round(sum(kept) / duels, 3)
+
+
 def summarize(duels: list[dict[str, Any]], duel_log: str, taker_log: str, ledger: Path) -> dict[str, Any]:
-    scored = [d for d in duels if isinstance(d.get("result"), dict) and not d["result"].get("practice")]
+    scored = [d for d in duels if isinstance(d.get("result"), dict)]  # practice included: it plays the same
     deals = [d for d in scored if d["status"] == "deal"]
     gains = [float(d["result"].get("your_gain") or 0) for d in deals]
     accepts = Counter()
@@ -94,7 +105,8 @@ def summarize(duels: list[dict[str, Any]], duel_log: str, taker_log: str, ledger
         "duels_scored": len(scored),
         "deals": len(deals),
         "deal_rate": round(len(deals) / len(scored), 3) if scored else None,
-        "points": round(sum(float(d["result"].get("points") or 0) for d in scored), 2),
+        "points_scored_sessions": round(sum(float(d["result"].get("points") or 0) for d in scored), 2),
+        "mean_share_per_duel": mean_share(deals, len(scored)),
         "mean_gain_per_deal": round(sum(gains) / len(gains), 2) if gains else None,
         "outside_limit": sum(1 for g in gains if g < 0),
         "two_issue_duels": sum(1 for d in scored if "days" in (d.get("issues") or [])),
@@ -122,10 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=PORT, help="must match the checkout's config.LOCAL_SIM_URL")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
-    env = agent_env()
-    preflight(env, args.port)
     work = args.out.with_suffix("")
+    if (work / "agent").exists():
+        raise SystemExit(f"{work / 'agent'} exists: every run starts from a fresh ledger, pick another --out")
     work.mkdir(parents=True, exist_ok=True)
+    env = agent_env() | {"BAZAAR_DATA_DIR": str(work / "agent")}  # this run's own ledger, latch and logs
+    preflight(env, args.port)
     sim_env = {k: v for k, v in os.environ.items() if not k.startswith("BAZAAR")} | {
         "SIM_TICK_SECONDS": str(args.tick_seconds),
         "SIM_DUEL_FIRST_TICK": "2",
@@ -163,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             if p.poll() is None:
                 p.terminate()
         sim.terminate()
-    ledger = ROOT / ".local" / "sim-client" / "ledger.jsonl"
+    ledger = work / "agent" / "ledger.jsonl"
     taker_log = (work / "taker.log").read_text() if (work / "taker.log").exists() else ""
     result = {
         "tick_seconds": args.tick_seconds,
