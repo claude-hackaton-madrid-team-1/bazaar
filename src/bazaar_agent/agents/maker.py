@@ -279,8 +279,6 @@ class Maker:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
-        if fresh := self.pages.new(snap.me):
-            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
         mine, total = our_open_offers(snap.offers, snap.us)
         self._lapsed_bids(snap, mine)
         stops = kill_switch(self.rules)
@@ -292,13 +290,15 @@ class Maker:
                 f"stay open): {'; '.join(stops)}"
             )
             return
+        if fresh := self.pages.new(snap.me):  # after the hold: a page seen while holding is said when we act
+            self.log(new_page_line(clock.tick, "maker", fresh, snap.me))
         hands_off = self.ledger.hands_off_ids()
         by_hand = [o for o in mine if o.id in hands_off]
         mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
         if self.notices is not None:
             self.notices.update(snap.events, snap.us)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
+        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules, snap.scan)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
             snap,

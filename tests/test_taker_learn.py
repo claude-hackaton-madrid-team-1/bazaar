@@ -133,7 +133,8 @@ def test_a_dry_run_skips_too_and_sends_nothing(tmp_path):
     team = FakeTeam()
     t, _ = taker(tmp_path, team, store, live=False)
     t.on_tick(clock())
-    assert team.sent == [] and [r["kind"] for r in rows(tmp_path)] == ["dealer_skip"]
+    dealer_rows = [r["kind"] for r in rows(tmp_path) if r["kind"] != "pack_open"]  # the fake /me's sealed pack
+    assert team.sent == [] and dealer_rows == ["dealer_skip"]
 
 
 def test_a_blocker_is_recorded_once_and_its_row_stays_private(tmp_path):

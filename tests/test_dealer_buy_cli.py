@@ -1,6 +1,8 @@
 """`bazaar dealer buy --live` guards every move with our OTHER open offers (the maker's board bids, the
 taker's dealer threads) and leaves out its own thread, whose bid the next move replaces (PR #72 review)."""
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
@@ -56,10 +58,12 @@ def dealer_buy(monkeypatch, tmp_path):
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
         # the committed file as it was with our venue off (Omar's 270 floor, no bond reserve): these cases are
         # about the cash our open offers promise, not the venue
-        venue_off = (
-            GUARDRAILS_FILE.read_text(encoding="utf-8")
-            .replace("`allow_venue_open` = true", "`allow_venue_open` = false")
-            .replace("`cash_floor` = 100", "`cash_floor` = 270")
+        venue_off = re.sub(
+            r"`cash_floor` = \d+",
+            "`cash_floor` = 270",
+            GUARDRAILS_FILE.read_text(encoding="utf-8").replace(
+                "`allow_venue_open` = true", "`allow_venue_open` = false"
+            ),
         )
         monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)

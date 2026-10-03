@@ -4,15 +4,26 @@ Each session gives every player team two duels on one item, once as seller (`you
 and once as buyer (a value). You see only your limit. The rival bot has its own, concedes toward it
 over the session's clock, and accepts an offer that beats where it would be next. A deal outside
 your limit loses points, no deal scores zero, and the deal's value shrinks with every round of
-talk. Even-numbered sessions negotiate price and delivery day (`your_days_weight`, P per day);
-a priced message there without `days` is `missing_days`. Session 1 is practice and does not score.
+talk: `rounds` is the fewer priced messages of the two sides, and a deal keeps (1 - decay) ** rounds of
+its value, as in the real practice payloads. Even-numbered sessions negotiate price and delivery day
+(`your_days_weight`, P per day); a priced message there without `days` is `missing_days`. Session 1 is
+practice and does not score.
+
+`SIM_DUEL_STYLES` (comma list of `duel_zoo.STYLES` and the exploiters `squeezer`, `oracle_squeezer`; default `sim`)
+gives each duel a rival drawn from the zoo, fixed per duel; `sim` is the bot below. `SIM_DUEL_DECAY` sets the decay
+per round (default 0.06). `SIM_DUEL_PAIRS` (1-6, default 1) gives each team that many seller/buyer pairs per
+session, all on one deadline (6 concurrent duels at 3).
 """
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
+import random
 from typing import Any
 
-from bazaar_sim import catalog, validate
+from bazaar_sim import catalog, duel_exploit, duel_zoo, validate
 from bazaar_sim.errors import SimError, invalid, not_found, wait_for_tick
 from bazaar_sim.models import Duel, DuelOffer
 from bazaar_sim.world import World
@@ -35,6 +46,76 @@ COUNTERS = (
     "I appreciate it. Let us try to close quickly: {p} P.",
 )
 ACCEPTS = ("Deal at {p} P. Pleasure doing business.",)
+STYLES_ENV, DECAY_ENV, PAIRS_ENV = "SIM_DUEL_STYLES", "SIM_DUEL_DECAY", "SIM_DUEL_PAIRS"
+EXPLOITERS = ("squeezer", "oracle_squeezer")  # duel_exploit's live-playable rivals (the mirror needs a pair memory)
+LIVE_STYLES = (*duel_zoo.STYLES, *EXPLOITERS)
+LIVE_RIVALS = {**duel_zoo.RIVALS, **{s: duel_exploit.RIVALS[s] for s in EXPLOITERS}}
+log = logging.getLogger(__name__)
+_warned: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    """Settings are read every tick: say what is wrong once, not once per duel per tick."""
+    if message not in _warned:
+        _warned.add(message)
+        log.warning(message)
+
+
+def styles() -> tuple[str, ...]:
+    """The rival styles duels draw from (`SIM_DUEL_STYLES`). Unset means `sim`; a bad value also means `sim`, with
+    a warning: this runs inside the tick, and an exception there would leave the tick half done."""
+    raw = [s.strip() for s in os.environ.get(STYLES_ENV, "").split(",") if s.strip()]
+    unknown = [s for s in raw if s not in LIVE_STYLES]
+    if unknown:
+        _warn_once(f"{STYLES_ENV}: unknown rival style {unknown} (one of {LIVE_STYLES}): using sim")
+        return ("sim",)
+    return tuple(raw) or ("sim",)
+
+
+def pairs() -> int:
+    """Seller/buyer duel pairs per team per session (`SIM_DUEL_PAIRS`, 1-6, default 1: two duels as before)."""
+    raw = os.environ.get(PAIRS_ENV)
+    try:
+        value = int(raw) if raw not in (None, "") else 1
+    except ValueError:
+        value = 0
+    if not 1 <= value <= 6:
+        _warn_once(f"{PAIRS_ENV}={raw!r} is not 1-6: using 1")
+        return 1
+    return value
+
+
+def decay() -> float:
+    """The decay per round (`SIM_DUEL_DECAY`, default 0.06); a value outside [0, 1) falls back to the default."""
+    raw = os.environ.get(DECAY_ENV)
+    try:
+        value = float(raw) if raw not in (None, "") else DECAY
+    except ValueError:
+        value = -1.0
+    if not 0 <= value < 1:
+        _warn_once(f"{DECAY_ENV}={raw!r} is not in [0, 1): using {DECAY}")
+        return DECAY
+    return value
+
+
+def _style_rng(w: World, duel: Duel) -> random.Random:
+    """Fixed per duel across ticks (`World.rng` changes every tick)."""
+    seed = f"{w.state.seed}:duel_style:{duel.duel}"
+    return random.Random(hashlib.sha256(seed.encode("utf-8")).hexdigest())
+
+
+def rival_style(w: World, duel: Duel) -> tuple[str, dict[str, float]]:
+    """The duel's rival style and its parameters, drawn per duel id from `SIM_DUEL_STYLES`. The draw is a pure
+    function of (seed, duel id, pool), recomputed each tick (no model field): change the pool between sessions,
+    not during one, or live duels switch rivals."""
+    pool = styles()
+    if pool == ("sim",):
+        return "sim", {}
+    rng = _style_rng(w, duel)
+    style = rng.choice(pool)
+    if style in EXPLOITERS:
+        return style, duel_exploit.exploit_params(style, rng)
+    return style, duel_zoo.style_params(style, rng)
 
 
 def on_tick(w: World) -> None:
@@ -52,12 +133,13 @@ def on_tick(w: World) -> None:
 def start_session(w: World) -> int:
     w.state.duel_session += 1
     session = w.state.duel_session
+    per_round = decay()
     two_issues = session % 2 == 0
     issues = ["price", "days"] if two_issues else ["price"]
     rng = w.rng("duels", session)
     players = [t for t in w.state.teams.values() if not t.bot]
     created = 0
-    for team in players:
+    for team, _ in ((t, i) for t in players for i in range(pairs())):  # each pair: one scenario, both roles
         item = rng.choice([c.name for c in catalog.cards().values()])
         cost = rng.randint(30, 110)
         value = cost + rng.randint(20, 80)
@@ -77,7 +159,7 @@ def start_session(w: World) -> int:
                 your_days_weight=weights[0],
                 rival_days_weight=weights[1],
                 deadline_tick=w.tick + w.config.duel_ticks,
-                decay_per_round=DECAY,
+                decay_per_round=per_round,
                 started_tick=w.tick,
                 practice=session == 1,
             )
@@ -91,7 +173,7 @@ def start_session(w: World) -> int:
             "duels": created,
             "rounds": 1,
             "duel_ticks": w.config.duel_ticks,
-            "decay": DECAY,
+            "decay": per_round,
             "issues": issues,
         },
     )
@@ -128,9 +210,9 @@ def say(w: World, team_id: str, did: int, body: dict[str, Any]) -> dict[str, Any
     days = int(days_raw) if days_raw is not None else 0
     if price is not None:
         duel.your_offer = DuelOffer(id=w.next_id("duel_offer"), price=price, days=days, tick=w.tick)
-        duel.rounds += 1
     message = {"tick": w.tick, "from": "you", "text": text, "price": price, "days": days_raw}
     duel.messages.append(message)
+    duel.rounds = rounds(duel)
     duel.last_message_tick = w.tick
     w.emit("duel.message", {"duel": did, **message}, scope=f"team:{team_id}", actor=team_id)
     return {"ok": True, "duel": did, "offer": duel.your_offer.model_dump() if duel.your_offer else None}
@@ -140,7 +222,10 @@ def accept(w: World, team_id: str, did: int) -> dict[str, Any]:
     duel = _team_duel(w, team_id, did)
     if duel.rival_offer is None:
         raise SimError("no_offer", f"the rival has no standing offer in duel {did}", 400)
-    w.use(team_id, f"duel_accept:{did}", 1, "one accept per duel per tick")
+    cap = w.limit("accepts_per_team_per_tick")  # RULES.md: one accept per team per tick, duels and market alike
+    if w.used(team_id, "accepts") >= cap:
+        raise wait_for_tick("accepts per tick", w.tick + 1)
+    w.use(team_id, "accepts", cap, "accepts per tick")  # `_team_duel` already refuses a duel accepted once
     duel.accepted, duel.accepted_tick = "team", w.tick
     return {"ok": True, "duel": did, "settles_tick": w.tick + 1}
 
@@ -182,6 +267,10 @@ def _tick_duel(w: World, duel: Duel) -> None:
         return
     if duel.accepted is not None:
         return
+    style, params = rival_style(w, duel)
+    if style != "sim":
+        _zoo_turn(w, duel, style, params)
+        return
     rng = w.rng("duel", duel.duel)
     target = _rival_price(w, duel)
     days = _rival_days(duel)
@@ -198,6 +287,41 @@ def _tick_duel(w: World, duel: Duel) -> None:
         lines = OPENERS if duel.rival_offer is None else COUNTERS
         duel.rival_offer = DuelOffer(id=w.next_id("duel_offer"), price=target, days=days, tick=w.tick)
         _rival_says(w, duel, rng.choice(lines).format(p=target), target, days)
+
+
+def _offer(raw: DuelOffer | None) -> duel_zoo.Offer | None:
+    return None if raw is None else duel_zoo.Offer(raw.price, raw.days, raw.tick)
+
+
+def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> None:
+    """A zoo rival's move: it sees only its own limit, the clock and the messages (`duel_zoo.RivalView`)."""
+    rng = w.rng("duel", duel.duel)
+    view = duel_zoo.RivalView(
+        tick=w.tick,
+        started_tick=duel.started_tick,
+        deadline_tick=duel.deadline_tick,
+        role="buyer" if duel.role == "seller" else "seller",
+        limit=duel.rival_limit,
+        days_weight=duel.rival_days_weight,
+        two_issues="days" in duel.issues,
+        decay=duel.decay_per_round,
+        params=params,
+        messages=tuple(duel.messages),  # our messages are "from": "you" here too (duel_zoo.US)
+        our_offer=_offer(duel.your_offer),
+        its_offer=_offer(duel.rival_offer),
+        rng=rng,
+        other_limit=duel.your_limit,
+    )
+    act = LIVE_RIVALS[style](view)
+    ours = duel.your_offer
+    if act.kind == "accept" and ours is not None:
+        duel.accepted, duel.accepted_tick = "rival", w.tick
+        _rival_says(w, duel, rng.choice(ACCEPTS).format(p=ours.price), ours.price, ours.days)
+    elif act.kind == "offer" and act.price is not None:
+        days = act.days if act.days is not None and "days" in duel.issues else 0
+        lines = OPENERS if duel.rival_offer is None else COUNTERS
+        duel.rival_offer = DuelOffer(id=w.next_id("duel_offer"), price=act.price, days=days, tick=w.tick)
+        _rival_says(w, duel, rng.choice(lines).format(p=act.price), act.price, days)
 
 
 def _rival_days(duel: Duel) -> int:
@@ -217,7 +341,15 @@ def _rival_says(w: World, duel: Duel, text: str, price: int, days: int) -> None:
         "days": days if "days" in duel.issues else None,
     }
     duel.messages.append(message)
+    duel.rounds = rounds(duel)
     w.emit("duel.message", {"duel": duel.duel, **message}, scope=f"team:{duel.team}", actor="duel")
+
+
+def rounds(duel: Duel) -> int:
+    """The real game's count (all 26 practice payloads): the fewer priced messages of the two sides."""
+    ours = sum(1 for m in duel.messages if m["from"] == "you" and m.get("price") is not None)
+    theirs = sum(1 for m in duel.messages if m["from"] != "you" and m.get("price") is not None)
+    return min(ours, theirs)
 
 
 def _close_deal(w: World, duel: Duel) -> None:
@@ -233,7 +365,7 @@ def _close(w: World, duel: Duel, status: str, offer: DuelOffer | None) -> None:
     if offer is not None:
         gain = _utility(duel, offer.price, offer.days, rival=False)
         share = gain / pie if pie else 0.0
-        decay = (1 - duel.decay_per_round) ** max(0, duel.rounds - 1)
+        decay = (1 - duel.decay_per_round) ** duel.rounds  # the real result: surplus × (1 - decay) ** rounds
         points = OUTSIDE_LIMIT_POINTS if gain < 0 else round(POINTS_PER_PIE * share * decay, 2)
         duel.price, duel.days = offer.price, offer.days if "days" in duel.issues else None
     duel.result = {

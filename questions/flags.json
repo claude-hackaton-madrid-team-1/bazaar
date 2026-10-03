@@ -1,0 +1,17 @@
+{
+ "about": "Bad-faith flags (S1). `POST /api/flags` scores when the flagged dealer message was bad faith and costs points when it was not. The flag rule is deterministic (agents/inspector.py: the structured offer binds a lesser item than the thread asked for, AND the words claim the better one). An honest dealer that discloses it is out of a card can read like a trick, so a flag may only go to a dealer a human opted in (GUARDRAILS.md flag_dealers) after checking its would-flag rows. Jev only decides whether the evidence justifies switching allow_flags on; a yes never sends a flag by itself.",
+ "questions": {
+  "enable_bad_faith_flags": {
+   "type": "noul",
+   "stakes": "design",
+   "instructions": {
+    "question": "Should we switch bad-faith flags on now, given the flag rule replayed over the captured feed: `would_flag_on_flag_dealers`, `flag_dealers`, `would_flag_trusted_dealers`, `would_flag_untrusted_dealers`, `dealer_offers_inspected`, `clean` and `blocked`?",
+    "note": "`flag_dealers` lists the dealers a human checked and opted in; only they can ever be flagged, so `would_flag_on_flag_dealers` is the only count that can turn into a sent flag. A would-flag on an untrusted dealer that is NOT in `flag_dealers` may be an honest out-of-stock message and proves nothing. Trusted dealers (`trusted_dealers`) are honest by construction: a would-flag on them is a false positive of the rule. Each correct flag scores and each wrong one costs; at most `max_flags_sent` flags are ever sent."
+   },
+   "criteria": {
+    "true": "A human opted dealers in (`flag_dealers` is not empty), the rule fires on their offers (`would_flag_on_flag_dealers` > 0), and it never fired on the trusted dealers' many honest offers (`would_flag_trusted_dealers` = 0 over hundreds of offers).",
+    "false": "No dealer is opted in (`flag_dealers` is empty), or none of their offers would be flagged, or the rule fired on a trusted dealer's honest offer, or the sample is too small to trust. Would-flags on dealers nobody opted in never justify a yes."
+   }
+  }
+ }
+}
