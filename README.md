@@ -67,13 +67,12 @@ BAZAAR_SIM=1 uv run bazaar monitor --no-db                          # the live S
 BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another simulated team (sim-team1 ... 8)
 ```
 
-### Test on the simulator (before every merge)
+### Test on the simulator (optional)
 
-The whole team tests here before a PR merges, and CI does the same on every PR (the
-`sim-smoke` job: `uv run python scripts/sim_smoke.py`). It runs the same steps against a local
-simulator and fails the PR on any error, including an error a tick loop swallowed (`Traceback`,
-`tick loop:`) or a write the simulator refused (a ` refused ` line). It holds no secrets and cannot
-reach the network: children inherit only an allow-listed environment, never read the repo `.env`
+Run `uv run python scripts/sim_smoke.py` for an optional manual diagnostic against a local
+simulator. It exits on any error, including an error a tick loop swallowed (`Traceback`,
+`tick loop:`) or a write the simulator refused (a ` refused ` line). It is not a CI or merge gate.
+It holds no secrets and cannot reach the network: children inherit only an allow-listed environment, never read the repo `.env`
 (`BAZAAR_ENV_FILE` points at an empty file), and load `scripts/sim_guard/sitecustomize.py`, which
 raises on any non-loopback connection before a packet leaves (a dead proxy backs it up).
 
@@ -103,7 +102,7 @@ raises on any non-loopback connection before a packet leaves (a dead proxy backs
    SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve       # terminal 1: http://127.0.0.1:8765
    BAZAAR_SIM=local uv run bazaar status                                    # terminal 2: same commands, BAZAAR_SIM=local
    BAZAAR_SIM=local uv run bazaar agent taker --live --max-ticks 10
-   uv run python scripts/sim_smoke.py                                       # the CI gate, start to finish (~20 s)
+   uv run python scripts/sim_smoke.py                                       # optional manual diagnostic (~20 s)
    ```
 
    (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
@@ -192,8 +191,16 @@ uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgr
 uv run bazaar db tables                   # every table with its row count
 ```
 
-Tests: `uv run pytest` (the DB tests are skipped when Postgres is unreachable).
-Format: `uv run black src tests scripts` · Lint: `uv run ruff check . && uv run ruff format --check . && uv run black --check src tests scripts` · Types: `uv run mypy src`.
+Depot runs four PR checks in `.depot/workflows/tests.yml`:
+
+- Unit tests: `uv run pytest -m 'not integration'`.
+- Integration tests: `uv run pytest -m integration`, against an isolated Postgres 17 + pgvector service.
+- Formatter: `uv run black --check src tests scripts`.
+- Linter: `uv run ruff check src tests scripts`.
+
+Run all tests locally with `uv run pytest`; DB tests need reachable Postgres.
+Format locally with `uv run black src tests scripts`. Typechecking (`uv run mypy src`), coverage
+and generated-document checks remain local requirements. The simulator smoke is optional.
 
 ## Shared database (Railway)
 
@@ -1413,14 +1420,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] build-error — CI1 exposed three integration failures
+- [2026-10-04] gotcha — CI1 integration tests were skipped or misclassified
 - [2026-10-04] build-error: PR #263 merge verification separator
 - [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
 - [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
 - [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
 - [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
 - [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
-- [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
-- [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
 
 <!-- BAZAAR:STATUS:END -->
 

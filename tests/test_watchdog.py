@@ -368,6 +368,7 @@ def _decision(conn, tick, kind, inputs, status="done", chosen=None, dry_run=Fals
     )  # fmt: skip
 
 
+@pytest.mark.integration
 def test_run_trips_on_live_rows_only_and_never_twice(pg):
     from bazaar_agent import breakers
 
@@ -385,6 +386,7 @@ def test_run_trips_on_live_rows_only_and_never_twice(pg):
     assert not any(r.active(103) for r in breakers.rows(pg))
 
 
+@pytest.mark.integration
 def test_run_never_shortens_a_human_trip_and_spam_trips_lapse(pg):
     from bazaar_agent import breakers
 
@@ -397,6 +399,7 @@ def test_run_never_shortens_a_human_trip_and_spam_trips_lapse(pg):
     assert row.source == "manual" and row.until_tick is None  # the human's open-ended trip stands
 
 
+@pytest.mark.integration
 def test_run_survives_a_broken_query_and_rolls_back(pg):
     pg.execute("alter table executions rename column sdk_method to gone")  # never public.executions
     pg.commit()

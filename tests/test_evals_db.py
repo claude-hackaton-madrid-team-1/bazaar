@@ -217,7 +217,8 @@ def test_the_cli_imports_a_duel_runner_log(cli_db: None, tmp_path: Any) -> None:
     log = tmp_path / "duels.jsonl"
     log.write_text(json.dumps({"tick": 300, "response": {"duels": [{"duel": 777, "status": "live"}]}}) + "\n")
     out = CliRunner().invoke(evals_cli.evals_app, ["import-duels", str(log), str(tmp_path / "missing.jsonl")])
-    assert out.exit_code == 0 and "1 duel snapshot(s) upserted" in out.output and "no such file" in out.output
+    output = " ".join(out.output.split())
+    assert out.exit_code == 0 and "1 duel snapshot(s) upserted" in output and "no such file" in output
 
 
 def clock(tick: int) -> Any:

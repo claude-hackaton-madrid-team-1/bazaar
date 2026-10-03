@@ -124,6 +124,14 @@ enforced by the pre-commit hook) · README status block current (`python3
 scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Honest Implementation
 Report — no ✅ without pasted evidence (see "Honesty protocol" below).
 
+## CI
+Depot runs the PR test workflow in `.depot/workflows/tests.yml` with exactly four checks:
+unit tests (`pytest -m 'not integration'`), integration tests (`pytest -m integration` with an
+isolated Postgres 17 + pgvector service), Black formatter and Ruff linter. GitHub Actions does
+not duplicate the test workflow. Typechecking, coverage and generated-document checks above
+remain local requirements. `scripts/sim_smoke.py` is an optional manual diagnostic, never a CI
+or merge requirement. This supersedes older task entries that require sim smoke.
+
 ## Hard rules
 **Parallel by default (Omar, 2026-10-03, HARD RULE):** every worker splits its task and runs Claude Code
 sub-agents / parallel agents whenever the pieces can run independently (file-disjoint slices, research,

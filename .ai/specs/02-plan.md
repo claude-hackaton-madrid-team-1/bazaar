@@ -693,3 +693,13 @@ time-critical: do them directly, no team fan-out.
   `Success: no issues found in 206 source files`. All gates unset DATABASE_URL, BAZAAR_SIM and BAZAAR_ENV_FILE.
   Coverage measured 92%; its approvals setup lock timeout passed on isolated retry, as recorded in memory.
   Unverified: the full suite's skipped test and expected failures. Could-not-do: none for this fix.
+
+### CI1 — four Depot checks ([spec](CI1-spec.md))
+
+- Scope: unit tests, integration tests, Black formatter and Ruff linter in Depot; remove automated
+  sim smoke and duplicate GitHub test workflows. Keep the simulator script for optional manual use.
+- Step 1: split pytest suites with the `integration` marker and an isolated Postgres 17 + pgvector service.
+- Step 2: update the workflow and documentation in parallel, then regenerate agent docs.
+- Step 3: run the four checks, verify the workflow configuration and complete the CI1 evidence report.
+- Older sim-smoke acceptance entries above are historical; CI1 removes sim smoke as a merge requirement.
+- Status: implementation and verification in progress; evidence belongs in CI1-spec.md.

@@ -80,8 +80,9 @@ def test_the_second_reader_in_a_tick_answers_from_the_first_ones_snapshot(opener
 def test_the_stored_row_never_holds_the_broker_key(opener):
     game = Game()
     game.payload["starter_broker_key"] = "bk_live_SECRET_000"
-    reader(opener, game).me(clock(tick=TICK))
-    with SharedDb(opener).session() as conn:
+    taker = reader(opener, game)
+    taker.me(clock(tick=TICK))
+    with taker.shared.session() as conn:
         (me,) = conn.execute("select me from me_snapshots where team = 't01'").fetchone()
         assert "starter_broker_key" not in me and "bk_live_SECRET_000" not in str(me)
     assert "starter_broker_key" not in reader(opener, game, "maker").me(clock(tick=TICK)).me
@@ -92,9 +93,11 @@ def test_a_simulator_snapshot_never_answers_for_the_real_game(opener):
     sim = Holdings(game.me, SharedDb(opener), reader="taker", rules=Guardrails(), team="t01",
                    scope=Scope("sim:127.0.0.1:8765", False))  # fmt: skip
     sim.me(clock(tick=TICK))  # sim-team1 is t01 too, at the same tick number
-    real = reader(opener, game, "mcp").me(clock(tick=TICK))
+    assert sim.shared.call(lambda conn: None, timeout_s=5, queue_if_stuck=True)[0]
+    mcp = reader(opener, game, "mcp")
+    real = mcp.me(clock(tick=TICK))
     assert (real.source, real.why, game.calls) == ("live", "no snapshot this tick", 2)
-    with SharedDb(opener).session() as conn:
+    with mcp.shared.session() as conn:
         worlds = conn.execute("select world from me_snapshots order by world").fetchall()
     assert worlds == [("real",), ("sim:127.0.0.1:8765",)]
 
@@ -104,15 +107,17 @@ def test_a_simulator_in_a_shared_database_writes_no_world_less_table(opener):
     sim = Holdings(game.me, SharedDb(opener), reader="taker", rules=Guardrails(), team="t01",
                    scope=Scope("sim:127.0.0.1:8765", False))  # fmt: skip
     sim.me(clock(tick=TICK))
-    with SharedDb(opener).session() as conn:
+    # The live answer precedes its commit; the same worker's session waits for that commit.
+    with sim.shared.session() as conn:
         assert conn.execute("select count(*) from snapshots").fetchone() == (0,)
         assert conn.execute("select count(*) from me_snapshots").fetchone() == (1,)
 
 
 def test_a_tampered_row_is_never_a_decision_input(opener):
     game = Game()
-    reader(opener, game).me(clock(tick=TICK))
-    with SharedDb(opener).session() as conn:
+    taker = reader(opener, game)
+    taker.me(clock(tick=TICK))
+    with taker.shared.session() as conn:
         conn.execute("update me_snapshots set me = jsonb_set(me, '{cash}', '5000')")
     forged = reader(opener, game, "maker").me(clock(tick=TICK))
     assert (forged.source, forged.why, forged.me["cash"]) == ("live", "stored row does not match itself", ME["cash"])
