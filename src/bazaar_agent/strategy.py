@@ -58,6 +58,8 @@ class StrategyParams(BaseModel):
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
     dealer_mints_unminted: bool = False  # optional line: a dealer sells (mints) a card nobody holds yet
+    # The one exception to "all required": 0 keeps today's behaviour for every caller that predates it.
+    chaser_min_p: float = Field(default=0.0, ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -753,6 +755,28 @@ class Playbook:
     pack_slots: PackSlots | None = None  # set by gate_packs
 
 
+def map_chasers(
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    events: Sequence[intel.Event],
+    min_p: float,
+    fallback: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    """set -> the teams whose top set it is with probability at least `min_p`, from the rival affinity map
+    (`affinity.py`). When the map cannot be drawn (our multiplier count does not match the catalog's
+    sets), `fallback` (the team-flow chasers) stands."""
+    from bazaar_agent import affinity
+
+    sets = affinity.catalog_sets(catalog)
+    try:
+        amap = affinity.affinity_map(
+            events, sets, affinity.multipliers_from(me), catalog, exclude=[str(me.get("id") or "")]
+        )
+    except ValueError:
+        return fallback
+    return {s: tuple(sorted(c)) for s in sets if (c := amap.chasers(s, min_p))}
+
+
 def build_playbook(
     me: dict[str, Any],
     catalog: dict[str, Any],
@@ -762,6 +786,8 @@ def build_playbook(
     rules: Guardrails,
 ) -> Playbook:
     m = build_market(me, catalog, events, dealers)
+    if params.chaser_min_p > 0:
+        m = replace(m, chasers=map_chasers(me, catalog, events, params.chaser_min_p, m.chasers))
     buys, skipped = buy_moves(m, params, rules)
     quotas: dict[str, int] = {}
     for q in m.quotes:

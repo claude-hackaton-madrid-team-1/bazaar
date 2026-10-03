@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
-from bazaar_agent.guardrails import Ledger, LedgerStore, is_pack
+from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack
 from bazaar_agent.pgconn import RETRY_EVERY_S, DatabaseUrlError, Reconnector, Target, describe
 
 ACCEPT_LOCK = "bazaar_agent.ledger.accept"
@@ -148,6 +148,17 @@ class PgLedger:
         )
         return [str(item or "") for (item,) in rows]
 
+    def hands_off_ids(self) -> set[int]:
+        """Offer ids a person posted by hand (`guardrails.HANDS_OFF` listing rows), from every machine."""
+        rows = self._run(
+            "read",
+            lambda conn: conn.execute(
+                "select item from ledger where kind = 'listing' and item like %s", (HANDS_OFF + "%",)
+            ).fetchall(),
+        )
+        ids = (hands_off_id(str(item or "")) for (item,) in rows)
+        return {i for i in ids if i is not None}
+
     def count_in_tick(self, kind: str, tick: int) -> int:
         return self._one("select count(*) from ledger where kind = %s and tick = %s", (kind, tick))
 
@@ -223,6 +234,9 @@ class FallbackLedger:
 
     def accept_items(self, tick: int) -> list[str]:
         return self._use(lambda ledger: ledger.accept_items(tick))
+
+    def hands_off_ids(self) -> set[int]:
+        return self._use(lambda ledger: ledger.hands_off_ids())
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
