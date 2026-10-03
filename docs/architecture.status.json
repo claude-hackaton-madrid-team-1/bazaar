@@ -485,8 +485,8 @@
         },
         {
           "priority": "P1",
-          "status": "todo",
-          "text": "Dealer ladder: walk instead of paying the opening ask (#8, #9)",
+          "status": "done",
+          "text": "Dealer ladder: walk instead of paying the opening ask, reopen lower once (#8, #9; PR #72)",
           "owner": "Marius"
         }
       ]
