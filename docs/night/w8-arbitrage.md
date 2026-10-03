@@ -103,6 +103,7 @@ rounds up, so our cost estimate (8) was 1 P above the sim's charge (7): conserva
 - **Who pays the fee on a bid accept** is verified on the tape only for ask accepts (the accepting side pays). For
   the exit (accepting a bid) we assume the same and charge ourselves the fee. If the bid's maker pays instead, our
   proceeds are higher: the assumption errs on the safe side.
+- **Rate budget** (W5W6: burst NO-GO at the tick edge): with `arb_enabled` on, each arbitrage adds one board re-read before the buy and one before the exit, and a pending exit runs at the top of the tick (after the duel grace, up to 2 s). Weigh that before flipping.
 - Duplicate buys don't see a copy that is accepted but not yet settled (bounded by `dup_max_spend_per_hour`).
 - The exit uses the accept slot one tick after the buy; a duel that takes that slot delays it, up to 3 ticks.
 

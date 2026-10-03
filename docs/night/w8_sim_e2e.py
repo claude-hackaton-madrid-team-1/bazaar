@@ -34,6 +34,7 @@ with running_sim(QUIET, run_clock=False) as (url, sim):
     bid = market.offer_from_input(w, BUYER, {"venue": vid, "give": {"cash": BID}, "want": {"cards": [card.ref]}})
     print(f"setup: {card.ref} (asset {card.id}) ask {ASK} on rastro by {SELLER}, bid {BID} on {vid} by {BUYER}")
     team, public = Bazaar(url, "sim-team1", wait_on_tick=False, retries=0), PublicBazaar(url)
+    # cash_floor=0: a harness setting for the sim's 400 P start, never a GUARDRAILS.md value
     rules = Guardrails(arb_enabled=True, arb_min_net_spread=3, arb_max_inventory_p=60, cash_floor=0)
     tmp = Path(tempfile.mkdtemp())
     ledger = Ledger(tmp / "ledger.jsonl")
