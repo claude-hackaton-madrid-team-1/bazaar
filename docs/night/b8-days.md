@@ -24,13 +24,15 @@ PR #60 and v2 therefore value every day at the worst case (|weight| against us) 
   - `unknown`: null, simulator text, or ambiguous; off;
   - `conflict`: real payloads disagree; off for good.
 
-  - A finished real two-issue deal with days also counts (`scored_evidence`, W2b's review): its `result` shows how the game scored the days, and it disagrees with the text only as a `conflict`.
+  - The text must speak of "you", never of the other side (buyer, seller, rival...), with no negation (r1's review).
+  - A finished real two-issue deal with days also counts (`scored_evidence`, W2b's review): its `result` shows how the game scored the days. `duel run` reads `?done=true` only for v2 with `duel_days_auto`, after its sends, and keeps reading while the verdict is `signed`, so a misread text still meets the score as a `conflict`.
+  - Real evidence against the sign turns `duel_days_signed` off even when set by hand.
 
   The verdict persists in `.local/duels/days_sign.json`, merged and replaced atomically so `duel run` and the runtime never undo each other. `real_game` holds only for the official host.
 - **New guardrail `duel_days_auto`**, default false, so today's behaviour holds. When true, a `signed` verdict turns `duel_days_signed` on for the tick.
   - The policy (`V2Params`) and the guard (`duel_inside_limit`) read the same rules object, so they always agree (#113).
   - v1 keeps #60's worst case in the guard.
-- **`rival_days(duel)`** reads which end of 0–10 the rival prefers from its own offers. A 0 counts half: a rival may send 0 because it ignores days. It also gives a rough weight when the rival's price and days move together.
+- **`rival_days(duel)`** reads which end of 0–10 the rival prefers from its own offers. A 0 counts half: a rival may send 0 because it ignores days. It gives no weight estimate: a rival's price moves mix concession with days (r1).
 - **`choose_days` / `reprice` / `days_aware`** pick our day by joint weight and keep our value strictly inside our limit.
 - **Zoo**: days-blind rivals (`days_fixed`).
 
@@ -61,6 +63,8 @@ Mean P per duel; "outside" counts deals outside our true limit, out of 2,400. Ev
 4. **Choosing days by joint weight adds nothing measurable to v2** (26.47 vs 26.52). v2 mostly accepts the rival's offer, and when signed it already offers our own preferred end. `days_aware` stays available and is not wired.
 
 ## Caveats
+- **The latch is per machine.** On Railway, `duel run` and the runtime are separate services, and a redeploy re-arms the latch. There, set `duel_days_signed` by hand once a person has read the first real payload.
+- **The latch is not "only the first payload".** It waits for the first UNAMBIGUOUS real evidence, and a scored deal can latch it while `days_meaning` stays null. Marius should know both (r1).
 - **The real `days_meaning` wording is unknown.** The parser is deliberately narrow: anything it cannot tie to a direction stays `unknown`, the safe side.
 - **The zoo's rivals value days with the simulator's sign.** Real rivals' days behaviour is unseen: no real two-issue payload exists yet.
 - **One draw, n = 200.** The +10 % / −13 % gaps are an order of magnitude above the ~0.1 P seed noise measured for the zoo (W2a report).
