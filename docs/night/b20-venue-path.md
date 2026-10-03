@@ -2,6 +2,13 @@
 
 Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at 1696789 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
 
+> **As merged by #218 (BE1, Sat 3 Oct afternoon) — read this before the steps below.** Two switches are wired on
+> `bazaar-maker`: `BAZAAR_BENCH_POLICY` (`exact` default | `edge`) and `BAZAAR_BENCH_GUARD_MARGIN` (estimated P,
+> default 10; `none` = unguarded, #84 as it was). `BAZAAR_BENCH_CROSS` and `BAZAAR_BENCH_PRESET` are **not wired**: set,
+> the maker logs `IGNORED`, and no limit probe is ever sent. With `edge` the maker's start line is
+> `venue keeper: broker bench edge (guard margin 10 P)` (or `(unguarded, as #84)`), and the keeper's
+> `broker on for vNN (LIVE), bench ...` line repeats it. Proof and points tables: `scripts/bench_edge_proof.py`, PR #218.
+
 ## The premise needs one correction
 
 "No venue = 0" does not apply to us as written. From team venues' opening (+3 h), every team without a venue has a **free starter stall** (RULES.md "Your own market"). `/api/me` carries its broker key (`starter_broker_key`, the kit's `me()`), and the kit says the starter broker "earns what the free stall earns, half the bench points". So without opening anything we should already score the stall's level, 0.5, every session. That is 0.375 final points per Saturday session in W5's/B2's units (15 bench points × 0.40 ÷ 8 sessions × 0.5).
