@@ -2545,15 +2545,18 @@ def _run_agent(
         decisions.close()
 
 
-def _news_sentinel(public: Any, kw: dict[str, Any], settings: Any) -> Any:
-    """Radio Rastro and the schedule, read by the taker after its sends: stored in the feed reader's learnings
-    store (Postgres + memory) when it runs, else in memory only; logging and storage only (news.py)."""
+def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
+    """Radio Rastro and the schedule, read by the taker after its sends on its own keyless client (2 s, never
+    retried: a hung or rate-limited read costs one attempt, never the next tick): stored in the feed reader's
+    learnings store (Postgres + memory) when it runs, else in memory only; logging and storage only (news.py)."""
     from bazaar_agent.learn.store import LearningStore
-    from bazaar_agent.news import NewsSentinel
+    from bazaar_agent.news import READ_TIMEOUT_S, NewsSentinel
+    from bazaar_agent.sdk import PublicBazaar
 
     learner = kw.get("learner")
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
-    return NewsSentinel(public, store.record, kw["log"], settings.data_dir / "agents")
+    reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
+    return NewsSentinel(reader, store.record, kw["log"], settings.data_dir / "agents")
 
 
 @agent_app.command("taker")
@@ -2601,7 +2604,7 @@ def agent_taker(
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
-            news=_news_sentinel(public, kw, settings),
+            news=_news_sentinel(kw, settings),
             **kw,
         )
 

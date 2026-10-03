@@ -123,6 +123,7 @@ negotiates well.
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
+| N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -454,6 +455,22 @@ deals per level, and a sale to a dealer is a dealer deal. RULES.md "Dealers": de
 - Step 3 — `negotiate_sell` + CLI: guardrails on every ask and accept (with `sellable`), S1 gate, accept slot,
   kill switch, Recorder rows. · **Acceptance:** fake-dealer tests; private sim deal.
 - Step 4 — taker plan behind `dealer_sell_enabled` (default false). · ⬜ not started.
+
+### N19 — Pilar readiness + news sentinel (PR #182)
+Spec: the lead's brief (2026-10-03) and the live data it cites: `/api/dealers` (Pilar: `kind: "collector"`, sells only
+`sobre_oro` 420, buys uncommon/rare/epic, SAL/RET loved), `/api/levels` (Radio Rastro: "some items are true, some are
+rumours"), `/api/schedule` (the Salamanca fever `persona_patch`, game hours 9.15-11.15); RULES.md "Dealers" and the
+rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_sends`), `cli.py` (`_news_sentinel`),
+`learn/model.py` (kind `news`), `guardrails.py` + GUARDRAILS.md, `bazaar_sim/*` (Pilar), `tests/test_news.py`,
+`tests/test_pilar_readiness.py`.
+- Step 1 — sim Pilar gated like Chato (3 Chato deals or `SIM_PILAR_OPEN_TICKS`), bids book ×1.2 on SAL/RET.
+  · **Acceptance:** `tests/test_pilar_readiness.py`.
+- Step 2 — taker picks her up from `/api/dealers` + `/me.unlocked` each tick; her 420 P pack never actionable under
+  `max_price_pack`. · **Acceptance:** tests (no restart, no thread opened).
+- Step 3 — sentinel: `news.posted` from the feed; `/api/news` + `/api/schedule` at most once per 10 ticks on its own
+  keyless client (2 s timeout, no retries), after the sends; one learnings row per item; `market_events.json`.
+  · **Acceptance:** `tests/test_news.py`.
+- Step 4 — `active_signals` consumers in strategy/maker behind `news_signals_enabled`. · ⬜ not started.
 
 ## Parallel-work notes
 

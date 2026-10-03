@@ -132,10 +132,12 @@ def test_the_sentinel_stores_and_logs_each_item_once_and_reads_the_api_every_ten
 
 
 def test_a_failed_read_is_logged_once_and_never_raises(tmp_path):
-    s, stored, lines = sentinel(tmp_path, Public(fail=True))
+    public = Public(fail=True)
+    s, stored, lines = sentinel(tmp_path, public)
     assert [i.news_id for i in s.on_tick(400, [FEED_NEWS], CATALOG)] == ["news:2"]
     s.on_tick(410, [], CATALOG)
-    assert sum("read failed" in line for line in lines) == 2  # /api/news then /api/schedule, each said once
+    assert sum("read failed" in line for line in lines) == 1  # said once; /api/schedule not tried after it
+    assert public.calls == ["/api/news", "/api/news"]
     assert len(stored) == 1
 
 
@@ -177,3 +179,14 @@ def test_the_taker_runs_the_sentinel_after_its_sends(tmp_path):
     t.on_tick(clock())
     assert any("Atleti win 2-1" in line for line in lines) and news_public.calls == ["/api/news", "/api/schedule"]
     assert len(stored) == 5
+
+
+def test_the_cli_sentinel_reads_on_its_own_client_with_a_short_timeout_and_no_retries(tmp_path):
+    from types import SimpleNamespace
+
+    from bazaar_agent.cli import _news_sentinel
+
+    settings = SimpleNamespace(bazaar_url="http://127.0.0.1:9", data_dir=tmp_path)
+    s = _news_sentinel({"log": lambda line: None}, settings)
+    assert (s.public.timeout, s.public.retries, s.public.key) == (2.0, 0, "")
+    assert s.path == tmp_path / "agents" / EVENTS_FILE

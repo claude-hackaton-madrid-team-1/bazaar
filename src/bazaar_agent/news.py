@@ -26,6 +26,7 @@ from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.learn.model import Learning
 
 READ_EVERY_TICKS = 10
+READ_TIMEOUT_S = 2.0  # its own keyless client: a hung /api/news never holds the taker past this (no retries)
 EVENTS_FILE = "market_events.json"
 NEWS_CONFIDENCE = 0.5  # a Radio Rastro item may be a rumour: nothing tells which
 SCHEDULE_CONFIDENCE = 1.0  # the organisers' schedule happens
@@ -272,6 +273,7 @@ class NewsSentinel:
                 items += read()
             except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
                 self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
+                break  # the game is slow or refusing: the next read waits for the next window
         return items
 
     def _news(self) -> list[NewsItem]:
