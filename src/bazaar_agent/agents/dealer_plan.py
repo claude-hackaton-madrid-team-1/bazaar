@@ -1,0 +1,139 @@
+"""The per-dealer plan (N14a): what the taker bids one dealer for one item, built from recall.
+
+Inputs, all recalled and all numbers (never a dealer's words):
+- the learned ladder policy for (dealer, price class): a `learnings` row (kind `policy`) the outcome learner
+  writes (`learn.evolve`), applied as before: it only lowers, narrows or skips a ladder;
+- the dealer's curve for that class (`learn.curves.CurveStats`): patience, opening ask, a bid it ignored;
+- GUARDRAILS `dealer_final_lift`: how far above the rarity cap a dealer's FINAL may be taken (0 = today).
+Blockers (cooloff, quota, sold out, locks) are applied before this, in `Taker._unblocked`.
+
+The patience play. A dealer's final is its limit: when its patience runs out it names one final offer, and
+it walks if that is refused (RULES.md). When a final may close above our top bid, the ladder has to last
+until the final comes, with step 1 and at least `patience + PATIENCE_MARGIN` distinct bids up to the top. It
+never starts lower than a bid the dealer ignored or `MIN_OPEN_SHARE` of its opening ask. On Friday's feed,
+t03 used it on Chato's uncommons (start 13, step 1) and got finals of 28, 29 and 29; the teams that stepped
+by 3 paid 31-32. Our bids stay at or under the cap: only the final is taken above it.
+
+Every input that changed a number becomes a `Note`, so each `dealer_open` and `dealer_bid` row records which
+learning moved the bid (`changed_by`).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, replace
+
+from bazaar_agent.evals.dealers import price_class
+from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.learn.curves import CurveStats
+from bazaar_agent.learn.evolve import DEFAULT_PATIENCE, LadderPolicy
+from bazaar_agent.strategy import Move, dealer_command, final_reach
+
+__all__ = ["DealerPlan", "Note", "final_reach", "patience_ladder", "plan_dealer_buy"]
+
+PATIENCE_MARGIN = 2  # distinct bids beyond the dealer's patience before our top: the final comes first
+MIN_OPEN_SHARE = 0.4  # never open below this share of the dealer's opening ask (t03 opened 13 of 33: answered)
+MIN_FINAL_SHARE = 0.2  # a learned skip is lifted only when this share of the fills sits at or under final_max
+Ladder3 = tuple[int, int, int]  # (start, top, step), as `strategy.Move.ladder`
+
+
+@dataclass(frozen=True)
+class Note:
+    """One recalled input that changed a number of the plan."""
+
+    source: str  # "policy" | "curve" | "final_lift"
+    ref: str  # what was recalled, e.g. "learning policy chato card:uncommon @t150"
+    effect: str  # what it changed
+    text: str = ""  # the learning's own sentence (quoted data), when it has one
+
+    def __str__(self) -> str:
+        return f"{self.ref}: {self.effect}"
+
+
+@dataclass(frozen=True)
+class DealerPlan:
+    move: Move | None  # None: skip this buy (see `skip`)
+    final_max: int | None = None  # the most we take for the dealer's final; None = the top bid, as today
+    notes: tuple[Note, ...] = ()
+    skip: str | None = None
+
+    @property
+    def changed_by(self) -> list[str]:
+        return [str(n) for n in self.notes]
+
+    @property
+    def lessons(self) -> list[str]:
+        return [n.text for n in self.notes if n.text]
+
+
+def fmt(ladder: Ladder3) -> str:
+    start, top, step = ladder
+    return f"{start}→{top} step {step}"
+
+
+def patience_ladder(ladder: Ladder3, patience: float | None, opening: float | None, silent: int | None) -> Ladder3:
+    """A ladder that lasts until the dealer's final: step 1, `patience + PATIENCE_MARGIN` distinct bids up to the
+    top, never starting below a bid the dealer ignored or `MIN_OPEN_SHARE` of its opening ask, and never above
+    the start we already had (a plan only lowers a start)."""
+    start, top, _ = ladder
+    need = math.ceil(patience or DEFAULT_PATIENCE) + PATIENCE_MARGIN
+    floor = max(1, (silent + 1) if silent is not None else 1, math.ceil(opening * MIN_OPEN_SHARE) if opening else 1)
+    return (min(start, max(floor, top - (need - 1))), top, 1)
+
+
+def _policy_ref(policy: LadderPolicy) -> str:
+    return f"learning policy {policy.dealer} {policy.price_class} @t{policy.tick}"
+
+
+def _patience_ref(cls: str, mv: Move, curve: CurveStats | None, policy: LadderPolicy | None) -> tuple[str, float]:
+    """Where the patience comes from: the curve, else the policy, else the default."""
+    if curve is not None and curve.patience is not None:
+        opens = f", opens {curve.opening:g}" if curve.opening is not None else ""
+        return f"curve {mv.source} {cls} (final after ~{curve.patience:g} bids{opens})", curve.patience
+    if policy is not None:
+        return f"{_policy_ref(policy)} (final after ~{policy.patience:g} bids)", policy.patience
+    return f"default patience for {mv.source} ({DEFAULT_PATIENCE:g} bids)", DEFAULT_PATIENCE
+
+
+def plan_dealer_buy(
+    mv: Move, policy: LadderPolicy | None, curve: CurveStats | None, rules: Guardrails, min_surplus: float
+) -> DealerPlan:
+    """The strategy's dealer buy, evolved by its learned policy and, with `dealer_final_lift` on, by the patience
+    play. With the lift off and no policy, the move comes back unchanged (today's behaviour)."""
+    cls = price_class(mv.ref)
+    if mv.ladder is None or cls is None:
+        return DealerPlan(mv)
+    ladder, notes, reasons = mv.ladder, list[Note](), list[str]()
+    if policy is not None:
+        planned, why = policy.plan(ladder)
+        if planned is None:
+            final_max = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus)
+            if final_max is None or policy.deal_share(final_max) < MIN_FINAL_SHARE:
+                return DealerPlan(None, skip=why)
+            under = sum(1 for f in policy.fills if f <= final_max)
+            lifted = f"skip lifted: {under} of {len(policy.fills)} fills at or under the final cap {final_max}"
+            notes.append(Note("policy", _policy_ref(policy), lifted, policy.text()))
+        else:
+            if planned != ladder:
+                changed = f"ladder {fmt(ladder)} → {fmt(planned)}"
+                notes.append(Note("policy", _policy_ref(policy), changed, policy.text()))
+            ladder = planned
+            reasons.append(why)
+    final_max = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus)
+    if final_max is not None:
+        ref, patience = _patience_ref(cls, mv, curve, policy)
+        opening, silent = (curve.opening, curve.silent_below) if curve is not None else (None, None)
+        played = patience_ladder(ladder, patience, opening, silent)
+        if played != ladder:
+            notes.append(Note("curve", ref, f"ladder {fmt(ladder)} → {fmt(played)}"))
+            ladder = played
+        lift = f"dealer_final_lift {rules.dealer_final_lift:g}"
+        effect = f"take a final up to {final_max} (our bids stay at or under {ladder[1]})"
+        notes.append(Note("final_lift", lift, effect))
+        reasons.append(f"a final up to {final_max} ({lift})")
+    if ladder == mv.ladder and not reasons:
+        return DealerPlan(mv, final_max, tuple(notes))
+    start, top, step = ladder
+    command = dealer_command(mv.ref, mv.source, start, top, step)
+    evolved = replace(mv, ladder=ladder, limit=top, reason="; ".join([mv.reason, *reasons]), command=command)
+    return DealerPlan(evolved, final_max, tuple(notes))
