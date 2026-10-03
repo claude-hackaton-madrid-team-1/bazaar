@@ -194,3 +194,16 @@ def test_a_venue_named_next_to_a_starter_broker_key_is_the_free_stall(venue):
 def test_a_me_venue_marked_starter_false_is_ours_whatever_the_stall_key_says():
     me = {"venue": {"venue": "v09", "status": "open", "starter": False}, "starter_broker_key": "bk_" + "Stale0ne"}
     assert gr.runs_venue(me) is True
+
+
+@pytest.mark.parametrize("venue", ["s05", {"venue": "s05", "status": "open"}])
+def test_a_me_without_its_secrets_still_shows_the_free_stall(venue):
+    """Security review round 4, P1: `holdings.without_secrets` drops `starter_broker_key`; the marker it keeps
+    must still tell the stall apart from our venue, or the bond reserve drops and the opening is refused."""
+    from bazaar_agent.holdings import without_secrets
+
+    stripped = without_secrets({"cash": 400, "venue": venue, "starter_broker_key": "bk_" + "S7a11Only"})
+    assert "starter_broker_key" not in stripped and gr.runs_venue(stripped) is False
+    planned = gr.Guardrails(allow_venue_open=True, cash_floor=100, venue_bond_reserve=270)
+    c = gr.context_from(stripped, 400, 6.5, gr.Ledger(Path("/nonexistent/l.jsonl")), planned)
+    assert gr.effective_cash_floor(planned, c) == 370 and gr.check(gr.Action("venue_open"), c, planned).allowed

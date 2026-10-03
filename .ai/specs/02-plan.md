@@ -156,6 +156,21 @@ Files: `src/bazaar_agent/agents/ladder.py`, `src/bazaar_agent/intel/dealer_curve
   · **Acceptance:** decision log shows the verdict, and the policy's final choice, for each step.
 - Step 4 — Three negotiated deals. · **Acceptance:** settlements in the feed + unlock progress in `/api/dealers`.
 
+### N13 — Real-time holdings + card catalog in Postgres (spec: `N13-spec.md`)
+Files: `src/bazaar_agent/{holdings,catalog_db}.py`, `sql/schema.sql`, `sdk.py`, `agents/{runtime,taker,maker}.py`,
+`runtime/{backend,actions,tools,agents}.py`, `cli.py`, `tests/test_holdings{,_db}.py`
+- Step 1 — Schema: `me_snapshots`, `holdings_state`, the `cards` columns. · **Acceptance:** `init_schema` twice in a
+  scratch schema, columns listed.
+- Step 2 — `holdings.py`: freshness verdict, single-flight read, upsert, write tracker; `sdk.TrackedBazaar`.
+  · **Acceptance:** unit tests (no DB) + Postgres tests: stale tick, a send, a thread message, max age, after a deal,
+  two readers one call, two writers never backwards.
+- Step 3 — `catalog_db.py` + `CatalogSync` from the catalog the agents already read. · **Acceptance:** tests:
+  malformed cards skipped, release and every-N-ticks writes, no rollback.
+- Step 4 — Agents, MCP tools (`status`, `holdings`, `cards`), `bazaar status`. · **Acceptance:** tool test answers
+  from the DB with tick and age and no `/me` call; taker re-reads after a deal.
+- Step 5 — Simulator run, before vs after. · **Acceptance:** `GET /api/me` per tick counted server-side, pasted.
+- Step 6 — Docs, memory, architecture boxes; gate + `scripts/sim_smoke.py`; `/pr-review`.
+
 ### N5 (part 1) — Minimal Python Jev judge
 Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 - Step 1 — Verdict logic from recorded responses (noul yes/no/below threshold, choice, schema

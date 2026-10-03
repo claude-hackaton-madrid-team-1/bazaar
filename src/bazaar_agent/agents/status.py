@@ -225,6 +225,8 @@ class StatusHub:
             self._decisions.append(payload)
 
     def execution(self, row: dict[str, Any]) -> None:
+        if row.get("method") in PRIVATE_METHODS and row.get("error_code") is not None:
+            return  # a refused opening or match would tell rivals we tried and failed
         self._publish("agent.execution", public_execution(row))
 
     def _publish(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:

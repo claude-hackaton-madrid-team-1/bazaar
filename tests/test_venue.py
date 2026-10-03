@@ -2,6 +2,7 @@
 runs, and the broker key (saved 0600, never printed, only sent to the host it belongs to). No network."""
 
 import stat
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -89,17 +90,19 @@ class FakeConn:
         elif sql.startswith("insert into venue_broker_keys") and "do nothing" in sql:  # a venue without its key
             target, venue, tick = params
             self.store.setdefault((target, venue), ("", tick))
-        elif sql.startswith("insert into venue_broker_keys") and "''" in sql:  # the claim
-            target, claim, tick, stale = params
+        elif sql.startswith("insert into venue_broker_keys") and "returning venue" in sql:  # the claim
+            target, claim, owner, tick, stale, _ = params
             held = self.store.get((target, claim))
-            if held is None or held[1] < stale:
-                self.store[(target, claim)] = ("", tick)
+            if held is None or held[1] < stale or held[0] == owner:
+                self.store[(target, claim)] = (owner, tick)
                 self.last = (claim,)
         elif sql.startswith("insert into venue_broker_keys"):
             target, venue, key, tick = params
             self.store[(target, venue)] = (key, tick)
         elif sql.startswith("delete from venue_broker_keys"):
-            self.store.pop(tuple(params), None)
+            target, venue, owner = params
+            if self.store.get((target, venue), ("", 0))[0] == owner:
+                del self.store[(target, venue)]
         elif sql.startswith("select venue, broker_key"):
             target, claim, wanted, _ = params
             rows = [(v, k) for (t, v), (k, _) in self.store.items() if t == target and v != claim and k]
@@ -349,8 +352,22 @@ def test_one_postgres_blip_never_locks_the_vault_out_for_good(tmp_path):
 def test_a_release_inside_the_backoff_still_gives_the_claim_back(tmp_path):
     """Round-4 review P2: the second check failing starts the backoff; the release right after must not be
     skipped, or our own claim holds our next tries off for 20 ticks."""
-    store = {("", "_claim"): ("", 400)}
+    store = {}
     v = vault(tmp_path, lambda: FakeConn(store))
+    assert v.claim(400)
     v._skip_until = v.now() + vn.DB_RETRY_S  # just failed
     v.release()
     assert store == {}
+
+
+def test_a_process_gives_back_only_its_own_claim_and_renews_it():
+    """Security review round 4, P2/P3: a release (or a save) never deletes another process's live claim, and
+    our own claim never holds our next try off."""
+    store = {}
+    a = vault(Path("/nonexistent/a"), lambda: FakeConn(store))
+    b = vault(Path("/nonexistent/b"), lambda: FakeConn(store))
+    assert a.claim(400) and not b.claim(401)
+    b.release()
+    assert ("", "_claim") in store and store[("", "_claim")][0] == a.owner  # b cannot drop a's claim
+    assert a.claim(410)  # ours: renewed, not blocked
+    assert a.owner.startswith("claim-") and not a.owner.startswith(("bk_", "simbk-"))

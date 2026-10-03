@@ -43,6 +43,8 @@ class Guardrails(BaseModel):
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     block_buying_held_cards: bool = True
+    holdings_from_db: bool = True
+    holdings_max_age_s: float = Field(default=5.0, ge=0, le=60)
     max_accepts_per_tick: int = 1
     dealer_max_ticks_per_thread: int = 14
     jev_can_accept_early: bool = True
@@ -79,6 +81,8 @@ ENFORCED_BY: dict[str, str] = {
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "block_buying_held_cards": "guardrails.check (album from /me)",
+    "holdings_from_db": "holdings.Holdings.me",
+    "holdings_max_age_s": "holdings.Holdings.me (Postgres clock)",
     "max_accepts_per_tick": "guardrails.check + ledger.reserve_accept (shared, atomic)",
     "dealer_max_ticks_per_thread": "agents.dealer.negotiate",
     "jev_can_accept_early": "cli dealer buy → apply_advice; agents.duel_jev.choose",
@@ -291,6 +295,10 @@ class Context:
     has_venue: bool = False  # we run a venue we opened (open or closing), from /api/me `venue`
 
 
+# What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
+STARTER_STALL_MARKER = "has_starter_stall"
+
+
 def runs_venue(me: dict[str, Any]) -> bool:
     """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one:
     /me carries `starter_broker_key` while we have the stall (the kit's `Bazaar.me`), and opening our own
@@ -301,7 +309,7 @@ def runs_venue(me: dict[str, Any]) -> bool:
         return False
     if isinstance(venue, dict) and venue.get("starter") is False:  # said outright: ours, whatever the key says
         return str(venue.get("status") or "open") in ("open", "closing")
-    if me.get("starter_broker_key"):
+    if me.get("starter_broker_key") or me.get(STARTER_STALL_MARKER):  # live /me, or one without its secrets
         return False
     if isinstance(venue, str):
         return True

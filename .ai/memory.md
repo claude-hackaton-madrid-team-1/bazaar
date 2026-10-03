@@ -335,6 +335,69 @@ reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
 
+### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
+`holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
+the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
+thread message of ours this tick, younger than `holdings_max_age_s`), else read live. Counted server-side
+on a local simulator (8 s ticks, dry run, 10 ticks): `GET /api/me` 20 → 11. Live on the sim (20 ticks,
+7 dealer deals) 40 → 36, including 7 album-first re-reads after deals that main never made. Kill switch:
+`holdings_from_db = false` in GUARDRAILS.md. `bazaar status` prints `read: /me from db (tick, age, epoch)`.
+
+### [2026-10-03] gotcha — a /me snapshot can be stale without any send of ours
+A dealer may answer our bid and accept it inside the tick (it settles at once), and our accept settles at the
+next tick boundary. So the epoch (bumped by every send) is not enough: a tick with a thread message of ours
+is never served from the database, and every snapshot expires after 5 s. Postgres `now()` is the
+transaction start: freshness uses `clock_timestamp()`, or a reader that waited on the lock looks younger.
+
+### [2026-10-03] gotcha — another worker's simulator may own 127.0.0.1:8765
+`BAZAAR_SIM=local` hardcodes 8765, and a teammate's `bazaar-sim serve` may hold it. Never kill it: for a
+private run, patch `bazaar_agent.config.LOCAL_SIM_URL` in a wrapper (`config.LOCAL_SIM_URL = ...` before
+importing `bazaar_agent.cli`) and serve the sim elsewhere. `scripts/sim_smoke.py` refuses a busy 8765.
+
+### [2026-10-03] gotcha — parallel worktrees running `scripts/sim_smoke.py` collide on 127.0.0.1:8765
+Two smokes started together both see 8765 free; one sim fails to bind and that smoke's CLI steps talk to the
+OTHER worktree's simulator with the same `sim-team1` key (seen: `thread_exists: one open conversation per
+dealer` in the dealer-buy step). Not a code failure: rerun when `lsof -iTCP:8765 -sTCP:LISTEN` is empty.
+
+### [2026-10-03] build-error — a reset simulator world's rows hid the current tick from the holdings
+symptom: after a sim restart every `/me` read was `live (older than 5 s)` and the agents never shared one →
+root cause: the freshness query took the newest row with `tick >= current`, and the previous world's tick-19
+row (age minutes) won over the fresh tick-1 row → fix: match the reader's tick exactly
+(`test_a_row_from_a_reset_world_never_hides_the_current_tick`). It failed safe (live), never stale.
+
+### [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
+symptom: `read: /me live (team id not known yet)` on every run → root cause: the CLI process learns our team
+id from its own first `/me` and exits; nothing cached it → fix: a live read that names our team calls
+`identity.remember_team_id` (`.local/team_id`, per target), and a live read that disagrees corrects it.
+
+### [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
+symptom: in bazaar-mcp an `accept()` waited 2.8 s behind another thread's slow `/me`, and a first send waited
+15 s for `schema.sql`'s lock → root cause: the reader and the write tracker shared one connection and one
+lock held across HTTP, and the hook connected inline with `connect_ready` → fix: the tracker has its own
+connection (plain `db.connect`) opened by a background thread, a 0.2 s lock budget, and a lost bump sets
+`missed` (this process reads live; the next bump catches up). Also: the taker books an accept's spend
+BEFORE the `/me` re-read (a failed re-read once skipped the spend row), and snapshot rows carry their world.
+
+### [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
+pr-reviewer on #105: 27/27 replies to a team bid came one tick later, and 37/40 of those settlements landed
+at the boundary, before her message. A tick-start `/me` already sees the deal; the holdings' calm rule is
+conservative, not required.
+
+### [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
+symptom: behind a black-holed TCP proxy an `accept()` stayed blocked 20 s and a tick-start `/me` read 15 s,
+although the hook's lock wait was capped at 0.2 s → root cause: `statement_timeout` is server-side and TCP
+keepalives see a proxy that ACKs but never answers as alive; nothing bounded the client's wait → fix: every
+holdings Postgres call runs on a worker thread per connection (`SharedDb.call`), callers wait a deadline
+(send 0.2 s, read 5 s) and then go live; a stuck worker makes later reads skip the database at once.
+Second bug found by the test: the worker's starter took the lock the hung worker held (own lock now).
+
+### [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
+symptom: behind a proxy that black-holed the link right after `/me` returned, the tick-start read stayed
+blocked 20 s+ → root cause: the caller extended its wait with `done.wait()` (no timeout) once the worker had
+asked the game, and the worker then hung on the store/COMMIT → fix: a `Ticket` per read: the worker hands
+the game's answer to the caller BEFORE storing it, the caller waits at most `ME_BUDGET_S` (the SDK's own
+budget) for that answer, and a caller that gave up first cancels the job so it never asks the game.
+
 ### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
 On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
 identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the

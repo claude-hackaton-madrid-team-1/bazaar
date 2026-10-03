@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import secrets
 import tempfile
 import time
 from collections.abc import Callable
@@ -168,6 +169,7 @@ class KeyVault:
         self._conn: Any = None
         self._skip_until = 0.0
         self.now: Callable[[], float] = time.monotonic
+        self.owner = "claim-" + secrets.token_hex(8)  # whose opening claim it is: only we give ours back
 
     @classmethod
     def from_settings(cls, settings: Settings, connect: Callable[[], Any] | None = None) -> KeyVault:
@@ -232,15 +234,17 @@ class KeyVault:
 
     def claim(self, tick: int) -> bool:
         """Reserve the one opening for this process, atomically across processes (a deploy overlap, a laptop):
-        True when the claim is ours. A claim older than CLAIM_STALE_TICKS is taken over."""
+        True when the claim is ours. A claim older than CLAIM_STALE_TICKS is taken over; our own is renewed.
+        The claim row's key column holds this process's random owner id, never a broker key."""
         try:
             row = (
                 self._db()
                 .execute(
-                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
-                    "on conflict (target, venue) do update set opened_tick = excluded.opened_tick "
-                    "where venue_broker_keys.opened_tick < %s returning venue",
-                    (self.target, CLAIM, tick, tick - CLAIM_STALE_TICKS),
+                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, %s, %s) "
+                    "on conflict (target, venue) do update set opened_tick = excluded.opened_tick, "
+                    "broker_key = excluded.broker_key "
+                    "where venue_broker_keys.opened_tick < %s or venue_broker_keys.broker_key = %s returning venue",
+                    (self.target, CLAIM, self.owner, tick, tick - CLAIM_STALE_TICKS, self.owner),
                 )
                 .fetchone()
             )
@@ -269,7 +273,10 @@ class KeyVault:
         a claim left behind would hold our own next tries off for CLAIM_STALE_TICKS."""
         self._skip_until = 0.0
         try:
-            self._db().execute("delete from venue_broker_keys where target = %s and venue = %s", (self.target, CLAIM))
+            self._db().execute(
+                "delete from venue_broker_keys where target = %s and venue = %s and broker_key = %s",
+                (self.target, CLAIM, self.owner),
+            )
         except Exception as e:
             self._failed(e)
 
@@ -288,7 +295,10 @@ class KeyVault:
                     "opened_tick = excluded.opened_tick",
                     (self.target, venue, key, tick),
                 )
-                db.execute("delete from venue_broker_keys where target = %s and venue = %s", (self.target, CLAIM))
+                db.execute(
+                    "delete from venue_broker_keys where target = %s and venue = %s and broker_key = %s",
+                    (self.target, CLAIM, self.owner),
+                )
                 saved.append("postgres")
             except Exception as e:
                 self._failed(e)
@@ -373,9 +383,9 @@ def guarded_write(
 
 
 def may_have_landed(e: BazaarError) -> bool:
-    """A write the server may have carried out although we got no answer: no response, a 5xx, or a body that
-    is not JSON. Only a 4xx refusal is sure to have changed nothing."""
-    return not 400 <= e.status < 500
+    """A write the server may have carried out although we got no answer: no response, a 5xx, a 408 (a proxy
+    timing out after the server acted), or a body that is not JSON. Only another 4xx is sure to change nothing."""
+    return not 400 <= e.status < 500 or e.status == 408
 
 
 class AlreadyOpened(ConfigError):

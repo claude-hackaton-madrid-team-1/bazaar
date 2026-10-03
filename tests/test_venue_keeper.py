@@ -433,3 +433,17 @@ def test_no_answer_on_the_second_check_gives_the_claim_back_and_tries_again(tmp_
     later = snap(tick=410)
     k.on_tick(later.clock, later, window())
     assert len(team.opened) == 1
+
+
+def test_a_refused_opening_never_reaches_the_public_events_at_all(tmp_path):
+    hub = StatusHub("maker", True)
+    k = keeper(tmp_path, Team(refuse=BazaarError("locked", "", 403)), hub=hub)
+    k.on_tick(snap().clock, snap(), window())
+    assert not any("open_venue" in event for event in hub.replay())
+
+
+def test_a_408_may_have_opened_the_venue_so_the_claim_is_kept(tmp_path):
+    store = {}
+    k = keeper(tmp_path, Team(refuse=BazaarError("http_408", "", 408)), store=store)
+    k.on_tick(snap().clock, snap(), window())
+    assert ("", "_claim") in store and k.held_claim
