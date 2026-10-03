@@ -35,6 +35,8 @@ class RuntimeConfig(BaseModel):
     runtime_models: tuple[str, ...] = ("haiku-4-5", "sonnet-5-5", "opus-5-5", "gpt-6-1-sol")
     model_choice_cache_ticks: int = Field(default=5, ge=1, le=120)
     llm_words: bool = False
+    llm_read_feed: bool = False
+    read_feed_every_ticks: int = Field(default=10, ge=1, le=600)
     words_timeout_s: float = Field(default=2.5, gt=0, le=10)
     subscription_words_timeout_s: float = Field(default=6.0, gt=0, le=10)
     words_max_chars: int = Field(default=300, ge=40, le=1200)
