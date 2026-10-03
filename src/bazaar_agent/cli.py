@@ -21,6 +21,7 @@ from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
+from bazaar_agent.evals.model import EVERY_TICKS
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.learn import cli as learn_cli
@@ -51,6 +52,19 @@ console = Console()
 err_console = Console(stderr=True)
 
 LIVE_HELP = "Merge the live feed window into the captured history"
+
+
+def evals_default(asked: int | None, trading: bool) -> int:
+    """`--evals-every`, else every EVERY_TICKS ticks for a process that trades (live, or duel --play) and off
+    for a dry run: a laptop dry run must not write the team's scores."""
+    if asked is not None:
+        return asked
+    return EVERY_TICKS if trading else 0
+
+
+EVALS_EVERY_HELP = (
+    "Score this agent's settled decisions every N ticks in the background (default: 6 if it trades, else off)"
+)
 
 
 @app.callback()
@@ -320,6 +334,9 @@ def thread_cmd(
 # ---------------------------------------------------------------- dealers (writes: needs BAZAAR_KEY)
 
 
+DEALER_REOPENS = 1  # new threads after she held her opening ask (each with a lower first bid)
+
+
 @dealer_app.command("buy")
 def dealer_buy(
     item: str = typer.Argument(help="Card ref (LAV-03) or pack id (sobre_barrio)"),
@@ -330,9 +347,10 @@ def dealer_buy(
     live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
     jev: bool = typer.Option(False, help="Ask Jev negotiation_move each tick (advisory, inside the limit)"),
 ) -> None:
-    """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
+    """Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask."""
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.dealer import BidPlan, bid_schedule, negotiate, template_words
+    from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
@@ -344,54 +362,73 @@ def dealer_buy(
     if not live:
         schedule = bid_schedule(plan)
         console.print(
-            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}, accept any ask ≤ next bid, "
-            f"walk above {max_price}. Add --live to trade."
+            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}; take her ask only once she came down "
+            f"from her opening (≤ our next bid), counter below an opening ask, walk above {max_price}; if she "
+            f"holds her opening, walk and reopen once lower. Add --live to trade."
         )
         return
     settings = load_settings()
     client = team_client(settings)
     ledger = _ledger("dealer-buy")
+
+    def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
+        """/me + the shared ledger + every open offer of ours (the maker's bids, the taker's dealer threads),
+        except this command's own thread, whose bid the next move replaces."""
+        me = client.me()
+        offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
+        base = gr.context_from(me, c.tick, c.t_hours, ledger, rules)
+        return committed_context(base, open_commitments(offers, str(me.get("id") or "")))
+
     clock_now = Clock.model_validate(client.clock())
-    pre = gr.check(
-        gr.Action("buy", item, rarity, start),
-        gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
-        rules,
-    )
+    pre = gr.check(gr.Action("buy", item, rarity, start), committed(clock_now), rules)
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
 
-    def guard(move: Any) -> str | None:
-        c = Clock.model_validate(client.clock())
-        ctx = gr.context_from(client.me(), c.tick, c.t_hours, ledger, rules)
+    def guard(move: Any, thread_id: int) -> str | None:
+        # The accept quota is no reason to walk: `reserve` claims it atomically on the tick the accept
+        # is sent, and a full quota makes the accept wait for the next tick.
+        ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
-        if verdict.allowed and move.kind == "accept":
-            limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-            if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
-                return "another process took the team's accept this tick (shared ledger)"
-            tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return None if verdict.allowed else "; ".join(verdict.violations)
+
+    def reserve(move: Any, c: Clock) -> bool:
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+            return False
+        tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
+        return True
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         ledger.record("spend", tick, t_hours, price, item)
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
-    with traces.trace_negotiation(dealer, topic, plan) as observer:
-        out = negotiate(
-            client,
-            dealer,
-            topic,
-            plan,
-            log=console.print,
-            advisor=advisor,
-            guard=guard,
-            on_deal=on_deal,
-            max_ticks=rules.dealer_max_ticks_per_thread,
-            observer=observer,
-            words_fn=llm_cli.words_for(settings, rules, template_words),
-        )
+    for attempt in range(1 + DEALER_REOPENS):
+        with traces.trace_negotiation(dealer, topic, plan) as observer:
+            out = negotiate(
+                client,
+                dealer,
+                topic,
+                plan,
+                log=console.print,
+                advisor=advisor,
+                guard=guard,
+                on_deal=on_deal,
+                max_ticks=rules.dealer_max_ticks_per_thread,
+                observer=observer,
+                words_fn=llm_cli.words_for(settings, rules, template_words),
+                reserve=reserve,
+                kill_switch=lambda: gr.kill_switch(rules),
+            )
+        if out.reopen_start is None or attempt == DEALER_REOPENS:
+            break
+        if stops := gr.kill_switch(rules):  # opening a thread is a write: no reopen while the switch is on
+            console.print(f"she held her opening ask; not reopening: kill switch on ({'; '.join(stops)})")
+            break
+        console.print(f"she held her opening ask on thread {out.thread}: reopening lower, first bid {out.reopen_start}")
+        plan = replace(plan, start=out.reopen_start)
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
@@ -451,6 +488,7 @@ def duel_run(
     play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev duel_move picks among the legal moves (undecided: today's move)"),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
@@ -547,6 +585,9 @@ def duel_run(
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
             return
+        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+            console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
+            return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
 
@@ -603,7 +644,7 @@ def duel_run(
                     tick=c.tick,
                     t_hours=c.t_hours,
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
-                    paused=(REPO_ROOT / rules.pause_file).exists(),
+                    stops=gr.kill_switch(rules),  # read live: a GUARDRAILS.md edit counts without a restart
                 )
                 verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
@@ -635,9 +676,12 @@ def duel_run(
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if store.read_finished(duels):
             save_finished(c.tick)
+        evals.after_tick(c.tick)  # last: a background pass every N ticks, never on the tick's path
 
+    every = evals_default(evals_every, play)
+    evals = _tick_evals("duels", every, lambda m: console.print(f"[dim]{escape(m)}[/dim]"))
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
-    console.print(f"duels → {log_path} + Postgres duels ({mode})")
+    console.print(f"duels → {log_path} + Postgres duels ({mode}) · evals every {every or '-'} ticks")
     try:
         run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
     finally:
@@ -650,6 +694,28 @@ def _db_connect(app: str) -> Callable[[], Any]:
     from bazaar_agent import db
 
     return lambda: db.connect(app=app)
+
+
+def _tick_evals(agent: str, every: int, log: Callable[[str], None]) -> Any:
+    """The agent's in-loop evals (evals/inline.py). A missing Phoenix key is said once, not every pass."""
+    from bazaar_agent.evals.inline import TickEvals
+    from bazaar_agent.evals.phoenix import annotator_from
+
+    said: set[str] = set()
+
+    def once(message: str) -> None:
+        if message not in said:
+            said.add(message)
+            log(message)
+
+    def annotator() -> Any:
+        if load_settings().simulator:  # simulated duel ids collide with real ones: never annotate real traces
+            once(f"evals ({agent}): simulator, scores stay in Postgres only")
+            return None
+        cfg = tm.tracing_config()
+        return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, once)
+
+    return TickEvals(agent, every, _db_connect(f"bazaar-evals-{agent}"), evals_cli.team_id, annotator, log)
 
 
 def _jev_journal(settings: Any) -> Any:
@@ -721,7 +787,7 @@ def rules_show() -> None:
     """Every guardrail from GUARDRAILS.md, its value, and the code that enforces it."""
     from rich.table import Table
 
-    from bazaar_agent.guardrails import ENFORCED_BY
+    from bazaar_agent.guardrails import ENFORCED_BY, kill_switch
 
     loaded = _rules()
     t = Table(title=f"Guardrails · {loaded.path.name} (edit it, then rerun this to validate)")
@@ -734,11 +800,12 @@ def rules_show() -> None:
         console.print("[bold]Principles[/bold] (read by agents, not enforced in code):")
         for line in loaded.principles:
             console.print(f"  • {line}")
-    pause = REPO_ROOT / loaded.rules.pause_file
-    state = (
-        "[red]PAUSED[/red]" if pause.exists() or not loaded.rules.trading_enabled else "[green]trading enabled[/green]"
+    stops = kill_switch(loaded.rules, loaded.path)
+    state = f"[red]ON, holding[/red] ({'; '.join(stops)})" if stops else "[green]off, trading enabled[/green]"
+    console.print(
+        f"Kill switch: {state}. touch {loaded.rules.pause_file} to hold the processes run from this checkout: "
+        "nothing is sent, not even cancels or closes"
     )
-    console.print(f"Kill switch: {state} (touch {loaded.rules.pause_file} to stop the writes run from this checkout)")
 
 
 @rules_app.command("check")
@@ -1264,7 +1331,12 @@ def sell_cancel(
     offer_id: int = typer.Argument(help="Offer id, from `bazaar sell offers`"),
     live: bool = typer.Option(False, help="Actually cancel. Without it: dry run, nothing is sent"),
 ) -> None:
-    """Withdraw one of our open offers."""
+    """Withdraw one of our open offers (refused while the kill switch is on: open offers stay open)."""
+    from bazaar_agent import guardrails as gr
+
+    stops = gr.kill_switch(_rules().rules)
+    if stops:
+        _fail(f"kill switch on, nothing is sent (open offers stay open): {'; '.join(stops)}")
     if not live:
         console.print(f"[yellow]dry run[/yellow] would cancel offer {offer_id}. Add --live to cancel.")
         return
@@ -1274,6 +1346,65 @@ def sell_cancel(
         _fail(f"cancel refused: {e.code} ({e.message[:80]})")
         return
     console.print(f"[green]cancelled offer {offer_id}[/green]")
+
+
+@app.command("flatten")
+def flatten_cmd(
+    live: bool = typer.Option(False, help="Actually cancel (and close). Without it: dry run, nothing is sent"),
+    threads: bool = typer.Option(False, help="Also close our open threads (a dealer remembers a walk)"),
+) -> None:
+    """Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds."""
+    from bazaar_agent import db
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.flatten import flatten, offers_to_cancel, threads_to_close
+    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.decisions import DecisionLog
+
+    rules = _rules().rules
+    settings = load_settings()
+    client, me = _team_me()
+    try:
+        now = Clock.model_validate(client.clock())
+        items = offers_to_cancel(client.my_offers(), str(me.get("id") or ""))
+        items += threads_to_close(client.my_threads("open")) if threads else []
+    except BazaarError as e:
+        _fail(f"read refused: {e.code} ({e.status}); nothing sent")
+        return
+    stops = gr.kill_switch(rules)
+    if stops:
+        console.print(f"kill switch on ({'; '.join(stops)}): agents hold; only this flatten's cancels/closes go out")
+    else:
+        console.print(f"[yellow]kill switch off: the maker may post again; touch {rules.pause_file} first[/yellow]")
+    decisions = DecisionLog(settings.data_dir, lambda: db.connect(app="bazaar-flatten"), console.print)
+    decisions.begin_tick(now.tick)
+    rec = Recorder("flatten", decisions, live, lambda line: console.print(line, highlight=False))
+    try:
+        ledger = _ledger("flatten") if live else None
+        out = flatten(
+            client,
+            items,
+            rec=rec,
+            tick=now.tick,
+            t_hours=now.t_hours,
+            ledger=ledger,
+            live=live,
+            kill_switch=stops,
+            max_tick_seconds=now.max_tick_seconds,
+        )
+    finally:
+        decisions.close()
+    offers = sum(1 for i in items if i.kind == "cancel")
+    plan = f"{offers} offer(s) to cancel" + (f", {len(items) - offers} thread(s) to close" if threads else "")
+    if not live:
+        console.print(f"[yellow]dry run[/yellow] {plan}. Add --live to send.")
+        return
+    console.print(f"flatten: {plan}; {len(out.done)} done, {len(out.failed)} refused, {len(out.left)} left")
+    for item, code in out.failed:
+        console.print(f"  refused {item.kind} {item.id} ({item.what}): {code}")
+    if out.left:
+        _fail(f"stopped by {out.stopped}: {len(out.left)} left; run `bazaar flatten --live` again next tick")
+    if out.failed:  # a refused cancel or close may have left an offer or a thread open: never report success
+        _fail(f"{len(out.failed)} refused; check `bazaar sell offers` / `bazaar threads` and run it again")
 
 
 # ---------------------------------------------------------------- autonomous agents (needs BAZAAR_KEY)
@@ -1318,6 +1449,7 @@ def _run_agent(
     build: Callable[..., Any],
     port: int | None = None,
     host: str | None = None,
+    evals_every: int | None = None,
     learn: bool = False,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
@@ -1391,10 +1523,17 @@ def _run_agent(
         ),
         **extra,
     )
-    log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
+    every = evals_default(evals_every, is_live)
+    evals = _tick_evals(name, every, log)
+    log(f"{name}: ledger {ledger.where} · decisions {decisions.where} · evals every {every or '-'} ticks")
+
+    def on_tick(clock: Clock) -> None:
+        agent.on_tick(clock)
+        evals.after_tick(clock.tick)  # after every send of the tick; the pass runs in the background
+
     try:
         read_clock = watched_clock(team.clock, name, log, hub)
-        run_per_tick(read_clock, traces.per_tick(f"{name} tick", agent.on_tick), max_ticks=max_ticks or None)
+        run_per_tick(read_clock, traces.per_tick(f"{name} tick", on_tick), max_ticks=max_ticks or None)
     finally:
         decisions.close()
 
@@ -1407,6 +1546,7 @@ def agent_taker(
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
     learn: bool = typer.Option(
         True,
         envvar="BAZAAR_LEARN",
@@ -1431,7 +1571,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host, learn=learn)
+    _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn)
 
 
 @agent_app.command("maker")
@@ -1441,6 +1581,7 @@ def agent_maker(
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
@@ -1448,7 +1589,7 @@ def agent_maker(
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
 
-    _run_agent("maker", live, max_ticks, build, port, host)
+    _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 
 
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
