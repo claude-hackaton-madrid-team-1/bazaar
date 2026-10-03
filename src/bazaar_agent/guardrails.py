@@ -373,7 +373,7 @@ ENFORCED_BY: dict[str, str] = {
     "protect_page_exceptions": "guardrails.protects + check (every sale >= MIN) + maker ask floors (maker_jev, relist)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
-    "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, this process)",
+    "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, shared ledger `taller:` rows)",
     "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
     "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
@@ -570,6 +570,7 @@ class LedgerStore(Protocol):
     def packs_since(self, t_hours: float) -> Counter[str]: ...
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int: ...  # rows after `t_hours`
     def accept_items(self, tick: int) -> list[str]: ...
     def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
@@ -618,6 +619,13 @@ class Ledger:
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
+
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int:
+        return sum(
+            1
+            for e in self.entries()
+            if e.get("kind") == kind and e["t_hours"] > t_hours and str(e.get("item") or "").startswith(prefix)
+        )
 
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
@@ -836,6 +844,8 @@ class Context:
     # How we got each copy and k (`impact_board`). None: read this process's board for `tick` (fail closed).
     impact: move_impact.Facts | None = None
     taller_last_hour: int = 0  # Workshop crafts in the last game hour (`max_taller_per_game_hour`, this process)
+    # Why no Workshop craft may go this tick: an accept still settling hands over a copy we cannot name.
+    taller_hold: str | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -994,6 +1004,8 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if ctx.taller_hold:  # `agents.taller.unnamed_settling`
+        v.append(ctx.taller_hold)
     if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
         named = [c.ref if (c := ctx.cards.copy(a)) is not None else None for a in action.assets]
         if named != refs:
@@ -1005,21 +1017,24 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
 
 def _taller_impact(action: Action, refs: list[str], ctx: Context, rules: Guardrails) -> list[str]:
     """`max_score_loss_per_move` for a craft: each copy given away at 0 and no ladder deal (`move_impact`: a copy a
-    team trade brought us costs its your_value in neg_points). Fails closed: unread origins count as team copies,
-    and copies not named one by one, or with no value, refuse."""
+    team trade brought us costs its your_value in neg_points), less the card it brings: `action.your_value`, the
+    value to us of a card of the result's rarity (the caller's estimate; None credits nothing), at the same k.
+    Fails closed: unread origins count as team copies, and copies not named one by one, or with no value, refuse."""
     from bazaar_agent import impact_board
 
     if len(action.assets) != len(refs):
         return ["the Workshop's copies are not named one by one: their score impact cannot be estimated"]
     facts = ctx.impact if ctx.impact is not None else impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
-    total = 0.0
+    total, k = 0.0, None
     for asset, ref in zip(action.assets, refs, strict=True):
         impact = move_impact.sell_impact(
             ctx.cards, ref, action.rarity, 0, None, facts, rules.score_per_neg_point_fallback, 0.0, asset
         )
         if impact.score is None:
             return [f"score impact of giving {ref} #{asset} cannot be estimated (max_score_loss_per_move)"]
-        total += impact.score
+        total, k = total + impact.score, impact.k
+    if action.your_value is not None and action.your_value > 0 and k is not None:
+        total += action.your_value * k  # the card the craft brings
     if total < -rules.max_score_loss_per_move:
         return [f"score impact {total:+.2f} < -{rules.max_score_loss_per_move:g} (max_score_loss_per_move)"]
     return []

@@ -1183,3 +1183,8 @@ cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 
 and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
 1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
 every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))`; the JSONL ledger has no such check, so a new kind
+passes every file-ledger test and fails live with `CheckViolation` (found by the #236 reviews). A Workshop craft is
+booked as `spend` at price 0 with item `taller:<refs>` and counted by prefix (`count_since(kind, t_hours, prefix)`).

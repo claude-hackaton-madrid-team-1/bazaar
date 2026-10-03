@@ -22,6 +22,7 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 
 from __future__ import annotations
 
+import re
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 
-from bazaar_agent import buy_targets
+from bazaar_agent import buy_targets, deploy_guard, move_impact
 from bazaar_agent.activity import ActivityWatch
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
@@ -103,7 +104,18 @@ from bazaar_agent.agents.seller import (
 from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.taller import LEVEL_ID as TALLER_LEVEL
-from bazaar_agent.agents.taller import action_item, craft, free_counts, pulled, rank_triples, sell_thread_assets
+from bazaar_agent.agents.taller import (
+    action_item,
+    book_craft,
+    craft,
+    crafts_last_hour,
+    free_counts,
+    pulled,
+    rank_triples,
+    received_value,
+    sell_thread_assets,
+    unnamed_settling,
+)
 from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving
 from bazaar_agent.agents.trickster import note as forgiving_note
@@ -589,7 +601,6 @@ class Taker:
             record=store.record if store is not None else None,
         )
         self._playbook_said: set[str] = set()  # playbook instructions the taker already said it obeys
-        self._crafts: list[float] = []  # game hours of our Workshop crafts (`max_taller_per_game_hour`, this process)
         self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
         self._taller_rest_until = 0  # a refused craft: no other try before this tick
 
@@ -1079,20 +1090,44 @@ class Taker:
             return
         if clock.tick < self._taller_rest_until:
             return
-        self._crafts = [h for h in self._crafts if h > clock.t_hours - 1.0]
-        items = [item for t in (clock.tick - 1, clock.tick) for item in self.ledger.accept_items(t)]
-        sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
-        refs = {item for item in items if ":" not in item and "-" in item}  # a card accepted: its copies may move
-        refs |= {talk.trade.refs[0] for talk in self.team_desk.talks.values() if talk.trade.refs}
-        held = [a for a in run.snap.me.get("assets") or [] if isinstance(a, dict) and isinstance(a.get("id"), int)]
-        busy = set(open_commitments(run.offers, us).listed) | sold | sell_thread_assets(threads)
-        busy |= {int(a["id"]) for a in held if str(a.get("ref")) in refs}
-        triples = rank_triples(run.snap.me, run.snap.catalog, run.snap.dealers, busy)
-        if not triples:
+        done = crafts_last_hour(self.ledger, clock.t_hours)  # every process, the CLI too (shared ledger)
+        if done >= self.rules.max_taller_per_game_hour:
+            return
+        if not rank_triples(
+            run.snap.me, run.snap.catalog, run.snap.dealers, self._taller_busy(run, run.snap.me, run.offers, threads)
+        ):
+            return  # nothing to craft: no request at all
+        hold = unnamed_settling(self.ledger, clock.tick)
+        if hold:  # `check` refuses it too (the CLI's path): here before any request, said once per reason
+            note = ("hold", re.sub(r"\d+", "#", hold))
+            if note not in self._taller_notes:
+                self._taller_notes.add(note)
+                self.log(f"tick {clock.tick} taker: Workshop waits: {hold}")
+            return
+        try:
+            guard = deploy_guard.verdict(self.team.duels(), self.team.schedule(), clock.model_dump(), self.rules)
+            if not guard.safe:
+                self._taller_rest_until = max(clock.tick + 1, guard.next_safe_tick or clock.tick + 10)
+                self.log(f"tick {clock.tick} taker: Workshop waits until tick {self._taller_rest_until}: "
+                         f"{'; '.join(guard.reasons)[:160]}")  # fmt: skip
+                return
+            me, offers = self.team.me(), offers_in(self.team.my_offers())  # album first: what we hold right now
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} taker: Workshop skipped, a read failed ({e.code})")
+            return
+        offers = [*offers, *(o for o in run.offers if o.get("id") == -4)]  # a craft of this tick not settled yet
+        busy = self._taller_busy(run, me, offers, threads)
+        triples = rank_triples(me, run.snap.catalog, run.snap.dealers, busy)
+        if not triples or not run.window.open():
             return
         t = triples[0]
-        ctx = replace(self._ctx(run), sellable=free_counts(run.snap.me, busy), taller_last_hour=len(self._crafts))
-        verdict = check(Action("taller", action_item(t), t.rarity, assets=tuple(t.asset_ids)), ctx, self.rules)
+        ctx = replace(
+            self._ctx(run), sellable=free_counts(me, busy), taller_last_hour=done, taller_hold=hold,
+            cards=move_impact.our_cards(me),
+        )  # fmt: skip
+        gain = received_value(run.snap.catalog, t.to_rarity)
+        action = Action("taller", action_item(t), t.rarity, your_value=gain, assets=tuple(t.asset_ids))
+        verdict = check(action, ctx, self.rules)
         status: Status = "approved" if verdict.allowed else "rejected"
         if status == "approved" and not run.window.open():
             status = "expired"
@@ -1122,17 +1157,32 @@ class Taker:
         )
         if status != "approved" or not self.live:
             return
+        book_craft(self.ledger, clock.tick, clock.t_hours, t.refs)  # before the send: the shared hourly cap
         body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
         if body is None and not self.rec.maybe_landed:  # refused (locked, not_owner, ...): it cost nothing
             self._taller_rest_until = clock.tick + 10
             return
-        self._crafts.append(clock.t_hours)  # a craft that may have landed counts toward the hour (fail safe)
         gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
                 for s in t.spares]}}  # fmt: skip
         run.offers.append(gone)  # later checks this tick (the team desk's posts too) never give a crafted copy
         if run.team_view is not None and run.team_view.offers is not run.offers:
             run.team_view = replace(run.team_view, offers=[*run.team_view.offers, gone])
         self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
+
+    def _taller_busy(
+        self, run: _TickRun, me: dict[str, Any], offers: list[dict[str, Any]], threads: list[dict[str, Any]]
+    ) -> set[int]:
+        """Copies never crafted: in an open offer of ours (board, thread, a swap accepted this tick), a sell thread of
+        ours, a sell accept of this or the last tick, and every copy of a card an accept or a live team-desk talk may
+        move."""
+        clock = run.snap.clock
+        items = [item for t in (clock.tick - 1, clock.tick) for item in self.ledger.accept_items(t)]
+        sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
+        refs = {item for item in items if ":" not in item and "-" in item}  # a card accepted: its copies may move
+        refs |= {talk.trade.refs[0] for talk in self.team_desk.talks.values() if talk.trade.refs}
+        held = [a for a in me.get("assets") or [] if isinstance(a, dict) and isinstance(a.get("id"), int)]
+        busy = set(open_commitments(offers, run.snap.us).listed) | sold | sell_thread_assets(threads)
+        return busy | {int(a["id"]) for a in held if str(a.get("ref")) in refs}
 
     # ------------------------------------------------------------ (b) the dealer desk
 

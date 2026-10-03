@@ -221,3 +221,36 @@ def _pulled(answer: Any) -> str:
     if isinstance(cards, list) and cards and isinstance(cards[0], Mapping):
         return str(cards[0].get("ref") or cards[0].get("name") or "?")[:40]
     return "?"
+
+
+# ---------------------------------------------------------------- shared by the taker's step and `bazaar taller`
+
+# A craft in the shared ledger: kind `spend` at price 0 (the table only takes spend, accept and listing), item
+# `taller:<refs>`. It adds nothing to a spend or pack count; every process counts it by this prefix (the hourly cap).
+TALLER_ITEM = "taller:"
+SETTLING_TICKS = 2  # `seller.UNSETTLED_TICKS`: an accept settles on the next tick, /me may lag one more
+
+
+def crafts_last_hour(ledger: Any, t_hours: float) -> int:
+    """Crafts any process booked in the last game hour (`max_taller_per_game_hour`)."""
+    return int(ledger.count_since("spend", t_hours - 1.0, TALLER_ITEM))
+
+
+def book_craft(ledger: Any, tick: int, t_hours: float, refs: Sequence[str]) -> None:
+    """Book a craft BEFORE its send: a refusal over-counts the hourly cap (fail safe), never under-counts it."""
+    ledger.record("spend", tick, t_hours, 0, TALLER_ITEM + ",".join(refs))
+
+
+def unnamed_settling(ledger: Any, tick: int) -> str | None:
+    """Why no craft may go this tick: an accept of this or the last SETTLING_TICKS ticks that cannot name the copy
+    it hands over (a team swap's `team:<thread>`). `sell:<asset>` names its copy, a plain card ref names its card
+    (the step marks those busy), a `duel:` moves no card. Fail closed: any other `<kind>:<id>` holds."""
+    items = {item for t in range(tick - SETTLING_TICKS, tick + 1) for item in ledger.accept_items(t)}
+    unnamed = sorted(i for i in items if ":" in i and i.split(":", 1)[0] not in ("sell", "duel"))
+    return f"accept {', '.join(unnamed)} still settling may hand over a copy we cannot name" if unnamed else None
+
+
+def received_value(catalog: Mapping[str, Any], rarity: str) -> float | None:
+    """What a pull of `rarity` is worth to us, for the score impact's credit: its book value (none: no credit)."""
+    book = ((catalog.get("rarities") or {}).get(rarity) or {}).get("book")
+    return float(book) if isinstance(book, int | float) and not isinstance(book, bool) and book > 0 else None
