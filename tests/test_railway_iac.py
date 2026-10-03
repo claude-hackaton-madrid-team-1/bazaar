@@ -32,6 +32,16 @@ VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
 LIVE_IN_COMMAND = re.compile(r"--live\b|BAZAAR_LIVE")
 PHOENIX_IMAGE = "arizephoenix/phoenix:"
+# The exact start commands: a wrapper script could add `--live` behind a clean-looking command, and
+# live is decided by BAZAAR_LIVE alone. Changing one is a reviewed edit of this map.
+START_COMMANDS = {
+    "phoenix": None,
+    "bazaar-duels": "/app/.venv/bin/bazaar duel run --play",
+    "bazaar-taker": "/app/.venv/bin/bazaar agent taker",
+    "bazaar-maker": "/app/.venv/bin/bazaar agent maker",
+    "bazaar-mcp": "/app/.venv/bin/bazaar mcp serve --host 0.0.0.0",
+    "bazaar-sim": "/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
+}
 
 
 def compiled(path: Path = IAC) -> list[dict[str, Any]]:
@@ -52,6 +62,7 @@ def services(resources: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def test_exactly_the_services_and_volumes_we_run_are_declared(resources: list[dict[str, Any]]) -> None:
+    assert {r["type"] for r in resources} <= {"service", "volume"}  # no unreviewed database or bucket
     names = [r["name"] for r in resources]
     assert len(names) == len(set(names)), names  # a second service("bazaar-taker", ...) would win
     assert {r["name"] for r in resources if r["type"] == "service"} == SERVICES
@@ -72,6 +83,8 @@ def test_no_command_turns_a_service_live(services: dict[str, dict[str, Any]]) ->
         commands = [deploy.get("startCommand") or "", *(pre if isinstance(pre, list) else [pre])]
         assert not any(LIVE_IN_COMMAND.search(str(c)) for c in commands), (name, commands)
         assert ("--play" in " ".join(map(str, commands))) == (name == "bazaar-duels"), (name, commands)
+    starts = {name: (s.get("deploy") or {}).get("startCommand") for name, s in services.items()}
+    assert starts == START_COMMANDS
 
 
 def test_every_service_builds_our_repo_on_main_or_the_pinned_phoenix(services: dict[str, dict[str, Any]]) -> None:
