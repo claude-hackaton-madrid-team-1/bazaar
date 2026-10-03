@@ -35,9 +35,11 @@ err_console = Console(stderr=True)
 
 
 def printable(text: str) -> str:
-    """A counterparty's words safe for a terminal: no control, format or direction characters (no escape
-    sequence can move the cursor or reverse the line); rich markup is escaped by the caller."""
-    return "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in text)
+    """A counterparty's words safe for a terminal: only printable characters (no escape sequence, direction
+    mark, lone surrogate or other unprintable one), whitespace runs collapsed (a run of spaces cannot wrap a
+    fake line to column 0); rich markup is escaped by the caller."""
+    kept = "".join(ch if ch.isprintable() and unicodedata.category(ch) != "Cs" else " " for ch in text)
+    return " ".join(kept.split())
 
 
 @flags_app.command("precision")
@@ -77,7 +79,8 @@ def flags_precision(
         console.print(f"would flag message {i.message_id} from {escape(i.dealer)}: {escape(i.reason)}")
         said = printable(source.text or "(no words)")
         words = said[:WORDS_SHOWN] + ("…" if len(said) > WORDS_SHOWN else "")
-        console.print(f"  thread {source.thread}, tick {source.tick}, its words: [dim]{escape(words)}[/dim]")
+        console.print(f"  thread {source.thread}, tick {source.tick}, its words:")
+        console.print(f"    [dim]» {escape(words)}[/dim]", overflow="fold")  # indented: never a line of ours
     skipped = evidence.offers - evidence.known_topic - evidence.unreadable
     console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")
     console.print(f"flag_dealers = {', '.join(sorted(rules.flag_dealer_ids)) or 'none'} (GUARDRAILS.md opt-in)")
