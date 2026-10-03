@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from bazaar_agent import cli, pages
 from bazaar_agent.guardrails import Guardrails
 from tests.test_intel import opened, settle
+from tests.test_sim_cli import run, session  # noqa: F401  (the in-process simulator)
 from tests.test_strategy import PARAMS, card
 
 RULES = Guardrails()  # cash_floor 270, max_spend_per_game_hour 150, max_price_rare 80, max_price_uncommon 26
@@ -419,3 +420,22 @@ def test_a_ladder_slot_naming_a_card_the_trade_plan_buys_is_a_duplicate_and_spen
         )[0].ref
         == "LAV-09"
     )
+
+
+def test_bazaar_plan_pages_reads_every_input_from_the_simulator_over_http(session):  # noqa: F811
+    """No file at all: /api/me with the sim key, the public catalog, dealers, schedule and feed (GET only)."""
+    _, sim, _ = session
+
+    def ours():
+        state = sim.world.state
+        offers = sum(o.maker == "t01" for o in state.offers.values())
+        threads = sum(t.team == "t01" for t in state.threads.values())
+        return offers, threads, state.teams["t01"].cash
+
+    before = ours()
+    out = run("plan", "pages", "--json", "--now-hours", "4", "--no-live")
+    data = json.loads(out[out.index("{") :])
+    assert {p["set"] for p in data["pages"]} >= {"LAV", "MAL", "LAT", "SAL"}
+    assert data["scenarios"][-1]["name"].startswith("no venue")
+    assert all(s["floor"] == RULES.cash_floor for s in data["scenarios"])
+    assert ours() == before  # read-only: no offer, no thread, no cash moved
