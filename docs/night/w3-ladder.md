@@ -37,6 +37,8 @@ Share = (opening − price) / (opening − that conversation's limit). No deal c
 
 The gain is in uncommons: +0.105 share in the model and +0.173 on the real replays, with the deal rate up from 0.946 to 0.994. It also survives slow replies: if every round cost two ticks, 85 % of W3's uncommon deals would still settle within 8 ticks, against 13 % for today's 17→26. For commons today's ladder is already at the ceiling: W3 is 0.009 lower in the model and equal on the replays. A grid over start and max shows that floor ± 2 is within 0.01 of the best choice on every Abuela class, by the mean of model and replay share (commons best 6→12 at 0.974 vs 0.965; uncommons 21→26 at 0.961 vs 0.960; packs: floor ± 2 is the best).
 
+Held out in time: fitted only on threads opened before tick 80, 100 or 120, the uncommon plan is the same 21→25 every time. Replayed on the later threads (17, 10 and 2 of them), it closes every one at its limit (share 1.00). Today's 17→26 gets 0.85, 0.77 and 0.79. Commons tie at 1.00.
+
 ## On the simulator's dealers (#55, local merge, never pushed)
 `scripts/ladder_sim_check.py`: 2,000 conversations per row, the simulator's own `dealers.start()` / `reply()`, our template words (her kindness discount applies).
 
