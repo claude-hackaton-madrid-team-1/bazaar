@@ -37,15 +37,15 @@ Draft PR #100, stacked on #81 (`night/w3-ladder`), which is stacked on #61. Noth
 - **Rival model:** it reads half of our threads and learns our next bid per (class, bid index, last bid), backing off to the most common step. It then predicts every bid of the other half. This is the best a reader of a stationary policy can do; it does not use her asks.
 
 ## Frontier (excerpt; worst cell = min over Abuela classes × plans × dealer models × speeds)
-| level | spread / below / band / max / gap | worst share × model (2 seeds) | worst share × sim | mean share × | extra ticks per deal | Chato worst (model / sim) | hit all (model / sim) | hit first |
+| level | spread / below / band / max / gap | worst share × model (2 seeds) | worst share × sim (2 seeds) | mean share × | extra ticks per deal | Chato worst (model / sim) | hit all (model / sim) | hit first |
 |---|---|---|---|---|---|---|---|---|
 | off (today) | 0 / 0 / 0 / – / – | 1.000 | 1.000 | 1.000 | +0.00 | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 |
-| band only, no time cost | 0 / 0 / 0.2 / 2 / 2 | 0.978 | 0.981 | 1.001 | +0.00 | 0.964 / 0.965 | 0.929 / 0.953 | 1.000 |
+| band only, no time cost | 0 / 0 / 0.2 / 2 / 2 | 0.978 | 0.978 | 1.001 | +0.00 | 0.964 / 0.962 | 0.929 / 0.956 | 1.000 |
 | **recommended** | 1 / 0 / 0.35 / 2 / 3 | **0.981** | **0.958** | **1.005** | **+0.90** | 0.947 / 0.965 | **0.717 / 0.616** | 0.474 |
-| more margin in the sim | 1 / 0 / 0.2 / 2 / 3 | 0.971 | 0.966 | 1.003 | +0.93 | 0.947 / 0.980 | 0.745 / 0.631 | 0.474 |
-| spread 2 (fails on time) | 2 / 0.5 / 0.2 / 2 / 3 | 0.956 | 0.965 | 1.001 | +1.60 ✗ | 0.957 / 0.981 | 0.671 / 0.498 | 0.340 |
-| same without gap | 2 / 0.5 / 0.2 / 2 / 0 | 0.948 ✗ | 0.952 | 0.989 | +1.38 ✗ | 0.949 / 0.966 | 0.632 / 0.492 | 0.340 |
-| big band jumps | 0 / 0 / 0.35 / 4 / 0 | 0.828 ✗ | 0.874 ✗ | 0.947 | +0.00 | 0.841 / 0.863 | 0.867 / 0.922 | 1.000 |
+| more margin in the sim | 1 / 0 / 0.2 / 2 / 3 | 0.971 | 0.966 | 1.003 | +0.93 | 0.947 / 0.980 | 0.745 / 0.635 | 0.474 |
+| spread 2 (fails on time) | 2 / 0.5 / 0.2 / 2 / 3 | 0.956 | 0.964 | 1.001 | +1.60 ✗ | 0.957 / 0.981 | 0.671 / 0.493 | 0.340 |
+| same without gap | 2 / 0.5 / 0.2 / 2 / 0 | 0.948 ✗ | 0.952 | 0.989 | +1.38 ✗ | 0.949 / 0.966 | 0.632 / 0.488 | 0.340 |
+| big band jumps | 0 / 0 / 0.35 / 4 / 0 | 0.828 ✗ | 0.874 ✗ | 0.947 | +0.00 | 0.841 / 0.863 | 0.867 / 0.923 | 1.000 |
 
 - **Where the cost is.** W3's plan starts at the bottom of the limit band (Abuela uncommon limits p10–p90 = 21–25), so any step > 1 inside the band can overshoot her limit: 1 P = 0.17 share on uncommons, 0.5 on commons.
 - **The band gap** is what makes in-band jumps affordable. A 20 % band share with +2 jumps scores 0.951 without the gap and 0.983 with gap 2; with a spread of 2 the same share fails without it (0.948). With the gap, a +2 jump happens only while her ask (never below her limit) is ≥ 3 above the landing. In the simulator, whose Abuela holds her ask far above her limit, the gap protects less (worst cell 0.958).
