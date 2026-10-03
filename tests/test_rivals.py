@@ -195,3 +195,79 @@ def test_the_cli_scans_the_board_rebuilt_from_the_feed(tmp_path):
     assert [(o["kind"], o["ref"]) for o in json.loads(out.output)] == [("buy", "LAV-08"), ("sell", "LAT-09")]
     out = CliRunner().invoke(app, ["rivals", *files, "--json"])
     assert out.exit_code == 0 and json.loads(out.output)["t06"]["asks"] == 4
+
+
+# ---------------------------------------------------------------- the taker's sell side (accept_bids)
+
+
+class SellTeam:
+    """FakeTeam whose accept records the copies handed over."""
+
+    @staticmethod
+    def make(**kw):
+        from tests.agent_fakes import FakeTeam
+
+        class Team(FakeTeam):
+            def accept(self, offer_id, assets=None):
+                self.sent.append(("accept", offer_id, assets))
+                return {"ok": True}
+
+        return Team(**kw)
+
+
+def sell_taker(tmp_path, team, boards, accept_bids=True, **rules):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, parts
+
+    lines: list[str] = []
+    t = Taker(
+        team,
+        FakePublic(boards=boards),
+        live=True,
+        log=lines.append,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=0, accept_bids=accept_bids),
+        **parts(tmp_path, **rules),
+    )
+    return t, lines
+
+
+def test_the_taker_sells_into_a_rich_bid_only_when_asked(tmp_path):
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock
+
+    rich = {"rastro": [board_bid(77, "LAT-09", 70, maker="m9")]}  # 70 - fee 5 - our loss 45 = +20
+    off = SellTeam.make()
+    sell_taker(tmp_path / "off", off, rich, accept_bids=False)[0].on_tick(clock())
+    assert off.sent == []
+    on = SellTeam.make()
+    t, lines = sell_taker(tmp_path / "on", on, rich)
+    t.on_tick(clock())
+    assert on.sent == [("accept", 77, [5])]
+    assert t.ledger.spent_since(0) == 0 and t.ledger.accept_items(100) == ["LAT-09"]
+    assert any("sell LAT-09 #5 into m9's bid 77" in line for line in lines)
+
+
+def test_the_taker_never_sells_below_its_bar_or_a_copy_already_offered(tmp_path):
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock, our_ask
+
+    team = SellTeam.make()
+    sell_taker(tmp_path / "thin", team, {"rastro": [board_bid(79, "LAT-09", 50, maker="m9")]})[0].on_tick(clock())
+    assert team.sent == []  # 50 - 4 - 45 = +1 < sell_min_surplus 5
+    listed = SellTeam.make(offers=[our_ask(5, 5, "LAT-09", 90)])
+    rich = {"rastro": [board_bid(77, "LAT-09", 70, maker="m9")]}
+    sell_taker(tmp_path / "listed", listed, rich)[0].on_tick(clock())
+    assert not [s for s in listed.sent if s[0] == "accept"]  # #5 is already in our ask: never sold twice
+
+
+def test_the_counterparty_cap_holds_on_the_sell_side(tmp_path):
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock
+
+    team = SellTeam.make()
+    rich = {"rastro": [board_bid(77, "LAT-09", 70, maker="m9")]}
+    t, lines = sell_taker(tmp_path, team, rich, max_counterparty_share=0.25)
+    t.on_tick(clock())
+    assert team.sent == [] and any("'m9' is not a known team" in line for line in lines)  # pseudonym: fail closed
