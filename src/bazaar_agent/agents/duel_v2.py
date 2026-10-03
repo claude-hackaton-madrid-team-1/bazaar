@@ -8,7 +8,9 @@ every tick (7–8 rounds a deal, ~30 % of the surplus gone at 6 %). v2, behind `
   2. Spend at most `duel_max_own_offers` rounds: the anchor, a stall-counter when the rival has not moved for
      `duel_stall_ticks` ticks, and a last offer at our floor before the endgame when nothing inside our limit is on
      the table. A rival that never priced, or went quiet and ignores us, gets v1's descending offers for free
-     (they add a round only if it answers with a price), up to `duel_free_offers` messages.
+     (they add a round only if it answers with a price), up to `duel_free_offers` messages. Against a rival that
+     never priced, that ladder reaches our floor `silent_floor_lead` ticks before the deadline: measured to the
+     deadline, its last offer (D − 1) stayed ~9 % off our limit and the floor was due on a tick we never send.
   3. Accept a rival offer strictly inside our limit when it meets our target, when the rival has stalled and a
      counter is not worth one more round (`step × (1 − decay) < surplus × decay`), or in the endgame.
   4. The team accepts one offer per tick (RULES.md), shared by every duel: `plan_moves` gives the slot to the
@@ -78,6 +80,7 @@ class V2Params:
     jitter: float = 0.0  # duel_jitter
     jitter_seed: int = 0  # duel_jitter_seed
     days_signed: bool = False  # duel_days_signed
+    silent_floor_lead: int = 1  # a rival that never priced gets our floor this many ticks before the deadline
 
     @classmethod
     def from_rules(cls, rules: Any, anchor: float | None = None, floor: float | None = None) -> V2Params:
@@ -166,6 +169,14 @@ def own_offers(duel: Mapping[str, Any]) -> int:
     """Priced messages we sent: each one is a round once the rival has priced as many."""
     sent = len(_priced(duel, ours=True))
     return 1 if sent == 0 and isinstance(duel.get("your_offer"), dict) else sent
+
+
+def ladder_progress(duel: Mapping[str, Any], elapsed: int, total: int, params: V2Params) -> float:
+    """How far along v1's curve our offer is. Against a rival that never priced, the curve ends `silent_floor_lead`
+    ticks before the deadline, so our floor is sent while the rival can still take it (`our_target` clamps at 1)."""
+    if _priced(duel, ours=False) or isinstance(duel.get("rival_offer"), dict):  # it priced: the curve is unchanged
+        return elapsed / total
+    return elapsed / max(1, total - max(0, params.silent_floor_lead))
 
 
 def first_offer_wait(params: V2Params) -> int:
@@ -341,7 +352,7 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     # Without every message's tick we cannot tell a stalled rival from a conceding one: never call it stalled.
     stalled = timed and elapsed >= params.stall_ticks and (moved is None or tick - moved >= params.stall_ticks)
     decay = _number(duel.get("decay_per_round")) or 0.0
-    target = our_target(limit, str(role), elapsed / total, params.anchor, params.floor)
+    target = our_target(limit, str(role), ladder_progress(duel, elapsed, total, params), params.anchor, params.floor)
     target_surplus = surplus(target, limit, str(role))
     endgame = left <= params.endgame_ticks
 
@@ -444,7 +455,8 @@ def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params:
     if not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="unreadable duel")
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
-    target = our_target(limit, str(role), (tick - started_tick) / total, params.anchor, params.floor)
+    progress = ladder_progress(duel, tick - started_tick, total, params)
+    target = our_target(limit, str(role), progress, params.anchor, params.floor)
     move = _offer(duel, target, params.days_signed, "counter at our target")
     return move or DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
 
