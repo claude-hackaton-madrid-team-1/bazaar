@@ -20,7 +20,7 @@ r.efficiency, r.stall, r.oracle, r.points(), r.refused, r.max_requests_per_tick
 | arrivals | spread over ticks 0–10 | same | **assumption** (`arrive_spread`) |
 | relaxing | linear with age, gives up 50–100 % of its shade by its last tick | same | **assumption** |
 | limits, shades | cost 20–60, ask +5–30 %; value 40–95, bid −5–25 % | same | #55, unchanged |
-| match rule | `quote` (today's) or `limit` (hidden limits honoured) | same | **unknown**, settled by the morning probe |
+| match rule | `quote` (today's, default) or `limit` (hidden limits honoured) | same | **unknown**. The SDK's `Broker.match` docstring, "(ask <= price, price + fee <= bid)", reads as `quote`; the kit README's "a broker that estimates those limits does better" fits `limit` better. The morning probe settles it. |
 | stall replica | crosses by quote every tick, fee 0, the kit's tie-break | same | starter_broker.py docstring; fee is an **assumption** |
 
 Efficiency is the realised gain divided by the possible gains at the true limits (the static optimum, regardless of who is in the book when). The **oracle** knows every limit, arrival, departure and future quote: it is an exact max-weight matching over the pairs that can be matched at some tick under the rule. No broker can beat it.
@@ -57,11 +57,11 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 
 1. **The W1b bar "p50 ≥ stall + 0.15" cannot be reached in the default cell.** Even the oracle reaches only +0.03 to +0.06 there. It reaches +0.15 only under the `limit` rule with shades about 2× wider or traders mostly firm. W1b found the same thing independently with its own bench model (STATUS 02:17: stall 0.80, ceiling 0.90).
 2. **The win rate over the stall matters more than the margin.** Points are relative to the top-three mean, so beating a stall-level field by any amount earns the full point for that session, and ties earn 0.5. The oracle ties the stall on 23–41 % of books. That is the ceiling on the share of sessions we can win.
-3. **The default cell is the most pessimistic one for a smart broker.** The kit says crossing by quote earns "half the bench points and no more" and that estimating limits beats the stall. In the default cell the hard test is barely harder than the normal one (stall 0.821 vs 0.827), because 5–30 % shades let firm traders cross anyway. The cells consistent with the designers' text are the `limit` rule and/or shades ≥ 1.5×.
+3. **The default cell is the most pessimistic one for a smart broker.** The kit says crossing by quote earns "half the bench points and no more" and that estimating limits beats the stall. In the default cell the hard test is barely harder than the normal one (stall 0.821 vs 0.827), because 5–30 % shades let firm traders cross anyway. The cells consistent with the designers' text are the `limit` rule and/or shades ≥ 1.5×. If the probe confirms `quote`, as the SDK docstring suggests, the oracle's median edge stays ≤ 0.05 whenever arrivals are spread out. The edge then comes almost entirely from winning ties, never from margin.
 
 ## Go / no-go
 
-- Simulator deliverable: **go.** The bench is in, both presets are in, the stall replica is scored in the same run, and the oracle bounds every policy. Refusals are counted by reason, and reads and posts are counted per tick. Gates: 816 passed (24 new), ruff, black and mypy clean. `/code-review` (high) raised 10 candidates; 7 are fixed, and 3 are left as noted duplications that tests pin equal.
+- Simulator deliverable: **go.** The bench is in, both presets are in, the stall replica is scored in the same run, and the oracle bounds every policy. Refusals are counted by reason, and reads and posts are counted per tick. Gates: 816 passed (24 new), ruff, black and mypy clean. `/code-review` (high) raised 10 candidates. 7 are fixed. Two duplications are kept and pinned equal by tests (`stall_policy` vs `cross_by_quote`; `BenchSession.match` vs `broker._bench_match`). `mm_points` is kept as #55 had it (see Risks).
 - The W1b criteria as written: **no-go by construction** (see 1). Proposed instead, per preset and per rule over 1,000 books:
   - never below the stall on any book (issue #12's own "never worse than greedy");
   - 0 refused matches under `quote`, and refusals reported under `limit`;
@@ -71,7 +71,7 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 
 ## Risks
 
-- Arrivals, relaxing, the shades, the stall's fee and the match rule are not in any official text. Every one of them is a parameter, and the grid shows the headroom moves by 10× across them. The shape of the relax curve does not matter: relaxing late (age³) instead of linearly moves the median edge by < 0.003.
+- Arrivals, relaxing, the shades and the stall's fee are not in any official text, and the match rule is ambiguous (see the table). Every one of them is a parameter, and the grid shows the headroom moves by 10× across them. The shape of the relax curve does not matter: relaxing late (age³) instead of linearly moves the median edge by < 0.003.
 - The points curve between 0, the stall and the top three is our reading of one sentence in RULES.md.
 - The two old bench tests in `test_sim_world.py` pass only because `bench_ticks=3` collapses the arrival spread to 0. The staggered regime is covered in `tests/test_sim_bench.py`.
 - Simulator standings still add `10 × efficiency` to `mm_points` (unchanged #55 behaviour). The stall-relative curve lives in `bench.points` and in the `bench.finished` fields; it is not wired into the simulator's leaderboard.
