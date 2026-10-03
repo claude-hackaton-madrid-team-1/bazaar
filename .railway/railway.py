@@ -44,6 +44,9 @@ ALWAYS = {"restartPolicyType": "ALWAYS"}
 AGENT_PORT = "8080"  # each agent's read-only status: GET /health, GET /state, WS /events (public domain)
 
 
+# No BAZAAR_URL and no BAZAAR_SIM anywhere in this file: every service plays the real game
+# (https://bazaar.causaprima.ai with BAZAAR_KEY), the target src/bazaar_agent/config.py picks when the
+# flag is unset. Only bazaar-sim below IS the simulator; nothing here points a client at it.
 def runtime_env() -> dict:
     """What `bazaar monitor`, `bazaar duel run` and `bazaar agent` read (config.py, telemetry.py)."""
     return {
@@ -87,7 +90,9 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
     DRY RUN on purpose: this file never sets BAZAAR_LIVE. Live trading needs BAZAAR_LIVE=1 set by hand
-    on the service (README "Autonomous agents"), never here. `enabled=False`: no source (see runtime())."""
+    on the service (README "Autonomous agents"), never here. It is declared `preserve()` so an apply keeps
+    whatever was set by hand: undeclared, `railway config plan` proposed to delete it (2026-10-03), which
+    would have put a live agent back in dry run. `enabled=False`: no source (see runtime())."""
     return service(
         name,
         source=github(REPO, branch=BRANCH) if enabled else None,
@@ -97,7 +102,7 @@ def agent(name: str, command: str, data: object, enabled: bool = True) -> object
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT},
+        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve()},
     )
 
 
