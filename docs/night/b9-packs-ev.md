@@ -1,0 +1,59 @@
+# B9 · Packs EV: sealed packs as inventory vs ladder cash (night shift, 3 Oct 2026)
+
+Draft PR on `night/b9-packs-ev`, stacked on W7's `night/w7-page-economics` (#87). Nothing went live.
+- **Inputs:** Friday's public feed (local capture merged with the shared DB, read-only, ticks 0–159), our tick-149 `/me` (aggregates only here), the catalog fixture, and W4's chaser map (#79, P(top set) ≥ 0.5).
+- **Recompute:** `uv run bazaar plan packs` (read-only; every input can come from a file).
+
+## Verdict: no. Pack cash loses to ladder deals at the margin.
+| use of cash | round points per prima | source |
+|---|---|---|
+| Abuela best three (W3, share ~0.95) | **0.044** | W7 §4, W5 ladder model |
+| three Chato uncommons (needs `dealer_price_caps = chato:uncommon=31`) | 0.021 | W7 §4 |
+| W4's seven trades, model fills (+80 P) | 0.016–0.049 | W7 §4 |
+| W4's seven trades at Friday's fill rates (+4.8 P) | 0.001–0.003 | W4 §3 |
+| a 4th Abuela deal (outside the best three) | **0** | RULES.md: best three per level |
+| **one `sobre_barrio`, cards resold at Friday's fill rates** | **0.0005–0.0015** | this model |
+| one `sobre_barrio`, every chased card sold (optimistic what-if) | 0.006–0.018 | this model |
+
+- **At Friday's liquidity** a pack is worth **30–90× less per prima** than the ladder's best three.
+- **In the optimistic what-if** (every card whose set has a chaser sells), it is still **2.4–7× less**.
+- **After the best three** the ladder's own marginal is 0, so spare cash should be compared with the Chato caps or W4's trades. A pack loses to both, except W4 at Friday's fill rates, where both are near zero.
+- **Packs cannot even be bought today.** Abuela's pack limits sit at 20–24 against `max_price_pack` 20, so most threads never fill (W3: deal rate 0.12 on the replays).
+- **As a ladder deal**, a pack (share ~0.90 uncapped) never displaces a common (~0.975) from Abuela's best three.
+
+## Why a pack scores so little
+A pack scores only two ways. First, as a dealer deal: its ladder share, if it is among the best three, which it never is. Second, through its cards sold to other teams: the trade surplus `price − our private value` (W7 §1). Holding cards, pack luck and cash score nothing.
+
+**Pack contents** (catalog): `sobre_barrio` = common, common, (common 0.75 / uncommon 0.25), expected book 33.8. Assumption: each slot draws uniformly from the released sets' page cards (LAV, MAL, LAT, SAL, plus RET on Saturday).
+
+**Friday's team tape:** single cards for cash, team to team:
+
+| rarity | listed | sold | fill rate | median price |
+|---|---|---|---|---|
+| common | 456 | 24 | 5.3 % | 9 |
+| uncommon | 67 | 12 | 17.9 % | 24.5 |
+| rare | 13 | 8 | 61.5 % | 70 |
+| pack | – | 0 | – | – |
+
+**Per pack, on Saturday's five sets:**
+
+| | value |
+|---|---|
+| expected book | 33.8 |
+| private value of its cards if kept (scores nothing) | 20.0 |
+| scored resale surplus at the tape's fill rates | **0.59 P** |
+| scored resale surplus if every chased card sells (W4's map) | 7.68 P |
+| cash back from resale at the tape's fill rates | 1.23 P |
+
+Only cards worth less to us than their net sale (price − El Rastro's 5 % + 1 P) are listed; the rest are kept. With Friday's four sets: 0.69 P, and 9.55 P in the what-if.
+
+## What to do with packs on Saturday (consistent with W7's cash plan)
+1. **Buy none from Abuela.** W7's spare ~88 P is better held for the Chato caps (W3 #81) or the venue decision (W7 decision C).
+2. **Open the free packs** (the grant's and the welcome pack). Opening is free, and luck does not score (W7 step 1).
+3. **List only the duplicates whose net sale beats our value**, addressed to W4's chasers through W4's `bazaar sell list … --to tNN` (#79), which respects the per-counterparty cap. That is +0.6 to +7.7 P of scored surplus per pack, at zero cash.
+
+## Risks and what is unverified
+- The tape is Friday's: 24 common sales across 18 teams. Saturday's liquidity may differ. The what-if row is the ceiling if every chaser buys.
+- The draw is assumed uniform over sets and cards; a pack may weight its own neighbourhood.
+- The round-point conversion uses W5's assumed trade weight (5) and a top-3 trade raw of 100–300 P (W7 §4). The ladder number is W5's fitted model.
+- Pack resale between teams has never happened (0 pack trades on Friday), so selling *sealed* packs to chasers has no price evidence at all.

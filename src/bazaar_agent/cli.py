@@ -1175,6 +1175,76 @@ def _jsonl_file(path: str) -> list[Event]:
     return sorted(events, key=lambda e: e["id"])
 
 
+@plan_app.command("packs")
+def plan_packs(
+    me_file: str | None = typer.Option(None, "--me", help=f"{FILE_HELP} (GET /api/me)"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help=f"{FILE_HELP} (GET /api/catalog)"),
+    dealers_file: str | None = typer.Option(None, "--dealers", help=f"{FILE_HELP} (GET /api/dealers, or a list)"),
+    feed_file: str | None = typer.Option(None, "--feed", help="Read the feed from this JSONL capture"),
+    chasers_file: str | None = typer.Option(None, "--chasers", help="JSON {set: [team, ...]} (W4's affinity map)"),
+    affinity_file: str | None = typer.Option(None, "--affinity", help="W4's `bazaar affinity --json`"),
+    sets: str = typer.Option("", "--sets", help="Sets a pack draws from (default: our released album pages)"),
+    price: float | None = typer.Option(None, "--price", help="Pack price (default: W3's median limit, capped)"),
+    pack: str = typer.Option("sobre_barrio", "--pack", help="Pack id"),
+    as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
+    live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
+) -> None:
+    """Packs as inventory (B9): a pack's expected cards, their private value (scores nothing) and the trade
+    surplus of reselling them at the team tape's prices and fill rates, next to the round points the same
+    cash buys on the ladder and in W4's trades. Read-only."""
+    from bazaar_agent import packs as pk
+    from bazaar_agent import pages as pg
+
+    def read(path: str | None, route: str) -> Any:
+        return _json_file(path) if path else getattr(public_client(load_settings()), route)()
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    catalog = read(catalog_file, "catalog")
+    personas = read(dealers_file, "dealers")
+    dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
+    events = _jsonl_file(feed_file) if feed_file else _events(live)
+    chasers = None
+    if affinity_file:
+        chasers, _ = pg.from_affinity_map(_json_file(affinity_file))
+    if chasers_file:
+        chasers = pg.chasers_from(_json_file(chasers_file))
+    m = pg.market_for(me, catalog, events, dealers, chasers)
+    tape = pk.tape_by_rarity(events, {c.ref: c.rarity for c in m.cards.values()})
+    pool = [s.strip() for s in sets.split(",") if s.strip()] or list(m.released)
+    if price is None:
+        price, basis = pk.expected_price(pk.pack_fills(events, pack), _rules().rules.max_price_pack)
+    else:
+        basis = "given"
+    value = pk.pack_value(m, pack, price, tape, sets=pool)
+    what_if = pk.pack_value(m, pack, price, tape, sets=pool, chaser_fill=1.0)
+    uses = pk.uses_of_cash([value])
+    if as_json:
+        out = {
+            "pack": pk.summary_row(value),
+            "price_basis": basis,
+            "chaser_what_if": pk.summary_row(what_if),
+            "tape": {r: {"listed": t.listed, "sold": t.sold, "median": t.median_price} for r, t in tape.items()},
+            "uses": [
+                {"use": u.name, "cash": u.cash, "points_per_prima": u.per_prima, "source": u.source} for u in uses
+            ],
+        }
+        typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+    console.print(f"{pack} from sets {', '.join(pool)} · price {price:g} P ({basis})")
+    for t in sorted(tape.values(), key=lambda t: t.rarity):
+        console.print(
+            f"  team tape {t.rarity}: {t.sold} sold of {t.listed} listed ({t.fill_rate:.0%}), median {t.median_price}"
+        )
+    console.print(
+        f"  expected book {value.expected_book:.1f} · private value if kept {value.keep_value:.1f} (scores nothing) · "
+        f"scored resale surplus {value.scored_surplus:.2f} P at the tape's fill rates, "
+        f"{what_if.scored_surplus:.2f} P if every chased card sold"
+    )
+    for u in uses:
+        low, high = u.per_prima
+        console.print(f"  {u.name}: {low:.4f}–{high:.4f} round points per prima ({u.source})")
+
+
 @plan_app.command("pages")
 def plan_pages(
     me_file: str | None = typer.Option(None, "--me", help=f"{FILE_HELP} (GET /api/me)"),
