@@ -10,7 +10,9 @@ read on `origin/main` **03244c12** (02:15; includes #262, #263, #264).
 
 1. **Sunday blocker (main as it is now):** at 15 s ticks the taker drops the LLM decider and uses Jev
    (#262, `BAZAAR_DECIDER_MIN_TICK_S` default 30). On Saturday, Jev said yes to **0 of 214** taker questions. So team
-   swaps and ladder probes stay off all Sunday unless Marius picks one of the settings in §5 row 0.
+   swaps and ladder probes stay off all Sunday unless Marius sets §5 row 0 on Railway bazaar-taker before 09:00.
+   **Do not lower `team_swap_jev_min_confidence` below 0.5:** the validator rejects it, and an invalid GUARDRAILS.md
+   stops every write on all three services.
 2. **How quiet, against what:**
    - 29 Saturday settlements: joint 13th of 17 (others' median 46.5), 4.8 % of the market's 603.
    - On Friday we were **last of 17** with 4, so being quiet started before Saturday's code, and per hour Saturday was
@@ -19,8 +21,8 @@ read on `origin/main` **03244c12** (02:15; includes #262, #263, #264).
      (29/h market-wide, against 52–92/h before).
    - Saturday-only settlements against the final rank: t13 64 (10th), t18 23 (2nd), t03 23 (5th), us 29 (9th). The
      number of trades itself does not score (RULES.md:122). Dealer deals score only as **ladder slots** (best three per
-     level, a missing one counts zero; RULES.md:118). We filled **11 of 15** slots, the same as the 1st and 2nd teams
-     (t10, t18). Missing: 1 Chato slot (level 2) and all 3 Banco slots (level 5); 14 of 17 teams have 0 at level 5.
+     level, a missing one counts zero; RULES.md:118). We filled **11 of 15** slots. That ties us with t10 and t18
+     (1st and 2nd), and with t03, t15 and t17, but 10 of the 16 other teams filled 12–13; only t09 has fewer. Missing: 1 Chato slot (level 2) and all 3 Banco slots (level 5); 14 of 17 teams have 0 at level 5.
 3. **Cause #1 (largest measured score effect): cash lock-up.**
    - v19 opened at 10:20 for 270 P (bond 250 + 20). It earned 0 trades all day, and its bench score was 0.5 every
      session, the same as the free stall. Free-stall teams t05/t07/t15/t18 also have market 7.5, and t16/t17 more.
@@ -204,7 +206,7 @@ Ranked by what each cause cost in score, not by how many moves it blocked (that 
 | # | Cause | Score effect (evidence) | Lost activity | Status on main |
 |---|---|---|---|---|
 | 1 | **Cash lock-up: v19's 270 P bond (10:20) plus the 100/50 floor kept after it** | **About +40 neg_points at our values** (MAL-10 team buy, ticks 504–584; at the loss-side k 0.048 that would be ≈ +1.9 board, but k is unmeasured for gains). v19 brought **0** market over the free stall: bench 0.5 every session, 0 organic trades; free-stall teams have 7.5–10.16. | room < 60 P on 809 of 940 ticks; 263 board skips for `cash_floor` (distinct offers: 17 in B, 3 in C, 3 in D); 27 dealer passes "none affordable" | bond still posted (refunded 10 ticks after a close, as t13 did 3 times); `max_venues` = 2 allows a second, hand-opened venue (another 270 P) |
-| 2 | **Dealer-ladder deals blocked by our own caps and gates** (official-value cap on dealer bids, `max_price_uncommon` 26 against Chato, `max_price_epic` 0, no Banco path, the probe gate) | **Unmeasured, possibly the largest.** Ladder slots 11 of 15, the same as t10/t18 (1st/2nd), but 1 empty L2 slot (Chato) and 3 empty L5 slots. Ladder = 12.5 × min(1, raw / top-3 mean): what an L2 deal is worth depends on the share it captures, which the DB does not give for other teams. I do not claim a RET buy at 50 would have beaten one of our three L4 deals. | 17 RET walks at 50 > 49; 2 Chato deals; 0 Banco; probe gate no ×9 (813–1201); about 400 P idle for 2 h | by design; §4 rec 3 |
+| 2 | **Dealer-ladder deals blocked by our own caps and gates** (official-value cap on dealer bids, `max_price_uncommon` 26 against Chato, `max_price_epic` 0, no Banco path, the probe gate) | **Unmeasured, possibly the largest.** Ladder slots 11 of 15: tied with t10/t18 (1st/2nd) and t03/t15/t17, below the 10 teams with 12–13; 1 empty L2 slot (Chato) and 3 empty L5 slots. Ladder = 12.5 × min(1, raw / top-3 mean): what an L2 deal is worth depends on the share it captures, which the DB does not give for other teams. I do not claim a RET buy at 50 would have beaten one of our three L4 deals. | 17 RET walks at 50 > 49; 2 Chato deals; 0 Banco; probe gate no ×9 (813–1201); about 400 P idle for 2 h | by design; §4 rec 3 |
 | 3 | **Swaps: Jev gate (until 16:55) + the cancel bug (all day)** | 0 swaps. Upper bound small: 13 swaps settled market-wide on Saturday | 204 refused openings (mean 0.35 against 0.75); 84 ladders with 0 concessions; 36 futile re-cancels | the gate is back on Sunday (TL;DR 1); bug half fixed (§3.1) |
 | 4 | **Opening spend cap 150/h + price caps** | ~0: every refused card was in our album later, mostly cheaper | 32 refused offers in A; 39 lost to the 1-accept quota | cap now 250 |
 | 5 | **Human approval ≥ 60** (15:46–19:56) | ~0 (delay only) | 21 refused LAV-10 opens; MAL-09 at 63 refused (bought 4 h 20 min later at 61) | 250 now (#232) |
@@ -265,7 +267,7 @@ Checked and found **not** to be a cause:
 
 | # | Change | Where | Expected | Risk |
 |---|---|---|---|---|
-| 1 | **Choose the Sunday decider on purpose** (§5 row 0) | Railway bazaar-taker env, or GUARDRAILS.md:114 | Swaps and ladder probes only run with it. Probes feed the ladder (row 3); swaps are small (13 market-wide on Saturday) | see row 0 |
+| 1 | **Keep the LLM decider at 15 s ticks** (§5 row 0) | Railway bazaar-taker env only | Swaps and ladder probes only run with it. Probes feed the ladder (row 3); swaps are small (13 market-wide on Saturday) | answers of 6.2–9.1 s: slower ones time out and refuse (fail closed); the change restarts the taker |
 | 2 | **No new bond.** Keep v19 and don't hand-open a second venue (`max_venues` 2 → 1, or a written rule). Close v19 only if the organisers confirm the stall comes back | GUARDRAILS.md:98; `bazaar venue close` is Marius's call | keeps 270 P for round 3. On Saturday's evidence a second venue adds 0 bench | closing v19 could lose bench presence (3.75 per Sunday session) |
 | 3 | **Let dealer-ladder deals price on the dealer's range, not the official value**, for round-3 ladder slots we do not have yet: at most 3 per level, a hard P cap per deal, logged as ladder buys | `official_value_margin` path (GUARDRAILS.md:27) for dealer bids; needs code (a ladder-slot exception) and review | fills empty slots: round-3 ladder +1.7 to +3 (RULES_AUDIT estimate, unverified) | each buy above the official value spends cash that scores nothing else; dealer buys add no neg_points either way, so the only loss is the cash |
 | 4 | **Fix the remaining team-desk branches** (§3.1) | `team_desk.py:1053`, `:1098–1102` | concessions on time; small upper bound | one redeploy, outside bench and duel windows |
@@ -273,14 +275,34 @@ Checked and found **not** to be a cause:
 
 ## 5. Sunday pre-flight checklist (09:00 doors, 15 s ticks)
 
-**Row 0, the #1 item:** the taker's decider at 15 s ticks. Main as it is now gives **Jev** (0 of 214 yes on
-Saturday): no swaps and no ladder probes all day. Marius chooses one option and writes down why:
+**Row 0, the #1 item: the taker's decider at 15 s ticks.** As main stands, the taker falls back to **Jev** at 15 s ticks,
+and Jev said yes to 0 of 214 taker questions on Saturday (its highest swap confidence was 0.47). That means no swaps
+and no ladder probes all day.
 
-| Option | Exact setting | Effect | Risk |
-|---|---|---|---|
-| (a) LLM at 15 s | Railway **bazaar-taker**: `BAZAAR_DECIDER=llm` (already set), **`BAZAAR_DECIDER_MIN_TICK_S=15`**, **`BAZAAR_DECIDER_TIMEOUT_S=8`** | Saturday's post-16:55 regime: 220 of 260 yes | An answer takes 6.2–9.1 s and the window is about 15 − 4.5 − 1 = 9.5 s. Many calls turn into "no tick budget" or a timeout, and every timeout is a refusal (fail closed). The LLM's yes was never tested against real swap fills (the bug). A Railway var change restarts the taker. |
-| (b) Jev with a lower swap bar | GUARDRAILS.md:114 `team_swap_jev_min_confidence` 0.75 → e.g. 0.35 (Jev's Saturday mean), or `team_swap_jev_gate` = false (the rules alone decide) | swaps run under Jev; **ladder probes stay off** (their bar is in `questions/strategies.json`, with no GUARDRAILS knob) | Jev's calibration on swaps is unproven; merging GUARDRAILS.md redeploys all three services |
-| (c) Accept it | nothing | no swaps, no probes on Sunday | lost probes for the round-3 ladder |
+- **Do:** on Railway **bazaar-taker only**, **before 09:00** (the change restarts the taker):
+  - `BAZAAR_DECIDER=llm` (already set);
+  - **`BAZAAR_DECIDER_MIN_TICK_S=15`**;
+  - **`BAZAAR_DECIDER_TIMEOUT_S=8`**.
+- **Risk:**
+  - LLM answers took 6.2–9.1 s on Saturday. An 8 s timeout needs about 9 s left in a 15 s tick, so slower answers time
+    out and refuse (fail closed): fewer swaps and probes, never an unjudged one.
+  - The LLM's yes (220 of 260 on Saturday) was never tested against real swap fills, because of the cancel bug.
+- **Verify in the first 20 Sunday ticks:**
+  - the WARN "shorter than BAZAAR_DECIDER_MIN_TICK_S" is **absent** from the taker log;
+  - some `yes` verdicts appear in `team_open` / `strategy_gate`, with "no tick budget" or a timeout in under 30 % of them
+    (SQL below).
+  - If either check fails, there are no swaps and no ladder probes: fall back to (c) below. Do not lower the bar.
+- **Alternatives:**
+  - **(b) `team_swap_jev_gate = false`** (GUARDRAILS.md:113). This is the only Jev-side lever that changes anything.
+    The rules alone decide swaps, **with no judge at all**: every swap that passes the surplus, share, cash and
+    official-value rules is sent. Ladder probes stay off: their bar is `stakes: design` = 0.75 in
+    `questions/strategies.json`, with no GUARDRAILS knob. Merging it redeploys all three services.
+  - (c) Accept it: no swaps and no probes on Sunday.
+- **⚠ Never set `team_swap_jev_min_confidence` below 0.5.**
+  - The field is `ge=0.5` (`guardrails.py:207`). A lower value makes GUARDRAILS.md invalid, and an invalid file stops
+    every write on taker, maker and duels (`guardrails.py:483–497`).
+  - Even 0.5 unlocks nothing. The gate needs `verdict == "yes"` (`team_desk.py:837`), and every Saturday Jev swap value
+    was below 0.5 (max 0.47).
 
 Each row below names the Saturday cause it would have caught, or says it is a guard rather than a check.
 
@@ -289,10 +311,10 @@ Each row below names the Saturday cause it would have caught, or says it is a gu
 | before **any merge or hand action** (all day) | Gate, not a read: no bond, venue open or close, floor change, or `BAZAAR_SIM`/`BAZAAR_DECIDER*` change without a one-line expected gain and Marius's sign-off | the line exists | cause #1 (#171 was a deliberate mid-morning merge that no pre-open read could catch); the simulator run |
 | 08:40 | `railway logs -s bazaar-{taker,maker,duels} --lines 30 \| grep target:` | `target: real game https://bazaar.causaprima.ai` on all three | the 13:27–15:17 simulator run |
 | 08:40 | `railway variables -s <svc> --json`, filtered to print names and these values only | taker/maker `BAZAAR_LIVE=1`; **no `BAZAAR_SIM`** anywhere; `DATABASE_URL` set on all three; duels `BAZAAR_DECIDER=jev`; taker `BAZAAR_DECIDER*` as chosen in row 0 | simulator run; decider |
-| 09:00 + 5 ticks | taker log after 09:00: `grep "shorter than BAZAAR_DECIDER_MIN_TICK_S"` | **absent** if (a) was chosen, present if (b) or (c) was | the decider choice actually in force (variables at 08:40 say nothing about the running process) |
-| 09:00 + 20 ticks | `SELECT jev->>'verdict', count(*) FROM decisions WHERE agent='taker' AND kind IN ('team_open','strategy_gate') AND tick > <first Sunday tick> GROUP BY 1` | some `yes` under (a)/(b); `no tick budget` under 30 % for (a) | the gate regime (cause #3) |
+| 09:00 + 5 ticks | taker log after 09:00: `grep "shorter than BAZAAR_DECIDER_MIN_TICK_S"` | **absent** (row 0 applied); present = Jev decides, so no swaps or probes unless (b) | the decider choice actually in force (variables at 08:40 say nothing about the running process) |
+| 09:00 + 20 ticks | `SELECT kind, jev->>'verdict', jev->>'reason', count(*) FROM decisions WHERE agent='taker' AND kind IN ('team_open','strategy_gate') AND tick > <first Sunday tick> GROUP BY 1,2,3` | some `yes`; reasons `no tick budget for jev` + `request_timeout` under 30 % of rows | the gate regime (cause #3) |
 | 08:40 | duels log: `ledger: postgres ledger table … (shared…)` | not a JSONL fallback | ledger not shared |
-| 08:45 | `uv run bazaar rules` | `cash_floor` 5, `max_spend_per_game_hour` 250, `human_approval_above` 250, `max_price_uncommon` 26 / `rare` 95 / `epic` 240, `max_accepts_per_tick` 1, `max_venues` (see rec 2), `team_swap_jev_*` as in row 0, `team_desk_never_trade` none, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 (= 2 h at 15 s), **`activity_stall_seconds` 15** (#248 asks for 15 on Sunday; it is 30) | the spend cap at the open (A); approval at 60 (D); the blocklist (E–F) |
+| 08:45 | `uv run bazaar rules` | `cash_floor` 5, `max_spend_per_game_hour` 250, `human_approval_above` 250, `max_price_uncommon` 26 / `rare` 95 / `epic` 240, `max_accepts_per_tick` 1, `max_venues` (see rec 2), `team_swap_jev_gate` true (or false if row 0 (b) was chosen) and `team_swap_jev_min_confidence` **≥ 0.5** (0.75), `team_desk_never_trade` none, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 (= 2 h at 15 s), **`activity_stall_seconds` 15** (#248 asks for 15 on Sunday; it is 30) | the spend cap at the open (A); approval at 60 (D); the blocklist (E–F) |
 | 08:55 | `GET /api/clock` (keyless) | `paused` false at 09:00, `tick_seconds` 15 | the 09:00–09:29 wait (organisers; information only) |
 | 09:00 + 5 ticks | one summary line per tick per service (taker `accept candidate(s)`, maker `action(s)`, duels `live duel(s)`) | a line every tick, `LIVE`, `/me live` | a down service |
 | every 30 min | SQL: every `team_offer` decision at step ≥ 1 has a `say` execution within 2 ticks; `executions.error_code='offer_not_open'` ≤ 1 per concession | both hold | cause #3 (the Saturday loop, and the 2-tick lag left on main) |
@@ -303,7 +325,8 @@ Each row below names the Saturday cause it would have caught, or says it is a gu
 
 ## 6. Open questions for Marius
 
-1. **Decider for Sunday:** (a), (b) or (c) from §5 row 0? This decides whether swaps and ladder probes run at all.
+1. **Decider for Sunday:** apply §5 row 0 (LLM at 15 s ticks) before 09:00? If it fails the 20-tick check, take
+   (b) `team_swap_jev_gate = false` (swaps with no judge) or (c) no swaps and no probes. Never a bar below 0.5.
 2. Close v19 to free the 250 bond for round 3? Only if the organisers confirm a team without a venue still gets a
    bench stall (`venue.closed v08 replaced` suggests the stall does not come back by itself).
 3. Who switched the three services to `BAZAAR_SIM` at 13:27, and was it on purpose?
@@ -341,3 +364,11 @@ Each row below names the Saturday cause it would have caught, or says it is a gu
 | 11 | Banco and epics | folded into cause #2 and F |
 | 12 | SAL-07 pointer | added in E |
 | 13 | affinity ordering | "our two lowest-affinity sets" removed |
+
+### Re-check (0ef731d6)
+
+| Item | Done |
+|---|---|
+| HIGH: option (b) 0.35 is invalid (`ge=0.5`) and would stop every write; 0.5 unlocks nothing | (b) is now `team_swap_jev_gate = false`, with its no-judge risk; a loud warning never to go below 0.5 (TL;DR 1, §5 row 0, the rules row, Q1); row 0 is the exact Railway setting, with its risk and the 20-tick check |
+| LOW: t10/t18 framing | the slot count is now set against all 16 other teams (10 of them filled 12–13) |
+| LOW: SQL check groups by verdict only | groups by `kind`, `verdict` and `reason`; the pass criterion names the reasons |
