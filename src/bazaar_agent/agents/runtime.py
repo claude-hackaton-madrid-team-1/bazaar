@@ -169,7 +169,7 @@ def read_snapshot(team: Any, public: Any, feed: MarketFeed, clock: Clock) -> Sna
         offers=offers,
         catalog=public.catalog(),
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
-        venues=venues_from(public.venues()),
+        venues=venues_from(public.venues(), clock.tick),
         events=feed.events(),
     )
 

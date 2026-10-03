@@ -20,6 +20,42 @@ def test_a_zero_fee_venue_charges_nothing_and_venues_parse_their_mechanism():
     assert cheap.fee(500) == 0 and (rastro.mechanism, cheap.mechanism, cheap.owner) == ("board", "board", "t12")
 
 
+# B19 (bite X8): an announced fee change (`pending_fee`) is priced in once an accept now could settle under it.
+HIKE = {**CHEAP, "pending_fee": {"fee_bps": 1000, "fee_per_card": 5, "effective_tick": 101}}  # the RULES cap
+
+
+def test_an_announced_fee_effective_by_settlement_is_priced_in():
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=100)  # accept at 100 settles at 101 = effective tick
+    assert hiked.fee(10) == 6 and hiked.fee(65) == 12 and hiked.fee_bps == 0  # today's fee is still 0
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=101)  # the server still shows it pending
+    assert hiked.fee(10) == 6
+
+
+def test_an_announced_fee_effective_after_settlement_is_not_priced_in_yet():
+    (later,) = venues_from({"venues": [HIKE]}, tick=99)  # accept at 99 settles at 100 < 101
+    assert later.fee(10) == 0 and later.pending_fee is None
+
+
+def test_an_announced_fee_without_a_tick_is_priced_in():
+    """No tick to compare with: assume the change can apply (the conservative side)."""
+    (hiked,) = venues_from({"venues": [HIKE]})
+    assert hiked.fee(10) == 6
+    no_effective = {**CHEAP, "pending_fee": {"fee_bps": 100, "fee_per_card": 0}}
+    assert venues_from({"venues": [no_effective]}, tick=100)[0].fee(200) == 2
+
+
+def test_an_announced_fee_cut_never_lowers_the_fee_before_it_applies():
+    cut = {**RASTRO, "pending_fee": {"fee_bps": 0, "fee_per_card": 0, "effective_tick": 101}}
+    (rastro,) = venues_from({"venues": [cut]}, tick=100)
+    assert rastro.fee(65) == 5  # the higher of today's 5 and the announced 0
+
+
+def test_an_unreadable_announced_fee_is_ignored_and_none_is_the_old_shape():
+    bad = {**CHEAP, "pending_fee": {"fee_bps": "lots", "effective_tick": 101}}
+    late = {**CHEAP, "pending_fee": {"fee_bps": 100, "effective_tick": "soon"}}
+    assert [v.fee(100) for v in venues_from({"venues": [bad, late, {**CHEAP, "pending_fee": None}]}, 100)] == [0] * 3
+
+
 def test_only_plain_one_card_shapes_are_read():
     assert parse_offer(ask(1, "LAV-02", 10)).side == "ask"
     assert parse_offer(bid(2, "LAV-09", 70)).side == "bid" and parse_offer(bid(2, "LAV-09", 70)).ref == "LAV-09"
