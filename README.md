@@ -1175,6 +1175,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
 | [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | Sat 06:37 | `b0caeb6` |
@@ -1186,7 +1187,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
 | [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
 | [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
-| [#147](../../pull/147) | style: wrap a long IaC docstring line (ruff E501 on main) | Sat 05:25 | `aaeb0fe` |
 
 ### Open pull requests
 
@@ -1203,7 +1203,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#154](../../pull/154) | docs(night): salvage the reports of Marius's closed night PRs, with an index of findings and decisions | `docs/night-salvage` |
 | [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
 | [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
-| [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | `ogarciarevett/takeover-duelsv2` |
 | [#146](../../pull/146) | feat(safety): offer inspector before every accept — dealer, board, duel (S1 part A, takes over #93) | `ogarciarevett/s1-inspector` |
 | [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
 | [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
@@ -1212,5 +1211,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
+| [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
 
 <!-- BAZAAR:ACTIVITY:END -->
