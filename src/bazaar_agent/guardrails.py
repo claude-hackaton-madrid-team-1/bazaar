@@ -238,6 +238,7 @@ class Guardrails(BaseModel):
     watchdog_max_swaps_per_team: int = Field(default=3, ge=1)
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
+    dealer_sell_breaker_reset_ticks: int = Field(default=40, ge=0, le=2000)  # 0: only a human resets it
     watchdog_refusal_storm: int = Field(default=50, ge=1)
     # Buy targets (`buy_targets.py`): a human's buy approval of an off-page card becomes a card the agents pursue.
     buy_targets_enabled: bool = False
@@ -429,6 +430,7 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
+    "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
 }

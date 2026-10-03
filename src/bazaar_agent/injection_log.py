@@ -26,6 +26,8 @@ import psycopg
 from bazaar_agent.db import INT4, jsonb_safe
 from bazaar_agent.llm.chooser import folded, injection_flags
 
+# ponytail: keep tags in the deployed natural key; retagging can duplicate a message.
+# Removing tags requires an explicit migration of both the unique constraint and INSERT conflict target.
 DDL = (
     "create table if not exists injection_attempts (id bigserial primary key, world text not null default 'real', "
     "tick int, source text not null check (source in ('feed','team_thread','duel','dealer_thread','offer_text')), "

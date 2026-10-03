@@ -1,9 +1,12 @@
 """`injection_attempts` against a real Postgres, in a throwaway schema (skipped when Postgres is unreachable)."""
 
 import json
+import secrets
 import time
 
+import psycopg
 import pytest
+from psycopg import sql
 
 from bazaar_agent import injection_log as il
 from tests.test_db import conn, database_url, open_in, schema  # noqa: F401 — fixtures
@@ -72,9 +75,33 @@ def test_the_cli_backfills_and_lists_ascii_json_with_proofs(conn, database_url, 
 
 def test_visible_shows_the_hiding_and_never_a_terminal_escape():
     from bazaar_agent.injection_cli import visible
+    from bazaar_agent.llm.chooser import HIDING_MARKS
 
     assert visible("Ign​ore \x1b[31mred") == "Ign⟨U+200B⟩ore ⟨U+001B⟩[31mred"
     assert visible("Hola, cariño") == "Hola, cariño"
+    for mark in HIDING_MARKS:
+        assert visible(mark) == f"⟨U+{ord(mark):04X}⟩"
+
+
+def test_recent_works_for_a_select_only_role(conn, database_url, schema):  # noqa: F811
+    from bazaar_agent.pgconn import describe
+
+    if not describe(database_url).is_local_default:
+        pytest.skip("roles are cluster-wide: only on the local docker Postgres")
+    seed(conn)
+    il.store(conn, il.InjectionLog(None), il.backfill(conn, "t01"))
+    conn.commit()
+    role = sql.Identifier(f"bazaar_pytest_ro_{secrets.token_hex(4)}")
+    try:
+        conn.execute(sql.SQL("create role {}").format(role))
+        conn.execute(sql.SQL("grant usage on schema {} to {}").format(schema, role))
+        conn.execute(sql.SQL("grant select on injection_attempts to {}").format(role))
+        conn.execute(sql.SQL("set local role {}").format(role))
+        assert len(il.recent(conn)) == 4
+        with pytest.raises(psycopg.errors.InsufficientPrivilege), conn.transaction():
+            conn.execute(il.DDL)
+    finally:
+        conn.rollback()  # includes the temporary role and grants, even when an assertion fails
 
 
 def test_startup_and_live_flush_do_not_wait_for_backfill(conn, database_url, schema):  # noqa: F811

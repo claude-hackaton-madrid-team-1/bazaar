@@ -692,7 +692,8 @@ class Taker:
             tactics = getattr(conv, "tactics", None)  # N16: message id -> tactic, when the desk records one
             self.thread_store.saw(thread, snap.us, snap.clock.tick, tactics if isinstance(tactics, dict) else None)
         if self.injection_log is not None and snap.us:  # buffered only: written after the sends
-            self.injection_log.note_thread(thread, snap.us, "dealer_thread", snap.clock.tick)  # never raises
+            source = "team_thread" if thread.get("kind") == "team" else "dealer_thread"
+            self.injection_log.note_thread(thread, snap.us, source, snap.clock.tick)  # never raises
 
     def _record_injections(self, tick: int) -> None:
         """After the sends: the injection attempts in this tick's feed window and our team threads (no request;

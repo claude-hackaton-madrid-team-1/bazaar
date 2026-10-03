@@ -72,3 +72,69 @@ Code and security reviews ran independently in parallel and found no further P0-
 One worker owned the edits to avoid overlapping changes; the full Postgres suite ran once.
 Unverified: deployed behavior; this repair made no production change.
 Could-not-do: none within the requested repair scope.
+
+## Final review repair scope (2026-10-04)
+
+The latest `pr-reviewer (codex gpt-6-astra)` review adds incorrect dealer attribution and duplicate proofs for
+inline team messages. A thread recorded by `_keep` and the team desk must yield one `team_thread` row.
+Malformed thread or duel recording must preserve taker sends and duel processing. Reads must work with only
+SELECT permission, every `HIDING_MARKS` character must be visible, and the deployed natural key stays unchanged.
+The final gate runs the full pytest once alone, with `DATABASE_URL`, `BAZAAR_SIM`, and `BAZAAR_ENV_FILE` unset.
+
+## Honest Implementation Report (IJ1, final repair)
+
+All eight criteria from `.ai/specs/IJ1-spec.md` are verified by the tests below and the pasted gate output.
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Red-team payloads recorded with raw proof | Verified | `tests/test_injection_log.py:21`, `test_every_red_team_payload_is_an_attempt` |
+| 2 | Hidden Unicode detected and visibly rendered | Verified | `tests/test_injection_log.py:37`; `tests/test_injection_log_db.py:76` checks every `HIDING_MARKS` character |
+| 3 | Our words and organiser text excluded; weak shapes graded separately | Verified | `tests/test_injection_log.py:43` and `:93` |
+| 4 | Feed/thread deduplication and correct team attribution | Verified | `tests/test_injection_log.py:74`; `tests/test_injection_wiring.py:36` proves both taker passes write one team row |
+| 5 | Recording preserves sends, post-send processing and failure buffers | Verified | `tests/test_injection_log.py:197`, `:206`, `:231`; `tests/test_injection_wiring.py:54` and `:73` cover malformed payloads and forced extractor errors |
+| 6 | Backfill deduplicates all channels; CLI emits ASCII JSON with proofs | Verified | `tests/test_injection_log_db.py:38`, `:52`, `:64` |
+| 7 | SELECT-only role can read | Verified | `tests/test_injection_log_db.py:86` reads four rows as a temporary SELECT-only role and confirms DDL raises `InsufficientPrivilege` |
+| 8 | Requested full gate and simulator smoke pass | Verified | Output below |
+
+The full pytest suite ran **once, alone**, with `DATABASE_URL`, `BAZAAR_SIM`, and `BAZAAR_ENV_FILE` unset.
+The same variables were unset for the focused run and other Python checks. The resolved database target was
+verified as the local default without printing its URL. After the full run, code review strengthened only
+the duel test with an assertion that the final `evals.after_tick(134)` ran; the five wiring cases were rerun.
+No implementation changed after the full run.
+
+```text
+uv run pytest -q
+5401 passed, 1 skipped, 2 xfailed, 42 subtests passed in 101.28s (0:01:41)
+uv run pytest -q tests/test_injection_wiring.py
+5 passed in 0.78s
+uv run ruff check .
+All checks passed!
+uv run ruff format --check .
+683 files already formatted
+uv run black --check src tests scripts
+450 files would be left unchanged.
+uv run mypy src
+Success: no issues found in 208 source files
+sh scripts/sync-ai-docs.sh
+sync-ai-docs: regenerated (AGENTS.md inline; CLAUDE.md @import stub)
+python3 scripts/readme_status.py --check
+exit 0
+uv run python scripts/architecture_page.py
+exit 0
+uv run bazaar rules
+exit 0
+BAZAAR_SIM_PORT=8974 uv run python scripts/sim_smoke.py
+SMOKE PASSED in 54 s
+```
+
+`lsof` confirmed port 8974 was free before the smoke. `git diff --check` passed and `git ls-files -u` was empty.
+A line-order check confirmed every memory line from both merge parents was preserved. Independent code and
+security reviews both returned APPROVE after the final test assertion.
+
+**Honest Implementation Metric: 8/8 = 100%.**
+
+**Unverified:** production behavior, production occurrence of inline team messages, worst-case 15-second tick
+timing, and fresh coverage percentage. This run followed the requested `pytest -q` gate without a coverage rerun.
+
+**Could-not-do:** reconstruct historic team-thread words that were never stored. Nothing blocks the requested
+repair; the separate bazaar-live panel and deployment are outside this task.
