@@ -28,6 +28,7 @@ from bazaar_agent.agents.dealer import (
     newest_dealer_offer,
     settled_price,
     whole_primas,
+    with_name,
 )
 from bazaar_agent.guardrails import OFF_PAGE_RARITIES
 
@@ -169,8 +170,8 @@ def ask_schedule(plan: AskPlan) -> list[int]:
 
 def sell_words(step: int, price: int, dealer: str = "") -> str:
     """Kind, varied words for an ask. The structured price is what binds; the text never changes it."""
-    name = DEALER_NAMES.get(dealer, "amigo")
-    return SELL_WORDS[step % len(SELL_WORDS)].format(p=price, n=name)
+    name = DEALER_NAMES.get(dealer, "")
+    return with_name(SELL_WORDS[step % len(SELL_WORDS)], price, name)
 
 
 def sell_topic(asset_id: int) -> dict[str, Any]:
