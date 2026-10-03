@@ -505,3 +505,14 @@ def test_ladder_floor_quantile_falls_back_to_todays_ladder_without_a_floor():
     on = PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})
     moves, _ = strategy.buy_moves(market(), on, RULES)  # EVENTS have no thread messages: floors == {}
     assert market().floors == {} and next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)
+
+
+def test_a_floor_plan_below_the_market_never_drops_todays_buy():
+    from dataclasses import replace as dc_replace
+
+    from bazaar_agent.ladder import FloorRow
+
+    low = FloorRow("abuela", "card:uncommon", 29, 9, 9, (14, 14, 15, 15, 15, 15, 16, 16, 16), 9, 5.0, 3.0)
+    m = dc_replace(market(), floors={("abuela", "card:uncommon"): low})  # floor 15 → 13..17, LAV-08 fills ~22
+    moves, _ = strategy.buy_moves(m, PARAMS.model_copy(update={"ladder_floor_quantile": 0.5}), RULES)
+    assert next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)  # today's ladder, not dropped

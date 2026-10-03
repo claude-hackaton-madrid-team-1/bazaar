@@ -21,7 +21,9 @@ from typing import Any
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.ladder import Conversation, FloorRow, PlanChoice, main_rows, plan_for, rarity_of_class
 from bazaar_agent.ladder_replay import Summary, backtest, fit
+from bazaar_agent.strategy import dealer_command
 
+UNLIMITED = 10_000  # a quota the payload does not state
 SATURDAY_OPEN_T = 4.0  # game hours: Friday 19:00–23:00 is t 0–4, Saturday opens at t 4.0 (09:00 Madrid)
 
 
@@ -99,11 +101,8 @@ class Slot:
 
     def as_dict(self) -> dict[str, Any]:
         t = self.target
-        cmd = f"uv run bazaar dealer buy {t.ref or '<ref>'} --start {self.start} --max {self.max_price}"
-        if t.price_class.startswith("pack:"):
-            cmd = (
-                f"uv run bazaar dealer buy {t.price_class.split(':', 1)[1]} --start {self.start} --max {self.max_price}"
-            )
+        item = t.price_class.split(":", 1)[1] if t.price_class.startswith("pack:") else t.ref or "<ref>"
+        cmd = dealer_command(item, t.dealer, self.start, self.max_price, self.step)
         return {
             "tick": self.tick,
             "wall": self.wall,
@@ -118,7 +117,7 @@ class Slot:
                 "price": None if self.expected_price is None else round(self.expected_price, 1),
                 "ticks": None if self.expected_ticks is None else round(self.expected_ticks, 1),
             },
-            "command": f"{cmd} --dealer {t.dealer} --live",
+            "command": f"{cmd} --live",
             "why": self.why,
         }
 
@@ -213,10 +212,10 @@ def schedule(
             reason = None
             if deals.get((target.dealer, hour), 0) >= quota.deals_per_hour:
                 reason = f"{target.dealer} quota {quota.deals_per_hour}/h"
-            elif pack and packs.get((pack, hour), 0) >= min(
-                quota.packs_per_hour.get(pack, 99), rules.max_packs_per_game_hour
-            ):
+            elif pack and packs.get((pack, hour), 0) >= quota.packs_per_hour.get(pack, UNLIMITED):
                 reason = f"{pack} quota"
+            elif pack and sum(n for (_, h), n in packs.items() if h == hour) >= rules.max_packs_per_game_hour:
+                reason = f"max_packs_per_game_hour {rules.max_packs_per_game_hour}"  # every pack id together
             elif spend.get(hour, 0) + plan.max_price > rules.max_spend_per_game_hour:
                 reason = f"max_spend_per_game_hour {rules.max_spend_per_game_hour}"
             elif min(cash_left(t) for t in checks) - plan.max_price < rules.cash_floor:
@@ -271,17 +270,19 @@ def best_three_first(plans: Mapping[tuple[str, str], ClassPlan], dealer: str) ->
 
 
 def quotas_from_dealers(dealers: Iterable[Mapping[str, Any]]) -> dict[str, DealerQuota]:
-    """`GET /api/dealers` → quotas: each dealer's deals per team per hour and its pack allotments."""
+    """`GET /api/dealers` → quotas: each dealer's deals per team per hour and its pack allotments. A
+    missing number means no quota (as in `strategy.dealer_quotes`); a 0 means none this hour."""
     out = {}
     for d in dealers:
         menu = d.get("menu") or {}
-        packs = {
-            str(s["pack"]): int(s.get("per_team_per_hour") or 99) for s in menu.get("sells") or [] if s.get("pack")
-        }
-        out[str(d["id"])] = DealerQuota(
-            str(d["id"]), int(d.get("level") or 0), int(menu.get("deals_per_team_per_hour") or 0), packs
-        )
+        packs = {str(s["pack"]): _count(s.get("per_team_per_hour")) for s in menu.get("sells") or [] if s.get("pack")}
+        deals = _count(menu.get("deals_per_team_per_hour"))
+        out[str(d["id"])] = DealerQuota(str(d["id"]), int(d.get("level") or 0), deals, packs)
     return out
+
+
+def _count(value: Any) -> int:
+    return UNLIMITED if value is None else int(value)
 
 
 # Quotas when no `GET /api/dealers` dump is given: Abuela from the real payload (tests/fixtures/api,
@@ -338,7 +339,7 @@ def plan_document(
     rules: Guardrails,
     *,
     cash: int,
-    grants: Sequence[Grant] = (Grant(6, 150),),
+    grants: Sequence[Grant] = (),
     window: Window | None = None,
     quotas: Mapping[str, DealerQuota] = DEFAULT_QUOTAS,
     refs: Sequence[tuple[str, str]] = (),
@@ -395,7 +396,11 @@ def plan_document(
                 "opening": cp.choice.row.opening,
                 "floor_p50": cp.choice.floor,
                 "cap": cp.choice.cap,
-                "plan": None if cp.choice.plan is None else [cp.choice.plan.start, 1, cp.choice.plan.max_price],
+                "plan": (
+                    None
+                    if cp.choice.plan is None
+                    else [cp.choice.plan.start, cp.choice.plan.step, cp.choice.plan.max_price]
+                ),
                 "reason": cp.choice.reason,
                 "backtest": None if cp.backtest is None else cp.backtest.as_dict(),
             }

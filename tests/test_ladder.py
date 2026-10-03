@@ -98,6 +98,22 @@ def test_a_fill_goes_to_the_thread_about_that_item():
     assert fills == {99: 7, 101: None}
 
 
+def test_a_rarity_request_takes_only_a_card_of_that_rarity():
+    events = [
+        opened(1, topic={"buy": {"rarity": "uncommon", "set": "LAV"}}),
+        said(1, "t05", 10, 1),
+        settled(10, 2, ref="LAV-03"),  # a common, from another thread we never saw open
+    ]
+    assert conversations(events)[0].fill is None
+    assert conversations([*events[:2], settled(10, 2, ref="LAV-07")])[0].fill == 10
+
+
+def test_one_odd_opening_does_not_change_the_regime_we_plan_on(real):
+    c = Conversation(9999, "t05", "abuela", "buy", "LAV-07", 999, turns=[Turn(999, True, 17), Turn(999, False, 16)])
+    rows = main_rows(floor_table([*real, c]))
+    assert rows[("abuela", "card:uncommon")].opening == 29
+
+
 def test_the_final_offer_bounds_the_limit_and_counts_patience():
     c = Conversation(1, "t04", "abuela", "buy", "sobre_barrio", 0)
     c.turns = [Turn(0, True, 30), Turn(1, False, 9), Turn(1, True, 25), Turn(2, False, 11), Turn(2, True, 24, True)]

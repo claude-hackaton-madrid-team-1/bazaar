@@ -176,8 +176,15 @@ def likely_holders(events: Iterable[intel.Event], us: str) -> dict[str, tuple[st
 
 
 def build_market(
-    me: dict[str, Any], catalog: dict[str, Any], events: Sequence[intel.Event], dealers: Iterable[dict[str, Any]]
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    events: Sequence[intel.Event],
+    dealers: Iterable[dict[str, Any]],
+    *,
+    floors: bool = False,
 ) -> Market:
+    """Everything a strategy reads, from plain payloads. `floors` also rebuilds the dealer floor table
+    from every thread in `events` (only `ladder_floor_quantile` > 0 reads it)."""
     us = str(me.get("id") or "")
     cards = {
         str(c["id"]): Card(
@@ -219,7 +226,7 @@ def build_market(
         holders=likely_holders(events, us),
         chasers={k: tuple(sorted(v)) for k, v in chasers.items()},
         tick=me.get("tick"),
-        floors=main_rows(floor_table(conversations(events))),
+        floors=main_rows(floor_table(conversations(events))) if floors else {},
     )
 
 
@@ -491,9 +498,8 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     cap = rules.max_price_for(card.rarity)
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
     row = m.floors.get((quote.dealer, f"card:{card.rarity}")) if params.ladder_floor_quantile > 0 else None
-    if row is not None and (
-        floored := floor_range(row, case.value, cap, params.min_buy_surplus, params.ladder_floor_quantile)
-    ):
+    floored = floor_range(row, case.value, cap, params.min_buy_surplus, params.ladder_floor_quantile) if row else None
+    if floored is not None and floored[1] >= est.price:  # never drop a buy today's ladder would make
         plan = floored
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
@@ -747,7 +753,7 @@ def build_playbook(
     params: StrategyParams,
     rules: Guardrails,
 ) -> Playbook:
-    m = build_market(me, catalog, events, dealers)
+    m = build_market(me, catalog, events, dealers, floors=params.ladder_floor_quantile > 0)
     buys, skipped = buy_moves(m, params, rules)
     quotas: dict[str, int] = {}
     for q in m.quotes:

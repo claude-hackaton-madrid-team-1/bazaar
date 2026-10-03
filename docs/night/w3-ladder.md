@@ -29,9 +29,9 @@ Share = (opening − price) / (opening − that conversation's limit). No deal c
 | abuela uncommon | **W3 21→25** | **0.945** | 0.994 | 0.994 | 0.847 | 0 | **0.973** / 0.888 | 0.838 | 37 |
 | abuela common | today 7→12 | 0.984 | 1.000 | 1.000 | 0.906 | 0 | 0.960 / 0.959 | 0.960 | 25 |
 | abuela common | W3 8→12 | 0.975 | 1.000 | 1.000 | 0.994 | 0 | 0.960 / 0.943 | 0.960 | 25 |
-| abuela pack | today 17→20 | 0.421 | 0.432 | 0.432 | 0.325 | 0 | 0.118 / 0.603 | 0.581 | 34 |
+| abuela pack | today 17→20 | 0.421 | 0.432 | 0.432 | 0.325 | 0 | 0.118 / 0.603 | 0.647 | 34 |
 | abuela pack | W3 (cap 20) | blocked | | | | | | | |
-| abuela pack | W3 uncapped 20→24 | 0.901 | 0.959 | 0.959 | 0.818 | 0 | 0.933 / 0.838 | 0.581 | 34 |
+| abuela pack | W3 uncapped 20→24 | 0.901 | 0.959 | 0.959 | 0.818 | 0 | 0.933 / 0.838 | 0.647 | 34 |
 | chato uncommon | W3 uncapped 27→31 | 0.690 | 0.832 | 0.832 | 0.676 | 0 | 0.833 / 0.560 | 1.000 | 6 |
 | chato rare | W3 uncapped 89→93 | 0.756 | 0.997 | 0.997 | 0.975 | 0 | 0.948 / 0.618 | 0.889 | 9 |
 
@@ -49,6 +49,8 @@ The gain is in uncommons: +0.105 share in the model and +0.173 on the real repla
 | chato rare (uncapped) | 89→93 | 86–92 | 0.907 | 1.00 | 1.00 | 0 |
 
 End to end, our real CLI (`bazaar dealer buy … --live`, BAZAAR_SIM=1) ran against an in-process simulator: 7 of 7 deals, all negotiated, 6 at exactly the secret limit and 1 at the limit + 1. The simulator's pack floor (17–18) is lower than Friday's real one (21 at p25). Trust the real numbers for packs.
+
+The desk itself (`bazaar agent taker --live`, 40 ticks, Friday's feed loaded) also ran against the simulator, with `ladder_floor_quantile` at 0.5 and then at 0. At 0.5 it opened Abuela uncommons at 21 and commons at 8, through `Move.ladder`: 7 deals, mean share 0.95, 2–3 bids per uncommon. At 0 it opened at 17 and 7: 8 deals, mean share 1.00, 5–6 bids per uncommon. **Caveat:** the simulator's Abuela waits 10 rounds before her final, so starting low costs nothing there. Friday's real Abuela named a final after a median of 5 bids, and that is exactly what makes 17→26 lose 0.10–0.17 on the real threads. Decision 2 rests on trusting Friday's threads over the simulator's patience.
 
 ## The 09:00–10:30 plan (`docs/night/ladder_plan.json`)
 Inputs: cash 353 at the open plus the 150 grant at 09:03 (tick 6), `cash_floor` 270, 150 P per game hour, Abuela 8 deals per hour, one conversation per dealer at a time, and each slot reserves its max price. The first three slots are Abuela's best three: commons, the highest-share and cheapest class. The rest is album fill, alternating commons and uncommons. When the dealer takes our bid, no team accept slot is used.

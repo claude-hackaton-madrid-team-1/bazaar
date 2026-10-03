@@ -8,6 +8,7 @@ from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.ladder import floor_table, from_rows
 from bazaar_agent.ladder_plan import (
     DEFAULT_QUOTAS,
+    UNLIMITED,
     DealerQuota,
     Grant,
     Target,
@@ -90,10 +91,38 @@ def test_a_dealer_out_of_play_is_blocked(plans):
 def test_quotas_from_a_dealers_payload():
     body = json.loads((FIXTURE.parent.parent / "api" / "get_api_dealers.anon.json").read_text())["body"]
     assert quotas_from_dealers(body["personas"]) == {"abuela": DealerQuota("abuela", 1, 8, {"sobre_barrio": 3})}
+    odd = {"id": "x", "level": 3, "menu": {"sells": [{"pack": "p", "per_team_per_hour": 0}]}}
+    assert quotas_from_dealers([odd]) == {"x": DealerQuota("x", 3, UNLIMITED, {"p": 0})}  # 0 is none, missing is no cap
+
+
+def test_packs_share_one_hourly_cap_across_pack_ids(plans):
+    """GUARDRAILS.md max_packs_per_game_hour (3) counts every pack id together."""
+    loose = Guardrails(max_price_pack=200)  # what-if caps so both packs are plannable
+    real = from_rows(json.loads(FIXTURE.read_text())["rows"])
+    caps = {("abuela", "pack:sobre_barrio"): 24, ("chato", "pack:sobre_plata"): 190}
+    both = class_plans(real, floor_table(real), loose, caps=caps, runs=100)
+    plata = both[("chato", "pack:sobre_plata")]
+    assert plata.choice.plan is None  # one closed thread: not enough to trust a floor
+    both = dict(both) | {("chato", "pack:sobre_plata"): both[("abuela", "pack:sobre_barrio")]}  # stand-in plan
+    targets = [Target("abuela", "pack:sobre_barrio"), Target("chato", "pack:sobre_plata")] * 3
+    quotas = {d: DealerQuota(d, 1, 8, {"sobre_barrio": 3, "sobre_plata": 2}) for d in ("abuela", "chato")}
+    sched = schedule(both, targets, quotas, loose.model_copy(update={"max_spend_per_game_hour": 10_000}), cash=10_000)
+    in_first_hour = [s for s in sched.slots if s.game_hour == 4]
+    assert len(in_first_hour) == loose.max_packs_per_game_hour
+
+
+def test_the_dealers_option_refuses_a_body_that_is_not_dealers(tmp_path):
+    from bazaar_agent.cli import app
+
+    bad = tmp_path / "dealers.json"
+    bad.write_text(json.dumps({"personas": [{"name": "no id"}]}))
+    args = ["ladder", "plan", "--cash", "353", "--source", "fixture", "--dealers", str(bad)]
+    result = CliRunner().invoke(app, args, env={"COLUMNS": "300"})
+    assert result.exit_code == 2 and "every dealer needs a string id" in result.output
 
 
 def test_plan_document_for_saturday_morning(real):
-    doc = plan_document(real, floor_table(real), RULES, cash=353, runs=300)
+    doc = plan_document(real, floor_table(real), RULES, cash=353, grants=[Grant(6, 150)], runs=300)
     assert doc["window"]["ticks"] == 180 and doc["budget"]["grants"][0]["wall"] == "09:03:00"
     first = doc["schedule"][0]
     assert (first["wall"], first["dealer"], first["plan"]) == ("09:00:00", "abuela", {"start": 8, "step": 1, "max": 12})
@@ -119,7 +148,8 @@ def test_cli_writes_the_plan(tmp_path):
 
 def test_a_later_slot_never_blocks_an_earlier_one_on_cash(real):
     """Chato's 2nd and 3rd slots land after the 09:03 grant; Abuela's first still opens at 09:00."""
-    doc = plan_document(real, floor_table(real), RULES, cash=353, caps={("chato", "card:uncommon"): 31}, runs=300)
+    caps = {("chato", "card:uncommon"): 31}
+    doc = plan_document(real, floor_table(real), RULES, cash=353, grants=[Grant(6, 150)], caps=caps, runs=300)
     first = [(s["wall"], s["dealer"]) for s in doc["schedule"][:2]]
     assert first == [("09:00:00", "abuela"), ("09:00:00", "chato")]
     assert doc["what_if_caps"] == {"chato:card:uncommon": 31}

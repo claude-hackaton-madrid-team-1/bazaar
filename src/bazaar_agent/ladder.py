@@ -22,10 +22,11 @@ from statistics import median
 from typing import Any
 
 from bazaar_agent.agents.dealer import BidPlan
-from bazaar_agent.evals.dealers import SELL, price_class
+from bazaar_agent.evals.dealers import SELL, card_rarity, price_class
 from bazaar_agent.intel import Event, offer_price
 
 PLAN_WIDTH = 2  # PLAN.md W3: start = floor − 2, step 1, max = floor + 2
+RECENT = 10  # newest conversations per dealer × class that decide which opening ask is current
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,9 @@ def conversations(events: Iterable[Event]) -> list[Conversation]:
             c.turns.append(Turn(int(e.get("tick", 0)), p.get("sender") == c.dealer, price, bool(offer.get("final"))))
         elif kind == "settlement":
             settlements.append(e)
-    newest_first = sorted(threads.values(), key=lambda c: (c.opened_tick, c.thread), reverse=True)
+    by_party: dict[tuple[str, str, str], list[Conversation]] = defaultdict(list)
+    for c in sorted(threads.values(), key=lambda c: (c.opened_tick, c.thread), reverse=True):
+        by_party[(c.dealer, c.team, c.side)].append(c)  # newest first
     for e in settlements:
         p = e.get("payload") or {}
         dealer, items = p.get("persona"), p.get("items") or []
@@ -151,10 +154,9 @@ def conversations(events: Iterable[Event]) -> list[Conversation]:
         price, tick = int(p["price"]), int(p.get("tick") or e.get("tick") or 0)
         frm, to = str(items[0].get("frm")), str(items[0].get("to"))
         side, team = ("buy", to) if frm == dealer else ("sell", frm)
-        for c in newest_first:
-            if c.fill is not None or c.dealer != dealer or c.team != team or c.side != side:
-                continue
-            if c.opened_tick <= tick and price in (c.team_prices + c.dealer_prices) and _same_item(c, items):
+        for c in by_party.get((dealer, team, side), []):
+            named = {t.price for t in c.turns if t.tick <= tick}  # a price named before it settled
+            if c.fill is None and c.opened_tick <= tick and price in named and _same_item(c, items):
                 c.fill, c.fill_tick = price, tick
                 break
     return sorted(threads.values(), key=lambda c: c.thread)
@@ -166,8 +168,12 @@ def _same_item(c: Conversation, items: list[dict[str, Any]]) -> bool:
     if c.item.startswith("assets:"):
         wanted = {int(a) for a in c.item.split(":", 1)[1].split(",") if a.strip().isdigit()}
         return any(i.get("id") in wanted for i in items)
-    if ":" in c.item:  # a rarity request, "uncommon:LAV"
-        return True
+    if ":" in c.item:  # a rarity request, "uncommon:LAV": any card of that rarity (and set)
+        rarity, code = c.item.split(":", 1)
+        return any(
+            card_rarity(str(i.get("ref"))) == rarity and code in ("*", str(i.get("ref")).split("-", 1)[0])
+            for i in items
+        )
     return any(i.get("ref") == c.item for i in items)
 
 
@@ -227,6 +233,7 @@ class FloorRow:
     fills: int
     patience: float | None  # median priced team turns before the final
     first_drop: float | None  # median first counter, in primas
+    recent: int = 0  # how many of this dealer × class's newest RECENT conversations opened at this ask
 
     def floor(self, q: float = 0.5) -> int | None:
         return _quantile(self.limits, q)
@@ -260,6 +267,13 @@ def floor_table(convs: Iterable[Conversation], *, since_tick: int = 0) -> list[F
         if (cls == SELL) != (c.side == "sell"):
             continue
         groups[(c.dealer, cls, opening)].append(c)
+    by_class: dict[tuple[str, str], list[Conversation]] = defaultdict(list)
+    for (dealer, cls, _), members in groups.items():
+        by_class[(dealer, cls)].extend(members)
+    recent: dict[tuple[str, str, int], int] = defaultdict(int)
+    for (dealer, cls), members in by_class.items():
+        for c in sorted(members, key=lambda c: (c.opened_tick, c.thread), reverse=True)[:RECENT]:
+            recent[(dealer, cls, c.opening or 0)] += 1
     rows = []
     for (dealer, cls, opening), members in groups.items():
         points = sorted(p for c in members if (p := limit_point(c)) is not None)
@@ -276,17 +290,24 @@ def floor_table(convs: Iterable[Conversation], *, since_tick: int = 0) -> list[F
                 fills=sum(c.fill is not None for c in members),
                 patience=float(median(patience)) if patience else None,
                 first_drop=float(median(drops)) if drops else None,
+                recent=recent.get((dealer, cls, opening), 0),
             )
         )
     return sorted(rows, key=lambda r: (r.dealer, r.price_class, -r.conversations))
 
 
 def main_rows(rows: Iterable[FloorRow]) -> dict[tuple[str, str], FloorRow]:
-    """The regime to plan on per dealer × price class: the opening ask with the most closed conversations."""
+    """The regime to plan on per dealer × price class: the opening ask most of its RECENT newest
+    conversations had (a dealer that changes its opening starts a new regime, which needs its own
+    closed threads before `plan_for` trusts it; one odd thread does not flip it), then the most closed."""
     best: dict[tuple[str, str], FloorRow] = {}
     for r in rows:
         key = (r.dealer, r.price_class)
-        if key not in best or (r.closed, r.conversations) > (best[key].closed, best[key].conversations):
+        if key not in best or (r.recent, r.closed, r.conversations) > (
+            best[key].recent,
+            best[key].closed,
+            best[key].conversations,
+        ):
             best[key] = r
     return best
 

@@ -45,6 +45,19 @@ def _caps(what_if: list[str]) -> dict[tuple[str, str], int]:
     return out
 
 
+def _quotas(path: Path) -> dict[str, Any]:
+    """A saved `GET /api/dealers` (the body, or a fixture with the body under "body") → quotas."""
+    try:
+        body: Any = json.loads(path.read_text())
+        body = body.get("body", body) if isinstance(body, dict) else body
+        dealers = body if isinstance(body, list) else body.get("dealers") or body.get("personas") or []
+        if not all(isinstance(d, dict) and isinstance(d.get("id"), str) for d in dealers):
+            raise ValueError("every dealer needs a string id")
+        return quotas_from_dealers(dealers)
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        raise typer.BadParameter(f"--dealers {path}: not a GET /api/dealers body ({e})") from e
+
+
 @app.command("floors")
 def floors(
     source: str = typer.Option("auto", help=SOURCE_HELP),
@@ -97,9 +110,7 @@ def plan(
     label += f", threads opened at tick {since_tick} or later" if since_tick else ""
     quotas = DEFAULT_QUOTAS
     if dealers_json is not None:
-        body: Any = json.loads(Path(dealers_json).read_text())
-        body = body.get("body", body)
-        quotas = quotas_from_dealers(body.get("dealers") or body.get("personas") or [])
+        quotas = _quotas(Path(dealers_json))
     ref_list = [(r, card_rarity(r) or "") for r in refs.split(",") if r.strip()]
     doc = plan_document(
         convs,
