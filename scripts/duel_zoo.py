@@ -6,7 +6,8 @@
 
 A policy is `v1` (bazaar_agent.agents.duelist.duel_move at today's GUARDRAILS.md values), a reference policy
 of `bazaar_sim.duel_zoo.REFERENCE_POLICIES` by name, or `module:attribute` for any callable with the
-`duel_move(duel, tick, started_tick)` signature. `--gate X` adds the night plan's go/no-go of X against v1.
+`duel_move(duel, tick, started_tick)` signature; `label=module:attr` names its column. `--gate X` adds the night
+plan's go/no-go of X against v1, once per `--gate-decays` pair (default 0.06,0.08).
 """
 
 from __future__ import annotations
@@ -255,22 +256,26 @@ def replay_section(policies: dict[str, Policy]) -> str:
     )
 
 
-def gate_section(name: str, candidate: Policy, n: int) -> str:
-    gate = duel_gate.go_no_go(candidate, resolve("v1"), n=n)
+def gate_section(name: str, candidate: Policy, n: int, decays: Sequence[float] = (0.06, 0.08)) -> str:
+    gate = duel_gate.go_no_go(candidate, resolve("v1"), n=n, decays=decays)
     rows = [(c.name, c.value, c.threshold, "pass" if c.passed else "FAIL", c.detail) for c in gate.checks]
     verdict = "GO" if gate.go else "NO-GO"
-    return f"## Go/no-go: {name} vs v1 → {verdict}\n\n" + table(("check", "value", "threshold", "", "detail"), rows)
+    return f"## Go/no-go: {name} vs v1, decays {'/'.join(map(str, decays))} → {verdict}\n\n" + table(
+        ("check", "value", "threshold", "", "detail"), rows
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", action="append", help="v1, a reference policy, or module:attr (repeatable)")
     ap.add_argument("--gate", action="append", default=[], help="a policy to put through the go/no-go vs v1")
+    ap.add_argument("--gate-decays", action="append", default=[], help="decay pairs for --gate, e.g. 0.08,0.10")
     ap.add_argument("--n", type=int, default=200, help="scenarios per style × role × decay × length")
     ap.add_argument("--out", type=Path, help="write the Markdown here instead of stdout")
     args = ap.parse_args(argv)
     names = args.policy or ["v1", *duel_zoo.REFERENCE_POLICIES]
-    policies = {name: resolve(name) for name in names}
+    specs = [n.partition("=")[::2] if "=" in n else (n, n) for n in names]  # label=module:attr names a column
+    policies = {label: resolve(spec) for label, spec in specs}
     sections = [
         fit_section(),
         realism_section(args.n),
@@ -280,7 +285,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         sensitivity_section(policies, args.n),
         order_section(policies, args.n),
         replay_section(policies),
-        *(gate_section(g, resolve(g), args.n) for g in args.gate),
+        *(
+            gate_section(label, resolve(spec), args.n, tuple(map(float, d.split(","))))
+            for label, spec in (g.partition("=")[::2] if "=" in g else (g, g) for g in args.gate)
+            for d in (args.gate_decays or ["0.06,0.08"])
+        ),
     ]
     text = "\n\n".join(sections) + "\n"
     if args.out:
