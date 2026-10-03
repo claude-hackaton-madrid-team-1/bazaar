@@ -524,3 +524,11 @@ symptom: `_reserve_accept` caught `LedgerUnavailable` and returned False ("slot 
 `meet_ask` (a bid at her ask) whose spend the dead ledger could not book → root cause: one bool for two
 answers → fix: `Reserve` returns `None` when the slot cannot be read, and the dealer holds the tick
 (`test_an_unreadable_accept_slot_holds_the_tick_instead_of_bidding_her_ask`).
+
+### [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
+1. A sell was priced from the copies `/me` holds, which still counts a copy in our own ask (or sold last
+   tick, settling next): the last FREE copy was sold as a duplicate (+6.8 shown, −3.2 real once the ask
+   fills and the page loses its bonus) → `score_offer(..., unavailable=)` prices from free copies only.
+2. `market.parse_offer`'s bid branch never checked `want.assets`: a bid for `card:X` that also wants the id
+   of our rare read as plain → any side key outside cash/assets/types/cards with a value is not plain.
+Also: the sell path must re-read the kill switch after the duel grace wait, as the buy path does.

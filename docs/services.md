@@ -95,7 +95,8 @@ A decision, as published:
  "move": {"kind": "bid", "price": 21}}
 ```
 
-- `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+- `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
+  default, `--accept-bids`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict).
 - `status` is `approved`, `rejected` or `expired`. `sent` and `dry_run` are only on a **sent** row (see below),

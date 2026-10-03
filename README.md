@@ -1047,6 +1047,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
 - [2026-10-03] build-error — a ledger outage made the dealer bid her ask instead of holding (#79 review)
 - [2026-10-03] gotcha — CliRunner's `.output` includes stderr: parse `.stdout` in JSON CLI tests
 - [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
