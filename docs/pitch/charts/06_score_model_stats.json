@@ -1,0 +1,9 @@
+{
+ "in_sample_rmse_all_38": 0.336,
+ "in_sample_max_abs": 0.57,
+ "holdout_rmse_ticks_140_159": 0.343,
+ "holdout_max_abs_140_159": 0.47,
+ "holdout_rmse_all_38": 0.371,
+ "holdout_l2_weight": 0.58,
+ "in_sample_rmse_ticks_140_159": 0.186
+}

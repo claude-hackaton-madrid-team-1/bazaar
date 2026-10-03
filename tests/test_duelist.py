@@ -224,3 +224,17 @@ def test_the_guard_denies_an_accept_whose_terms_are_not_the_rivals_offer():
     d["rival_offer"] = {"price": 130, "days": 4}  # 130 − 3 × 4 = 118 > our cost of 100
     assert gr.check(duel_action(d, DuelMove("accept", 130)), ctx, rules).allowed
     assert not gr.check(duel_action(d, DuelMove("accept", 999)), ctx, rules).allowed
+
+
+def test_our_duel_messages_counts_our_own_lines_only():
+    from bazaar_agent.agents.duelist import our_duel_messages
+
+    duel = {"messages": [{"from": "you"}, {"from": "Rival Plata"}, {"from": "you"}, "odd"]}
+    assert our_duel_messages(duel) == 2 and our_duel_messages({}) == 0 and our_duel_messages({"messages": "x"}) == 0
+
+
+def test_an_int_too_large_for_a_float_is_not_a_number():
+    # PR #165 security P3-3: math.isfinite(10**400) raises OverflowError (int too large to convert to float).
+    from bazaar_agent.agents.duelist import _number
+
+    assert _number(10**400) is None and _number(-(10**400)) is None and _number(10**300) == 1e300

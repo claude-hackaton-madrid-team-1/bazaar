@@ -305,6 +305,11 @@
           "text": "ledger (accept slot)"
         },
         {
+          "text": "supply_assets · supply_cards · supply_sets (N14b)",
+          "mark": "◑",
+          "note": true
+        },
+        {
           "text": "outcomes + scorecard",
           "mark": "◑",
           "note": true
@@ -399,7 +404,7 @@
       "status": "part",
       "label": "gap",
       "title": "Prompt-injection hardening (S1)",
-      "body": "Counterparty text is capped and escaped; bait inspector and auto-flagging still open (Marius #93 off by default)."
+      "body": "Offer inspector before every accept (dealer, board, duel; #146). Flags as proven decision rows, off by default and opt-in per dealer; injection tagging and hostile-text tests on every text path (#152)."
     }
   ],
   "links": [
@@ -712,7 +717,7 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Own venue + broker (#71 approved; merges before 06:00, Jev 0.99)",
+            "title": "Own venue + broker (#71: built, shipped OFF by team decision)",
             "start": "2026-10-03T03:20",
             "end": "2026-10-03T06:00",
             "status": "wip",
@@ -727,7 +732,7 @@
             "priority": "P2"
           },
           {
-            "title": "Venue open + broker live (Market Tests)",
+            "title": "Venue open + broker live (needs a closed-door go: edge or organic trades)",
             "start": "2026-10-03T11:30",
             "end": "2026-10-04T14:00",
             "status": "todo",
@@ -803,14 +808,14 @@
             "title": "Packs: EV with supply, 3/hour (N14)",
             "start": "2026-10-03T13:00",
             "end": "2026-10-03T17:00",
-            "status": "todo",
+            "status": "wip",
             "priority": "P1"
           },
           {
             "title": "Supply + scarcity: print runs, holders (N14)",
             "start": "2026-10-03T14:00",
             "end": "2026-10-03T20:00",
-            "status": "todo",
+            "status": "wip",
             "priority": "P1"
           },
           {
@@ -831,7 +836,7 @@
             "title": "New pages + grants: El Retiro, Chamberí (N14)",
             "start": "2026-10-03T09:00",
             "end": "2026-10-03T12:00",
-            "status": "todo",
+            "status": "wip",
             "priority": "P2"
           },
           {

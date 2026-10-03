@@ -46,7 +46,14 @@ def clock(tick=TICK, next_tick_in=40.0, tick_seconds=60.0, **limits):
     return Clock(tick=tick, tick_seconds=tick_seconds, next_tick_in=next_tick_in, t_hours=1.5, limits=limits or {})
 
 
-def ask(oid, ref, price, venue="rastro", asset=900, maker="m1", to=None):
+def catalog_rarity(ref):
+    """A real copy carries its card's catalog rarity (the server builds the asset)."""
+    cards = (c for s in CATALOG.get("sets") or [] for c in s.get("cards") or [])
+    return next((str(c.get("rarity")) for c in cards if c.get("id") == ref), "common")
+
+
+def ask(oid, ref, price, venue="rastro", asset=900, maker="m1", to=None, rarity=None):
+    rarity = rarity or catalog_rarity(ref)
     return {
         "id": oid,
         "maker": maker,
@@ -54,7 +61,7 @@ def ask(oid, ref, price, venue="rastro", asset=900, maker="m1", to=None):
         "venue": venue,
         "thread": None,
         "status": "open",
-        "give": {"cash": 0, "assets": [{"id": asset, "kind": "card", "ref": ref, "rarity": "common"}], "types": []},
+        "give": {"cash": 0, "assets": [{"id": asset, "kind": "card", "ref": ref, "rarity": rarity}], "types": []},
         "want": {"cash": price, "assets": [], "types": []},
         "expires_tick": 140,
         "created_tick": 90,
@@ -127,6 +134,10 @@ class FakeTeam:
     def close_thread(self, tid):
         self.sent.append(("close_thread", tid))
         return {"id": tid, "status": "closed"}
+
+    def flag(self, message_id, reason=""):
+        self.sent.append(("flag", message_id, reason))
+        return {"ok": True}
 
     def accept(self, offer_id, assets=None):
         self.sent.append(("accept", offer_id))

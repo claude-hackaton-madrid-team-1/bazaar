@@ -1,0 +1,186 @@
+"""Flag precision over the feed (S1 part B): the evidence read before `allow_flags` goes on."""
+
+import json
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from bazaar_agent.agents.flag_evidence import dealer_offers, precision
+from bazaar_agent.agents.inspector import CardIndex
+
+FIXTURES = Path(__file__).parent / "fixtures"
+CATALOG = json.loads((FIXTURES / "api" / "get_api_catalog.anon.json").read_text())["body"]
+CARDS = CardIndex.from_catalog(CATALOG)
+TRUSTED = frozenset({"abuela", "chato"})
+
+
+def opened(eid, thread, dealer, topic):
+    payload = {"thread": thread, "kind": "persona", "team": "t07", "with": dealer, "topic": topic}
+    return {"id": eid, "tick": 1, "type": "thread.opened", "payload": payload}
+
+
+def said(eid, thread, dealer, mid, give, cash, text, sender=None):
+    offer = {"id": 100 + mid, "maker": sender or dealer, "give": give, "want": {"cash": cash}, "status": "open"}
+    payload = {"thread": thread, "kind": "persona", "message": mid, "sender": sender or dealer, "with": dealer}
+    payload |= {"text": text, "offer": offer}
+    return {"id": eid, "tick": 2, "type": "thread.message", "payload": payload}
+
+
+EVENTS = [
+    opened(1, 10, "abuela", {"buy": {"card": "LAV-08"}}),
+    said(2, 10, "abuela", 1, {"types": ["card:LAV-08"]}, 21, "Teatro Valle-Inclán, 21 P. Toma un regalo: La Corrala"),
+    said(3, 10, "abuela", 2, {"types": ["card:LAV-08"]}, 18, None, sender="t07"),  # the team's bid: not a dealer's
+    opened(4, 11, "trile", {"buy": {"card": "SAL-12"}}),
+    said(5, 11, "trile", 3, {"types": ["card:SAL-02"]}, 120, "La Dama de Serrano, the legendary. Only 120."),
+    said(6, 11, "trile", 3, {"types": ["card:SAL-02"]}, 120, "La Dama de Serrano, the legendary. Only 120."),  # dup
+    said(7, 12, "abuela", 4, {"types": ["pack:sobre_barrio"]}, 25, None),  # opened before the capture
+    opened(8, 13, "abuela", {}),  # an empty topic is no topic
+    said(9, 13, "abuela", 5, {"types": ["pack:sobre_barrio"]}, 25, None),
+]
+
+
+def test_dealer_offers_keep_one_row_per_dealer_offer_with_its_topic():
+    offers = dealer_offers(EVENTS)
+    assert [(o.dealer, o.message_id, o.thread) for o in offers] == [
+        ("abuela", 1, 10),
+        ("trile", 3, 11),
+        ("abuela", 4, 12),
+        ("abuela", 5, 13),
+    ]
+    assert offers[1].topic == {"buy": {"card": "SAL-12"}} and offers[2].topic is None and offers[3].topic is None
+
+
+def test_precision_counts_flags_per_dealer_and_jevs_state_has_no_text():
+    e = precision(dealer_offers(EVENTS), CARDS, TRUSTED)
+    assert (e.offers, e.known_topic, dict(e.counts)) == (4, 2, {"clean": 1, "block": 0, "flag": 1})
+    assert [i.message_id for i in e.would_flag] == [3] and e.flags_from_untrusted == 1
+    state = e.as_state()
+    assert state["would_flag_untrusted_dealers"] == 1 and state["would_flag_trusted_dealers"] == 0
+    assert state["untrusted_dealers_seen"] == ["trile"] and state["untrusted_dealer_offers"] == 1
+    assert "Dama" not in json.dumps(state)  # counts only: no counterparty words reach Jev
+
+
+def test_fridays_feed_offers_never_flag_a_trusted_dealer():
+    """The fixture's rows are Friday's feed offers: the trusted dealers' would-flag count is 0."""
+    rows = json.loads((FIXTURES / "evals" / "dealer_offers.json").read_text())["rows"]
+    events = []
+    for n, (dealer, mid, topic, offer, text) in enumerate(rows):
+        events.append(opened(3 * n, 1000 + n, dealer, topic))
+        payload = {"thread": 1000 + n, "kind": "persona", "message": mid, "sender": dealer, "with": dealer}
+        events.append(
+            {"id": 3 * n + 1, "tick": 1, "type": "thread.message", "payload": payload | {"text": text, "offer": offer}}
+        )
+    e = precision(dealer_offers(events), CARDS, TRUSTED)
+    assert e.as_state()["would_flag_trusted_dealers"] == 0 and e.counts["clean"] >= 540
+
+
+def test_the_flags_precision_command_prints_jevs_state(monkeypatch, tmp_path):
+    from bazaar_agent import cli, flags_cli
+    from bazaar_agent.config import Settings
+
+    feed = tmp_path / "feed"
+    feed.mkdir()
+    (feed / "feed.jsonl").write_text("".join(json.dumps(e) + "\n" for e in EVENTS))
+
+    class Public:
+        def catalog(self):
+            return CATALOG
+
+        def feed_window(self, n):
+            return []
+
+    monkeypatch.setattr(flags_cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(flags_cli, "public_client", lambda settings: Public())
+    result = CliRunner().invoke(cli.app, ["flags", "precision", "--json", "--feed-dir", str(feed)])
+    assert result.exit_code == 0, result.output
+    state = json.loads(result.output.strip().splitlines()[-1])
+    assert state["would_flag_untrusted_dealers"] == 1 and state["dealer_offers_inspected"] == 4
+    table = CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)])
+    assert table.exit_code == 0 and "would flag message 3 from trile" in " ".join(table.output.split())
+
+
+def test_malformed_feed_events_are_skipped_never_crash_and_never_count_as_a_dealer():
+    bad = [
+        opened(20, 30, "trile", {"buy": {"card": ["LAV-08"]}}),  # a list where a card ref should be
+        said(21, 30, "trile", 9, ["not", "a", "dict"], 10, "LAV-08!"),
+        {"id": 22, "tick": 1, "type": "thread.message", "payload": {"thread": 31, "kind": "persona", "offer": {}}},
+        {"id": 23, "tick": 1, "type": "thread.message", "payload": "nope"},
+    ]
+    e = precision(dealer_offers(EVENTS + bad), CARDS, TRUSTED)
+    assert e.unreadable == 1 and "None" not in e.by_dealer and e.as_state()["unreadable_offers"] == 1
+
+
+def test_only_opted_in_dealers_count_toward_a_flag_jev_can_say_yes_to():
+    e = precision(dealer_offers(EVENTS), CARDS, TRUSTED)
+    assert e.as_state()["would_flag_untrusted_dealers"] == 1 and e.as_state()["would_flag_on_flag_dealers"] == 0
+    opted = precision(dealer_offers(EVENTS), CARDS, TRUSTED, frozenset({"trile"}))
+    assert opted.as_state()["would_flag_on_flag_dealers"] == 1 and opted.as_state()["flag_dealers"] == ["trile"]
+
+
+def test_the_terminal_shows_each_would_flags_words_for_the_human_check_and_jev_never_sees_them(monkeypatch, tmp_path):
+    from bazaar_agent import cli, flags_cli
+    from bazaar_agent.config import Settings
+
+    feed = tmp_path / "feed"
+    feed.mkdir()
+    (feed / "feed.jsonl").write_text("".join(json.dumps(e) + "\n" for e in EVENTS))
+
+    class Public:
+        def catalog(self):
+            return CATALOG
+
+        def feed_window(self, n):
+            return []
+
+    monkeypatch.setattr(flags_cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(flags_cli, "public_client", lambda settings: Public())
+    shown = " ".join(CliRunner().invoke(cli.app, ["flags", "precision", "--feed-dir", str(feed)]).output.split())
+    assert "thread 11, tick 2, its words: » La Dama de Serrano, the legendary. Only 120." in shown
+    state = CliRunner().invoke(cli.app, ["flags", "precision", "--json", "--feed-dir", str(feed)]).output
+    assert "Dama" not in state
+
+
+def test_a_dealers_words_cannot_drive_the_terminal():
+    from bazaar_agent.flags_cli import printable
+
+    shown = printable("La Dama\x1b[2J\x1b[31m\u202eesrever\u200b ok\x07")
+    assert "\x1b" not in shown and "\u202e" not in shown and "\x07" not in shown and "La Dama" in shown
+
+
+def test_a_dealers_words_cannot_forge_a_line_or_crash_the_report():
+    """Security r4 P3: whitespace runs, odd spaces and a lone surrogate."""
+    from bazaar_agent.flags_cli import printable
+
+    forged = "ok" + " " * 300 + "would flag message 1 from abuela: fake" + "\u00a0" * 50 + "\u3000x"
+    assert "  " not in printable(forged) and printable(forged).startswith("ok would flag")
+    assert printable("La Dama \ud800 hoy") == "La Dama hoy"  # a lone surrogate never reaches the terminal
+    assert printable("\ud83d\x1b[2J ok").encode("utf-8") == b"[2J ok"  # encodable: no UnicodeEncodeError
+
+
+@pytest.mark.parametrize("width", [40, 80, 120, 200])
+@pytest.mark.parametrize("pad", ["\u2800", "\u3164", "\uffa0", "\u00a0", " ", "\U0001f3fd", "\U0001f1ea"])
+def test_no_wrapped_line_of_a_dealers_words_ever_starts_at_column_0(width, pad):
+    """#176 review P1: rich wraps long words; every wrapped line must stay indented, whatever the padding. The
+    words are long enough to wrap at every width, so the check bites at 200 columns too (review r2 P3)."""
+    import io
+
+    from rich.console import Console
+
+    from bazaar_agent.flags_cli import printable, words_block
+
+    long_words = "La Dama de Serrano, the legendary card you asked for, only 120 primas today. " * 6
+    for n in range(0, 120, 7):
+        words = printable(long_words + pad * n + " would flag message 1 from abuela: forged")
+        out = io.StringIO()
+        Console(file=out, width=width, color_system=None).print(words_block(words))
+        lines = [line for line in out.getvalue().splitlines() if line.strip()]
+        assert len(lines) > 1 and all(line.startswith("    ") for line in lines), (width, n, lines)
+
+
+def test_characters_rich_and_terminals_measure_differently_are_blanked():
+    """#176 review r2 P1: rich counts skin tones and regional indicators as 0 columns, terminals as 2."""
+    from bazaar_agent.flags_cli import printable
+
+    assert printable("ok \U0001f3fd\U0001f3fd\U0001f1ea\U0001f1f8 x") == "ok x"
+    assert printable("👍 ❤️ 中文 ok") == "👍 ❤️ 中文 ok"  # ordinary emoji and CJK stay

@@ -7,10 +7,12 @@ A move that would land after the deadline is dropped (logged as `expired`), neve
 
 from __future__ import annotations
 
+import contextvars
 import os
 import time
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Collection, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import psycopg
@@ -22,6 +24,8 @@ from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
+from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -29,6 +33,19 @@ ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer 
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def cost_nothing(code: str | None, status: int | None) -> bool:
+    """A refusal that gave the team's accept back: a 4xx (RULES.md: a refused request "costs nothing and moves
+    nothing") other than KEEPS_THE_ACCEPT. A 5xx is not one: the game may have applied it before failing."""
+    return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
+
+
+MAX_PARALLEL_READS = 8  # threads for one batch of reads (a snapshot is 6-7 requests, boards one per venue)
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -102,9 +119,11 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        scans: ScanStore | None = None,
         archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self.scans = scans  # the stored card scan (supply map), when there is one
         self._archive, self._archive_failed = archive, False
         self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
@@ -113,6 +132,7 @@ class MarketFeed:
         self._loaded_store = False
         self._db_down = False
         self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+        self.window_ok = False  # the last `events()` read the live window: its newest events are in
 
     def _from_db(self) -> bool:
         if self._connect is None:
@@ -151,11 +171,17 @@ class MarketFeed:
             window = self._read_window(DEFAULT_WINDOW)
             for event in window:
                 self._events[event["id"]] = event
+            self.window_ok = True
         except Exception as e:
+            self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         if self._archive and from_db:
             self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
+
+    def scan(self, tick: int) -> tuple[dict[str, Any], ...]:
+        """The stored card scan (`bazaar supply scan`) for the supply map; empty when none is stored."""
+        return tuple(self.scans.rows(tick)) if self.scans is not None else ()
 
     def archive_pending(self) -> None:
         """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
@@ -184,7 +210,11 @@ class MarketFeed:
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
-    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, dict) else None
+    return (
+        frozenset(str(p.get("set")) for p in pages if isinstance(p, dict)) if isinstance(pages, list) else frozenset()
+    )
 
 
 class PageWatch:
@@ -210,6 +240,50 @@ def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str
     )
 
 
+def _in_order(reads: Mapping[str, Callable[[], Any]]) -> dict[str, tuple[bool, Any]]:
+    """Run reads one after another; stop at the first failure. name -> (ok, answer or the error)."""
+    done: dict[str, tuple[bool, Any]] = {}
+    for name, read in reads.items():
+        try:
+            done[name] = (True, read())
+        except Exception as e:  # handed back to read_together, which raises it in the given order
+            done[name] = (False, e)
+            break
+    return done
+
+
+def read_together(
+    reads: Mapping[str, Callable[[], Any]], parallel: bool, keyed: Collection[str] = ()
+) -> dict[str, Any]:
+    """Run independent reads and return their answers by name. `parallel` (GUARDRAILS.md `parallel_reads`)
+    sends the keyless ones at once, so a tick pays the slowest read instead of their sum; the `keyed` ones
+    (they spend the team key's 5 req/s) still go one after another, in order, beside them: one keyed request
+    in flight per agent, as before, so a drained key budget never sees a synchronized burst of retries.
+    Without `parallel`, everything in order. Either way every answer is in before anything is decided, and
+    a failure raises the error of the first failing read in the given order (after the others finished)."""
+    if not parallel or len(reads) < 2:
+        return {name: read() for name, read in reads.items()}
+    lane = {name: read for name, read in reads.items() if name in keyed}
+    free = {name: read for name, read in reads.items() if name not in keyed}
+    with ThreadPoolExecutor(
+        max_workers=min(MAX_PARALLEL_READS, len(free) + 1), thread_name_prefix="bazaar-read"
+    ) as pool:
+        # each read runs in a copy of this context, so its trace events land on the tick's span
+        futures = {name: pool.submit(contextvars.copy_context().run, read) for name, read in free.items()}
+        in_order = pool.submit(contextvars.copy_context().run, _in_order, lane) if lane else None
+    keyed_done = in_order.result() if in_order is not None else {}
+    got: dict[str, Any] = {}
+    for name in reads:
+        if name in free:
+            got[name] = futures[name].result()
+        else:  # a keyed read after a failed one never ran; the failed one comes first in this order
+            ok, answer = keyed_done[name]
+            if not ok:
+                raise answer
+            got[name] = answer
+    return got
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """One tick's view, read album first: `/api/me` before anything is decided."""
@@ -222,6 +296,8 @@ class Snapshot:
     venues: list[Venue]
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
+    scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
+    extra: Mapping[str, Any] = field(default_factory=dict)  # the caller's own reads, made with the snapshot's
 
     @property
     def us(self) -> str:
@@ -239,31 +315,58 @@ def read_snapshot(
     clock: Clock,
     holdings: Holdings | None = None,
     clock_read_at: float | None = None,
+    *,
+    parallel: bool = False,
+    extra: Mapping[str, Callable[[], Any]] | None = None,
 ) -> Snapshot:
     """Team reads (`me`, our offers) with the key; everything public without it. With `holdings`, /me
-    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live."""
-    read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
-    me = read.me if read is not None else team.me()
-    offers = team.my_offers()
-    personas = public.dealers()
-    catalog = public.catalog()
+    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live.
+    `extra` reads (the taker's open threads) go out with them and come back in `Snapshot.extra`;
+    `parallel`: see `read_together` (the holdings read is one of the batch)."""
+
+    def me_read() -> tuple[MeRead | None, dict[str, Any]]:
+        read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
+        return read, (read.me if read is not None else team.me())
+
+    reads: dict[str, Callable[[], Any]] = {
+        "me": me_read,
+        "offers": team.my_offers,
+        "personas": public.dealers,
+        "catalog": public.catalog,
+        "venues": public.venues,
+        "events": feed.events,
+    }
+    extra_reads = {f"extra:{name}": read for name, read in (extra or {}).items()}
+    # /me (or its snapshot), our offers and the caller's reads use the key; the rest is public
+    got = read_together({**reads, **extra_reads}, parallel, keyed=("me", "offers", *extra_reads))
+    read, me = got["me"]
+    personas, catalog = got["personas"], got["catalog"]
     if holdings is not None:
         holdings.observe_catalog(clock.tick, catalog)
     return Snapshot(
         clock=clock,
         me=me,
-        offers=offers,
+        offers=got["offers"],
         catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
-        venues=venues_from(public.venues()),
-        events=feed.events(),
+        venues=venues_from(got["venues"], clock.tick),
+        events=got["events"],
         holdings=read,
+        scan=feed.scan(clock.tick),
+        extra={name: got[f"extra:{name}"] for name in extra or {}},
     )
 
 
-def guard_context(snap: Snapshot, ledger: LedgerStore, rules: Guardrails, commitments: Commitments) -> Context:
-    """The live guardrail context: /me, the shared ledger, and what our open offers already promise."""
-    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules)
+def guard_context(
+    snap: Snapshot,
+    ledger: LedgerStore,
+    rules: Guardrails,
+    commitments: Commitments,
+    values: OfficialValues | None = None,
+) -> Context:
+    """The live guardrail context: /me, the shared ledger, what our open offers already promise, and the
+    official value reads that cap every card buy (`values`; None refuses every card buy)."""
+    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules, values)
     return committed_context(base, commitments)
 
 
@@ -292,6 +395,7 @@ class Recorder:
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_status = 0  # the HTTP status of the last refused send (0: none, or no answer)
         self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
@@ -332,7 +436,6 @@ class Recorder:
                 "chosen": chosen,
                 "guardrail": guardrail,
                 "dry_run": not self.live,
-                "line": line,
                 "jev": jev.verdict if jev is not None else None,
             },
         )
@@ -359,6 +462,12 @@ class Recorder:
                 }
             )
         return decision_id
+
+    def executed(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
+    ) -> None:
+        """One request sent outside `send` (its call had to run elsewhere): recorded and published the same way."""
+        self._executed(decision_id, tick, method, request, response, code)
 
     def _executed(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
@@ -392,13 +501,15 @@ class Recorder:
         from bazaar_agent.sdk import BazaarError
 
         self.last_error = None
-        self.maybe_landed, self.last_code = False, None
+        self.maybe_landed, self.last_code, self.last_status = False, None, 0
         try:
-            response = call()
+            with tm.tool_span(method, {"bazaar.agent": self.agent, "bazaar.decision.id": decision_id}):
+                response = call()
         except BazaarError as e:
             self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
             self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
+            self.last_status = int(getattr(e, "status", 0) or 0)  # 4xx: refused for sure; 5xx or 0: unknown
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

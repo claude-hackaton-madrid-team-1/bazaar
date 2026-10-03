@@ -6,6 +6,9 @@ What the real threads showed (`bazaar curves`, ticks 0-160):
 - El Chato opens uncommons at 33, rares at 97, silver packs at 188; he holds your first move, then
   moves one per small step and matches a big one ("Six from you. Six from me").
 - Neither concedes on a repeated or backward price. When buying, both quote once and never move.
+- Doña Pilar (level 3, a collector; modelled on the real /api/dealers entry, not on a feed) sells only gold packs
+  and buys uncommon+ cards: over book (x1.2) for the sets she loves (SAL, RET), under book (x0.9) for the rest.
+  Like every buyer here she quotes once and never moves.
 - When patience runs out the dealer names a `final` offer; anything but taking it makes it walk.
 - A bid that reaches the secret limit is accepted at once ("Deal!"): the dealer takes OUR offer.
 
@@ -33,7 +36,8 @@ class Style:
     dealer: str
     open_mult: dict[str, float]  # opening ask over the menu's list price, per rarity
     floor_range: dict[str, tuple[float, float]]  # the secret floor, as a share of the list price
-    buy_open: float  # share of book a dealer bids for a card it buys (and never moves from)
+    buy_open: float  # share of book a dealer first bids for a card it buys
+    buy_ceiling: float  # its secret limit when buying: it raises one prima per move of ours, up to this share
     patience: int  # rounds before a final offer when selling
     buy_patience: int
     matches_moves: bool  # El Chato: holds the first move, one per small step, matches a big one
@@ -43,6 +47,9 @@ class Style:
     cooloff_ticks: int
     kindness_discount: int  # the floor drops this much once per conversation for a kind team
     spam_penalty: bool  # the same words again without a new price cost patience
+    loved_sets: tuple[str, ...] = ()  # a collector pays `love_mult` x book for these sets' cards
+    love_mult: float = 1.0
+    love_rarities: tuple[str, ...] = ("uncommon", "rare", "epic")
 
 
 ABUELA = Style(
@@ -50,6 +57,7 @@ ABUELA = Style(
     {"common": 1.2, "uncommon": 1.16},
     {"common": (0.7, 0.9), "uncommon": (0.84, 0.92), "pack": (0.654, 0.70)},
     buy_open=0.5,
+    buy_ceiling=0.65,  # real feed, Friday sells: 5→6 on commons, 12→16 and 20→23 on uncommons
     patience=10,
     buy_patience=4,
     matches_moves=False,
@@ -65,6 +73,7 @@ CHATO = Style(
     {"uncommon": 1.1, "rare": 1.078},
     {"uncommon": (0.9, 1.0), "rare": (0.95, 1.02), "pack": (0.92, 0.95)},
     buy_open=0.52,
+    buy_ceiling=0.6,
     patience=8,
     buy_patience=3,
     matches_moves=True,
@@ -75,7 +84,25 @@ CHATO = Style(
     kindness_discount=0,
     spam_penalty=True,
 )
-STYLES = {s.dealer: s for s in (ABUELA, CHATO)}
+PILAR = Style(
+    "pilar",
+    {"uncommon": 1.15, "rare": 1.1, "epic": 1.1},
+    {"uncommon": (0.92, 1.0), "rare": (0.95, 1.02), "epic": (0.95, 1.02), "pack": (0.93, 0.97)},
+    buy_open=0.9,
+    buy_ceiling=1.0,  # other sets: up to book; her loved sets open at love_mult (1.2) and hold there
+    patience=6,
+    buy_patience=3,
+    matches_moves=True,
+    generosity=0.5,
+    memory=0.7,
+    cooloff_at=-3.0,
+    cooloff_ticks=40,
+    kindness_discount=0,
+    spam_penalty=True,
+    loved_sets=("SAL", "RET"),
+    love_mult=1.2,
+)
+STYLES = {s.dealer: s for s in (ABUELA, CHATO, PILAR)}
 
 ABUELA_LINES = {
     "open": ("Hola, cariño, have you eaten? {name} for {p} P. A good start for your album.",),
@@ -106,7 +133,18 @@ CHATO_LINES = {
     "accept_buy": ("Hecho. {p} P for {name}.",),
     "walk": ("Bueno. Next stall, amigo.",),
 }
-LINES = {"abuela": ABUELA_LINES, "chato": CHATO_LINES}
+PILAR_LINES = {
+    "open": ("Doña Pilar, encantada. {name}: {p} P. It is a fine piece.",),
+    "open_buy": ("Ah, {name}. For my album I can offer {p} P.", "{name}... {p} P, and not a céntimo more."),
+    "move": ("Very well, {p} P. Only because you have taste.", "You move {d}, I move {c}: {p} P."),
+    "hold": ("{p} P. I know exactly what it is worth.", "Still {p} P, joven."),
+    "final": ("{p} P. My last word, and I keep my word.",),
+    "final_buy": ("{p} P. My last word, and I keep my word.",),
+    "accept": ("Trato hecho: {name} for {p} P.",),
+    "accept_buy": ("Trato hecho. {p} P for your {name}; it goes in my album.",),
+    "walk": ("Then we are done. Buenas tardes.",),
+}
+LINES = {"abuela": ABUELA_LINES, "chato": CHATO_LINES, "pilar": PILAR_LINES}
 
 
 @dataclass(frozen=True)
@@ -130,6 +168,13 @@ def mood_delta(text: str | None) -> float:
     return delta
 
 
+def buy_share(style: Style, set_code: str, rarity: str) -> float:
+    """The share of book a dealer bids for one card: a collector's loved sets beat book, the rest get `buy_open`."""
+    if set_code in style.loved_sets and rarity in style.love_rarities:
+        return style.love_mult
+    return style.buy_open
+
+
 def carried_mood(style: Style, mood: float) -> float:
     """What a dealer still feels when a new conversation opens."""
     return round(mood * style.memory, 3)
@@ -146,10 +191,13 @@ def start(
     opening: int | None,
     assets: list[int],
     rng: random.Random,
+    bid: int | None = None,
 ) -> Negotiation:
-    """A fresh conversation's secret limit and patience. `opening` overrides the computed opening ask."""
+    """A fresh conversation's secret limit and patience. `opening` overrides the computed opening ask.
+
+    When buying, `bid` (already weighted per card with `buy_share`) overrides `list_price x buy_open`."""
     if side == "buy":
-        bid = max(1, round(list_price * style.buy_open))
+        bid = max(1, bid if bid is not None else round(list_price * style.buy_open))
         return Negotiation(
             side="buy",
             item=item,
@@ -158,7 +206,7 @@ def start(
             assets=assets,
             list_price=list_price,
             opening=bid,
-            limit=bid,
+            limit=max(bid, round(list_price * style.buy_ceiling)),
             patience=style.buy_patience,
         )
     key = "pack" if item_kind == "pack" else str(rarity)
@@ -260,8 +308,8 @@ def _haggle(
 ) -> Reply:
     assert neg.ask is not None
     step = _moved(neg, team_price)
-    give = concession(style, step, neg.rounds) if neg.side == "sell" else 0
-    ask = max(neg.limit, neg.ask - give) if neg.side == "sell" else neg.ask
+    give = concession(style, step, neg.rounds) if neg.side == "sell" else min(step, 1)
+    ask = max(neg.limit, neg.ask - give) if neg.side == "sell" else min(neg.limit, neg.ask + give)
     spam = style.spam_penalty and team_price is None and team_text is not None and team_text == neg.last_team_text
     cost = 1 if step > 0 else (2 if _backward(neg, team_price) or spam else 1)
     patience = neg.patience - cost
@@ -275,7 +323,11 @@ def _haggle(
         "pending_reply": False,
     }
     if patience <= 0:
-        final = ask - round((ask - neg.limit) * style.generosity) if neg.side == "sell" else ask
+        final = (
+            ask - round((ask - neg.limit) * style.generosity)
+            if neg.side == "sell"
+            else ask + round((neg.limit - ask) * style.generosity)
+        )
         key = "final" if neg.side == "sell" else "final_buy"
         done = neg.model_copy(update={**update, "ask": final, "final": True})
         return Reply("final", final, _say(style, key, rng, p=final), done)
