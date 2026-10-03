@@ -54,6 +54,8 @@ TEAM_THREADS_ENV = "BAZAAR_TEAM_THREADS"  # "0" turns the desk off at the next t
 HOUSE_VENUE = "rastro"
 TOPIC = {"trade": "cards"}  # public with the thread: never the card we want
 REST_TICKS = 20  # after a walk, the team is left alone this long (no reopening every few ticks)
+DEAD = ("cancelled", "expired", "failed")  # an offer of ours in one of these will never settle: its spend comes back
+CHECK_TICKS = 10  # how long an offer whose end we have not seen is re-read before its spend is simply kept
 
 
 def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | None:
@@ -104,6 +106,12 @@ def _ours_open(payload: dict[str, Any], us: str) -> dict[str, Any] | None:
     """Our open offer in a thread (after a restart, or a send whose answer was lost)."""
     mine = [o for o in payload.get("standing_offers") or [] if isinstance(o, dict) and o.get("maker") == us]
     return next((o for o in reversed(mine) if o.get("status") in (None, "open") and isinstance(o.get("id"), int)), None)
+
+
+def offer_status(payload: dict[str, Any], oid: int) -> str | None:
+    """The status of one offer as a thread shows it (its standing offers, or the offer inside a message)."""
+    offers = [*(payload.get("standing_offers") or []), *(m.get("offer") for m in payload.get("messages") or [])]
+    return next((str(o.get("status")) for o in offers if isinstance(o, dict) and o.get("id") == oid), None)
 
 
 def _ours_taken(o: Any, us: str) -> bool:
@@ -195,6 +203,7 @@ class TeamDesk:
         self._refused: set[int] = set()  # their offers we refused (logged once)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
+        self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._plan: _Plan | None = None
 
     # ------------------------------------------------------------ reads
@@ -321,11 +330,13 @@ class TeamDesk:
         (both copies would leave). False when a cancel was refused: the taker then does not accept."""
         for o in self._ours_in(v, a.thread_id):
             oid = int(o["id"])
-            cancel = partial(self.team.cancel, oid)
-            if self.live and self.rec.send(decision_id, v.tick, "cancel", {"offer": oid}, cancel) is None:
+            if not self.live:
+                continue
+            body = self.rec.send(decision_id, v.tick, "cancel", {"offer": oid}, partial(self.team.cancel, oid))
+            if body is None:
                 self.log(f"tick {v.tick} team desk: cancel of our offer {oid} refused: their offer is not taken")
                 return False
-            self._refund(v, o)
+            self._after_cancel(v, a.thread_id, o, body)
         if (talk := self.talks.get(a.thread_id)) is not None:
             talk.offer_id = None
         return True
@@ -367,6 +378,7 @@ class TeamDesk:
     # ------------------------------------------------------------ (2) what we say
 
     def converse(self, v: DeskView, taken: set[int]) -> None:
+        self._check_refunds(v)  # also while the desk is off
         if (why := disabled(self.rules, self.env)) is not None:
             self._withdraw(v, why)
             return
@@ -384,7 +396,8 @@ class TeamDesk:
         for tid, talk in list(self.talks.items()):
             if tid in open_ids:
                 continue
-            status = "deal" if talk.accepted else str(self._payload({"id": tid}).get("status") or "")
+            payload = {} if talk.accepted else self._payload({"id": tid})
+            status = "deal" if talk.accepted else str(payload.get("status") or "")
             if not status and v.tick - talk.sent_tick <= 2 * self.rules.team_thread_idle_ticks:
                 continue  # its end is unknown (a refused read): keep it, read it again next tick
             del self.talks[tid]
@@ -393,8 +406,9 @@ class TeamDesk:
                 self._plan = None  # our album changed: the next plan is built on the new holdings
                 for o in self._ours_in(v, tid):  # an offer of ours left open there would be a second deal
                     self._cancel_left(v, tid, talk.team, o)
-            elif talk.offer_id is not None:  # closed by them, expired, the message cap: our offer never settles
-                self._refund(v, self._talk_offer(talk))
+            elif talk.offer_id is not None:  # closed (by them or the cap): its spend comes back only once our offer
+                self._settled_or_dead(v, tid, self._talk_offer(talk), payload)  # reads dead: a closed thread
+                # may still settle an offer accepted before the close
             self.log(f"tick {v.tick} team desk: thread {tid} with {talk.team} ended ({status or '?'})")
 
     def _our_threads(self, v: DeskView) -> set[int]:
@@ -630,10 +644,11 @@ class TeamDesk:
         if self.live:
             if talk.offer_id is not None and self._still_open(v, talk):  # one standing offer per thread
                 old = talk.offer_id
-                if self.rec.send(did, v.tick, "cancel", {"offer": old}, lambda: self.team.cancel(old)) is None:
+                body = self.rec.send(did, v.tick, "cancel", {"offer": old}, partial(self.team.cancel, old))
+                if body is None:
                     self.log(f"tick {v.tick} team desk: cancel of offer {old} refused: no new offer this tick")
                     return  # never two standing offers in one thread; the next tick reads what stands
-                self._refund(v, self._talk_offer(talk))
+                self._after_cancel(v, talk.thread_id, self._talk_offer(talk), body)
             elif talk.offer_id is not None and self._gone(v, talk):  # expired or cancelled by the server
                 self._refund(v, self._talk_offer(talk))
             talk.offer_id = None
@@ -683,8 +698,38 @@ class TeamDesk:
             thread_id=tid,
             move={"kind": "cancel"},
         )
-        if self.live and self.rec.send(did, v.tick, "cancel", {"offer": oid}, lambda: self.team.cancel(oid)):
+        if self.live and (body := self.rec.send(did, v.tick, "cancel", {"offer": oid}, partial(self.team.cancel, oid))):
+            self._after_cancel(v, tid, offer, body)
+
+    def _after_cancel(self, v: DeskView, tid: int, offer: dict[str, Any], body: dict[str, Any]) -> None:
+        """A cancel answered: the spend comes back only if the answer says the offer is dead (a cancel of an
+        offer that settled meanwhile answers `settled`); anything else is read again later."""
+        if body.get("status") in DEAD:
             self._refund(v, offer)
+        else:
+            self._check_later(v, tid, offer)
+
+    def _check_later(self, v: DeskView, tid: int, offer: dict[str, Any]) -> None:
+        if isinstance(offer.get("id"), int) and offer["id"] not in self.refunded:
+            self.to_check.setdefault(int(offer["id"]), (tid, offer, v.tick))
+
+    def _settled_or_dead(self, v: DeskView, tid: int, offer: dict[str, Any], payload: dict[str, Any]) -> None:
+        status = offer_status(payload, int(offer["id"])) if isinstance(offer.get("id"), int) else None
+        if status in DEAD:
+            self._refund(v, offer)
+        elif status not in ("accepted", "settled"):
+            self._check_later(v, tid, offer)
+
+    def _check_refunds(self, v: DeskView) -> None:
+        """Offers of ours whose end we have not seen yet (a closed thread, an unclear cancel): read their thread
+        again, give the spend back once one reads dead, keep it if it settled or after `CHECK_TICKS`."""
+        for oid, (tid, offer, since) in list(self.to_check.items()):
+            payload = self._payloads.get(tid) or self._payload({"id": tid})
+            status = offer_status(payload, oid)
+            if status in DEAD:
+                self._refund(v, offer)
+            if status in (*DEAD, "accepted", "settled") or v.tick - since > CHECK_TICKS:
+                del self.to_check[oid]
 
     def _gone(self, v: DeskView, talk: Talk) -> bool:
         """Our last offer reads expired or cancelled: it will never settle (accepted or unseen: not gone)."""
@@ -718,10 +763,10 @@ class TeamDesk:
         if status != "approved":
             return False
         if self.live:
-            ours = self._ours_in(v, tid)  # closing the thread cancels them: their spend comes back
+            ours = self._ours_in(v, tid)  # a close cancels our open offers, never one already accepted: their
             if self.rec.send(did, v.tick, "close_thread", {"thread": tid}, lambda: self.team.close_thread(tid)):
-                for o in ours:
-                    self._refund(v, o)
+                for o in ours:  # spend comes back once a read shows them dead
+                    self._check_later(v, tid, o)
         self.first_seen.pop(tid, None)
         self._closed.add(tid)
         return True

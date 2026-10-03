@@ -656,12 +656,13 @@ def test_a_ledger_outage_inside_the_desk_still_stops_the_taker_tick(tmp_path):
 
 
 def test_after_a_restart_a_desk_turned_off_withdraws_and_refunds_what_it_withdrew(tmp_path):
-    # security-auditor #123 r2/r3 P1: turning the desk off is a restart on Railway, so the desk has no memory
-    # of its threads. Spend was booked when each offer was POSTED (by the previous process); off, the desk
-    # closes the thread holding an OPEN offer of ours (its spend comes back) and never one where a team took ours.
+    # security-auditor #123 r2-r4: turning the desk off is a restart on Railway, so the desk has no memory of
+    # its threads. Spend was booked when each offer was POSTED (by the previous process); off, the desk closes
+    # the thread holding an OPEN offer of ours and gives its spend back once a read shows that offer dead.
     from bazaar_agent.guardrails import Ledger
 
-    team = Team()
+    closed = {"id": 42, "status": "closed", "messages": [], "standing_offers": [{"id": 702, "status": "cancelled"}]}
+    team = Team(thread_payloads={42: closed})
     d, _ = desk(tmp_path, team, env={"BAZAAR_TEAM_THREADS": "0"})
     d.ledger = Ledger(tmp_path / "ledger.jsonl")
     d.ledger.record("spend", TICK - 2, 1.45, 1, "LAV-02")  # offer 702, posted before the restart
@@ -672,9 +673,13 @@ def test_after_a_restart_a_desk_turned_off_withdraws_and_refunds_what_it_withdre
     v = DeskView(**{**view([thread(), thread(tid=43)]).__dict__, "offers": [standing, taken]})
     d.proposals(v)
     d.converse(v, set())
-    d.converse(v, set())  # the next tick: nothing refunded twice
     assert ("close_thread", 42) in team.sent and ("close_thread", 43) not in team.sent  # 43 settles: a deal
-    assert d.ledger.spent_since(0) == 4  # 1 + 4 booked at the posts, 1 refunded with the withdrawal
+    assert d.ledger.spent_since(0) == 5  # nothing given back before a read shows the offer dead
+    v2 = DeskView(**{**view([thread(tid=43)], tick=TICK + 1).__dict__, "offers": [taken]})
+    d.proposals(v2)
+    d.converse(v2, set())
+    d.converse(v2, set())  # read again: nothing refunded twice
+    assert d.ledger.spent_since(0) == 4
 
 
 def test_an_adopted_thread_remembers_the_cash_of_our_standing_offer(tmp_path):
@@ -695,21 +700,24 @@ def test_a_thread_whose_end_cannot_be_read_is_kept_until_it_can(tmp_path):
 
     class Flaky(Team):
         reads = 0
+        ours: int | None = None
 
         def thread(self, tid):
             Flaky.reads += 1
             if Flaky.reads == 1:
                 raise BazaarError("rate_limited", "slow down", 429)
-            return {"id": tid, "status": "closed", "messages": [], "standing_offers": []}
+            gone = [{"id": Flaky.ours, "status": "cancelled"}]
+            return {"id": tid, "status": "closed", "messages": [], "standing_offers": gone}
 
     team = Flaky()
     d, _ = desk(tmp_path, team)
     d.ledger = Ledger(tmp_path / "ledger.jsonl")
     d.converse(view(), set())  # our anchor adds 1 P, booked at the post
+    Flaky.ours = d.talks[42].offer_id
     d._plan, d.plan_ttl = _Plan(TICK, (), {}), 10**6  # nothing else to open: thread 42 is the only one
     d.converse(view([], tick=TICK + 1), set())  # gone from the open list; its status read is refused
     assert 42 in d.talks and d.ledger.spent_since(0) == 1
-    d.converse(view([], tick=TICK + 2), set())  # read again: closed without a deal, the spend comes back
+    d.converse(view([], tick=TICK + 2), set())  # read again: closed, our offer cancelled: the spend comes back
     assert 42 not in d.talks and d.ledger.spent_since(0) == 0
 
 
@@ -765,7 +773,7 @@ def test_a_take_in_the_tick_the_desk_goes_off_is_left_to_settle(tmp_path):
     v = DeskView(**{**v.__dict__, "offers": [open_]})
     d.proposals(v)
     d.converse(v, set())
-    assert team.sent == [("close_thread", 43)] and d.ledger.spent_since(0) == -1  # only 703's spend comes back
+    assert team.sent == [("close_thread", 43)] and 703 in d.to_check and 702 not in d.to_check
 
 
 def test_the_desk_waits_when_the_ticks_listings_are_used(tmp_path):
@@ -886,3 +894,42 @@ def test_a_team_thread_swap_is_not_counted_again_as_thread_cash():
     dealer = {"id": 2, "maker": US, "to": "abuela", "thread": 7, "status": "open", "give": {"cash": 9}}
     c = open_commitments([swap, dealer], US)
     assert (c.cash, c.thread_cash) == (13, 9)  # both promise cash; only the dealer bid waits to be booked
+
+
+# ---------------------------------------------------------------- review round 4 (#123): refunds follow the offer
+
+
+def test_a_rival_that_takes_our_offer_then_closes_the_thread_gets_no_refund_from_us(tmp_path):
+    # security-auditor #123 r4 P1: a close cancels only OPEN offers; an accepted one still settles. The spend
+    # comes back only when a read shows our offer dead, never because the thread reads closed.
+    from bazaar_agent.guardrails import Ledger
+
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.converse(view(), set())  # anchor: + 1 P booked
+    oid = d.talks[42].offer_id
+    team.thread_payloads[42] = {"id": 42, "status": "closed", "standing_offers": [{"id": oid, "status": "settled"}]}
+    d._plan, d.plan_ttl = _Plan(TICK, (), {}), 10**6
+    for tick in range(TICK + 1, TICK + 14):
+        d.proposals(view([], tick=tick))
+        d.converse(view([], tick=tick), set())
+    assert d.ledger.spent_since(0) == 1 and d.to_check == {}
+
+
+def test_a_cancel_answered_settled_keeps_the_spend(tmp_path):
+    from bazaar_agent.guardrails import Ledger
+
+    class LateCancel(Team):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            return {"id": offer_id, "status": "settled"}  # it settled before our cancel landed
+
+    team = LateCancel()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.converse(view(), set())  # anchor: + 1 P
+    reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    d.proposals(view([reply], tick=TICK + 1))
+    d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: + 3 P, no refund
+    assert d.ledger.spent_since(0) == 1 + 3
