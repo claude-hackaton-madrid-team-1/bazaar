@@ -955,6 +955,7 @@ class Taker:
         price = (settled_price(thread) or trail.top_price) if status == "deal" else None
         if price is not None:
             self.ledger.record("spend", clock.tick, clock.t_hours, int(price), trail.item)
+            self._after_deal(run, f"deal in thread {trail.thread_id} from before the restart")
         dealer = str(thread.get("with") or "-")
         line = f"thread {trail.thread_id} from before the restart: {status} price {price or '-'}"
         self.log(f"tick {clock.tick} taker: {line}")
