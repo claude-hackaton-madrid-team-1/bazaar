@@ -39,6 +39,7 @@ from bazaar_agent.agents.dealer_sell import (
     sell_topic,
 )
 from bazaar_agent.agents.dealer_sell_data import REFRESH_TICKS, Fill, SellMarket, market_from_feed
+from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.news import EVENTS_FILE, MarketEvent, active_signals, load_market_events
 from bazaar_agent.persona_model import Persona, parse_personas, sell_weight
@@ -215,6 +216,7 @@ class SellTalk:
     plan: AskPlan
     hooks: SellHooks
     max_ticks: int = 14
+    final_share: float = 0.0  # `dealer_sell_final_min_first_ask_share`: a final must reach this × our first ask
     tid: int | None = None
     status: str = "new"
     ticks: int = 0
@@ -332,7 +334,8 @@ class SellTalk:
         c, tid = self.cand, self.tid
         bid, offer_id, final = latest_dealer_bid(thread, c.dealer, c.asset_id)
         see_bids(self.neg, thread, c.dealer, c.asset_id)
-        move = decide_sell(self.neg, bid, offer_id, final)
+        final_min = math.ceil(self.final_share * self.neg.asks[0] - 1e-9) if self.neg.asks else 0
+        move = decide_sell(self.neg, bid, offer_id, final, final_min)
         if self.ticks > self.max_ticks and move.kind != "accept":
             move = Move("walk", reason=f"no deal after {self.max_ticks} ticks")
         verb = "ask" if move.kind == "bid" else move.kind
@@ -423,9 +426,11 @@ class SellDesk:
         log: Callable[[str], None],
         hooks: Callable[[Candidate], SellHooks],
         load: Callable[[Any], SellMarket | None] | None = None,
+        gate: StrategyGate | None = None,
     ) -> None:
         self.team, self.rules, self.rec, self.live, self.log = team, rules, rec, live, log
         self.hooks, self.load = hooks, load
+        self.gate = gate  # Jev `dealer_sell_duplicates_worth_it` (SG1): None = no Jev, no new sell thread
         self.talk: SellTalk | None = None
         self.opened_at: list[tuple[float, str]] = []  # (game hour, dealer) of our openings
         self.market: SellMarket | None = None
@@ -454,6 +459,44 @@ class SellDesk:
             return True
         when, floor = seen
         return clock.t_hours - when >= self.rules.dealer_sell_retry_game_hours or c.floor < floor
+
+    def gate_on(self, snap: Any) -> bool:
+        """A new sell thread only on Jev's decided yes (SG1), asked again every `strategy_jev_refresh_ticks`;
+        a thread already open plays on whatever the gate says."""
+        if self.gate is None:
+            return False
+        return self.gate.allows(DEALER_SELL, int(snap.clock.tick), lambda: self.gate_state(snap))
+
+    def gate_state(self, snap: Any) -> dict[str, Any]:
+        """What Jev reads: our spare copies (a page keeps one) with `your_value`, cash, and the last no-deals."""
+        me = snap.me or {}
+        copies: dict[str, list[float]] = {}
+        for a in me.get("assets") or []:
+            if isinstance(a, Mapping) and a.get("kind") == "card" and a.get("ref"):
+                copies.setdefault(str(a["ref"]), []).append(float(a.get("your_value") or 0))
+        spare = [{"card": c, "copies": len(v), "your_value": min(v)} for c, v in sorted(copies.items()) if len(v) > 1]
+        walked = [{"dealer": d, "card": c, "game_hour": round(h, 2)} for (d, c), (h, _) in self.walked.items()]
+        return {
+            "cash": me.get("cash"),
+            "cash_floor": self.rules.cash_floor,
+            "duplicates": spare,
+            "rules": {
+                "min_surplus": self.rules.dealer_sell_min_surplus,
+                "final_min_first_ask_share": self.rules.dealer_sell_final_min_first_ask_share,
+                "retry_game_hours": self.rules.dealer_sell_retry_game_hours,
+                "dealer_gap_ticks": self.rules.dealer_sell_dealer_gap_ticks,
+                "taker_window_ticks": self.rules.dealer_sell_taker_window_ticks,
+            },
+            "history": {"no_deals_this_process": walked, "sells_opened_last_hour": len(self.opened_at)},
+        }
+
+    def taker_wants(self, tick: int) -> set[str]:
+        """Dealers the taker wanted in the last `dealer_sell_taker_window_ticks` (#200: its buys come first)."""
+        window = self.rules.dealer_sell_taker_window_ticks
+        log = getattr(self.rec, "decisions", None)
+        if window <= 0 or log is None or not hasattr(log, "wanted_dealers"):
+            return set()
+        return set(log.wanted_dealers("taker", tick - window))
 
     def market_for(self, snap: Any) -> SellMarket:
         tick = snap.clock.tick
@@ -486,9 +529,12 @@ class SellDesk:
         self.opened_at = [(h, d) for h, d in self.opened_at if h > clock.t_hours - 1.0]
         if len(self.opened_at) >= self.rules.dealer_sell_max_per_game_hour:
             return
+        if not self.gate_on(snap):
+            return
         market = self.market_for(snap)
         threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
         busy = {str(t.get("with")) for t in threads}  # one open conversation per dealer, shared with the taker
+        busy |= self.taker_wants(clock.tick)
         for t in market.traders:
             if t.deals_per_hour is not None and sum(d == t.id for _, d in self.opened_at) >= t.deals_per_hour:
                 busy.add(t.id)
@@ -531,7 +577,14 @@ class SellDesk:
                     move={"open_thread": {"dealer": c.dealer, "topic": sell_topic(c.asset_id)}},
                 )
             return
-        self.talk = SellTalk(self.team, c, plan, self.hooks(c), self.rules.dealer_max_ticks_per_thread)
+        self.talk = SellTalk(
+            self.team,
+            c,
+            plan,
+            self.hooks(c),
+            self.rules.dealer_max_ticks_per_thread,
+            self.rules.dealer_sell_final_min_first_ask_share,
+        )
         self.opened_at.append((clock.t_hours, c.dealer))
         self.talk.step(clock, snap.me)
         if self.talk.done:
