@@ -61,7 +61,7 @@ def base_env(data_dir: Path, env_file: Path) -> dict[str, str]:
             "BAZAAR_DATA_DIR": str(data_dir),
             "DATABASE_URL": NOWHERE_DB,
             "BAZAAR_SIM_DATABASE_URL": NOWHERE_DB,
-            "BAZAAR_TRACING": "0",
+            "BAZAAR_TRACING": os.environ.get("SMOKE_TRACING", "0"),  # N18: run it with 1 to prove tracing moves nothing
             "COLUMNS": "200",
             "HTTP_PROXY": DEAD_PROXY,
             "HTTPS_PROXY": DEAD_PROXY,
@@ -205,6 +205,17 @@ def run_smoke(env: dict[str, str]) -> None:
     print("ok  key guard and BAZAAR_URL fail-fast", flush=True)
 
 
+def dump_requests() -> None:
+    """SMOKE_DUMP=<file>: what the simulator recorded as OUR team's sent requests, for an on/off tracing diff.
+    Ids, ticks and timestamps are dropped (the world's clock runs on wall time); types, prices and words stay."""
+    target = os.environ.get("SMOKE_DUMP")
+    if not target:
+        return
+    events = get("/api/feed?limit=500", keyed=True).get("events") or []
+    keep = [{"type": e.get("type"), "payload": e.get("payload")} for e in events if isinstance(e, dict)]
+    Path(target).write_text(json.dumps(keep, indent=1, sort_keys=True, default=str))
+
+
 def main() -> int:
     started = time.monotonic()
     if port_busy():
@@ -224,6 +235,7 @@ def main() -> int:
             wait_for_sim(server, log)
             print(f"simulator up: tick {get('/api/clock')['tick']}", flush=True)
             run_smoke(base_env(Path(tmp) / "client", empty_env))
+            dump_requests()
             if server.poll() is not None:
                 fail(
                     f"bazaar-sim exited with code {server.returncode} during the smoke", log.read_text(errors="replace")
