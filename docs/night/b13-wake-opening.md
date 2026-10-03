@@ -62,5 +62,8 @@ The request cost overnight is unchanged (74 reads). A late opening costs one rea
 - **Merge conflict to expect:** `tests/bites/test_doors_open_wakeup.py` also exists on `night/r2-bite-hunter`
   with strict xfails. If that branch is merged after this one, keep this version (without the markers), or the
   strict xfails turn into failures.
-- **Decision:** merge before 09:00 (a redeploy, bite X16), or skip the merge and restart the services at
-  ~09:00:05.
+- **#78 (stagger)** also changes `seconds_until_next_tick` (a positional `offset_s`). Resolve the text conflict
+  as `(clock, offset_s=0.0, *, now=None)`. `now` is keyword-only, so the two can't be confused.
+- **Decision:** merge any time before ~08:50. A redeploy while the doors are closed costs no ticks (bite X16 is
+  free overnight). The only cost left is X3 (dealer threads left open on Friday are orphaned), the same at 08:58
+  or 09:00:05, and B17 handles it. If it isn't merged, restart the services at ~09:00:05.
