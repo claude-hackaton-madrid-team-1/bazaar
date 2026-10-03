@@ -56,13 +56,17 @@ def dealer_buy(monkeypatch, tmp_path):
             return Outcome(OWN, "walked", None, (), 1)
 
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
-        # the committed file as it was with our venue off (Omar's 270 floor, no bond reserve): these cases are
-        # about the cash our open offers promise, not the venue
+        # the committed file as it was with our venue off (Omar's 270 floor, no bond reserve, the 150 hourly
+        # cap): these cases are about the cash our open offers promise, not the venue or today's limits
         venue_off = re.sub(
-            r"`cash_floor` = \d+",
-            "`cash_floor` = 270",
-            GUARDRAILS_FILE.read_text(encoding="utf-8").replace(
-                "`allow_venue_open` = true", "`allow_venue_open` = false"
+            r"`max_spend_per_game_hour` = \d+",
+            "`max_spend_per_game_hour` = 150",
+            re.sub(
+                r"`cash_floor` = \d+",
+                "`cash_floor` = 270",
+                GUARDRAILS_FILE.read_text(encoding="utf-8").replace(
+                    "`allow_venue_open` = true", "`allow_venue_open` = false"
+                ),
             ),
         )
         monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
