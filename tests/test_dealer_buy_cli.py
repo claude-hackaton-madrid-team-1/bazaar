@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from bazaar_agent import cli
 from bazaar_agent.agents.dealer import Move, Outcome
 from bazaar_agent.config import Settings
-from bazaar_agent.guardrails import Ledger
+from bazaar_agent.guardrails import GUARDRAILS_FILE, Ledger, parse_guardrails
 
 OWN = 85  # the thread `dealer buy` opens
 ACCEPT_20 = ((Move("accept", 20, 7), OWN),)
@@ -54,6 +54,14 @@ def dealer_buy(monkeypatch, tmp_path):
             return Outcome(OWN, "walked", None, (), 1)
 
         monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+        # the committed file as it was with our venue off (Omar's 270 floor, no bond reserve): these cases are
+        # about the cash our open offers promise, not the venue
+        venue_off = (
+            GUARDRAILS_FILE.read_text(encoding="utf-8")
+            .replace("`allow_venue_open` = true", "`allow_venue_open` = false")
+            .replace("`cash_floor` = 100", "`cash_floor` = 270")
+        )
+        monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)

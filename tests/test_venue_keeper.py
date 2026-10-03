@@ -487,15 +487,15 @@ def test_a_pause_that_lands_during_the_claim_stops_the_opening_and_gives_the_cla
     assert team.opened == [] and store == {}
 
 
-def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(tmp_path):
-    """Team decision Sat 06:08: GUARDRAILS.md ships allow_venue_open = false. The maker, live, at game hour
-    7.0 with plenty of cash and a healthy vault, never POSTs /api/venues and never touches the vault."""
+def test_with_the_committed_switch_on_the_maker_opens_our_venue_once_from_game_hour_3(tmp_path):
+    """Team decision Sat 3 Oct, game hour 3.1: GUARDRAILS.md ships allow_venue_open = true from game hour 3.0. The
+    maker, live, with plenty of cash and a healthy vault, sends nothing before 3.0, then POSTs /api/venues once."""
     from bazaar_agent.agents.maker import Maker
     from bazaar_agent.guardrails import load_guardrails
     from tests.agent_fakes import FakePublic, FakeTeam, clock, parts
 
     committed = load_guardrails().rules
-    assert committed.allow_venue_open is False
+    assert committed.allow_venue_open is True and committed.venue_open_after_game_hours == 3.0
 
     class OpeningTeam(FakeTeam):
         opened: list[tuple] = []
@@ -515,12 +515,14 @@ def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(t
         log=lambda line: None,
     )
     m = Maker(team, FakePublic(), live=True, log=lambda line: None, market=keeper_, **parts(tmp_path))
-    for tick in (400, 401, 420):
+    for tick, t_hours in ((210, 2.99), (211, 3.0), (212, 3.01), (230, 3.15)):
         c = clock(tick=tick)
         keeper_.on_tick(
-            Clock(tick=tick, t_hours=7.0, tick_seconds=30.0, next_tick_in=25.0),
-            snap(tick=tick, t_hours=7.0, cash=900),
+            Clock(tick=tick, t_hours=t_hours, tick_seconds=30.0, next_tick_in=25.0),
+            snap(tick=tick, t_hours=t_hours, cash=900),
             window(),
         )
         m.on_tick(c)
-    assert team.opened == [] and store == {} and keeper_.opened is None
+        if t_hours < 3.0:
+            assert team.opened == [] and store == {}
+    assert team.opened == [("Team 1 market", 0, 0)] and list(store) == [("", "v09")]  # once, at 3.0
