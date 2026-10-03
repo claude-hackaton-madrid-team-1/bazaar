@@ -330,3 +330,13 @@ def test_the_live_simulator_counts_rounds_and_decay_like_the_real_game(monkeypat
     for d in deals:
         kept = (1 - d.decay_per_round) ** d.rounds
         assert d.result["points"] == pytest.approx(10 * d.result["share"] * kept, abs=0.02)
+
+
+def test_a_listening_one_shot_takes_a_fresh_offer_that_leaves_it_its_margin_and_a_deaf_one_never_does():
+    params = {"open": 0.5, "shots": 1, "gap": 1, "listens": 1.0, "accept": 0.1}
+    sc = scenario(style="one_shot", params=params, rival_limit=200)  # it bids 100 once; it takes ≤ 180
+    late = Script(zoo.HOLD, zoo.HOLD, zoo.HOLD, zoo.Act("offer", 185), zoo.Act("offer", 180))
+    record, final = zoo.play(late, sc)
+    assert rival_prices(final) == [100, 180] and (record.status, record.price, record.closer) == ("deal", 180, "rival")
+    deaf, _ = zoo.play(Script(zoo.Act("offer", 120)), scenario(style="one_shot", params={**params, "listens": 0.0}))
+    assert deaf.status == "no_deal"

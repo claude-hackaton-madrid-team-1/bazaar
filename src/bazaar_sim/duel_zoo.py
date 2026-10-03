@@ -49,7 +49,7 @@ import random
 import statistics
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
 Role = Literal["seller", "buyer"]
@@ -146,7 +146,8 @@ def style_params(style: str, rng: random.Random) -> dict[str, float]:
             "open": rng.uniform(0.2, 0.7),
             "shots": float(rng.choice((1, 2))),
             "gap": float(rng.randint(1, 3)),  # ticks between its two shots
-            "listens": float(rng.random() < 0.5),  # it still accepts our offers after going silent
+            "listens": float(rng.random() < 0.5),  # it still reads and accepts our offers after going silent
+            "accept": rng.uniform(0.02, 0.2),  # then any offer leaving it this margin (fraction of its limit)
         }
     if style == "tit_for_tat":
         return {
@@ -292,11 +293,14 @@ def _conceder(view: RivalView) -> Act:
 
 
 def _one_shot(view: RivalView) -> Act:
+    """One or two early offers, then silence. A listening one still takes any fresh offer of ours that leaves it
+    its `accept` margin; a deaf one never closes."""
     p = view.params
     days = view.days()
-    price = view.price_for(p["open"], days)
-    if p["listens"] and _accepts(view, price, p["open"]):
-        return Act("accept", view.our_offer.price if view.our_offer else None)
+    ours = view.our_offer
+    fresh = ours is not None and (view.its_offer is None or ours.tick >= view.its_offer.tick)
+    if p["listens"] and ours is not None and fresh and view.utility(ours.price, ours.days) >= p["accept"] * view.limit:
+        return Act("accept", ours.price)
     shots = [view.started_tick, view.started_tick + int(p["gap"])][: int(p["shots"])]
     if view.tick in shots:
         second = view.its_offer is not None
@@ -636,6 +640,11 @@ def scenarios(
                             )
                         )
     return out
+
+
+def with_params(grid: Iterable[Scenario], styles: Sequence[str], **fixed: float) -> list[Scenario]:
+    """The same grid with some parameters of `styles` pinned (a sensitivity run): other duels unchanged."""
+    return [replace(sc, params={**sc.params, **fixed}) if sc.style in styles else sc for sc in grid]
 
 
 def run(policy: Policy, grid: Iterable[Scenario]) -> list[Record]:

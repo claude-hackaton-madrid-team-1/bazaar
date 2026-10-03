@@ -165,6 +165,53 @@ def tournament_section(policies: dict[str, Policy], n: int) -> str:
     return "\n\n".join(parts)
 
 
+def seeds_section(policies: dict[str, Policy], n: int, seeds: Sequence[int] = (1, 2, 3, 4, 5)) -> str:
+    """The go/no-go grid (6 plan styles × 2 roles × 2 decays) redrawn with other seeds: how much the means move."""
+    rows = []
+    for name, p in policies.items():
+        means = []
+        for seed in seeds:
+            grid = duel_zoo.scenarios(duel_zoo.PLAN_STYLES, n=n, decays=(0.06, 0.08), seed=seed)
+            means.append(duel_zoo.summarize(duel_zoo.run(p, grid)).mean_result)
+        spread = statistics.stdev(means) if len(means) > 1 else 0.0
+        rows.append((name, *(round(m, 2) for m in means), round(statistics.fmean(means), 2), round(spread, 2)))
+    head = ("policy", *(f"seed {s}" for s in seeds), "mean", "sd")
+    return (
+        f"## Seed stability: mean P per duel on the go/no-go grid ({len(duel_zoo.PLAN_STYLES) * n * 4} duels per seed)"
+        "\n\n" + table(head, rows)
+    )
+
+
+SENSITIVITY: tuple[tuple[str, tuple[str, ...], dict[str, float]], ...] = (
+    ("as fitted", (), {}),
+    ("conceders end 2 % over their limit", ("linear", "convex"), {"end": 0.02}),
+    ("conceders end 30 % over their limit", ("linear", "convex"), {"end": 0.3}),
+    ("one-shots never listen", ("one_shot",), {"listens": 0.0}),
+    ("one-shots always listen", ("one_shot",), {"listens": 1.0}),
+    ("tit-for-tat ratio 0.4, no drift", ("tit_for_tat",), {"ratio": 0.4, "drift": 0.0}),
+    ("tit-for-tat ratio 1.2, drift 2 %", ("tit_for_tat",), {"ratio": 1.2, "drift": 0.02}),
+    ("holdout holds at 30 %", ("holdout",), {"hold": 0.3}),
+)
+
+
+def sensitivity_section(policies: dict[str, Policy], n: int) -> str:
+    """Mean P per duel on the go/no-go grid (plus holdout) when one assumption of the zoo is pinned."""
+    base = duel_zoo.scenarios(duel_zoo.STYLES, n=n, decays=(0.06, 0.08))
+    rows = []
+    for label, styles, fixed in SENSITIVITY:
+        grid = duel_zoo.with_params(base, styles, **fixed)
+        means = {name: duel_zoo.summarize(duel_zoo.run(p, grid)).mean_result for name, p in policies.items()}
+        first = next(iter(means.values()))
+        rows.append((label, *(round(m, 2) for m in means.values()), *(round(m / first, 2) if first else None
+                                                                       for m in list(means.values())[1:])))  # fmt: skip
+    names = list(policies)
+    head = ("assumption", *(f"{n} P" for n in names), *(f"{n} / {names[0]}" for n in names[1:]))
+    return (
+        f"## Sensitivity: mean P per duel when one zoo assumption is pinned ({len(base)} duels, 7 styles)\n\n"
+        + table(head, rows)
+    )
+
+
 def replay_section(policies: dict[str, Policy]) -> str:
     rows: dict[int, list[Any]] = {}
     totals = []
@@ -212,6 +259,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         realism_section(args.n),
         confusion_section(min(args.n, 100)),
         tournament_section(policies, args.n),
+        seeds_section(policies, args.n),
+        sensitivity_section(policies, args.n),
         replay_section(policies),
         *(gate_section(g, resolve(g), args.n) for g in args.gate),
     ]
