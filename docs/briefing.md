@@ -32,6 +32,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **How the 30-point blocks split** *[audit, fitted]*:
   - Market-making per round = **22.5 × `bench_points` + 7.5 × organic**, where organic is value created between other teams on our venue, capped at the top-3 mean. The free stall alone is `bench_points` 0.5 = 11.25 of 30; nine teams sat at exactly that level and two at the organic cap.
   - Negotiating per round ≈ ladder 7.5 + duels 7.5 + team trades 15 (estimate). Each part is capped at the top-3 mean: once we are at the cap, more of it adds nothing that round.
+- **Separate scoring models** *[Omar, Sat 3 Oct]*: RULES.md counts duels inside the Negotiating 30, but each mechanism has its own formula (duels: pie share × (1 − decay)^rounds, no cash or card moves; ladder: share of a dealer's range; team trades: price − `your_value`; market: 22.5 × bench + 7.5 × organic). Never mix their numbers or lessons; see `.ai/context.md`.
 - **What moves which part** *[audit]*:
   - `neg_points` moves only on settlements with other teams, by price − our `your_value` of that copy.
   - Dealer deals score only through the ladder.

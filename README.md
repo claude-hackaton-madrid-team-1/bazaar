@@ -350,7 +350,7 @@ this README. Every buy also stays under the hourly spend cap and under the card'
 - Never sell below our floor: `sell_min_value_ratio` x the server's `your_value` of that copy.
 - Any card buy or sell priced at 60 P or more needs a human approval first (`human_approval_above`;
   `uv run bazaar approve`). It fails closed.
-- No override flag, breaker reset, kill-switch bypass or approval trick forces a sale past the first two rules.
+- No override flag, breaker reset, kill-switch bypass or approval trick forces a sale past any of the three rules above.
 
 The incident: on Sat 3 Oct at about 18:28 (ticks 947-948) our only copy of SAL-07, which completed the
 Salamanca page, was sold to Pilar. Score went from 28.25 to 23.98, negotiating from 21.26 to 16.48, rank

@@ -30,6 +30,8 @@ Everything goes through `uv run bazaar …` (source: `src/bazaar_agent/`). Pytho
 
 ## What scores
 
+Separate models: duels (pie share × (1 − decay)^rounds, no cash or card moves, so `your_value`, the sell floor and the album never apply), dealer ladder, team trades (price − `your_value`) and market-making each have their own formula; never mix their numbers or lessons (`.ai/context.md`). Top lever, per a game founder: team trades at private values, then dealer deals near their final, then duels and market. Completing a page never scores by itself.
+
 Details: `docs/briefing.md` ("Scoring", "Dealers and ladder", "Duels", "Our own market") and `STRATEGY.md` ("What scores").
 The official `vendor/bazaar-kit/RULES.md` wins on any clash.
 
@@ -56,7 +58,7 @@ Omar's HARD RULES (Sat 3 Oct ~18:28 we sold our only SAL-07 and fell from score 
 - Never sell or swap away our only copy of a page card (`protect_page_sets` lists EVERY set); sell only true duplicates.
 - Never sell below our floor: `sell_min_value_ratio` x the server's `your_value` of that copy.
 - A card buy or sell priced at 60 P or more needs human approval (`human_approval_above`; `uv run bazaar approve`); it fails closed.
-- No override flag, breaker reset, kill-switch bypass or approval trick to force a sale past the two rules above.
+- No override flag, breaker reset, kill-switch bypass or approval trick to force a sale past any of the three rules above.
 
 ## Reading the market (no key needed)
 

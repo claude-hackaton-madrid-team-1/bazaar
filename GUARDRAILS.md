@@ -61,6 +61,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `parallel_reads` = true — each tick's reads (/me, our offers and threads, dealers, catalog, venues, the feed, each venue's board) go out together instead of one after the other; the decision still waits for all of them; false reads them in order (SP1).
 
 ## Duels
+Scoring note (Omar, Sat 3 Oct): duels have their own scoring model (pie share × (1 − decay)^rounds). A duel moves no cash or card, so the sell floor, `protect_page_sets`, `your_value` and the album never apply to it, and its results are no evidence about dealers or team trades (`.ai/context.md`).
 - `duel_anchor` = 0.6 — open this far beyond our limit (fraction of the limit).
 - `duel_floor_margin` = 0.05 — do not settle closer than this to our limit until the endgame.
 - `duel_endgame_ticks` = 1 — in the last tick, accept any rival offer strictly inside our limit.

@@ -84,6 +84,20 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
   Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never
   score". *[inferred by the coordinator, not in the audit: the page cards we had bought from teams
   were revalued at the new `your_value`; see `.ai/memory.md`, same date.]*
+- **Separate scoring models (Omar, Sat 3 Oct):** RULES.md counts duels inside the Negotiating 30, but each
+  mechanism has its own formula and the agents never mix their numbers or lessons.
+  - Duels: the share of each deal's pie we capture × (1 − decay)^rounds, rounds = min(our priced messages,
+    the rival's). No cash or card moves, so `your_value`, the sell floor, `protect_page_sets` and the album
+    play no part; no ladder, no bench. The duel accept uses the team's accept slot only on the tick it sends one.
+  - Dealer ladder: share of that dealer's own price range, best 3 per level, restarts each round.
+  - Team trades: price − our `your_value` (`neg_points`). Market-making: 22.5 × bench + 7.5 × organic.
+  - A duel result is no evidence about a dealer or a team trade, and an album or floor rule never applies to a
+    duel. The RAG keeps lessons apart by `learnings.scope` (`duel`, `trader`, `card`, `market`, `bench`).
+- **Where points come from (a game founder, via Omar, Sat 3 Oct):** "what matters is trading with teams and
+  making good negotiations". Pages and collection value never score: completing Salamanca by buying SAL-07
+  back from Abuela raised collection value by about 88 and the score did not move. Top lever: team trades at
+  private values (buy missing cards from teams below our `your_value`, sell duplicates to teams above it),
+  then dealer deals near their final, then duels and market.
 - **El Rastro fee:** ceil(5 % × price) + 1 P per card, paid by the side that accepts.
 - **API (Python SDK + starter agent provided):** cash, cards, value, live score, available
   dealers, current tick and time left in it, threads (open / negotiate / accept).
@@ -165,7 +179,7 @@ laptop checkout, or one Railway service's volume: pause each, README "Pause writ
 - Any card buy or sell priced at `human_approval_above` (60 P) or more needs a human approval first
   (`uv run bazaar approve`); it fails closed.
 - No override flag, breaker reset, kill-switch bypass or approval shortcut may be used to force a
-  sale past the rules above (a `--allow-page-card` CLI flag, PR #220, was closed and never merged).
+  sale past any of the three rules above (the Sat 3 Oct sale used the coordinator's `--allow-page-card` hand flag after a `dealer_sell` breaker reset, per the coordinator's own report; PR #220 is closed).
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 **This repo (decided 2026-10-03): the backlog is LOCAL.** Tasks live in `.ai/specs/02-plan.md` with a
