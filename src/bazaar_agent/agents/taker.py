@@ -122,6 +122,7 @@ from bazaar_agent.strategy import (
     PackSlots,
     Playbook,
     StrategyParams,
+    boosted_score,
     build_market,
     build_playbook,
     buy_case,
@@ -418,6 +419,7 @@ class _TickRun:
     accepted: list[AcceptProposal] = field(default_factory=list)
     cards: CardIndex | None = None  # the inspector's catalog index, built on first use this tick
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
+    boost: dict[str, float] = field(default_factory=dict)  # card ref -> rank multiplier (cards heartbeat)
     team_view: DeskView | None = None  # what the team desk saw this tick (N17)
     plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
 
@@ -568,9 +570,9 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
-        boost = self.cards.boost(clock.tick) if self.cards is not None else None
+        run.boost = self.cards.boost(clock.tick) if self.cards is not None else {}
         book = build_playbook(
-            snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=boost
+            snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan, boost=run.boost
         )
         self._open(run, book, threads)
         desk = self._desk_moves(run)
@@ -836,7 +838,7 @@ class Taker:
                 for mv in (*book.buys, *book.packs)
                 if mv.source in dealer_ids and self.cooling.get((mv.source, mv.ref), -1.0) <= clock.t_hours
             ],
-            key=lambda mv: -mv.score,
+            key=lambda mv: -boosted_score(mv, run.boost),  # a fresh release opens first (order only, #185)
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)

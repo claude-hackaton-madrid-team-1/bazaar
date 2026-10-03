@@ -4,6 +4,8 @@ rank those cards up for a while (ranking only)."""
 import json
 from copy import deepcopy
 
+import pytest
+
 from bazaar_agent import cards_heartbeat as hb
 from bazaar_agent import strategy
 from bazaar_agent.agents.taker import Taker, TakerConfig
@@ -137,8 +139,8 @@ def test_a_store_or_disk_failure_never_raises(tmp_path):
     h.flush(2)
     assert any("learnings not stored (RuntimeError)" in x for x in lines)
     assert any("not written" in x for x in lines)
-    assert h.observe(3, {"sets": [{"id": "LAV", "released": True, "cards": [{"id": "X", "minted": "many"}]}]}, []) == []
-    assert any("cards: skipped (ValueError)" in x for x in lines)
+    assert h.observe(3, {"sets": 5}, []) == []  # a catalog of the wrong shape
+    assert any("cards: skipped (TypeError)" in x for x in lines)
 
 
 def test_the_boost_reorders_buys_and_changes_no_move():
@@ -170,3 +172,84 @@ def test_the_taker_diffs_the_catalog_it_already_read_and_stores_after_the_sends(
     assert [(lr.kind, lr.detail["item"]) for lr in stored] == [("card_release", ref)]
     assert any(line.startswith(f"tick 2 cards: new card: {ref}") for line in lines)
     assert cards.boost(2) == {ref: hb.BOOST}
+
+
+class ValueTeam(FakeTeam):
+    """A team client whose `GET /api/me/value` answers from a table (the official-value cap)."""
+
+    def __init__(self, values: dict[str, float]) -> None:
+        super().__init__()
+        self.values = values
+
+    def value(self, card):
+        return {"card": card, "your_value": self.values[card]}
+
+
+@pytest.mark.official_values
+def test_a_boosted_card_opens_first_and_is_still_refused_above_its_official_value(tmp_path, monkeypatch):
+    monkeypatch.setattr(hb, "BOOST", 10.0)  # LAV-02 (score 19.7) ahead of LAV-08 (47.5)
+    lines: list[str] = []
+    cards = hb.CardsHeartbeat(ON, lambda rows: None, lines.append, tmp_path / "agents")
+    cards.events = [hb.CardEvent("new_card", "LAV-02", "LAV", "common", 1, 1, 30, ("abuela",), (), ())]
+    team = ValueTeam({"LAV-02": 1.0, "LAV-08": 1.0})
+    t = Taker(
+        team, FakePublic(), live=True, log=lines.append, now=lambda: 1000.0, sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=1), cards=cards, **parts(tmp_path),
+    )  # fmt: skip
+    t.on_tick(clock(tick=1))
+    opens = [x for x in lines if "open thread with abuela" in x]
+    assert "for LAV-02" in opens[0]  # the boost moved the opening order
+    assert "guardrails denied: price" in opens[0] and "> official value 1 of LAV-02" in opens[0]
+    assert team.sent == []  # nothing went out: the cap still binds a boosted card
+
+
+def test_a_tampered_hint_file_drops_its_bad_rows_and_never_raises(tmp_path):
+    bad = [
+        {"kind": "new_card", "card": "RET-01", "set": "RET", "rarity": "common", "tick": "7", "minted": 1},
+        {"kind": "new_card", "card": ["x"], "tick": 1, "minted": 1},
+        {"kind": "rm -rf", "card": "RET-02", "tick": 1, "minted": 1},
+        {"kind": "new_card", "card": "RET-03", "set": "RET", "rarity": "rare", "tick": 1, "minted": 2,
+         "sold_by": ["chato", 5, "[red]x"], "packs": "nope"},
+    ]  # fmt: skip
+    baseline = {"LAV-01": {"set": "LAV", "minted": "x", "visible": True}, "LAV-02": {"set": "LAV", "visible": True}}
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / hb.EVENTS_FILE).write_text(json.dumps({"events": bad, "baseline": baseline}))
+    h, lines, _ = beat(tmp_path)
+    assert [(e.card, e.sold_by, e.packs) for e in h.events] == [("RET-03", ("chato", "_red_x"), ())]
+    assert list(h.baseline) == ["LAV-02"] and h.baseline["LAV-02"]["minted"] is None
+    assert h.boost(5) == {"RET-03": hb.BOOST}
+    h.observe(5, cat(lav(card("LAV-01"), card("LAV-02", minted=9))), MENUS)
+    h.flush(5)
+    assert not any("skipped" in x or "no boost" in x or "not written" in x for x in lines)
+
+
+def test_a_broken_event_list_in_memory_gives_no_boost_and_a_log_line(tmp_path):
+    h, lines, _ = beat(tmp_path)
+    h.events = [object()]  # type: ignore[list-item]
+    assert h.boost(1) == {}
+    h.flush(1)
+    assert any("cards: no boost" in x for x in lines) and any("not written" in x for x in lines)
+
+
+def test_a_glitchy_read_is_never_a_release_or_a_jump(tmp_path):
+    h, _, _ = beat(tmp_path)
+    full = cat(lav(card("LAV-01", minted=10)), ret(card("RET-01", minted=8)))
+    h.observe(1, full, MENUS)
+    assert h.observe(2, cat(lav(card("LAV-01", minted=10))), MENUS) == []  # RET left out for one read
+    assert h.observe(3, full, MENUS) == []  # ... and back: not "released" again
+    no_minted = cat(lav({"id": "LAV-01", "rarity": "common"}), ret(card("RET-01", minted=8)))
+    assert h.observe(4, no_minted, MENUS) == []
+    assert h.observe(5, full, MENUS) == []  # the count came back unchanged: no jump
+
+
+def test_a_minted_jump_is_stored_but_never_boosted():
+    jump = hb.CardEvent("minted_jump", "LAV-08", "LAV", "uncommon", 10, 9, 30, (), (), ())
+    assert hb.boost(ON, [jump], 10) == {}
+
+
+def test_the_taker_opens_a_boosted_dealer_buy_first():
+    from bazaar_agent.strategy import boosted_score
+
+    plain = strategy.build_playbook(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES)
+    low, high = sorted((m for m in plain.buys if m.source == "abuela"), key=lambda m: m.score)[:2]
+    assert boosted_score(low, {low.ref: 10.0}) > boosted_score(high, {}) and boosted_score(low, None) == low.score

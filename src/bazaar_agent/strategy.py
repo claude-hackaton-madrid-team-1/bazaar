@@ -712,6 +712,12 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     return moves + rank(spares, m, params)[: params.sell_spare_slots]
 
 
+def boosted_score(mv: Move, boost: Mapping[str, float] | None) -> float:
+    """The score a move is ORDERED by: a positive score times its boost (the cards heartbeat's fresh releases);
+    the move itself, its price and its limit never change."""
+    return mv.score * (boost or {}).get(mv.ref, 1.0) if mv.score > 0 else mv.score
+
+
 def rank(
     moves: Iterable[Move], m: Market, params: StrategyParams, boost: Mapping[str, float] | None = None
 ) -> list[Move]:
@@ -722,8 +728,7 @@ def rank(
     def key(mv: Move) -> tuple[float, int, float]:
         card = m.cards.get(mv.ref)
         aff = m.affinity.get(card.set_code, 1.0) if card else 1.0
-        score = mv.score * boost.get(mv.ref, 1.0) if mv.score > 0 else mv.score
-        return (-score, 0 if m.held.get(mv.ref, 0) > 1 else 1, aff)
+        return (-boosted_score(mv, boost), 0 if m.held.get(mv.ref, 0) > 1 else 1, aff)
 
     return sorted(moves, key=key)[: params.max_moves]
 

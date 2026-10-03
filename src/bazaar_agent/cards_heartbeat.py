@@ -12,8 +12,10 @@ it was down) and reports three kinds of event:
 
 Each event is stored once in the learnings store (kind `card_release`, deduped by its key), logged, and written to
 `<data_dir>/agents/card_events.json` with the dealers that sell or buy it per their `/api/dealers` menus. For
-`card_release_boost_ticks` ticks after it, `boost()` hands strategy a rank multiplier for those cards (GUARDRAILS
-`card_release_boost_enabled`): ranking only, every buy still passes guardrails and the official-value cap.
+`card_release_boost_ticks` ticks after a new card or a released set (never a minted jump), `boost()` hands the
+taker a rank multiplier for those cards (GUARDRAILS `card_release_boost_enabled`): the order of its buys and dealer
+openings only, every buy still passes guardrails and the official-value cap. The hint file is read back typed: a
+row that does not parse is dropped, and a heartbeat failure is logged, never raised into the tick.
 Detection runs in memory before the sends; the store and the file are written after them (`flush`).
 """
 
@@ -33,7 +35,8 @@ EVENTS_FILE = "card_events.json"
 MINTED_JUMP = 3  # copies printed since the last report that make a jump worth a hint
 BOOST = 1.5  # rank multiplier of a boosted card's score (ranking only)
 KEEP_EVENTS = 200  # the file keeps the newest events only
-KEYS = frozenset({"set", "rarity", "minted", "print_run", "visible"})
+KINDS = frozenset({"new_card", "set_released", "minted_jump"})
+BOOSTED = frozenset({"new_card", "set_released"})  # a minted jump is a hint, never a rank boost
 LISTS = ("sold_by", "bought_by", "packs")
 SAFE = re.compile(r"[^A-Za-z0-9_.:\-]")
 
@@ -75,11 +78,50 @@ def catalog_cards(catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                 out[_str(c["id"])] = {
                     "set": _str(s["id"]),
                     "rarity": _str(c.get("rarity"), 32),
-                    "minted": int(c.get("minted") or 0),
-                    "print_run": int(c.get("print_run") or 0),
+                    "minted": _count(c.get("minted")),  # None: not said this read (never a jump)
+                    "print_run": _count(c.get("print_run")) or 0,
                     "visible": bool(s.get("released", True)) and not c.get("hidden"),
                 }
     return out
+
+
+def _count(value: Any) -> int | None:
+    """A non-negative whole count, or None (missing, a bool, a float that is not whole, text)."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or value != value or value < 0:
+        return None
+    return int(value) if float(value).is_integer() else None
+
+
+def _entry(value: Any) -> dict[str, Any] | None:
+    """One baseline entry read back from the hint file, typed, or None."""
+    if not isinstance(value, dict) or not isinstance(value.get("visible"), bool):
+        return None
+    minted = value.get("minted")
+    if minted is not None and _count(minted) is None:
+        return None
+    return {
+        "set": _str(value.get("set")),
+        "rarity": _str(value.get("rarity"), 32),
+        "minted": None if minted is None else _count(minted),
+        "print_run": _count(value.get("print_run")) or 0,
+        "visible": value["visible"],
+    }
+
+
+def _event(row: Any) -> CardEvent | None:
+    """One event read back from the hint file, typed, or None (a tampered or older row is dropped)."""
+    if not isinstance(row, dict) or row.get("kind") not in KINDS:
+        return None
+    tick, minted = _count(row.get("tick")), _count(row.get("minted"))
+    card = _str(row.get("card")) if isinstance(row.get("card"), str) else ""
+    if tick is None or minted is None or not card:
+        return None
+    lists: list[list[Any]] = [v if isinstance(v := row.get(k), list) else [] for k in LISTS]
+    sold, bought, packs = (tuple(_str(x) for x in v if isinstance(x, str))[:20] for v in lists)
+    return CardEvent(
+        row["kind"], card, _str(row.get("set")), _str(row.get("rarity"), 32), tick, minted,
+        _count(row.get("print_run")) or 0, sold, bought, packs,
+    )  # fmt: skip
 
 
 def _covers(line: Mapping[str, Any], set_code: str) -> bool:
@@ -129,25 +171,31 @@ def detect(
             continue
         if old is None or not old["visible"]:
             kind = "set_released" if c["set"] in released_sets else "new_card"
-        elif c["minted"] - old["minted"] >= jump:
+        elif c["minted"] is not None and old["minted"] is not None and c["minted"] - old["minted"] >= jump:
             kind = "minted_jump"
         else:
             continue
         sold, bought, packs = dealer_lines(menus, c["set"], c["rarity"])
-        out.append(CardEvent(kind, ref, c["set"], c["rarity"], tick, c["minted"], c["print_run"], sold, bought, packs))
+        minted = c["minted"] if c["minted"] is not None else 0
+        out.append(CardEvent(kind, ref, c["set"], c["rarity"], tick, minted, c["print_run"], sold, bought, packs))
     return out
 
 
 def advance(
     before: Mapping[str, Mapping[str, Any]], now: Mapping[str, Mapping[str, Any]], jump: int = MINTED_JUMP
 ) -> dict[str, dict[str, Any]]:
-    """The next baseline: `now`, except a minted count rising slower than a jump keeps its last reported value
-    (so a card printed one copy a tick still reports a jump once it adds up)."""
-    out = {}
+    """The next baseline: `now`, except a minted count rising slower than a jump (or not said) keeps its last
+    reported value (so a card printed one copy a tick still reports a jump once it adds up), and a card or set the
+    read left out keeps its entry (a glitchy read is never "released again" on the next one)."""
+    out = {ref: dict(c) for ref, c in before.items() if ref not in now}
     for ref, c in now.items():
         old = before.get(ref)
-        keep = old is not None and old["visible"] and c["visible"] and 0 <= c["minted"] - old["minted"] < jump
-        out[ref] = {**c, "minted": old["minted"]} if keep and old is not None else dict(c)
+        if old is None or not old["visible"] or not c["visible"] or old["minted"] is None:
+            out[ref] = dict(c)
+        elif c["minted"] is None or 0 <= c["minted"] - old["minted"] < jump:
+            out[ref] = {**c, "minted": old["minted"]}
+        else:
+            out[ref] = dict(c)
     return out
 
 
@@ -169,11 +217,13 @@ def learning_of(ev: CardEvent) -> Learning:
 
 
 def boost(rules: Guardrails, events: Iterable[CardEvent], tick: int) -> dict[str, float]:
-    """card ref -> rank multiplier for the cards released or reprinted in the last `card_release_boost_ticks`
-    ticks; nothing while `card_release_boost_enabled` is false."""
+    """card ref -> rank multiplier for the cards released (a new card, a released set) in the last
+    `card_release_boost_ticks` ticks; nothing while `card_release_boost_enabled` is false. A minted jump is logged
+    and stored only: other teams' pulls make a card more plentiful, never a reason to chase it (security #185)."""
     if not rules.card_release_boost_enabled:
         return {}
-    return {ev.card: BOOST for ev in events if 0 <= tick - ev.tick < rules.card_release_boost_ticks}
+    ticks = rules.card_release_boost_ticks
+    return {ev.card: BOOST for ev in events if ev.kind in BOOSTED and 0 <= tick - ev.tick < ticks}
 
 
 class CardsHeartbeat:
@@ -208,7 +258,11 @@ class CardsHeartbeat:
             return []
 
     def boost(self, tick: int) -> dict[str, float]:
-        return boost(self.rules, self.events, tick)
+        try:
+            return boost(self.rules, self.events, tick)
+        except Exception as e:  # noqa: BLE001 — no boost is today's ranking: never break a tick
+            self.log(f"tick {tick} cards: no boost ({type(e).__name__})")
+            return {}
 
     def flush(self, tick: int) -> None:
         """After the sends: log, store and write the hint file (also the first baseline)."""
@@ -223,7 +277,7 @@ class CardsHeartbeat:
         try:
             if fresh or not self.path.exists():
                 self._write(tick)
-        except OSError as e:
+        except Exception as e:  # noqa: BLE001 — the file is a hint: never break the after-sends work
             self.log(f"tick {tick} cards: {EVENTS_FILE} not written ({type(e).__name__})")
 
     def _write(self, tick: int) -> None:
@@ -245,8 +299,9 @@ class CardsHeartbeat:
         try:
             body = json.loads(self.path.read_text())
             raw = body.get("baseline") or {}
-            self.baseline = {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict) and v.keys() >= KEYS}
-            rows = [r for r in body.get("events") or [] if isinstance(r, dict)]
-            self.events = [CardEvent(**{**r, **{k: tuple(r.get(k) or ()) for k in LISTS}}) for r in rows]
-        except (OSError, ValueError, TypeError, AttributeError):
+            entries = {_str(k): _entry(v) for k, v in raw.items() if isinstance(k, str)}
+            self.baseline = {k: v for k, v in entries.items() if k and v is not None}
+            rows = body.get("events") if isinstance(body.get("events"), list) else []
+            self.events = [ev for ev in map(_event, rows[-KEEP_EVENTS:]) if ev is not None]
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
             self.baseline, self.events = {}, []
