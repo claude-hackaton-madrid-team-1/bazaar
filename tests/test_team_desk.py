@@ -263,6 +263,45 @@ def test_the_taker_takes_a_fair_counter_through_the_shared_accept_slot(tmp_path)
     assert any("take t05's swap offer 900 on thread 42" in line for line in lines)
 
 
+def test_a_swap_accept_passes_the_accept_gate_and_a_block_never_takes_the_slot(tmp_path, monkeypatch):
+    # #146's S1 gate covers every accept, a team swap too: the decision row carries the inspection (private:
+    # `inspector` is not on the public allow-list), and a block sends nothing and leaves the accept slot free.
+    from bazaar_agent.agents import taker as tk
+    from bazaar_agent.agents.accept_gate import Gate
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, clock, parts, rows
+
+    def run(path):
+        fair = thread(messages=[{"sender": THEM, "tick": TICK, "text": "trato"}], offers=[their_offer(cash_out=1)])
+        team, lines = Team(threads=[fair]), []
+        t = Taker(
+            team,
+            FakePublic(),
+            live=True,
+            log=lines.append,
+            now=lambda: 1000.0,
+            sleep=lambda s: None,
+            config=TakerConfig(max_dealer_threads=0),
+            **parts(path, team_threads_enabled=True),
+        )
+        t.team_desk.env = {}
+        t.team_desk._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0})
+        t.on_tick(clock())
+        return t, team, lines
+
+    t, team, _ = run(tmp_path / "ok")
+    assert ("accept", 900, None) in team.sent
+    (row,) = [r for r in rows(tmp_path / "ok") if r.get("kind") == "team_accept" and r.get("chosen")]
+    assert (row["inputs"]["inspector"]["kind"], row["inputs"]["inspector"]["verdict"]) == ("team", "clean")
+
+    monkeypatch.setattr(tk, "swap_gate", lambda *a: Gate("team", 900, "block", ("it does not move the cards",)))
+    t, team, lines = run(tmp_path / "blocked")
+    assert not [s for s in team.sent if s[0] == "accept"] and t.ledger.accept_items(TICK) == []
+    (row,) = [r for r in rows(tmp_path / "blocked") if r.get("kind") == "team_accept"]
+    assert (row["status"], row["chosen"], row["inputs"]["inspector"]["verdict"]) == ("rejected", False, "block")
+    assert any("inspector block on thread 42" in line for line in lines)
+
+
 def test_the_taker_never_takes_a_counter_while_the_desk_is_off(tmp_path):
     from bazaar_agent.agents.taker import Taker, TakerConfig
     from tests.agent_fakes import FakePublic, clock, parts

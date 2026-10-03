@@ -21,8 +21,10 @@ from typing import Any, Literal
 from bazaar_agent.agents.duelist import DuelMove, duel_done, duel_id, effective_price, inside_limit, rival_text
 from bazaar_agent.agents.inspector import CardIndex, Verdict, inspect_offer, message_for_offer
 from bazaar_agent.agents.market import BoardOffer
+from bazaar_agent.swaps import TheirOffer, is_the_planned_swap, read_offer
+from bazaar_agent.trade_desk import Trade
 
-GateKind = Literal["dealer", "board", "duel"]
+GateKind = Literal["dealer", "board", "duel", "team"]
 # A price the words claim: "80 P", "80p", "80 primas", "80 €" (a bare number is too ambiguous to read as one).
 PRICE_CLAIM = re.compile(r"(?<![\w.])(\d{1,7})\s*(?:p|primas?|€)(?!\w)", re.IGNORECASE)
 
@@ -128,6 +130,35 @@ def bid_gate(offer: BoardOffer, ref: str, price: int, copy: Mapping[str, Any] | 
     elif copy.get("kind", "card") != "card" or copy.get("ref") != offer.ref:
         findings.append(f"the copy we would hand over is {copy.get('ref')}, not {offer.ref}")
     return Gate("board", offer.id, "block" if findings else "clean", tuple(findings))
+
+
+def swap_gate(
+    thread: Mapping[str, Any], us: str, priced: TheirOffer, trade: Trade, copy: Mapping[str, Any] | None
+) -> Gate:
+    """A team's offer in a swap thread (N17) about to be accepted: read from the thread again, it is still an
+    open plain offer from that team to us, with the structure we priced (the planned cards, the same cash
+    either way), and the copy we hand over is our copy of the planned card in /me."""
+    oid = priced.offer_id
+    raw = next((o for o in thread.get("standing_offers") or [] if isinstance(o, dict) and o.get("id") == oid), None)
+    if raw is None:
+        return _block("team", oid, f"offer {oid} is not a standing offer in this thread")
+    fresh = read_offer(raw, us)
+    if fresh is None:
+        return _block("team", oid, f"offer {oid} is no longer a plain open offer to us")
+    findings = []
+    if fresh.team != priced.team:
+        findings.append(f"it is {fresh.team}'s offer, our decision priced {priced.team}'s")
+    if (fresh.cash_in, fresh.cash_out) != (priced.cash_in, priced.cash_out):
+        findings.append(
+            f"its cash is +{fresh.cash_in}/-{fresh.cash_out}, our decision priced +{priced.cash_in}/-{priced.cash_out}"
+        )
+    if fresh != priced or not is_the_planned_swap(fresh, trade):
+        findings.append("it does not move the cards we priced")
+    if copy is None:
+        findings.append("the copy we would hand over is not in /me")
+    elif copy.get("kind", "card") != "card" or copy.get("ref") != trade.refs[0]:
+        findings.append(f"the copy we would hand over is {copy.get('ref')}, not {trade.refs[0]}")
+    return Gate("team", oid, "block" if findings else "clean", tuple(dict.fromkeys(findings)))
 
 
 def price_claims(text: str | None) -> list[int]:

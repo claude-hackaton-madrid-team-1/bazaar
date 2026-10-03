@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bazaar_agent.affinity import AffinityMap
-from bazaar_agent.agents.accept_gate import Gate, bid_gate, board_gate, dealer_gate
+from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
@@ -891,11 +891,17 @@ class Taker:
         try:
             return self._gate_unchecked(run, p)
         except Exception as e:  # a malformed counterparty payload: no accept, the desk goes on
-            return Gate(
-                "dealer" if p.desk else "board", p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",)
-            )
+            kind: GateKind = "dealer" if p.desk else "team" if p.swap else "board"
+            return Gate(kind, p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",))
 
     def _gate_unchecked(self, run: _TickRun, p: AcceptProposal) -> Gate:
+        if p.swap is not None:
+            a = p.swap
+            payload = self.team_desk.thread_payload(a.thread_id)
+            if payload is None:
+                return Gate("team", p.offer_id, "block", (f"thread {a.thread_id} was not read this tick",))
+            copy = next((x for x in run.snap.me.get("assets") or [] if x.get("id") == a.trade.asset_id), None)
+            return swap_gate(payload, run.snap.us, a.offer, a.trade, copy)
         if p.sell is not None:
             if p.bid is None:
                 return Gate("board", p.offer_id, "block", ("a sell with no bid to inspect",))
@@ -1326,15 +1332,20 @@ class Taker:
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
+        gate = self._gate(run, p)  # S1: their standing offer, read again, is the swap we priced
+        if gate is not None and not gate.allowed:
+            self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on thread {a.thread_id}: {gate.reason}")
+            self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
+            return False
         pay = a.offer.cash_out + a.fee
-        if not self._slot(run, p, pay, f"team:{a.thread_id}", limit):
+        if not self._slot(run, p, pay, f"team:{a.thread_id}", limit, gate):
             return False
         did = self.rec.decide(
             clock.tick,
             "team_accept",
             f"take {a.offer.team}'s swap offer {a.offer.offer_id} on thread {a.thread_id}: "
             f"{a.trade.refs[0]} for {a.trade.refs[1]}, cash {a.offer.net_cash:+d}, fee {a.fee} · guardrails {verdict}",
-            inputs=p.inputs,
+            inputs=_with_gate(p.inputs, gate),
             reason=f"{a.verdict.reason}; {a.trade.reason}",
             guardrail=str(verdict),
             chosen=True,

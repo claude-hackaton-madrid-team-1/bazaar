@@ -1208,6 +1208,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
 - [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
 - [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
 - [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
@@ -1215,7 +1216,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
 - [2026-10-03] build-error — #138's `accept_bids` sold into a bid without main's S1 accept gate (#146)
 - [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
-- [2026-10-03] build-error — merging main into the N17 stack: a new ledger method must reach FallbackLedger too
 
 <!-- BAZAAR:STATUS:END -->
 

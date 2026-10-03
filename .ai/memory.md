@@ -732,3 +732,10 @@ A rival can accept our swap offer and close the thread in the same tick: the dea
 cash we add when the offer is POSTED and gives it back only when a read shows that offer `cancelled`,
 `expired` or `failed` (a cancel's own answer, or the thread re-read for at most 10 ticks); otherwise it stays
 booked (over-count, fail safe). Found by security-auditor rounds 2-5 on #123 against the in-process simulator.
+
+### [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
+symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspector row once main's #146 gate was in
+→ root cause: #123 checks the swap structure when it proposes (`read_offer` + `is_the_planned_swap`) but the accept
+was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
+offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
+the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
