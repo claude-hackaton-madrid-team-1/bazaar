@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ class Guardrails(BaseModel):
     duel_anchor: float = 0.6
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
+    duel_inside_limit: bool = True
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
@@ -83,6 +85,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
+    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
@@ -236,6 +239,14 @@ class Ledger:
 # ---------------------------------------------------------------- the check
 
 
+DUEL_DAYS_MAX = 10  # RULES.md: two-issue duels trade delivery days 0 to 10
+
+
+def duel_days_ok(days: float) -> bool:
+    """Inside the rules' 0 to 10 days. Anything else (negative, NaN) would turn the days penalty into a bonus."""
+    return 0 <= days <= DUEL_DAYS_MAX
+
+
 ActionKind = Literal["buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag"]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 
@@ -247,6 +258,10 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
+    role: str | None = None  # duels: "seller" | "buyer"
+    days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
+    days_weight: float | None = None  # two-issue duels: `your_days_weight`
 
 
 @dataclass(frozen=True)
@@ -330,4 +345,29 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
+        v.extend(_duel_limit_violations(action))
     return Verdict(not v, tuple(v))
+
+
+def _duel_limit_violations(action: Action) -> list[str]:
+    """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
+    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here."""
+    if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
+        return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
+    if action.days is not None and action.days_weight is None:
+        return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
+    if action.days is not None and not duel_days_ok(action.days):
+        return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
+    if action.days_weight is not None and not math.isfinite(action.days_weight):
+        return [f"your_days_weight {action.days_weight}: cannot value the duel move (duel_inside_limit)"]
+    penalty = abs(action.days_weight or 0.0) * (action.days or 0.0)
+    seller = action.role == "seller"
+    worth = action.price - penalty if seller else action.price + penalty
+    if (worth > action.limit) if seller else (worth < action.limit):
+        return []
+    side = "above" if seller else "below"
+    return [
+        f"duel {action.role} price {action.price} is worth {worth:g}, not strictly {side} limit "
+        f"{action.limit} (duel_inside_limit)"
+    ]

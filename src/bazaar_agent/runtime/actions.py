@@ -168,7 +168,7 @@ def _plan_dealer(b: Backend, clock: Clock, read_at: float, args: DealerBuyArgs) 
 
 
 def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> Planned:
-    from bazaar_agent.agents.duelist import duel_id, duel_move
+    from bazaar_agent.agents.duelist import duel_action, duel_id, duel_move
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     duels = [d for d in b.team.duels().get("duels") or [] if isinstance(d, dict)]
@@ -192,7 +192,7 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
         accepts_this_tick=b.ledger.accepts_in_tick(clock.tick),
         paused=(REPO_ROOT / b.rules.pause_file).exists(),
     )
-    action = Action("duel_accept" if move.kind == "accept" else "duel_offer", str(args.duel_id))
+    action = duel_action(duel, move)  # the price and days we would agree to, with our limit and role
     detail = {"duel": duel, "move": move}
     return Planned("duel_move", check(action, ctx, b.rules), clock, read_at, action, detail)
 
