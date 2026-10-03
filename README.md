@@ -1303,6 +1303,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
 - [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
 - [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
@@ -1310,7 +1311,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
 - [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
 - [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
-- [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 
 <!-- BAZAAR:STATUS:END -->
 

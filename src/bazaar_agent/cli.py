@@ -2695,7 +2695,22 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     learner = kw.get("learner")
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
-    return NewsSentinel(reader, store.record, kw["log"], settings.data_dir / "agents")
+    return NewsSentinel(
+        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+    )
+
+
+def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
+    """Leaderboard snapshots in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.leaderboard_store import LeaderboardStore
+
+    return LeaderboardStore(lambda: db.connect(app="bazaar-leaderboard", connect_timeout_s=3), kw["log"],
+                            scope_of(settings).world)  # fmt: skip
 
 
 @agent_app.command("taker")
