@@ -292,10 +292,15 @@ class Context:
 
 
 def runs_venue(me: dict[str, Any]) -> bool:
-    """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one."""
+    """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one:
+    /me carries `starter_broker_key` while we have the stall (the kit's `Bazaar.me`), and opening our own
+    venue replaces the stall (RULES.md), so a venue named next to that key is the stall. The same answer
+    drives the bond reserve and the refusal of a second opening."""
     venue = me.get("venue")
+    if not venue or me.get("starter_broker_key"):
+        return False
     if isinstance(venue, str):
-        return bool(venue)
+        return True
     if not isinstance(venue, dict) or venue.get("starter") is True:
         return False
     return str(venue.get("status") or "open") in ("open", "closing")

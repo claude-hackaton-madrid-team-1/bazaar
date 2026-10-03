@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from bazaar_agent.config import BROKER_ENV_FILE, REPO_ROOT, ConfigError, Settings, read_env_file
 from bazaar_agent.guardrails import VENUE_COST, Action, Context, Guardrails, Verdict, check, runs_venue
+from bazaar_agent.sdk import BazaarError
 
 GAME_HOST = "bazaar.causaprima.ai"
 SIM_BROKER_PREFIX = "simbk-"
@@ -118,11 +119,15 @@ def check_key_file_writable(data_dir: Path) -> None:
 # ---------------------------------------------------------------- the key vault
 
 # The same statement as in sql/schema.sql (a test keeps them equal): the vault creates its table itself, so
-# a key is never lost to a database the schema was not applied to yet.
+# a key is never lost to a database the schema was not applied to yet. One row per venue we opened on a
+# target (the game's host, or a simulator's host:port), plus a `_claim` row while an opening is in flight.
 VENUE_KEYS_DDL = (
-    "create table if not exists venue_keys (venue text primary key, broker_key text not null, "
-    "opened_tick int, created_at timestamptz not null default now())"
+    "create table if not exists venue_keys (target text not null, venue text not null, broker_key text not null, "
+    "opened_tick int, created_at timestamptz not null default now(), primary key (target, venue))"
 )
+CLAIM = "_claim"  # the venue column of the row that reserves an opening for one process
+CLAIM_STALE_TICKS = 20  # a claim older than this, with no venue to show for it, was a process that died
+DB_RETRY_CALLS = 5  # calls that skip Postgres after a failure (a connect may take 10 s of the tick)
 
 
 @dataclass(frozen=True)
@@ -132,10 +137,17 @@ class StoredVenue:
     where: str  # "postgres", "file" or "environment"
 
 
+def _target(url: str) -> str:
+    parts = urlsplit(url)
+    return parts.netloc.lower() or url
+
+
 class KeyVault:
     """Where our broker key lives between restarts: the shared Postgres `venue_keys` table first (a Railway
-    redeploy keeps it), then `<data_dir>/broker.env`, then BAZAAR_BROKER_KEY / BAZAAR_VENUE. Errors name
-    only their type: a psycopg message could quote a parameter."""
+    redeploy keeps it), then `<data_dir>/broker.env`, then BAZAAR_BROKER_KEY / BAZAAR_VENUE. It also holds
+    what makes the automatic opening happen once across processes and restarts (`opened_before`, `claim`).
+    Errors name only their type: a psycopg message could quote a parameter. Every key it reads or saves is
+    registered with the telemetry scrubber by value."""
 
     def __init__(
         self,
@@ -143,26 +155,35 @@ class KeyVault:
         connect: Callable[[], Any] | None = None,
         env_key: SecretStr | None = None,
         env_venue: str | None = None,
+        target: str = "",
     ) -> None:
-        self.data_dir, self._connect = data_dir, connect
+        self.data_dir, self._connect, self.target = data_dir, connect, target
         self._env = (env_key, env_venue)
         self._conn: Any = None
+        self._skip = 0
 
     @classmethod
     def from_settings(cls, settings: Settings, connect: Callable[[], Any] | None = None) -> KeyVault:
-        return cls(settings.data_dir, connect, settings.broker_key, settings.venue_id)
+        return cls(settings.data_dir, connect, settings.broker_key, settings.venue_id, _target(settings.bazaar_url))
 
     def _db(self) -> Any:
         if self._connect is None:
             raise ConfigError("no database configured for the broker key")
+        if self._skip > 0:
+            self._skip -= 1
+            raise ConfigError("Postgres was unreachable a moment ago")
         if self._conn is None or self._conn.closed:
-            self._conn = self._connect()
-            self._conn.autocommit = True
-            self._conn.execute(VENUE_KEYS_DDL)
+            try:
+                self._conn = self._connect()
+                self._conn.autocommit = True
+                self._conn.execute(VENUE_KEYS_DDL)
+            except Exception:
+                self._drop()
+                raise
         return self._conn
 
     def _drop(self) -> None:
-        conn, self._conn = self._conn, None
+        conn, self._conn, self._skip = self._conn, None, DB_RETRY_CALLS
         if conn is not None:
             with contextlib.suppress(Exception):  # already gone
                 conn.close()
@@ -171,7 +192,7 @@ class KeyVault:
         """None when a key returned now can be saved (`durable`: in Postgres, which a redeploy keeps), else why not."""
         if durable:
             try:
-                self._db().execute("select count(*) from venue_keys").fetchone()
+                self._db().execute("select count(*) from venue_keys where target = %s", (self.target,)).fetchone()
             except Exception as e:
                 self._drop()
                 return f"Postgres cannot hold the broker key ({type(e).__name__})"
@@ -182,16 +203,61 @@ class KeyVault:
             return str(e)
         return None
 
+    def opened_before(self) -> bool | None:
+        """Did any process open a venue on this target already? None when Postgres cannot say (do not open)."""
+        try:
+            row = (
+                self._db()
+                .execute("select count(*) from venue_keys where target = %s and venue <> %s", (self.target, CLAIM))
+                .fetchone()
+            )
+        except Exception:
+            self._drop()
+            return None
+        return bool(row and row[0])
+
+    def claim(self, tick: int) -> bool:
+        """Reserve the one opening for this process, atomically across processes (a deploy overlap, a laptop):
+        True when the claim is ours. A claim older than CLAIM_STALE_TICKS is taken over."""
+        try:
+            row = (
+                self._db()
+                .execute(
+                    "insert into venue_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
+                    "on conflict (target, venue) do update set opened_tick = excluded.opened_tick "
+                    "where venue_keys.opened_tick < %s returning venue",
+                    (self.target, CLAIM, tick, tick - CLAIM_STALE_TICKS),
+                )
+                .fetchone()
+            )
+        except Exception:
+            self._drop()
+            return False
+        return row is not None
+
+    def release(self) -> None:
+        """Give the claim back (the opening was refused: nothing was opened)."""
+        try:
+            self._db().execute("delete from venue_keys where target = %s and venue = %s", (self.target, CLAIM))
+        except Exception:
+            self._drop()
+
     def save(self, venue: str, key: str, tick: int) -> tuple[str, ...]:
         """Write the key everywhere it can go; where it went (empty: nowhere, say so without the key)."""
+        from bazaar_agent import telemetry as tm
+
+        tm.add_secret(key)
         saved: list[str] = []
         if self._connect is not None:
             try:
-                self._db().execute(
-                    "insert into venue_keys (venue, broker_key, opened_tick) values (%s, %s, %s) on conflict (venue) "
-                    "do update set broker_key = excluded.broker_key, opened_tick = excluded.opened_tick",
-                    (venue, key, tick),
+                db = self._db()
+                db.execute(
+                    "insert into venue_keys (target, venue, broker_key, opened_tick) values (%s, %s, %s, %s) "
+                    "on conflict (target, venue) do update set broker_key = excluded.broker_key, "
+                    "opened_tick = excluded.opened_tick",
+                    (self.target, venue, key, tick),
                 )
+                db.execute("delete from venue_keys where target = %s and venue = %s", (self.target, CLAIM))
                 saved.append("postgres")
             except Exception:
                 self._drop()
@@ -204,14 +270,22 @@ class KeyVault:
 
     def load(self, venue: str | None = None) -> StoredVenue | None:
         """The key for `venue` (or the newest one when None): Postgres, then the file, then the environment."""
+        found = self._load(venue)
+        if found is not None:
+            from bazaar_agent import telemetry as tm
+
+            tm.add_secret(found.key.get_secret_value())
+        return found
+
+    def _load(self, venue: str | None) -> StoredVenue | None:
         if self._connect is not None:
             try:
                 row = (
                     self._db()
                     .execute(
-                        "select venue, broker_key from venue_keys where %s::text is null or venue = %s "
-                        "order by created_at desc limit 1",
-                        (venue, venue),
+                        "select venue, broker_key from venue_keys where target = %s and venue <> %s "
+                        "and (%s::text is null or venue = %s) order by created_at desc limit 1",
+                        (self.target, CLAIM, venue, venue),
                     )
                     .fetchone()
                 )
@@ -267,6 +341,10 @@ def guarded_write(
     return VenueOutcome(True, verdict, body, f"sent: {describe}")
 
 
+class AlreadyOpened(ConfigError):
+    """A venue was opened on this target before: the automatic opening never opens another (a human may)."""
+
+
 @dataclass(frozen=True)
 class Opened:
     """A venue we just opened. `saved` is where its key went: empty means only this process holds it."""
@@ -287,12 +365,15 @@ def open_venue(
     me: dict[str, Any] | None = None,
     clock: dict[str, Any] | None = None,
 ) -> tuple[VenueOutcome, Opened | None]:
-    """Open our venue (album first: /me for the cash the bond takes and the venue we may already run).
+    """Open our venue (album first: /me for the cash the bond takes and the venue we may already run; the
+    caller passes `me` with the cash our open offers already promise taken off).
 
-    Live and allowed, the vault must be able to hold the key BEFORE the request goes out (`durable`: in
-    Postgres), and the key it returns is saved at once and removed from the outcome. It never raises after
-    the open: a key that could not be saved is still returned in `Opened` (the caller keeps it in memory
-    and says so, never showing it)."""
+    Live and allowed, the vault must be able to hold the key BEFORE the request goes out. `durable` (the
+    maker's automatic opening) also needs Postgres to say no venue was ever opened on this target and to
+    grant this process the one claim (`AlreadyOpened` / `ConfigError` otherwise: nothing is sent); a refusal
+    gives the claim back, a network error keeps it (the venue may be open). The key it returns is saved at
+    once and removed from the outcome. It never raises after the open: a key that could not be saved is
+    still returned in `Opened` (the caller keeps it in memory and says so, never showing it)."""
     me, clock = me if me is not None else team.me(), clock if clock is not None else team.clock()
     ctx = venue_context(rules, clock, int(me.get("cash") or 0), me)
     describe = (
@@ -303,10 +384,23 @@ def open_venue(
     def send() -> Any:
         if (why := vault.ready(durable=durable)) is not None:  # nothing is opened if the key would be lost
             raise ConfigError(f"{why}: not opening")
+        if durable:
+            before = vault.opened_before()
+            if before is None:
+                raise ConfigError("Postgres cannot say whether we opened a venue before: not opening")
+            if before:
+                raise AlreadyOpened("a venue was opened on this target before: the maker never opens another")
+            if not vault.claim(ctx.tick):
+                raise ConfigError("another process holds the opening claim: not opening")
         mechanism = {"mechanism": spec.mechanism}
-        return team.open_venue(
-            spec.name, spec.fee_bps, spec.fee_per_card, rules=mechanism, description=spec.description
-        )
+        try:
+            return team.open_venue(
+                spec.name, spec.fee_bps, spec.fee_per_card, rules=mechanism, description=spec.description
+            )
+        except BazaarError as e:
+            if durable and e.code != "network":  # refused: nothing opened, the next try may claim again
+                vault.release()
+            raise
 
     outcome = guarded_write(
         Action("venue_open", spec.name, price=VENUE_COST), ctx, rules, live=live, describe=describe, call=send

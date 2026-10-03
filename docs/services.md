@@ -241,9 +241,13 @@ before its own offers, `agents/venue_keeper.py`:
    `venue_open_after_game_hours` (6.5, about 11:30 Madrid, before the h7.0 Market Test at 12:00): a
    `board` venue, 0 bps + 0 P per card, named "Team 1 market". It is tick-driven: no wall clock. The opening
    goes through `guardrails.check()`: cash must stay at or above `cash_floor` (100) after the 250 P bond +
-   20 P fee, never a second venue, never before that game hour. Before the request goes out, the shared
-   Postgres must be able to hold the broker key (else it waits `RETRY_TICKS` = 10 ticks). A refused opening
-   costs nothing and is retried 10 ticks later; `venue_exists` stops it for good.
+   20 P fee (on the cash our open offers do not already promise), never a second venue, never before that
+   game hour. Before the request goes out, the shared Postgres must be able to hold the broker key, must
+   show that no venue was ever opened on this target (a venue closed or suspended since is never reopened
+   automatically: a human opens it by hand), and must grant this process the one opening claim (a deploy
+   overlap or a laptop maker cannot open a second). Otherwise it waits `RETRY_TICKS` = 10 ticks. A refused
+   opening costs nothing, gives the claim back and is retried 10 ticks later; `venue_exists` stops it.
+   `/api/me` naming a venue next to `starter_broker_key` is the free stall, not ours (the kit's `me()`).
 3. **Brokers its book every tick**: `GET /api/broker/book`, then the exact maximum-surplus matching (bench
    first, ties in book order like the stall, never two offers of one maker, never ours, never an order
    already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.

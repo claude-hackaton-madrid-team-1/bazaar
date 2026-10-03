@@ -115,8 +115,11 @@ class Match:
 
 
 def _public_quote(o: BookOffer) -> Quote | None:
-    """A plain public sell (one card for cash) or buy (cash for one card type); anything else is skipped."""
+    """A plain public sell (one card for cash) or buy (cash for one card type); anything else is skipped,
+    and so is an offer addressed to one team (`to`): only that team may take it."""
     if o.status not in (None, "open") or o.thread is not None or not isinstance(o.id, int) or not o.maker:
+        return None
+    if (o.model_extra or {}).get("to"):
         return None
     give_cash, want_cash = o.give.cash or 0, o.want.cash or 0
     if len(o.give.assets) == 1 and not give_cash and want_cash > 0 and not o.want.types and not o.want.assets:

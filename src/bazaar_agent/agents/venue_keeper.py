@@ -27,12 +27,13 @@ from pydantic import SecretStr
 
 from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
+from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import VENUE_COST, Guardrails, runs_venue
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import Clock
-from bazaar_agent.venue import KeyVault, Opened, VenueSpec, broker_client, open_venue
+from bazaar_agent.venue import AlreadyOpened, KeyVault, Opened, VenueSpec, broker_client, open_venue
 
 RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; a network error may have opened it)
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
@@ -95,11 +96,13 @@ class VenueKeeper:
         self.team, self.settings, self.rules, self.vault = team, settings, rules, vault
         self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
         self.rec = Recorder("broker", decisions, live, log, hub)
+        self.quiet_rec = Recorder("broker", decisions, live, log)  # rows the public status never shows
         self.broker_config = broker_config or BrokerConfig(pace_s=0.2)
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
         self.opened: Opened | None = None  # the venue this process opened, its key kept in memory too
         self.opened_tick = 0
+        self.held_claim = False  # the opening claim is still ours after a network error
         self.retry_tick = 0
         self.final: str | None = None  # a refusal that ends our attempts (venue_exists, ...)
         self.reminded = -REMIND_TICKS
@@ -136,15 +139,24 @@ class VenueKeeper:
             return None
         if self.opened is not None or self.final is not None or clock.tick < self.retry_tick or not window.open():
             return None
+        if self.held_claim:  # our last try timed out and no venue showed up since: it did not open
+            self.vault.release()
+            self.held_claim = False
         clock_view = {"tick": clock.tick, "t_hours": clock.t_hours}
-        me = snap.me
+        # The bond is judged like a purchase: on the cash our open offers do not already promise.
+        promised = open_commitments(offers_in(snap.offers), snap.us).cash
+        me = {**snap.me, "cash": int(snap.me.get("cash") or 0) - promised}
         if runs_venue(me):  # `our_venue` found it is a starter stall (or not ours): say so to the guardrail
             me = {**me, "venue": {**(me["venue"] if isinstance(me["venue"], dict) else {}), "starter": True}}
         try:
             outcome, opened = open_venue(
                 self.team, self.plan, rules, live=self.live, vault=self.vault, durable=True, me=me, clock=clock_view
             )
-        except ConfigError as e:  # the vault cannot hold the key: nothing was sent
+        except AlreadyOpened as e:  # a venue was opened on this target before (closed since?): a human decides
+            self.final = "opened_before"
+            self.log(f"tick {clock.tick} venue: {e}; not opening (open one by hand if we must)")
+            return None
+        except ConfigError as e:  # the vault cannot hold the key, or another process is opening: nothing sent
             self._quiet(clock, "rejected", f"denied: {e}", False)
             self.retry_tick = clock.tick + RETRY_TICKS
             return None
@@ -155,6 +167,10 @@ class VenueKeeper:
             allowed = outcome.verdict.allowed
             self._quiet(clock, "approved" if allowed else "rejected", str(outcome.verdict), allowed)
             return None
+        if opened is not None:  # first, before any write that could fail: the key lives in memory at least
+            self.opened, self.opened_tick = opened, clock.tick
+        else:
+            self.final = "no_key"
         did = self._record_open(clock, "approved", str(outcome.verdict), True)
         response = {k: v for k, v in (outcome.response or {}).items() if k != "broker_key"}
         venue = opened.venue if opened is not None else str(response.get("venue") or "")
@@ -162,9 +178,7 @@ class VenueKeeper:
         self.rec.executed(did, clock.tick, "open_venue", self._request(), {**response, "saved": list(saved)}, None)
         if opened is None:
             self.log(f"tick {clock.tick} venue: opened {venue or '?'} but NO broker key came back: ask the desk")
-            self.final = "no_key"
             return venue or None
-        self.opened, self.opened_tick = opened, clock.tick
         where = " + ".join(saved) if saved else "NOWHERE: kept in this process only (a restart loses it)"
         self.log(f"tick {clock.tick} venue: OPENED {venue} ({self.plan.mechanism}, 0 bps); broker key saved to {where}")
         return venue
@@ -174,20 +188,21 @@ class VenueKeeper:
         if (status, guardrail) == self._last and clock.tick - self.reminded < REMIND_TICKS:
             return
         self._last, self.reminded = (status, guardrail), clock.tick
-        self._record_open(clock, status, guardrail, chosen)
+        self._record_open(clock, status, guardrail, chosen, publish=False)
 
     def _request(self) -> dict[str, Any]:
         spec = self.plan
         return {"name": spec.name, "fee_bps": spec.fee_bps, "fee_per_card": spec.fee_per_card, "venue": "new"}
 
-    def _record_open(self, clock: Clock, status: Status, guardrail: str, chosen: bool) -> int:
+    def _record_open(self, clock: Clock, status: Status, guardrail: str, chosen: bool, publish: bool = True) -> int:
         spec = self.plan
         verb = "open" if chosen else "skip opening"
         line = (
             f"{verb} our venue {spec.name!r} ({spec.mechanism}, {spec.fee_bps} bps) for {VENUE_COST} P "
             f"at game hour {clock.t_hours:g}"
         )
-        return self.rec.decide(
+        # An opening that sent nothing stays off the public status: it would tell rivals we plan one, or lack cash.
+        return (self.rec if publish else self.quiet_rec).decide(
             clock.tick,
             "venue_open",
             line if chosen else f"{line}: {guardrail}",
@@ -208,6 +223,7 @@ class VenueKeeper:
             self.log(f"tick {clock.tick} venue: opening refused {e.code}; not trying again")
             return
         self.retry_tick = clock.tick + RETRY_TICKS
+        self.held_claim = e.code == "network"  # it may have landed: the lists will say before the retry
         self.log(f"tick {clock.tick} venue: opening refused {e.code}; trying again at tick {self.retry_tick}")
 
     # ------------------------------------------------------------ the broker

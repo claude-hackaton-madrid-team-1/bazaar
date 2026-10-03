@@ -345,3 +345,10 @@ def test_on_the_simulators_bench_we_realise_at_least_what_its_auto_venue_realise
     ours = sum(limits[str(m.buy.id)] - limits[str(m.sell.id)] for m in plan)
     assert ours >= stall
     assert all(limits[str(m.buy.id)] >= limits[str(m.sell.id)] for m in plan)  # quotes shade: never a loss
+
+
+def test_an_offer_addressed_to_one_team_is_never_matched_by_the_broker():
+    addressed = {**book_sell(1, "LAV-03", 20, "mA"), "to": "t07"}
+    book = BrokerBook(offers=[addressed, book_buy(2, "LAV-03", 30, "mB")])
+    quotes = quotes_from(book)
+    assert [q.id for q in quotes.quotes] == [2] and quotes.skipped == 1

@@ -206,6 +206,8 @@ class BrokerAgent:
         """One pass. Inside the maker: its tick `window`, its read of `/api/me/offers` and of the feed."""
         window = window or window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
+        if not window.open():  # nothing could be sent in time: not even the read
+            return
         try:
             book = BrokerBook.model_validate(self.broker.book())
         except BazaarError as e:
