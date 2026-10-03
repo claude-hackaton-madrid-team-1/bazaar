@@ -267,6 +267,15 @@ def test_the_team_client_still_tells_the_holdings_about_every_write_once(monkeyp
     assert [c[2] for c in calls] == ["before", "after"] and calls[0][0] == "POST"
 
 
+def test_team_client_carries_the_holdings_hook_unless_told_not_to(monkeypatch):
+    """main's #105: every process's team client reports its writes to the shared holdings (review of #141)."""
+    hook = lambda method, path, phase: None  # noqa: E731
+    monkeypatch.setattr("bazaar_agent.holdings.process_tracker", lambda settings: hook)
+    settings = types.SimpleNamespace(bazaar_url="http://127.0.0.1:9", require_team_key=lambda: "tk-t-t")
+    tracked, untracked = sdk.team_client(settings), sdk.team_client(settings, track=False)
+    assert isinstance(tracked, TeamBazaar) and tracked.on_write is hook and untracked.on_write is None
+
+
 def test_the_public_client_keeps_the_sdk_retries():
     public = sdk.public_client(types.SimpleNamespace(bazaar_url="http://127.0.0.1:9"))
     assert public.retries == 2 and not isinstance(public, TeamBazaar)
