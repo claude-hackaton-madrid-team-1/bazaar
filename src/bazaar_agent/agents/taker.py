@@ -47,11 +47,13 @@ from bazaar_agent.agents.runtime import (
     JevAdvice,
     JevFn,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
     accept_limit,
     guard_context,
+    new_page_line,
     no_jev,
     read_snapshot,
     window_for,
@@ -59,12 +61,28 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
+from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.holdings import Holdings
+from bazaar_agent.learn.blockers import Blocks
+from bazaar_agent.learn.live import LiveLearner
+from bazaar_agent.learn.outcomes import OutcomeLearner
+from bazaar_agent.learn.recall import Lessons
+from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
-from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
+from bazaar_agent.strategy import (
+    Market,
+    PackSlots,
+    Playbook,
+    StrategyParams,
+    build_market,
+    build_playbook,
+    buy_case,
+    dealer_command,
+)
+from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -271,6 +289,7 @@ class _TickRun:
     spent: int = 0  # dry run: this tick's board accepts, which only a live accept books in the ledger
     jev_calls: int = 0
     accepted: list[AcceptProposal] = field(default_factory=list)
+    blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
 
 
 class Taker:
@@ -294,6 +313,10 @@ class Taker:
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         holdings: Holdings | None = None,
+        learner: LiveLearner | None = None,
+        outcome_learner: OutcomeLearner | None = None,
+        lessons: Lessons | None = None,
+        thread_store: ThreadStore | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -301,13 +324,20 @@ class Taker:
         self.config = config or TakerConfig()
         self.sleep = sleep
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
+        self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
+        self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
+        self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
+        self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
+        self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
+        self._skips: dict[str, str] = {}  # dealer -> the blocker last recorded as a `dealer_skip` (once each)
         # She held her opening ask and we walked: (dealer, item) -> the lower first bid of the next thread
         # (once); after the lower one held too, (dealer, item) -> the game hour until which we leave it.
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -323,14 +353,37 @@ class Taker:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
             self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
+        except Exception:
+            self._after_sends(clock.tick)
+            raise
+        self._after_sends(clock.tick)
+
+    def _after_sends(self, tick: int) -> None:
+        """After every send of the tick (an error included, never Ctrl-C): the learner's writes, our dealer
+        threads and the feed archive. No database write ever runs before a send."""
+        if self.learner is not None:
+            self.learner.flush()
+        if self.thread_store is not None:
+            self.thread_store.flush(tick)
+        self.feed.archive_pending()
+
+    def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
+        """Buffer a thread answer we already read (no request, no I/O): `threads` + `messages` after the sends."""
+        if self.thread_store is not None:
+            tactics = getattr(conv, "tactics", None)  # N16: message id -> tactic, when the desk records one
+            self.thread_store.saw(thread, snap.us, snap.clock.tick, tactics if isinstance(tactics, dict) else None)
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        for listed in threads:  # GET /api/me/threads, already read: our open dealer threads
+            self._keep(listed, snap)
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -341,6 +394,8 @@ class Taker:
                 f"{len(self.convs)} dealer thread(s) stay open): {'; '.join(stops)}"
             )
             return
+        if self.learner is not None:
+            run.blocks = self.learner.blocks(snap.events, snap.us, clock)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
@@ -351,6 +406,8 @@ class Taker:
         self._converse(run, desk)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
+        if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
+            self.outcome_learner.maybe_run(clock.tick, snap.us)
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"
@@ -427,8 +484,79 @@ class Taker:
             key=lambda mv: -mv.score,
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
+        moves = self._unblocked(run, moves, busy)
+        moves = self._evolved(run, moves, busy)
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
+
+    def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """Drop the dealer buys a learned blocker stops (cooloff, quota, sold out, locked), so the thread goes
+        to the next dealer instead of a refusal. One `dealer_skip` row per dealer and blocker (not per tick);
+        its inputs use keys the public status view does not list, so `/state` shows only that a skip happened."""
+        if not run.blocks:
+            return moves
+        kept: list[StrategyMove] = []
+        skipped: dict[str, tuple[StrategyMove, Any]] = {}
+        for mv in moves:
+            stop = run.blocks.stops(mv.source, mv.ref)
+            if stop is None:
+                kept.append(mv)
+            elif mv.source not in busy and mv.source not in skipped:
+                skipped[mv.source] = (mv, stop)
+        for dealer, (mv, stop) in skipped.items():
+            if self._skips.get(dealer) == stop.key():
+                continue
+            self._skips[dealer] = stop.key()
+            self.rec.decide(
+                run.snap.clock.tick,
+                "dealer_skip",
+                f"skip {dealer} for {mv.ref}: {stop.text}",
+                inputs={"blocked_dealer": dealer, "wanted": mv.ref, "until_tick": stop.until_tick, "why": stop.text},
+                reason=stop.text,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return kept
+
+    def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
+        """The learned ladder per (dealer, price class) replaces the strategy's, never above its start nor its
+        top, and a class priced above what we may pay is skipped (N3). One `dealer_skip` row per dealer, class
+        and reason (not per tick), with keys the public status view does not list. No policy: unchanged."""
+        policies = self.outcome_learner.policies if self.outcome_learner is not None else {}
+        if not policies:
+            return moves
+        kept: list[StrategyMove] = []
+        skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
+        for mv in moves:
+            cls = price_class(mv.ref)
+            policy = policies.get((mv.source, cls)) if mv.ladder is not None and cls is not None else None
+            if policy is None or mv.ladder is None or cls is None:
+                kept.append(mv)
+                continue
+            plan, why = policy.plan(mv.ladder)
+            if plan is None:
+                if mv.source not in busy:
+                    skipped.setdefault((mv.source, cls), (mv, why))
+                continue
+            start, top, step = plan
+            command = dealer_command(mv.ref, mv.source, start, top, step)
+            kept.append(replace(mv, ladder=plan, limit=top, reason=f"{mv.reason}; {why}", command=command))
+        for (dealer, cls), (mv, why) in skipped.items():
+            if self._learned_skips.get((dealer, cls)) == why:
+                continue
+            self._learned_skips[(dealer, cls)] = why
+            self.rec.decide(
+                run.snap.clock.tick,
+                "dealer_skip",
+                f"skip {dealer} for {mv.ref}: {why}",
+                inputs={"blocked_dealer": dealer, "wanted": mv.ref, "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
+        return kept
 
     def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> None:
         tick = run.snap.clock.tick
@@ -474,6 +602,8 @@ class Taker:
             {"with": op.dealer, "topic": topic},
             lambda: self.team.open_thread(op.dealer, topic=topic),
         )
+        if body is None and self.learner is not None and self.rec.last_error is not None:
+            self.learner.refused(op.dealer, self.rec.last_error, run.snap.us, run.snap.clock, op.item)
         if body is not None and isinstance(body.get("id"), int):
             reopened = self.reopen_at.pop((op.dealer, op.item), None) is not None
             self.convs[op.dealer] = Conversation(
@@ -494,6 +624,7 @@ class Taker:
         out = []
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
+            self._keep(thread, run.snap, conv)
             if held and str(thread.get("status") or "open") == "open":
                 continue
             conv.ticks += 1
@@ -529,6 +660,8 @@ class Taker:
             self.ledger.record("spend", tick, run.snap.clock.t_hours, int(price), conv.item)
         if status == "deal" and self.live:
             self._after_deal(run, f"deal in thread {conv.thread_id}")
+        if self.learner is not None:
+            self.learner.thread_closed(thread, run.snap.us, run.snap.clock)
         self.log(
             f"tick {tick} taker: thread {conv.thread_id} with {conv.dealer} {status} "
             f"({thread.get('closed_reason') or '-'}) price {price if status == 'deal' else '-'}"
@@ -600,6 +733,9 @@ class Taker:
                 # "Deal!" may have landed first, and a deal is never dropped unbooked.
                 self._after_refused_walk(run, conv, move)
                 return
+            # we never read this thread again: keep how it ended (no extra request)
+            ended = {**thread, "status": ended_as or "walked", "closed_reason": thread.get("closed_reason") or "walked"}
+            self._keep(ended, run.snap, conv)
             self.convs.pop(conv.dealer, None)
             if move.reopen:
                 self._held_opening(run, conv)
@@ -609,7 +745,7 @@ class Taker:
         price = int(move.price or 0)
         text = bid_words(
             self.words_fn,
-            WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item),
+            WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item, lessons=self._lessons_for(run, conv)),
             thread,
             run.snap.clock,
             run.window.deadline,
@@ -646,6 +782,7 @@ class Taker:
             return
         try:
             after = self.team.thread(conv.thread_id)
+            self._keep(after, run.snap, conv)  # the read we just made: how the thread really ended
         except BazaarError as e:
             self.log(
                 f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} unreadable after a refused walk ({e.code})"
@@ -673,6 +810,14 @@ class Taker:
             self.log(
                 f"tick {clock.tick} taker: {conv.dealer} held her opening ask again: {conv.item} rests 1 game hour"
             )
+
+    def _lessons_for(self, run: _TickRun, conv: Conversation) -> tuple[str, ...]:
+        """The top lessons about this dealer and item for the words (cached for a few ticks; none when short)."""
+        if self.lessons is None or self.words_fn is template_words or run.window.left() < self.config.jev_min_budget_s:
+            return ()  # the templates never read lessons: no recall for them
+        situation = f"bid to {conv.dealer} for {conv.item} ({conv.rarity})"
+        found = self.lessons(situation, subjects=(conv.dealer,), tick=run.snap.clock.tick)
+        return tuple(str(x["quoted_lesson"]) for x in found)
 
     # ------------------------------------------------------------ accepts (shared quota)
 

@@ -335,6 +335,78 @@ reveals our top bid (#69 review) → root cause: `sent` ignored `chosen`; unsent
 (`insufficient_cash`, `persona_quota`) also said which limit bound us → fix (#121): `_is_sent` = approved + chosen
 + live, `publishable` = sent and not `hold_*`, `jev` always null, `error_code` coarse (`refused`).
 
+### [2026-10-03] finding — the homepage's "On air · Live feed" is /api/feed + the public SSE stream, nothing more
+Its bundle (`LiveFeed`, `EventLine`, `useEvents`) seeds from `GET /api/feed?limit=150` and follows
+`/api/events/stream?scope=public` (limit 200), one line per event type. So our capture already sees it all.
+Types that matter for blockers, not yet seen live: `persona.cooloff {persona, team, until_tick}` ("sent Team X
+away until T…"), `persona.strike {persona, team, kinds, strikes}`, `day.closed {reopens}`. Organiser news
+reaches teams as `announcement` (the `/api/admin/news` routes are admin-only). `bazaar learnings` reads them.
+
+### [2026-10-03] gotcha — a simulator run with no BAZAAR_SIM_DATABASE_URL reads the default local docker DB
+`BAZAAR_SIM=local` with `DATABASE_URL` unset still connects to `localhost:5433` (`bazaar-db`), which holds an
+old copy of the REAL feed: the agents merge real `feed_events` with the simulator's window, and the ids
+collide. For an end-to-end sim run, set `BAZAAR_SIM_DATABASE_URL` to a sim database or stop `bazaar-db`.
+
+### [2026-10-03] finding — in the simulator a cooloff's `thread.closed` has no until_tick; the refusal does
+Rude words drove sim Abuela to `cooloff` in 3 messages (tick 5 → `until_tick` 25). The thread shows
+`closed_reason: cooloff`, `persona.cooloff` carries `until_tick: 25`, and a re-open is refused `cooloff` with
+`extra.until_tick`. The live taker then logged `skip abuela for LAT-08: abuela cooloff with us until T25`
+for ticks 6–8 instead of sending a refused `open_thread`.
+
+### [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
+Found by the PR #89 review: running `init_schema` inside a tick waited the full 15 s `lock_timeout` while
+another session wrote to the table. Apply the schema once at process start (the ledger's `connect_ready` does),
+never in a tick loop.
+
+### [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
+`insert … on conflict do nothing` of a feed window failed with `UntranslatableCharacter` on one `\u0000`, and the
+window was retried and failed every tick. `db.jsonb_safe` strips NUL and replaces lone surrogates before insert.
+
+### [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
+`bazaar learnings --lessons --save` on a copy of the shared DB (tick 159): 26 outcomes → 26 lessons + 9 dealer
+curves + 1169 dealer moves. `--query "open a thread with chato to buy LAV-08; his opening ask 33"` → thread 187's
+lesson first (rerank +6.41, BM25 #1, vector #3: "every chato uncommon fill is 28-32, above our top bid 24");
+"accept her opening ask of 7?" → thread 99 first (+7.34: an opening-ask deal voids the unlock credit); an
+unrelated query ("list LAT-09 on rastro") scores −4 to −10 and returns nothing. 75–112 ms per query on a laptop
+(BM25 + pgvector + MiniLM-L-6 rerank of 12). Models: fastembed 0.8.1 `BAAI/bge-small-en-v1.5` (0.067 GB) and
+`Xenova/ms-marco-MiniLM-L-6-v2` (0.08 GB), ~3 s cold download, then cached in `<data_dir>/models`.
+
+### [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
+The feed publishes `thread.opened.topic` as sent (t08 opened one with `topic: {}`), and `evals.dealers.price_class`
+turns any colon-free non-card string into `pack:<string>`. A forged "pack" name could become a dealer curve and a
+lesson's text, then reach Jev. Fix: `learn/curves.KNOWN_CLASS` allowlist (`card:<rarity>`, `pack:sobre_*`, `sell`)
+and recall returns only `source = outcome` rows by default. Treat every feed string as hostile, even "structure".
+
+### [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
+`git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
+`"${B}:src/file.py"` with braces in every shell one-liner.
+
+### [2026-10-03] finding — today's Abuela ladder is already the best on replay; a bigger step loses (N3)
+Replaying every team's real Abuela threads (each brackets its own limit: countered bid < limit ≤ price taken
+or offered), uncommons: 17→26 step 1 = share 0.415 (50/58 deals); step 2 = 0.372, because her final sits near
+her limit and a big step overshoots it. Held-out (learn on ticks < 84, test after): 0.352 both. The auto-evolve
+keeps today's Abuela ladder and skips Chato (fills 28-32 vs cap 26; rares 82-93 vs 80). With cap 32 the replay
+closes 11/12 Chato uncommons at a mean 30.45 (share 0.467 vs the teams' 0.35): a human cap decision.
+
+### [2026-10-03] finding — the learner escapes the first-bid trap on the simulator: uncommons 25 → 20-22 (N3)
+Local `bazaar-sim` (2 s ticks; cash floor and hourly spend cap raised in memory for the run only). With no fills
+seen, the strategy's ladder is 25→25, Abuela takes the first bid, and those fills became "the floor" (learned
+25→25): a fill at our first bid only bounds her limit from above. Fix: probe from 80 % of the lowest fill when half
+the fills took the first bid. A second team in the same world then paid 25, 22, 20, 21, 22 as the ladder moved
+20→25 → 17→25 → 16→25. Ports 8765/8799 were taken by other workers' simulators: run yours on another port.
+
+### [2026-10-03] gotcha — a "free" simulator port may already be another worker's simulator: check before you run
+An e2e taker patched to 127.0.0.1:8815 ran LIVE in another worktree's `bazaar-sim` (my own failed to bind,
+"address already in use") and closed 4 Abuela deals as sim-team1 in that world. Before any sim run: check the
+port with `lsof -nP -iTCP:<port> -sTCP:LISTEN`, start the simulator, confirm the listener's process is yours,
+and abort otherwise. `scripts/sim_smoke.py` refuses a busy 8765 on its own.
+
+### [2026-10-03] finding — the taker now keeps our dealer threads (N12 part 3), with zero extra requests
+On the simulator the live taker stored 3 threads (`deal`, opened/closed ticks) and 6 messages (our bid 25 and
+our Spanish words, Abuela's "Deal! … for 25 P") from the reads it already makes. A thread opened by ANOTHER
+process (a laptop's `dealer buy`) that closes before the taker sees it is not stored: the taker lists only open
+threads. Follow-up: list all our threads in the same request and keep only the ones that changed.
+
 ### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
 `holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
 the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
@@ -468,6 +540,37 @@ AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last
 (`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
 `200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
 as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
+The smoke and `BAZAAR_SIM=local` both hardcode 127.0.0.1:8765. A wrapper that imports `sim_smoke`, sets
+`PORT`/`SIM` to another port and `GUARD` to a dir whose `sitecustomize.py` runs the repo's guard and then sets
+`bazaar_agent.config.LOCAL_SIM_URL` runs the whole gate there (children get only `GUARD` on PYTHONPATH). N14b
+used 8815: `SMOKE PASSED in 18 s`.
+
+### [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
+The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every tick, and "released" comes only
+from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
+maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
+value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.
+
+### [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
+Run the smoke or a proof from a scratch `git worktree` whose `config.py` `LOCAL_SIM_URL` and `scripts/sim_smoke.py`
+`SIM`/`PORT` are patched to your own port (D1: 8805 for the smoke, 8811-8824 for proofs). Never commit that patch.
+
+### [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
+`duel run --play --no-jev` over HTTP against `bazaar-sim` (3 seller/buyer pairs per team on one deadline, 12-tick duels,
+price-only and two-issue sessions, 96 finished duels per run). Mean score (share × kept): honest zoo v1 0.268, v2 0.364,
+v2 + B11 (min share 0.3, endgame 1) 0.383, + `duel_days_signed` 0.419; exploiters v1 0.169, v2 0.259, v2 + B11 0.318.
+Outside-limit closes: 0 of 776. Rounds per deal: v1 6.2, v2 1.1. Reproduce: `docs/night/d1-sim-proof.md`.
+
+### [2026-10-03] finding — six duels on one deadline can run out of accept ticks
+`plan_moves` counts only duels holding an acceptable offer; when more rivals cross into our limit on D − 3 than ticks are
+left, one duel ends with an acceptable offer unanswered (sim duel 86: rival 81 vs our value 87, three accepts wanted on
+D − 2). 1 of 96 duels for v2 and for v1 at decay 0.08. A planner that also counts converging duels would accept earlier.
+
+### [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
+`refused duel_closed (duel N is live)`: the rival accepted our previous offer earlier in the tick, the deal settles next
+tick, and the payload has no `accepted` flag to tell us. The deal still closes at our earlier offer; nothing is lost.
 
 ### [2026-10-03] finding — bazaar-sim duels now score like the real game and share the team's one accept per tick
 After #151: a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
