@@ -380,3 +380,29 @@ def test_a_dealer_trickster_is_never_accepted_and_only_logged_as_would_flag(tmp_
         assert ("accept", 802) not in team.sent and not [s for s in team.sent if s[0] == "flag"]
         (would,) = [line for line in lines if "would flag message 9001" in line]
         assert ("allow_flags" in would) is (not allow) and ("dry run" in would) is allow
+
+
+def test_the_gate_refuses_a_dealer_trick_even_if_the_desks_own_check_is_bypassed(tmp_path, monkeypatch):
+    """Defence in depth (review P2): the desk's structure check is patched out, so only the accept gate stands."""
+    from bazaar_agent.agents import taker as taker_module
+
+    def careless(conv, thread, max_ticks):
+        if not thread.get("standing_offers"):
+            return plan_conversation(conv, thread, max_ticks)
+        offer = thread["standing_offers"][0]
+        move = Move("accept", 21, offer["id"], "a desk that forgot to read the structure")
+        return DeskMove(conv, move, 21, True, offer_id=offer["id"])
+
+    monkeypatch.setattr(taker_module, "plan_conversation", careless)
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = FakeTeam()
+    t, lines, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))
+    assert ("accept", 802) not in team.sent and ledger.accept_items(TICK + 1) == []
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
+    assert row["status"] == "rejected" and row["inputs"]["inspector"]["verdict"] in ("block", "flag")
+    assert any("inspector" in line and "offer 802" in line for line in lines)

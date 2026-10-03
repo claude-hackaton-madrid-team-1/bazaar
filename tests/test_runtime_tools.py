@@ -383,8 +383,6 @@ def test_a_runtime_duel_accept_is_refused_when_the_rival_moved_and_the_slot_stay
     team = Moving(duels=[DUEL])
     b = backend(tmp_path, live=True, team=team)
     refused, _ = run(b, "duel_move", {"duel_id": 7})
-    assert (
-        refused["status"] == "rejected" and "the rival's offer is 60 now, our decision priced 90" in refused["reason"]
-    )
+    assert refused["status"] == "rejected" and "moved against us: we priced 90" in refused["reason"]
     assert refused["inspector"]["words"] == "the words name 90 P; the structure binds 60"
     assert ("duel_accept", 7) not in team.sent and b.ledger.accepts_in_tick(team.now.tick) == 0

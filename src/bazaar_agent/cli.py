@@ -423,7 +423,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
-        return None if gate.allowed else f"{gate.verdict}: {gate.reason}"
+        return None if gate.allowed else escape(f"{gate.verdict}: {gate.reason}")  # printed by rich
 
     return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
 
@@ -655,6 +655,10 @@ def duel_run(
                     if not gate.allowed:
                         console.print(f"  duel {did}: INSPECTOR {gate.verdict}: {escape(gate.reason)}")
                         record(d, move, pick, c.tick, "rejected", f"inspector {gate.verdict}: {gate.reason}", gate)
+                        continue
+                    if time.monotonic() >= send_by:  # the re-read took the rest of the tick: never send late
+                        console.print(f"  duel {did}: the re-read took the rest of tick {c.tick}, accept next tick")
+                        record(d, move, pick, c.tick, "expired", gate=gate)
                         continue
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
                 if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):

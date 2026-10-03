@@ -186,7 +186,8 @@ def test_duel_run_refuses_an_accept_when_the_rival_moved_its_offer_after_our_rea
     assert "INSPECTOR block" in " ".join(result.output.split())
     (row,) = decision_rows(tmp_path)
     assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
-    assert row["inputs"]["inspector"]["findings"] == ["the rival's offer is 105 now, our decision priced 110"]
+    (finding,) = row["inputs"]["inspector"]["findings"]
+    assert finding == "the rival's offer moved against us: we priced 110 (days 0), it is 105 (days 0) now"
 
 
 def test_duel_run_records_the_clean_inspection_on_a_sent_accept(duel_cli):
@@ -195,3 +196,27 @@ def test_duel_run_records_the_clean_inspection_on_a_sent_accept(duel_cli):
     assert result.exit_code == 0, result.output
     (row,) = decision_rows(tmp_path)
     assert row["status"] == "done" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_drops_an_accept_whose_re_read_took_the_rest_of_the_tick(duel_cli, monkeypatch):
+    """Review P2: the SDK may retry a slow read; an accept after the tick's deadline is dropped, never sent late."""
+    import time as real_time
+
+    cli, client, asked, tmp_path = duel_cli
+    late = {"by": 0.0}
+    payload = client.payload
+
+    def duels():
+        if client.sent == [] and late["by"] == 0.0 and getattr(duels, "calls", 0) == 1:
+            late["by"] = 10_000.0  # the gate's re-read: the clock jumps past the tick
+        duels.calls = getattr(duels, "calls", 0) + 1
+        return {"duels": deepcopy(payload)}
+
+    client.duels = duels
+    clock = real_time.monotonic  # the real one, captured before the patch
+    monkeypatch.setattr(cli.time, "monotonic", lambda: clock() + late["by"])
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and "the re-read took the rest of tick" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "expired" and row["inputs"]["inspector"]["verdict"] == "clean"

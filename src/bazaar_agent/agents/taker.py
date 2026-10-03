@@ -262,6 +262,7 @@ class _TickRun:
     started: float  # monotonic time the tick's work began (the clock was read just before)
     jev_calls: int = 0
     accepted: list[AcceptProposal] = field(default_factory=list)
+    cards: CardIndex | None = None  # the inspector's catalog index, built on first use this tick
 
 
 class Taker:
@@ -297,7 +298,6 @@ class Taker:
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
         self.flags = FlagBook.from_rules(rules)  # the offer inspector's would-flag log (S1: nothing is sent)
-        self._cards: tuple[int, CardIndex] | None = None
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -449,11 +449,10 @@ class Taker:
         return out
 
     def _card_index(self, run: _TickRun) -> CardIndex:
-        """The catalog as the inspector reads it, rebuilt only when the catalog payload changes."""
-        catalog = run.snap.catalog
-        if self._cards is None or self._cards[0] != id(catalog):
-            self._cards = (id(catalog), CardIndex.from_catalog(catalog))
-        return self._cards[1]
+        """The catalog as the inspector reads it: built once per tick, from that tick's catalog read."""
+        if run.cards is None:
+            run.cards = CardIndex.from_catalog(run.snap.catalog)
+        return run.cards
 
     def _inspect(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
         """The offer inspector on the dealer's newest offer: a certain trickster is logged as `would flag`

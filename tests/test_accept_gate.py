@@ -121,7 +121,7 @@ def test_a_duel_offer_unchanged_since_our_decision_passes():
 
 def test_a_rival_that_lowers_its_bid_between_our_read_and_our_accept_is_refused():
     g = duel_gate(duel(), duel(price=52, text="Te doy 70 P, trato hecho"), DuelMove("accept", 70))
-    assert not g.allowed and "is 52 now, our decision priced 70" in g.reason
+    assert not g.allowed and "moved against us: we priced 70 (days None), it is 52 (days None) now" in g.reason
     assert g.words == "the words name 70 P; the structure binds 52"  # evidence: the words still say 70
 
 
@@ -133,7 +133,7 @@ def test_a_duel_accept_outside_our_limit_is_refused_even_if_the_price_is_what_we
 def test_two_issue_duels_refuse_moved_days_and_a_gone_duel_is_refused():
     decided = duel(price=70, days=2, issues=("price", "days"))
     moved = duel(price=70, days=9, issues=("price", "days"))
-    assert "days are 9 now" in duel_gate(decided, moved, DuelMove("accept", 70)).reason
+    assert "moved against us" in duel_gate(decided, moved, DuelMove("accept", 70)).reason  # days cost a seller
     assert not duel_gate(decided, None, DuelMove("accept", 70)).allowed
     assert not duel_gate(decided, duel(status="deal"), DuelMove("accept", 70)).allowed
     no_offer = {**duel(), "rival_offer": None}
@@ -178,3 +178,14 @@ def test_an_asset_of_the_right_card_without_a_kind_is_the_card():
     t = thread(give, "LAV-08, 21 P")
     assert dealer_gate(t, "trile", 802, 21, t["topic"], CARDS).allowed
     assert offer_terms_problem({"give": give, "want": {"cash": 21}}, "LAV-08") is None
+
+
+def test_a_rival_offer_that_moved_in_our_favour_is_still_accepted():
+    """Refusing a better offer could turn the last tick's deal into no deal (review P2)."""
+    better = duel_gate(duel(), duel(price=75), DuelMove("accept", 70))
+    assert better.allowed and better.findings == ("the rival's offer moved in our favour: 70 → 75, days None",)
+    decided = duel(price=70, days=6, issues=("price", "days"))
+    fewer_days = duel_gate(decided, duel(price=70, days=1, issues=("price", "days")), DuelMove("accept", 70))
+    assert fewer_days.allowed
+    buyer = duel_gate(duel(role="buyer", limit=90), duel(price=60, role="buyer", limit=90), DuelMove("accept", 70))
+    assert buyer.allowed  # a buyer gains when the price falls

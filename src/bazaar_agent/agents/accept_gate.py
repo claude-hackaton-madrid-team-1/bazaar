@@ -120,9 +120,16 @@ def _days(duel: Mapping[str, Any]) -> Any:
     return offer.get("days") if isinstance(offer, dict) else None
 
 
+def _worse(worth: float, than: float, role: str) -> bool:
+    """`worth` is worse for us than `than`: a seller wants more, a buyer less."""
+    return worth < than if role == "seller" else worth > than
+
+
 def duel_gate(decided: Mapping[str, Any], fresh: Mapping[str, Any] | None, move: DuelMove) -> Gate:
     """Accepting a duel binds the rival's offer standing WHEN the accept lands. `decided` is the duel we
-    priced the move on, `fresh` the same duel read again just before the accept (None: gone)."""
+    priced the move on, `fresh` the same duel read again just before the accept (None: gone). An offer that
+    moved against us (price or days) is refused; one that moved in our favour, still inside our limit, is
+    accepted (refusing it could turn the last tick's deal into no deal)."""
     if fresh is None or duel_done(fresh):
         return _block("duel", None, "the duel is no longer live")
     offer = fresh.get("rival_offer")
@@ -131,22 +138,29 @@ def duel_gate(decided: Mapping[str, Any], fresh: Mapping[str, Any] | None, move:
     price = rival.get("price")
     if not isinstance(price, int | float) or isinstance(price, bool):
         return _block("duel", offer_id, "the rival has no standing priced offer")
-    findings = []
-    if move.price is None or int(price) != move.price:
-        findings.append(f"the rival's offer is {int(price)} now, our decision priced {move.price}")
-    if "days" in (fresh.get("issues") or []) and _days(fresh) != _days(decided):
-        findings.append(f"the rival's days are {_days(fresh)} now, our decision priced {_days(decided)}")
     limit, role = fresh.get("your_limit"), fresh.get("role")
     worth = effective_price(dict(fresh), int(price))
-    if not isinstance(limit, int) or role not in ("seller", "buyer") or worth is None:
+    priced = effective_price(dict(decided), move.price) if move.price is not None else None
+    moved = int(price) != move.price or _days(fresh) != _days(decided)
+    findings, notes = [], []
+    if not isinstance(limit, int) or role not in ("seller", "buyer") or worth is None or priced is None:
         findings.append("our limit or the rival's days cannot be read")
     elif not inside_limit(round(worth), limit, str(role)):
         findings.append(f"{int(price)} is not inside our limit")
+    elif moved and _worse(worth, priced, str(role)):
+        findings.append(
+            f"the rival's offer moved against us: we priced {move.price} (days {_days(decided)}), "
+            f"it is {int(price)} (days {_days(fresh)}) now"
+        )
+    elif moved:
+        notes.append(f"the rival's offer moved in our favour: {move.price} → {int(price)}, days {_days(fresh)}")
     claims = price_claims(rival_text(dict(fresh)))
     words = None
     if claims and int(price) not in claims:
         words = f"the words name {', '.join(map(str, claims))} P; the structure binds {int(price)}"
-    return Gate("duel", offer_id, "block" if findings else "clean", tuple(findings), words)
+    if findings:
+        return Gate("duel", offer_id, "block", tuple(findings), words)
+    return Gate("duel", offer_id, "clean", tuple(notes), words)
 
 
 def duel_accept_check(read_duels: Callable[[], Any], decided: Mapping[str, Any], did: int, move: DuelMove) -> Gate:

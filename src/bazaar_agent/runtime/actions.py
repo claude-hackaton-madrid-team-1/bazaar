@@ -377,6 +377,9 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         if not gate.allowed:
             why = f"inspector {gate.verdict}: {gate.reason}"
             return outcome(planned, "rejected", reason=why, request=request, inspector=gate.as_inputs())
+        if planned.budget_left() <= 0:  # the re-read took the rest of the tick: never send late
+            why = "the duel re-read took the rest of the tick"
+            return outcome(planned, "expired", reason=why, request=request, inspector=gate.as_inputs())
     limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
     if move.kind == "accept" and not b.ledger.reserve_accept(
         clock.tick, clock.t_hours, 0, f"duel:{args.duel_id}", limit
