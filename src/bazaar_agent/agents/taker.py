@@ -34,8 +34,10 @@ from bazaar_agent.agents.dealer import (
     apply_advice,
     bid_words,
     reopen_start,
+    requested_item,
     template_words,
 )
+from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
@@ -78,8 +80,9 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.intel import book_values, listed_makers, settled_volume
+from bazaar_agent.intel import book_values, dealer_threads, listed_makers, settled_volume
 from bazaar_agent.learn.blockers import Blocks
+from bazaar_agent.learn.curves import curve_stats
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
@@ -96,7 +99,6 @@ from bazaar_agent.strategy import (
     build_market,
     build_playbook,
     buy_case,
-    dealer_command,
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
@@ -264,7 +266,9 @@ def desk_proposal(dm: DeskMove, thread: dict[str, Any] | None = None) -> AcceptP
         "final": dm.final,
         "our_bids": list(conv.neg.bids),
         "max": conv.neg.plan.max_price,
+        "final_max": conv.neg.plan.final_max,
         "value": conv.value,
+        "changed_by": list(conv.notes),
     }
     reason = f"{dm.move.reason}; {conv.reason}"
     return AcceptProposal(
@@ -345,6 +349,7 @@ class _TickRun:
     accepted: list[AcceptProposal] = field(default_factory=list)
     cards: CardIndex | None = None  # the inspector's catalog index, built on first use this tick
     blocks: Blocks = field(default_factory=Blocks)  # learned dealer blockers in force for us (N12)
+    plans: dict[tuple[str, str], DealerPlan] = field(default_factory=dict)  # (dealer, item) -> its plan (N14a)
 
 
 class Taker:
@@ -629,8 +634,18 @@ class Taker:
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
-        moves = self._evolved(run, moves, busy)
-        for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
+        floor = effective_cash_floor(self.rules, ctx)  # the floor check() applies, bond reserve included (#71)
+        cash_room = min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
+        # The card of every DEALER thread of ours is busy, this process's or another's (security #158 r2 P3-B):
+        # with the lift on, two dealers may sell one card. Only threads with a dealer: we wrote their topic; a
+        # thread another team opened with us carries a topic that team chose (review #158 r3 P2).
+        busy_items = {c.item for c in self.convs.values()} | {
+            item
+            for t in threads
+            if str(t.get("with")) in dealer_ids and (item := requested_item(t.get("topic") or {})) is not None
+        }
+        for op in openings(moves, busy, busy_items, room):
             self._open_one(run, op, ctx)
 
     def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
@@ -663,29 +678,38 @@ class Taker:
             )
         return kept
 
-    def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
-        """The learned ladder per (dealer, price class) replaces the strategy's, never above its start nor its
-        top, and a class priced above what we may pay is skipped (N3). One `dealer_skip` row per dealer, class
-        and reason (not per tick), with keys the public status view does not list. No policy: unchanged."""
-        policies = self.outcome_learner.policies if self.outcome_learner is not None else {}
-        if not policies:
+    def _evolved(
+        self, run: _TickRun, moves: list[StrategyMove], busy: set[str], room: int | None = None
+    ) -> list[StrategyMove]:
+        """The per-dealer plan (N14a, `dealer_plan.py`): the learned ladder per (dealer, price class) replaces the
+        strategy's, never above its start nor its top, and a class priced above what we may pay is skipped (N3);
+        with `dealer_final_lift` on, a final above the cap may close it (the patience play). Each plan is kept in
+        `run.plans` for the open's `changed_by`. One `dealer_skip` row per dealer, class and reason (not per
+        tick), with keys the public status view does not list. No policy and the lift off: unchanged."""
+        learner = self.outcome_learner
+        policies = learner.policies if learner is not None else {}
+        if not policies and self.rules.dealer_final_lift <= 0:
             return moves
+        last = getattr(learner, "last", None)  # the last pass's curves (none before the first pass)
+        curves = last.curves if last is not None else {}
+        if not curves and self.rules.dealer_final_lift > 0:  # no pass yet: this tick's feed window is the history
+            curves = curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
         kept: list[StrategyMove] = []
         skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
         for mv in moves:
             cls = price_class(mv.ref)
-            policy = policies.get((mv.source, cls)) if mv.ladder is not None and cls is not None else None
-            if policy is None or mv.ladder is None or cls is None:
+            if mv.ladder is None or cls is None:
                 kept.append(mv)
                 continue
-            plan, why = policy.plan(mv.ladder)
-            if plan is None:
+            key = (mv.source, cls)
+            min_surplus = run.params.min_buy_surplus
+            plan = plan_dealer_buy(mv, policies.get(key), curves.get(key), self.rules, min_surplus, room)
+            if plan.move is None:
                 if mv.source not in busy:
-                    skipped.setdefault((mv.source, cls), (mv, why))
+                    skipped.setdefault(key, (mv, plan.skip or "skip"))
                 continue
-            start, top, step = plan
-            command = dealer_command(mv.ref, mv.source, start, top, step)
-            kept.append(replace(mv, ladder=plan, limit=top, reason=f"{mv.reason}; {why}", command=command))
+            run.plans[(mv.source, mv.ref)] = plan
+            kept.append(plan.move)
         for (dealer, cls), (mv, why) in skipped.items():
             if self._learned_skips.get((dealer, cls)) == why:
                 continue
@@ -710,8 +734,15 @@ class Taker:
         lower = self.reopen_at.get((op.dealer, op.item))
         if lower is not None and lower < op.plan.start:  # she held her opening ask last time: start lower
             op = replace(op, plan=replace(op.plan, start=lower), reason=f"{op.reason}; reopened lower")
+        dp = run.plans.get((op.dealer, op.item))
+        if dp is not None and dp.final_max is not None:
+            op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
+        final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""
+        # Private keys (not on the public /state allow-list): which learning changed the plan, and what was recalled.
+        notes = dp.changed_by if dp is not None else []
+        recalled = self._recalled(run, op) if verdict.allowed else []
         inputs = {
             "dealer": op.dealer,
             "item": op.item,
@@ -720,8 +751,12 @@ class Taker:
             "plan": plan,
             "score": op.move.score,
             "surplus": op.move.surplus,
+            "final_max": op.plan.final_max,
+            "changed_by": notes,
+            "learned": dp.lessons if dp is not None else [],
+            "recalled": recalled,
         }
-        what = f"open thread with {op.dealer} for {op.item} (ladder {plan}, worth {op.value:g})"
+        what = f"open thread with {op.dealer} for {op.item} (ladder {plan}{final}, worth {op.value:g})"
         status: Status = "approved" if verdict.allowed else "rejected"
         if verdict.allowed and not run.window.open():
             status = "expired"
@@ -760,7 +795,18 @@ class Taker:
                 int(body["id"]),
                 tick,
                 reopened=reopened,
+                notes=tuple(notes),
+                recalled=tuple(recalled),
             )
+
+    def _recalled(self, run: _TickRun, op: Opening) -> list[str]:
+        """The top lessons about this dealer and item, recalled once per opened thread (quoted data for the log;
+        they never set a price). None without the recall or with less than `jev_min_budget_s` of the tick left."""
+        if self.lessons is None or self.outcome_learner is None or run.window.left() < self.config.jev_min_budget_s:
+            return []  # no learner (BAZAAR_LEARN=0): no recall either (review #158 r3 P3)
+        situation = f"open a thread with {op.dealer} to buy {op.item} ({op.rarity})"
+        found = self.lessons(situation, subjects=(op.dealer,), tick=run.snap.clock.tick)
+        return [str(x.get("quoted_lesson")) for x in found if isinstance(x, dict)]
 
     def _desk_moves(self, run: _TickRun, *, held: bool = False) -> list[tuple[DeskMove, dict[str, Any]]]:
         """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped
@@ -878,7 +924,8 @@ class Taker:
     def _desk_send(self, run: _TickRun, dm: DeskMove, thread: dict[str, Any]) -> None:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
         if move.kind == "bid":
-            action = Action("bid", conv.item, conv.rarity, move.price)
+            at_final = dm.final and move.price is not None and move.price == dm.ask  # meeting her final (N14a)
+            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
         verdict = check(action, self._ctx(run, skip_thread=conv.thread_id), self.rules)
@@ -896,6 +943,9 @@ class Taker:
             "final": dm.final,
             "our_bids": list(conv.neg.bids),
             "max": conv.neg.plan.max_price,
+            "final_max": conv.neg.plan.final_max,
+            "changed_by": list(conv.notes),
+            "recalled": list(conv.recalled),
         }
         what = f"{move.kind} {move.price or ''} to {conv.dealer} on thread {conv.thread_id} for {conv.item}"
         status: Status = "approved" if run.window.open() else "expired"
@@ -1065,7 +1115,8 @@ class Taker:
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
-        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask)
+        final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
+        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final)
         verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")

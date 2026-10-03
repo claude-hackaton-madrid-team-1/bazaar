@@ -19,6 +19,7 @@ from rich.console import Console
 
 from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
+from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.evals.model import EVERY_TICKS
@@ -2551,6 +2552,7 @@ def broker_run(
 llm_cli.register(app)
 evals_cli.register(app)
 learn_cli.register(app)
+dealer_finals.register(dealer_app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.
