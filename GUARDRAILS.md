@@ -63,7 +63,8 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Flags
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
-- `max_flags_per_process` = 2 — the offer inspector sends at most this many flags per process (each certain trickster is still logged); S1, from Marius's #93.
+- `max_flags_sent` = 2 — at most this many flags that may have landed, ever, per data dir (`agents/flags.jsonl`); a refused flag does not count, and no message is flagged twice (S1).
+- `flag_dealers` = none — opt-in: the only dealer ids a flag may be sent to, set after a human checked that dealer's `would flag` rows (an honest out-of-stock message can read like a trick); none = no dealer.
 - `flag_trusted_dealers` = abuela,chato — dealers the offer inspector blocks but never flags (their structure matched the thread in 1,017 of 1,017 Friday offers).
 - `inspect_accepts` = true — kill flag (S1): every accept (dealer, board, duel) first passes the offer inspector, which refuses a structure that is not what we decided on; false = the older structure checks only.
 

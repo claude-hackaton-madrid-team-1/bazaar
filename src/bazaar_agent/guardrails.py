@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.intel import TEAM_ID
@@ -47,6 +47,10 @@ def set_codes(value: str) -> tuple[str, ...]:
 
 class GuardrailsError(ValueError):
     """GUARDRAILS.md has an unknown rule id or a bad value. The runtime refuses to start."""
+
+
+def _dealer_ids(value: str) -> frozenset[str]:
+    return frozenset(d.strip() for d in value.split(",") if d.strip() and d.strip().lower() != "none")
 
 
 LIFTED_RARITIES = frozenset({"common", "uncommon", "rare"})  # cards a dealer's final may be taken above the cap
@@ -95,24 +99,36 @@ class Guardrails(BaseModel):
     allow_venue_open: bool = False
     venue_bond_reserve: int = Field(default=270, ge=0)
     venue_open_after_game_hours: float = Field(default=6.5, ge=0)
-    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    max_flags_sent: int = Field(default=2, ge=0, le=20)
     flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
+    flag_dealers: str = "none"  # opt-in: the only dealer ids a flag may be SENT to (none: no dealer)
     inspect_accepts: bool = True
     bluff_enabled: bool = True
 
-    @field_validator("flag_trusted_dealers")
+    @field_validator("flag_trusted_dealers", "flag_dealers")
     @classmethod
-    def _trusted_parse(cls, value: str) -> str:
+    def _dealer_list_parse(cls, value: str, info: ValidationInfo) -> str:
         if value.strip().lower() == "none":
             return value
         ids = [d.strip() for d in value.split(",")]
         if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
-            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+            raise ValueError(f"{info.field_name} {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
         return value
+
+    @model_validator(mode="after")
+    def _never_flag_the_honest_dealers(self) -> Guardrails:
+        honest = self.flag_dealer_ids & (self.trusted_dealers | {"abuela", "chato"})
+        if honest:
+            raise ValueError(f"flag_dealers {sorted(honest)}: a trusted dealer (or abuela, chato) is never flagged")
+        return self
 
     @property
     def trusted_dealers(self) -> frozenset[str]:
-        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
+        return _dealer_ids(self.flag_trusted_dealers)
+
+    @property
+    def flag_dealer_ids(self) -> frozenset[str]:
+        return _dealer_ids(self.flag_dealers)
 
     protect_page_sets: str = "none"
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
@@ -198,8 +214,9 @@ ENFORCED_BY: dict[str, str] = {
     "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches); agents.venue_keeper opens it",
     "venue_bond_reserve": "guardrails.check (effective_cash_floor while a planned venue is not open yet)",
     "venue_open_after_game_hours": "guardrails.check (venue_open) + agents.venue_keeper (first tick past it)",
-    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
-    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "max_flags_sent": "agents.inspector.FlagBook (flag_step: the desk; agents/flags.jsonl per data dir)",
+    "flag_dealers": "agents.inspector.FlagBook (flag_step: the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",

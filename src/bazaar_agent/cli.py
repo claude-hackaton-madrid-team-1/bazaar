@@ -18,7 +18,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import flags_cli, intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -837,6 +837,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     from rich.markup import escape
 
     from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
     try:
@@ -845,6 +846,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
         cards = CardIndex.from_catalog({})
     book = FlagBook.from_rules(rules)
+    tags = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)
 
     def log(line: str) -> None:
         console.print(escape(f"inspector: {line}"))
@@ -852,6 +854,8 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     def on_thread(thread: dict[str, Any]) -> None:
         guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
         flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+        mid, text = latest_message(thread, dealer)
+        tags.tag(dealer, mid, text, None, log)  # `negotiate` keeps the tick; the row needs no more
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
@@ -939,6 +943,7 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
     from bazaar_agent.agents.runtime import Recorder, cost_nothing
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
@@ -978,6 +983,7 @@ def duel_run(
     # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
+    injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
     us = _our_team_id(client)
     shared = ledger.where.startswith("postgres")
     say = lambda m: console.print(escape(m))  # noqa: E731
@@ -1164,6 +1170,9 @@ def duel_run(
             if did is None:
                 return
             gate: Gate | None = None
+            offer = d.get("rival_offer")
+            key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
+            injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
                 pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
@@ -1926,6 +1935,7 @@ def strategy(
 
 sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
 app.add_typer(sell_app, name="sell")
+app.add_typer(flags_cli.flags_app, name="flags")
 EXPIRES_HELP = "Ticks the offer stays open"
 POST_HELP = "Actually post. Without it: dry run, nothing is sent"
 TO_HELP = "Address the offer to one team (t05): only it may accept. Default: anyone on the venue"
