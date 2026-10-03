@@ -163,8 +163,9 @@ def learn_once(
         if save_moves and fresh:
             with conn.cursor() as cur:
                 cur.executemany(BEHAVIOUR_INSERT, [r.as_tuple() for r in fresh])
-            state.moves.update(r.dedupe_key for r in fresh)
         conn.commit()
+        if save_moves:  # only once committed: a failed commit inserts them again next pass
+            state.moves.update(r.dedupe_key for r in fresh)
     store.begin_tick(tick)
     pending = state.changed(learned)
     store.record(pending)

@@ -224,3 +224,12 @@ def test_a_sobre_pack_name_counts_only_once_a_dealer_sold_it():
     assert curve_stats(forged) == {}
     sold = curve_stats([*forged, thread(999, "sobre_barrio", [17], [30], 19, team="t08")])
     assert set(sold) == {("abuela", "pack:sobre_barrio")}
+
+
+def test_a_nan_or_an_infinity_never_reaches_a_lesson():
+    from bazaar_agent.learn.lessons import clean
+
+    nan = duel("no_deal", rival_best=float("nan"), missed_surplus=float("inf"))
+    lr = duel_lesson(nan, "Rival Azul", US)
+    assert lr is not None and "rival_best" not in lr.detail and "missed_surplus" not in lr.detail
+    assert clean({"a": 1.5, "b": float("-inf"), "c": None, "d": [1.0, float("nan")]}) == {"a": 1.5, "d": [1.0]}

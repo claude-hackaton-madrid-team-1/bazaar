@@ -421,7 +421,9 @@ FILTERS = (
     "and (%(sk)s::text is null or subject_kind = %(sk)s) "
     "and (%(tick)s::int is null or until_tick is null or until_tick > %(tick)s) "
     "and (%(team)s::text is null or team is null or team = %(team)s) "
-    "and (%(where)s::jsonb is null or stats @> %(where)s::jsonb)"
+    # each feature compared as text, as memory compares it (a number 115 matches "115")
+    "and (%(where)s::jsonb is null or not exists (select 1 from jsonb_each_text(%(where)s::jsonb) w "
+    "where (stats ->> w.key) is distinct from w.value))"
 )
 
 
