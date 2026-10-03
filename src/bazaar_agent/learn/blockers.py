@@ -13,6 +13,22 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from bazaar_agent.learn.model import ORIGINS_THAT_BLOCK, Learning
+from bazaar_agent.learn.reader import COOLOFF_CAP_TICKS, HOURLY_CAP_TICKS, LOCKED_RECHECK_TICKS
+
+# The longest a blocker may hold after the tick it was learned, whatever `until_tick` a stored row carries
+# (rows written before the caps, or by another process): a refusal is free, a stale block loses trades.
+CAP_TICKS = {
+    "cooloff": COOLOFF_CAP_TICKS,
+    "quota": HOURLY_CAP_TICKS,
+    "sold_out": HOURLY_CAP_TICKS,
+    "blocker": LOCKED_RECHECK_TICKS,
+}
+
+
+def in_force(lr: Learning, tick: int) -> bool:
+    """Still blocking at `tick`: before its `until_tick`, and within its kind's cap from when it was learned."""
+    cap = CAP_TICKS.get(lr.kind)
+    return lr.active(tick) and (cap is None or tick < lr.tick + cap)
 
 
 @dataclass(frozen=True)
@@ -59,7 +75,7 @@ def blocks_for(learnings: Iterable[Learning], us: str | None, tick: int) -> Bloc
     dealers: dict[str, Learning] = {}
     items: dict[tuple[str, str], Learning] = {}
     for lr in pool:
-        if not lr.blocking or lr.subject_kind != "dealer" or lr.team != us or not lr.active(tick):
+        if not lr.blocking or lr.subject_kind != "dealer" or lr.team != us or not in_force(lr, tick):
             continue
         if lr.source != "rules" or not str(lr.detail.get("origin", "")).startswith(ORIGINS_THAT_BLOCK):
             continue
