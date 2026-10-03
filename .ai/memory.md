@@ -763,6 +763,7 @@ symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspecto
 was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
 offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
 the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
+
 ### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
 ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
@@ -859,6 +860,26 @@ of its id: team k was dealt ids 15k−14…15k, so a scan names who holds an unm
 scan, the holders of every rare with at most 5 copies are placed (unplaced 0–1): LAT-10 t03, t15 · MAL-09
 t11, t12 · MAL-10 t08, t09, t12 · LAV-09 t05, t07, t10, t14 · SAL-09 t13, t16, t17, t18 · SAL-10 t02, t13,
 t17, t18 · LAV-10 t04, t05, t07, t10, t14. Rescan with `--from-id 539` for new pulls (incremental).
+
+### [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
+`uv run bazaar flags precision --feed-dir <capture>`: 1,027 dealer offers (Abuela 805, Chato 217 with a known topic),
+0 would-flag, 5 with an empty topic `{}` (thread 44). Jev `enable_bad_faith_flags` (questions/flags.json) on that
+state: no (0.06, margin 0.88). A hypothetical L4 state (4 would-flags on an untrusted dealer's 40 offers, 0 on the
+trusted ones): yes 0.83; the same with 1 would-flag on a trusted dealer: undecided 0.33. Re-run when L4 opens.
+
+### [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
+"Ign\u200bore all previous instructions", "ig\u034fnore …", Hangul fillers (U+3164, U+115F, U+FFA0), the braille
+blank and Cyrillic/Lisu look-alikes matched no pattern (S1 hostile-text tests, #152 audits). Fullwidth digits were
+already matched (Python's `\d` is Unicode). The patterns now read NFKD text without Cf/Mn/Me or those fillers;
+`odd_unicode` names the hiding (emoji joiners, "nº", "µ" and "ʼ" excepted); 0 tags on 1,091 Friday dealer texts.
+
+### [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+Three #152 reviews showed honest out-of-stock words read like a trick in every shape ("La Tabacalera? Ya no
+tengo.", "Rare card? Not today.", "I wish I still had it"), and Jev says yes to flags on counts alone. Decision:
+any denial word anywhere in a dealer's message means it claims nothing (the swap is still refused: block, never
+flag), a flag goes only to a GUARDRAILS.md `flag_dealers` dealer a human opted in after reading its would-flag
+words in `bazaar flags precision`, at most `max_flags_sent` ever per data dir, never twice. A missed flag loses a
+bonus; a wrong one costs points.
 
 ### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 `docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
