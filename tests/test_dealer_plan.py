@@ -171,8 +171,17 @@ def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lif
 
 def test_no_price_history_means_no_lift_for_that_dealer():
     # security audit #158 P1-2: an unknown dealer (an L4 trickster) gets no final above the cap
-    unknown = replace(chato_move(), source="trileros")
+    unknown = replace(chato_move(), source="trileros", price=24.0)  # its fills fit under our top: kept, as today
     plan = plan_dealer_buy(unknown, None, None, LIFT, SURPLUS, room=100)
     assert plan.move == unknown and plan.final_max is None and plan.notes == ()
     empty = CurveStats("trileros", "card:uncommon", 3, (), (40,), 0, None, None, None, (1, 2, 3))
     assert plan_dealer_buy(unknown, None, empty, LIFT, SURPLUS, room=100).final_max is None
+
+
+def test_with_the_lift_a_buy_only_a_final_could_close_is_skipped_without_price_history():
+    plan = plan_dealer_buy(replace(chato_move(), source="trileros"), None, None, LIFT, SURPLUS, room=100)
+    assert (
+        plan.move is None
+        and plan.skip == "no price history for a final above our top: trileros card:uncommon fills ~28"
+    )
+    assert plan_dealer_buy(chato_move(), None, None, OFF, SURPLUS, room=100).move == chato_move()  # lift off: today

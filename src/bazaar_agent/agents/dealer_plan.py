@@ -151,8 +151,11 @@ def plan_dealer_buy(
             reasons.append(why)
     final_max = _reach(mv, ladder[1], rules, min_surplus, room) if history else None
     lifted = history and final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus) is not None
-    if lifted and room is not None and mv.price > max(ladder[1], final_max or 0):
-        return DealerPlan(None, skip=f"cash: what we may still commit is below {mv.source} {cls} fills ~{mv.price:g}")
+    if rules.dealer_final_lift > 0 and mv.price > max(ladder[1], final_max or 0):
+        # The strategy kept this buy only for a final above our top that we may not take now: a thread there just
+        # walks (the simulator opened Chato 7 times at 80→80 with no price history).
+        why = "cash: what we may still commit is below" if lifted else "no price history for a final above our top:"
+        return DealerPlan(None, skip=f"{why} {mv.source} {cls} fills ~{mv.price:g}")
     if final_max is not None:
         ref, patience = _patience_ref(cls, mv, curve, policy)
         opening, silent = (curve.opening, curve.silent_below) if curve is not None else (None, None)

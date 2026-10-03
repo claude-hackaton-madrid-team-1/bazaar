@@ -180,6 +180,30 @@ def stop(server: subprocess.Popen[bytes]) -> None:
     raise SystemExit(f"{SIM} still answers after our simulator stopped")
 
 
+# Price history first: a lifted final is only for a dealer and class with fills seen (security review #158), and a
+# fresh world has none. Another team (sim-team2) makes one negotiated buy per class with the dealer under test.
+SEEDS = {
+    "abuela": [("LAV-07", 18, 26)],
+    "chato": [("LAV-07", 27, 33), ("LAV-10", 86, 97)],
+}
+
+
+def seed(dealers: list[str], env: dict[str, str]) -> None:
+    for dealer in dealers:
+        for item, start, top in SEEDS.get(dealer, []):
+            args = ["dealer", "buy", item, "--start", str(start), "--max", str(top), "--dealer", dealer, "--live"]
+            run = subprocess.run(
+                [sys.executable, "-m", "bazaar_agent.cli", *args, "--no-jev"],
+                cwd=ROOT,
+                env={**env, "BAZAAR_SIM_KEY": "sim-team2"},
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            done = [line for line in run.stdout.splitlines() if "thread" in line and ("deal" in line or "walk" in line)]
+            print(f"seed: sim-team2 {item} from {dealer}: {(done or ['no deal'])[-1].strip()[:100]}")
+
+
 def describe(lift: float, out: Path, caps: dict[str, int]) -> None:
     summary = json.loads((out / "summary.json").read_text())
     log = out / "agents" / "decisions.jsonl"
@@ -235,6 +259,7 @@ def main() -> int:
             out.mkdir()
             server = serve(base / f"sim-{lift:g}.log")
             try:
+                seed(dealers, child_env(base / f"seed-{lift:g}", env_file))
                 run = subprocess.run(
                     [sys.executable, "-c", CHILD, str(lift), str(args.ticks), str(out), ",".join(dealers)],
                     cwd=ROOT,
