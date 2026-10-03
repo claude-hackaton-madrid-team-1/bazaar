@@ -4,7 +4,7 @@ runs, and the broker key (saved 0600, never printed, only sent to the host it be
 import stat
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from typer.testing import CliRunner
 
 from bazaar_agent import cli
@@ -29,7 +29,7 @@ class FakeTeam:
         return {"id": "t01", "cash": self.cash, "assets": []}
 
     def clock(self):
-        return {"tick": 150, "t_hours": 2.5}
+        return {"tick": 150, "t_hours": 7.0}
 
     def open_venue(self, name, fee_bps=300, fee_per_card=0, rules=None, description=""):
         self.sent.append(("open_venue", name, fee_bps, fee_per_card, rules))
@@ -58,10 +58,42 @@ def rules(tmp_path, **kw):
 
 
 def ctx(cash=600, paused=False):
-    return gr.Context(cash=cash, held={}, tick=150, t_hours=2.5, paused=paused)
+    return gr.Context(cash=cash, held={}, tick=150, t_hours=7.0, paused=paused)
 
 
 SPEC = vn.VenueSpec(name="Team 1 market")
+
+
+def vault(data_dir, connect=None):
+    return vn.KeyVault(data_dir, connect)
+
+
+class FakeConn:
+    """psycopg's surface the vault uses: execute(...).fetchone(), autocommit, closed, close()."""
+
+    def __init__(self, store, fail=False):
+        self.store, self.fail, self.closed, self.autocommit = store, fail, False, False
+
+    def execute(self, sql, params=()):
+        if self.fail:
+            raise RuntimeError("database down")
+        self.last = None
+        if sql.startswith("insert into venue_keys"):
+            venue, key, tick = params
+            self.store[venue] = (key, tick)
+        elif sql.startswith("select venue, broker_key"):
+            wanted = params[0]
+            rows = [(v, k) for v, (k, _) in self.store.items() if wanted in (None, v)]
+            self.last = rows[-1] if rows else None
+        elif sql.startswith("select count"):
+            self.last = (len(self.store),)
+        return self
+
+    def fetchone(self):
+        return self.last
+
+    def close(self):
+        self.closed = True
 
 
 # ---------------------------------------------------------------- the writes
@@ -70,7 +102,7 @@ SPEC = vn.VenueSpec(name="Team 1 market")
 def test_open_is_a_dry_run_by_default_and_sends_nothing(tmp_path):
     team = FakeTeam()
     outcome, saved = vn.open_venue(
-        team, SPEC, rules(tmp_path, allow_venue_open=True), live=False, settings=Settings(data_dir=tmp_path)
+        team, SPEC, rules(tmp_path, allow_venue_open=True), live=False, vault=vault(tmp_path)
     )
     assert (outcome.sent, saved, team.sent) == (False, None, [])
     assert outcome.message.startswith("dry run: would open venue 'Team 1 market' (board")
@@ -78,36 +110,44 @@ def test_open_is_a_dry_run_by_default_and_sends_nothing(tmp_path):
 
 def test_allow_venue_open_false_blocks_open_even_with_live(tmp_path):
     team = FakeTeam()
-    outcome, saved = vn.open_venue(team, SPEC, rules(tmp_path), live=True, settings=Settings(data_dir=tmp_path))
+    outcome, saved = vn.open_venue(team, SPEC, rules(tmp_path), live=True, vault=vault(tmp_path))
     assert (outcome.sent, saved, team.sent) == (False, None, [])
     assert "LIVE: guardrails refuse" in outcome.message and "allow_venue_open = false" in outcome.message
     assert not (tmp_path / BROKER_ENV_FILE).exists()
 
 
 def test_open_with_live_respects_the_cash_floor(tmp_path):
-    team = FakeTeam(cash=500)
+    team = FakeTeam(cash=369)
     outcome, _ = vn.open_venue(
-        team, SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=tmp_path)
+        team, SPEC, rules(tmp_path, allow_venue_open=True, cash_floor=100), live=True, vault=vault(tmp_path)
     )
     assert team.sent == [] and "cash_floor" in str(outcome.verdict)
 
 
 def test_a_live_allowed_open_sends_a_board_venue_and_saves_the_key_0600_never_returning_it(tmp_path):
-    team = FakeTeam()
-    outcome, saved = vn.open_venue(
+    team, store = FakeTeam(), {}
+    outcome, opened = vn.open_venue(
         team,
         vn.VenueSpec(name="Team 1 market", fee_bps=0, fee_per_card=0),
         rules(tmp_path, allow_venue_open=True),
         live=True,
-        settings=Settings(data_dir=tmp_path),
+        vault=vault(tmp_path, lambda: FakeConn(store)),
+        durable=True,
     )
     assert team.sent == [("open_venue", "Team 1 market", 0, 0, {"mechanism": "board"})]
-    assert outcome.sent and saved == tmp_path / BROKER_ENV_FILE
-    assert SIM_KEY not in str(outcome) and outcome.response == {
-        "venue": "v07",
-        "name": "Team 1 market",
-        "broker_key": "[saved]",
-    }
+    assert outcome.sent and opened is not None and opened.venue == "v07" and opened.saved == ("postgres", "file")
+    assert (
+        SIM_KEY not in str(outcome)
+        and SIM_KEY not in repr(opened)
+        and outcome.response
+        == {
+            "venue": "v07",
+            "name": "Team 1 market",
+            "broker_key": "[saved]",
+        }
+    )
+    assert store == {"v07": (SIM_KEY, 150)}
+    saved = tmp_path / BROKER_ENV_FILE
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert SIM_KEY in saved.read_text() and "v07" in saved.read_text()
 
@@ -116,10 +156,40 @@ def test_nothing_is_opened_when_the_broker_key_could_not_be_saved(tmp_path):
     team, blocker = FakeTeam(), tmp_path / "a-file"
     blocker.write_text("not a directory")
     with pytest.raises(ConfigError, match="not writable"):
-        vn.open_venue(
-            team, SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=blocker / "x")
-        )
+        vn.open_venue(team, SPEC, rules(tmp_path, allow_venue_open=True), live=True, vault=vault(blocker / "x"))
     assert team.sent == []
+
+
+def test_a_durable_open_needs_postgres_first_and_sends_nothing_without_it(tmp_path):
+    team = FakeTeam()
+    for broken in (vault(tmp_path), vault(tmp_path, lambda: FakeConn({}, fail=True))):
+        with pytest.raises(ConfigError, match="Postgres cannot hold the broker key"):
+            vn.open_venue(team, SPEC, rules(tmp_path, allow_venue_open=True), live=True, vault=broken, durable=True)
+    assert team.sent == []
+
+
+def test_the_vault_reads_postgres_first_then_the_file_then_the_environment(tmp_path):
+    store = {}
+    v = vault(tmp_path, lambda: FakeConn(store))
+    assert v.load() is None
+    vn.save_broker_key(tmp_path, "v07", SIM_KEY)
+    found = v.load("v07")
+    assert found is not None and (found.venue, found.where) == ("v07", "file") and SIM_KEY not in repr(found)
+    assert v.save("v08", "simbk-" + "Q1w2E3r4T5y6", 200) == ("postgres", "file")
+    found = v.load("v08")
+    assert found is not None and found.where == "postgres" and found.key.get_secret_value().endswith("T5y6")
+    assert v.load("v99") is None  # a key for another venue is never handed out
+    env = vn.KeyVault(tmp_path / "empty", None, SecretStr(REAL_KEY), "v10")
+    assert env.load("v10").where == "environment" and env.load("v11") is None
+    down = vault(tmp_path / "empty2", lambda: FakeConn({}, fail=True))
+    assert down.load("v07") is None and down.save("v07", SIM_KEY, 1) == ("file",)
+
+
+def test_the_vault_table_is_the_schema_s_venue_keys(tmp_path):
+    from importlib.resources import files
+
+    schema = files("bazaar_agent").joinpath("sql/schema.sql").read_text(encoding="utf-8")
+    assert vn.VENUE_KEYS_DDL + ";" in schema
 
 
 def test_saving_the_key_follows_no_symlink_planted_in_the_data_dir(tmp_path):
@@ -129,25 +199,26 @@ def test_saving_the_key_follows_no_symlink_planted_in_the_data_dir(tmp_path):
     data.mkdir()
     for name in (f".{BROKER_ENV_FILE}.probe", "broker.tmp", BROKER_ENV_FILE):
         (data / name).symlink_to(victim)
-    outcome, saved = vn.open_venue(
-        FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=data)
+    outcome, opened = vn.open_venue(
+        FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, vault=vault(data)
     )
-    assert outcome.sent and victim.read_text() == "keep me"
-    assert saved is not None and not saved.is_symlink() and stat.S_IMODE(saved.stat().st_mode) == 0o600
+    saved = data / BROKER_ENV_FILE
+    assert outcome.sent and opened is not None and opened.saved == ("file",) and victim.read_text() == "keep me"
+    assert not saved.is_symlink() and stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert SIM_KEY in saved.read_text()
 
 
-def test_a_save_that_still_fails_after_the_open_says_so_without_the_key(tmp_path, monkeypatch):
+def test_a_save_that_still_fails_after_the_open_keeps_the_key_in_memory_and_never_shows_it(tmp_path, monkeypatch):
     def broken(*args):
         raise PermissionError("disk went read-only")
 
     monkeypatch.setattr(vn, "save_broker_key", broken)
-    with pytest.raises(ConfigError) as e:
-        vn.open_venue(
-            FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, settings=Settings(data_dir=tmp_path)
-        )
-    assert "venue v07 is OPEN" in str(e.value) and "venue close v07" in str(e.value)
-    assert SIM_KEY not in str(e.value)
+    monkeypatch.setattr(vn, "check_key_file_writable", lambda data_dir: None)
+    outcome, opened = vn.open_venue(
+        FakeTeam(), SPEC, rules(tmp_path, allow_venue_open=True), live=True, vault=vault(tmp_path)
+    )
+    assert opened is not None and opened.saved == () and opened.key.get_secret_value() == SIM_KEY
+    assert "NOWHERE" in outcome.message and SIM_KEY not in outcome.message
 
 
 def test_load_settings_reads_the_saved_broker_key_and_never_shows_it(tmp_path, monkeypatch):

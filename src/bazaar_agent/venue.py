@@ -7,13 +7,16 @@ through `guardrails.check()` first: the kill switch and the pause file stop all 
 opening fee may never take cash below `cash_floor`.
 
 The broker key is returned once, by the opening call. It is a secret like the team key: never printed,
-never logged, saved only to `<data_dir>/broker.env` (mode 0600, read back by `config.load_settings` as
-`BAZAAR_BROKER_KEY`), or set by hand as a Railway variable. A real broker key is only sent to the real
-game, a simulator key (`simbk-...`, PR #55's `bazaar-sim`) only to another host.
+logged, published or committed. `KeyVault` keeps it where the maker finds it again after a restart or a
+Railway redeploy: the shared Postgres `venue_keys` table (the simulator has its own database), and
+`<data_dir>/broker.env` (mode 0600, read back by `config.load_settings` as `BAZAAR_BROKER_KEY`). No public
+route reads that table. A real broker key is only sent to the real game, a simulator key (`simbk-...`)
+only to another host.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from collections.abc import Callable
@@ -22,10 +25,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from bazaar_agent.config import BROKER_ENV_FILE, REPO_ROOT, ConfigError, Settings
-from bazaar_agent.guardrails import VENUE_COST, Action, Context, Guardrails, Verdict, check
+from bazaar_agent.config import BROKER_ENV_FILE, REPO_ROOT, ConfigError, Settings, read_env_file
+from bazaar_agent.guardrails import VENUE_COST, Action, Context, Guardrails, Verdict, check, runs_venue
 
 GAME_HOST = "bazaar.causaprima.ai"
 SIM_BROKER_PREFIX = "simbk-"
@@ -75,13 +78,13 @@ def check_broker_key_for_url(url: str, key: str) -> None:
         raise ConfigError(f"BAZAAR_URL ({host}) is not the real game: only a simulator broker key is sent there")
 
 
-def broker_client(settings: Settings) -> Any:
+def broker_client(settings: Settings, key: SecretStr | None = None) -> Any:
     """Our venue's broker connection (header X-Broker-Key), after the key/host guard."""
     from bazaar_agent.sdk import Broker
 
-    key = settings.require_broker_key()
-    check_broker_key_for_url(settings.bazaar_url, key)
-    return Broker(settings.bazaar_url, key, retries=2)
+    secret = key.get_secret_value() if key is not None else settings.require_broker_key()
+    check_broker_key_for_url(settings.bazaar_url, secret)
+    return Broker(settings.bazaar_url, secret, retries=2)
 
 
 def save_broker_key(data_dir: Path, venue: str, key: str) -> Path:
@@ -112,6 +115,119 @@ def check_key_file_writable(data_dir: Path) -> None:
         raise ConfigError(f"{data_dir} is not writable ({type(e).__name__}): the broker key could not be saved") from e
 
 
+# ---------------------------------------------------------------- the key vault
+
+# The same statement as in sql/schema.sql (a test keeps them equal): the vault creates its table itself, so
+# a key is never lost to a database the schema was not applied to yet.
+VENUE_KEYS_DDL = (
+    "create table if not exists venue_keys (venue text primary key, broker_key text not null, "
+    "opened_tick int, created_at timestamptz not null default now())"
+)
+
+
+@dataclass(frozen=True)
+class StoredVenue:
+    venue: str
+    key: SecretStr  # shown as '**********' by repr and str
+    where: str  # "postgres", "file" or "environment"
+
+
+class KeyVault:
+    """Where our broker key lives between restarts: the shared Postgres `venue_keys` table first (a Railway
+    redeploy keeps it), then `<data_dir>/broker.env`, then BAZAAR_BROKER_KEY / BAZAAR_VENUE. Errors name
+    only their type: a psycopg message could quote a parameter."""
+
+    def __init__(
+        self,
+        data_dir: Path,
+        connect: Callable[[], Any] | None = None,
+        env_key: SecretStr | None = None,
+        env_venue: str | None = None,
+    ) -> None:
+        self.data_dir, self._connect = data_dir, connect
+        self._env = (env_key, env_venue)
+        self._conn: Any = None
+
+    @classmethod
+    def from_settings(cls, settings: Settings, connect: Callable[[], Any] | None = None) -> KeyVault:
+        return cls(settings.data_dir, connect, settings.broker_key, settings.venue_id)
+
+    def _db(self) -> Any:
+        if self._connect is None:
+            raise ConfigError("no database configured for the broker key")
+        if self._conn is None or self._conn.closed:
+            self._conn = self._connect()
+            self._conn.autocommit = True
+            self._conn.execute(VENUE_KEYS_DDL)
+        return self._conn
+
+    def _drop(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            with contextlib.suppress(Exception):  # already gone
+                conn.close()
+
+    def ready(self, *, durable: bool) -> str | None:
+        """None when a key returned now can be saved (`durable`: in Postgres, which a redeploy keeps), else why not."""
+        if durable:
+            try:
+                self._db().execute("select count(*) from venue_keys").fetchone()
+            except Exception as e:
+                self._drop()
+                return f"Postgres cannot hold the broker key ({type(e).__name__})"
+            return None
+        try:
+            check_key_file_writable(self.data_dir)
+        except ConfigError as e:
+            return str(e)
+        return None
+
+    def save(self, venue: str, key: str, tick: int) -> tuple[str, ...]:
+        """Write the key everywhere it can go; where it went (empty: nowhere, say so without the key)."""
+        saved: list[str] = []
+        if self._connect is not None:
+            try:
+                self._db().execute(
+                    "insert into venue_keys (venue, broker_key, opened_tick) values (%s, %s, %s) on conflict (venue) "
+                    "do update set broker_key = excluded.broker_key, opened_tick = excluded.opened_tick",
+                    (venue, key, tick),
+                )
+                saved.append("postgres")
+            except Exception:
+                self._drop()
+        try:
+            save_broker_key(self.data_dir, venue, key)
+            saved.append("file")
+        except OSError:
+            pass
+        return tuple(saved)
+
+    def load(self, venue: str | None = None) -> StoredVenue | None:
+        """The key for `venue` (or the newest one when None): Postgres, then the file, then the environment."""
+        if self._connect is not None:
+            try:
+                row = (
+                    self._db()
+                    .execute(
+                        "select venue, broker_key from venue_keys where %s::text is null or venue = %s "
+                        "order by created_at desc limit 1",
+                        (venue, venue),
+                    )
+                    .fetchone()
+                )
+                if row is not None:
+                    return StoredVenue(str(row[0]), SecretStr(str(row[1])), "postgres")
+            except Exception:
+                self._drop()
+        saved = read_env_file(self.data_dir / BROKER_ENV_FILE)
+        if saved.get("BAZAAR_BROKER_KEY") and saved.get("BAZAAR_VENUE") and venue in (None, saved["BAZAAR_VENUE"]):
+            return StoredVenue(saved["BAZAAR_VENUE"], SecretStr(saved["BAZAAR_BROKER_KEY"]), "file")
+        key, env_venue = self._env
+        if key is not None and key.get_secret_value() and (venue is None or env_venue in (None, venue)):
+            return StoredVenue(str(env_venue or venue or ""), key, "environment")
+        return None
+
+
 # ---------------------------------------------------------------- one guarded write
 
 
@@ -123,14 +239,16 @@ class VenueOutcome:
     message: str
 
 
-def venue_context(rules: Guardrails, clock: dict[str, Any], cash: int = 0) -> Context:
-    """What `check()` needs for a venue write: cash (for the bond), the tick, and the pause file."""
+def venue_context(rules: Guardrails, clock: dict[str, Any], cash: int = 0, me: dict[str, Any] | None = None) -> Context:
+    """What `check()` needs for a venue write: cash (for the bond), the game hour, whether we already run
+    a venue (/api/me), and the pause file."""
     return Context(
         cash=cash,
         held={},
         tick=int(clock.get("tick") or 0),
         t_hours=float(clock.get("t_hours") or 0.0),
         paused=(REPO_ROOT / rules.pause_file).exists(),
+        has_venue=runs_venue(me or {}),
     )
 
 
@@ -149,20 +267,42 @@ def guarded_write(
     return VenueOutcome(True, verdict, body, f"sent: {describe}")
 
 
+@dataclass(frozen=True)
+class Opened:
+    """A venue we just opened. `saved` is where its key went: empty means only this process holds it."""
+
+    venue: str
+    key: SecretStr
+    saved: tuple[str, ...]
+
+
 def open_venue(
-    team: Any, spec: VenueSpec, rules: Guardrails, *, live: bool, settings: Settings
-) -> tuple[VenueOutcome, Path | None]:
-    """Open our venue (album first: /me for the cash the bond takes). Live and allowed, the broker key it
-    returns is saved to `<data_dir>/broker.env` and removed from the outcome; it is never printed."""
-    me, clock = team.me(), team.clock()
-    ctx = venue_context(rules, clock, int(me.get("cash") or 0))
+    team: Any,
+    spec: VenueSpec,
+    rules: Guardrails,
+    *,
+    live: bool,
+    vault: KeyVault,
+    durable: bool = False,
+    me: dict[str, Any] | None = None,
+    clock: dict[str, Any] | None = None,
+) -> tuple[VenueOutcome, Opened | None]:
+    """Open our venue (album first: /me for the cash the bond takes and the venue we may already run).
+
+    Live and allowed, the vault must be able to hold the key BEFORE the request goes out (`durable`: in
+    Postgres), and the key it returns is saved at once and removed from the outcome. It never raises after
+    the open: a key that could not be saved is still returned in `Opened` (the caller keeps it in memory
+    and says so, never showing it)."""
+    me, clock = me if me is not None else team.me(), clock if clock is not None else team.clock()
+    ctx = venue_context(rules, clock, int(me.get("cash") or 0), me)
     describe = (
         f"open venue {spec.name!r} ({spec.mechanism}, {spec.fee_bps} bps + {spec.fee_per_card} P per card) "
         f"for {VENUE_COST} P (bond + opening fee) with cash {ctx.cash}"
     )
 
     def send() -> Any:
-        check_key_file_writable(settings.data_dir)  # nothing is opened if the key would be lost
+        if (why := vault.ready(durable=durable)) is not None:  # nothing is opened if the key would be lost
+            raise ConfigError(f"{why}: not opening")
         mechanism = {"mechanism": spec.mechanism}
         return team.open_venue(
             spec.name, spec.fee_bps, spec.fee_per_card, rules=mechanism, description=spec.description
@@ -177,14 +317,12 @@ def open_venue(
     key, venue = str(body.pop("broker_key", "") or ""), str(body.get("venue") or "")
     if not key or not venue:
         return VenueOutcome(True, outcome.verdict, body, f"{outcome.message}; no broker key came back"), None
-    try:
-        path = save_broker_key(settings.data_dir, venue, key)
-    except OSError as e:  # checked writable a moment ago; if it still fails, say so plainly (never the key)
-        raise ConfigError(
-            f"venue {venue} is OPEN but its broker key could not be saved ({type(e).__name__}). "
-            f"Close it (`bazaar venue close {venue} --live`, the bond comes back) and open it again."
-        ) from e
-    return VenueOutcome(True, outcome.verdict, {**body, "broker_key": "[saved]"}, outcome.message), path
+    saved = vault.save(venue, key, ctx.tick)
+    where = " + ".join(saved) if saved else "NOWHERE (kept in memory only)"
+    message = f"{outcome.message}; venue {venue}, broker key saved to {where} (never shown)"
+    return VenueOutcome(True, outcome.verdict, {**body, "broker_key": "[saved]"}, message), Opened(
+        venue, SecretStr(key), saved
+    )
 
 
 def close_venue(team: Any, venue: str, rules: Guardrails, *, live: bool) -> VenueOutcome:

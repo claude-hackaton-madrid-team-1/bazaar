@@ -47,7 +47,7 @@ from bazaar_agent.agents.runtime import (
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, effective_cash_floor
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -222,8 +222,8 @@ def offer_state(p: AcceptProposal, snap: Snapshot, ctx: Context, rules: Guardrai
             "how_the_value_was_computed": p.reason,
         },
         "cash": ctx.cash,
-        "cash_floor": rules.cash_floor,
-        "cash_above_floor": max(0, ctx.cash - rules.cash_floor),
+        "cash_floor": effective_cash_floor(rules, ctx),
+        "cash_above_floor": max(0, ctx.cash - effective_cash_floor(rules, ctx)),
         "accept_slots_left_this_tick": slots_left,
         "tick": snap.clock.tick,
     }

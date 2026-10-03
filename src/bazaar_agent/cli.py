@@ -1103,12 +1103,15 @@ def _pack_judge(settings: Any, timeout_s: float) -> Any:
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
+    from bazaar_agent import guardrails as gr
+
     slots = book.pack_slots
     quotas = ", ".join(f"{pack} dealer quota {n}" for pack, n in book.pack_quotas.items()) or "no dealer quota"
     console.print(
         f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
-        f"{max(0, ctx.cash - rules.cash_floor)} above cash_floor {rules.cash_floor} · spent last game hour "
-        f"{ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · pack slots this game hour: used {slots.used}, "
+        f"{max(0, ctx.cash - gr.effective_cash_floor(rules, ctx))} above {gr.floor_text(rules, ctx)} · "
+        f"spent last game hour {ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · "
+        f"pack slots this game hour: used {slots.used}, "
         f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
     )
     console.print(render.scarce_supply_table(list(book.supply)))
@@ -1383,19 +1386,41 @@ def agent_maker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
+    venue: bool = typer.Option(True, help="Run our venue: open it once (GUARDRAILS.md), then broker its book"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
 ) -> None:
-    """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
+    """Every tick: our venue's broker (and its one opening), then asks for sell candidates and bids for missing
+    cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
+        market = _venue_keeper(team, settings, kw) if venue else None
+        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, market=market, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host)
 
 
 # ---------------------------------------------------------------- our venue and its broker (#11, #12)
+
+
+def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
+    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
+    from bazaar_agent import venue as vn
+    from bazaar_agent.agents.venue_keeper import VenueKeeper
+
+    return VenueKeeper(
+        team,
+        settings=settings,
+        rules=kw["rules"],
+        vault=vn.KeyVault.from_settings(settings, _db_connect("bazaar-maker-venue")),
+        decisions=kw["decisions"],
+        live=kw["live"],
+        log=kw["log"],
+        hub=kw.get("hub"),
+        stats_dir=settings.data_dir / "agents",
+    )
+
 
 VENUE_LIVE_HELP = "Actually send it. Without it: dry run. Live also needs allow_venue_open = true in GUARDRAILS.md"
 
@@ -1438,7 +1463,8 @@ def venue_open(
     description: str = typer.Option("", help="Public description (at most 280 characters)"),
     live: bool = typer.Option(False, help=VENUE_LIVE_HELP),
 ) -> None:
-    """Open our venue: 250 P bond + 20 P; saves the broker key (0600), never prints it."""
+    """Open our venue: 250 P bond + 20 P; saves the broker key (Postgres + 0600 file), never prints it.
+    On Railway the maker opens it on its own (GUARDRAILS.md `venue_open_after_game_hours`)."""
     from bazaar_agent import venue as vn
 
     settings = load_settings()
@@ -1454,9 +1480,13 @@ def venue_open(
                 "description": description,
             }
         )
-        outcome, saved = vn.open_venue(_team_client(), spec, rules, live=live, settings=settings)
-        if saved is not None and outcome.response is not None:
-            console.print(f"venue {outcome.response.get('venue')} · broker key saved to {saved} (mode 0600, not shown)")
+        vault = vn.KeyVault.from_settings(settings, _db_connect("bazaar-venue"))
+        outcome, opened = vn.open_venue(_team_client(), spec, rules, live=live, vault=vault)
+        if opened is not None and not opened.saved:  # the key exists only in this process, which now ends
+            raise ConfigError(
+                f"venue {opened.venue} is OPEN but its broker key could not be saved. "
+                f"Close it (`bazaar venue close {opened.venue} --live`, the bond comes back) and open it again."
+            )
         return outcome
 
     _venue_write(write)

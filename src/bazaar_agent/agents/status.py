@@ -62,6 +62,10 @@ MOVE_FIELDS = frozenset(
     {"kind", "price", "accept", "open_thread", "topic", "cancel", "hold", "reprice", "give", "want", "venue"}
 )
 REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
+# Our venue's broker sees a private book (pseudonyms, the Market Test's bench): its rows show only that a match
+# or an opening happened and how it ended, never an offer id, a quote, a maker or a price.
+PRIVATE_KINDS = frozenset({"broker_match", "venue_open"})
+PRIVATE_METHODS = frozenset({"broker_match", "open_venue"})
 VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain values (card refs)
     "threads": frozenset({"dealer", "thread", "item", "ticks", "opened_tick", "accepted_price"}),
     "open_offers": frozenset({"id", "side", "ref", "price", "venue", "expires_tick", "created_tick"}),
@@ -86,6 +90,14 @@ def public_decision(row: dict[str, Any]) -> dict[str, Any]:
     its status: a rival who lists a card and sees our `skip ... accept quota` or `would accept` row for its
     offer and price would learn that its ask sat below our value. A missing `dry_run` counts as a dry run."""
     sent = row.get("status") == "approved" and row.get("dry_run") is False
+    if row.get("kind") in PRIVATE_KINDS:
+        return {
+            **_pick(row, DECISION_FIELDS if sent else UNSENT_FIELDS),
+            "guardrail": _guardrail(row.get("guardrail")),
+            "jev": None,
+            "inputs": {},
+            "move": {},
+        }
     fields = INPUT_FIELDS | {SENT_PRICE} if sent else UNSENT_INPUT_FIELDS
     raw = row.get("inputs")
     inputs: dict[str, Any] = {}
@@ -105,14 +117,15 @@ def public_execution(row: dict[str, Any]) -> dict[str, Any]:
     """One request we sent: the request (public once sent) and how it ended, not the game's answer body."""
     response = row.get("response")
     created = response.get("id") if isinstance(response, dict) else None
+    private = row.get("method") in PRIVATE_METHODS
     return {
         "decision_id": row.get("decision_id"),
         "tick": row.get("tick"),
         "method": row.get("method"),
-        "request": _pick(row.get("request"), REQUEST_FIELDS),
+        "request": {} if private else _pick(row.get("request"), REQUEST_FIELDS),
         "ok": row.get("error_code") is None,
         "error_code": row.get("error_code"),
-        "created_id": created if isinstance(created, int) else None,
+        "created_id": created if isinstance(created, int) and not private else None,
     }
 
 
