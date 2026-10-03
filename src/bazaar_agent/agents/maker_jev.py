@@ -72,8 +72,10 @@ def price_candidates(t: Target, params: StrategyParams, rules: Guardrails) -> di
     """Distinct prices by label, in label order. Today's price is always there; a tie keeps its label."""
     if t.side == "ask":
         clears = math.ceil(t.value + params.sell_min_surplus - ROUNDING)
-        quick = min(t.price, max(ask_floor(t.value, rules), clears))
-        prices = {"aggressive": t.price, "fair": math.ceil((t.price + quick) / 2), "quick_sale": quick}
+        least = rules.exception_min(t.ref)  # protect_page_exceptions: an excepted card never goes below its MIN
+        top = max(t.price, least)
+        quick = min(top, max(ask_floor(t.value, rules), clears, least))
+        prices = {"aggressive": top, "fair": math.ceil((top + quick) / 2), "quick_sale": quick}
     else:
         top = math.floor(t.value - params.min_buy_surplus + ROUNDING)
         cap = rules.max_price_for(t.rarity)

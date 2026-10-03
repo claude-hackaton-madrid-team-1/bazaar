@@ -60,16 +60,25 @@ def set_codes(value: str) -> tuple[str, ...]:
     return codes
 
 
-def card_refs(value: str) -> tuple[str, ...]:
-    """'lat-10, SAL-01' -> ('LAT-10', 'SAL-01'); 'none' -> (). An entry that is not an ASCII card ref is refused
-    (checked before upper-casing: 'ſ' upper-cases to 'S')."""
+def card_minimums(value: str) -> dict[str, int]:
+    """'lat-10:80, SAL-01:12' -> {'LAT-10': 80, 'SAL-01': 12}; 'none' -> {}. Each entry is REF:MIN, MIN the least
+    we may receive in P (1 or more); anything else is refused (ASCII checked before upper-casing: 'ſ' -> 'S')."""
     if value.strip().lower() in NO_SETS:
-        return ()
-    entries = [r.strip() for r in value.split(",") if r.strip()]
-    bad = [r for r in entries if not r.isascii() or not CARD_REF.fullmatch(r.upper())]
-    if bad:
-        raise ValueError(f"not a card ref: {', '.join(bad)} (use e.g. LAT-10 or none)")
-    return tuple(r.upper() for r in entries)
+        return {}
+    out: dict[str, int] = {}
+    for entry in (e.strip() for e in value.split(",") if e.strip()):
+        ref, _, low = entry.partition(":")
+        ref, low = ref.strip().upper(), low.strip()
+        ok = entry.isascii() and CARD_REF.fullmatch(ref) and low.isdigit() and int(low) >= 1 and ref not in out
+        if not ok:
+            raise ValueError(f"not a REF:MIN entry: {entry} (use e.g. LAT-10:80 or none)")
+        out[ref] = int(low)
+    return out
+
+
+def card_refs(value: str) -> tuple[str, ...]:
+    """The card refs of a `protect_page_exceptions` value, in order."""
+    return tuple(card_minimums(value))
 
 
 class GuardrailsError(ValueError):
@@ -242,13 +251,17 @@ class Guardrails(BaseModel):
     @field_validator("protect_page_exceptions")
     @classmethod
     def _known_card_refs(cls, value: str) -> str:
-        card_refs(value)
+        card_minimums(value)
         return value
 
     def excepted(self, ref: str) -> bool:
-        """A card named in `protect_page_exceptions`: its last copy may be sold, with a human approval at any
-        price. The ref must match exactly (/me refs are canonical): any other spelling stays protected."""
-        return ref in card_refs(self.protect_page_exceptions)
+        """A card named in `protect_page_exceptions`: its last copy may be sold, never below its MIN. The ref must
+        match exactly (/me refs are canonical): any other spelling stays protected."""
+        return ref in card_minimums(self.protect_page_exceptions)
+
+    def exception_min(self, ref: str) -> int:
+        """The least we may receive for an excepted card (0: not excepted)."""
+        return card_minimums(self.protect_page_exceptions).get(ref, 0)
 
     def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
         """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
@@ -332,7 +345,7 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
-    "protect_page_exceptions": "guardrails.protects (check, sell planners) + check: a human approves its last copy",
+    "protect_page_exceptions": "guardrails.protects + check (every sale >= MIN) + maker ask floors (maker_jev, relist)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
     "max_taller_per_game_hour": "guardrails.check (taller: Context.taller_last_hour, this process)",
@@ -901,6 +914,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if selling and (wrong := _not_a_copy_of_the_excepted_card(action, ctx, rules)):
         v.append(wrong)
+    if selling and (low := rules.exception_min(action.item)) and (action.price is None or action.price < low):
+        v.append(f"{action.item} sells for {low} P or more (protect_page_exceptions), not {action.price}")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     team_trade = action.kind in TEAM_TRADES and action.counterparty is not None and action.price is not None
@@ -1029,17 +1044,14 @@ def _not_a_copy_of_the_excepted_card(action: Action, ctx: Context, rules: Guardr
 
 def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
     """`human_approval_above`: a card trade at or above it (fee included, plus the copy a swap gives) needs an
-    approval covering its card, side and price. The last copy of a card in `protect_page_exceptions` needs one at
-    any price, even with the threshold off. Fails closed: approvals that cannot be read approve nothing."""
+    approval covering its card, side and price. Fails closed: approvals that cannot be read approve nothing."""
     side = approval_side(action)
-    last_excepted = side == "sell" and rules.excepted(action.item) and _copies(ctx, action.item) <= 1
-    above = 0 if last_excepted else rules.human_approval_above
     # A ranking or plan check skips it (as the official value cap): a plan prices at its ladder top, not at the
     # bid, and a human is asked only about a write about to be sent.
-    if side is None or (above <= 0 and not last_excepted) or action.price is None or ctx.ranking:
+    if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:
         return []
     price = action.price + (action.gives_value if side == "buy" else 0.0)
-    if price < above:
+    if price < rules.human_approval_above:
         return []
     from bazaar_agent import approvals
 
