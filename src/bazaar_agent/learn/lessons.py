@@ -300,6 +300,7 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
 # ---------------------------------------------------------------- any strategy's own outcome (N14 writes back)
 
 MECHANICS = ("dealer", "duel", "trade", "pack", "market", "venue", "page", "grant")
+LESSON_TEXT = re.compile(r"[\w .,;:()%+\-→/'·]{1,300}")
 
 
 def record_lesson(
@@ -321,6 +322,8 @@ def record_lesson(
     The text must be ours, built from structure: never a counterparty's words."""
     if mechanic not in MECHANICS:
         raise ValueError(f"unknown mechanic {mechanic!r} (one of {', '.join(MECHANICS)})")
+    if not LESSON_TEXT.fullmatch(text):  # quoted to Jev and the words model as our own: plain words and numbers only
+        raise ValueError("a lesson's text must be plain words, numbers and punctuation (no tags, no quotes)")
     detail = {k: v for k, v in (features or {}).items() if isinstance(v, str | int | float | bool)}
     return Learning(
         subject_kind=subject_kind,  # type: ignore[arg-type]  # validated by the model

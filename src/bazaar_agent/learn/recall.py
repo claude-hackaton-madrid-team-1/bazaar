@@ -237,7 +237,7 @@ class Lessons:
             )
             found = self.recall.recall(query)
             quoted = found.as_quoted(self.k) if found.status in ("ok", "bm25_only") else []
-            if key is not None and found.status in ("ok", "no_candidates"):  # BM25-only, timeouts, errors: retried
+            if key is not None and found.status in ("ok", "no_candidates", "bm25_only"):  # timeouts, errors: retried
                 if len(self._cache) > 256:
                     self._cache.clear()
                 self._cache[key] = quoted

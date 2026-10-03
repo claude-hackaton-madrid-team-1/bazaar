@@ -425,4 +425,4 @@ def test_without_the_reranker_recall_is_bm25_only_above_a_lexical_floor():
 
     lessons = Lessons(r)
     assert lessons("buy LAV-08 uncommon from chato", tick=120)[0]["about"] == "chato"
-    assert lessons._cache == {}  # BM25-only answers are not cached: the reranker may be ready next call
+    assert len(lessons._cache) == 1  # cached for its tick bucket only: the reranker may be ready a few ticks on

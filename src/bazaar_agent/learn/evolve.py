@@ -24,7 +24,7 @@ from typing import Any
 
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.intel import DealerThread
-from bazaar_agent.learn.curves import CurveStats, informative_fill, quantile
+from bazaar_agent.learn.curves import CurveStats, quantile
 from bazaar_agent.learn.model import TEXT_MAX, Learning
 
 START_Q = 0.10
@@ -93,18 +93,14 @@ class LadderPolicy:
 
     def plan(self, base: tuple[int, int, int]) -> tuple[tuple[int, int, int] | None, str]:
         """The strategy's ladder (start, top, step) evolved by this policy, or None to skip the thread.
-        Never above the strategy's start nor its top (value and cap): a learned ladder only lowers or skips."""
+        Never above the strategy's start, top or step: a learned ladder only lowers, narrows or skips."""
         start, top, step = base
         if self.ladder is None:
             return None, self.reason
-        if self.deal_share(top) < MIN_DEAL_SHARE:
-            return None, (
-                f"learned: only {self.deal_share(top):.0%} of {self.dealer} {self.price_class} fills "
-                f"({self.fills[0]}-{self.fills[-1]}) are at or under our top {top}"
-            )
         walk = min(self.ladder.walk, top)
         new_start = max(1, min(self.ladder.start, start, walk))
-        return (new_start, walk, max(1, self.ladder.step)), f"learned ladder {self.ladder} (was {start}→{top})"
+        new_step = max(1, min(self.ladder.step, step))  # a bigger step can overshoot a low limit: never above today's
+        return (new_start, walk, new_step), f"learned ladder {self.ladder} (was {start}→{top})"
 
     def text(self) -> str:
         if self.ladder is None:
@@ -219,6 +215,32 @@ def target_ladder(
     return Ladder(start, step, walk), f"fills p10 {lo:g} / p90 {hi:g}, final after ~{patience:g} bids"
 
 
+def asked_above_after(t: DealerThread, cap: int) -> bool:
+    """The dealer named a price above the cap AFTER the team had offered the cap or more (feed order)."""
+    offered = False
+    for who, price in t.sequence:
+        if who == "team" and price >= cap:
+            offered = True
+        elif who == "dealer" and offered and price > cap:
+            return True
+    return False
+
+
+def haggled_above(t: DealerThread, cap: int) -> bool:
+    """A real haggle the dealer closed above the cap: the team was refused a lower bid (not a first-bid fill,
+    not the opening ask taken as is) and the dealer countered above the cap after a team bid. Each such
+    fill costs whoever makes it the fill price."""
+    if t.fill_price is None or t.fill_price <= cap or not any(b < t.fill_price for b in t.team_prices):
+        return False
+    bid = False
+    for who, price in t.sequence:
+        if who == "team":
+            bid = True
+        elif bid and price > cap:
+            return True
+    return False
+
+
 def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread]) -> str | None:
     """Why this class cannot close under our cap, or None. Only evidence the DEALER produced counts:
     - a fill above the cap that is not a team paying the opening ask as is (`curves.informative_fill`);
@@ -227,16 +249,8 @@ def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread
     second team to agree; our own walks count alone (a dealer nobody else trades with: thread 187)."""
     if cap is None:
         return None
-    above = [t for t in threads if informative_fill(t) and (t.fill_price or 0) > cap]
-    walked = [
-        t
-        for t in threads
-        if t.fill_price is None
-        and t.team_prices
-        and max(t.team_prices) >= cap
-        and t.dealer_prices
-        and t.dealer_prices[-1] > cap
-    ]
+    above = [t for t in threads if haggled_above(t, cap)]
+    walked = [t for t in threads if t.fill_price is None and asked_above_after(t, cap)]
     closable = sum(1 for t in threads if t.fill_price is not None and t.fill_price <= cap)
     evidence = len(above) + len(walked) + closable
     teams = {t.team for t in (*above, *walked)}
@@ -252,7 +266,8 @@ def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread
 def probe(stats: CurveStats, walk_cap: int) -> tuple[Ladder, str]:
     """Most fills took the team's first bid, so they only bound the limit from above (we may have overpaid):
     start below the lowest fill and climb by 1, so the next conversations show where the dealer counters.
-    Never below a bid it ignored, nor below half its opening ask."""
+    It starts above a bid of ours the dealer ignored and at half its opening ask or more, but always below the
+    lowest fill (that bound wins)."""
     floor = stats.fills[0]
     start = math.floor(floor * PROBE_RATIO)
     if stats.silent_below is not None:  # our own ignored bid (curves counts only ours)
