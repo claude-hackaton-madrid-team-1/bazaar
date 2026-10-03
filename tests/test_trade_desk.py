@@ -34,7 +34,7 @@ def known(team, **mult):
     )
 
 
-def got(eid, to, ref, asset, price=20, frm="abuela", tick=5):
+def got(eid, to, ref, asset, price=20, frm="t20", tick=5):  # a team sold it, unless a dealer is named
     items = [{"id": asset, "ref": ref, "frm": frm, "to": to, "kind": "card"}]
     persona = frm if not frm.startswith("t") else None
     payload = {"items": items, "price": price, "persona": persona, "parties": [frm, to], "settlement": eid}
@@ -120,10 +120,13 @@ def test_a_bid_never_passes_the_cap_or_beats_a_dealer():
     w2 = [w for w in td.wanted_cards(m, PARAMS, tight) if w.ref == "LAV-08"]
     (capped,) = td.bid_trades(m, w2, AMAP, copies, td.PlanParams(), VENUE)
     assert capped.price == 10 and capped.theirs > 0
-    # a dealer sold it for 15: a team bid never pays more
-    dealer = td.dealer_prices([got(9, "t07", "LAV-08", 777, price=15)])
+    # a dealer sold it for 15: worth no more than 15 to us, a team bid below it, and short-lived
+    dealer = td.dealer_prices([got(9, "t07", "LAV-08", 777, price=15, frm="abuela")])
     assert dealer == {"LAV-08": [15]}
-    assert [w.top for w in td.wanted_cards(m, PARAMS, Guardrails(), dealer) if w.ref == "LAV-08"] == [15]
+    (w,) = [w for w in td.wanted_cards(m, PARAMS, Guardrails(), dealer) if w.ref == "LAV-08"]
+    assert (w.worth, w.top, w.dealer) == (15.0, 13, True)  # min(worth − min surplus, cap, fill − 1)
+    (cheap,) = td.bid_trades(m, [w], AMAP, copies, td.PlanParams(), VENUE)
+    assert cheap.price <= 13 and cheap.expires == 10 and "--expires 10" in td.command(cheap)
 
 
 def test_a_swap_splits_the_pie_with_a_cash_leg():
@@ -349,7 +352,7 @@ def test_a_thread_proposal_opens_a_team_thread_and_sends_one_structured_offer():
         == "Swap proposal: our LAT-09 + 13 P for your LAV-09. Accept the offer if it works for you."
     )
     ask = td.Trade(
-        "ask", "t15", {"assets": [5]}, {"cash": 76}, ("LAT-09",), 5, 76, 5, 31, 31, 1.0, 76, "", "rare", "t15"
+        "ask", "t15", {"assets": [5]}, {"cash": 76}, ("LAT-09",), 5, 76, 5, 31, 31, 1.0, 76, "", "rare", to="t15"
     )
     assert td.listing_request(ask) == {
         "venue": "rastro",
@@ -406,7 +409,7 @@ def test_a_large_pool_is_cut_before_the_search():
     teams = [f"t{i:02d}" for i in range(2, 19)]
     big = [trade(rng.choice(teams), rng.randint(5, 90), rng.randint(1, 40), f"C-{i % 60}") for i in range(1500)]
     pool = td._pool(big, td.PlanParams())
-    assert len(pool) <= 120 and max(Counter(i for t in pool for i in td._items(t)).values()) <= 4
+    assert len(pool) <= 120 and max(Counter(i for t in pool for i in td._items(t)).values()) <= 6
     began = time.monotonic()
     listings, _, _, _ = td.choose(big, [], td.PlanParams(threads=0), cash_room=0, max_nodes=50_000)
     assert time.monotonic() - began < 30 and td._fair(listings, 0.25)

@@ -1448,9 +1448,23 @@ def _hands_off(ledger: Any, ctx: Any, out: Any, price: int) -> None:
     from bazaar_agent.guardrails import HANDS_OFF
 
     offer_id = (out.offer or {}).get("id") if out.sent else None
-    if isinstance(offer_id, int):
+    if not isinstance(offer_id, int):
+        return
+    try:
         ledger.record("listing", ctx.tick, ctx.t_hours, price, f"{HANDS_OFF}{offer_id}")
-        console.print(f"[dim]offer {offer_id} booked hands-off: the maker leaves it alone[/dim]")
+    except Exception as e:  # the offer is out: say so, never fail the command after the send
+        console.print(
+            f"[red]offer {offer_id} is posted but NOT booked hands-off ({type(e).__name__}): "
+            f"the maker may cancel it; pause the maker or repost[/red]"
+        )
+        return
+    if str(getattr(ledger, "where", "")).startswith("file"):
+        console.print(
+            f"[yellow]offer {offer_id} booked hands-off in this machine's ledger only ({ledger.where}): "
+            f"a maker on another machine does not see it[/yellow]"
+        )
+    else:
+        console.print(f"[dim]offer {offer_id} booked hands-off in the shared ledger: the maker leaves it alone[/dim]")
 
 
 def _report_post(out: Any) -> None:
