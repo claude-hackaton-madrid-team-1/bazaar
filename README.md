@@ -963,6 +963,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#97](../../pull/97) | Night B11 (w2a): exploiter rivals that read our limit and squeeze our endgame | `night/b11-exploiters` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
 | [#95](../../pull/95) | docs: RAG-driven strategies per mechanic (N14) on the plan and roadmap | `docs/rag-strategies` |
 | [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
@@ -978,10 +979,9 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#79](../../pull/79) | feat(trade-desk): rival affinity map, per-counterparty cap, 09:00 dry-run trade plan (W4) | `night/w4-trade-desk` |
 | [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
 | [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
-| [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
+| [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | `fix/cash-spend-accounting` |
 | [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
 | [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
 | [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
-| [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
 
 <!-- BAZAAR:ACTIVITY:END -->
