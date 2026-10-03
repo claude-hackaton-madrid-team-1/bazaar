@@ -2,7 +2,7 @@
 
     uv run python scripts/sim_smoke.py
 
-It starts `bazaar-sim serve` on 127.0.0.1:8765 (BAZAAR_SIM=local's hardcoded address) with an
+It starts `bazaar-sim serve` on 127.0.0.1:8765 (BAZAAR_SIM=local's address; BAZAAR_SIM_PORT moves both) with an
 in-memory world, then drives our real CLI against it: status, one dealer buy with negotiation,
 two ticks of the taker and of the maker in --live, duel moves, the monitor's live stream, and the
 two key guards. No secrets, no database, no network beyond localhost: the repo's `.env` is never read
@@ -23,15 +23,18 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
-SIM = "http://127.0.0.1:8765"
 KEY = "sim-team1"
 STEP_TIMEOUT_S = 180
-PORT = 8765  # BAZAAR_SIM=local's hardcoded address (src/bazaar_agent/config.py LOCAL_SIM_URL)
+# BAZAAR_SIM=local's address (src/bazaar_agent/config.py LOCAL_SIM_URL); BAZAAR_SIM_PORT moves it (and this smoke)
+# to another loopback port when several workers' simulators share one laptop.
+PORT = int(os.environ.get("BAZAAR_SIM_PORT") or 8765)
+SIM = f"http://127.0.0.1:{PORT}"
 # Duel budget: the session opens at tick 2 and lasts SIM_DUEL_TICKS ticks of 2 s. The duel step starts
 # ~10 s in, so 60 ticks (120 s) leaves room for steps added before it.
 DUEL_TICKS = "60"
@@ -56,6 +59,7 @@ def base_env(data_dir: Path, env_file: Path) -> dict[str, str]:
         {
             "BAZAAR_ENV_FILE": str(env_file),  # an empty file: a laptop's real .env never loads
             "BAZAAR_SIM": "local",
+            "BAZAAR_SIM_PORT": str(PORT),
             "BAZAAR_SIM_KEY": KEY,
             "BAZAAR_TEAM_ID": "t01",
             "BAZAAR_DATA_DIR": str(data_dir),
@@ -98,8 +102,11 @@ def get(path: str, keyed: bool = False) -> dict:
 
 
 def port_busy() -> bool:
+    """Anything that answers, even with an HTTP error (404, a 429), holds the port: only a refused connect is free."""
     try:
         get("/api/health")
+        return True
+    except urllib.error.HTTPError:
         return True
     except OSError:
         return False
@@ -112,6 +119,9 @@ def wait_for_sim(server: subprocess.Popen[bytes], log: Path) -> None:
             fail(f"bazaar-sim exited with code {server.returncode} before answering", log.read_text(errors="replace"))
         try:
             if get("/api/health").get("ok"):
+                time.sleep(0.5)  # ours, not another simulator that won the port: ours must still be running
+                if server.poll() is not None:
+                    fail(f"bazaar-sim exited with code {server.returncode}: 127.0.0.1:{PORT} answers for someone else")
                 return
         except OSError:
             pass
