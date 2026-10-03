@@ -16,8 +16,9 @@ Every maker tick (`Maker.on_tick`, driven by /api/clock), before the maker's own
      (`POST /api/broker/announce`) once the broker is on, then one every that many ticks and at most
      ANNOUNCE_MAX_PER_GAME_HOUR per game hour, through `guardrails.check()` (`venue_announce`:
      `allow_venue_open` and the kill switch). It names the cards the most other teams miss (`venue_notice.py`,
-     from the team matrix the maker reads) or, without a current matrix, says our fee and what the broker
-     does. The server takes one notice per venue every few ticks and refuses the rest `wait`: the last notice
+     from the team matrix the maker reads, rotating through the top WANTED_POOL) or, without a current matrix,
+     says our fee and what the broker does. The server takes one notice per venue every 10 ticks and refuses the
+     rest `wait`: the last notice
      the feed shows for our venue counts, so a restart never retries one, and a `wait` naming a tick is honoured.
 Dry run (the maker's default) opens nothing and matches nothing: it writes what it would do.
 
@@ -37,7 +38,7 @@ from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_f
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
-from bazaar_agent.agents.venue_notice import wanted_cards, wanted_notice
+from bazaar_agent.agents.venue_notice import WANTED_POOL, rotated, wanted_cards, wanted_notice
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import VENUE_COST, Action, Guardrails, check, runs_venue
@@ -60,8 +61,10 @@ RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; 
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
 LIST_LAG_TICKS = 3  # ticks the public list and /me may take to show the venue we just opened
 FINAL_REFUSALS = frozenset({"venue_exists", "not_allowed", "forbidden"})  # never tried again by this process
-ANNOUNCE_EVERY_TICKS = 24  # the maker's notice on our venue: once, then one every this many ticks...
-ANNOUNCE_MAX_PER_GAME_HOUR = 5  # ...and at most this many per game hour (15 s ticks: every 48)
+# The server takes one notice per venue every 10 ticks and refuses a sooner one `wait` (Saturday, every venue: 95 of
+# 297 gaps exactly 10, none below), so we post at that cadence...
+ANNOUNCE_EVERY_TICKS = 10
+ANNOUNCE_MAX_PER_GAME_HOUR = 24  # ...and at most this many per game hour (15 s ticks: every 10; 7.5 s: every 20)
 WAIT_HINT_MAX_TICKS = 120  # a `wait` refusal naming a later tick is honoured up to this far ahead
 MATRIX_GRACE_TICKS = 3  # a process's first notice waits this long for the team matrix's first read
 EXAMPLE_PRICE = 20  # the notice's fee example: 5 % of it is a whole number, so no rounding hides in it
@@ -381,7 +384,8 @@ class VenueKeeper:
         ):
             return
         us, held = (snap.us, _held(snap.me)) if snap is not None else ("", set())
-        cards = wanted_cards(self.matrix(clock.tick), us, only=held) if self.matrix is not None else []
+        pool = wanted_cards(self.matrix(clock.tick), us, WANTED_POOL, held) if self.matrix is not None else []
+        cards = rotated(pool, clock.tick // self.announce_every)
         if self._first_try is None:
             self._first_try = clock.tick
         if not cards and self.matrix is not None and clock.tick - self._first_try < MATRIX_GRACE_TICKS:

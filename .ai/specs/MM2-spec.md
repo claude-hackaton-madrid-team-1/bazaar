@@ -22,8 +22,8 @@ mechanics. Stop-building rule in force: this is the one lever, no matching chang
    would raise its asks to us and send its sellers to a venue our key cannot trade on. An empty /me names nothing.
 3. No matrix, a stale one (`LatestMatrix.current`, 30 ticks) or no card that fits: the existing generic notice.
    A process's first notice waits up to `MATRIX_GRACE_TICKS` (3) for the matrix's first read.
-4. Cadence: one notice every `ANNOUNCE_EVERY_TICKS` (24) and at most `ANNOUNCE_MAX_PER_GAME_HOUR` (5) per game
-   hour. The newest `venue.announcement` for our venue in the feed (shared `feed_events`) counts as our last notice,
+4. Cadence: one notice every `ANNOUNCE_EVERY_TICKS` (10, the server's window: Saturday, every venue, 95 of 297 gaps
+   exactly 10, none below) and at most `ANNOUNCE_MAX_PER_GAME_HOUR` (24) per game hour. The newest `venue.announcement` for our venue in the feed (shared `feed_events`) counts as our last notice,
    so a restart never retries one. A `wait` refusal that names a later tick (`next_tick`/`until_tick`/`retry_tick`,
    at most 120 ticks ahead) is honoured; any refusal waits the normal cadence.
 5. Still gated by `guardrails.check(Action("venue_announce"))` (`allow_venue_open`, kill switch); dry run sends
@@ -31,8 +31,18 @@ mechanics. Stop-building rule in force: this is the one lever, no matching chang
 6. SDK parity audit (findings in the PR body, no code change): `agents/broker.py`, `matcher.py`, `venue_keeper.py`
    vs `vendor/bazaar-kit/starter_broker.py`.
 
+7. (Omar, 22:22: "copy Team 10's market, but better") Position v19 like t10's v07, honestly: "Team 1 market (v19):
+   0 % fee, 0 P a card, crossing bids and asks matched every tick at the midpoint. Wanted now: <4 cards> (missed for
+   a page by the most teams). Post asks and bids here, public or addressed." No claim the code does not back (we do
+   NOT claim to match by page completion). Each notice names the next 4 of the top `WANTED_POOL` (8) ranked cards
+   (`rotated`, turn = tick // 10, so a restart keeps the rotation).
+8. Addressed offers on v19: the broker no longer skips an offer with `to`; `matcher.feasible` crosses it only with an
+   offer whose maker equals that `to`, card by card and fee-aware like the starter's `public_plan`. If the real book
+   shows `to` as a team id while makers are pseudonyms, nothing ever equals it: no match (fail safe). The addressee
+   can always accept the addressed offer itself.
+
 ## Out of scope
-Matching logic, bench policy (`BAZAAR_BENCH_POLICY=exact` stays), fees, opening or closing the venue.
+Other matching logic, bench policy (`BAZAAR_BENCH_POLICY=exact` stays), fees, opening or closing the venue.
 
 ## Acceptance
 Tests without network: `tests/test_venue_notice.py` (card choice, text bounds and cleaning, fallback, cadence,

@@ -80,10 +80,20 @@ def test_the_notice_names_our_venue_fee_and_the_wanted_cards_within_240_characte
     note = vnote.wanted_notice(vk.PLAN, "v19", ["LAV-04", "RET-10", "LAT-08", "LAT-09"], HOUSE)
     assert note is not None
     assert note.text == (
-        "Team 1 market (v19, 0 % fee, crossing bids and asks matched every tick): wanted LAV-04, RET-10, LAT-08,"
-        " LAT-09; sellers and buyers welcome. On El Rastro the side that accepts pays 5 % + 1 P/card."
+        "Team 1 market (v19): 0 % fee, 0 P a card, crossing bids and asks matched every tick at the midpoint. Wanted"
+        " now: LAV-04, RET-10, LAT-08, LAT-09 (missed for a page by the most teams). Post asks and bids here, public"
+        " or addressed."
     )
     assert len(note.text) <= vnote.NOTICE_MAX_CHARS
+
+
+def test_each_notice_names_the_next_cards_of_the_ranked_pool():
+    pool = ["A-01", "B-02", "C-03", "D-04", "E-05", "F-06"]
+    assert vnote.rotated(pool, 0) == ["A-01", "B-02", "C-03", "D-04"]
+    assert vnote.rotated(pool, 1) == ["E-05", "F-06", "A-01", "B-02"]
+    assert vnote.rotated(pool, 2) == ["C-03", "D-04", "E-05", "F-06"]
+    assert vnote.rotated(pool[:3], 7) == ["A-01", "B-02", "C-03"]
+    assert vnote.rotated([], 3) == []
 
 
 def test_no_team_value_or_cash_in_the_text_and_only_printable_ascii():
@@ -136,22 +146,22 @@ def notice_keeper(tmp_path, broker, source=None, **kw):
     return k
 
 
-def test_a_notice_then_one_every_24_ticks(tmp_path):
+def test_a_notice_then_one_every_10_ticks_the_servers_window(tmp_path):
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker)
-    for tick in range(400, 448):
+    for tick in range(400, 420):
         run(k, tick)
-    assert len(broker.notes) == 2  # ticks 400 and 424
-    run(k, 448)
+    assert len(broker.notes) == 2  # ticks 400 and 410
+    run(k, 420)
     assert len(broker.notes) == 3
 
 
-def test_at_most_five_notices_per_game_hour_when_ticks_are_short(tmp_path):
+def test_at_most_24_notices_per_game_hour_when_ticks_are_short(tmp_path):
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker)
-    for tick in range(400, 640):  # one game hour at 15 s ticks
-        run(k, tick, tick_seconds=15.0)
-    assert len(broker.notes) == 5
+    for tick in range(400, 880):  # one game hour at 7.5 s ticks: the hour cap, not the tick cadence, binds
+        run(k, tick, tick_seconds=7.5)
+    assert len(broker.notes) == 24
 
 
 def announced(tick, venue="v09"):
@@ -161,11 +171,11 @@ def announced(tick, venue="v09"):
 def test_a_restarted_keeper_waits_for_the_notice_the_feed_shows_instead_of_retrying(tmp_path):
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker)
-    feed = [announced(380, "v02"), announced(390), announced(395, "v07")]
-    for tick in range(400, 414):
+    feed = [announced(380, "v02"), announced(396), announced(399, "v07")]
+    for tick in range(400, 406):
         run(k, tick, feed)
     assert broker.notes == []
-    run(k, 414, feed)
+    run(k, 406, feed)
     assert len(broker.notes) == 1
 
 
@@ -181,7 +191,7 @@ class WaitBroker(AnnouncingBroker):
         return super().announce(text)
 
 
-@pytest.mark.parametrize(("extra", "next_try"), [(None, 424), ({"next_tick": 450}, 450)])
+@pytest.mark.parametrize(("extra", "next_try"), [(None, 410), ({"next_tick": 450}, 450)])
 def test_a_wait_refusal_is_honoured_and_never_retried_tick_after_tick(tmp_path, extra, next_try):
     broker = WaitBroker(extra)
     k = notice_keeper(tmp_path, broker)
@@ -195,10 +205,12 @@ def test_a_wait_refusal_is_honoured_and_never_retried_tick_after_tick(tmp_path, 
 def test_the_keeper_names_the_matrix_cards_and_falls_back_to_the_generic_notice(tmp_path):
     named = AnnouncingBroker()
     k = notice_keeper(tmp_path / "named", named, source=lambda tick: matrix(tick, DEMAND, ("t03", "t05")))
-    run(k, 400)
-    assert named.notes and "wanted LAV-04, RET-10, LAT-08, LAT-09" in named.notes[0]
-    [row] = [d for d in rows(tmp_path / "named") if d.get("kind") == "venue_announce"]
-    assert row["inputs"]["cards"] == ["LAV-04", "RET-10", "LAT-08", "LAT-09"]
+    run(k, 400)  # turn 40: the pool of 5 (LAV-04, RET-10, LAT-08, LAT-09, LAV-08) starts at 40 * 4 % 5 = 0
+    assert named.notes and "Wanted now: LAV-04, RET-10, LAT-08, LAT-09 (missed" in (named.notes[0])
+    run(k, 410)  # the next turn starts 4 further on
+    assert "Wanted now: LAV-08, LAV-04, RET-10, LAT-08 (" in named.notes[1]
+    rows_ = [d for d in rows(tmp_path / "named") if d.get("kind") == "venue_announce"]
+    assert rows_[0]["inputs"]["cards"] == ["LAV-04", "RET-10", "LAT-08", "LAT-09"]
     generic = AnnouncingBroker()
     k = notice_keeper(tmp_path / "generic", generic, source=lambda tick: None)
     for tick in range(400, 400 + vk.MATRIX_GRACE_TICKS):
@@ -216,7 +228,7 @@ def test_the_keeper_never_names_a_card_we_miss(tmp_path):
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker, source=lambda tick: matrix(tick, DEMAND, ("t03", "t05")))
     run(k, 400, assets=[{"kind": "card", "ref": "LAT-09", "id": 1}])  # we miss LAV-04, RET-10, LAT-08
-    assert "wanted LAT-09;" in broker.notes[0] and "LAV-04" not in broker.notes[0]
+    assert "Wanted now: LAT-09 (" in broker.notes[0] and "LAV-04" not in broker.notes[0]
 
 
 def test_a_feed_notice_from_the_future_or_a_clock_that_went_back_never_silences_the_notice(tmp_path):

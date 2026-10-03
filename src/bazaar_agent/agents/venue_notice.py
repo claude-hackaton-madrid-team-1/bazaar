@@ -23,6 +23,7 @@ from bazaar_agent.venue import Announcement, VenueSpec
 
 NOTICE_MAX_CHARS = 240  # the feed clips a notice here (venue.ANNOUNCE_MAX_CHARS is the server's 280)
 WANTED_MAX = 4  # cards named in one notice
+WANTED_POOL = 8  # the ranked cards the notices rotate through
 CARD_REF = re.compile(r"[A-Z]{2,4}-[0-9]{2}")  # LAV-03, RET-10: anything else is never echoed
 EXAMPLE_PRICE = 20  # "dearer" is judged on one sale at this price, as the generic notice's example
 
@@ -56,12 +57,19 @@ def clean(text: str) -> str:
 
 
 def wanted_notice(plan: VenueSpec, venue: str, cards: Sequence[str], house: Venue | None = None) -> Announcement | None:
-    """Our venue, its fee and the wanted cards in at most NOTICE_MAX_CHARS (fewer cards when it is long), then the
-    house market's fee when it is dearer and still fits. None without a card that fits."""
+    """Our venue, its fee, what the broker does and the wanted cards in at most NOTICE_MAX_CHARS (fewer cards when it
+    is long), then the house market's fee when it is dearer and still fits. Only claims the code backs: crossing
+    quotes are matched every tick at the midpoint (`matcher.match_price`), an addressed offer only with its addressee
+    (`matcher.feasible`), and an addressed offer can be accepted by that team itself. None without a card that fits."""
     named = [c for c in cards if CARD_REF.fullmatch(c)][:WANTED_MAX]
-    head = f"{plan.name} ({venue}, {fee_text(plan.fee_bps, plan.fee_per_card)} fee, crossing bids and asks matched"
+    per_card = "" if plan.fee_per_card else ", 0 P a card"
+    head = (
+        f"{plan.name} ({venue}): {fee_text(plan.fee_bps, plan.fee_per_card)} fee{per_card}, crossing bids and asks"
+        " matched every tick at the midpoint."
+    )
+    tail = "Post asks and bids here, public or addressed."
     for n in range(len(named), 0, -1):
-        text = clean(f"{head} every tick): wanted {', '.join(named[:n])}; sellers and buyers welcome.")
+        text = clean(f"{head} Wanted now: {', '.join(named[:n])} (missed for a page by the most teams). {tail}")
         if len(text) > NOTICE_MAX_CHARS:
             continue
         if house is not None and _fee(house.fee_bps, house.fee_per_card, EXAMPLE_PRICE, 1) > _fee(
@@ -72,3 +80,12 @@ def wanted_notice(plan: VenueSpec, venue: str, cards: Sequence[str], house: Venu
             text = more if len(more) <= NOTICE_MAX_CHARS else text
         return Announcement(text=text)
     return None
+
+
+def rotated(pool: Sequence[str], turn: int, size: int = WANTED_MAX) -> list[str]:
+    """`size` cards of the ranked pool, starting `size` further on each turn (the notice's tick // cadence, so a
+    restart keeps the rotation): every card of a pool longer than one notice gets named in turn."""
+    if len(pool) <= size:
+        return list(pool)
+    start = (turn * size) % len(pool)
+    return (list(pool[start:]) + list(pool[:start]))[:size]
