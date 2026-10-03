@@ -1156,8 +1156,7 @@ FILE_HELP = "Read this JSON file instead of the API"
 
 
 def _plan_input(path: str | None) -> Any:
-    """A `bazaar plan` input file: a bare body or a captured response (`{"body": ...}`). Named apart from W4's
-    `_json_file` (#79) so the two PRs merge without a redefinition."""
+    """A `bazaar plan` input file: a bare body or a captured response (`{"body": ...}`)."""
     if path is None:
         return None
     with open(path, encoding="utf-8") as f:
