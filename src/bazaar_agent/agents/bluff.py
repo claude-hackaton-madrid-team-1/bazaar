@@ -283,13 +283,14 @@ class TacticBook:
         if not fits:
             return Choice(cp, side, conversation, step, price, None, "no tactic left for this counterparty", private)
         total = sum(arms[t].n for t in fits if t in arms)
+        just_used = self.last[conversation].choice.tactic if conversation in self.last else None
 
-        def rank(t: str) -> tuple[int, float, str]:
+        def rank(t: str) -> tuple[int, int, float, str]:
             tie = _tie(self.seed, cp, conversation, step, t)
-            if t not in arms or arms[t].n == 0:
-                return (0, -self._prior(cp.kind, t), tie)
+            if t not in arms or arms[t].n == 0:  # untried: the one still waiting for an answer goes last
+                return (0, int(t == just_used), -self._prior(cp.kind, t), tie)
             arm = arms[t]
-            return (1, -(arm.mean + EXPLORE * math.sqrt(math.log(total + 1) / arm.n)), tie)
+            return (1, 0, -(arm.mean + EXPLORE * math.sqrt(math.log(total + 1) / arm.n)), tie)
 
         best = min(fits, key=rank)
         arm = arms.get(best)

@@ -78,6 +78,17 @@ def test_untried_tactics_rotate_then_the_best_learned_one_wins():
     assert later.count(winner) >= 3, (winner, later)
 
 
+def test_an_unanswered_untried_tactic_is_not_repeated_on_the_next_message():
+    for seed in range(40):  # ties are seeded: a repeat would show up for some seed
+        b = book(seed=seed)
+        picks = []
+        for step in range(4):  # the rival never answers: every message is still waiting when the next one goes
+            c = b.choose(RIVAL, "buy", "duel:2", step, 40 + step)
+            b.sent(c, their_price=100, their_offer=1, tick=100 + step)
+            picks.append(c.tactic)
+        assert all(x != y for x, y in zip(picks, picks[1:], strict=False)), (seed, picks)
+
+
 def test_abuela_never_gets_a_non_kindness_tactic_whatever_the_history():
     rnd = random.Random(16)
     b = book(seed=1)
