@@ -540,3 +540,34 @@ def test_at_the_cap_we_wait_for_her_answer_before_walking():
     assert decide(n, 7, 9, False) == Move("wait", reason="her answer to our last bid is not in yet")
     see_history(n, {"messages": [ours, hers, ours, hers]}, "abuela", "LAV-03")  # she answered: held at 7
     assert decide(n, 7, 9, False).reopen
+
+
+def test_her_answer_is_read_by_message_id_not_by_list_position():
+    # The real GET /api/threads/187 lists a slow reply AFTER our next bid: ids 1145 us, 1159 us, 1153 her.
+    from bazaar_agent.agents.dealer import see_history
+
+    n = Negotiation(BidPlan(29, 1, 40), [29, 31])
+    ask = {"maker": "chato", "status": "open", "give": {"types": ["card:SAL-09"]}, "want": {"cash": 33}}
+    listed = [
+        {"id": 1145, "sender": "t01"},
+        {"id": 1159, "sender": "t01"},
+        {"id": 1153, "sender": "chato", "offer": ask},
+    ]
+    see_history(n, {"messages": listed}, "chato", "SAL-09")
+    assert n.awaiting_reply  # by id the last message is our 1159: her answer to it is not in yet
+
+
+def test_the_waits_for_her_answer_are_bounded():
+    n = Negotiation(BidPlan(6, 1, 10), [6])
+    assert [decide(n, None, None, False).kind for _ in range(3)] == ["wait", "wait", "walk"]  # she never answers
+    n = neg(bids=[6, 7, 8], opened=(9, 1))
+    n.awaiting_reply = True  # held at her opening, our 8 unanswered
+    assert [decide(n, 9, 5, False).kind for _ in range(3)] == ["wait", "wait", "walk"]
+
+
+def test_at_our_max_we_wait_for_her_answer_before_walking():
+    n = neg(start=12, max_price=14, bids=[12, 13, 14], opened=(17, 0))
+    n.awaiting_reply = True  # our max 14 is unanswered: it may be a "Deal!"
+    assert decide(n, 17, 5, False) == Move("wait", reason="her answer to our max bid is not in yet")
+    n.awaiting_reply = False
+    assert decide(n, 17, 5, False) == Move("walk", reason="no higher bid left inside our limit")

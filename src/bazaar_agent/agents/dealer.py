@@ -63,6 +63,8 @@ class Negotiation:
     lowest_ask: int | None = None
     bids_at_opening: int = 0  # bids we had sent when her opening ask appeared; later ones are counters
     awaiting_reply: bool = False  # the thread's last message is ours: her answer to our last bid is not in yet
+    waits: int = 0  # ticks we waited for her answer to our latest bid (`patient`)
+    waited_after: int = 0  # how many bids we had sent when that count started
 
     def next_bid(self) -> int | None:
         """A strictly higher price than our last bid, capped at the limit; None when spent."""
@@ -112,12 +114,25 @@ def counter_below(neg: Negotiation, ask: int) -> Move:
     return Move("bid", price, reason=f"counter below her unconceded ask {ask}")
 
 
+MAX_WAITS = 2  # the feed: every answered bid was answered within 0-1 tick; ~2 % of first bids never were
+
+
+def patient(neg: Negotiation, waiting: bool, reason: str) -> Move | None:
+    """A one-tick wait for her answer while `waiting` (her answer may be a "Deal!"), at most `MAX_WAITS`
+    ticks in a row; None when we should act now."""
+    if neg.waited_after != len(neg.bids):  # a new bid went out since: a fresh wait for her answer to it
+        neg.waits, neg.waited_after = 0, len(neg.bids)
+    if waiting and neg.waits < MAX_WAITS:
+        neg.waits += 1
+        return Move("wait", reason=reason)
+    return None
+
+
 def held_walk(neg: Negotiation, reason: str) -> Move:
     """She held her opening ask: walk and reopen lower. Unless her answer to our last bid is not in yet (it
-    may be a "Deal!" at that bid): then wait one tick for it."""
-    if neg.awaiting_reply:
-        return Move("wait", reason="her answer to our last bid is not in yet")
-    return Move("walk", reason=reason, reopen=True)
+    may be a "Deal!" at that bid): then wait for it, at most `MAX_WAITS` ticks."""
+    wait = patient(neg, neg.awaiting_reply, "her answer to our last bid is not in yet")
+    return wait or Move("walk", reason=reason, reopen=True)
 
 
 def reopen_start(neg: Negotiation) -> int | None:
@@ -145,7 +160,8 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
     neg.see_ask(ask)
     if ask is None and neg.bids and neg.opening_ask is None:  # a second bid before her first ask is blind
-        return Move("wait", reason="waiting for her first ask")
+        wait = patient(neg, True, "waiting for her first ask")
+        return wait or Move("walk", reason=f"no ask from her after {MAX_WAITS} ticks")
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
         if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
@@ -156,8 +172,9 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             return counter_below(neg, ask)
         if final:
             return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
-    if nxt is None:
-        return Move("walk", reason="no higher bid left inside our limit")
+    if nxt is None:  # our max is bid: her answer to it may still be a "Deal!"
+        wait = patient(neg, neg.awaiting_reply, "her answer to our max bid is not in yet")
+        return wait or Move("walk", reason="no higher bid left inside our limit")
     cap = neg.bid_cap()
     if cap is not None and nxt > cap:  # e.g. no ask of hers stands this tick: never bid up to her opening
         if cap > (neg.bids[-1] if neg.bids else 0):
@@ -239,6 +256,9 @@ def see_history(neg: Negotiation, thread: dict[str, Any], dealer: str, item: str
         o = m.get("offer")
         if isinstance(o, dict) and o.get("maker") == dealer and offer_terms_problem(o, item) is None:
             neg.see_ask(offer_cash(o))
+    # The real API lists a slow reply AFTER our next bid (thread 187): order by message id when every one has it.
+    if all(isinstance(m.get("id"), int) for m in messages):
+        messages = sorted(messages, key=lambda m: int(m["id"]))
     senders = [m.get("sender") for m in messages if m.get("sender")]
     neg.awaiting_reply = bool(senders) and senders[-1] != dealer
 

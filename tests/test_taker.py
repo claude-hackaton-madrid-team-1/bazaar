@@ -469,3 +469,21 @@ def test_a_refused_walk_rereads_the_thread_and_books_a_deal_that_landed_first(tm
     her(team, 5000, dealer_ask(800, 19))  # her opening 19, one above our 18: we walk
     t.on_tick(at(team, TICK + 1))
     assert t.convs == {} and t.reopen_at == {} and ledger.spent_since(0) == 18
+
+
+def test_a_refused_walk_whose_close_did_land_still_reopens_lower(tmp_path):
+    # The close went through but its answer was lost: the thread reads closed. She held her opening, so the
+    # next thread still starts lower (security audit #72 round 3, F4c).
+    from bazaar_agent.sdk import BazaarError
+
+    class LostAnswer(FakeTeam):
+        def close_thread(self, tid):
+            her(self, tid, dealer_ask(800, 19, status="cancelled"), status="closed")
+            raise BazaarError("network", "connection reset", 0)
+
+    team = LostAnswer()
+    t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    her(team, 5000, dealer_ask(800, 19))
+    t.on_tick(at(team, TICK + 1))
+    assert t.convs == {} and t.reopen_at == {("abuela", "LAV-08"): 17} and ledger.spent_since(0) == 0
