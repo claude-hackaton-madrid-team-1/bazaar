@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from bazaar_sim import catalog
+from bazaar_sim import bench, catalog
 from bazaar_sim.errors import SimError, not_found, wait_for_tick
 from bazaar_sim.models import Asset, ClockState, Event, Team, Venue, WorldState
 
@@ -62,11 +62,19 @@ class SimConfig:
     bench_first_tick: int = 30
     bench_every_ticks: int = 120
     bench_ticks: int = 16
+    bench_preset: str = "static"  # bench.PRESETS: static (the first simulator's book, the default), normal, hard
+    bench_match_rule: str = "quote"  # what a broker's bench match must cross at: quote or limit
+    bench_hard_every: int = 0  # every n-th Market Test is the hard one (0: never)
     idle_ticks: int = 40
     venue_live_ticks: int = 0
     rivals_enabled: bool = True
     rival_inbound_threads: bool = False  # one rival opens a silent team thread to each player (slot pressure)
     limits: dict[str, int] = field(default_factory=lambda: dict(LIMITS))
+
+    def __post_init__(self) -> None:
+        bench.preset(self.bench_preset)  # a typo in SIM_BENCH_PRESET or SIM_BENCH_MATCH_RULE fails at boot
+        if self.bench_match_rule not in bench.MATCH_RULES:
+            raise ValueError(f"unknown bench match rule {self.bench_match_rule!r} (one of quote, limit)")
 
     @classmethod
     def from_env(cls) -> SimConfig:
@@ -83,6 +91,9 @@ class SimConfig:
             bench_first_tick=_env_int("SIM_BENCH_FIRST_TICK", 30),
             bench_every_ticks=max(5, _env_int("SIM_BENCH_EVERY_TICKS", 120)),
             bench_ticks=max(2, _env_int("SIM_BENCH_TICKS", 16)),
+            bench_preset=os.environ.get("SIM_BENCH_PRESET") or "static",
+            bench_match_rule=os.environ.get("SIM_BENCH_MATCH_RULE") or "quote",
+            bench_hard_every=max(0, _env_int("SIM_BENCH_HARD_EVERY", 0)),
             idle_ticks=max(5, _env_int("SIM_IDLE_TICKS", 40)),
             venue_live_ticks=max(0, _env_int("SIM_VENUE_LIVE_TICKS", 0)),
             rival_inbound_threads=_env_int("SIM_RIVAL_INBOUND_THREADS", 0) == 1,
