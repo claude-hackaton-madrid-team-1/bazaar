@@ -106,7 +106,7 @@ class LearningStore:
         self._down = False
         self._tick: int | None = None
         self._tried_tick: int | None = None
-        self._initialised = False
+        self._init_tried = False
         self.memory: dict[str, Learning] = {}
 
     # ---------------------------------------------------------------- connection (DecisionLog's pattern)
@@ -127,9 +127,7 @@ class LearningStore:
         self._tried_tick = self._tick
         try:
             conn = self._connect()
-            if self._init is not None and not self._initialised:
-                self._init(conn)  # the learnings columns (idempotent; once per process)
-                self._initialised = True
+            self._init_once(conn)
             conn.autocommit = True
         except Exception as e:
             if not self._down:
@@ -140,6 +138,22 @@ class LearningStore:
             self._log("learnings: Postgres back")
         self._conn, self._down = conn, False
         return conn
+
+    def open(self) -> str:
+        """Connect (and apply the schema) now, at process start, so no tick ever waits on it."""
+        return self.where
+
+    def _init_once(self, conn: psycopg.Connection) -> None:
+        """The learnings columns (idempotent `init_schema`), tried once per process: on failure the table is
+        used as it is, and a missing column only sends writes to memory."""
+        if self._init is None or self._init_tried:
+            return
+        self._init_tried = True
+        try:
+            self._init(conn)
+        except Exception as e:
+            self._log(f"learnings: schema init failed ({type(e).__name__}); using the table as it is")
+            conn.rollback()
 
     def _failed(self, what: str, error: Exception) -> None:
         self._log(f"learnings: {what} failed in Postgres ({type(error).__name__}); memory only this tick")

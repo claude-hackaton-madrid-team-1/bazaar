@@ -1325,7 +1325,9 @@ def _run_agent(
         from bazaar_agent.learn.live import LiveLearner
         from bazaar_agent.learn.store import LearningStore
 
-        extra["learner"] = LiveLearner(LearningStore(connect, log, init_schema=db.init_schema), log)
+        store = LearningStore(connect, log, init_schema=db.init_schema)
+        log(f"{name}: learnings {store.open()}")  # connect and apply the schema now, never inside a tick
+        extra["learner"] = LiveLearner(store, log)
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
