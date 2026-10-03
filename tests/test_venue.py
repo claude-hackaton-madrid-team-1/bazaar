@@ -374,3 +374,20 @@ def test_a_process_gives_back_only_its_own_claim_and_renews_it():
     assert ("", "_claim") in store and store[("", "_claim")][0] == a.owner  # b cannot drop a's claim
     assert a.claim(410)  # ours: renewed, not blocked
     assert a.owner.startswith("claim-") and not a.owner.startswith(("bk_", "simbk-"))
+
+
+def test_venue_writes_read_the_kill_switch_live_from_the_file(tmp_path, monkeypatch):
+    """Review round 6, P2: GUARDRAILS.md flipped to trading_enabled = false, no restart: no opening, fee,
+    announcement or close goes out, even though the loaded rules still say true."""
+    stopped = tmp_path / "GUARDRAILS.stopped.md"
+    stopped.write_text(gr.GUARDRAILS_FILE.read_text().replace("`trading_enabled` = true", "`trading_enabled` = false"))
+    monkeypatch.setattr(gr, "GUARDRAILS_FILE", stopped)
+    team, broker, on = FakeTeam(), FakeBroker(), rules(tmp_path, allow_venue_open=True)
+    assert on.trading_enabled is True  # the loaded rules: only the live read stops it
+    assert vn.venue_context(on, {"tick": 1, "t_hours": 7.0}).stops
+    outcome, opened = vn.open_venue(team, SPEC, on, live=True, vault=vault(tmp_path))
+    assert opened is None and "trading_enabled = false" in str(outcome.verdict)
+    assert not vn.set_fee(team, "v07", vn.FeeSpec(fee_bps=50), on, live=True).sent
+    assert not vn.announce(broker, {"tick": 1}, vn.Announcement(text="hi"), on, live=True).sent
+    assert not vn.close_venue(team, "v07", on, live=True).sent
+    assert team.sent == [] and broker.sent == []
