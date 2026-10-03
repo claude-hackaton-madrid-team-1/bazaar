@@ -1,7 +1,7 @@
 # SP1 — Speed: every agent finishes its tick inside Sunday's 15 s  (per-task spec)
 
 - Task id: SP1 (local backlog; coordinator task `task_d75f80cadcbc`)
-- Status: **in review** — measurements done (Sat 05:50); fixes PR open; step 6 (port onto #105 after the 09:30 merges) left
+- Status: **in review** (PR #157) — measured Sat 05:20-06:20; rebased onto main with #105 #91 #108 #72 (step 6 done)
 - Backlog source: local (`.ai/specs`). Traces up to: [`01-spec.md`](./01-spec.md) · Indexed in: [`02-plan.md`](./02-plan.md)
 
 ## Goal
@@ -26,8 +26,9 @@ then cut the hot spots in our code without changing a single move.
   key's busiest second — pasted in the PR.
 - [x] 3. The taker reuses a Jev answer for an unchanged state (offer accept, pack slot), tick and game hour
   aside, for `jev_cache_ticks` ticks; a failed call is asked again next tick; 0 turns it off.
-- [x] 4. Each tick's independent reads (/me, our offers and threads, dealers, catalog, venues, feed, each
-  venue's board, each dealer thread) go out together (`parallel_reads`); the decision waits for all of them.
+- [x] 4. Each tick's independent reads go out together (`parallel_reads`): the public ones (dealers, catalog,
+  venues, feed, each venue's board) at once, the keyed ones (/me or its snapshot, our offers, open threads, dealer
+  threads) one at a time beside them; the decision waits for all of them.
 - [x] 5. Tests prove identical moves: the same ticks with the speed rules off and on send the same writes
   and record the same decisions.
 - [x] 6. Both behaviours sit behind GUARDRAILS.md lines (`jev_cache_ticks`, `parallel_reads`): code built
@@ -46,15 +47,19 @@ taker + maker + duels together, real Jev, local Postgres. Wall time per tick, p5
 | run5 (40) | +250 ms | +1 s | fixed | 0.53 / 1.85 / 2.71 | 0.27 / 1.78 / 3.46 | 2.04 / 2.16 / 2.35 | 0 | 0 | 9 / 0.66 per s |
 | run6 (30), busy rules³ | +250 ms | +1 s | base | 3.31 / 3.79 / 4.13 | 1.54 / 3.04 / 6.71 | 2.06 / 2.17 / 2.17 | 0 | 0 | 8 / 0.69 per s |
 | run7 (30), busy rules³ | +250 ms | +1 s | fixed | 0.53 / 2.33 / 2.58 | 0.27 / 1.78 / 5.13 | 2.05 / 2.11 / 2.11 | 0 | 0 | 9 / 0.69 per s |
+| run8 (30), busy rules³ | +250 ms | +1 s | fixed, keyed lane⁴ | 1.06 / 2.84 / 3.26 | 0.53 / 2.04 / 5.61 | 2.08 / 2.20 / 2.22 | 0 | 0 | 9 / 0.69 per s |
 
 ¹ run3's maker started before its parallel read was ported (a control). ² tick 0 (start-up: first Jev call 1.7 s, every
-stage stalled ~1.4 s at once). ³ no venue bond reserve, spend and price caps raised.
+stage stalled ~1.4 s at once). ³ no venue bond reserve, spend and price caps raised. ⁴ the shipped version (PR #157
+security review): keyed reads (/me, our offers, open threads, dealer threads) one at a time in their own lane beside
+the parallel public reads, so a drained key budget never sees a synchronized burst of retries; with the bucket drained
+on the simulator's real limiter a snapshot reads ok after 5-6 keyed attempts with and without `parallel_reads`.
 
 The taker asked Jev `spend_pack_slot_now` on every tick for the same state: 40 calls in 40 ticks (base), 12-13 with the
 cache. The taker in the simulator stays mostly idle (spend caps, few dealer cards), so the busy case was also measured
 with the real `Taker` over fakes that sleep 250 ms per request and 1.3 s per Jev call (3 venues, 3 dealers, 4 board asks):
-**6.70 s p50 per tick with the rules off, 2.33 s on** (max 6.95 / 5.19 s; the max is the tick a cached answer expires), the
-same 10 writes. At 100 ms / 0.3 s: 2.05 s → 0.73 s.
+**6.74 s p50 per tick with the rules off, 2.86 s on** with the keyed lane (2.33 s with every read parallel; max 7.02 /
+5.73 s, the tick a cached answer expires), the same 10 writes. At 100 ms / 0.3 s: 2.09 s → 0.97 s.
 
 Not hot (measured): Postgres per tick 14-280 ms in total (p95 per statement 3-6 ms locally), recall 5-60 ms per call,
 `/me` from the snapshot (#105) ~110-260 ms (a live read at the injected latency). The duel player is bounded by its own

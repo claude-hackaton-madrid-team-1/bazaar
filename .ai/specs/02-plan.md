@@ -427,8 +427,8 @@ Files: `scripts/tick_profile.py`, `src/bazaar_agent/agents/{jev_cache,runtime,ta
   · **Acceptance:** identical writes with the rule off and on; reads in flight together (barrier test).
 - Step 5 — Re-measure the scratch merge with the fixes; request budget across the three agents under 5 req/s.
   · **Acceptance:** before/after table in the PR body.
-- Step 6 — After the 09:30 merges: rebase, port the reads onto #105's `/me` snapshot (holdings read in the
-  same batch), re-run the gate. · **Acceptance:** gate green on the rebased branch.
+- Step 6 — Rebase onto #105's `/me` snapshot (holdings read first in the keyed lane), #91, #108 and #72's kill switch;
+  re-run the gate. · **Acceptance:** gate green on the rebased branch (done Sat 06:20).
 
 ---
 
