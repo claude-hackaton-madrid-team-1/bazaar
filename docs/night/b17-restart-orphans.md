@@ -39,7 +39,7 @@ ticks after they are made). `TakerConfig`: `orphan_after_ticks = 3`, `restart_lo
 
 - The two r2 bite tests flip (copied from `night/r2-bite-hunter` @ 51a9314 with their xfail marks removed): they fail
   on #72 (`ledger spend 0`, `orphan thread 40 never read nor closed in 3 ticks`) and pass here.
-- `tests/test_taker_restart.py` (18 tests + 1 Postgres integration test): r1's three cases (a deal after the new
+- `tests/test_taker_restart.py` (16 tests + 1 Postgres integration test): r1's three cases (a deal after the new
   process's first tick is booked; two overlapping takers book it once, 18 not 36; a deal behind 16 walked threads is
   booked on the first tick); a thread the taker never drove is never read or closed, even quiet for 8 ticks; a
   watched thread with fresh bids is left alone; the quiet close waits 3 ticks; the kill switch holds it and its ticks
