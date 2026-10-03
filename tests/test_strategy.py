@@ -125,6 +125,8 @@ PARAMS = strategy.StrategyParams(
     rare_fallback_price=70,
     pack_price_estimate=17,
     max_moves=12,
+    ladder_floor_quantile=0.0,
+    ladder_level_deals=0,
 )
 RULES = Guardrails()
 
@@ -536,10 +538,19 @@ def test_ladder_level_deals_routes_card_buys_to_the_newest_dealer_until_it_has_e
         return next(mv for mv in moves if mv.ref == "LAV-08")
 
     assert lav08(m, PARAMS, capped).source == "abuela"  # off (0): the cheapest dealer
-    assert lav08(m, on, capped).source == "chato" and "level_unlock" in lav08(m, on, capped).strategy
+    routed = lav08(m, on, capped)
+    assert routed.source == "chato" and "level_unlock" in routed.strategy
     assert lav08(m, on, RULES).source == "abuela"  # Chato's plan is above max_price_uncommon 26: no route
     done = [
         settle(30 + i, 20 + i, "chato", "t01", "LAT-06", 28, tick=7, kind="card", persona="chato") for i in range(3)
     ]
     m_done = strategy.build_market(me, CATALOG, [*EVENTS, chato_fill, *done], [ABUELA, chato])
     assert lav08(m_done, on, capped).source == "abuela"  # three deals with Chato: back to the cheapest
+
+    # two missing uncommons, one Chato deal still needed: only the best-scored card goes to Chato
+    catalog = deepcopy(CATALOG)
+    catalog["sets"][0]["cards"].append(card("LAV-07", "uncommon", 9))
+    m_two = strategy.build_market(me, catalog, [*EVENTS, chato_fill, *done[:2]], [ABUELA, chato])
+    moves, _ = strategy.buy_moves(m_two, on, capped)
+    sources = {mv.ref: mv.source for mv in moves if mv.ref in ("LAV-07", "LAV-08")}
+    assert sorted(sources.values()) == ["abuela", "chato"]
