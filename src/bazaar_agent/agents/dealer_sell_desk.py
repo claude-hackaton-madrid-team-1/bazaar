@@ -464,7 +464,10 @@ class SellDesk:
         for t in market.traders:
             if t.deals_per_hour is not None and sum(d == t.id for _, d in self.opened_at) >= t.deals_per_hour:
                 busy.add(t.id)
-        personas, fever = self.persona_inputs(snap)
+        try:  # a hostile persona never costs the sell desk its tick: today's ranking then
+            personas, fever = self.persona_inputs(snap)
+        except Exception:  # noqa: BLE001
+            personas, fever = None, None
         found = candidates(
             snap.me,
             snap.catalog,

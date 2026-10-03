@@ -33,8 +33,9 @@ class PersonaBook:
         self.write, self.log, self.every = write, log, every
         self.personas: dict[str, Persona] = {}
         self._signature: str | None = None
-        self._stored: str | None = None  # the signature last handed to the writer
+        self._stored: str | None = None  # the signature last stored
         self._stored_tick: int | None = None
+        self._attempted: str | None = None  # the signature last handed to the writer (stored or not)
         self._worker: threading.Thread | None = None
 
     def observe(self, dealers: Sequence[Any], tick: int) -> dict[str, Persona]:
@@ -53,7 +54,7 @@ class PersonaBook:
     def _due(self, tick: int, dealers: Sequence[Any]) -> bool:
         if self._stored_tick is None or tick - self._stored_tick >= self.every:
             return True
-        stored_ids = {str(d.get("id")) for d in json.loads(self._stored or "[]")}
+        stored_ids = {str(d.get("id")) for d in json.loads(self._attempted or "[]")}  # our own json.dumps output
         return any(isinstance(d, dict) and str(d.get("id")) not in stored_ids for d in dealers)
 
     def _store(self, dealers: Sequence[Any], sig: str, tick: int) -> None:
@@ -66,9 +67,10 @@ class PersonaBook:
         def run() -> None:
             try:
                 write(snaps, tick)
+                self._stored = sig  # only a stored payload counts: a failed write is retried when it is due
             except Exception as e:  # noqa: BLE001 — storage is for reading later; never a reason to stop trading
                 self.log(f"tick {tick} personas: snapshot not stored ({type(e).__name__})")
 
-        self._stored, self._stored_tick = sig, tick
+        self._stored_tick, self._attempted = tick, sig
         self._worker = threading.Thread(target=run, name="persona-store", daemon=True)
         self._worker.start()

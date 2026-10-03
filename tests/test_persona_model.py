@@ -404,3 +404,39 @@ def test_sell_weight_ignores_a_negative_fever(pilar: pm.Persona) -> None:
 def test_sell_weight_zero_when_the_menu_does_not_buy(chato: pm.Persona) -> None:
     assert pm.sell_weight(chato, "common", "LAV", {}) == 0.0
     assert pm.sell_weight(chato, None, None, {}) == 0.0
+
+
+# ---------------------------------------------------------------- security review of #195: hostile payloads
+
+import json as _json  # noqa: E402
+
+from bazaar_agent.persona_model import parse_personas as _parse  # noqa: E402
+
+HOSTILE = [
+    '{"id": "x", "level": 1e400}',
+    '{"id": "x", "menu": {"deals_per_team_per_hour": Infinity}}',
+    '{"id": "x", "menu": {"sells": 5}}',
+    '{"id": "x", "menu": {"buys": true}}',
+    '{"id": "x", "menu": {"sells": [{"rarity": "rare", "list_price": 1' + "0" * 400 + "}]}}",
+    '{"id": "x", "menu": {"sells": [{"rarity": "rare", "list_price": NaN}]}}',
+    '{"id": "\\ud83d", "level": 1}',
+    '{"id": "x", "unlock": {"early_deals_with": 7, "early_min_deals": -1e400}}',
+]
+
+
+def test_a_hostile_persona_never_raises_and_never_prices() -> None:
+    from bazaar_agent.persona_model import trait_prior
+
+    for text in HOSTILE:
+        out = _parse([_json.loads(text)])
+        for p in out.values():
+            for line in p.sells:
+                trait_prior(p, line.item)
+            assert p.sells == () or all(0 < s.list_price <= 10**6 for s in p.sells)
+    assert _parse([_json.loads(HOSTILE[6])]) == {}
+
+
+def test_a_repeated_persona_id_keeps_the_first_payload() -> None:
+    first = {"id": "abuela", "menu": {"deals_per_team_per_hour": 8}}
+    second = {"id": "abuela", "menu": {"deals_per_team_per_hour": 0}}
+    assert _parse([first, second])["abuela"].deals_per_team_per_hour == 8

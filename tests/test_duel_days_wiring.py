@@ -30,8 +30,9 @@ def duel(meaning: str | None = SIM_TEXT, weight: float = 2.0) -> dict:
     }
 
 
-# A finished real deal whose score shows +2 P a day (5 days, 2 rounds at 0.08): the second signal the latch needs.
-SCORED = duel() | {"duel": 9, "status": "deal", "price": 120, "days": 5, "rounds": 2, "result": round(30 * 0.92**2, 1)}
+# A finished real deal whose score shows +2 P a day (3 days, 2 rounds at 0.08): the second signal the latch needs.
+# (Day 5 cannot tell a scorer counting days up from one counting them back from 10: never a signal, #165 r1.)
+SCORED = duel() | {"duel": 9, "status": "deal", "price": 120, "days": 3, "rounds": 2, "result": round(26 * 0.92**2, 1)}
 
 
 def tick_rules(rules: gr.Guardrails, switch: dd.DaysSwitch, d: dict, real: bool) -> gr.Guardrails:

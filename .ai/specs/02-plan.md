@@ -120,7 +120,7 @@ negotiates well.
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
 | [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
-| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
+| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 Marius's duel PRs merged as #150 (Sat 06:50): two-issue offers strictly inside the limit, v2 + B11 + days latch behind flags; `duel_policy` = v2 LIVE since #170 (Omar, Sat ~10:00; Jev had been undecided at 0.76) and B11 (min share 0.3, endgame 1) since #174; `duel_days_auto` OFF; sim harness #151 merged (Sat 10:42); pre-flip latch hardening #165 for the 23:00 window; duel-log surrogate fix #173 merged (Sat 11:08, emergency); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
@@ -274,6 +274,10 @@ rebased on `main` after the previous one merges.
   = '5s'` · reconnect with a plain connect (schema on the first connection only) · `LedgerUnavailable` in
   `dealer buy` HOLDS the tick (never walks or closes) · `sell` exits cleanly on an outage · reply to the
   private-IP Greptile P1 (false for us). · **Acceptance:** tests, gate, sim smoke, `/pr-review` APPROVE.
+- PR72 follow-up (#161, 23:00 window). Steps: the close retry catches any clock-read error, re-reads the thread
+  before it gives up and caps its sleep · a walk refused with a 429 on the last tick is closed on the next one and
+  keeps its lower reopen · the accepted_pending exit re-reads · `reread` never raises. · **Acceptance:** each fix has
+  a test that fails on `main` 90191ec; gate + sim smoke; `/pr-review` APPROVE.
 - PR60 (two-issue duels). Steps: drop `round()` in the inside-limit checks · finite `_number` for days in
   `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
   raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
@@ -418,6 +422,24 @@ per PR (his history carried our private numbers), authored by him; the fixes fol
   page bonus from FREE copies (P1) · the bid parser refuses `want.assets` and unknown keys, main's
   `market.parse_offer` too (P1) · the sell path re-reads the kill switch after the duel-grace wait (P1) · the
   `taker.py` import conflict (P1) · `accept_bids` stays off. · **Acceptance:** as above.
+
+### SP1 — Speed: every agent inside Sunday's 15 s tick ([spec](SP1-spec.md))
+Files: `scripts/tick_profile.py`, `src/bazaar_agent/agents/{jev_cache,runtime,taker}.py`, `src/bazaar_agent/pack_gate.py`,
+`src/bazaar_agent/guardrails.py`, `GUARDRAILS.md`, `tests/test_speed.py`.
+- Step 1 — Profiler: run one agent against a local simulator with per-tick and per-request JSONL; `report`
+  aggregates wall p50/p95/max, over-budget and dropped ticks, stages and the key's busiest second.
+  · **Acceptance:** report pasted for taker + maker + duels at 15 s ticks.
+- Step 2 — Measure on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) at 0, 100 and
+  250 ms per request. · **Acceptance:** numbers in the PR body; hot spots named.
+- Step 3 — Jev answer cache (`jev_cache_ticks`): the taker's offer Jev and the pack gate reuse an answer for an
+  unchanged state. · **Acceptance:** `tests/test_speed.py` identical decisions, fewer calls.
+- Step 4 — Concurrent reads (`parallel_reads`): snapshot + open threads, venue boards, dealer threads.
+  · **Acceptance:** identical writes with the rule off and on; reads in flight together (barrier test).
+- Step 5 — Re-measure the scratch merge with the fixes; request budget across the three agents under 5 req/s.
+  · **Acceptance:** before/after table in the PR body.
+- Step 6 — Rebase onto main as the Sunday PRs land (#105 /me snapshot first in the keyed lane, #91, #108, #72 kill
+  switch, #145, #89, #148, #96 lessons behind the cache, #112, #150, #162 ledger, #111); re-run the gate.
+  · **Acceptance:** gate green on the rebased branch (done Sat 07:10).
 
 ---
 

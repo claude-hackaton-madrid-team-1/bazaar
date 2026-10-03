@@ -125,13 +125,39 @@ class Persona:
         return frozenset(s for b in self.buys if b.sets is not None for s in b.sets)
 
 
+MAX_NUMBER = 10**6  # a persona number above this (or inf, NaN) is not a price, a level or a quota: ignored
+MAX_LINES = 64  # menu lines read per persona
+MAX_PERSONAS = 64
+ID_MAX = 40
+
+
 def _int(value: Any) -> int | None:
-    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0 else None
+    """A whole number in [0, MAX_NUMBER] from untrusted JSON (bool, inf, NaN, huge or negative: None)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return int(value) if 0 <= value <= MAX_NUMBER else None
+
+
+def _list(value: Any) -> list[Any]:
+    return value[:MAX_LINES] if isinstance(value, list) else []
+
+
+def _text(value: Any, cap: int) -> str | None:
+    """A printable id or name: truncated, and None when it does not encode (a lone surrogate)."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    return value[:cap]
 
 
 def _sets(raw: Any) -> tuple[str, ...] | None:
     if isinstance(raw, list):
-        return tuple(str(s)[:8] for s in raw if isinstance(s, str))
+        return tuple(s[:8] for s in raw[:MAX_LINES] if isinstance(s, str))
     if isinstance(raw, str) and raw not in ("released", "all"):
         return (raw[:8],)
     return None
@@ -143,17 +169,17 @@ def _rarities(raw: Any) -> list[str]:
 
 def parse_persona(raw: Mapping[str, Any]) -> Persona | None:
     """One persona payload (untrusted) → a Persona; None without an id."""
-    pid = raw.get("id")
-    if not isinstance(pid, str) or not pid:
+    pid = _text(raw.get("id"), ID_MAX)
+    if pid is None:
         return None
     raw_menu = raw.get("menu")
     menu: Mapping[str, Any] = raw_menu if isinstance(raw_menu, Mapping) else {}
     sells: list[SellLine] = []
-    for s in menu.get("sells") or []:
+    for s in _list(menu.get("sells")):
         if not isinstance(s, Mapping):
             continue
-        item, price = s.get("pack") or s.get("rarity"), _int(s.get("list_price"))
-        if isinstance(item, str) and price:
+        item, price = _text(s.get("pack") or s.get("rarity"), ID_MAX), _int(s.get("list_price"))
+        if item is not None and price:
             sells.append(
                 SellLine(
                     item, price, _int(s.get("opening_ask")), _int(s.get("per_team_per_hour")), _sets(s.get("sets"))
@@ -161,26 +187,26 @@ def parse_persona(raw: Mapping[str, Any]) -> Persona | None:
             )
     buys = [
         BuyLine(r, _sets(b.get("sets")))
-        for b in menu.get("buys") or []
+        for b in _list(menu.get("buys"))
         if isinstance(b, Mapping)
         for r in _rarities(b.get("rarity"))
     ]
     raw_unlock = raw.get("unlock")
     un: Mapping[str, Any] = raw_unlock if isinstance(raw_unlock, Mapping) else {}
-    early = un.get("early_deals_with")
+    early = _text(un.get("early_deals_with"), ID_MAX)
     unlock = Unlock(
         always=un.get("always") is True,
-        early_deals_with=early if isinstance(early, str) and early else None,
+        early_deals_with=early,
         early_min_deals=_int(un.get("early_min_deals")) or 0,
         early_min_level=_int(un.get("early_min_level")) or 0,
         open_to_all=raw.get("open_to_all") is True,
     )
     return Persona(
         id=pid,
-        name=str(raw.get("name") or pid)[:60],
-        kind=str(raw.get("kind") or "dealer"),
+        name=_text(raw.get("name"), 60) or pid,
+        kind=_text(raw.get("kind"), 20) or "dealer",
         level=_int(raw.get("level")) or 0,
-        status=str(raw.get("status") or "unknown"),
+        status=_text(raw.get("status"), 20) or "unknown",
         traits=Traits.of(raw.get("traits")),
         sells=tuple(sells),
         buys=tuple(buys),
@@ -191,10 +217,11 @@ def parse_persona(raw: Mapping[str, Any]) -> Persona | None:
 
 
 def parse_personas(payload: Iterable[Any]) -> dict[str, Persona]:
+    """Every persona with an id; a repeated id keeps its FIRST payload (a second one never overrides it)."""
     out: dict[str, Persona] = {}
-    for raw in payload:
+    for raw in list(payload)[:MAX_PERSONAS]:
         if isinstance(raw, Mapping) and (p := parse_persona(raw)) is not None:
-            out[p.id] = p
+            out.setdefault(p.id, p)
     return out
 
 

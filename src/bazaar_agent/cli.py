@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 from functools import partial
@@ -455,6 +456,44 @@ def swaps(
             f"{r['team']}: our {r['give']} (#{r['asset']}) for their {r['want']} · cash {r['cash_steps']} · "
             f"ours {r['ours']} · theirs {r['theirs']} · fair {r['fair']} · P(fill) {r['p_fill']:.0%}"
         )
+
+
+@app.command("team-checks")
+def team_checks(as_json: bool = typer.Option(False, "--json", help="Print the answers as JSON")) -> None:
+    """Read-only: the N17 spec's Q1-Q6 answered from the shared DB (the feed, our refused sends, thread offers)
+    and the go/no-go for team_threads_enabled. SELECTs in a read-only transaction; nothing is sent."""
+    from dataclasses import asdict
+
+    from rich.markup import escape
+
+    from bazaar_agent import db
+    from bazaar_agent import n17_checks as nc
+
+    events = _history(None, False)  # the shared DB first, as the agents read it
+    us = _our_team() or ""
+    refusals: list[dict[str, Any]] = []
+    offers: list[dict[str, Any]] = []
+    try:
+        with db.connect(app="bazaar-team-checks") as conn:
+            conn.read_only = True  # SELECTs only: any write raises
+            cur = conn.execute("select sdk_method, error_code, tick from executions where error_code is not null")
+            refusals = [{"sdk_method": m, "error_code": c, "tick": t} for m, c, t in cur.fetchall()]
+            # Our thread offers as #148's thread store keeps them (the `offers` table is not written by the agents).
+            cur = conn.execute(
+                "select (m.offer->>'id')::bigint, m.thread_id, m.offer->>'maker', m.offer->>'status' from messages m"
+                " join threads t on t.id = m.thread_id where t.ours and m.offer is not null"
+            )
+            offers = [{"id": i, "thread_id": t, "maker": m, "status": st} for i, t, m, st in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001 — never the URL: a connect error can echo it (.ai/memory.md)
+        err_console.print(f"[yellow]no database ({type(e).__name__}): the feed alone answers[/yellow]")
+    found = nc.answers(events, us, refusals, offers)
+    verdict, why = nc.go_no_go(found)
+    if as_json:
+        typer.echo(json.dumps({"answers": [asdict(a) for a in found], "go_no_go": verdict, "why": why}, indent=2))
+        return
+    for a in found:
+        console.print(f"{a.q} · {a.verdict} · {a.question} · {escape(a.evidence)}", highlight=False)  # no [..]: markup
+    console.print(f"team_threads_enabled: {verdict} · {why}")
 
 
 def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
@@ -1113,6 +1152,7 @@ def duel_run(
     )
     days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
     done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
+    days_failed: list[int] = []  # the last tick the latch failed: its line is printed once per tick
     real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
@@ -1211,14 +1251,37 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
-    def observe_days(rows: list[dict[str, Any]]) -> None:
-        before = days_switch.verdict
-        days_switch.observe(rows, real)
-        if days_switch.verdict != before:
-            console.print(
-                f"  duel days sign: {days_switch.verdict} (duel {escape(str(days_switch.duel))}: "
-                f"{escape(str(days_switch.text))})"
-            )
+    def latch_failed(tick: int, e: Exception) -> None:
+        """This tick's session is unknown (#165 r1 P2): no sign from an older one; one dim line per tick says why."""
+        days_switch.session = None
+        if days_failed[-1:] != [tick]:
+            days_failed[:] = [tick]
+            why = f"{type(e).__name__}: {str(e)[:80]}"
+            console.print(f"[dim]  duel days sign unchanged: the latch failed ({escape(ascii(why)[1:-1])})[/dim]")
+
+    def observe_days(tick: int, rows: list[dict[str, Any]]) -> None:
+        """Feed the days-sign latch. It never costs a tick its moves (#150 security r3): when it raises (a malformed
+        server field, a latch file that cannot be written) the latch keeps the verdict it had before the call, one
+        dim line per tick says why, and the tick goes on. The rollback copy and the verdict line sit inside the
+        protection too (#165 security P3-1, P3-2): a value `deepcopy` cannot copy skips this tick's observe, and a
+        server text is printed through `ascii()`, so a lone surrogate never fails the stdout write."""
+        nonlocal days_switch
+        try:
+            kept = deepcopy(days_switch)
+        except Exception as e:  # noqa: BLE001 - RecursionError on a pathological server value: keep the switch as is
+            latch_failed(tick, e)
+            return
+        try:
+            days_switch.observe(rows, real)
+            if days_switch.verdict != kept.verdict:
+                console.print(
+                    f"  duel days sign: {days_switch.verdict} (duel {escape(ascii(days_switch.duel))}: "
+                    f"{escape(ascii(days_switch.text))})"
+                )
+        except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
+            if days_switch.verdict not in ("cost", "reversed", "conflict"):  # a safer verdict found stays
+                days_switch = kept  # never a half-merged `signed` for the policy and the guard
+            latch_failed(tick, e)
 
     def read_done_days(tick: int) -> None:
         """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
@@ -1226,27 +1289,32 @@ def duel_run(
         if tick % done_every_ticks or not reads_done(rules, days_switch, real):
             return
         try:
-            observe_days([d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
+            observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+            console.print(f"  /api/duels?done=true failed ({type(e).__name__}): the days sign waits")
 
-    def save_finished(tick: int) -> None:
-        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
+    def save_finished(tick: int) -> bool:
+        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result.
+        True when the read was answered or refused (the days latch then needs no read of its own this tick: a
+        refusal such as a 429 waits for a later tick, never a second try in this one)."""
         try:
             data = client.duels(done=True)
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
-            return
+            return True
         except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
-            return
+            return False
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         finished = [d for d in duel_list(data) if d.get("status") != "live"]
         for d in finished:
             if (did := duel_id(d)) is not None:
                 observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
         store.save(tick, finished)
-        observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
+        observe_days(tick, duel_list(data))  # free scored evidence for the days sign: this read happens anyway
+        return True
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -1263,7 +1331,7 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = duel_list(data)
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
-        observe_days(duels)
+        observe_days(c.tick, duels)
         rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
@@ -1436,7 +1504,6 @@ def duel_run(
             if duel_id(d) not in done:
                 play_safely(d)
         duel_traces.end_tick(duel_id(d) for d in duels)
-        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):
@@ -1445,8 +1512,9 @@ def duel_run(
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
-        if store.read_finished(duels):
-            save_finished(c.tick)
+        read = store.read_finished(duels) and save_finished(c.tick)
+        if not read:  # one ?done=true read per tick at most (r1, #159): the days latch reuses the store's
+            read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
             book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
         book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
@@ -2039,11 +2107,11 @@ def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, An
     return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
-def _pack_judge(settings: Any, timeout_s: float) -> Any:
+def _pack_judge(settings: Any, timeout_s: float, cache_ticks: int = 0) -> Any:
     """Jev `spend_pack_slot_now` (questions/packs.json): (verdict, probability of yes) for one pack state."""
     from bazaar_agent.pack_gate import jev_pack_judge
 
-    return jev_pack_judge(settings, timeout_s)
+    return jev_pack_judge(settings, timeout_s, cache_ticks)
 
 
 def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: Any) -> None:
@@ -2654,7 +2722,7 @@ def agent_taker(
             bluff=bluff,
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
-            pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
+            pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
             news=_news_sentinel(kw, settings),

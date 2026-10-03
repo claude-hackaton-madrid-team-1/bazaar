@@ -118,3 +118,21 @@ def test_no_writer_never_spawns_a_thread() -> None:
     book.observe([ABUELA], 0)
     book.observe([ABUELA, CHATO], 20)
     assert book._worker is None
+
+
+def test_a_failed_write_is_retried_when_due_not_every_tick() -> None:
+    from bazaar_agent.agents.persona_book import PersonaBook
+
+    calls: list[int] = []
+
+    def boom(snaps: list, tick: int) -> None:
+        calls.append(tick)
+        raise RuntimeError("db down")
+
+    book = PersonaBook(boom, lambda line: None)
+    payload = [{"id": "abuela", "traits": {"patience": 0.5}}]
+    for tick in range(100, 112):
+        book.observe(payload, tick)
+        if book._worker is not None:
+            book._worker.join(1)
+    assert calls == [100, 110]

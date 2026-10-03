@@ -491,3 +491,43 @@ def test_a_runtime_duel_accept_is_refused_when_the_rival_moved_and_the_slot_stay
     assert refused["status"] == "rejected" and "moved against us: we priced 90" in refused["reason"]
     assert refused["inspector"]["words"] == "the words name 90 P; the structure binds 60"
     assert ("duel_accept", 7) not in team.sent and b.ledger.accepts_in_tick(team.now.tick) == 0
+
+
+# ---------------------------------------------------------------- the kill switch on the runtime duel path (#165 P3-5)
+
+
+def endgame_duel_backend(tmp_path, monkeypatch, policy):
+    """One duel the runtime accepts at tick 107 (the rival's 90 against our cost 50, deadline 110), under `policy`,
+    with our own GUARDRAILS.md copy and pause file (never the checkout's .local/PAUSE)."""
+    (tmp_path / "switch").mkdir()
+    switch = Switch(tmp_path / "switch", monkeypatch)
+    team, rules = Team(duels=[DUEL]), Guardrails(duel_policy=policy, pause_file=str(switch.pause))
+    return backend(tmp_path, live=True, team=team, rules=rules, public=Public(now=clock(tick=107))), team, switch
+
+
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+@pytest.mark.parametrize("stop", ["trading", "pause"])
+def test_the_kill_switch_stops_a_runtime_duel_accept(tmp_path, monkeypatch, policy, stop):
+    b, team, switch = endgame_duel_backend(tmp_path, monkeypatch, policy)
+    if stop == "trading":
+        switch.trading(False)
+    else:
+        switch.paused(True)
+    refused, failed = run(b, "duel_move", {"duel_id": 7})
+    reason = "trading_enabled = false" if stop == "trading" else f"pause file {switch.pause} exists"
+    assert not failed and refused["status"] == "rejected" and reason in refused["guardrail"], refused
+    assert team.sent == [] and b.ledger.accepts_in_tick(107) == 0  # nothing sent, no accept slot booked
+    switch.trading(True)  # the same backend, the switch off again: the very accept it held goes out
+    switch.paused(False)
+    accepted, _ = run(b, "duel_move", {"duel_id": 7})
+    assert accepted["status"] == "done" and team.sent == [("duel_accept", 7)]
+
+
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+def test_with_the_kill_switch_off_the_runtime_duel_accept_goes_out(tmp_path, monkeypatch, policy):
+    b, team, switch = endgame_duel_backend(tmp_path, monkeypatch, policy)
+    switch.trading(True)
+    switch.paused(False)
+    accepted, failed = run(b, "duel_move", {"duel_id": 7})
+    assert not failed and accepted["status"] == "done" and accepted["guardrail"] == "allowed", accepted
+    assert team.sent == [("duel_accept", 7)]
