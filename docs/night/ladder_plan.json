@@ -1,0 +1,771 @@
+{
+ "what_if_caps": null,
+ "source": "Friday snapshot tests/fixtures/evals/dealer_threads.json (273 dealer threads)",
+ "conversations": 273,
+ "window": {
+  "wall_start": "09:00",
+  "minutes": 90,
+  "tick_seconds": 30.0,
+  "ticks": 180,
+  "t_start": 4.0
+ },
+ "budget": {
+  "cash_at_open": 353,
+  "grants": [
+   {
+    "tick": 6,
+    "wall": "09:03:00",
+    "cash": 150
+   }
+  ],
+  "cash_floor": 270,
+  "max_spend_per_game_hour": 150,
+  "max_packs_per_game_hour": 3
+ },
+ "quotas": {
+  "abuela": {
+   "level": 1,
+   "deals_per_hour": 8,
+   "packs_per_hour": {
+    "sobre_barrio": 3
+   }
+  },
+  "chato": {
+   "level": 2,
+   "deals_per_hour": 6,
+   "packs_per_hour": {
+    "sobre_plata": 2,
+    "sobre_oro": 1
+   }
+  }
+ },
+ "floor_table": [
+  {
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "opening": 12,
+   "conversations": 31,
+   "closed": 25,
+   "fills": 25,
+   "floor_p10": 8,
+   "floor_p25": 9,
+   "floor_p50": 10,
+   "floor_p75": 10,
+   "floor_p90": 10,
+   "patience_median": null,
+   "first_drop_median": 2.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "opening": 7,
+   "conversations": 4,
+   "closed": 2,
+   "fills": 3,
+   "floor_p10": 7,
+   "floor_p25": 7,
+   "floor_p50": 7,
+   "floor_p75": 7,
+   "floor_p90": 7,
+   "patience_median": null,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "opening": 29,
+   "conversations": 58,
+   "closed": 37,
+   "fills": 32,
+   "floor_p10": 21,
+   "floor_p25": 22,
+   "floor_p50": 23,
+   "floor_p75": 24,
+   "floor_p90": 25,
+   "patience_median": 5.0,
+   "first_drop_median": 3.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "opening": 17,
+   "conversations": 5,
+   "closed": 4,
+   "fills": 5,
+   "floor_p10": 17,
+   "floor_p25": 17,
+   "floor_p50": 17,
+   "floor_p75": 17,
+   "floor_p90": 17,
+   "patience_median": null,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "pack:sobre_barrio",
+   "opening": 30,
+   "conversations": 51,
+   "closed": 34,
+   "fills": 24,
+   "floor_p10": 20,
+   "floor_p25": 21,
+   "floor_p50": 22,
+   "floor_p75": 23,
+   "floor_p90": 24,
+   "patience_median": 5.0,
+   "first_drop_median": 4.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "pack:sobre_barrio",
+   "opening": 17,
+   "conversations": 13,
+   "closed": 5,
+   "fills": 7,
+   "floor_p10": 17,
+   "floor_p25": 17,
+   "floor_p50": 17,
+   "floor_p75": 17,
+   "floor_p90": 17,
+   "patience_median": 4.0,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "sell",
+   "opening": 5,
+   "conversations": 22,
+   "closed": 19,
+   "fills": 19,
+   "floor_p10": 5,
+   "floor_p25": 5,
+   "floor_p50": 6,
+   "floor_p75": 6,
+   "floor_p90": 6,
+   "patience_median": 5.0,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "sell",
+   "opening": 12,
+   "conversations": 10,
+   "closed": 8,
+   "fills": 6,
+   "floor_p10": 12,
+   "floor_p25": 13,
+   "floor_p50": 14,
+   "floor_p75": 14,
+   "floor_p90": 16,
+   "patience_median": 5.0,
+   "first_drop_median": 1.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "sell",
+   "opening": 13,
+   "conversations": 3,
+   "closed": 2,
+   "fills": 2,
+   "floor_p10": 13,
+   "floor_p25": 13,
+   "floor_p50": 13,
+   "floor_p75": 13,
+   "floor_p90": 13,
+   "patience_median": 5.5,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "sell",
+   "opening": 20,
+   "conversations": 1,
+   "closed": 1,
+   "fills": 1,
+   "floor_p10": 23,
+   "floor_p25": 23,
+   "floor_p50": 23,
+   "floor_p75": 23,
+   "floor_p90": 23,
+   "patience_median": 4.0,
+   "first_drop_median": 2.0
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "sell",
+   "opening": 15,
+   "conversations": 1,
+   "closed": 1,
+   "fills": 1,
+   "floor_p10": 16,
+   "floor_p25": 16,
+   "floor_p50": 16,
+   "floor_p75": 16,
+   "floor_p90": 16,
+   "patience_median": 5.0,
+   "first_drop_median": 1.0
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:rare",
+   "opening": 97,
+   "conversations": 15,
+   "closed": 9,
+   "fills": 8,
+   "floor_p10": 82,
+   "floor_p25": 90,
+   "floor_p50": 91,
+   "floor_p75": 91,
+   "floor_p90": 93,
+   "patience_median": 5.0,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:uncommon",
+   "opening": 33,
+   "conversations": 12,
+   "closed": 6,
+   "fills": 6,
+   "floor_p10": 28,
+   "floor_p25": 28,
+   "floor_p50": 29,
+   "floor_p75": 31,
+   "floor_p90": 32,
+   "patience_median": 6.0,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "chato",
+   "price_class": "pack:sobre_plata",
+   "opening": 188,
+   "conversations": 2,
+   "closed": 1,
+   "fills": 1,
+   "floor_p10": 181,
+   "floor_p25": 181,
+   "floor_p50": 181,
+   "floor_p75": 181,
+   "floor_p90": 181,
+   "patience_median": null,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "chato",
+   "price_class": "sell",
+   "opening": 13,
+   "conversations": 14,
+   "closed": 5,
+   "fills": 3,
+   "floor_p10": 13,
+   "floor_p25": 13,
+   "floor_p50": 15,
+   "floor_p75": 15,
+   "floor_p90": 16,
+   "patience_median": 5.5,
+   "first_drop_median": 0.0
+  },
+  {
+   "dealer": "chato",
+   "price_class": "sell",
+   "opening": 39,
+   "conversations": 1,
+   "closed": 1,
+   "fills": 1,
+   "floor_p10": 46,
+   "floor_p25": 46,
+   "floor_p50": 46,
+   "floor_p75": 46,
+   "floor_p90": 46,
+   "patience_median": 8.0,
+   "first_drop_median": 0.0
+  }
+ ],
+ "plans": [
+  {
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "opening": 12,
+   "floor_p50": 10,
+   "cap": 12,
+   "plan": [
+    8,
+    1,
+    12
+   ],
+   "reason": "floor p50 10 ± 2",
+   "backtest": {
+    "runs": 2000,
+    "mean_share": 0.976,
+    "deal_rate": 1.0,
+    "fill_within": 1.0,
+    "mean_price": 9.078,
+    "mean_ticks": 3.078,
+    "repeated": 0,
+    "at_opening": 8,
+    "hows": {
+     "her_ask": 396,
+     "our_bid": 1604
+    }
+   }
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "opening": 29,
+   "floor_p50": 23,
+   "cap": 26,
+   "plan": [
+    21,
+    1,
+    25
+   ],
+   "reason": "floor p50 23 ± 2",
+   "backtest": {
+    "runs": 2000,
+    "mean_share": 0.944,
+    "deal_rate": 0.993,
+    "fill_within": 0.993,
+    "mean_price": 22.153,
+    "mean_ticks": 3.153,
+    "repeated": 0,
+    "at_opening": 0,
+    "hows": {
+     "her_ask": 146,
+     "her_final": 30,
+     "our_bid": 1810,
+     "walk": 14
+    }
+   }
+  },
+  {
+   "dealer": "abuela",
+   "price_class": "pack:sobre_barrio",
+   "opening": 30,
+   "floor_p50": 22,
+   "cap": 20,
+   "plan": null,
+   "reason": "cap 20 below market: 3 in 4 limits seen are above 20",
+   "backtest": null
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:rare",
+   "opening": 97,
+   "floor_p50": 91,
+   "cap": 80,
+   "plan": null,
+   "reason": "cap 80 below market: 3 in 4 limits seen are above 89",
+   "backtest": null
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:uncommon",
+   "opening": 33,
+   "floor_p50": 29,
+   "cap": 26,
+   "plan": null,
+   "reason": "cap 26 below market: 3 in 4 limits seen are above 27",
+   "backtest": null
+  },
+  {
+   "dealer": "chato",
+   "price_class": "pack:sobre_plata",
+   "opening": 188,
+   "floor_p50": 181,
+   "cap": 20,
+   "plan": null,
+   "reason": "1 closed conversations: fewer than 5",
+   "backtest": null
+  }
+ ],
+ "schedule": [
+  {
+   "tick": 0,
+   "wall": "09:00:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 6,
+   "wall": "09:03:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 12,
+   "wall": "09:06:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 18,
+   "wall": "09:09:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "uncommon"
+    }
+   },
+   "plan": {
+    "start": 21,
+    "step": 1,
+    "max": 25
+   },
+   "expected": {
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
+   "why": "floor p50 23 ± 2; reserve 25 P"
+  },
+  {
+   "tick": 24,
+   "wall": "09:12:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 30,
+   "wall": "09:15:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "uncommon"
+    }
+   },
+   "plan": {
+    "start": 21,
+    "step": 1,
+    "max": 25
+   },
+   "expected": {
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
+   "why": "floor p50 23 ± 2; reserve 25 P"
+  },
+  {
+   "tick": 36,
+   "wall": "09:18:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 42,
+   "wall": "09:21:00",
+   "game_hour": 4,
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "uncommon"
+    }
+   },
+   "plan": {
+    "start": 21,
+    "step": 1,
+    "max": 25
+   },
+   "expected": {
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
+   "why": "floor p50 23 ± 2; reserve 25 P"
+  },
+  {
+   "tick": 120,
+   "wall": "10:00:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 126,
+   "wall": "10:03:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "uncommon"
+    }
+   },
+   "plan": {
+    "start": 21,
+    "step": 1,
+    "max": 25
+   },
+   "expected": {
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
+   "why": "floor p50 23 ± 2; reserve 25 P"
+  },
+  {
+   "tick": 132,
+   "wall": "10:06:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 138,
+   "wall": "10:09:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:uncommon",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "uncommon"
+    }
+   },
+   "plan": {
+    "start": 21,
+    "step": 1,
+    "max": 25
+   },
+   "expected": {
+    "share": 0.944,
+    "price": 22.2,
+    "ticks": 3.2
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 21 --max 25 --dealer abuela --live",
+   "why": "floor p50 23 ± 2; reserve 25 P"
+  },
+  {
+   "tick": 144,
+   "wall": "10:12:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  },
+  {
+   "tick": 150,
+   "wall": "10:15:00",
+   "game_hour": 5,
+   "dealer": "abuela",
+   "price_class": "card:common",
+   "ref": null,
+   "topic": {
+    "buy": {
+     "rarity": "common"
+    }
+   },
+   "plan": {
+    "start": 8,
+    "step": 1,
+    "max": 12
+   },
+   "expected": {
+    "share": 0.976,
+    "price": 9.1,
+    "ticks": 3.1
+   },
+   "command": "uv run bazaar dealer buy <ref> --start 8 --max 12 --dealer abuela --live",
+   "why": "floor p50 10 ± 2; reserve 12 P"
+  }
+ ],
+ "per_game_hour": {
+  "4": {
+   "slots": 8,
+   "reserved": 135,
+   "expected_spend": 112.1
+  },
+  "5": {
+   "slots": 6,
+   "reserved": 98,
+   "expected_spend": 80.8
+  }
+ },
+ "blocked": [
+  {
+   "dealer": "abuela",
+   "price_class": "pack:sobre_barrio",
+   "why": "cap 20 below market: 3 in 4 limits seen are above 20"
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:rare",
+   "why": "cap 80 below market: 3 in 4 limits seen are above 89"
+  },
+  {
+   "dealer": "chato",
+   "price_class": "card:uncommon",
+   "why": "cap 26 below market: 3 in 4 limits seen are above 27"
+  },
+  {
+   "dealer": "chato",
+   "price_class": "pack:sobre_plata",
+   "why": "1 closed conversations: fewer than 5"
+  }
+ ],
+ "notes": [
+  "2 more abuela card:uncommon did not fit the window's budget or quotas"
+ ]
+}

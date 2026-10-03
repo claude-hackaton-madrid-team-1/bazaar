@@ -125,6 +125,8 @@ PARAMS = strategy.StrategyParams(
     rare_fallback_price=70,
     pack_price_estimate=17,
     max_moves=12,
+    ladder_floor_quantile=0.0,
+    ladder_level_deals=0,
 )
 RULES = Guardrails()
 
@@ -479,3 +481,76 @@ def test_ladder_steps_fit_the_thread_and_openings_follow_the_ratio():
     assert strategy.bid_range([], 77, 145.6, 80, 2) == (77, 77)  # nothing learned anywhere: list price
     steps = (strategy.ladder_step(50, 77, 14), strategy.ladder_step(8, 9, 14), strategy.ladder_step(5, 5, 1))
     assert steps == (3, 1, 1)
+
+
+def test_ladder_floor_quantile_opens_dealer_card_buys_from_the_floor_table():
+    from dataclasses import replace as dc_replace
+    from pathlib import Path
+
+    from bazaar_agent.ladder import floor_table, from_rows, main_rows
+
+    rows = json.loads((Path(__file__).parent / "fixtures" / "evals" / "dealer_threads.json").read_text())["rows"]
+    m = dc_replace(market(), floors=main_rows(floor_table(from_rows(rows))))
+
+    def lav08(params):
+        moves, _ = strategy.buy_moves(m, params, RULES)
+        return next(mv for mv in moves if mv.ref == "LAV-08").ladder
+
+    assert lav08(PARAMS) == (18, 22, 1)  # today: the lowest fill seen up to the highest anyone paid
+    assert lav08(PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})) == (21, 25, 1)  # floor 23 ± 2
+    assert strategy.floor_range(m.floors[("abuela", "card:uncommon")], 24.0, 26, 2, 0.5) == (21, 22)  # our value
+    assert strategy.floor_range(m.floors[("chato", "card:rare")], 200.0, 80, 2, 0.5) is None  # cap below market
+
+
+def test_ladder_floor_quantile_falls_back_to_todays_ladder_without_a_floor():
+    """A thin feed (no floors, or too few closed threads) keeps the lowest-fill ladder."""
+    on = PARAMS.model_copy(update={"ladder_floor_quantile": 0.5})
+    moves, _ = strategy.buy_moves(market(), on, RULES)  # EVENTS have no thread messages: floors == {}
+    assert market().floors == {} and next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)
+
+
+def test_a_floor_plan_below_the_market_never_drops_todays_buy():
+    from dataclasses import replace as dc_replace
+
+    from bazaar_agent.ladder import FloorRow
+
+    low = FloorRow("abuela", "card:uncommon", 29, 9, 9, (14, 14, 15, 15, 15, 15, 16, 16, 16), 9, 5.0, 3.0)
+    m = dc_replace(market(), floors={("abuela", "card:uncommon"): low})  # floor 15 → 13..17, LAV-08 fills ~22
+    moves, _ = strategy.buy_moves(m, PARAMS.model_copy(update={"ladder_floor_quantile": 0.5}), RULES)
+    assert next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)  # today's ladder, not dropped
+
+
+def test_ladder_level_deals_routes_card_buys_to_the_newest_dealer_until_it_has_enough():
+    chato = {
+        "id": "chato",
+        "status": "active",
+        "level": 2,
+        "menu": {"sells": [{"rarity": "uncommon", "sets": "released", "list_price": 30}]},
+    }
+    me = {**ME, "unlocked": ["abuela", "chato"]}
+    chato_fill = settle(20, 9, "chato", "t07", "LAT-06", 28, tick=6, kind="card", persona="chato")
+    m = strategy.build_market(me, CATALOG, [*EVENTS, chato_fill], [ABUELA, chato])
+    on = PARAMS.model_copy(update={"ladder_level_deals": 3})
+    capped = Guardrails(dealer_price_caps="chato:uncommon=31")
+
+    def lav08(market_, params, rules):
+        moves, _ = strategy.buy_moves(market_, params, rules)
+        return next(mv for mv in moves if mv.ref == "LAV-08")
+
+    assert lav08(m, PARAMS, capped).source == "abuela"  # off (0): the cheapest dealer
+    routed = lav08(m, on, capped)
+    assert routed.source == "chato" and "level_unlock" in routed.strategy
+    assert lav08(m, on, RULES).source == "abuela"  # Chato's plan is above max_price_uncommon 26: no route
+    done = [
+        settle(30 + i, 20 + i, "chato", "t01", "LAT-06", 28, tick=7, kind="card", persona="chato") for i in range(3)
+    ]
+    m_done = strategy.build_market(me, CATALOG, [*EVENTS, chato_fill, *done], [ABUELA, chato])
+    assert lav08(m_done, on, capped).source == "abuela"  # three deals with Chato: back to the cheapest
+
+    # two missing uncommons, one Chato deal still needed: only the best-scored card goes to Chato
+    catalog = deepcopy(CATALOG)
+    catalog["sets"][0]["cards"].append(card("LAV-07", "uncommon", 9))
+    m_two = strategy.build_market(me, catalog, [*EVENTS, chato_fill, *done[:2]], [ABUELA, chato])
+    moves, _ = strategy.buy_moves(m_two, on, capped)
+    sources = {mv.ref: mv.source for mv in moves if mv.ref in ("LAV-07", "LAV-08")}
+    assert sorted(sources.values()) == ["abuela", "chato"]

@@ -16,7 +16,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import intel, ladder_cli, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
 from bazaar_agent.evals import cli as evals_cli
@@ -51,6 +51,7 @@ venue_app = typer.Typer(
 app.add_typer(venue_app, name="venue")
 broker_app = typer.Typer(no_args_is_help=True, help="Our venue's broker: match crossing offers every tick. Dry run")
 app.add_typer(broker_app, name="broker")
+app.add_typer(ladder_cli.app, name="ladder")
 console = Console()
 err_console = Console(stderr=True)
 
@@ -326,9 +327,9 @@ def dealer_buy(
     plan = BidPlan(start, step, max_price)
     topic = {"buy": {"pack": item}} if "-" not in item else {"buy": {"card": item}}
     rarity = _rarity_of(item)
-    cap = rules.max_price_for(rarity)
+    cap = rules.max_price_for(rarity, dealer)
     if cap is not None and max_price > cap:
-        _fail(f"--max {max_price} is above max_price_{rarity} = {cap} in GUARDRAILS.md")
+        _fail(f"--max {max_price} is above the {dealer} cap for {rarity} = {cap} in GUARDRAILS.md")
     if not live:
         schedule = bid_schedule(plan)
         console.print(
@@ -342,7 +343,7 @@ def dealer_buy(
     clock_now = Clock.model_validate(client.clock())
     try:
         pre = gr.check(
-            gr.Action("buy", item, rarity, start),
+            gr.Action("buy", item, rarity, start, dealer=dealer),
             gr.context_from(client.me(), clock_now.tick, clock_now.t_hours, ledger, rules),
             rules,
         )
@@ -366,7 +367,7 @@ def dealer_buy(
         # is sent, and a full quota makes the accept wait for the next tick.
         ctx = replace(ctx, accepts_this_tick=0)
         kind: gr.ActionKind = "accept_buy" if move.kind == "accept" else "bid"
-        verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
+        verdict = gr.check(gr.Action(kind, item, rarity, move.price, dealer=dealer), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
@@ -798,6 +799,7 @@ def rules_check(
     item: str = typer.Argument(help="Card ref (LAV-05) or pack id"),
     price: int = typer.Option(..., help="Price in primas"),
     your_value: float | None = typer.Option(None, help="For sells: what we lose by selling that copy"),
+    dealer: str | None = typer.Option(None, help="A dealer buy: its own dealer_price_caps entry applies"),
 ) -> None:
     """Dry-run one action against the guardrails with our live /me, clock and ledger."""
     from bazaar_agent import guardrails as gr
@@ -808,7 +810,7 @@ def rules_check(
     c = Clock.model_validate(client.clock())
     ctx = gr.context_from(client.me(), c.tick, c.t_hours, _ledger("rules-check"), rules)
     try:
-        action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value)
+        action = gr.Action(gr.action_kind(kind), item, _rarity_of(item), price, your_value, dealer=dealer)
     except ValueError as e:
         _fail(str(e))
     verdict = gr.check(action, ctx, rules)

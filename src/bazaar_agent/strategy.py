@@ -14,7 +14,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from statistics import median
 from typing import Any, Literal
@@ -34,6 +34,7 @@ from bazaar_agent.guardrails import (
     parse_md_config,
 )
 from bazaar_agent.guardrails import validated as validated_model
+from bazaar_agent.ladder import FloorRow, conversations, floor_table, main_rows, plan_for
 
 STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
 BASIC_PACK = "sobre_barrio"  # the pack `pack_price_estimate` prices (STRATEGY.md)
@@ -56,6 +57,8 @@ class StrategyParams(BaseModel):
     rare_fallback_price: int = Field(ge=1)
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
+    ladder_floor_quantile: float = Field(ge=0, le=1)
+    ladder_level_deals: int = Field(ge=0, le=8)
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,7 @@ class Market:
     holders: dict[str, tuple[str, ...]]
     chasers: dict[str, tuple[str, ...]]
     tick: int | None
+    floors: dict[tuple[str, str], FloorRow] = field(default_factory=dict)  # (dealer, price class) → limits seen
 
 
 def is_team(party: str | None) -> bool:
@@ -173,8 +177,15 @@ def likely_holders(events: Iterable[intel.Event], us: str) -> dict[str, tuple[st
 
 
 def build_market(
-    me: dict[str, Any], catalog: dict[str, Any], events: Sequence[intel.Event], dealers: Iterable[dict[str, Any]]
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    events: Sequence[intel.Event],
+    dealers: Iterable[dict[str, Any]],
+    *,
+    floors: bool = False,
 ) -> Market:
+    """Everything a strategy reads, from plain payloads. `floors` also rebuilds the dealer floor table
+    from every thread in `events` (only `ladder_floor_quantile` > 0 reads it)."""
     us = str(me.get("id") or "")
     cards = {
         str(c["id"]): Card(
@@ -216,6 +227,7 @@ def build_market(
         holders=likely_holders(events, us),
         chasers={k: tuple(sorted(v)) for k, v in chasers.items()},
         tick=me.get("tick"),
+        floors=main_rows(floor_table(conversations(events))) if floors else {},
     )
 
 
@@ -233,9 +245,13 @@ class Supply:
     availability: Availability
 
 
-def quote_for(m: Market, card: Card) -> Quote | None:
-    """The cheapest dealer quote that sells this card's rarity for its set."""
-    fits = [q for q in m.quotes if q.item == card.rarity and (q.sets is None or card.set_code in q.sets)]
+def quote_for(m: Market, card: Card, dealer: str | None = None) -> Quote | None:
+    """The cheapest dealer quote (or `dealer`'s) that sells this card's rarity for its set."""
+    fits = [
+        q
+        for q in m.quotes
+        if q.item == card.rarity and (q.sets is None or card.set_code in q.sets) and dealer in (None, q.dealer)
+    ]
     return min(fits, key=lambda q: q.list_price) if fits else None
 
 
@@ -403,6 +419,17 @@ def bid_range(
     return max(1, min(start, top)), top
 
 
+def floor_range(row: FloorRow, value: float, cap: int | None, min_surplus: float, q: float) -> tuple[int, int] | None:
+    """(start, max) from the floor table (`bazaar ladder floors`): open 2 under the q-quantile of the
+    limits every team's conversations closed at, stop 2 over it, never above the cap or our value minus
+    the minimum surplus. None when that leaves no room (the caller keeps the lowest-fill ladder then)."""
+    choice = plan_for(row, cap, q=q)
+    if choice.plan is None:
+        return None
+    top = min(choice.plan.max_price, math.floor(value - min_surplus))
+    return (choice.plan.start, top) if top >= choice.plan.start else None
+
+
 def opening_ratio(m: Market) -> float | None:
     """The lowest fill / list price any dealer has accepted (e.g. Abuela: a 26 P pack at 17 → 0.65)."""
     rarity_of = _rarity_of(m)
@@ -473,8 +500,12 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     fills = dealer_fills(m, quote.dealer)
     est = estimate_price(card.ref, card.rarity, fills, rarity_of, quote.list_price, card.book)
     same = [float(p.price) for p in fills if rarity_of.get(p.ref) == card.rarity]
-    cap = rules.max_price_for(card.rarity)
+    cap = rules.max_price_for(card.rarity, quote.dealer)
     plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
+    row = m.floors.get((quote.dealer, f"card:{card.rarity}")) if params.ladder_floor_quantile > 0 else None
+    floored = floor_range(row, case.value, cap, params.min_buy_surplus, params.ladder_floor_quantile) if row else None
+    if floored is not None and floored[1] >= est.price:  # never drop a buy today's ladder would make
+        plan = floored
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
     if plan[1] < est.price:
@@ -556,7 +587,38 @@ def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[lis
             moves.append(result)
         else:
             skipped.append(result)
-    return moves, skipped
+    return level_routed(m, moves, params, rules), skipped
+
+
+def level_need(m: Market, params: StrategyParams) -> int:
+    """level_unlock: deals the newest dealer still needs (`ladder_level_deals` minus the deals we closed
+    with it, counted over the feed we hold, not per day; a deal still in a thread is not counted yet)."""
+    if params.ladder_level_deals <= 0 or m.newest_dealer is None:
+        return 0
+    ours = sum(1 for p in m.prints if p.persona == m.newest_dealer and p.buyer == m.us)
+    return max(0, params.ladder_level_deals - ours)
+
+
+def level_routed(m: Market, moves: list[Move], params: StrategyParams, rules: Guardrails) -> list[Move]:
+    """Route the best-scored `level_need` dealer card buys to the newest dealer, when its ladder fits our
+    caps and value (the ladder counts each level's best three, and they unlock the next level early);
+    every other card stays with the cheapest dealer. A routed move whose guardrail verdict is later
+    denied (cash, spend) leaves that card without a buy for the tick."""
+    need, newest = level_need(m, params), m.newest_dealer
+    if need == 0 or newest is None:
+        return moves
+    dealers = {q.dealer for q in m.quotes}
+    routed: dict[str, Move] = {}
+    for mv in moves:
+        card = m.cards.get(mv.ref)
+        quote = quote_for(m, card, newest) if card and mv.source in dealers - {newest} else None
+        if card is None or quote is None:
+            continue
+        level = dealer_buy(m, buy_case(m, card, params), quote, params, rules)
+        if isinstance(level, Move):
+            routed[mv.ref] = level
+    best = set(sorted(routed, key=lambda ref: -routed[ref].score)[:need])
+    return [routed[mv.ref] if mv.ref in best else mv for mv in moves]
 
 
 def _priced(asset: dict[str, Any]) -> bool:
@@ -658,7 +720,11 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
             est = estimate_price(pack, "pack", dealer_fills(m, quote.dealer), {}, quote.list_price, quote.list_price)
         else:
             est = Estimate(m.expected_book.get(pack, 0.0), "expected book (no seller)")
-        plan = bid_range(fills, est.price, ev, rules.max_price_for("pack"), params.min_buy_surplus, opening_ratio(m))
+        cap = rules.max_price_for("pack", quote.dealer if quote else None)
+        cap_rule = (
+            "max_price_pack" if cap == rules.max_price_pack else f"dealer_price_caps {quote and quote.dealer}:pack"
+        )
+        plan = bid_range(fills, est.price, ev, cap, params.min_buy_surplus, opening_ratio(m))
         capped = plan is not None and plan[1] < est.price
         actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
         slot_text = " + ".join("/".join(f"{odds:g} {r} {means[r]:.1f}" for r, odds in slot.items()) for slot in slots)
@@ -679,7 +745,7 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 plan[1] if plan else 0,
                 f"EV {ev:.1f} = {slot_text}; price {est.basis} {est.price:g}"
                 + ("" if quote else "; no dealer we can reach sells it")
-                + (f"; max_price_pack caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
+                + (f"; {cap_rule} caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
                 (
                     dealer_command(pack, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread))
                     if actionable and quote and plan
@@ -727,7 +793,7 @@ def build_playbook(
     params: StrategyParams,
     rules: Guardrails,
 ) -> Playbook:
-    m = build_market(me, catalog, events, dealers)
+    m = build_market(me, catalog, events, dealers, floors=params.ladder_floor_quantile > 0)
     buys, skipped = buy_moves(m, params, rules)
     quotas: dict[str, int] = {}
     for q in m.quotes:
@@ -755,7 +821,8 @@ def guarded(book: Playbook, ctx: Context, rules: Guardrails, listed: frozenset[i
         if mv.asset_id is not None and mv.asset_id in listed:
             return replace(mv, guardrail=f"denied: asset {mv.asset_id} is already in one of our open offers")
         your_value = mv.value if mv.side == "sell" else None
-        action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value)
+        dealer = None if is_team(mv.source) or mv.source in ("teams", "rastro") else mv.source  # dealer_price_caps
+        action = Action(action_kind(mv.action), mv.ref, mv.rarity, mv.limit, your_value, dealer=dealer)
         return replace(mv, guardrail=str(check(action, ctx, rules)))
 
     return replace(
