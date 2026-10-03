@@ -12,8 +12,9 @@ How it decides, every time it reads the book (a rollout over the base policy "cr
   3. the candidate matchings among the pairs that cross at today's quotes (the stall's plan, every other
      matching, none), each followed by stall-like crossing to the end of the session;
   4. per future, our true gain against the shadow stall's: a win scores 1, a tie 0.5, a loss 0.5 × the
-     ratio (`loss_curve="linear"`) or 0 (`"zero"`, the safe reading of an unpublished curve);
-  5. the candidate with the best mean, the stall's plan unless another beats it by `min_edge`.
+     ratio (`loss_curve="linear"`) or 0 (`"zero"`, the default: the safe reading of an unpublished curve);
+  5. the candidate with the best mean, the stall's plan unless another beats it by `min_edge` after
+     subtracting `z` standard errors of the paired difference (a deviation chosen on sampling noise loses).
 
 The prior is W1a's own generative model of the bench (`bazaar_sim.bench`): arrivals, shades and patience are
 unverified assumptions there, so this policy is only as good as that model is right. Matches use the quote
@@ -67,11 +68,14 @@ class _Trader:
     arrive: int
     life: int
     relax: float
+    shown: dict[int, int] = field(default_factory=dict)  # the quotes actually seen: replayed exactly
 
     def present(self, k: int) -> bool:
         return self.arrive <= k < self.arrive + self.life
 
     def quote_at(self, k: int) -> int:
+        if k in self.shown:
+            return self.shown[k]
         if self.relax <= 0 or self.life <= 1:
             return self.quote
         age = min(max(k - self.arrive, 0), self.life - 1)
@@ -141,15 +145,17 @@ class WinRatePolicy:
         self,
         prior: BenchPrior = NORMAL_PRIOR,
         *,
-        samples: int = 48,
-        min_edge: float = 0.02,
-        loss_curve: Literal["linear", "zero"] = "linear",
+        samples: int = 128,
+        min_edge: float = 0.0,
+        z: float = 1.0,
+        loss_curve: Literal["linear", "zero"] = "zero",
         max_candidates: int = 24,
         seed: int = 0,
     ) -> None:
         self.prior = prior
         self.samples = samples
         self.min_edge = min_edge
+        self.z = z
         self.loss_curve = loss_curve
         self.max_candidates = max_candidates
         self.rng = random.Random(seed)
@@ -231,6 +237,7 @@ class WinRatePolicy:
                 relax = rng.uniform(*p.relax)
             cand = _Trader(t.id, t.order, t.side, limit, q0, t.arrive, life, relax)
             if all(abs(cand.quote_at(tk) - q) <= 1 for tk, q in t.quotes.items()):
+                cand.shown = dict(t.quotes)
                 return cand
         return None
 
@@ -291,7 +298,7 @@ class WinRatePolicy:
         candidates = _matchings(edges, self.max_candidates)
         if stall_plan not in candidates:
             candidates.append(stall_plan)
-        totals = [0.0] * len(candidates)
+        scores: list[list[float]] = [[] for _ in candidates]
         drawn = 0
         for _ in range(self.samples * 2):
             if drawn == self.samples:
@@ -308,12 +315,15 @@ class WinRatePolicy:
                 stall_used |= {i for pair in step for i in pair}
             stall_gain = _gain({t.id: t for t in traders}, stall_pairs)
             for i, cand in enumerate(candidates):
-                totals[i] += self._score(self._rollout(traders, k, cand, fee), stall_gain)
+                scores[i].append(self._score(self._rollout(traders, k, cand, fee), stall_gain))
         choice = stall_plan
-        if drawn:
-            base = totals[candidates.index(stall_plan)]
-            best = max(range(len(candidates)), key=lambda i: totals[i])
-            if totals[best] - base >= self.min_edge * drawn:
+        if drawn > 1:
+            base = scores[candidates.index(stall_plan)]
+            best = max(range(len(candidates)), key=lambda i: sum(scores[i]))
+            diff = [a - b for a, b in zip(scores[best], base, strict=True)]
+            mean = sum(diff) / drawn
+            se = math.sqrt(sum((d - mean) ** 2 for d in diff) / (drawn - 1) / drawn)
+            if mean - self.z * se > self.min_edge:
                 choice = candidates[best]
         if choice != stall_plan:
             self.deviations += 1
