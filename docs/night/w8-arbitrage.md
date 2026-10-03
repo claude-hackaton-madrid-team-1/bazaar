@@ -5,7 +5,7 @@ either one on Friday's evidence: the Friday market held **0** arbitrage opportun
 asks. **GO** for the read-only `bazaar arb scan`: run it on Saturday's live boards and flip a switch only when the
 conditions below show up in the scan.
 
-PR #101 is stacked on #72 and includes #79 until #79 merges. W8 review range: `c2d1c50..HEAD`.
+PR #101 is stacked on #72 and includes #79 until #79 merges. W8 alone: `git diff origin/night/w4-trade-desk...night/w8-arbitrage`.
 
 ## Friday, measured (`bazaar arb study stream.jsonl`, ticks 0–149; full tables in `w8-arbitrage-study.md`)
 
