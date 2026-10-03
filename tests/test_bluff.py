@@ -16,7 +16,7 @@ from bazaar_agent.agents.bluff import (
     TacticBook,
     enabled,
 )
-from bazaar_agent.agents.tactics import BY_ID, eligible, numbers_in
+from bazaar_agent.agents.tactics import ABUELA_ALLOWED, BY_ID, eligible, numbers_in
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.learn.store import LearningStore
@@ -40,7 +40,7 @@ def plain(request: WordsRequest) -> str:
 
 def play(b: TacticBook, cp: Counterparty, conv: str, step: int, before: int, after: int, tick: int) -> Choice:
     """One tactic message, then the counterparty's answer (a new offer at `after`)."""
-    c = b.choose(cp, "buy", conv, step, 30)
+    c = b.choose(cp, "buy", conv, step, 30, their_price=before)
     b.sent(c, their_price=before, their_offer=tick * 10, tick=tick)
     b.observe(conv, their_price=after, their_offer=tick * 10 + 1, tick=tick + 1)
     return c
@@ -63,20 +63,16 @@ def test_the_choice_is_deterministic_for_a_seed_and_history():
 
 def test_untried_tactics_rotate_then_the_best_learned_one_wins():
     b = book(seed=3)
-    used = []
-    for step in range(4):  # four bluff tactics for a buy: each is tried once
-        c = play(b, CHATO, "thread:1", step, 33, 33, 100 + 2 * step)
-        used.append(c.tactic)
-    assert sorted(used) == sorted(eligible("dealer", "chato", "buy"))
-    # one tactic moved Chato every time, the others never did
+    fitting = [t for t in eligible("dealer", "chato", "buy") if t != "accusation_audit"]  # every step after the 1st
+    used = [play(b, CHATO, "thread:1", 1 + i, 33, 33, 100 + 2 * i).tactic for i in range(len(fitting))]
+    assert sorted(used) == sorted(fitting)  # each one tried once before any is repeated
     winner = used[1]
-    for step in range(4, 10):
-        c = b.choose(CHATO, "buy", "thread:1", step, 30)
-        moved = c.tactic == winner
-        b.sent(c, their_price=33, their_offer=1000 + step, tick=200 + step)
-        b.observe("thread:1", their_price=31 if moved else 33, their_offer=2000 + step, tick=201 + step)
-    later = [b.choose(CHATO, "buy", f"thread:{n}", 0, 30).tactic for n in range(2, 6)]
-    assert later.count(winner) >= 3, (winner, later)
+    for i in range(40):  # the winner moves Chato every time; every other tactic pushes him away
+        c = b.choose(CHATO, "buy", "thread:1", 20 + i, 30, their_price=33)
+        b.sent(c, their_price=33, their_offer=1000 + i, tick=200 + 2 * i)
+        b.observe("thread:1", their_price=31 if c.tactic == winner else 35, their_offer=2000 + i, tick=201 + 2 * i)
+    later = [b.choose(CHATO, "buy", f"thread:{n}", 1, 30, their_price=33).tactic for n in range(2, 6)]
+    assert later == [winner] * 4, (winner, later)
 
 
 def test_an_unanswered_untried_tactic_is_not_repeated_on_the_next_message():
@@ -95,7 +91,7 @@ def test_abuela_never_gets_a_non_kindness_tactic_whatever_the_history():
     b = book(seed=1)
     for step in range(60):
         c = b.choose(ABUELA, rnd.choice(("buy", "sell")), "thread:5", step, rnd.randint(1, 60))
-        assert c.tactic is None or BY_ID[c.tactic].kindness, c
+        assert c.tactic is None or c.tactic in ABUELA_ALLOWED, c
         b.sent(c, their_price=rnd.randint(1, 60), their_offer=step, tick=step)
         b.observe("thread:5", their_price=rnd.randint(1, 60), their_offer=step + 1000, tick=step)
 
@@ -103,16 +99,17 @@ def test_abuela_never_gets_a_non_kindness_tactic_whatever_the_history():
 def test_a_cooloff_disables_that_tactic_for_that_dealer_for_the_rest_of_the_day():
     b = book()
     b.begin_tick(100, day=2)
-    c = b.choose(CHATO, "buy", "thread:1", 0, 30)
+    c = b.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33)
     b.sent(c, their_price=33, their_offer=1, tick=100)
     b.ended("thread:1", status="closed", closed_reason="cooloff", tick=101)
     arms = b.arms(CHATO)
     assert arms[c.tactic].penalties_today == 1 and arms[c.tactic].total == PENALTY
     for n in range(20):
-        assert b.choose(CHATO, "buy", f"thread:{n + 2}", 0, 30).tactic != c.tactic
+        assert b.choose(CHATO, "buy", f"thread:{n + 2}", 1, 30, their_price=33).tactic != c.tactic
     other = Counterparty.dealer("mercader")  # only for chato: another dealer still gets it, tried last
-    tried = [play(b, other, "thread:40", step, 33, 33, 300 + 2 * step).tactic for step in range(4)]
-    assert tried[-1] == c.tactic and sorted(tried) == sorted(eligible("dealer", "mercader", "buy"))
+    fitting = [t for t in eligible("dealer", "mercader", "buy") if t != "accusation_audit"]
+    tried = [play(b, other, "thread:40", 1 + i, 33, 33, 300 + 2 * i).tactic for i in range(len(fitting))]
+    assert tried[-1] == c.tactic and sorted(tried) == sorted(fitting)
     b.begin_tick(500, day=3)  # a new game day: the tactic may be tried again (its mean stays low)
     assert b.arms(CHATO)[c.tactic].off_today() is None
 

@@ -17,7 +17,7 @@ from bazaar_agent.agents.bluff import ENV, TacticBook
 from bazaar_agent.agents.dealer import BidPlan, negotiate
 from bazaar_agent.agents.duelist import DUEL_WORDS, DuelMove, duel_choice
 from bazaar_agent.agents.status import StatusHub, public_decision
-from bazaar_agent.agents.tactics import BY_ID, TACTICS, numbers_in
+from bazaar_agent.agents.tactics import ABUELA_ALLOWED, BY_ID, TACTICS, numbers_in
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, parts, rows
 from tests.test_dealer import FakeDealerClient
@@ -83,7 +83,7 @@ def test_the_taker_sends_the_same_moves_with_and_without_tactics(tmp_path):
     for (_, _, price), text in zip([s for s in bluffed.sent if s[0] == "say"], bluffed.texts, strict=True):
         assert price in numbers_in(text)  # ...and every one carries its structured price
     bids = [r for r in rows(tmp_path / "bluff") if r.get("kind") == "dealer_bid"]
-    assert bids and all(BY_ID[r["inputs"]["tactic"]].kindness for r in bids)  # abuela: kindness only
+    assert bids and all(r["inputs"]["tactic"] in ABUELA_ALLOWED for r in bids)  # abuela: her allow-list only
     assert all(r["inputs"]["tactic_counterparty"] == "dealer:abuela" for r in bids)
 
 
@@ -159,7 +159,7 @@ def test_negotiate_structured_moves_are_identical_with_and_without_a_tactic_prop
 
 def test_negotiate_gives_abuela_kindness_and_chato_a_bluff():
     _, _ = play("abuela", [30, 29, 28], BidPlan(6, 1, 10), book := on())
-    assert book.lessons and all(BY_ID[lr.detail["tactic"]].kindness for lr in book.lessons.values())
+    assert book.lessons and all(lr.detail["tactic"] in ABUELA_ALLOWED for lr in book.lessons.values())
     _, _ = play("chato", [30, 29, 28], BidPlan(6, 1, 10), book := on())
     assert book.lessons and not any(BY_ID[lr.detail["tactic"]].kindness for lr in book.lessons.values())
 

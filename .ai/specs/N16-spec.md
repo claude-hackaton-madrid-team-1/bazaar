@@ -53,6 +53,19 @@ becomes a `tactic` lesson that can switch that tactic off for that counterparty 
    is an allow-list and does not list them). The accept logic is untouched: an accept that is already good is
    sent before (and instead of) any bluff.
 
+## Scope addition (coordinator, 2026-10-03, Omar: a negotiation-psychology skill for the runtime agents)
+Jev `psychology_where` = `words_in_n16` (0.88). Two MIT skills from `wondelai/skills`
+(commit `c172996495bed0fcd26896a9416b2093fd7073f0`, files byte-identical) are vendored in
+`.ai/skills/negotiation/` (Voss) and `.ai/skills/influence-psychology/` (Cialdini), each with its LICENSE
+and a SOURCE.md. Their ideas join the tactic bank as `psychology` tactics the bandit learns like the bluffs:
+`empathy_label` (labeling), `calibrated_question` ("How am I supposed to pay 31 for one card?"),
+`accusation_audit` (first message only), `no_question` ("Would it be unreasonable to meet at 19?"),
+`reciprocity` (thanks and a promised return visit), `mirror`; and two more bluffs: `scarcity`,
+`social_proof`. Mirroring echoes ONE safe token: the counterparty's own structured price, never their words
+(the renderer cannot see them). Abuela's allow-list: kindness, `empathy_label`, `calibrated_question`.
+Ackerman's 65/85/95/100 schedule and precise non-round numbers change prices: proposed for N14 in
+`98-nice-to-haves.md`, not built here.
+
 ## Non-goals
 No LLM in the executor path (`llm_words` stays false; with it on, a chosen tactic's text wins over the LLM's).
 No change to prices, days, accept rules, Jev questions or guardrail caps. No flags sent. No prompt injection.
@@ -61,7 +74,7 @@ No team-to-team thread wiring (we run none today; the bank supports `team` count
 ## Acceptance criteria
 1. The structured fields (price, days, kind, offer id) of every move are identical with and without a tactic
    (property test over generated dealer and duel moves).
-2. Abuela never gets a non-kindness tactic (any state, any history).
+2. Abuela gets only her allow-list: kindness, labeling and calibrated questions (any state, any history).
 3. A cooloff (thread `closed_reason: cooloff`, `persona.cooloff` or `persona.strike` for us) after a tactic
    disables that tactic for that dealer for the rest of the day; a flag on one of our tactic messages does the
    same for that counterparty.
@@ -75,6 +88,8 @@ No team-to-team thread wiring (we run none today; the bank supports `team` count
 9. Tactic id and reason stay private: never in `/state`, `/events`, `/health`.
 10. Simulator run (`BAZAAR_SIM=local`) with tactics on: transcript lines pasted.
 11. Gate green: black, ruff, mypy, pytest (≥ 80 % on the new modules).
+12. Scope addition: both skills vendored verbatim with LICENSE + attribution; every psychology tactic exists in
+    both languages; mirroring never echoes more than the safe token; the accusation audit opens only.
 
 ## Interfaces / data touched
 - New: `src/bazaar_agent/agents/tactics.py`, `src/bazaar_agent/agents/bluff.py`, `tests/test_tactics.py`,

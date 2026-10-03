@@ -142,7 +142,8 @@ def duel_choice(book: TacticBook | None, duel: dict[str, Any], did: int, move: D
         return None
     private = private_numbers(duel.get("your_limit"), duel.get("your_days_weight"))
     side: Side = "sell" if role == "seller" else "buy"
-    return book.choose(Counterparty.rival(duel.get("rival"), did), side, f"duel:{did}", step, move.price, avoid=private)
+    cp, their = Counterparty.rival(duel.get("rival"), did), _rival_price(duel)
+    return book.choose(cp, side, f"duel:{did}", step, move.price, avoid=private, their_price=their)
 
 
 def observe_duel(book: TacticBook | None, duel: dict[str, Any], did: int, tick: int) -> None:

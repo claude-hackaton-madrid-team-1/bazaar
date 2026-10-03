@@ -579,11 +579,18 @@ structure binds. Your agent may say anything." The code and `guardrails.check()`
 (price, days, accept, walk) exactly as before. A tactic then writes the words of a dealer bid or a duel
 offer. It never writes an accept, so an accept is never delayed by a bluff.
 
-- **Tactics** (`agents/tactics.py`, Spanish and English): `budget_cap`, `outside_option`, `low_need`,
-  `walk_threat`, `fake_demand` and `cost_floor` (sells only). Abuela gets kindness only
-  (`kind_gratitude`, `kind_flattery`, `kind_patience`), because RULES.md says "Abuela likes kindness".
-  No template holds a digit. Every number is the structured price or one invented from it, never our
-  limit, max or value. The counterparty's words are never quoted.
+- **Tactics** (`agents/tactics.py`, Spanish and English), in three families:
+  - bluffs: `budget_cap`, `outside_option`, `low_need`, `walk_threat`, `scarcity`, `social_proof`,
+    and for sells `fake_demand` and `cost_floor`;
+  - psychology, from the vendored `negotiation` (Voss) and `influence-psychology` (Cialdini) skills in
+    `.ai/skills/`: `empathy_label`, `calibrated_question`, `accusation_audit` (first message only),
+    `no_question`, `reciprocity`, `mirror`;
+  - kindness: `kind_gratitude`, `kind_flattery`, `kind_patience`.
+
+  Abuela gets kindness, `empathy_label` and `calibrated_question` only, because RULES.md says
+  "Abuela likes kindness". No template holds a digit. A number in the text is our structured price,
+  the counterparty's own structured price (`mirror`, `calibrated_question`), or one invented from our
+  price. It is never our limit, max or value. The counterparty's words are never parsed or quoted.
 - **Chooser** (`agents/bluff.py`): one deterministic bandit (UCB1) per counterparty: each dealer, duel
   rival and team. Each tactic is tried once, then the one with the best learned value wins. Ties are
   broken by a seeded hash, so the simulator and the tests are reproducible.

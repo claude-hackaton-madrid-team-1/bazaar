@@ -182,6 +182,11 @@ Files: `src/bazaar_agent/agents/{tactics,bluff}.py`, `learn/model.py`, `guardrai
   row (private keys); outcomes observed each tick; flush after the sends. · **Acceptance:** property test
   (structured move identical with and without a tactic), accept-beats-bluff test, `/state` never shows a tactic.
 - Step 5 — Simulator run with tactics on (`BAZAAR_SIM=local`). · **Acceptance:** transcript lines pasted in the PR.
+- Step 6 — Scope addition (coordinator): vendor `negotiation` + `influence-psychology` (wondelai/skills, MIT)
+  under `.ai/skills/`, add the psychology tactics (labeling, calibrated questions, accusation audit, no-oriented
+  questions, reciprocity, safe mirroring, scarcity, social proof), Abuela's allow-list; Ackerman + precise numbers
+  as an N14 proposal in `98-nice-to-haves.md`. · **Acceptance:** byte-identical to upstream (blob SHAs); tests:
+  both languages, Abuela allow-list, mirroring echoes only the safe token, the audit opens only.
 
 ---
 

@@ -28,7 +28,7 @@ import math
 import os
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bazaar_agent.agents.tactics import BY_ID, CounterpartyKind, Side, eligible, leaks, render
@@ -114,6 +114,7 @@ class Choice:
     tactic: str | None
     reason: str  # private: why this tactic (or why none)
     avoid: frozenset[int] = frozenset()  # our private numbers: an invented number never equals one
+    their: int | None = None  # the counterparty's own structured price (public), the one token we may mirror
 
     def inputs(self) -> dict[str, Any]:
         """For the decision row, under keys the public status view does not list (private)."""
@@ -133,16 +134,8 @@ class Choice:
         def say(request: WordsRequest) -> str:
             if request.price != self.price:
                 return base(request)
-            text = render(
-                tactic,
-                request.price,
-                side=self.side,
-                language=request.language,
-                kind=self.counterparty.kind,
-                counterparty=self.counterparty.id,
-                avoid=self.avoid,
-            )
-            return text if text is not None and not leaks(text, self.avoid, request.price) else base(request)
+            text = _text(tactic, self, request.language)
+            return text if text is not None else base(request)
 
         return say
 
@@ -186,6 +179,23 @@ class _Agg:
     n: int = 0
     total: float = 0.0
     penalties: int = 0
+
+
+def _text(tactic: str, c: Choice, language: str) -> str | None:
+    """The tactic's words for this choice; None when it does not render or would show a private number."""
+    cp = c.counterparty
+    text = render(
+        tactic,
+        c.price,
+        side=c.side,
+        language=language,
+        kind=cp.kind,
+        counterparty=cp.id,
+        avoid=c.avoid,
+        step=c.step,
+        their=c.their,
+    )
+    return text if text is not None and not leaks(text, c.avoid, c.price) else None
 
 
 def _tie(seed: int, cp: Counterparty, conversation: str, step: int, tactic: str) -> str:
@@ -267,24 +277,25 @@ class TacticBook:
         price: int,
         *,
         avoid: Iterable[int] = frozenset(),
+        their_price: int | None = None,
     ) -> Choice:
-        """The tactic for the message whose structured `price` the caller already decided. Pure: no I/O."""
-        private = frozenset(avoid)
+        """The tactic for the message whose structured `price` the caller already decided. Pure: no I/O.
+        `their_price`: the counterparty's current structured price (their ask or bid), never their words."""
+        base = Choice(cp, side, conversation, step, price, None, "", frozenset(avoid), their_price)
         on, why = self.enabled()
         if not on:
-            return Choice(cp, side, conversation, step, price, None, f"bluff off ({why})", private)
+            return replace(base, reason=f"bluff off ({why})")
         arms = self.arms(cp)
         penalties = sum(a.penalties_today for a in arms.values())
         if penalties >= MUTE_AFTER:
-            return Choice(cp, side, conversation, step, price, None, f"muted today ({penalties} penalties)", private)
+            return replace(base, reason=f"muted today ({penalties} penalties)")
         fits = [
             t
             for t in eligible(cp.kind, cp.id, side)
-            if render(t, price, side=side, language="es", kind=cp.kind, counterparty=cp.id, avoid=private) is not None
-            and (t not in arms or arms[t].off_today() is None)
+            if _text(t, base, "es") is not None and (t not in arms or arms[t].off_today() is None)
         ]
         if not fits:
-            return Choice(cp, side, conversation, step, price, None, "no tactic left for this counterparty", private)
+            return replace(base, reason="no tactic left for this counterparty")
         total = sum(arms[t].n for t in fits if t in arms)
         just_used = self.last[conversation].choice.tactic if conversation in self.last else None
 
@@ -298,7 +309,7 @@ class TacticBook:
         best = min(fits, key=rank)
         arm = arms.get(best)
         reason = f"untried with {cp.id}" if arm is None or arm.n == 0 else f"mean {arm.mean:+.2f} over {arm.n}"
-        return Choice(cp, side, conversation, step, price, best, reason, private)
+        return replace(base, tactic=best, reason=reason)
 
     # ---------------------------------------------------------------- what followed
 

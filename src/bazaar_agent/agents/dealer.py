@@ -342,7 +342,8 @@ def negotiate(
             if bluff is not None:
                 avoid = private_numbers(plan.max_price)
                 cp = Counterparty.dealer(dealer)
-                choice = bluff.choose(cp, "buy", conversation, len(neg.bids), move.price, avoid=avoid)
+                step = len(neg.bids)
+                choice = bluff.choose(cp, "buy", conversation, step, move.price, avoid=avoid, their_price=ask)
                 log(f"tick {clock.tick}: words tactic {choice.tactic or 'none'} ({choice.reason})")
             fn = choice.words(words_fn) if choice is not None else words_fn
             text = bid_words(fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)

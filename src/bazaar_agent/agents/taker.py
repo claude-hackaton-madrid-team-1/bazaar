@@ -567,7 +567,7 @@ class Taker:
             verdict_text = str(verdict)
             if not verdict.allowed:
                 move = Move("walk", reason=f"guardrail: {verdict}")
-        choice = self._tactic(conv, move)
+        choice = self._tactic(conv, move, dm.ask)
         inputs = {
             "dealer": conv.dealer,
             "thread": conv.thread_id,
@@ -630,14 +630,15 @@ class Taker:
                     choice, their_price=dm.ask, their_offer=dm.offer_id, tick=tick, message=message_id(body)
                 )
 
-    def _tactic(self, conv: Conversation, move: Move) -> Choice | None:
+    def _tactic(self, conv: Conversation, move: Move, her_ask: int | None) -> Choice | None:
         """The bluff tactic for a bid's words (N16): a dealer bid only, after the guardrails passed it. It never
         changes the price; it never sees our max or value except to keep an invented number off them."""
         if self.bluff is None or move.kind != "bid" or move.price is None:
             return None
         avoid = private_numbers(conv.neg.plan.max_price, conv.value)
         cp = Counterparty.dealer(conv.dealer)
-        return self.bluff.choose(cp, "buy", _conversation(conv), len(conv.neg.bids), int(move.price), avoid=avoid)
+        conversation, step = _conversation(conv), len(conv.neg.bids)
+        return self.bluff.choose(cp, "buy", conversation, step, int(move.price), avoid=avoid, their_price=her_ask)
 
     # ------------------------------------------------------------ accepts (shared quota)
 
