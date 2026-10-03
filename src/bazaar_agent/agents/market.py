@@ -76,10 +76,22 @@ def _cards_wanted(want: dict[str, Any]) -> list[str]:
     return [str(t).split(":", 1)[-1] for t in (want.get("types") or []) + (want.get("cards") or [])]
 
 
+SIDE_KEYS = frozenset({"cash", "assets", "types", "cards"})  # what an offer side may carry; anything else is not plain
+
+
+def _extra_structure(side: dict[str, Any]) -> bool:
+    """A non-empty key we do not price (`want.packs`, `give.debt`, ...): the offer is not a plain shape."""
+    return any(value not in (None, 0, [], {}, "") for key, value in side.items() if key not in SIDE_KEYS)
+
+
 def parse_offer(o: dict[str, Any], venue: str | None = None) -> BoardOffer | None:
-    """One card for cash (ask) or cash for one card (bid); None for every other shape."""
+    """One card for cash (ask) or cash for one card (bid); None for every other shape, including one that
+    carries any extra structure (a bid that also wants one of our assets, an unknown key): skipped, never
+    guessed at. Words persuade, structure binds."""
     give, want = o.get("give") or {}, o.get("want") or {}
-    if not isinstance(o.get("id"), int):
+    if not isinstance(o.get("id"), int) or not isinstance(give, dict) or not isinstance(want, dict):
+        return None
+    if _extra_structure(give) or _extra_structure(want):
         return None
     assets = [a for a in give.get("assets") or [] if isinstance(a, dict)]
     oid, where, maker = int(o["id"]), str(o.get("venue") or venue or ""), str(o.get("maker") or "")
@@ -99,7 +111,14 @@ def parse_offer(o: dict[str, Any], venue: str | None = None) -> BoardOffer | Non
         ref, price = str(a.get("ref")), int(want["cash"])
         return BoardOffer(oid, where, maker, "ask", ref, price, asset_id, a.get("rarity"), expires, created)
     wanted = _cards_wanted(want)
-    if int(give.get("cash") or 0) > 0 and not give.get("assets") and len(wanted) == 1 and not want.get("cash"):
+    if (
+        int(give.get("cash") or 0) > 0
+        and not give.get("assets")
+        and not _cards_wanted(give)
+        and len(wanted) == 1
+        and not want.get("cash")
+        and not want.get("assets")
+    ):
         return BoardOffer(oid, where, maker, "bid", wanted[0], int(give["cash"]), None, None, expires, created)
     return None
 
