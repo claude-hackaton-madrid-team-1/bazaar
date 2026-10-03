@@ -49,17 +49,29 @@ def declared(monkeypatch: pytest.MonkeyPatch, path: Path | None = None) -> tuple
     return {n: kw for n, kw in services.items() if n in kept}, {n for kind, n in resources if kind == "volume"}
 
 
+def _variables(kw: dict[str, Any]) -> dict[str, Any]:
+    """`env` and `variables`: the SDK merges both into the service's variables."""
+    return {**(kw.get("variables") or {}), **(kw.get("env") or {})}
+
+
 def test_only_the_live_agents_declare_bazaar_live_and_only_as_preserve(monkeypatch: pytest.MonkeyPatch) -> None:
     services, _ = declared(monkeypatch)
-    live = {name: kw.get("env", {}).get("BAZAAR_LIVE", "absent") for name, kw in services.items()}
+    live = {name: _variables(kw).get("BAZAAR_LIVE", "absent") for name, kw in services.items()}
     assert {n for n, v in live.items() if v is PRESERVE} == LIVE_AGENTS
     assert all(v == "absent" for n, v in live.items() if n not in LIVE_AGENTS), live
 
 
+def test_no_start_command_turns_an_agent_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    services, _ = declared(monkeypatch)
+    starts = {n: str(kw.get("start") or kw.get("startCommand") or "") for n, kw in services.items()}
+    assert not [n for n, cmd in starts.items() if "--live" in cmd.split()], starts  # live is BAZAAR_LIVE only
+
+
 def test_every_service_has_a_source(monkeypatch: pytest.MonkeyPatch) -> None:
     services, _ = declared(monkeypatch)
-    sourceless = sorted(n for n, kw in services.items() if kw.get("source") is None)
-    assert services and sourceless == [], sourceless
+    kinds = {n: kw.get("source") for n, kw in services.items()}
+    sourceless = sorted(n for n, src in kinds.items() if not (isinstance(src, tuple) and src[0] in ("github", "image")))
+    assert services and sourceless == [], sourceless  # None or {} would be an OFF service
 
 
 def test_the_monitor_and_the_evals_are_not_declared(monkeypatch: pytest.MonkeyPatch) -> None:

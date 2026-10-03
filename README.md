@@ -732,7 +732,8 @@ Code, Python authoring, beta): change it by PR.
   clock's flag, not this file):
   `for s in bazaar-duels bazaar-taker bazaar-maker; do railway ssh --service "$s" -- touch /app/.local/PAUSE; done`
   and `for s in bazaar-duels bazaar-taker bazaar-maker; do railway ssh --service "$s" -- ls /app/.local/PAUSE; done`.
-  A pause keeps our open offers on the board: see "Stop one" below to withdraw them.
+  A pause keeps our open offers on the board: see "Stop one" below to withdraw them. A laptop running
+  a `--live` command reads its own `.local/PAUSE`: touch that one too.
 
 ### Open Phoenix
 

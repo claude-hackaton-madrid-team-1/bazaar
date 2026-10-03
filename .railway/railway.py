@@ -189,7 +189,8 @@ def main(ctx=None):
             "PHOENIX_API_KEY": preserve(),  # a system key for span ingestion: `bazaar obs bootstrap`
         },
     )
-    # bazaar-monitor: removed 2026-10-03 by Omar, with its volume. The monitor runs in the CLI on a laptop
+    # bazaar-monitor: leaves this file 2026-10-03 (Omar deletes the service and its volume by hand; apply
+    # nothing until a re-plan shows 0 destroy). The monitor runs in the CLI on a laptop
     # (one per team). An off service still redeploys its last image whenever an apply changes its config,
     # source or not (Fri 23:14 UTC), so it is not declared at all. To run it on Railway again, re-add
     # `volume("bazaar-monitor-data", ...)` and `runtime("bazaar-monitor", "monitor", <that volume>)`.
