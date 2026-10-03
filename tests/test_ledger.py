@@ -326,3 +326,14 @@ def test_decisions_and_executions_rows_land_in_postgres(database_url, schema, tm
     assert ex.fetchone() == ("accept", "1", None)
     conn.close()
     log.close()
+
+
+def test_the_fallback_ledger_reads_hands_off_posts_while_postgres_is_down(tmp_path):
+    # #62 x #79: the maker asks every ledger for the hand-posted offers it must never cancel. #62's
+    # FallbackLedger had no hands_off_ids, so a dry run with Postgres down raised AttributeError in the maker.
+    from bazaar_agent.guardrails import HANDS_OFF
+
+    ledger = open_ledger(tmp_path, source="maker", database_url=RAILWAY, game_url=SIM, connect=refused)
+    assert isinstance(ledger, FallbackLedger)
+    ledger.record("listing", 10, 1.0, 0, f"{HANDS_OFF}4242")
+    assert ledger.hands_off_ids() == {4242}

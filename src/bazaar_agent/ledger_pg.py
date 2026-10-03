@@ -131,12 +131,12 @@ class PgLedger:
 
     def hands_off_ids(self) -> set[int]:
         """Offer ids a person posted by hand (`guardrails.HANDS_OFF` listing rows), from every machine."""
-        try:
-            rows = self._conn.execute(
+        rows = self._run(
+            "read",
+            lambda conn: conn.execute(
                 "select item from ledger where kind = 'listing' and item like %s", (HANDS_OFF + "%",)
-            ).fetchall()
-        except psycopg.Error as e:
-            raise LedgerUnavailable(f"ledger read failed ({type(e).__name__})") from None
+            ).fetchall(),
+        )
         ids = (hands_off_id(str(item or "")) for (item,) in rows)
         return {i for i in ids if i is not None}
 
@@ -210,6 +210,9 @@ class FallbackLedger:
 
     def accept_items(self, tick: int) -> list[str]:
         return self._use(lambda ledger: ledger.accept_items(tick))
+
+    def hands_off_ids(self) -> set[int]:
+        return self._use(lambda ledger: ledger.hands_off_ids())
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
