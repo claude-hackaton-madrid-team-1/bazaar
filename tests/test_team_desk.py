@@ -946,3 +946,12 @@ def test_a_team_accept_shows_only_its_thread_and_fee_on_the_public_view():
     row = {"kind": "team_accept", "status": "approved", "chosen": True, "dry_run": False}
     row["inputs"] = swap_proposal(a).inputs
     assert public_decision(row)["inputs"] == {"thread": 42, "fee": 3}
+
+
+def test_warnings_stay_off_stdout_except_on_railway():
+    # Found by the sim smoke step of `bazaar swaps --json`: #105's holdings warning landed on stdout first.
+    import sys
+
+    from bazaar_agent.cli import log_stream
+
+    assert log_stream({}) is sys.stderr and log_stream({"RAILWAY_ENVIRONMENT": "production"}) is sys.stdout

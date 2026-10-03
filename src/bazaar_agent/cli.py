@@ -85,9 +85,9 @@ def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTI
     style = "bold yellow" if settings.simulator else "dim"
     banner = console if os.environ.get("RAILWAY_ENVIRONMENT") else err_console
     banner.print(f"[{style}]{settings.target_line()}[/{style}]", highlight=False)
-    # Warnings (e.g. Phoenix unreachable) go to stdout with the console lines: a container platform
-    # such as Railway files stderr as errors. A no-op when logging is already configured.
-    logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    # Warnings (e.g. Phoenix or Postgres unreachable) follow the banner: stdout on Railway, which files stderr
+    # as errors, stderr elsewhere so `--json` stdout stays JSON. A no-op when logging is already configured.
+    logging.basicConfig(stream=log_stream(), level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if tm.init_tracing("bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
@@ -103,6 +103,11 @@ def _events(live: bool) -> list[Event]:
         err_console.print("[yellow]no captured feed yet: reading the live window[/yellow]")  # stdout stays JSON
         events = load_events(store, public_client(settings).feed_window(DEFAULT_WINDOW))
     return events
+
+
+def log_stream(env: Any = None) -> Any:
+    """Where warnings go: stdout on Railway (it files stderr as errors), stderr elsewhere (`--json` stays JSON)."""
+    return sys.stdout if (os.environ if env is None else env).get("RAILWAY_ENVIRONMENT") else sys.stderr
 
 
 def _fail(message: str) -> None:

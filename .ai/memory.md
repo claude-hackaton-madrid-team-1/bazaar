@@ -549,3 +549,9 @@ After a rival accepted our swap offer, the desk read its message as a reply and 
 was refused `offer_accepted`. An offer of ours reading `accepted` in the thread's `standing_offers` now marks
 the thread as waiting for its deal. The simulator's rivals also stack one counter per tick (old ones stay
 open): read every standing offer, judge each, log a refusal once.
+
+### [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
+symptom: the sim smoke's `bazaar swaps --json` step failed: stdout started with `WARNING bazaar_agent.holdings:
+... Postgres unavailable` → root cause: the CLI's `logging.basicConfig(stream=sys.stdout)` (stdout because
+Railway files stderr as errors) → fix: `cli.log_stream()`: stdout only when RAILWAY_ENVIRONMENT is set, as the
+target banner already does; stderr elsewhere, so every `--json` command stays pure JSON on a laptop.
