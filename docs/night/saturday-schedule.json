@@ -1012,6 +1012,14 @@
       "owner": "Marius"
     },
     {
+      "id": "G1c",
+      "when": "before 09:00",
+      "question": "BAZAAR_LEARN on bazaar-taker?",
+      "check": "railway variable list --service bazaar-taker: #89 (merged 06:24) makes the live taker skip dealers under learned blockers unless BAZAAR_LEARN=0; over-blocking risks: a card persona_quota refusal blocks that dealer's packs for the hour, an unseen sold_out blocks the whole dealer for the hour. #145 (merged) keeps our only copy of any RET/CHA page card from being sold (protect_page_sets = RET,CHA)",
+      "then": "Marius decides on/off",
+      "owner": "Marius"
+    },
+    {
       "id": "G1b",
       "when": "all day",
       "question": "Is this a safe moment to merge?",
