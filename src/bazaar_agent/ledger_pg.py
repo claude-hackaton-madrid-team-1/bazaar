@@ -148,6 +148,15 @@ class PgLedger:
         )
         return [str(item or "") for (item,) in rows]
 
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        rows = self._run(
+            "read",
+            lambda conn: conn.execute(
+                "select item, price from ledger where kind = 'accept' and tick = %s order by id", (tick,)
+            ).fetchall(),
+        )
+        return [(str(item or ""), int(price or 0)) for item, price in rows]
+
     def hands_off_ids(self) -> set[int]:
         """Offer ids a person posted by hand (`guardrails.HANDS_OFF` listing rows), from every machine."""
         rows = self._run(
@@ -188,6 +197,18 @@ class PgLedger:
             return True
 
         return self._run("accept reservation", reserve)
+
+    def release_accept(self, tick: int, item: str) -> None:
+        """Give back a reserved accept the game refused (a refused request costs nothing, RULES.md): the
+        newest reservation of `item` in `tick` is deleted, so its slot can be taken again."""
+        self._run(
+            "accept release",
+            lambda conn: conn.execute(
+                "delete from ledger where id = (select id from ledger where kind = 'accept' and tick = %s "
+                "and item = %s order by id desc limit 1)",
+                (tick, item),
+            ),
+        )
 
     def close(self) -> None:
         self._pg.drop()
@@ -235,11 +256,17 @@ class FallbackLedger:
     def accept_items(self, tick: int) -> list[str]:
         return self._use(lambda ledger: ledger.accept_items(tick))
 
+    def accept_rows(self, tick: int) -> list[tuple[str, int]]:
+        return self._use(lambda ledger: ledger.accept_rows(tick))
+
     def hands_off_ids(self) -> set[int]:
         return self._use(lambda ledger: ledger.hands_off_ids())
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         return self._use(lambda ledger: ledger.reserve_accept(tick, t_hours, price, item, limit))
+
+    def release_accept(self, tick: int, item: str) -> None:
+        self._use(lambda ledger: ledger.release_accept(tick, item))
 
 
 LOCAL_HOSTS = ("localhost", "host.docker.internal", "gateway.docker.internal")  # this machine, seen from docker

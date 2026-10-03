@@ -487,15 +487,15 @@ def test_a_pause_that_lands_during_the_claim_stops_the_opening_and_gives_the_cla
     assert team.opened == [] and store == {}
 
 
-def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(tmp_path):
-    """Team decision Sat 06:08: GUARDRAILS.md ships allow_venue_open = false. The maker, live, at game hour
-    7.0 with plenty of cash and a healthy vault, never POSTs /api/venues and never touches the vault."""
+def test_with_the_committed_switch_on_the_maker_opens_our_venue_once_from_game_hour_3(tmp_path):
+    """Team decision Sat 3 Oct, game hour 3.1: GUARDRAILS.md ships allow_venue_open = true from game hour 3.0. The
+    maker, live, with plenty of cash and a healthy vault, sends nothing before 3.0, then POSTs /api/venues once."""
     from bazaar_agent.agents.maker import Maker
     from bazaar_agent.guardrails import load_guardrails
     from tests.agent_fakes import FakePublic, FakeTeam, clock, parts
 
     committed = load_guardrails().rules
-    assert committed.allow_venue_open is False
+    assert committed.allow_venue_open is True and committed.venue_open_after_game_hours == 3.0
 
     class OpeningTeam(FakeTeam):
         opened: list[tuple] = []
@@ -515,12 +515,87 @@ def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(t
         log=lambda line: None,
     )
     m = Maker(team, FakePublic(), live=True, log=lambda line: None, market=keeper_, **parts(tmp_path))
-    for tick in (400, 401, 420):
+    for tick, t_hours in ((210, 2.99), (211, 3.0), (212, 3.01), (230, 3.15)):
         c = clock(tick=tick)
         keeper_.on_tick(
-            Clock(tick=tick, t_hours=7.0, tick_seconds=30.0, next_tick_in=25.0),
-            snap(tick=tick, t_hours=7.0, cash=900),
+            Clock(tick=tick, t_hours=t_hours, tick_seconds=30.0, next_tick_in=25.0),
+            snap(tick=tick, t_hours=t_hours, cash=900),
             window(),
         )
         m.on_tick(c)
-    assert team.opened == [] and store == {} and keeper_.opened is None
+        if t_hours < 3.0:
+            assert team.opened == [] and store == {}
+    assert team.opened == [("Team 1 market", 0, 0)] and list(store) == [("", "v09")]  # once, at 3.0
+
+
+# ---------------------------------------------------------------- the notice on our venue
+
+
+class AnnouncingBroker(FakeBroker):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.notes: list[str] = []
+
+    def announce(self, text):
+        self.notes.append(text)
+        return {"ok": True}
+
+
+def announcing(tmp_path, broker, *, live=True, **rules):
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker, live=live, **rules)
+    k.announce_every = vk.ANNOUNCE_EVERY_GAME_HOURS
+    return k
+
+
+def ran(k, tick, t_hours, open_=True):
+    s = snap(tick=tick, t_hours=t_hours, venues=(RASTRO, ours()), venue={"venue": "v09", "status": "open"})
+    k.on_tick(s.clock, s, window(open_))
+
+
+def test_our_venue_is_announced_once_then_at_most_once_per_game_hour(tmp_path):
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    ran(k, 400, 6.5)
+    ran(k, 401, 6.52)
+    ran(k, 500, 7.49)
+    assert len(broker.notes) == 1
+    ran(k, 501, 7.5)
+    assert len(broker.notes) == 2
+    note = broker.notes[0]
+    assert note.startswith("Team 1 market (v09) is open: board venue, 0 % fee") and len(note) <= vn.ANNOUNCE_MAX_CHARS
+    executions = [e["sdk_method"] for e in rows(tmp_path, "executions.jsonl")]
+    assert executions.count("broker_announce") == 2
+    assert [d["status"] for d in rows(tmp_path) if d.get("kind") == "venue_announce"] == ["approved", "approved"]
+
+
+def test_a_dry_run_or_a_closed_window_or_the_switch_off_announces_nothing(tmp_path):
+    dry = AnnouncingBroker()
+    k = announcing(tmp_path / "dry", dry, live=False)
+    ran(k, 400, 6.5)
+    assert dry.notes == [] and [d["kind"] for d in rows(tmp_path / "dry")].count("venue_announce") == 1
+    late = AnnouncingBroker()
+    k = announcing(tmp_path / "late", late)
+    ran(k, 400, 6.5, open_=False)
+    assert late.notes == []
+    off = AnnouncingBroker()
+    k = announcing(tmp_path / "off", off, allow_venue_open=False)
+    ran(k, 400, 6.5)
+    assert off.notes == []
+
+
+def test_the_kill_switch_holds_the_notice_until_it_is_lifted(tmp_path):
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    (tmp_path / "PAUSE").write_text("")
+    ran(k, 400, 6.5)
+    assert broker.notes == []
+    (tmp_path / "PAUSE").unlink()
+    ran(k, 401, 6.51)
+    assert len(broker.notes) == 1
+
+
+def test_without_the_maker_setting_the_keeper_never_announces(tmp_path):
+    broker = AnnouncingBroker()
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
+    ran(k, 400, 6.5)
+    assert broker.notes == []

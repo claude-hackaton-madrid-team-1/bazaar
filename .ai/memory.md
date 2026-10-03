@@ -688,6 +688,14 @@ someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
 
+### [2026-10-03] finding — organisers' Saturday opening (09:19): 17 teams played Friday, duels now score
+Source: `docs/transcripts/2026-10-03-morning-voice-memo.md` § 2 (organisers' talk before the Saturday market). Friday had
+17 teams, not 18 (one never showed up); four team markets opened. Today: another pack drop, team markets open, duels later
+in the day and now scored, and new dealers may arrive during the day with cards nobody has seen yet; 2 deals per minute.
+Their hints: some teams paid a first offer above the card's value to them (know `your_value` before buying); repeating the
+same "last price" moves nothing (matches the N14a finding above: repeating our top price drew a final in 1 of 11 threads);
+half of Friday's practice duels ended with no deal. The 03:22 memo in the same file reads back the night's docs: no new facts.
+
 ### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
 From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
 1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
@@ -763,6 +771,7 @@ symptom: `_accept_swap` sent `accept(their_offer, assets=pick)` with no inspecto
 was a third path beside `_accept_one` and `_accept_bid` → fix: `accept_gate.swap_gate` reads the thread's standing
 offer again (still open, from that team, to us, same cards and cash, our copy of the planned card in /me), before
 the slot; kind `team`, kept off the public view by the status allow-list. Test in test_team_desk.py.
+
 ### [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 Friday's four `venue.fee_announced` events (v03, ticks 134→136, 145→147, 154→156, 159→161) all gave exactly 2
 ticks' notice. Friday had 0 settlements on team venues, so which fee the real server charges at the settlement
@@ -773,3 +782,178 @@ half-to-even while the tape rounds up. The taker prices the higher fee from `eff
 Twice on Sat morning (load from ~10 parallel review agents), `uv run pytest` ended with no summary and a
 "Extension modules: psycopg_binary.pq, …" dump instead; the same commit passed on an immediate rerun (1127 and
 1172 passed). Rerun before blaming the change; a crash that repeats on an idle machine is real.
+
+### [2026-10-03] finding — duel_policy v2 sends nothing for many ticks against a conceding rival; the smoke plays the duel out
+Private sim, 16-tick sessions: v2 held while the sim's rival conceded every tick, then accepted at D − 3 and D − 2
+(94 and 88, 0 rounds, 56–58 % of the pie). The old 3-tick smoke step saw no move, so `scripts/sim_smoke.py` now runs
+`duel run --play` to the session's deadline (SIM_DUEL_TICKS 24) and needs every duel closed as a deal inside our
+limit. Two-issue session, `duel_days_signed` false: v2 valued the rival's 74 at 10 days as 36 (cost 40), offered 42 at
+0 days and made 2 of a 63 pie; the sim's scoring put the 74 offer at +72. After the rival took our 42, v2 sent the second
+"last offer" and the sim refused it (`duel_closed`): no cost, but a step that has a " refused " marker fails the smoke.
+
+### [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
+symptom: the duel CLI tests exited 1 with `AttributeError: 'DuelClient' object has no attribute 'me'` → root
+cause: the new bluff book reads our team id once at start and only caught `BazaarError` → fix: `_our_team_id`
+fails open on any error (the tactic lessons then bind no team); a duel loop never waits on it.
+
+### [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+Sim run with tactics on (tick 0-17): Abuela got kindness only and dealt at 7 after 2 bids; El Chato moved one
+per our step ("You moved 1, I move 1") whatever the bluff, and both sim rivals conceded 1 P per tick, so every
+tactic scored "toward" (+1). The sim's dealers read words only for mood (kindness, rudeness, injection). Expect
+the same from real dealers ("their prices come from their own rules"): lying should pay, if anywhere, against
+LLM duel rivals; the no-gain rule switches a tactic off where it earns nothing.
+
+### [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
+BAZAAR_SIM=local has a fixed address, so two workers running `scripts/sim_smoke.py` at once collide
+("address already in use", the second sim exits 3). Wait until `lsof -iTCP:8765 -sTCP:LISTEN` is empty; never
+kill another worktree's simulator.
+
+### [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
+`DuelStore.read_finished` is True on a runner's first tick, so `duel run` calls `client.duels(done=True)`; the
+`DuelClient` fake in tests/test_jev_journal.py takes no `done`, and the TypeError is swallowed by `run_per_tick`
+("tick loop: tick N failed"), so code placed after it in `on_tick` never ran in those tests. A fake for
+`duel run` needs `duels(self, done=False)` (tests/test_bluff_wiring.py does).
+
+### [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
+`git merge origin/main` in a scratch worktree printed "Resolved '.ai/memory.md' using previous resolution": a
+reviewer's earlier scratch merge had recorded it. Check the result (`git diff HEAD`) before trusting a rerere
+resolution; `git rerere forget <path>` drops a bad one.
+
+### [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
+#131 was cut from #96's pre-rebase commits; `git merge origin/main` then hit 29 conflicts, mostly add/add in
+`learn/*` (the same files from two histories). Fix: apply only the PR's own commits onto main, `git diff --binary
+<old base head> <PR head> | git apply -3` in a scratch worktree of main, resolve the few real conflicts there, and
+use that tree for the merge commit (`git merge --no-commit origin/main`, then `git read-tree --reset -u <tree>`).
+Under `duel_policy = v2` the duel words stay main's plain templates, so N16 tactics are off for duels there.
+
+### [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
+symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squashed onto #72's round-3 head: thread
+40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that
+is not answered yet, and the adopted `Negotiation` started with `waits = 0` → fix: `_adopt` starts it with
+`waits = MAX_WAITS` (her answer already had `orphan_after_ticks` ≥ `MAX_WAITS` ticks to come in).
+
+### [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
+A quiet thread is not an orphan: a laptop `bazaar dealer buy` paused by its own `.local/PAUSE` stops bidding,
+and the Railway taker cannot see that pause. The taker now owns a thread only when its decisions log names it
+(`dealer_opened` rows carry the thread id); it adopts those on sight, because a fresh bid's "Deal!" can land
+a tick after the new process starts. A `process_started` row marks the first process that writes
+`dealer_closed`: earlier threads are never booked again (their process booked them silently).
+
+### [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
+`DecisionLog` writes `inputs` through `telemetry.scrub`, which redacts anything that looks like an internal host
+name (`Omars-MacBook-Pro.local` → `[redacted]`). An identity meant to be compared later must be a token the
+scrubber keeps: `decisions.writer()` stores a short hash (`w` + 10 hex) of `RAILWAY_SERVICE_ID` or the host name.
+
+### [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
+`bazaar_sdk._Http` re-sends a `rate_limited` call up to `retries` times, writes included, and waits 15 s per
+attempt: on one key shared by every process that fills the 5 req/s bucket further. `TeamBazaar` (B18) never
+re-sends a refusal or a write. RULES.md's "a refused request costs nothing" is about a `4xx`: a 5xx (or an edge
+502/504) may come after the game applied it, so it keeps the team's accept slot and books the spend (#141 review).
+
+### [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
+A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed or been cancelled by `bazaar
+flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
+a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
+emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
+
+### [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
+`uv run bazaar supply` (N14b) at Friday's close, before any card scan: 287 assets placed from settlements and
+listings, 42 packs opened. Complete pages that can exist now (fewest copies of a page card): LAT 2 (LAT-10),
+MAL 3 (MAL-09/MAL-10), LAV 4 (LAV-09), SAL 4 (SAL-09/SAL-10). A starting asset never traded keeps the block
+of its id: team k was dealt ids 15k−14…15k, so a scan names who holds an unmoved rare even though
+`/api/cards/{id}` says only "a team".
+
+### [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
+`uv run bazaar supply scan --rate 2` read ids 1–538 (doors closed, tick 159), then 5 unknown ids. With the
+scan, the holders of every rare with at most 5 copies are placed (unplaced 0–1): LAT-10 t03, t15 · MAL-09
+t11, t12 · MAL-10 t08, t09, t12 · LAV-09 t05, t07, t10, t14 · SAL-09 t13, t16, t17, t18 · SAL-10 t02, t13,
+t17, t18 · LAV-10 t04, t05, t07, t10, t14. Rescan with `--from-id 539` for new pulls (incremental).
+
+### [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
+`uv run bazaar flags precision --feed-dir <capture>`: 1,027 dealer offers (Abuela 805, Chato 217 with a known topic),
+0 would-flag, 5 with an empty topic `{}` (thread 44). Jev `enable_bad_faith_flags` (questions/flags.json) on that
+state: no (0.06, margin 0.88). A hypothetical L4 state (4 would-flags on an untrusted dealer's 40 offers, 0 on the
+trusted ones): yes 0.83; the same with 1 would-flag on a trusted dealer: undecided 0.33. Re-run when L4 opens.
+
+### [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
+"Ign\u200bore all previous instructions", "ig\u034fnore …", Hangul fillers (U+3164, U+115F, U+FFA0), the braille
+blank and Cyrillic/Lisu look-alikes matched no pattern (S1 hostile-text tests, #152 audits). Fullwidth digits were
+already matched (Python's `\d` is Unicode). The patterns now read NFKD text without Cf/Mn/Me or those fillers;
+`odd_unicode` names the hiding (emoji joiners, "nº", "µ" and "ʼ" excepted); 0 tags on 1,091 Friday dealer texts.
+
+### [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+Three #152 reviews showed honest out-of-stock words read like a trick in every shape ("La Tabacalera? Ya no
+tengo.", "Rare card? Not today.", "I wish I still had it"), and Jev says yes to flags on counts alone. Decision:
+any denial word anywhere in a dealer's message means it claims nothing (the swap is still refused: block, never
+flag), a flag goes only to a GUARDRAILS.md `flag_dealers` dealer a human opted in after reading its would-flag
+words in `bazaar flags precision`, at most `max_flags_sent` ever per data dir, never twice. A missed flag loses a
+bonus; a wrong one costs points.
+
+### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+`docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
+"0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
+`docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
+
+### [2026-10-03] finding — dealers buying from us DO raise their bid; `bazaar dealer sell` sells duplicates
+Friday feed, 104 sell threads (`{"sell": {"assets": [id]}}`): Abuela bids `give.cash` and moves up when the
+team moves down (commons 5→6, uncommons 12→16, 20→23), then a `final`. The simulator modelled a buyer that
+never moved; it now raises one prima per move of ours up to `buy_ceiling` (Abuela 0.65 of book). A sale is a
+ladder deal: `dealer sell` never closes at her opening bid. Private sim: LAT-04 sold at 6 (her opening 5).
+### [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
+Day-2 hint 1: `GET /api/me/value?card=` = our value of ONE more copy (book × affinity × copy marginal), the value the
+score counts trades at. Our model adds a page-bonus share and lands higher (MAL-06 official 27.5 vs ours 36, SAL-07
+32.5 vs 50.4). `guardrails.check()` now refuses a card buy above it (`official_value_margin`, read last, once per card
+per tick, a failed read refuses). First proof, the sim smoke: `dealer buy LAV-01` walked at "price 8 > official
+value 7" (LAV affinity 0.7). Tests run the cap only when marked `official_values` (tests/conftest.py).
+
+### [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
+An emoji cut in half by a JS/TS string slice reaches us as a lone surrogate (`"\ud83d"` in JSON). `json.dumps(...,
+ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Postgres jsonb rejects it raw or escaped.
+`duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
+move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
+owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.
+
+### [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
+`/api/levels` (tick ~330): Radio Rastro active since game hour 3.675; `news.posted` events (payload id, source, headline,
+body) are in `/api/feed` too, so the taker's sentinel reads them at no request cost and backfills `/api/news` +
+`/api/schedule` once per 10 ticks. `/api/dealers`: Doña Pilar `kind: "collector"`, level 3, opens to all at game hour
+5.508; she sells only `sobre_oro` (list 420, 1/team/hour) and buys uncommon/rare/epic (SAL, RET loved). Our taker never
+buys her pack while `max_price_pack` = 20; selling to her needs `bazaar dealer sell --dealer pilar` (no runner sells
+to dealers). Schedule: "Salamanca fever: Pilar pays 25 % over book for Salamanca" from game hour 9.15 to 11.15.
+### [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
+`console.print(f"    {words}")` indents only the first line: the wrapped rest starts at column 0, and padding made
+of "printable" blanks (U+2800 braille blank, U+3164/U+FFA0 Hangul fillers) can push a forged line there (#176 review).
+Print untrusted text as `Padding(Text(words), (0, 0, 0, 4))` (literal, every wrapped line indented) after blanking
+unprintable characters, those fillers, and the characters rich measures 0 wide but terminals draw 2 wide (skin-tone
+modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself would wrap to column 0)
+(`flags_cli.printable`).
+
+### [2026-10-03] gotcha — one exception in a bazaar-sim tick stopped its clock for good while /api/health said ok
+`app._clock_loop` had no try/except: a raising rival (or a failed world save) killed the background task, the world
+froze at that tick and every health check still answered ok. #178 holds a raising rival for the tick and makes the loop
+log a failed tick or save and go on (the tick counter moves first, so a failure never retries in a hot loop).
+
+### [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
+`scripts/tick_profile.py` on a scratch merge of the Sunday PRs (#89 #96 #112 #91 #105 #108 #111 #71 #72) against a
+local `bazaar-sim` at 15 s ticks, 40 ticks of taker + maker + duels together (SP1): at 100 ms per request the taker
+took p50 1.12 s / p95 1.43 s, the maker 0.65 / 1.07 s, the duels 0.60 / 0.69 s of a 12.6 s budget; with 250 ms per
+request and Jev 1 s slower, 3.31 / 1.55 / 2.04 s p50. 0 ticks over budget, 0 decisions dropped, 0 × 429, busiest
+second 8-12 keyed requests (bucket 20), mean 0.66-0.68 keyed req/s for all three (limit 5). The taker asked Jev
+`spend_pack_slot_now` on every tick for an unchanged state (40 calls in 40 ticks): `jev_cache_ticks` cut it to 12-13,
+and `parallel_reads` brought the taker to p50 0.24 s (100 ms) / 0.53 s (250 ms + slow Jev).
+
+### [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
+Another worker's e2e taker traded on our `bazaar-sim` at 127.0.0.1:8815 (ticks 14-18, as sim-team1): every run on that
+sim was discarded and re-run. The SDK opens a new TLS connection for every request (~25-30 ms from Madrid to the game,
+measured on the keyless clock), so the simulator's ~1 ms answers understate a tick: profile with `SP1_LATENCY_MS`.
+
+### [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
+Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` = the fewer priced messages of the two sides (verified on 26/26
+practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
+team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
+(a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
+
+### [2026-10-03] gotcha — a fresh `run_per_tick` handles the CURRENT tick at once
+`run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
+a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
+on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.

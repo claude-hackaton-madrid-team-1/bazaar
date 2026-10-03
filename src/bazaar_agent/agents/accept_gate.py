@@ -89,9 +89,10 @@ def dealer_gate(
     message_id, text = message_for_offer(thread, offer_id)
     inspection = inspect_offer(offer, topic, text, cards, dealer=dealer, message_id=message_id)
     findings = list(inspection.findings)
-    asks = (offer.get("want") or {}).get("cash")
+    selling = isinstance(topic.get("sell"), Mapping)  # a sale: the dealer's bid is the cash it gives
+    asks = (offer.get("give" if selling else "want") or {}).get("cash")
     if price is not None and asks != price:
-        findings.append(f"the structure asks {asks} P, our decision priced {price} P")
+        findings.append(f"the structure {'bids' if selling else 'asks'} {asks} P, our decision priced {price} P")
     verdict: Verdict = inspection.verdict
     if verdict == "clean" and findings:
         verdict = "block"

@@ -116,7 +116,7 @@ def score_offer(
         reason += f"; tape {market:g}"
     if their_value is not None:
         reason += f"; {o.maker} values it ~{their_value:.1f}"
-    verdict = check(action, ctx, rules)
+    verdict = check(action, replace(ctx, ranking=True), rules)  # ranking: the accept's own check reads the value
     return Opportunity(
         o.id,
         o.venue,

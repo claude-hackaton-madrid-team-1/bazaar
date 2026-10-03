@@ -75,8 +75,8 @@ probabilities) still goes to the Postgres `decisions` table and to Phoenix, both
 
 `wss://bazaar-taker-production.up.railway.app/events` and `wss://bazaar-maker-production.up.railway.app/events`.
 
-- One JSON message per event, in the same envelope as the web dashboard's live feed (spec 003 on
-  `feat/web-live`): `{id, tick, t, type, scope, actor, agent, payload}`. Ids are negative and made up,
+- One JSON message per event, in the same envelope as the game feed that
+  [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live) relays to its game screens (agent, negotiations, album, market, debug): `{id, tick, t, type, scope, actor, agent, payload}`. Ids are negative and made up,
   so they never collide with game event ids.
 - A client that joins late first receives the last **200** events, then everything new as it happens.
 - Event types:
@@ -341,5 +341,18 @@ only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is neve
 
 - **Postgres** (`iriguchi.proxy.rlwy.net:28880`, db `railway`): the shared memory. Credentials only in
   the Railway dashboard; never in chat, git or a browser.
+- **Read-only login for teammates** (`bazaar_team_ro`, for DataGrip or psql): SELECT on every table and
+  sequence in `public` (tables created later included) except `venue_broker_keys` (our broker key), no write
+  privilege, sessions read-only by default, 30 s statement timeout, idle sessions closed (60 s in a transaction,
+  10 min otherwise), at most 10 connections. The coordinator creates or rotates it with the admin
+  `DATABASE_URL`: `uv run bazaar db readonly-user` (generates a password) or `... --password-stdin` (prompt, or
+  one piped line). It prints `postgresql://bazaar_team_ro:<password>@<host>:<port>/railway?sslmode=require`
+  once; the password reaches the server only as a SCRAM hash, and re-running rotates it. In DataGrip: New →
+  Data Source → PostgreSQL, paste the URL, SSL required, auto-commit on. Ask the coordinator for it privately,
+  never in chat or git. Limits: the role is cluster-wide and PUBLIC still lets it connect to the server's other
+  databases (`bazaar_sim`, `postgres`) and create temp tables; a session may turn its read-only default and
+  timeouts off (the privileges still refuse every write); and PUBLIC's `pg_advisory_lock` lets it take our
+  writers' lock keys, which would stall accepts (they fail closed). Hand the URL only to teammates. A new
+  secret table must be added to `readonly_user.SECRET_TABLES_DDL` and revoked in `sql/readonly_user.sql`.
 - **`bazaar-duels`**: the duel player, a background worker with no HTTP. Its traces are in Phoenix.
 - **The monitor**: runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision.
