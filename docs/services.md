@@ -341,5 +341,12 @@ only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is neve
 
 - **Postgres** (`iriguchi.proxy.rlwy.net:28880`, db `railway`): the shared memory. Credentials only in
   the Railway dashboard; never in chat, git or a browser.
+- **Read-only login for teammates** (`bazaar_team_ro`, for DataGrip or psql): SELECT on every table and
+  sequence in `public` (tables created later included), no write privilege, sessions read-only by default,
+  30 s statement timeout, at most 10 connections. The coordinator creates or rotates it with the admin
+  `DATABASE_URL`: `uv run bazaar db readonly-user` (generates a password) or `... --password-stdin < file`.
+  It prints `postgresql://bazaar_team_ro:<password>@<host>:<port>/railway?sslmode=require` once; the password
+  reaches the server only as a SCRAM hash, and re-running rotates it. In DataGrip: New → Data Source →
+  PostgreSQL, paste the URL, SSL required. Ask the coordinator for it privately, never in chat or git.
 - **`bazaar-duels`**: the duel player, a background worker with no HTTP. Its traces are in Phoenix.
 - **The monitor**: runs in the CLI on a laptop (`uv run bazaar monitor --notify`) by team decision.
