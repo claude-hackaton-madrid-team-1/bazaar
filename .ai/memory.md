@@ -965,3 +965,8 @@ on the next tick, read the clock until `tick` is strictly later (bounded), as `n
 service (judge answers `undecided`), a Jev timeout or a tick with < `jev_min_budget_s` left all mean no swap
 (fail closed, a `rejected` decision row with the verdict). The cash we add to swaps is booked as `team:<card>`
 spend rows (`team_swap_max_cash_per_hour` sums them), still counted in `max_spend_per_game_hour`.
+
+### [2026-10-03] finding — the catalog shows a release before anyone trades it: CHA is `released: false` (Sat)
+Keyless `GET /api/catalog`: LAV/MAL/LAT/SAL `+0h`, RET `sat+0h`, CHA `sun+0h` with `released: false`, 12 cards
+each, none `hidden`, CHA minted 0. The taker's cards heartbeat (`cards_heartbeat.py`) diffs the catalog it already
+reads each tick (no request): Sunday's flip reports 12 `set_released` events with the dealers that sell/buy each.
