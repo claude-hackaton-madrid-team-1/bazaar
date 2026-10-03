@@ -118,9 +118,18 @@ def _ours(offer: Mapping[str, Any], team: str | None) -> bool:
     return team is None or offer.get("maker") in (team, None)
 
 
-def open_bids(offers: Iterable[Mapping[str, Any]], team: str | None) -> int:
-    """Cash our open offers would take if accepted: board bids and dealer-thread bids."""
-    return sum(_n((o.get("give") or {}).get("cash")) for o in offers if o.get("status") == "open" and _ours(o, team))
+def committed_cash(offers: Mapping[str, Any], threads: Iterable[Mapping[str, Any]], team: str | None) -> int:
+    """Cash our open or queued offers would take if they filled, the way the guardrails count it.
+
+    Board offers (every list in the `/api/me/offers` body) and the offers inside our threads, one per offer id:
+    a dealer-thread bid may appear in both, and `/api/me/offers` wins over a thread's older snapshot.
+    """
+    from bazaar_agent.agents.seller import offers_in, open_commitments
+
+    by_id: dict[Any, Mapping[str, Any]] = {}
+    for o in [*thread_offers(threads), *offers_in(dict(offers))]:
+        by_id[o.get("id", id(o))] = o
+    return open_commitments([dict(o) for o in by_id.values()], team or "").cash
 
 
 def thread_offers(threads: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -195,21 +204,27 @@ def cash_panel(reads: Reads, limits: Limits) -> Panel:
     me = reads.me or {}
     team = me.get("id")
     cash = _n(me.get("cash"))
-    board = list((reads.offers or {}).get("offers") or [])
-    in_threads = thread_offers((reads.threads or {}).get("threads") or [])
-    committed = open_bids(board, team) + open_bids(in_threads, team)
     reserve = limits.venue_bond_reserve if limits.venue_bond_reserve and not me.get("venue") else 0
     floor = limits.cash_floor + reserve
-    headroom = cash - committed - floor
-    status: Status = "bad" if headroom < 0 else "warn" if headroom < HEADROOM_WARN else "ok"
-    lines = [
-        Line("cash", f"{cash} P · open bids {committed} P"),
-        Line(
-            "floor",
-            f"{floor} P (cash_floor {limits.cash_floor}" + (f" + venue reserve {reserve}" if reserve else "") + ")",
-        ),
-        Line("headroom", f"{headroom} P above the floor after open bids", status),
-    ]
+    floor_line = Line(
+        "floor", f"{floor} P (cash_floor {limits.cash_floor}" + (f" + venue reserve {reserve}" if reserve else "") + ")"
+    )
+    if reads.offers is None or reads.threads is None:  # unknown open bids: never show a headroom we cannot back
+        missing = "offers" if reads.offers is None else "threads"
+        lines = [
+            Line("cash", f"{cash} P · open bids unknown"),
+            floor_line,
+            Line("headroom", f"unknown: {missing} unreadable ({reads.errors.get(missing, 'not read')})", "bad"),
+        ]
+    else:
+        committed = committed_cash(reads.offers, (reads.threads or {}).get("threads") or [], team)
+        headroom = cash - committed - floor
+        status: Status = "bad" if headroom < 0 else "warn" if headroom < HEADROOM_WARN else "ok"
+        lines = [
+            Line("cash", f"{cash} P · open bids {committed} P"),
+            floor_line,
+            Line("headroom", f"{headroom} P above the floor after open bids", status),
+        ]
     if reads.ledger is not None:
         spent = reads.ledger.spent_last_hour
         cap = limits.max_spend_per_game_hour
@@ -283,7 +298,9 @@ def caps_panel(reads: Reads) -> Panel:
         return Panel("Caps", (miss,))
     lim = _limits(reads.clock)
     team = (reads.me or {}).get("id")
-    board = [o for o in (reads.offers or {}).get("offers") or [] if o.get("status") == "open" and _ours(o, team)]
+    from bazaar_agent.agents.seller import offers_in
+
+    board = [o for o in offers_in(dict(reads.offers or {})) if o.get("status") == "open" and _ours(o, team)]
     threads = [t for t in (reads.threads or {}).get("threads") or [] if t.get("status") == "open"]
 
     def vs(n: int, cap: Any) -> Status:

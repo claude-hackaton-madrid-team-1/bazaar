@@ -12,7 +12,7 @@ the header carries the worst of them.
 |---|---|---|
 | Clock | doors, tick, game hour, tick length, round, the limits in force, next opening | doors closed |
 | Next (playbook) | the next 4 events from B6's timeline, with wall time and minutes to go. While the doors are closed: the resume column first, the jump time beside it. Each event's play, first sentence | – |
-| Cash | cash; open bids (board bids plus our bids inside dealer threads); the floor (`cash_floor`, plus #71's `venue_bond_reserve` while no venue is open, if that rule exists); headroom; spend and packs in the last game hour (ledger); sealed packs (r2 X21) | headroom < 30 P / < 0; spend at the cap; packs at the cap; sealed packs; `trading_enabled = false`; this checkout's PAUSE |
+| Cash | cash; open bids, counted as the guardrails count them (`seller.open_commitments`: open and queued; every list in `/api/me/offers` plus our dealer-thread offers, one per offer id; unreadable → headroom BAD, never a guess); the floor (`cash_floor`, plus #71's `venue_bond_reserve` while no venue is open, if that rule exists); headroom; spend and packs in the last game hour (ledger); sealed packs (r2 X21) | headroom < 30 P / < 0; spend at the cap; packs at the cap; sealed packs; `trading_enabled = false`; this checkout's PAUSE |
 | Ledger | where it is (Postgres, shared; or the file, this machine only); accepts and listings this tick; **which processes wrote the shared ledger in the last 120 ticks** (`ledger.source`) | the file ledger (BAD); a shared ledger nobody writes |
 | Agents | each `/health`: mode (live or dry), target, tick lag behind the server | unreachable, `ok: false`, or > 2 ticks behind with the doors open |
 | Caps | open offers and threads vs the clock's limits; each open thread | at the cap (BAD), one below (WARN) |
@@ -59,7 +59,7 @@ Team 1 cockpit · Sat 08:55:00 · overall WARN
 | Criterion (B22's line) | Result |
 |---|---|
 | One read-only command with every item in the backlog line | **GO**: 10 panels |
-| Fixture-driven tests, no writes | **GO**: 10 tests (9 pure on fixtures, 1 end-to-end on the local simulator with a no-write assertion); suite 849 passed, ruff/black/mypy clean |
+| Fixture-driven tests, no writes | **GO**: 12 tests (11 pure on fixtures, 1 end-to-end on the local simulator with a no-write assertion); suite 851 passed, ruff/black/mypy clean |
 | Never touched the live game | **GO**: run only on fixtures and `127.0.0.1` |
 
 ## Limits and risks

@@ -228,13 +228,14 @@ def cockpit_cmd(
             sources[f"health:{name}"] = functools.partial(ck.get_json, url)
         sources["alerts"] = lambda: read_alerts(settings.data_dir / "alerts.jsonl", 5)
         ck.read_each(reads, sources)
-        clock_now = reads.clock or {}
-        try:
-            reads.ledger = ck.read_ledger(
-                settings.data_dir, int(clock_now.get("tick") or 0), float(clock_now.get("t_hours") or 0.0)
-            )
-        except Exception as e:  # the other panels still render
-            reads.errors["ledger"] = f"{type(e).__name__}: {e}"[:200]
+        if reads.clock is None:  # the ledger's windows are in ticks and game hours: no clock, no honest read
+            reads.errors["ledger"] = "skipped: no clock read"
+        else:
+            try:
+                tick, t_hours = int(reads.clock.get("tick") or 0), float(reads.clock.get("t_hours") or 0.0)
+                reads.ledger = ck.read_ledger(settings.data_dir, tick, t_hours)
+            except Exception as e:  # the other panels still render
+                reads.errors["ledger"] = f"{type(e).__name__}: {e}"[:200]
         paused = (REPO_ROOT / loaded.rules.pause_file).exists()
         return ck.build(reads, ck.limits_from(loaded.rules, paused)), reads
 

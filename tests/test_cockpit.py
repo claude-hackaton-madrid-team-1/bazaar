@@ -251,3 +251,19 @@ def test_the_command_against_a_local_simulator_reads_only(sim_session):
     assert lines["Cash"]["cash"]["value"].endswith("open bids 0 P")
     with sim.world.lock:  # the cockpit sent nothing: no new offer, no new thread
         assert (len(sim.world.state.offers), len(sim.world.state.threads)) == before
+
+
+def test_unreadable_bids_never_show_a_comfortable_headroom():
+    r = reads(offers=None)
+    r.errors["offers"] = "BazaarError: 429"
+    cash = panel(ck.build(r, ck.Limits()), "Cash")
+    assert value(cash, "cash").value == "353 P · open bids unknown"
+    assert value(cash, "headroom").status == "bad" and "429" in value(cash, "headroom").value
+
+
+def test_a_bid_in_both_lists_counts_once_and_queued_counts():
+    bid = {**offer(9, give_cash=15), "thread": 7}
+    queued = offer(11, give_cash=12, status="queued")
+    dealer_ask = {**offer(12, want_cash=30, maker="abuela"), "to": US}  # the dealer's offer to us: not our cash
+    threads = [{"id": 7, "kind": "persona", "status": "open", "messages": [{"offer": bid}, {"offer": dealer_ask}]}]
+    assert ck.committed_cash({"offers": [bid, queued, offer(13, give_cash=5, status="expired")]}, threads, US) == 27
