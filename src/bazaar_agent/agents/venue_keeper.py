@@ -12,7 +12,8 @@ Every maker tick (`Maker.on_tick`, driven by /api/clock), before the maker's own
   3. We run a venue and hold its key: the broker (`agents/broker.py`) reads /api/broker/book and sends
      the maximum-surplus matches (bench first) inside the maker's tick window.
   4. With `announce_every_game_hours` (the maker passes ANNOUNCE_EVERY_GAME_HOURS): a short neutral notice
-     on our venue (`POST /api/broker/announce`, the venue's name, id, mechanism and fee only) once the
+     on our venue (`POST /api/broker/announce`: the venue's name, id and fee, the house market's fee on a
+     sample sale, and what the broker does) once the
      broker is on, then at most once per that many game hours, through `guardrails.check()`
      (`venue_announce`: `allow_venue_open` and the kill switch). Memory only: a restart announces once more.
 Dry run (the maker's default) opens nothing and matches nothing: it writes what it would do.
@@ -30,6 +31,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig
+from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.config import ConfigError, Settings
@@ -54,6 +56,7 @@ REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so ag
 LIST_LAG_TICKS = 3  # ticks the public list and /me may take to show the venue we just opened
 FINAL_REFUSALS = frozenset({"venue_exists", "not_allowed", "forbidden"})  # never tried again by this process
 ANNOUNCE_EVERY_GAME_HOURS = 1.0  # the maker's notice on our venue: once, then at most once per game hour
+EXAMPLE_PRICE = 20  # the notice's fee example: 5 % of it is a whole number, so no rounding hides in it
 
 # Our market: a board (only there can our broker act), no fee (fees never score; what counts is the gains
 # realised on it), and a short neutral name and line.
@@ -66,13 +69,29 @@ PLAN = VenueSpec(
 )
 
 
-def announcement(plan: VenueSpec, venue: str) -> Announcement:
-    """The notice on our venue: its name, id, mechanism and fee, nothing about our cards, cash or values."""
-    fee = f"{plan.fee_bps / 100:g} %" + (f" + {plan.fee_per_card} P per card" if plan.fee_per_card else "")
-    return Announcement(
-        text=f"{plan.name} ({venue}) is open: {plan.mechanism} venue, {fee} fee. Post your asks and bids "
-        f"here; crossing offers are matched every tick."
-    )
+def _fee_text(fee_bps: int, fee_per_card: int) -> str:
+    return f"{fee_bps / 100:g} %" + (f" + {fee_per_card} P/card" if fee_per_card else "")
+
+
+def announcement(plan: VenueSpec, venue: str, house: Venue | None = None) -> Announcement:
+    """The notice on our venue: its name, id and fee, what the same trade costs on the house market (from the
+    live `/api/venues` row, the accepting side pays it: `agents/market.py`), and what our broker does (a
+    crossing bid and ask are paired every tick at the midpoint, lowered only to fit a fee: `matcher.match_price`).
+    Nothing about our cards, cash or values, and no promise beyond that."""
+    ours = _fee_text(plan.fee_bps, plan.fee_per_card)
+    text = f"{plan.name} ({venue}): {ours} fee."
+    if house is not None:
+        theirs = _fee(house.fee_bps, house.fee_per_card, EXAMPLE_PRICE, 1)
+        here = _fee(plan.fee_bps, plan.fee_per_card, EXAMPLE_PRICE, 1)
+        if theirs > here:
+            where = "El Rastro" if house.id == "rastro" else "the house market"
+            text += (
+                f" A {EXAMPLE_PRICE} P sale on {where} costs the side that accepts {theirs} P"
+                f" ({_fee_text(house.fee_bps, house.fee_per_card)}); here it costs {here}."
+            )
+    where_mid = "at the midpoint" if not (plan.fee_bps or plan.fee_per_card) else "near the midpoint"
+    text += f" Asks and bids welcome: our broker pairs crossing bids and asks every tick, {where_mid}."
+    return Announcement(text=text)
 
 
 @dataclass(frozen=True)
@@ -326,18 +345,19 @@ class VenueKeeper:
             our_offers=snap.offers if snap is not None else None,
             events=snap.events if snap is not None else None,
         )
-        self._maybe_announce(venue, clock, window)
+        house = next((v for v in snap.venues if v.house), None) if snap is not None else None
+        self._maybe_announce(venue, clock, window, house)
 
     # ------------------------------------------------------------ the notice on our venue
 
-    def _maybe_announce(self, venue: str, clock: Clock, window: TickWindow) -> None:
+    def _maybe_announce(self, venue: str, clock: Clock, window: TickWindow, house: Venue | None = None) -> None:
         """Once the broker is on, then at most once per `announce_every` game hours; only inside the tick
         window and only when the guardrails allow `venue_announce` (a refusal is tried again next tick, quietly)."""
         if self.announce_every is None or self._client is None or not window.open():
             return
         if self.announced_at is not None and clock.t_hours - self.announced_at < self.announce_every:
             return
-        note = announcement(self.plan, venue)
+        note = announcement(self.plan, venue, house)
         verdict = check(
             Action("venue_announce"),
             venue_context(self.rules, {"tick": clock.tick, "t_hours": clock.t_hours}),
