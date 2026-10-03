@@ -224,7 +224,7 @@
       },
       "play": {
         "who": "Marius (CLI) + taker",
-        "do": "+150 P and a sobre_barrio pack. Open the packs (luck never scores). Cash 353 -> 503; headroom over cash_floor 270: 83 -> 233. Then re-run uv run bazaar plan pages (#87) and uv run bazaar trade-plan --live (#79, read-only) and post W4's plan by hand.",
+        "do": "+150 P and a sobre_barrio pack. Open the packs (luck never scores). Cash 353 -> 503; headroom over cash_floor 270: 83 -> 233. Then re-run uv run bazaar plan pages (#87) and uv run bazaar trade-plan --live (#79, read-only) Hand-posted board offers are cancelled by the live maker within a tick (r2 X19): send W4's thread swaps only, or switch bazaar-maker to dry run (railway variable delete BAZAAR_LIVE --service bazaar-maker) while hand offers stand.",
         "points": "trades +1.3 to +4.0 round points (W4 +80 P)"
       }
     },
@@ -288,7 +288,7 @@
       },
       "play": {
         "who": "duels",
-        "do": "Duels I: price only, decay 0.06, 34 duels per team, 3 at a time, 16 ticks each: up to 192 ticks (96 min). Overlaps the next Market Test. Keep bazaar-duels up the whole window; check bazaar duel done after the first wave.",
+        "do": "Duels I: price only, decay 0.06, 34 duels per team, 3 at a time, 16 ticks each: up to 192 ticks (96 min). Overlaps the next Market Test. Keep bazaar-duels up the whole window; check bazaar duel done after the first wave. Accept race (r2 X17): the taker reserves the one accept at 2 s, a Jev-slow duel tick books it at up to 3.5 s; v1 is exposed, #86 v2 fixes it.",
         "check": "uv run bazaar duel done; outcomes in bazaar evals report",
         "points": "12.5 round points at the top-3 mean if Duels I and II share the duel component (assumed); 0.18 per duel if sessions weigh equally"
       }
@@ -1007,7 +1007,7 @@
       "when": "before 09:00",
       "question": "What code is live at 09:00?",
       "check": "Railway: bazaar-taker and bazaar-maker have BAZAAR_LIVE=1, bazaar-duels runs `duel run --play` (main's v1); railway variable list per service shows DATABASE_URL",
-      "then": "Marius merges the safety PRs he wants (#60 before Duels II at the latest; #61 has 2 open P1s; #62 refuses to start live without a shared DATABASE_URL); a GUARDRAILS.md change reaches Railway only on a redeploy",
+      "then": "Marius merges the safety PRs he wants (#60 before Duels II at the latest; #61 has 2 open P1s; #62 refuses to start live without a shared DATABASE_URL); a GUARDRAILS.md change reaches Railway only on a redeploy; PR #71's head (since 03:23) sets allow_venue_open = true, cash_floor 100 + venue_bond_reserve 270 and has the maker open a board venue at t_hours >= 6.5: under resume that is 12:51, the Duels I start tick, and 353 < 370 blocks every buy until the 10:24 grant",
       "owner": "Marius"
     },
     {
