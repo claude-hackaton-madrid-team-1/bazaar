@@ -21,6 +21,11 @@ RECALL_LIMIT = 500
 # What the blocker view needs: the blockers, and the announcements that lift a `locked` one, read from
 # structure only (`source="rules"`). Other kinds and LLM readings never take a place in the recall window.
 BLOCKER_RECALL_KINDS = frozenset({*BLOCKING_KINDS, "announcement"})
+# What a dealer's memory reads before a thread opens (`agents.dealer_memory`, memory only inside the tick): the
+# stored behaviour and lessons about dealers, pulled in after the sends every `MEMORY_PULL_EVERY` ticks.
+MEMORY_KINDS = frozenset({"behaviour", "lesson"})
+MEMORY_PULL_EVERY = 5
+MEMORY_PULL_LIMIT = 200
 
 
 def game_hour(clock: Any, hours_per_tick: float | None = None) -> GameHour:
@@ -40,6 +45,7 @@ class LiveLearner:
         self._per_tick: float | None = None  # the game-hour pace observed between two readings
         self._us: str | None = None
         self._tick: int | None = None
+        self._memory_pulled: int | None = None  # the tick the dealers' memory was last pulled from the store
 
     def _hour(self, clock: Any) -> GameHour:
         """This tick's game hour, at the pace observed between clock readings (it follows a pace change)."""
@@ -130,6 +136,18 @@ class LiveLearner:
                 self.log(f"learned: {learned.text}")
         return learned
 
+    def _pull_memory(self) -> None:
+        """The stored behaviour and lessons about dealers (another process wrote them), into memory for the
+        dealers' memory to read without I/O; at most once every `MEMORY_PULL_EVERY` ticks."""
+        tick, last = self._tick, self._memory_pulled
+        if tick is None or (last is not None and 0 <= tick - last < MEMORY_PULL_EVERY):
+            return
+        self._memory_pulled = tick
+        found = self.store.recall(
+            None, MEMORY_KINDS, tick, subject_kind="dealer", team=self._us, limit=MEMORY_PULL_LIMIT
+        )
+        self.store.remember(lr for lr in found if lr.source != "llm")
+
     def flush(self) -> int:
         """After the tick's sends: write what this tick learned, and pull what is stored about dealers for us
         (another taker process, or `bazaar learnings --save` on a laptop) into memory for the next tick."""
@@ -148,6 +166,7 @@ class LiveLearner:
                         source="rules",
                     )
                 )
+                self._pull_memory()
             return written
         except Exception as e:
             self._fail("write", e)

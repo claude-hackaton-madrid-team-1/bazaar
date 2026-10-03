@@ -1379,12 +1379,12 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 - [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+- [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
+- [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
 - [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+- [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
 - [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
-- [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
-- [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
-- [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
-- [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
+- [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
 
 <!-- BAZAAR:STATUS:END -->
 

@@ -334,7 +334,11 @@ class Maker:
         self._tried: dict[int, set[tuple[str, int]]] = {}
         self._ranked: dict[int, str] = {}
         # Jev gates new sell threads (SG1, `dealer_sell_duplicates_worth_it`); no Jev = no new sell thread.
-        gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks) if strategy_jev else None
+        gate = (
+            StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks, rules.risk_posture)
+            if strategy_jev
+            else None
+        )
         self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate)
 
     def on_tick(self, clock: Clock) -> None:

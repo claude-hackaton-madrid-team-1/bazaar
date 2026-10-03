@@ -172,6 +172,7 @@ class Guardrails(BaseModel):
     dealer_sell_taker_window_ticks: int = Field(default=0, ge=0, le=500)
     strategy_jev_refresh_ticks: int = Field(default=120, ge=1, le=2000)
     ladder_probe_min_share: float = Field(default=0.3, ge=0, le=1)
+    risk_posture: str = Field(default="", max_length=200)
     buyer_rank_enabled: bool = False
     buyer_rank_fallback_ticks: int = Field(default=6, ge=1, le=40)
     # Live guard: off-by-default values here, so code built without GUARDRAILS.md behaves as before.
@@ -302,6 +303,7 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_final_min_first_ask_share": "agents.dealer_sell.decide_sell (a FINAL: also ≥ this × our first ask)",
     "dealer_sell_taker_window_ticks": "agents.dealer_sell_desk.SellDesk (not a dealer the taker wanted)",
     "strategy_jev_refresh_ticks": "agents.strategy_gate.StrategyGate (Jev asked again after this)",
+    "risk_posture": "agents.strategy_gate.StrategyGate (added to every strategy state Jev reads)",
     "ladder_probe_min_share": "agents.ladder_probe.plan_one (share of her range a top keeps)",
     "buyer_rank_enabled": "agents.maker._address (the addressee of an ask the maker already decided to post)",
     "buyer_rank_fallback_ticks": "agents.maker._with_fallbacks (an addressed ask unfilled this long goes public)",

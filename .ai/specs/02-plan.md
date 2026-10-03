@@ -557,6 +557,13 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   tests/test_strategy_gate.py (maker section).
 - Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
   key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+- Step 6 — risk posture: `risk_posture` (GUARDRAILS.md) in every strategy state; guardrail review re-run with it
+  plus `duplicates_reserve_choice`, `close_v19_choice`, `podium_venue_rule_choice` (all undecided or keep).
+- Step 7 — dealer memory (`agents/dealer_memory.py`, `learn/etiquette.py`): newest 5 behaviour/lesson learnings +
+  last 3 dealer texts in the dealer_open row and the words (Jev gets lessons, flags and counts only, never dealer
+  text or etiquette rows); address from etiquette learnings, then DEALER_NAMES, then the persona name. · **Acceptance:** tests/test_dealer_memory.py, test_etiquette.py.
+- Step 8 — no `reciprocity` tactic for dealers; a sell thread holds at its floor while her bid still rises.
+  · **Acceptance:** tests/test_tactics_reciprocity.py, tests/test_dealer_sell_hold.py.
 
 ### LD1 — BAZAAR_DECIDER: Claude Opus instead of Jev, behind an env switch ([spec](LD1-spec.md))
 - Step 1 — `jev/decider.py` (switch, timeout, `needed_budget_s`) and the `judge()` branch. · **Acceptance:** unset
@@ -565,6 +572,13 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   **Acceptance:** verdict parity and failure tests.
 - Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
   **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
+### AF1 — Ask other teams their multipliers (said vs inferred)
+Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_desk.py`, `agents/taker.py`, `cli.py`,
+`render.py`, `sql/schema.sql`, `tests/test_team_affinity.py`, `tests/test_readonly_user.py`.
+- Step 1 — parser + rows + table/view. · **Acceptance:** parser cases, upsert never backwards, board view (tests).
+- Step 2 — the desk asks once per team per day in its first message, parses replies, writes inferred every 10 ticks
+  off the tick. · **Acceptance:** desk tests (offer unchanged, once per day, told teams not asked).
+- Step 3 — `bazaar affinity --teams` read-only. · **Acceptance:** CLI tests; read-only role test.
 
 ## Parallel-work notes
 

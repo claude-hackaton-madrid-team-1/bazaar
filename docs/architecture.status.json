@@ -294,6 +294,11 @@
           "text": "outcomes + scorecard",
           "mark": "◑",
           "note": true
+        },
+        {
+          "text": "team_affinity: said vs inferred (AF1)",
+          "mark": "◑",
+          "note": true
         }
       ],
       "mark": "✓"

@@ -42,6 +42,7 @@ from bazaar_agent.agents.dealer import (
     settled_price,
     template_words,
 )
+from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
 from bazaar_agent.agents.desk import (
     Conversation,
@@ -139,6 +140,7 @@ from bazaar_agent.strategy import (
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
+from bazaar_agent.team_affinity import AffinityBook
 from bazaar_agent.ticks import Clock, action_budget_s
 from bazaar_agent.watchdog import Watchdog
 
@@ -489,6 +491,7 @@ class Taker:
         cards: CardsHeartbeat | None = None,
         news: NewsSentinel | None = None,
         personas: PersonaBook | None = None,
+        affinity: AffinityBook | None = None,
         strategy_gate: StrategyGate | None = None,
         strategy_jev: AskFn | None = None,
     ) -> None:
@@ -520,7 +523,9 @@ class Taker:
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
         if strategy_gate is None and strategy_jev is not None:  # the CLI hands Jev; the gate logs to our rows
-            self.strategy_gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks)
+            self.strategy_gate = StrategyGate(
+                strategy_jev, self.rec, rules.strategy_jev_refresh_ticks, rules.risk_posture
+            )
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._skips: dict[str, str] = {}  # dealer -> the blocker last recorded as a `dealer_skip` (once each)
@@ -550,7 +555,8 @@ class Taker:
         self._unsettled = Commitments()  # this tick: recent accepts /api/me does not show yet (bite X18)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
-        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger)
+        # AF1: the desk asks teams their multipliers and stores what they say (and what we infer) off the tick.
+        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger, affinity=affinity)
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
@@ -779,6 +785,7 @@ class Taker:
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),
             scan=snap.scan,
+            round=snap.clock.round,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
@@ -1262,6 +1269,8 @@ class Taker:
         # Private keys (not on the public /state allow-list): which learning changed the plan, and what was recalled.
         notes = dp.changed_by if dp is not None else []
         recalled = self._recalled(run, op) if verdict.allowed else []
+        memory = self._dealer_memory(run, op.dealer)  # memory only, no I/O: before every open
+        address = address_for(op.dealer, memory, self.personas.personas)
         inputs = {
             "dealer": op.dealer,
             "item": op.item,
@@ -1274,6 +1283,8 @@ class Taker:
             "changed_by": notes,
             "learned": dp.lessons if dp is not None else [],
             "recalled": recalled,
+            "dealer_memory": memory.facts(),
+            "dealer_address": address,
         }
         what = f"open thread with {op.dealer} for {op.item} (ladder {plan}{final}, worth {op.value:g})"
         status: Status = "approved" if verdict.allowed else "rejected"
@@ -1316,8 +1327,19 @@ class Taker:
                 reopened=reopened,
                 notes=tuple(notes),
                 recalled=tuple(recalled),
+                memory=memory.jev_facts(),  # structure only: the dealer's words never reach Jev (#212 r2)
+                address=address,
+                never_address=memory.never_address(),
+                memory_lines=memory.lines(),
             )
             self._opened(run, op.dealer, op.item, int(body["id"]))
+
+    def _dealer_memory(self, run: _TickRun, dealer: str) -> DealerMemory:
+        """The dealer's newest learnings (the live learner's store, memory only) and its last words to us in the
+        feed window; empty without a learner, and on any error."""
+        store = self.learner.store if self.learner is not None else None
+        snap = run.snap
+        return recall_dealer(store, dealer, snap.events, us=snap.us, tick=snap.clock.tick)
 
     def _recalled(self, run: _TickRun, op: Opening) -> list[str]:
         """The top lessons about this dealer and item, recalled once per opened thread (quoted data for the log;
@@ -1529,10 +1551,8 @@ class Taker:
         p = AcceptProposal(
             conv.dealer, conv.item, conv.rarity, dm.offer_id, dm.ask, conv.value, dm.final, conv.reason, {}
         )
-        advice = self._ask_jev(
-            run,
-            offer_state(p, run.snap, self._ctx(run, skip_thread=conv.thread_id), self.rules, 1, self._rival_moves()),
-        )
+        state = offer_state(p, run.snap, self._ctx(run, skip_thread=conv.thread_id), self.rules, 1, self._rival_moves())
+        advice = self._ask_jev(run, {**state, "dealer_memory": conv.memory} if conv.memory else state)
         if advice.verdict != "yes":
             return dm
         move = apply_advice(dm.move, "accept", conv.neg, dm.ask, dm.offer_id, self.rules.jev_accept_min_share)
@@ -1662,6 +1682,9 @@ class Taker:
                 conv.item,
                 lessons=self._lessons_for(run, conv),
                 tone=self._tones.get(conv.dealer, ""),
+                address=conv.address,
+                never_address=conv.never_address,
+                memory=conv.memory_lines,
             ),
             thread,
             run.snap.clock,

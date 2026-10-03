@@ -189,3 +189,22 @@ def test_the_venue_broker_key_table_is_never_readable(admin_url, setup):
         ro.apply(admin, password, role=role, schema=schema)
     with login(admin_url, *setup) as conn, pytest.raises(errors.InsufficientPrivilege):
         conn.execute("select count(*) from venue_broker_keys")
+
+
+@pytest.mark.integration
+def test_the_team_affinity_table_and_board_made_by_the_schema_are_readable(admin_url, setup):
+    # AF1: `team_affinity` and its view come from schema.sql, applied by the admin role after the grants.
+    from bazaar_agent import db
+
+    role, password, schema = setup
+    with psycopg.connect(admin_url) as admin:
+        admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(schema)))
+        admin.execute("drop table cards")  # the fixture's own `cards` is not schema.sql's
+        db.init_schema(admin)
+        admin.execute(
+            "insert into team_affinity (team, set_code, multiplier, source, tick) values ('t05','SAL',1.6,'said',1)"
+        )
+        admin.commit()
+    with login(admin_url, *setup) as conn:
+        assert conn.execute("select team, set_code from team_affinity").fetchall() == [("t05", "SAL")]
+        assert conn.execute("select team, said from team_affinity_board").fetchall()[0][0] == "t05"
