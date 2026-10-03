@@ -479,7 +479,8 @@ class Taker:
                 (
                     a
                     for a in run.snap.me.get("assets") or []
-                    if a.get("ref") == o.ref
+                    if a.get("kind") == "card"
+                    and a.get("ref") == o.ref
                     and isinstance(a.get("id"), int)
                     and isinstance(a.get("your_value"), int | float)
                     and int(a["id"]) not in listed | sold
