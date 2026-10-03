@@ -2345,6 +2345,53 @@ def strategy(
     _print_playbook(book, loaded, rules, ctx, commitments)
 
 
+@app.command("taller")
+def taller_cmd(
+    assets: Annotated[
+        list[int] | None, typer.Argument(help="Three asset ids of one rarity; none: ranked triples")
+    ] = None,
+    live: bool = typer.Option(False, "--live", help="Actually craft. Without it: dry run, nothing is sent"),
+) -> None:
+    """The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The
+    same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
+    hourly cap counts the taker's crafts only). Dry run by default."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import taller as tl
+
+    client, me = _team_me()
+    rules, _, ctx, commitments = _sell_context(client, me, live)
+    busy = set(commitments.listed)
+    public = public_client(load_settings())
+    catalog = public.catalog()
+    if not assets:
+        dealers = public.dealers()
+        rows = dealers.get("personas") if isinstance(dealers, dict) else dealers
+        for t in tl.rank_triples(me, catalog, rows or [], busy):
+            console.print(f"{' '.join(str(a) for a in t.asset_ids)}  {', '.join(t.refs)}  {escape(t.reason())}")
+        return
+    ours = {int(a["id"]): a for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)}
+    if len(set(assets)) != tl.INPUTS or any(a not in ours or a in busy for a in assets):
+        _fail(f"give {tl.INPUTS} different free copies of ours (not in an open offer): {assets}")
+    refs = [str(ours[a]["ref"]) for a in assets]
+    rarities = {str((tl.cards_of(catalog).get(ref) or {}).get("rarity")) for ref in refs}
+    if len(rarities) != 1:
+        _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
+    action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
+    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
+    if not verdict.allowed or not live:
+        if verdict.allowed:
+            console.print("[dim]dry run: nothing sent (add --live)[/dim]")
+        return
+    try:
+        answer = tl.craft(client, assets)
+    except BazaarError as e:
+        _fail(f"refused: {e.code} ({e.message[:80]})")
+    console.print(f"crafted: {escape(tl.pulled(answer))}")
+
+
 # ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
 
 sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")

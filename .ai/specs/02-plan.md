@@ -133,7 +133,7 @@ negotiates well.
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
-| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -616,10 +616,22 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
   tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
 
+### SA1 — Sentinel autonomy: the Workshop, dealer sells on news, levels to agents ([spec](SA1-spec.md))
+- Step 1 — `level_watch.py` in the news sentinel: a learnings row per level going active / open to all; the taker
+  asks `active("taller")` · **Acceptance:** tests/test_level_watch.py.
+- Step 2 — dealer sell desk readiness (ladder level ranking, trickster finals, busy thread copies; switch stays
+  off) · **Acceptance:** tests/test_dealer_sell_readiness.py.
+- Step 3 — the Workshop: `agents/taller.py`, `guardrails.check` action `taller` (`taller_enabled` false,
+  `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
+  **Acceptance:** tests/test_taller.py; full gate + sim smoke.
+
 ### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
 - Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
   · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
   tests/test_guardrails.py; full gate.
+- Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
+  would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
+  sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
 
 ## Parallel-work notes
 
