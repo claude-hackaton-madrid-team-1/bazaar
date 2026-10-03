@@ -64,13 +64,14 @@ def dealer_buy(monkeypatch, tmp_path):
 
 
 def test_the_guard_counts_the_makers_bids_and_the_takers_threads(dealer_buy):
-    # Cash 395: a maker bid of 40 and a taker thread bid of 70 at Chato are promised. Accepting 20 here
-    # leaves 395 - 110 - 20 = 265 < 270 if all three fill. Before the fix the guard saw 395 - 20 = 375.
-    client = Client(395, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
+    # Cash 225: a maker bid of 40 and a taker thread bid of 70 at Chato are promised. Accepting 20 here
+    # leaves 225 - 110 - 20 = 95 < cash_floor 100 if all three fill (no venue planned: no bond reserve).
+    # Before the fix the guard saw 225 - 20 = 205.
+    client = Client(225, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
     result, verdicts = dealer_buy(client)
     assert result.exit_code == 0, result.output
     (denied,) = verdicts
-    assert denied is not None and "cash_floor 270" in denied
+    assert denied is not None and "cash_floor 100" in denied
 
 
 def test_the_guard_leaves_out_its_own_thread_bid(dealer_buy):
@@ -87,7 +88,7 @@ def test_the_guard_leaves_out_its_own_thread_bid(dealer_buy):
 
 
 def test_it_refuses_to_open_when_our_open_offers_already_hold_the_cash(dealer_buy):
-    client = Client(353, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
+    client = Client(210, [offer(1, 40, ref="card:LAV-09"), offer(2, 70, thread=90, ref="card:LAV-10")])
     result, verdicts = dealer_buy(client)
-    assert result.exit_code == 1 and verdicts is None  # 353 - 110 - 6 < 270: no thread opened
+    assert result.exit_code == 1 and verdicts is None  # 210 - 110 - 6 < cash_floor 100: no thread opened
     assert "guardrails refuse to open this thread" in result.output

@@ -617,6 +617,64 @@ first successful `/api/duels` re-read and checked a later accept against it, whi
 → fix: every duel accept re-reads; only a FAILED re-read is kept, for its own tick (no 429 retry burst);
 test `test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught`.
 
+### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
+On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
+identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the
+free stall earns. On main's static bench too (`scripts/sim_market_test.py`: b1 0.892 vs 0.892, b2 1.0 vs 1.0).
+Ties must follow the book order (stable sort, as the stall): sorting by id lost 2 of 200 books to the stall.
+Beating the stall needs #84's edge (limit estimates, probes): opening our board venue alone buys the hook.
+
+### [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
+`BAZAAR_SIM=local` is hardcoded to :8765, so two workers cannot each run their own local sim through it.
+`scripts/sim_market_test.py` and `tests/test_sim_venue.py` serve `bazaar_sim` in-process on a free port instead.
+
+### [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
+symptom: property test `ours >= stall` failed (173 < 183) → root cause: equal quotes (two asks of 56) were
+sorted by id ("b1-10" < "b1-6"), so we matched a different seller than the stall at the same quoted surplus,
+and the hidden limits differ → fix: stable sort by price + a book-order term in the assignment weights, so
+at 0 bps we pick exactly the stall's traders (tests/test_matcher.py, 200 benches against `_auto_bench`).
+
+### [2026-10-03] build-error — a sim venue test opened nothing: `locked` at tick 0
+symptom: the keeper logged "opening refused locked" and retried 10 ticks later → root cause: the simulator
+unlocks El Chato (level 2, needed for a venue) at `chato_open_ticks`, never at tick 0 → fix: advance one tick
+first (`/sim/tick`). `locked` stays a retryable refusal in the keeper (a level can arrive later).
+
+### [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
+symptom: (review round 2) after one failed connect, `KeyVault.ready()` never succeeded again, so the h6.5
+opening would never come → root cause: the backoff raised, every caller's `except` re-armed the backoff,
+so it never ran out → fix: a call skipped by the backoff raises `_Skipped`, which never re-arms it
+(`venue.KeyVault._failed`; test `test_one_postgres_blip_never_locks_the_vault_out_for_good`).
+
+### [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
+The kit's `Bazaar.me()` docstring: /me carries `starter_broker_key` while we have the free starter stall;
+opening our own venue replaces the stall (RULES.md). `guardrails.runs_venue` reads it that way (the bond
+reserve stays, our opening is not blocked). Unverified live: if the key stays after we open, the floor stays
+370 all game; set `venue_bond_reserve = 0` then. The broker-key table is `venue_broker_keys` (target, venue):
+#84 still creates an older `venue_keys` shape, which nothing reads.
+
+### [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
+`holdings.without_secrets` (#105) strips every key-named field from a stored or answered /me, so
+`guardrails.runs_venue` would take the free stall for our venue (bond reserve gone, h6.5 opening refused).
+It now keeps `has_starter_stall: true` in the key's place. A snapshot written by older code has neither:
+deploy taker and maker together, and pull before a laptop uses the shared database.
+
+### [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
+Sat 06:08: opening our venue replaces the free stall (RULES.md "Your own market"), and our exact broker only
+equals the stall (0.5 of the bench points) in every simulation, unverifiable live before opening. While the
+switch is off no bond reserve is held (`effective_cash_floor` = `cash_floor` 100). Turn it on only in a
+closed-door window with Omar, once the broker has an edge (#84) or organic trades to serve.
+
+### [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
+symptom: masking private numbers inside `scrub()` turned `cash_floor 270` into `[redacted]` in the `decisions` row
+(test_status) → root cause: `decisions.scrubbed` calls `scrub` too → fix: `scrub_for_span` (span attributes only)
+cuts a number named like a limit/cost/value/floor; `scrub` keeps our numbers for Postgres and JSONL.
+
+### [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
+`SMOKE_TRACING=0|1 SMOKE_DUMP=<file> uv run python scripts/sim_smoke.py` dumps the sim feed (types and payloads,
+ids and ticks dropped): the 58 events (settlements, offers, thread messages with our words and prices) are
+identical, and the run passes with a dead Phoenix on 127.0.0.1:6006. A span used to carry `bazaar.duel.limit` and
+`bazaar.plan.max` in clear: both are gone.
+
 ### [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
 `uv run bazaar supply` (N14b) at Friday's close, before any card scan: 287 assets placed from settlements and
 listings, 42 packs opened. Complete pages that can exist now (fewest copies of a page card): LAT 2 (LAT-10),

@@ -72,6 +72,7 @@ class TextRequest:
     timeout_s: float
     effort: Effort = "low"
     retries: int = 0
+    purpose: str = ""  # "words" is the only purpose whose text may reach a trace (it is sent to a counterparty)
 
 
 class LLMProvider(Protocol):
@@ -336,4 +337,6 @@ def provider_for(ref: ModelRef, settings: Settings, factory: ProviderFactory = d
     if credential is None:
         variables = CREDENTIAL_VARIABLES[ref.provider]
         raise LLMError("key_missing", f"set {variables} in .env to use {ref.alias} ({ref.provider})")
-    return factory(credential.route, credential.secret)
+    from bazaar_agent.llm.traced import TracedProvider
+
+    return TracedProvider(factory(credential.route, credential.secret), credential.route)
