@@ -216,8 +216,8 @@ def _patch_ticks(rec: _Recorder) -> None:
 
     real = traces.per_tick
 
-    def per_tick(name: str, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
-        inner = real(name, on_tick)
+    def per_tick(name: str, on_tick: Callable[[Any], None], **kwargs: Any) -> Callable[[Any], None]:
+        inner = real(name, on_tick, **kwargs)  # `agent=True` for the agent loops (traces.per_tick)
 
         def measured(clock: Any) -> None:
             rec.begin(clock)

@@ -110,6 +110,14 @@ raises on any non-loopback connection before a packet leaves (a dead proxy backs
    answers there, a `bazaar-sim serve` or the MCP server: stop it first. When several simulators share
    one laptop, `BAZAAR_SIM_PORT=8817` moves both the smoke and `BAZAAR_SIM=local` to another loopback
    port.)
+
+   **The Sunday scenario** (`SIM_SCENARIO=sunday`, opt-in; unset = the plain simulator): the organisers' Sunday at
+   15 s ticks, calibrated from Friday + Saturday's data (`uv run python scripts/sim_calibrate.py` writes
+   `src/bazaar_sim/data/sunday.json`): the schedule as tick events (Market Tests, Round 3 + Chamberí + the 150 P
+   allowance, Duels III, the finale), all five dealers, Radio Rastro news, the Workshop, 16 fitted rivals, request
+   latency and the real rate limits. `uv run python scripts/sim_sunday.py --port 8981 --ticks 600 --tick-seconds 2`
+   runs our taker + maker + duels against it (a compressed Sunday: the game clock still adds 15 s a tick, the
+   per-second limits scale with the pace) and prints writes per tick, idle ticks and refusal reasons per agent.
 4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
    token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
    never lands in your shell history:

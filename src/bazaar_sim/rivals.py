@@ -32,9 +32,14 @@ ABUELA_EVERY = 25
 SWAP_MIN_GAIN = 1.0  # a rival takes a swap only when it gains at least this, at its private values, after the fee
 
 
+def _fit(w: World) -> dict[str, Any] | None:
+    """A scenario's rival numbers fitted to the real feed (`Scenario.rival_params`); None: the plain behaviour."""
+    return w.scenario.rival_params() if w.scenario is not None else None
+
+
 def on_tick(w: World) -> None:
     for team in [t for t in w.state.teams.values() if t.bot]:
-        for act in (_take, _answer_threads, _haggle, _list_duplicate, _bid_missing, _open_inbound):
+        for act in (_take, _answer_threads, _haggle, _list_duplicate, _bid_missing, _cancel_some, _open_inbound):
             try:
                 act(w, team)
             except SimError:
@@ -137,6 +142,12 @@ def _open_inbound(w: World, team: Team) -> None:
 def _take(w: World, team: Team) -> None:
     if w.used(team.id, "accepts") >= w.limit("accepts_per_team_per_tick"):
         return
+    fit = _fit(w)
+    if fit is not None:
+        boosted = _partner_offer(w, team, fit)
+        odds = fit["take_prob"] * (6.0 if boosted else 1.0)
+        if w.rng("rival-take", team.id).random() > odds:
+            return
     board = [
         o
         for o in w.state.offers.values()
@@ -147,9 +158,37 @@ def _take(w: World, team: Team) -> None:
         and o.to in (None, team.id)
     ]
     board.sort(key=lambda o: (w.state.teams[o.maker].bot if o.maker in w.state.teams else True, o.id))
+    if fit is not None:  # a reciprocal partner's offer first
+        board.sort(key=lambda o: 0 if _is_partner(team.id, o.maker, fit) else 1)
     for offer in board:
         if _good_for(w, team, offer):
             market.accept(w, team.id, offer.id, {})
+            return
+
+
+def _rival_index(team_id: str) -> int:
+    return int(team_id[1:]) - 11  # rival_team_id(i) = t(11 + i): the fitted pairs name rivals by this index
+
+
+def _is_partner(team_id: str, maker: str, fit: dict[str, Any]) -> bool:
+    return maker.startswith("t") and (_rival_index(team_id), _rival_index(maker)) in fit["partners"]
+
+
+def _partner_offer(w: World, team: Team, fit: dict[str, Any]) -> bool:
+    return any(
+        o.status == "open" and o.venue == "rastro" and o.thread is None and _is_partner(team.id, o.maker, fit)
+        for o in w.state.offers.values()
+    )
+
+
+def _cancel_some(w: World, team: Team) -> None:
+    """Fitted: about 38 % of real listings were cancelled before they filled or lapsed."""
+    fit = _fit(w)
+    if fit is None:
+        return
+    for offer in _open_listings(w, team):
+        if w.rng("rival-cancel", team.id, offer.id).random() < fit["cancel_prob"]:
+            market.cancel(w, team.id, offer.id)
             return
 
 
@@ -158,30 +197,42 @@ def _open_listings(w: World, team: Team) -> list[Offer]:
 
 
 def _list_duplicate(w: World, team: Team) -> None:
+    fit = _fit(w)
     rng = w.rng("rival-list", team.id)
-    if rng.random() > 0.25:
+    if rng.random() > (fit["list_prob"] if fit else 0.25):
         return
     mine = _open_listings(w, team)
     listed = {a for o in mine for a in o.give.assets}
-    if sum(1 for o in mine if o.give.assets) >= MAX_LISTINGS:
+    if sum(1 for o in mine if o.give.assets) >= (fit["max_listings"] if fit else MAX_LISTINGS):
         return
     counts = w.held_counts(team.id)
     spare = [a for a in w.holdings(team.id) if a.kind == "card" and counts[a.ref] > 1 and a.id not in listed]
+    if (
+        fit is not None and not spare
+    ):  # fitted rivals relist singles too: the feed relists the same assets every ~20 ticks
+        spare = [
+            a
+            for a in w.holdings(team.id)
+            if a.kind == "card" and a.id not in listed and catalog.cards()[a.ref].rarity in ("common", "uncommon")
+        ]
     if not spare:
         return
     asset = rng.choice(spare)
     book = catalog.cards()[asset.ref].book
-    ask = max(2, round(book * rng.uniform(1.1, 1.6)))
-    body = {"venue": "rastro", "give": {"assets": [asset.id]}, "want": {"cash": ask}, "expires_in_ticks": LISTING_TICKS}
+    lo, hi = (fit["ask_band"].get(catalog.cards()[asset.ref].rarity) or (1.1, 1.6)) if fit else (1.1, 1.6)
+    ask = max(2, round(book * rng.uniform(lo, hi)))
+    ttl = fit["listing_ticks"] if fit else LISTING_TICKS
+    body = {"venue": "rastro", "give": {"assets": [asset.id]}, "want": {"cash": ask}, "expires_in_ticks": ttl}
     market.offer_from_input(w, team.id, body)
 
 
 def _bid_missing(w: World, team: Team) -> None:
+    fit = _fit(w)
     rng = w.rng("rival-bid", team.id)
-    if rng.random() > 0.15:
+    if rng.random() > (0.15 if fit is None else min(0.9, fit["list_prob"] * 0.5)):
         return
     bids = [o for o in _open_listings(w, team) if o.give.cash]
-    if len(bids) >= MAX_BIDS:
+    if len(bids) >= (MAX_BIDS if fit is None else max(MAX_BIDS, fit["max_listings"] // 2)):
         return
     counts = w.held_counts(team.id)
     wanted = {t.partition(":")[2] for o in bids for t in o.want.types}
@@ -192,10 +243,16 @@ def _bid_missing(w: World, team: Team) -> None:
     if not missing:
         return
     ref = rng.choice(missing)
-    bid = max(1, round(_value_to(w, team, ref) * rng.uniform(0.5, 0.8)))
+    if fit is None:
+        bid = max(1, round(_value_to(w, team, ref) * rng.uniform(0.5, 0.8)))
+    else:
+        rarity = catalog.cards()[ref].rarity
+        lo, hi = fit["bid_band"].get(rarity) or (0.5, 0.8)
+        bid = max(1, round(catalog.cards()[ref].book * rng.uniform(lo, hi)))
     if bid >= team.cash - 50:
         return
-    body = {"venue": "rastro", "give": {"cash": bid}, "want": {"cards": [ref]}, "expires_in_ticks": LISTING_TICKS}
+    ttl = LISTING_TICKS if fit is None else fit["listing_ticks"]
+    body = {"venue": "rastro", "give": {"cash": bid}, "want": {"cards": [ref]}, "expires_in_ticks": ttl}
     market.offer_from_input(w, team.id, body)
 
 

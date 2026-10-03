@@ -30,6 +30,8 @@ def open_thread(w: World, team_id: str, body: dict[str, Any]) -> Thread:
     if len(open_now) >= w.limit("max_open_threads_per_team"):
         raise SimError("too_many_threads", f"at most {w.limit('max_open_threads_per_team')} open conversations", 400)
     if counterpart in catalog.raw_dealers():
+        if counterpart in w.state.disabled_dealers:
+            raise SimError("dealer_closed", f"{counterpart} has closed the stall", 400)
         return _open_dealer_thread(w, team_id, counterpart, body.get("topic"), open_now)
     if counterpart in w.state.teams:
         return _open_team_thread(w, team_id, counterpart, body)
@@ -51,7 +53,7 @@ def _open_dealer_thread(w: World, team_id: str, dealer_id: str, topic: Any, open
         raise SimError("persona_quota", f"{dealer_id} has done all its deals with you this game hour", 429)
     if not isinstance(topic, dict):
         raise invalid('a dealer conversation needs a topic, e.g. {"buy": {"pack": "sobre_barrio"}}')
-    style = dealers.STYLES[dealer_id]
+    style = w.style(dealer_id)
     neg = _negotiation(w, team_id, dealer_id, data, topic, style)
     team.mood[dealer_id] = dealers.carried_mood(style, team.mood.get(dealer_id, 0.0))
     th = Thread.model_validate(
@@ -176,7 +178,8 @@ def _sell_topic(
         if card is None or not card.page or not catalog.dealer_buys(data, card.rarity, card.set_code):
             raise invalid(f"{dealer_id} does not buy {asset.ref}")
         book += card.book
-        bid += card.book * dealers.buy_share(style, card.set_code, card.rarity)
+        fever = w.scenario.fever_mult(w, dealer_id, card.set_code, card.rarity) if w.scenario else 1.0
+        bid += card.book * dealers.buy_share(style, card.set_code, card.rarity) * fever
     first = catalog.cards()[w.asset(ids[0]).ref]
     return dealers.start(
         style,
@@ -363,7 +366,7 @@ def _answer(w: World, th: Thread) -> None:
 
     assert th.neg is not None
     dealer_id, team = th.with_, w.team(th.team)
-    style = dealers.STYLES[dealer_id]
+    style = w.style(dealer_id)
     mood = team.mood.get(dealer_id, 0.0)
     if mood <= style.cooloff_at:
         until = w.tick + style.cooloff_ticks
@@ -438,7 +441,7 @@ GATED = ("chato", "pilar")  # dealers that open early to teams that earned them,
 
 
 def levels_tick(w: World) -> None:
-    for dealer_id in GATED:
+    for dealer_id in (d for d in GATED if d in catalog.raw_dealers()):
         _level_tick(w, dealer_id)
 
 
@@ -455,7 +458,7 @@ def _level_tick(w: World, dealer_id: str) -> None:
                 "name": data["name"],
                 "teaser": data["teaser"],
                 "how": data["how"],
-                "opens_to_all_in_hours": round(open_tick * w.config.tick_seconds / 3600.0, 3),
+                "opens_to_all_in_hours": round(open_tick * w.game_tick_seconds / 3600.0, 3),
             },
             actor="admin",
         )

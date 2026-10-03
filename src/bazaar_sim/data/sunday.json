@@ -1,0 +1,1581 @@
+{
+ "bench": {
+  "note": "bench.finished is team-stream only: no efficiency or arrival data in the public feed",
+  "real_sessions": [
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 1,
+    "start_tick": 201,
+    "ticks": 16,
+    "venues": 18
+   },
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 2,
+    "start_tick": 441,
+    "ticks": 16,
+    "venues": 18
+   },
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 3,
+    "start_tick": 681,
+    "ticks": 16,
+    "venues": 18
+   },
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 4,
+    "start_tick": 921,
+    "ticks": 16,
+    "venues": 18
+   },
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 5,
+    "start_tick": 1161,
+    "ticks": 16,
+    "venues": 18
+   },
+   {
+    "name": "The Market Test: every venue gets the same synthetic book",
+    "session": 6,
+    "start_tick": 1401,
+    "ticks": 16,
+    "venues": 18
+   }
+  ],
+  "reference_efficiency": {
+   "sessions": [
+    {
+     "auto_baseline": 0.899,
+     "efficiency": 0.899,
+     "session": 1,
+     "venue": "v08"
+    },
+    {
+     "auto_baseline": 0.967,
+     "efficiency": 0.967,
+     "session": 2,
+     "venue": "v19"
+    },
+    {
+     "auto_baseline": 0.769,
+     "efficiency": 0.769,
+     "session": 3,
+     "venue": "v19"
+    }
+   ],
+   "source": ".ai/memory.md BE1 (team stream, our venues)"
+  },
+  "source": "feed_events bench.started; /api/schedule bench params; BENCH_REFERENCE from .ai/memory.md",
+  "sunday_plan": [
+   {
+    "at_hours": 14.65,
+    "name": "The hard Market Test",
+    "traders": 12
+   },
+   {
+    "at_hours": 15.0,
+    "name": null,
+    "traders": 10
+   },
+   {
+    "at_hours": 17.0,
+    "name": null,
+    "traders": 10
+   },
+   {
+    "at_hours": 19.0,
+    "name": null,
+    "traders": 10
+   },
+   {
+    "at_hours": 21.0,
+    "name": null,
+    "traders": 10
+   }
+  ],
+  "ticks_per_session": 16
+ },
+ "clock": {
+  "game_tick_seconds": 15,
+  "latency_ms": {
+   "p50": 40,
+   "p95": 120,
+   "source": "default (Phoenix not queried; .ai/memory.md tick profile: 25-30 ms TLS)"
+  },
+  "limits": {
+   "accepts_per_team_per_tick": 1,
+   "max_open_offers_per_team": 30,
+   "max_open_threads_per_team": 6,
+   "messages_per_side_per_tick": 1,
+   "offers_per_team_per_tick": 12
+  },
+  "open_hours": 16.65,
+  "rate": {
+   "burst": 20,
+   "per_sec": 5
+  },
+  "source": "/api/schedule day_opens/day_closes (h16.65 to h22.65) + /api/clock days; latency: default (Phoenix not queried; .ai/memory.md tick profile: 25-30 ms TLS)",
+  "sunday_ticks": 1440,
+  "tick_seconds": 15
+ },
+ "dealers": {
+  "abuela": {
+   "bids_before_final": 5.0,
+   "buys": {
+    "fill_over_book": {
+     "max": 2.3,
+     "min": 0.2,
+     "n": 122,
+     "p25": 0.5,
+     "p50": 0.6,
+     "p75": 0.6
+    },
+    "opening_bid_over_book": {
+     "max": 2.0,
+     "min": 0.48,
+     "n": 206,
+     "p25": 0.5,
+     "p50": 0.5,
+     "p75": 0.5
+    },
+    "source": "dealer_curves sell threads (topic.sell), book from the card catalog"
+   },
+   "buys_menu": [
+    {
+     "rarity": "common",
+     "sets": "released"
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    }
+   ],
+   "fake_final": {
+    "evidence": "rate: share of threads where the dealer priced differently after an offer with final=true (0 in Friday+Saturday data); rate_text_after_final: it only spoke again (walk lines)",
+    "rate": 0.0,
+    "rate_text_after_final": 0.055,
+    "threads_that_moved_after_final": 0,
+    "threads_with_dealer_text_after_final": 10,
+    "threads_with_final": 182
+   },
+   "fill_ratio": {
+    "common": {
+     "max": 1.5,
+     "min": 0.7,
+     "n": 75,
+     "p25": 0.9,
+     "p50": 0.9,
+     "p75": 1.0
+    },
+    "sobre_barrio": {
+     "max": 1.154,
+     "min": 0.654,
+     "n": 59,
+     "p25": 0.788,
+     "p50": 0.846,
+     "p75": 0.923
+    },
+    "uncommon": {
+     "max": 1.16,
+     "min": 0.68,
+     "n": 83,
+     "p25": 0.88,
+     "p50": 0.92,
+     "p75": 0.96
+    }
+   },
+   "floor_range": {
+    "common": {
+     "hi": 1.0,
+     "lo": 0.8,
+     "n": 60
+    },
+    "sobre_barrio": {
+     "hi": 0.958,
+     "lo": 0.731,
+     "n": 42
+    },
+    "uncommon": {
+     "hi": 1.0,
+     "lo": 0.84,
+     "n": 76
+    }
+   },
+   "kind": "dealer",
+   "level": 1,
+   "menu": {
+    "common": 10,
+    "sobre_barrio": 26,
+    "uncommon": 25
+   },
+   "n_threads": 743,
+   "open_mult": {
+    "common": 1.2,
+    "sobre_barrio": 1.154,
+    "uncommon": 1.16
+   },
+   "outcomes": {
+    "deal": 348,
+    "open_or_walked": 395
+   },
+   "source": "dealer_curves + feed_events thread.opened/thread.message; /api/dealers (menu, traits)",
+   "steps_to_final": {
+    "median": 5.0,
+    "n": 182,
+    "p25": 4.0,
+    "p75": 5.0
+   },
+   "traits": {
+    "chattiness": 0.75,
+    "generosity": 0.8,
+    "memory": 0.15,
+    "patience": 0.85,
+    "shrewdness": 0.2,
+    "strictness": 0.1
+   },
+   "unlock": {
+    "early_deals_with": null,
+    "early_min_deals": 3,
+    "early_min_level": 0,
+    "open_to_all_at_hours": null
+   },
+   "walk_rate": 0.532
+  },
+  "banco": {
+   "bids_before_final": 7.5,
+   "buys": {
+    "fill_over_book": {
+     "max": 0.667,
+     "min": 0.644,
+     "n": 3,
+     "p25": 0.656,
+     "p50": 0.667,
+     "p75": 0.667
+    },
+    "opening_bid_over_book": {
+     "max": 0.628,
+     "min": 0.622,
+     "n": 9,
+     "p25": 0.628,
+     "p50": 0.628,
+     "p75": 0.628
+    },
+    "source": "dealer_curves sell threads (topic.sell), book from the card catalog"
+   },
+   "buys_menu": [
+    {
+     "rarity": "epic",
+     "sets": "released"
+    },
+    {
+     "rarity": "legendary",
+     "sets": "released"
+    }
+   ],
+   "fake_final": {
+    "evidence": "rate: share of threads where the dealer priced differently after an offer with final=true (0 in Friday+Saturday data); rate_text_after_final: it only spoke again (walk lines)",
+    "rate": 0.0,
+    "rate_text_after_final": 0.25,
+    "threads_that_moved_after_final": 0,
+    "threads_with_dealer_text_after_final": 2,
+    "threads_with_final": 8
+   },
+   "fill_ratio": {},
+   "floor_range": {},
+   "kind": "banker",
+   "level": 5,
+   "menu": {
+    "legendary": 585,
+    "sobre_oro": 420
+   },
+   "n_threads": 33,
+   "open_mult": {
+    "legendary": 1.301,
+    "sobre_oro": 1.3
+   },
+   "outcomes": {
+    "deal": 3,
+    "open_or_walked": 30
+   },
+   "source": "dealer_curves + feed_events thread.opened/thread.message; /api/dealers (menu, traits)",
+   "steps_to_final": {
+    "median": 7.0,
+    "n": 8,
+    "p25": 5.5,
+    "p75": 9.0
+   },
+   "traits": {
+    "chattiness": 0.35,
+    "generosity": 0.1,
+    "memory": 1.0,
+    "patience": 0.95,
+    "shrewdness": 0.95,
+    "strictness": 1.0
+   },
+   "unlock": {
+    "early_deals_with": "pilar",
+    "early_min_deals": 3,
+    "early_min_level": 3,
+    "open_to_all_at_hours": 10.42
+   },
+   "walk_rate": 0.909
+  },
+  "chato": {
+   "bids_before_final": 5.0,
+   "buys": {
+    "fill_over_book": {
+     "max": 1.24,
+     "min": 0.414,
+     "n": 30,
+     "p25": 0.52,
+     "p50": 0.56,
+     "p75": 0.6
+    },
+    "opening_bid_over_book": {
+     "max": 1.04,
+     "min": 0.52,
+     "n": 60,
+     "p25": 0.52,
+     "p50": 0.52,
+     "p75": 0.52
+    },
+    "source": "dealer_curves sell threads (topic.sell), book from the card catalog"
+   },
+   "buys_menu": [
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    },
+    {
+     "rarity": "rare",
+     "sets": "released"
+    }
+   ],
+   "fake_final": {
+    "evidence": "rate: share of threads where the dealer priced differently after an offer with final=true (0 in Friday+Saturday data); rate_text_after_final: it only spoke again (walk lines)",
+    "rate": 0.0,
+    "rate_text_after_final": 0.08,
+    "threads_that_moved_after_final": 0,
+    "threads_with_dealer_text_after_final": 6,
+    "threads_with_final": 75
+   },
+   "fill_ratio": {
+    "rare": {
+     "max": 1.247,
+     "min": 0.974,
+     "n": 33,
+     "p25": 1.117,
+     "p50": 1.156,
+     "p75": 1.182
+    },
+    "sobre_plata": {
+     "max": 1.207,
+     "min": 1.08,
+     "n": 2,
+     "p25": 1.112,
+     "p50": 1.143,
+     "p75": 1.175
+    },
+    "uncommon": {
+     "max": 2.346,
+     "min": 0.538,
+     "n": 18,
+     "p25": 1.077,
+     "p50": 1.154,
+     "p75": 1.192
+    }
+   },
+   "floor_range": {
+    "rare": {
+     "hi": 1.208,
+     "lo": 1.052,
+     "n": 31
+    },
+    "sobre_plata": {
+     "hi": 1.194,
+     "lo": 1.093,
+     "n": 2
+    },
+    "uncommon": {
+     "hi": 1.231,
+     "lo": 0.831,
+     "n": 17
+    }
+   },
+   "kind": "dealer",
+   "level": 2,
+   "menu": {
+    "rare": 77,
+    "sobre_plata": 150,
+    "uncommon": 26
+   },
+   "n_threads": 379,
+   "open_mult": {
+    "rare": 1.26,
+    "sobre_plata": 1.253,
+    "uncommon": 1.269
+   },
+   "outcomes": {
+    "deal": 88,
+    "open_or_walked": 291
+   },
+   "source": "dealer_curves + feed_events thread.opened/thread.message; /api/dealers (menu, traits)",
+   "steps_to_final": {
+    "median": 5.0,
+    "n": 75,
+    "p25": 4.0,
+    "p75": 6.0
+   },
+   "traits": {
+    "chattiness": 0.3,
+    "generosity": 0.25,
+    "memory": 0.9,
+    "patience": 0.35,
+    "shrewdness": 0.85,
+    "strictness": 0.85
+   },
+   "unlock": {
+    "early_deals_with": "abuela",
+    "early_min_deals": 3,
+    "early_min_level": 0,
+    "open_to_all_at_hours": 2.63
+   },
+   "walk_rate": 0.768
+  },
+  "picaros": {
+   "bids_before_final": 3.0,
+   "buys": {
+    "fill_over_book": {
+     "max": 0.5,
+     "min": 0.4,
+     "n": 22,
+     "p25": 0.44,
+     "p50": 0.5,
+     "p75": 0.5
+    },
+    "opening_bid_over_book": {
+     "max": 0.4,
+     "min": 0.4,
+     "n": 101,
+     "p25": 0.4,
+     "p50": 0.4,
+     "p75": 0.4
+    },
+    "source": "dealer_curves sell threads (topic.sell), book from the card catalog"
+   },
+   "buys_menu": [
+    {
+     "rarity": "common",
+     "sets": "released"
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    }
+   ],
+   "fake_final": {
+    "evidence": "rate: share of threads where the dealer priced differently after an offer with final=true (0 in Friday+Saturday data); rate_text_after_final: it only spoke again (walk lines)",
+    "rate": 0.0,
+    "rate_text_after_final": 0.184,
+    "threads_that_moved_after_final": 0,
+    "threads_with_dealer_text_after_final": 19,
+    "threads_with_final": 103
+   },
+   "fill_ratio": {
+    "epic": {
+     "max": 1.031,
+     "min": 0.79,
+     "n": 18,
+     "p25": 0.858,
+     "p50": 0.88,
+     "p75": 0.949
+    },
+    "rare": {
+     "max": 1.063,
+     "min": 0.762,
+     "n": 53,
+     "p25": 0.857,
+     "p50": 0.889,
+     "p75": 0.937
+    }
+   },
+   "floor_range": {
+    "epic": {
+     "hi": 0.957,
+     "lo": 0.829,
+     "n": 18
+    },
+    "rare": {
+     "hi": 0.968,
+     "lo": 0.825,
+     "n": 51
+    }
+   },
+   "kind": "trickster",
+   "level": 4,
+   "menu": {
+    "epic": 162,
+    "rare": 63
+   },
+   "n_threads": 331,
+   "open_mult": {
+    "epic": 1.154,
+    "rare": 1.159
+   },
+   "outcomes": {
+    "deal": 93,
+    "open_or_walked": 238
+   },
+   "source": "dealer_curves + feed_events thread.opened/thread.message; /api/dealers (menu, traits)",
+   "steps_to_final": {
+    "median": 3.0,
+    "n": 103,
+    "p25": 2.0,
+    "p75": 4.0
+   },
+   "traits": {
+    "chattiness": 0.8,
+    "generosity": 0.6,
+    "memory": 0.3,
+    "patience": 0.4,
+    "shrewdness": 0.7,
+    "strictness": 0.1
+   },
+   "unlock": {
+    "early_deals_with": "pilar",
+    "early_min_deals": 2,
+    "early_min_level": 0,
+    "open_to_all_at_hours": 8.67
+   },
+   "walk_rate": 0.719
+  },
+  "pilar": {
+   "bids_before_final": 4.0,
+   "buys": {
+    "fill_over_book": {
+     "max": 1.243,
+     "min": 0.56,
+     "n": 116,
+     "p25": 0.76,
+     "p50": 0.92,
+     "p75": 1.029
+    },
+    "opening_bid_over_book": {
+     "max": 1.0,
+     "min": 0.64,
+     "n": 174,
+     "p25": 0.64,
+     "p50": 0.671,
+     "p75": 0.88
+    },
+    "source": "dealer_curves sell threads (topic.sell), book from the card catalog"
+   },
+   "buys_menu": [
+    {
+     "rarity": "uncommon",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "rare",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "epic",
+     "sets": [
+      "SAL",
+      "RET"
+     ]
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    },
+    {
+     "rarity": "rare",
+     "sets": "released"
+    },
+    {
+     "rarity": "epic",
+     "sets": "released"
+    }
+   ],
+   "fake_final": {
+    "evidence": "rate: share of threads where the dealer priced differently after an offer with final=true (0 in Friday+Saturday data); rate_text_after_final: it only spoke again (walk lines)",
+    "rate": 0.0,
+    "rate_text_after_final": 0.087,
+    "threads_that_moved_after_final": 0,
+    "threads_with_dealer_text_after_final": 6,
+    "threads_with_final": 69
+   },
+   "fill_ratio": {},
+   "floor_range": {},
+   "kind": "collector",
+   "level": 3,
+   "menu": {
+    "sobre_oro": 420
+   },
+   "n_threads": 264,
+   "open_mult": {
+    "sobre_oro": 1.2
+   },
+   "outcomes": {
+    "deal": 116,
+    "open_or_walked": 148
+   },
+   "source": "dealer_curves + feed_events thread.opened/thread.message; /api/dealers (menu, traits)",
+   "steps_to_final": {
+    "median": 4.0,
+    "n": 69,
+    "p25": 3.0,
+    "p75": 5.0
+   },
+   "traits": {
+    "chattiness": 0.55,
+    "generosity": 0.5,
+    "memory": 0.7,
+    "patience": 0.6,
+    "shrewdness": 0.75,
+    "strictness": 0.6
+   },
+   "unlock": {
+    "early_deals_with": "chato",
+    "early_min_deals": 3,
+    "early_min_level": 2,
+    "open_to_all_at_hours": 5.51
+   },
+   "walk_rate": 0.561
+  }
+ },
+ "duels": {
+  "by_role": {
+   "buyer": {
+    "deal_rate": 0.735,
+    "n": 68,
+    "price_over_limit": {
+     "max": 0.944,
+     "min": 0.5,
+     "n": 50,
+     "p25": 0.722,
+     "p50": 0.846,
+     "p75": 0.879
+    },
+    "rounds": 2.0
+   },
+   "seller": {
+    "deal_rate": 0.721,
+    "n": 68,
+    "price_over_limit": {
+     "max": 2.171,
+     "min": 1.087,
+     "n": 49,
+     "p25": 1.143,
+     "p50": 1.291,
+     "p75": 1.474
+    },
+    "rounds": 1.0
+   }
+  },
+  "by_session": {
+   "1": {
+    "all_teams_closed": 306,
+    "all_teams_deal_rate": 0.405,
+    "messages_per_duel": 11.0,
+    "ours_deal_rate": 0.441,
+    "ours_mean_result": 23.553,
+    "ours_mean_rounds_deal": 5.0,
+    "ours_n": 34
+   },
+   "2": {
+    "all_teams_closed": 306,
+    "all_teams_deal_rate": 0.742,
+    "messages_per_duel": 12.0,
+    "ours_deal_rate": 0.794,
+    "ours_mean_result": 19.796,
+    "ours_mean_rounds_deal": 2.0,
+    "ours_n": 34
+   },
+   "3": {
+    "all_teams_closed": 612,
+    "all_teams_deal_rate": 0.776,
+    "messages_per_duel": 11.0,
+    "ours_deal_rate": 0.838,
+    "ours_mean_result": 23.602,
+    "ours_mean_rounds_deal": 1.0,
+    "ours_n": 68
+   }
+  },
+  "note": "rival styles are not in the data: only the rival alias and its messages in duels.payload",
+  "scheduled": [
+   {
+    "decay": 0.06,
+    "duel_ticks": 12,
+    "duels": 306,
+    "name": "Practice duels",
+    "rounds": 1,
+    "session": 1
+   },
+   {
+    "decay": 0.06,
+    "duel_ticks": 16,
+    "duels": 306,
+    "name": "Duels I",
+    "rounds": 1,
+    "session": 2
+   },
+   {
+    "decay": 0.08,
+    "duel_ticks": 16,
+    "duels": 612,
+    "name": "Duels II",
+    "rounds": 2,
+    "session": 3
+   }
+  ],
+  "source": "feed_events duel.closed/duels.scheduled (all teams); duels table (ours only)"
+ },
+ "fevers": {
+  "items": [
+   {
+    "at_hours": 9.15,
+    "dealer": "pilar",
+    "kind": "set",
+    "mult": 1.25,
+    "note": "Salamanca fever: Pilar pays 25 % over book for Salamanca",
+    "set": "SAL",
+    "source": "/api/schedule (Saturday), .ai/memory.md",
+    "until_hours": 11.15
+   },
+   {
+    "at_hours": 9.1833,
+    "dealer": "abuela",
+    "kind": "rarity",
+    "mult": null,
+    "note": "Abuela pays more for uncommon cards until teatime",
+    "rarity": "uncommon",
+    "source": "/api/news",
+    "until_hours": null
+   }
+  ],
+  "note": "persona.updated carries only {name, persona, version}: it proves a rule change, not its size",
+  "persona_updates": [
+   {
+    "by": "admin",
+    "persona": "banco",
+    "tick": 254
+   },
+   {
+    "by": "news",
+    "persona": "chato",
+    "tick": 463
+   },
+   {
+    "by": "news",
+    "persona": "chato",
+    "tick": 583
+   },
+   {
+    "by": "schedule",
+    "persona": "pilar",
+    "tick": 939
+   },
+   {
+    "by": "news",
+    "persona": "abuela",
+    "tick": 979
+   },
+   {
+    "by": "schedule",
+    "persona": "pilar",
+    "tick": 1179
+   },
+   {
+    "by": "news",
+    "persona": "abuela",
+    "tick": 1219
+   }
+  ],
+  "source": "KNOWN_FEVERS (schedule text) + /api/news + feed_events persona.updated"
+ },
+ "generated_from": {
+  "bench.started": 6,
+  "competitor_profiles": 16,
+  "dealer_curves": 1750,
+  "duel.closed": 1224,
+  "duels": 136,
+  "duels.scheduled": 3,
+  "gift.given": 60,
+  "max_tick": 1445,
+  "offer.cancelled": 3063,
+  "offer.listed": 8422,
+  "pack.opened": 125,
+  "persona.updated": 7,
+  "settlement": 793,
+  "thread.message": 12012,
+  "thread.opened": 1750,
+  "venue.fee_changed": 25,
+  "venue.opened": 26
+ },
+ "news": {
+  "cadence_hours": 0.7,
+  "items": [
+   {
+    "at_hours": 3.6833,
+    "body": "News, rumours and what you hear between the stalls. Believe what you like.",
+    "headline": "Radio Rastro is on the air",
+    "source": "boletin",
+    "source_name": "Boletín del Bazar"
+   },
+   {
+    "at_hours": 4.0833,
+    "body": "Car horns on Gran Vía until late.",
+    "headline": "Atleti win 2-1 and Madrid goes out to celebrate",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 4.6833,
+    "body": "They say he pays above the usual price today. One hour, no more.",
+    "headline": "El Chato is looking for rare Malasaña cards",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 5.4833,
+    "body": "My cousin saw it. I swear.",
+    "headline": "El Chato gives a legendary to anyone who says hello!",
+    "source": "tablon",
+    "source_name": "El Tablón"
+   },
+   {
+    "at_hours": 6.1833,
+    "body": "",
+    "headline": "Metro line 5 is closed between Ópera and Callao",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 6.6833,
+    "body": "A neighbourhood pack for every team in one hour. Happy saint's day, Carmen.",
+    "headline": "Abuela Carmen gives out packs for her saint's day",
+    "source": "boletin",
+    "source_name": "Boletín del Bazar"
+   },
+   {
+    "at_hours": 7.6833,
+    "body": "That is what they say at the next stall.",
+    "headline": "Abuela stops buying common cards from today",
+    "source": "tablon",
+    "source_name": "El Tablón"
+   },
+   {
+    "at_hours": 8.2833,
+    "body": "",
+    "headline": "Half-hour queue at the San Ginés churro shop",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 9.1833,
+    "body": "She wants to complete her grandchildren's album.",
+    "headline": "Abuela pays more for uncommon cards until teatime",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 9.8833,
+    "body": "",
+    "headline": "Sun and 24 degrees; a storm after ten",
+    "source": "radio",
+    "source_name": "Radio Rastro"
+   },
+   {
+    "at_hours": 10.6833,
+    "body": "If you have spare Lavapiés cards, sell them now.",
+    "headline": "All of Lavapiés will be reprinted tonight",
+    "source": "tablon",
+    "source_name": "El Tablón"
+   }
+  ],
+  "source": "/api/news (= feed_events news.posted)"
+ },
+ "notes": [
+  "bench.finished is team-stream only: efficiency/auto_baseline come from .ai/memory.md BE1 (3 sessions).",
+  "No Sunday data exists: every Sunday number is a Saturday fit; the schedule is the organisers' own.",
+  "Schedule hours are game hours: the `day_opens sun` entry sits at h16.65 and `day_closes sun` at h22.65, exactly 1440 ticks of 15 s apart, so the Sunday ticks are (at_hours - 16.65) * 240. /api/clock shows t = 13.37 now (Saturday ended early), so the organisers must jump the game clock or fire the entries before h16.65 (hard Market Test h14.65, Market Test h15.0) at the open: the scenario fires them at tick 1.",
+  "Duel rival styles are not stored; fever sizes other than Pilar's Salamanca +25 % are not in the feed.",
+  "Friday ticks (< 160) ran 60 s and are excluded from the rival rates.",
+  "Request latency is a documented default unless Phoenix was reachable (see clock.latency_ms.source)."
+ ],
+ "packs": {
+  "by_pack": {
+   "sobre_barrio": 46,
+   "sobre_bienvenida": 6,
+   "sobre_plata": 30
+  },
+  "gifts_by_giver": {
+   "abuela": 39
+  },
+  "gifts_per_tick": 0.0316,
+  "packs_opened_per_tick": 0.0664,
+  "source": "feed_events pack.opened, gift.given (ticks >= 160)"
+ },
+ "rivals": {
+  "accept_rate": 0.018,
+  "ask_over_book": {
+   "common": {
+    "max": 7.7,
+    "min": 0.3,
+    "n": 3910,
+    "p25": 0.8,
+    "p50": 0.9,
+    "p75": 1.2
+   },
+   "epic": {
+    "max": 1.783,
+    "min": 0.65,
+    "n": 78,
+    "p25": 1.372,
+    "p50": 1.739,
+    "p75": 1.75
+   },
+   "rare": {
+    "max": 2.857,
+    "min": 0.786,
+    "n": 156,
+    "p25": 1.107,
+    "p50": 1.2,
+    "p75": 1.804
+   },
+   "uncommon": {
+    "max": 6.44,
+    "min": 0.4,
+    "n": 851,
+    "p25": 0.96,
+    "p50": 1.12,
+    "p75": 1.2
+   }
+  },
+  "bid_over_book": {
+   "common": {
+    "max": 4.9,
+    "min": 0.1,
+    "n": 882,
+    "p25": 0.2,
+    "p50": 0.4,
+    "p75": 0.5
+   },
+   "epic": {
+    "max": 1.167,
+    "min": 0.006,
+    "n": 48,
+    "p25": 0.525,
+    "p50": 0.639,
+    "p75": 0.896
+   },
+   "legendary": {
+    "max": 1.0,
+    "min": 0.002,
+    "n": 58,
+    "p25": 0.002,
+    "p50": 0.002,
+    "p75": 0.002
+   },
+   "rare": {
+    "max": 1.857,
+    "min": 0.014,
+    "n": 569,
+    "p25": 0.529,
+    "p50": 0.6,
+    "p75": 0.929
+   },
+   "uncommon": {
+    "max": 2.0,
+    "min": 0.2,
+    "n": 391,
+    "p25": 0.48,
+    "p50": 0.56,
+    "p75": 0.6
+   }
+  },
+  "cancel_rate": 0.383,
+  "listing_lifetime_ticks": {
+   "max": 120.0,
+   "min": 1.0,
+   "n": 7447,
+   "p25": 10.0,
+   "p50": 20.0,
+   "p75": 30.0
+  },
+  "listing_share_by_venue": {
+   "rastro": 0.686,
+   "v01": 0.027,
+   "v02": 0.056,
+   "v03": 0.001,
+   "v04": 0.001,
+   "v05": 0.001,
+   "v06": 0.002,
+   "v07": 0.073,
+   "v10": 0.015,
+   "v11": 0.017,
+   "v12": 0.002,
+   "v13": 0.053,
+   "v14": 0.003,
+   "v15": 0.021,
+   "v16": 0.001,
+   "v17": 0.002,
+   "v18": 0.002,
+   "v19": 0.002,
+   "v20": 0.004,
+   "v21": 0.031
+  },
+  "listings_per_tick": {
+   "mean": 5.791,
+   "p50": 5.0,
+   "p95": 13.0,
+   "ticks": 1286
+  },
+  "n_teams": 16,
+  "reciprocal_pairs": [
+   {
+    "a": "t07",
+    "a_to_b": 0,
+    "b": "t15",
+    "b_to_a": 6,
+    "trades": 6
+   },
+   {
+    "a": "t12",
+    "a_to_b": 0,
+    "b": "t15",
+    "b_to_a": 5,
+    "trades": 5
+   },
+   {
+    "a": "t06",
+    "a_to_b": 2,
+    "b": "t12",
+    "b_to_a": 3,
+    "trades": 5
+   },
+   {
+    "a": "t02",
+    "a_to_b": 3,
+    "b": "t14",
+    "b_to_a": 1,
+    "trades": 4
+   },
+   {
+    "a": "t09",
+    "a_to_b": 1,
+    "b": "t12",
+    "b_to_a": 3,
+    "trades": 4
+   },
+   {
+    "a": "t07",
+    "a_to_b": 2,
+    "b": "t08",
+    "b_to_a": 2,
+    "trades": 4
+   },
+   {
+    "a": "t01",
+    "a_to_b": 0,
+    "b": "t02",
+    "b_to_a": 3,
+    "trades": 3
+   },
+   {
+    "a": "t06",
+    "a_to_b": 3,
+    "b": "t09",
+    "b_to_a": 0,
+    "trades": 3
+   },
+   {
+    "a": "t08",
+    "a_to_b": 2,
+    "b": "t12",
+    "b_to_a": 1,
+    "trades": 3
+   },
+   {
+    "a": "t09",
+    "a_to_b": 0,
+    "b": "t14",
+    "b_to_a": 3,
+    "trades": 3
+   }
+  ],
+  "settlements_per_tick": {
+   "rastro": 0.069,
+   "team_venues": 0.033
+  },
+  "source": "feed_events offer.listed/offer.cancelled/settlement/venue.opened/venue.fee_changed (ticks >= 160, teams other than t01); competitor_profiles",
+  "teams": {
+   "t02": {
+    "listings_per_tick": 0.333,
+    "profile": {
+     "avg_pack_price": 26.0,
+     "bids": 412,
+     "dealer_threads": 130,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.053,
+    "settlement_share_as_seller": 0.076
+   },
+   "t03": {
+    "listings_per_tick": 0.232,
+    "profile": {
+     "avg_pack_price": null,
+     "bids": 138,
+     "dealer_threads": 33,
+     "level": null,
+     "top_set": "SAL"
+    },
+    "settlement_share_as_buyer": 0.031,
+    "settlement_share_as_seller": 0.031
+   },
+   "t04": {
+    "listings_per_tick": 0.131,
+    "profile": {
+     "avg_pack_price": 20.333,
+     "bids": 429,
+     "dealer_threads": 113,
+     "level": null,
+     "top_set": "LAV"
+    },
+    "settlement_share_as_buyer": 0.092,
+    "settlement_share_as_seller": 0.061
+   },
+   "t05": {
+    "listings_per_tick": 0.302,
+    "profile": {
+     "avg_pack_price": 20.333,
+     "bids": 236,
+     "dealer_threads": 74,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.053,
+    "settlement_share_as_seller": 0.008
+   },
+   "t06": {
+    "listings_per_tick": 0.677,
+    "profile": {
+     "avg_pack_price": 21.875,
+     "bids": 315,
+     "dealer_threads": 82,
+     "level": null,
+     "top_set": "SAL"
+    },
+    "settlement_share_as_buyer": 0.061,
+    "settlement_share_as_seller": 0.13
+   },
+   "t07": {
+    "listings_per_tick": 0.213,
+    "profile": {
+     "avg_pack_price": 20.667,
+     "bids": 580,
+     "dealer_threads": 163,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.115,
+    "settlement_share_as_seller": 0.061
+   },
+   "t08": {
+    "listings_per_tick": 0.854,
+    "profile": {
+     "avg_pack_price": 70.833,
+     "bids": 424,
+     "dealer_threads": 210,
+     "level": null,
+     "top_set": null
+    },
+    "settlement_share_as_buyer": 0.053,
+    "settlement_share_as_seller": 0.061
+   },
+   "t09": {
+    "listings_per_tick": 0.136,
+    "profile": {
+     "avg_pack_price": 20.0,
+     "bids": 151,
+     "dealer_threads": 37,
+     "level": null,
+     "top_set": "MAL"
+    },
+    "settlement_share_as_buyer": 0.115,
+    "settlement_share_as_seller": 0.031
+   },
+   "t10": {
+    "listings_per_tick": 0.351,
+    "profile": {
+     "avg_pack_price": null,
+     "bids": 397,
+     "dealer_threads": 199,
+     "level": null,
+     "top_set": null
+    },
+    "settlement_share_as_buyer": 0.031,
+    "settlement_share_as_seller": 0.046
+   },
+   "t12": {
+    "listings_per_tick": 0.133,
+    "profile": {
+     "avg_pack_price": 21.0,
+     "bids": 286,
+     "dealer_threads": 79,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.084,
+    "settlement_share_as_seller": 0.069
+   },
+   "t13": {
+    "listings_per_tick": 0.9,
+    "profile": {
+     "avg_pack_price": 21.6,
+     "bids": 948,
+     "dealer_threads": 230,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.038,
+    "settlement_share_as_seller": 0.099
+   },
+   "t14": {
+    "listings_per_tick": 0.215,
+    "profile": {
+     "avg_pack_price": null,
+     "bids": 283,
+     "dealer_threads": 73,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.076,
+    "settlement_share_as_seller": 0.053
+   },
+   "t15": {
+    "listings_per_tick": 0.26,
+    "profile": {
+     "avg_pack_price": 29.0,
+     "bids": 160,
+     "dealer_threads": 81,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.038,
+    "settlement_share_as_seller": 0.145
+   },
+   "t16": {
+    "listings_per_tick": 0.638,
+    "profile": {
+     "avg_pack_price": 24.0,
+     "bids": 223,
+     "dealer_threads": 59,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.053,
+    "settlement_share_as_seller": 0.046
+   },
+   "t17": {
+    "listings_per_tick": 0.29,
+    "profile": {
+     "avg_pack_price": 22.0,
+     "bids": 173,
+     "dealer_threads": 58,
+     "level": null,
+     "top_set": "SAL"
+    },
+    "settlement_share_as_buyer": 0.023,
+    "settlement_share_as_seller": 0.015
+   },
+   "t18": {
+    "listings_per_tick": 0.127,
+    "profile": {
+     "avg_pack_price": 20.0,
+     "bids": 154,
+     "dealer_threads": 48,
+     "level": null,
+     "top_set": "RET"
+    },
+    "settlement_share_as_buyer": 0.015,
+    "settlement_share_as_seller": 0.038
+   }
+  },
+  "venue_fee_bps": {
+   "latest_changed": {
+    "max": 0.0,
+    "min": 0.0,
+    "n": 14,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0
+   },
+   "n_venues_opened": 26,
+   "opened": {
+    "max": 300.0,
+    "min": 0.0,
+    "n": 26,
+    "p25": 0.0,
+    "p50": 25.0,
+    "p75": 300.0
+   }
+  }
+ },
+ "schedule": {
+  "open_hours": 16.65,
+  "source": "/api/schedule upcoming (verbatim) + ticks_from_open",
+  "upcoming": [
+   {
+    "action": "bench",
+    "at_hours": 14.65,
+    "before_open": true,
+    "note": "The hard Market Test: firmer and more impatient traders",
+    "params": {
+     "name": "The hard Market Test",
+     "ticks": 16,
+     "traders": 12
+    },
+    "ticks_from_open": -480
+   },
+   {
+    "action": "bench",
+    "at_hours": 15.0,
+    "before_open": true,
+    "note": "The Market Test: every venue gets the same synthetic book",
+    "params": {
+     "ticks": 16,
+     "traders": 10
+    },
+    "ticks_from_open": -396
+   },
+   {
+    "action": "set_release",
+    "at_hours": 16.65,
+    "before_open": false,
+    "note": "Chamberí released",
+    "params": {
+     "set": "CHA"
+    },
+    "ticks_from_open": 0
+   },
+   {
+    "action": "round",
+    "at_hours": 16.65,
+    "before_open": false,
+    "note": "Round 3 starts",
+    "params": {
+     "name": "Sunday · Chamberí",
+     "weight": 1
+    },
+    "ticks_from_open": 0
+   },
+   {
+    "action": "day_closes",
+    "at_hours": 16.65,
+    "before_open": false,
+    "note": "Closed until Sunday 09:00",
+    "params": {
+     "day": "sat"
+    },
+    "ticks_from_open": 0,
+    "wall": "2026-10-03T23:00:00+02:00"
+   },
+   {
+    "action": "day_opens",
+    "at_hours": 16.65,
+    "before_open": false,
+    "note": "Sunday opens",
+    "params": {
+     "day": "sun",
+     "tick_seconds": 15.0
+    },
+    "ticks_from_open": 0,
+    "wall": "2026-10-04T09:00:00+02:00"
+   },
+   {
+    "action": "grant_all",
+    "at_hours": 16.7,
+    "before_open": false,
+    "note": "The Sunday allowance: 150 primas for everyone",
+    "params": {
+     "cash": 150
+    },
+    "ticks_from_open": 12
+   },
+   {
+    "action": "bench",
+    "at_hours": 17.0,
+    "before_open": false,
+    "note": "The Market Test: every venue gets the same synthetic book",
+    "params": {
+     "ticks": 16,
+     "traders": 10
+    },
+    "ticks_from_open": 84
+   },
+   {
+    "action": "duels",
+    "at_hours": 18.65,
+    "before_open": false,
+    "note": "Duels III: two issues, shorter clock, harder decay",
+    "params": {
+     "decay": 0.1,
+     "duel_ticks": 12,
+     "issues": [
+      "price",
+      "days"
+     ],
+     "max_concurrent": 4,
+     "name": "Duels III",
+     "rounds": 2
+    },
+    "ticks_from_open": 480
+   },
+   {
+    "action": "bench",
+    "at_hours": 19.0,
+    "before_open": false,
+    "note": "The Market Test: every venue gets the same synthetic book",
+    "params": {
+     "ticks": 16,
+     "traders": 10
+    },
+    "ticks_from_open": 564
+   },
+   {
+    "action": "bench",
+    "at_hours": 21.0,
+    "before_open": false,
+    "note": "The Market Test: every venue gets the same synthetic book",
+    "params": {
+     "ticks": 16,
+     "traders": 10
+    },
+    "ticks_from_open": 1044
+   },
+   {
+    "action": "announce",
+    "at_hours": 21.45,
+    "before_open": false,
+    "note": "finale warning",
+    "params": {},
+    "ticks_from_open": 1152
+   },
+   {
+    "action": "persona",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "Finale: stalls close",
+    "params": {
+     "enabled": false,
+     "id": "abuela"
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "persona",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "Finale: stalls close",
+    "params": {
+     "enabled": false,
+     "id": "chato"
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "persona",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "Finale: stalls close",
+    "params": {
+     "enabled": false,
+     "id": "pilar"
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "persona",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "Finale: stalls close",
+    "params": {
+     "enabled": false,
+     "id": "picaros"
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "persona",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "Finale: stalls close",
+    "params": {
+     "enabled": false,
+     "id": "banco"
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "duels",
+    "at_hours": 21.65,
+    "before_open": false,
+    "note": "The Grand Final: the last duel wave, on the big screen",
+    "params": {
+     "decay": 0.1,
+     "duel_ticks": 12,
+     "issues": [
+      "price",
+      "days"
+     ],
+     "max_concurrent": 4,
+     "name": "Final duels",
+     "rounds": 1
+    },
+    "ticks_from_open": 1200
+   },
+   {
+    "action": "announce",
+    "at_hours": 22.55,
+    "before_open": false,
+    "note": "freeze warning",
+    "params": {},
+    "ticks_from_open": 1416
+   },
+   {
+    "action": "end_round",
+    "at_hours": 22.65,
+    "before_open": false,
+    "note": "Scores freeze",
+    "params": {},
+    "ticks_from_open": 1440
+   },
+   {
+    "action": "day_closes",
+    "at_hours": 22.65,
+    "before_open": false,
+    "note": "The Bazaar closes",
+    "params": {
+     "day": "sun"
+    },
+    "ticks_from_open": 1440,
+    "wall": "2026-10-04T15:00:00+02:00"
+   }
+  ]
+ },
+ "version": 1
+}

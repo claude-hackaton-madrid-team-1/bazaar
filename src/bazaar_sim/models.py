@@ -128,6 +128,7 @@ class Team(Model):
     bench_venue: str | None = None
     luck: float = 0.0
     venue: str | None = None
+    round_start_deal: int = 0  # the ladder counts deals from this index on (a new round restarts it)
 
 
 class Venue(Model):
@@ -260,3 +261,7 @@ class WorldState(Model):
     leaderboard_tick: int = 0
     duel_session: int = 0
     matches: list[dict[str, Any]] = Field(default_factory=list)  # crossed pairs waiting to settle
+    released: list[str] = Field(default_factory=list)  # sets released on top of the catalog's own flags (scenario)
+    disabled_dealers: list[str] = Field(default_factory=list)  # dealers switched off by a scenario (the finale)
+    round: int = 0
+    news: list[dict[str, Any]] = Field(default_factory=list)  # `/api/news` (scenario)
