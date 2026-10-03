@@ -445,6 +445,31 @@ options below remain for a Phoenix outside Railway.
    the environment, not from `.env`). This path is untested: check it against Arize's docs before
    relying on it.
 
+## Decider switch: Jev or Claude Opus (`BAZAAR_DECIDER`)
+
+Every verdict comes from `bazaar_agent.jev.judge()`. `BAZAAR_DECIDER=llm` sends the same masked state and
+questions to Claude instead of TypeSafe's Jev and returns the same verdicts under the same bars, so every
+caller (taker, maker, duels, team desk, pack gate, dealer buy, the model chooser) follows it. Guardrails, the
+official value cap, the cash floor, human approval, breakers and the ledger still gate every send. Spec:
+[`LD1-spec.md`](.ai/specs/LD1-spec.md).
+
+| variable | default | meaning |
+|---|---|---|
+| `BAZAAR_DECIDER` | `jev` | `llm` = Claude decides; anything else = Jev |
+| `BAZAAR_DECIDER_MODEL` | `opus-5-5` | alias or Claude id (API key first, else the subscription token) |
+| `BAZAAR_DECIDER_TIMEOUT_S` | `12` | whole-call budget (1-60), then `undecided request_timeout` |
+| `BAZAAR_DECIDER_CACHE_S` | `30` | reuse an answer for the same questions, bars and state |
+| `BAZAAR_DECIDER_MAX_CALLS` / `_WINDOW_S` | `8` / `30` | call starts per window per process, then `decider_call_cap` |
+| `BAZAAR_DECIDER_MAX_CONCURRENT` | `3` | calls in flight per process |
+
+Read from the process environment (not `.env`): export it on a laptop, set it per service on Railway.
+The caps are per process, and taker, maker and duels share ONE subscription token: turn `llm` on one service
+first (duels), watch `request_timeout` / `rate_limited` / `decider_call_cap` in the decision logs, then the
+others. A usage-limit answer pauses that process's Claude calls until the window resets (every verdict is then
+`undecided`, the words fall back to templates). Gates ask only with timeout + 1 s of the tick left. The prompt
+tells Claude to commit at or above the bar unless the options are equal, so gates that used to stay closed on
+an undecided Jev (pack slot, team swap) will decide far more often: still inside every guardrail.
+
 ## Runtime LLM (talk to it, let it write the words, steer it)
 
 [`RUNTIME.md`](RUNTIME.md) configures it. Jev picks the model for every operation
@@ -1334,6 +1359,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 - [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
 - [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
 - [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
@@ -1341,7 +1367,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
 - [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
-- [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 
 <!-- BAZAAR:STATUS:END -->
 

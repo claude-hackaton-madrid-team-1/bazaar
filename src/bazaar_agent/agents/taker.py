@@ -112,6 +112,7 @@ from bazaar_agent.guardrails import (
 )
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, dealer_threads, listed_makers, settled_volume
+from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.curves import curve_stats
 from bazaar_agent.learn.live import LiveLearner
@@ -787,7 +788,9 @@ class Taker:
         cached = self.jev_cache.get(key, tick)
         if cached is not None:  # marked, so a reused answer never reads as a fresh call in the decision log
             return replace(cached, digest=None, reason=f"cached ({cached.reason})" if cached.reason else "cached")
-        if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
+        if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < needed_budget_s(
+            self.config.jev_min_budget_s
+        ):
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         run.jev_calls += 1
         advice = self.jev(state)
@@ -798,7 +801,9 @@ class Taker:
     def _ask_swap_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
         """`team_swap_worth_it` for the team desk, inside the same per-tick Jev budget; never cached (each swap
         is judged on its own state)."""
-        if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
+        if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < needed_budget_s(
+            self.config.jev_min_budget_s
+        ):
             return JevAdvice("undecided", 0.0, reason=NO_JEV_BUDGET)
         run.jev_calls += 1
         return self.swap_jev(state)
@@ -943,7 +948,7 @@ class Taker:
             return
         dealer_ids = {str(d.get("id")) for d in run.snap.dealers}
         ctx = self._ctx(run)
-        if self.pack_judge is not None and run.window.left() >= self.config.jev_min_budget_s:
+        if self.pack_judge is not None and run.window.left() >= needed_budget_s(self.config.jev_min_budget_s):
             used = self.ledger.packs_since(clock.t_hours - 1.0)
             slots = PackSlots(sum(used.values()), self.rules.max_packs_per_game_hour)
             book = gate_packs(book, self.pack_judge, slots, used, self.rules, clock.t_hours)
@@ -1001,7 +1006,7 @@ class Taker:
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
         if not plan_probes(market, opens, self.rules, room, skip):
             return book
-        if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < self.config.jev_min_budget_s:
+        if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < needed_budget_s(self.config.jev_min_budget_s):
             return book
         values = ctx.values
 
