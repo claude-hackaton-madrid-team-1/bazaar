@@ -403,7 +403,7 @@ def shares(trades: Iterable[Trade]) -> dict[str, float]:
     return {team: round(v / total, 4) for team, v in volume.most_common()} if total else {}
 
 
-def _items(t: Trade) -> set[str]:
+def items_used(t: Trade) -> set[str]:
     """What a trade uses up: our copy, the card we want."""
     used = {f"asset:{t.asset_id}"} if t.asset_id is not None else set()
     if t.kind == "bid":
@@ -423,14 +423,14 @@ def _greedy(pool: Sequence[Trade], pp: PlanParams, cash_room: int, per_team: flo
     volume: Counter[str] = Counter()
     cash = n_list = n_swap = 0
     for t in pool:
-        if _items(t) & used or volume[t.counterparty] + t.volume > per_team + 1e-9:
+        if items_used(t) & used or volume[t.counterparty] + t.volume > per_team + 1e-9:
             continue
         if (n_swap >= pp.threads) if t.kind == "swap" else (n_list >= pp.listings):
             continue
         if cash + _cash_out(t) > cash_room:
             continue
         chosen.append(t)
-        used |= _items(t)
+        used |= items_used(t)
         volume[t.counterparty] += t.volume
         cash += _cash_out(t)
         n_swap += t.kind == "swap"
@@ -459,7 +459,7 @@ def _search(
     volume. Bound: the best expected per item still free, top-N by the slots left. Stops after `max_nodes`
     nodes with the best plan found (at least `seed`)."""
     best, best_value = list(seed), sum(t.expected for t in seed)
-    item_of = [sorted(_items(t)) for t in pool]
+    item_of = [sorted(items_used(t)) for t in pool]
     nodes = 0
 
     def bound(i: int, used: set[str], slots: int, cash_left: int) -> tuple[float, int]:
@@ -522,7 +522,7 @@ def _pool(trades: Sequence[Trade], pp: PlanParams) -> list[Trade]:
     seen: set[tuple[str, str, str]] = set()
     pool = []
     for t in sorted(trades, key=lambda t: (-t.expected, t.counterparty, t.refs)):
-        items = sorted(_items(t))
+        items = sorted(items_used(t))
         keys = {(i, t.counterparty, t.kind) for i in items}
         if t.expected <= 0 or keys & seen or any(per_item[i] >= pp.per_item for i in items):
             continue
