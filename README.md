@@ -1175,14 +1175,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
+- [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
+- [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 - [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
 - [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
 - [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
 - [2026-10-03] finding — six duels on one deadline can run out of accept ticks
 - [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
-- [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
-- [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
-- [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
 
 <!-- BAZAAR:STATUS:END -->
 

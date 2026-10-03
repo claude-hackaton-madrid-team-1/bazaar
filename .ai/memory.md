@@ -600,3 +600,19 @@ shared Postgres on every live service, or the process exits at start ("refusing 
 `ledger_pg._target` now labels only a plain host/IP/socket with a numeric port; anything else is "unparseable",
 never shared (a live process refuses it). Percent-encode passwords. Also never shared: host lists, `hostaddr`,
 `127.1`/`2130706433`/`0x7f000001`, `*.local`, single-label names (compose services).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
+The port is hardcoded twice (`scripts/sim_smoke.py` PORT/SIM and `config.LOCAL_SIM_URL`, which the CLI children
+use), and the smoke refuses a busy port. With several workers on one laptop: `git worktree add --detach <scratch>
+HEAD`, `sed` both files to a free port (check with `lsof -iTCP:<port> -sTCP:LISTEN`), run the smoke there.
+
+### [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
+symptom: the S1 accept gate refused LAV-08 in `test_live_accepts_one_offer...` → root cause: `tests/agent_fakes.ask()`
+hardcoded `"rarity": "common"` on every asset (the server builds the asset with its catalog rarity) → fix: `ask()`
+takes the catalog rarity (`catalog_rarity(ref)`), and a bait passes `rarity=` explicitly.
+
+### [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
+symptom: duel B's accept went out at 90 against our limit 104 → root cause: the S1 accept gate cached the tick's
+first successful `/api/duels` re-read and checked a later accept against it, while B's rival moved in between
+→ fix: every duel accept re-reads; only a FAILED re-read is kept, for its own tick (no 429 retry burst);
+test `test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught`.

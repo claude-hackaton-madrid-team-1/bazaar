@@ -87,6 +87,24 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    max_flags_per_process: int = Field(default=2, ge=0, le=20)
+    flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
+    inspect_accepts: bool = True
+
+    @field_validator("flag_trusted_dealers")
+    @classmethod
+    def _trusted_parse(cls, value: str) -> str:
+        if value.strip().lower() == "none":
+            return value
+        ids = [d.strip() for d in value.split(",")]
+        if not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", d) for d in ids):
+            raise ValueError(f"flag_trusted_dealers {value!r}: comma-separated dealer ids, e.g. abuela,chato (or none)")
+        return value
+
+    @property
+    def trusted_dealers(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.flag_trusted_dealers.split(",") if d.strip() and d.strip() != "none")
+
     protect_page_sets: str = "none"
 
     @field_validator("protect_page_sets")
@@ -149,6 +167,9 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "max_flags_per_process": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: cli dealer buy, the desk)",
+    "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
 }
 

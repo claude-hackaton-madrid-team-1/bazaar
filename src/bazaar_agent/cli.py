@@ -357,6 +357,8 @@ def dealer_buy(
     jev: bool = typer.Option(False, help="Ask Jev negotiation_move each tick (advisory, inside the limit)"),
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask."""
+    from rich.markup import escape
+
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.dealer import BidPlan, Hold, bid_schedule, negotiate, template_words
     from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
@@ -433,6 +435,7 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
+    inspector = _offer_inspector(settings, dealer, topic, rules)  # S1: one flag book across reopens
     for attempt in range(1 + DEALER_REOPENS):
         with traces.trace_negotiation(dealer, topic, plan) as observer:
             out = negotiate(
@@ -440,7 +443,7 @@ def dealer_buy(
                 dealer,
                 topic,
                 plan,
-                log=console.print,
+                log=lambda line: console.print(escape(line)),  # server and counterparty words: never markup
                 advisor=advisor,
                 guard=guard,
                 on_deal=on_deal,
@@ -449,6 +452,7 @@ def dealer_buy(
                 words_fn=llm_cli.words_for(settings, rules, template_words),
                 reserve=reserve,
                 kill_switch=lambda: gr.kill_switch(rules),
+                **inspector,
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
@@ -462,6 +466,35 @@ def dealer_buy(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
         f"in {out.ticks} ticks"
     )
+
+
+def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: Any) -> dict[str, Any]:
+    """`negotiate`'s offer inspector (S1): the would-flag log on every thread read and the accept gate.
+    No flag is sent from here; with `inspect_accepts` false only the older structure check runs."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
+
+    try:
+        cards = CardIndex.from_catalog(public_client(settings).catalog())
+    except BazaarError as e:  # without names the gate still refuses a swap; it only cannot grade it a flag
+        console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
+        cards = CardIndex.from_catalog({})
+    book = FlagBook.from_rules(rules)
+
+    def log(line: str) -> None:
+        console.print(escape(f"inspector: {line}"))
+
+    def on_thread(thread: dict[str, Any]) -> None:
+        guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
+        flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+
+    def inspect(thread: dict[str, Any], move: Any) -> str | None:
+        gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
+        return None if gate.allowed else f"{gate.verdict}: {gate.reason}"  # `negotiate`'s log escapes it
+
+    return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
 
 
 def _rules() -> Any:
@@ -522,6 +555,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.accept_gate import DuelRereads, Gate, duel_accept_check
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
@@ -572,6 +606,7 @@ def duel_run(
         )
     # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
+    rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -599,13 +634,21 @@ def duel_run(
             return "failed"
 
     def record(
-        d: dict[str, Any], move: DuelMove, pick: DuelPick | None, tick: int, status: Status, guardrail: str = "allowed"
+        d: dict[str, Any],
+        move: DuelMove,
+        pick: DuelPick | None,
+        tick: int,
+        status: Status,
+        guardrail: str = "allowed",
+        gate: Gate | None = None,
     ) -> None:
         """One `decisions` row per duel per tick: the state Jev read, its verdict and floats, what we did."""
         offer = d.get("rival_offer")
         rival = offer if isinstance(offer, dict) else {}
         inputs = pick.state.get("duel", {}) if pick is not None else {}
         inputs = inputs or {"role": d.get("role"), "our_limit": d.get("your_limit"), "rival_price": rival.get("price")}
+        if gate is not None:
+            inputs = {**inputs, "inspector": gate.as_inputs()}
         if pick is not None and pick.days is not None:
             inputs = {**inputs, "jev_days": pick.days.as_dict()}
         rec.decide(
@@ -656,6 +699,7 @@ def duel_run(
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
+        rereads.new_tick()
         decisions.begin_tick(c.tick)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
@@ -700,6 +744,7 @@ def duel_run(
             did = duel_id(d)
             if did is None:
                 return
+            gate: Gate | None = None
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
                 pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
@@ -739,6 +784,16 @@ def duel_run(
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     return
+                if move.kind == "accept" and rules.inspect_accepts:  # S1: before the accept slot is claimed
+                    gate = duel_accept_check(rereads.for_tick(c.tick), d, did, move)
+                    if not gate.allowed:
+                        console.print(f"  duel {did}: INSPECTOR {gate.verdict}: {escape(gate.reason)}")
+                        record(d, move, pick, c.tick, "rejected", f"inspector {gate.verdict}: {gate.reason}", gate)
+                        return
+                    if time.monotonic() >= send_by:  # the re-read took the rest of the tick: never send late
+                        console.print(f"  duel {did}: the re-read took the rest of tick {c.tick}, accept next tick")
+                        record(d, move, pick, c.tick, "expired", gate=gate)
+                        return
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
                 try:
                     reserved = move.kind != "accept" or ledger.reserve_accept(
@@ -761,7 +816,7 @@ def duel_run(
                 + (f" · {escape(pick.why)}" if pick is not None else "")
             )
             status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
-            record(d, move, pick, c.tick, status)
+            record(d, move, pick, c.tick, status, gate=gate)
 
         def play_safely(d: dict[str, Any]) -> None:
             try:

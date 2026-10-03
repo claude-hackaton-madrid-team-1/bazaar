@@ -437,3 +437,163 @@ def test_without_jev_a_forced_accept_goes_first_and_its_row_has_no_jev_context(d
     assert result.exit_code == 0, result.output
     (row,) = decision_rows(tmp_path)
     assert client.sent == [("accept", 95)] and row["jev"] is None and "jev not asked" not in row["reason"]
+
+
+def test_duel_run_refuses_an_accept_when_the_rival_moved_its_offer_after_our_read(duel_cli):
+    """S1: the accept binds the offer standing when it lands, so the duel is read again first."""
+    cli, client, asked, tmp_path = duel_cli
+    reads = []
+    lowered = [{**LIVE, "rival_offer": {"id": 703, "price": 105, "tick": 134, "days": 0}}]
+
+    def duels():
+        reads.append(1)
+        return {"duels": deepcopy(client.payload if len(reads) == 1 else lowered)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(reads) == 2
+    assert "INSPECTOR block" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
+    (finding,) = row["inputs"]["inspector"]["findings"]
+    assert finding == "the rival's offer moved against us: we priced 110 (days 0), it is 105 (days 0) now"
+
+
+def test_duel_run_records_the_clean_inspection_on_a_sent_accept(duel_cli):
+    cli, client, asked, tmp_path = duel_cli
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "done" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_drops_an_accept_whose_re_read_took_the_rest_of_the_tick(duel_cli, monkeypatch):
+    """Review P2: the SDK may retry a slow read; an accept after the tick's deadline is dropped, never sent late."""
+    import time as real_time
+
+    cli, client, asked, tmp_path = duel_cli
+    late = {"by": 0.0}
+    payload = client.payload
+
+    def duels():
+        if client.sent == [] and late["by"] == 0.0 and getattr(duels, "calls", 0) == 1:
+            late["by"] = 10_000.0  # the gate's re-read: the clock jumps past the tick
+        duels.calls = getattr(duels, "calls", 0) + 1
+        return {"duels": deepcopy(payload)}
+
+    client.duels = duels
+    clock = real_time.monotonic  # the real one, captured before the patch
+    monkeypatch.setattr(cli.time, "monotonic", lambda: clock() + late["by"])
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and "the re-read took the rest of tick" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "expired" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_re_reads_once_per_tick_and_a_failed_re_read_fails_every_accept(duel_cli):
+    """Security audit P2: a refused re-read is never retried per duel inside the tick (no 429 burst)."""
+    from bazaar_agent.sdk import BazaarError
+
+    cli, client, asked, tmp_path = duel_cli
+    two = [{**d, "duel": n} for n in (95, 96) for d in client.payload]
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) > 1:
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(two)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 2  # the tick's read, then ONE re-read for both accepts
+    rows = decision_rows(tmp_path)
+    assert [r["status"] for r in rows] == ["rejected", "rejected"]
+    assert all("could not be read again" in r["inputs"]["inspector"]["findings"][0] for r in rows)
+
+
+def test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught(duel_cli):
+    """Review r2 P1: a successful re-read is never reused for a later accept of the same tick."""
+    cli, client, asked, tmp_path = duel_cli
+    a, b = ({**d, "duel": n} for n in (95, 96) for d in client.payload)
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # duel 95's re-read: its rival moved against us
+            return {"duels": deepcopy([{**a, "rival_offer": {**a["rival_offer"], "price": 105}}, b])}
+        if len(calls) == 3:  # duel 96's re-read: its rival dropped below our limit in the meantime
+            return {"duels": deepcopy([a, {**b, "rival_offer": {**b["rival_offer"], "price": 90}}])}
+        return {"duels": deepcopy([a, b])}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 3
+    findings = [r["inputs"]["inspector"]["findings"][0] for r in decision_rows(tmp_path)]
+    assert "moved against us" in findings[0] and "90 is not inside our limit" in findings[1]
+
+
+def test_duel_run_forgets_a_failed_re_read_at_every_tick_even_a_repeated_tick_number(duel_cli, monkeypatch):
+    """Review r4 P3: `rereads.new_tick()` in duel_run (ticks 134 → 135 → 134 after a world reset). The ticks
+    are driven directly, so a regression fails instead of waiting for a tick that never comes."""
+    from bazaar_agent.sdk import BazaarError
+    from bazaar_agent.ticks import Clock
+
+    cli, client, asked, tmp_path = duel_cli
+    calls: list[int] = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # tick 134's re-read
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(client.payload)}
+
+    def three_ticks(read_clock, on_tick, **kwargs):
+        for tick in (134, 135, 134):
+            on_tick(Clock.model_validate({"tick": tick, "next_tick_in": 40.0, "tick_seconds": 60.0, "t_hours": 2.2}))
+        return 3
+
+    client.duels = duels
+    monkeypatch.setattr(cli, "run_per_tick", three_ticks)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "3"])
+    assert result.exit_code == 0, result.output
+    # 134: refused (429); 135: re-read, accepted; 134 again: the old failure is forgotten, re-read, accepted
+    assert client.sent == [("accept", 95), ("accept", 95)] and len(calls) == 6
+
+
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+def test_a_forced_or_planned_early_accept_is_refused_when_the_re_read_shows_a_moved_offer(
+    duel_cli, monkeypatch, policy
+):
+    """S1 on #150's early pass: v1's forced endgame accept and v2's planned accept are booked before Jev, so
+    the gate must run there too, before the slot, on a fresh read."""
+    from dataclasses import replace
+
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    standing = {**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}
+    moved = {**standing, "rival_offer": {"id": 703, "price": 105, "tick": 134, "days": 0}}
+    reads: list[int] = []
+
+    def duels():
+        reads.append(1)
+        return {"duels": deepcopy([standing] if len(reads) == 1 else [moved])}
+
+    client.duels = duels
+    if policy == "v2":
+        loaded = load_guardrails()
+        monkeypatch.setattr(
+            cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+        )
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert not [s for s in client.sent if s[0] == "accept"] and len(reads) >= 2
+    rows = [r for r in decision_rows(tmp_path) if r["kind"] == "duel_accept"]
+    assert (
+        rows and rows[0]["status"] == "rejected" and "moved against us" in rows[0]["inputs"]["inspector"]["findings"][0]
+    )
