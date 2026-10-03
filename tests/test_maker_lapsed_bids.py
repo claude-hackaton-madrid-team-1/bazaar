@@ -5,13 +5,14 @@ The flipped bite tests live in `tests/bites/test_maker_expired_bid_spend.py`. He
 feed), the exact dating, a bid from before a restart, the kill switch, a dry run, and the maker's own cancels.
 """
 
+from bazaar_agent.agents.maker import MakerConfig
 from bazaar_agent.agents.runtime import MarketFeed
 from bazaar_agent.ticks import Clock
 from tests.agent_fakes import bid
 from tests.test_maker import NoAccept, maker
 from tests.test_strategy import EVENTS
 
-TTL = 40
+TTL = MakerConfig().offer_ttl_ticks  # what the maker asks for (the server may give less)
 H0, T0 = 20.0, 2000
 
 

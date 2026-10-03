@@ -347,11 +347,28 @@ DealHook = Callable[[int, int, float], None]  # (price, tick, t_hours) once a de
 KillSwitch = Callable[[], Sequence[str]]  # why every write is refused right now (empty: off)
 
 
-def apply_advice(move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None) -> Move:
+def captured_share(neg: Negotiation, ask: int) -> float | None:
+    """The share of the gap between her opening ask and our first bid that taking `ask` would capture
+    (0 = her opening price, 1 = our first bid). None before both are known or when there is no gap."""
+    if neg.opening_ask is None or not neg.bids:
+        return None
+    span = neg.opening_ask - neg.bids[0]
+    return None if span <= 0 else (neg.opening_ask - ask) / span
+
+
+def apply_advice(
+    move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None, min_share: float = 0.0
+) -> Move:
     """Jev may make us accept earlier (still inside the limit) or keep bidding; it never lifts the limit
-    and never takes her opening ask (`Negotiation.may_take`)."""
+    and never takes her opening ask (`Negotiation.may_take`). With `min_share` > 0
+    (`jev_accept_min_share`) the early accept also needs her ask to give up that share of the gap between her
+    opening and our first bid: the dealers match our step, so holding on meets her near the middle, while
+    taking her ask after two bids captures almost none of her range (the ladder's score)."""
     ready = advice == "accept" and move.kind == "bid" and ask is not None and offer_id is not None
     if ready and ask is not None and neg.may_take(ask) and ask <= neg.plan.max_price:
+        share = captured_share(neg, ask)
+        if min_share > 0 and (share is None or share < min_share):
+            return move
         return Move("accept", ask, offer_id, "jev: accept (inside limit)")
     return move
 
@@ -471,6 +488,7 @@ def negotiate(
     inspect: Inspect | None = None,
     bluff: TacticBook | None = None,
     events: Callable[[int], list[dict[str, Any]]] | None = None,
+    jev_min_share: float = 0.0,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
@@ -648,7 +666,7 @@ def negotiate(
             bluff.observe(conversation, their_price=ask, their_offer=offer_id, tick=clock.tick)
         move = decide(neg, ask, offer_id, final)
         if advisor is not None and action_budget_s(clock) > 4.0:
-            move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id)
+            move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id, jev_min_share)
         if action_budget_s(clock) <= 0:
             log(f"tick {clock.tick}: no budget left in this tick, deciding next tick")
             return

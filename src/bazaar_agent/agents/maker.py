@@ -100,7 +100,9 @@ from bazaar_agent.ticks import Clock
 
 @dataclass(frozen=True)
 class MakerConfig:
-    offer_ttl_ticks: int = 40  # expires_in_ticks of a new offer (the SDK default)
+    # expires_in_ticks of a new offer. The live server answers 40 (the SDK default) with expires_tick = created + 20
+    # (every one of our listings since Friday, and t02/t06/t13's): ask for 80 to keep an ask up ~40 ticks.
+    offer_ttl_ticks: int = 80
     reprice_min_change: float = 0.05  # reprice when the target moved by at least 5 % (and 1 P)
 
 
@@ -589,7 +591,7 @@ class Maker:
                 self.ledger.record("spend", tick, run.snap.clock.t_hours, t.price, t.ref)
             offer_id = body.get("id") if body is not None and isinstance(body.get("id"), int) else None
             if t.side == "bid" and offer_id is not None:
-                self._remember(run, offer_id, t)
+                self._remember(run, offer_id, t, body.get("expires_tick") if body is not None else None)
             applied = advice is not None and (candidates or {}).get(advice.verdict) == t.price
             if self.jev is not None and offer_id is not None and applied:  # judged only on the price it set
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
@@ -727,9 +729,12 @@ class Maker:
 
     # ------------------------------------------------------------ bids that lapse unfilled (bite X15)
 
-    def _remember(self, run: _MakerRun, offer_id: int, t: Target) -> None:
+    def _remember(self, run: _MakerRun, offer_id: int, t: Target, expires_tick: Any = None) -> None:
+        """`expires_tick` is the server's answer: it may grant less than we asked (Sat 3 Oct: 40 asked, 20 given),
+        and a lapse is refunded only once its tick is reached, so the asked TTL is only the fallback."""
         clock = run.snap.clock
-        expires = clock.tick + self.config.offer_ttl_ticks
+        asked = clock.tick + self.config.offer_ttl_ticks
+        expires = expires_tick if isinstance(expires_tick, int) and clock.tick < expires_tick <= asked else asked
         offer = OpenOffer(offer_id, "bid", t.ref, t.price, "", None, expires, clock.tick)
         self._bids[offer_id] = _Bid(offer, _held(run.snap.me)[t.ref], clock.tick)
         self._spent_at[offer_id] = (clock.tick, clock.t_hours)
