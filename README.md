@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#125](../../pull/125) | B23: live opportunity alerts in the monitor (arbitrage, duplicates, B4), read-only, with a lifetime log (stacked on #101) | `night/b23-opportunity-alerts` |
 | [#124](../../pull/124) | docs: Saturday 04:30 status (pre-06:00 merges, 09:30 queue, N15-N17, Bazaar Live v2) | `docs/status-sat-0430` |
 | [#123](../../pull/123) | docs: N17 team-to-team swap threads, spec and plan (Phase 1, draft) | `ogarciarevett/feat-team-threads` |
 | [#122](../../pull/122) | night(B22): bazaar cockpit, read-only Saturday operator screen (stacked on #102) | `night/b22-cockpit` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | `ogarciarevett/feat-desk-jev-model` |
 | [#107](../../pull/107) | test(night r2): bite hunter — proofs of what could bite us Sat/Sun (tests only) | `night/r2-bite-hunter` |
 | [#106](../../pull/106) | fix(ticks): wake at the announced opening, not a blind 300 s poll (B13, bite X4) | `night/b13-wake-opening` |
-| [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | `ogarciarevett/feat-holdings-db` |
 
 <!-- BAZAAR:ACTIVITY:END -->
