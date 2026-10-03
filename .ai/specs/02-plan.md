@@ -133,6 +133,7 @@ negotiates well.
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -594,6 +595,26 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 3 — negotiators: `market_teams` (counterparty row + top-5 teams per card holding it spare / missing it) in
   the decider states of board and dealer accepts (taker), team swaps (team desk, plus the plan rows), and our asks
   (maker, from the stored matrix). No price or guardrail change. · **Acceptance:** `tests/test_team_matrix.py`.
+
+### RB1 / TF1 — rival blocklist for the team desk + a trickster's FINAL is not its limit (Sat 3 Oct, urgent)
+- RB1 — `team_desk_never_trade` (GUARDRAILS.md: t05,t10,t12,t13,t14,t17,t18): the team desk never plans, opens,
+  proposes to or accepts from these teams (Opus proposed SAL-03 to t17 at tick 814). · **Acceptance:**
+  tests/test_team_desk_blocklist.py.
+- TF1 — `agents/trickster.py`: a dealer of published kind `trickster` (Los Pícaros) has its FINAL read as a plain
+  ask; no accept at or above its list price, only at or under its lowest fill + `trickster_accept_fill_share` of its
+  fill range (none seen: only bid), on every accept path (decide, meet_ask, Jev early accept, restart adoption,
+  `dealer buy`). Abuela publishes strictness 0.1 but her FINAL is real: `trickster_max_strictness` ships at 0.
+  · **Acceptance:** tests/test_trickster_final.py.
+- SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
+  opens, not when it is planned. ❌ not done yet.
+
+### MI1 — Move impact: score cost of a sale, swap or buy, and a guard on it ([spec](MI1-spec.md))
+- Step 1 — `move_impact.py` (pure: origins from the tape, k from our snapshots, the estimate) · **Acceptance:**
+  tests/test_move_impact.py (incident replay −4.7 ± 0.5).
+- Step 2 — `impact_board.py` + `guardrails.check()` rule `max_score_loss_per_move` (approval override, fail closed)
+  and `asset=` on every sale path · **Acceptance:** tests/test_impact_guard.py.
+- Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
+  tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
 
 ## Parallel-work notes
 

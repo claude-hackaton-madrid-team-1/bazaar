@@ -76,6 +76,7 @@ class TeamMatrixStore:
         self._skip = 0  # calls left to skip before Postgres is tried again
         self._failed: set[str] = set()
         self._saving = threading.Lock()  # one background save at a time (`save_later`)
+        self._skipping = False  # a skip was logged for the save that still runs
 
     def _db(self) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:
@@ -99,7 +100,11 @@ class TeamMatrixStore:
         tick (Postgres' statement timeout is server-side). While a save still runs, this matrix is skipped (the
         next window brings a newer one). Returns whether a save was started."""
         if not self._saving.acquire(blocking=False):
+            if not self._skipping:
+                self._log("team matrix: the last save is still running (database link slow or hung); skipping")
+            self._skipping = True
             return False
+        self._skipping = False
 
         def run() -> None:
             try:
@@ -204,6 +209,8 @@ class LatestMatrix:
         self._loading = threading.Lock()
 
     def refresh(self, tick: int) -> None:
+        if self._at is not None and tick < self._at:  # the clock went back (a simulator reset): read again
+            self._at = None
         if self._at is not None and tick - self._at < self.every:
             return
         if not self._loading.acquire(blocking=False):
@@ -224,4 +231,4 @@ class LatestMatrix:
 
     def current(self, tick: int) -> TeamMatrix | None:
         m = self.matrix
-        return m if m is not None and tick - m.tick <= MAX_AGE_TICKS else None
+        return m if m is not None and 0 <= tick - m.tick <= MAX_AGE_TICKS else None  # never one from "the future"

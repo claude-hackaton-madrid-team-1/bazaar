@@ -10,7 +10,7 @@ from bazaar_agent import cli
 from bazaar_agent.guardrails import Guardrails, Ledger
 from bazaar_agent.runtime import tools as tl
 from tests.agent_fakes import clock, our_ask
-from tests.runtime_fakes import DUEL, TEAM_KEY, TOKEN, Public, Spawner, Team, backend
+from tests.runtime_fakes import DUEL, TEAM_KEY, TOKEN, Public, Spawner, Team, backend, with_spare
 from tests.test_kill_switch import Switch
 
 runner = CliRunner()
@@ -236,12 +236,13 @@ def test_sell_list_from_the_tool_and_from_the_cli_post_the_same_listing(tmp_path
 
     monkeypatch.setattr("bazaar_agent.runtime.actions.post", spy)
     monkeypatch.setattr("bazaar_agent.agents.seller.post", spy)
+    with_spare(cli_env)
     out = runner.invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5"])
     assert out.exit_code == 0, out.output
     answer, _ = run(backend(tmp_path, team=cli_env), "sell_list", {"target": "LAT-03", "price": 5})
     (from_cli, cli_live), (from_tool, tool_live) = seen
     assert from_cli == from_tool and cli_live is tool_live is False
-    assert answer["would"].startswith("dry run: would sell asset 4 (LAT-03)") and cli_env.sent == []
+    assert answer["would"].startswith("dry run: would sell asset 41 (LAT-03)") and cli_env.sent == []
 
 
 def test_dealer_buy_and_strategy_share_the_cli_code(tmp_path, monkeypatch, cli_env):

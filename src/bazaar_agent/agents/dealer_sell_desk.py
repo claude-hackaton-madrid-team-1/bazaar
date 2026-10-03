@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from bazaar_agent import impact_board
 from bazaar_agent.agents.dealer import Move, settled_price, with_name
 from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_sell import (
@@ -352,8 +353,13 @@ class SellTalk:
         return self.status
 
     def _open(self, clock: Any) -> None:
+        from bazaar_agent.agents.dealer import Hold
+
         c = self.cand
-        denied = self.hooks.guard("dealer_sell", self.plan.start)
+        try:
+            denied = self.hooks.guard("dealer_sell", self.plan.start)
+        except Hold as e:  # no thread yet: nothing to hold open, so a hold ends the talk unopened (#227 review)
+            denied = str(e)
         if denied:
             self.status = "refused"
             self.hooks.log(f"tick {clock.tick} dealer_sell: guardrails refuse to open: {denied}")
@@ -563,7 +569,8 @@ class SellDesk:
         return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap))
 
     def gate_state(self, snap: Any) -> dict[str, Any]:
-        """What Jev reads: our spare copies (a page keeps one) with `your_value`, cash, and the last no-deals."""
+        """What Jev reads: our spare copies (a page keeps one) with `your_value`, the score guard's estimate of
+        selling each one to a dealer (`score_impact`, in the same order), cash, and the last no-deals."""
         me = snap.me or {}
         copies: dict[str, list[float]] = {}
         for a in me.get("assets") or []:
@@ -575,6 +582,7 @@ class SellDesk:
             "cash": me.get("cash"),
             "cash_floor": self.rules.cash_floor,
             "duplicates": spare,
+            "score_impact": [self.sale_impact(snap, str(s["card"])) for s in spare],
             "rules": {
                 "min_surplus": self.rules.dealer_sell_min_surplus,
                 "final_min_first_ask_share": self.rules.dealer_sell_final_min_first_ask_share,
@@ -584,6 +592,25 @@ class SellDesk:
             },
             "history": {"no_deals_this_process": walked, "sells_opened_last_hour": len(self.opened_at)},
         }
+
+    def sale_impact(self, snap: Any, ref: str) -> dict[str, Any] | None:
+        """The score guard's estimate (`impact_board.sell_state`) of selling our cheapest copy of `ref` (then the
+        lowest id) to a dealer at its own `your_value`: our sell floor is never lower, so no sale of ours scores
+        worse. None when it cannot be built: one broken estimate never turns the whole sell strategy off."""
+        try:
+            me = snap.me or {}
+            assets = me.get("assets") or []
+            held = [
+                a for a in assets if isinstance(a, Mapping) and a.get("kind") == "card" and str(a.get("ref")) == ref
+            ]
+            copy = min(held, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))
+            price = float(copy.get("your_value") or 0)
+            rarity = copy.get("rarity") if isinstance(copy.get("rarity"), str) else None
+            tick = int(snap.clock.tick)
+            estimate = impact_board.sell_state(me, ref, rarity, price, None, self.rules, tick, asset=int(copy["id"]))
+            return {"card": ref, **estimate}
+        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks every send
+            return None
 
     def taker_wants(self, tick: int) -> set[str]:
         """Dealers the taker wanted in the last `dealer_sell_taker_window_ticks` (#200: its buys come first)."""
@@ -742,12 +769,18 @@ def standard_hooks(
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
         action = Action(
-            action_kind(kind), cand.ref, cand.rarity, price, your_value=cand.your_value, scope="dealer_sell"
+            action_kind(kind),
+            cand.ref,
+            cand.rarity,
+            price,
+            your_value=cand.your_value,
+            scope="dealer_sell",
+            asset=cand.asset_id,  # the score impact rule prices this copy, not the worst copy of the card
         )
         verdict = check(action, ctx, rules)
         if verdict.halted:  # the switch went on after the step read it: hold (a walk is a write too)
             raise Hold(f"kill switch on: {'; '.join(verdict.violations)}")
-        if not verdict.allowed and unread_only(verdict.violations):
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
             raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 

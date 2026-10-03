@@ -72,6 +72,7 @@ def dealer_buy(monkeypatch, tmp_path):
         monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
+        monkeypatch.setattr(cli, "_dealer_personas", lambda settings: [])  # no /api/dealers read: today's plan
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)
         result = CliRunner().invoke(cli.app, ["dealer", "buy", "sobre_barrio", "--start", "6", "--max", "20", "--live"])
         return result, seen.get("verdicts")

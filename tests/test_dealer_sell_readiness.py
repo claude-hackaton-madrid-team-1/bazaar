@@ -39,6 +39,7 @@ from tests.test_dealer_sell_desk import ME_DUP
 from tests.test_strategy import CATALOG, ME, PARAMS, card
 
 REAL = gr.load_guardrails().rules  # the committed GUARDRAILS.md, as every agent loads it
+AT60 = REAL.model_copy(update={"human_approval_above": 60})  # the approval gate at Saturday's 60 (250 since ~20:00)
 EVERY_SET = ("LAV", "SAL", "MAL", "RET", "LAT", "CHA")
 
 
@@ -396,25 +397,25 @@ def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_
 @pytest.mark.human_approval
 def test_a_sell_thread_without_an_approval_never_opens_at_a_big_ask(tmp_path, asked):
     team = Seller("chato", [50, 55], me=ME6)
-    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()))
-    t = desk.SellTalk(team, RARE, desk.plan_for(RARE.fill, RARE.floor, REAL), hooks)
-    assert t.plan.start >= REAL.human_approval_above
+    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()), AT60)
+    t = desk.SellTalk(team, RARE, desk.plan_for(RARE.fill, RARE.floor, AT60), hooks)
+    assert t.plan.start >= AT60.human_approval_above
     t.step(clock(tick=100))
     assert team.sent == [] and t.status == "refused"
 
 
 @pytest.mark.human_approval
 def test_unreadable_approvals_hold_the_sell_thread_never_walk_it(tmp_path, asked):
-    top = REAL.human_approval_above
-    hooks = approval_hooks(tmp_path, RARE, ctx_with(None))  # the board has no database: unreadable
+    top = AT60.human_approval_above
+    hooks = approval_hooks(tmp_path, RARE, ctx_with(None), AT60)  # the board has no database: unreadable
     for kind in ("dealer_sell", "accept_sell"):
         with pytest.raises(Hold, match="approvals unreadable"):
             hooks.guard(kind, top)
     assert hooks.guard("dealer_sell", top - 1) is None  # a small sale needs no approval: nothing to read
     team = Seller("chato", [50, 55], me=ME6)
-    t = desk.SellTalk(team, RARE, desk.plan_for(RARE.fill, RARE.floor, REAL), hooks)
+    t = desk.SellTalk(team, RARE, desk.plan_for(RARE.fill, RARE.floor, AT60), hooks)
     t.step(clock(tick=100))
-    assert team.sent == [] and t.status == "new" and not t.done  # held: the next tick tries again
+    assert team.sent == [] and t.status == "refused"  # no thread yet: the hold ends the talk unopened (#227)
 
 
 # ---------------------------------------------------------------- 4. never a deal at her opening bid

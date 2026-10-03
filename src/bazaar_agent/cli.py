@@ -23,6 +23,7 @@ from bazaar_agent import (
     breaker_cli,
     deploy_guard,
     flags_cli,
+    impact_cli,
     intel,
     persona_cli,
     render,
@@ -889,6 +890,7 @@ def dealer_buy(
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
+    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan)  # a trickster's FINAL is not its limit
 
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, the thread stays open, next tick decides again):
@@ -990,6 +992,7 @@ def dealer_sell(
     from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.official_values import unread_only
 
     rules = _rules().rules
     settings = load_settings()
@@ -1024,7 +1027,8 @@ def dealer_sell(
         return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
 
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
-        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell")  # a dealer sell thread
+        # a dealer sell thread; `asset`: the score impact rule prices this copy
+        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell", asset=asset_id)
 
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
@@ -1049,6 +1053,8 @@ def dealer_sell(
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
         verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
+            raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     decisions = DecisionLog(
@@ -1134,6 +1140,39 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         return None if gate.allowed else f"{gate.verdict}: {gate.reason}"  # `negotiate`'s log escapes it
 
     return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
+
+
+def _dealer_personas(settings: Any) -> list[dict[str, Any]]:
+    """`GET /api/dealers` (keyless): every dealer as it publishes itself (kind, traits, menu)."""
+    body = public_client(settings).dealers()
+    return [d for d in body.get("personas") or body.get("dealers") or [] if isinstance(d, dict)]
+
+
+def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any) -> Any:
+    """`dealer buy`'s plan against a forgiving dealer (agents/trickster.py): its FINAL is not its limit. Its persona
+    comes from `/api/dealers`: unreadable, nothing is opened (fail closed: a fake final could be taken as a limit).
+    Its fills come from the feed history the agents read (`_history`): none, and its asks are never taken (we only
+    bid). Every other dealer's plan comes back unchanged."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving, note
+    from bazaar_agent.intel import tape
+    from bazaar_agent.persona_model import parse_personas
+
+    try:
+        persona = parse_personas(_dealer_personas(settings)).get(dealer)
+    except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
+        _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
+    if persona is None or not is_forgiving(persona, rules):
+        return plan
+    try:
+        events = _history(None, live=True)
+    except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
+        console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
+        events = []
+    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules)
+    console.print(escape(f"{dealer} forgives (kind {persona.kind}): {note(shaped)}"))
+    return shaped
 
 
 def _rules() -> Any:
@@ -2361,6 +2400,7 @@ app.add_typer(flags_cli.flags_app, name="flags")
 app.add_typer(breaker_cli.breaker_app, name="breaker")
 app.command("approve")(approval_cli.approve)
 app.command("approvals")(approval_cli.approvals_list)
+app.command("impact")(impact_cli.impact)
 app.command("deploy-guard", help="Is it safe to merge to main (which redeploys the duels)? Exit 1 = no.")(
     deploy_guard.deploy_guard_cmd
 )
