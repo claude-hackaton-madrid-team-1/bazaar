@@ -2,6 +2,15 @@
 
 Night shift of 3–4 Oct 2026. Branch `night/w1a-bench-sim`, draft PR #77, stacked on #55 (`ogarciarevett/feat-bazaar-sim`). Refs #12.
 
+## Status on Saturday 3 Oct, game hour 6.6 (after the merge of `main` @ 6f014a5f)
+
+- **The live game confirms the bench's shape, not the static one.** The kit's `starter_broker.py` (docstring, lines 5–8) says bench traders shade, some are patient and some leave soon, most relax and the firm ones never do. In the h5 session (run `b35`, start tick 441) our exact broker matched pairs at ticks 442, 447, 447 and 448 (`decisions`, kind `broker_match`). On a static book every crossing pair crosses at the first read. The simulator on `main` still has no arrivals, departures or relaxing; this PR adds them.
+- **The hard test is the `hard` preset's size.** `/api/schedule` lists "The hard Market Test" at h14.65 with 12 traders and 16 ticks; the normal sessions (h7, 9, 11, 13) have 10 and 16.
+- **The match rule is `quote`.** `docs/api/openapi.json` → `BrokerMatch` (`x-verified: true`): "ask ≤ price and price + fee ≤ bid". The `limit` rows below are counterfactual. The knob stays because #84's eval (`edge_limit`) uses it.
+- **First calibration points.** Two real stall-level sessions scored `bench_efficiency` 0.899 (h3, run 1 at tick 201, on the starter stall) and 0.933 (h5, tick 441, on our board venue with #71's exact broker, which ties like the stall); `me_snapshots`, ticks 217 and 457. Both sit above the `normal`/`quote` stall p50 of 0.83 (mean 0.79). With a per-session SD near 0.2 two points decide nothing, but they lean toward the narrow-shade, relaxing cells, where the oracle's edge is smallest.
+- **Decisions below:** 1 is moot while #84 stays off; 2 is answered (`quote`); 3 is in progress, and `bench_offers` per read is still not logged.
+- **After the merge:** `scripts/sim_market_test.py`, `tests/test_sim_venue.py` and `tests/test_matcher.py` replay the stall with `bench.run_stall`. Merging changes no live agent: the bench lives in `bazaar_sim` only, and `SIM_BENCH_PRESET` still defaults to `static`.
+
 ## What it is
 
 `src/bazaar_sim/bench.py` is the Market Test with no `World` attached. The simulator's venues run it tick by tick, and a broker under test runs it in-process (1,000 hard books with the stall and the oracle scored in 0.14 s):
