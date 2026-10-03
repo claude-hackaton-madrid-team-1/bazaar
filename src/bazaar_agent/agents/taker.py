@@ -493,10 +493,13 @@ class Taker:
         moves = self._unblocked(run, moves, busy)
         cash_room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
         moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
-        # Every card in a thread of ours is busy, this process's or another's (security #158 r2 P3-B): with the
-        # lift on, two dealers may sell one card, and two threads for it could both close.
+        # The card of every DEALER thread of ours is busy, this process's or another's (security #158 r2 P3-B):
+        # with the lift on, two dealers may sell one card. Only threads with a dealer: we wrote their topic; a
+        # thread another team opened with us carries a topic that team chose (review #158 r3 P2).
         busy_items = {c.item for c in self.convs.values()} | {
-            item for t in threads if (item := requested_item(t.get("topic") or {})) is not None
+            item
+            for t in threads
+            if str(t.get("with")) in dealer_ids and (item := requested_item(t.get("topic") or {})) is not None
         }
         for op in openings(moves, busy, busy_items, room):
             self._open_one(run, op, ctx)
@@ -655,8 +658,8 @@ class Taker:
     def _recalled(self, run: _TickRun, op: Opening) -> list[str]:
         """The top lessons about this dealer and item, recalled once per opened thread (quoted data for the log;
         they never set a price). None without the recall or with less than `jev_min_budget_s` of the tick left."""
-        if self.lessons is None or run.window.left() < self.config.jev_min_budget_s:
-            return []
+        if self.lessons is None or self.outcome_learner is None or run.window.left() < self.config.jev_min_budget_s:
+            return []  # no learner (BAZAAR_LEARN=0): no recall either (review #158 r3 P3)
         situation = f"open a thread with {op.dealer} to buy {op.item} ({op.rarity})"
         found = self.lessons(situation, subjects=(op.dealer,), tick=run.snap.clock.tick)
         return [str(x.get("quoted_lesson")) for x in found if isinstance(x, dict)]

@@ -37,12 +37,12 @@ class FakeLearner:
         return False
 
 
-def taker(tmp_path, team, *, lift=0.0, learner=None, lessons=None):
+def taker(tmp_path, team, *, lift=0.0, learner=None, lessons=None, dealers=None):
     lines: list[str] = []
     kw = {**parts(tmp_path, dealer_final_lift=lift), "feed": MarketFeed(lambda n: deepcopy(EVENTS))}
     t = Taker(
         team,
-        FakePublic(dealers=[CHATO], events=EVENTS),
+        FakePublic(dealers=dealers or [CHATO], events=EVENTS),
         live=True,
         log=lines.append,
         now=lambda: 1000.0,
@@ -251,6 +251,16 @@ def test_a_card_another_process_is_negotiating_gets_no_second_thread(tmp_path):
     # security #158 r2 P3-B: the cards of every open thread of ours are busy, not only this process's
     other = {"id": 900, "with": "abuela", "status": "open", "topic": {"buy": {"card": "LAV-08"}}}
     team = FakeTeam(me=CHATO_ME, threads=[other])
-    t, _, _ = taker(tmp_path, team, lift=0.15)
+    abuela = {"id": "abuela", "status": "active", "level": 1, "menu": {"sells": []}}  # a dealer we may not buy from
+    t, _, _ = taker(tmp_path, team, lift=0.15, dealers=[abuela, CHATO])
     t.on_tick(clock())
     assert not [s for s in team.sent if s[0] == "open_thread" and s[2] == {"buy": {"card": "LAV-08"}}]
+
+
+def test_a_rival_team_thread_never_marks_a_card_busy(tmp_path):
+    # review #158 round 3 P2: a thread another team opened with us carries a topic that team wrote
+    rival = {"id": 901, "team": "t05", "with": "t01", "status": "open", "topic": {"buy": {"card": "LAV-08"}}}
+    team = FakeTeam(me=CHATO_ME, threads=[rival])
+    t, _, _ = taker(tmp_path, team, lift=0.15)
+    t.on_tick(clock())
+    assert ("open_thread", "chato", {"buy": {"card": "LAV-08"}}) in team.sent  # as if the rival thread were not there
