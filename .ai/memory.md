@@ -1168,3 +1168,10 @@ per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the 
 `tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
 GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
 
+### [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
+`executions` (sdk_method `broker_announce`, ticks 439-1166): 26 accepted, 12 refused `wait`, each 2-8 ticks after an
+accepted notice; accepted gaps went as low as 10 ticks (616 → 626), so the server's gap is about 10 ticks, not 20
+(UNVERIFIED: its exact message). The keeper remembered its notice in memory only, so every maker redeploy announced
+again. The 33 accepted notices on v19 were the same generic text naming no card; v19 had 0 organic trades. MM2: the
+notice names the page cards the most other teams miss (team matrix), one every 24 ticks, the feed's newest
+`venue.announcement` for our venue counting as the last one.

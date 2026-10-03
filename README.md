@@ -1318,6 +1318,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
+| [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1381,6 +1382,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
 - [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
 - [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
 - [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
@@ -1388,7 +1390,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 - [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
 - [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
-- [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
 
 <!-- BAZAAR:STATUS:END -->
 
