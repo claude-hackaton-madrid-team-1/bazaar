@@ -44,7 +44,14 @@ def _rival_price(duel: dict[str, Any]) -> int | None:
 
 
 def _two_issue(duel: Mapping[str, Any]) -> bool:
-    return "days" in (duel.get("issues") or [])
+    """Days are negotiated when `issues` says so, and also whenever our day weight is a number or the rival's offer
+    carries non-zero days: a payload that drops `issues` must not let days slip by unvalued (r2 bite B2a)."""
+    issues = duel.get("issues")
+    if isinstance(issues, list | tuple) and "days" in issues:
+        return True
+    offer = duel.get("rival_offer")
+    rival_days = offer.get("days") if isinstance(offer, dict) else None
+    return _number(duel.get("your_days_weight")) is not None or rival_days not in (None, 0)
 
 
 def _number(value: object) -> float | None:
@@ -54,7 +61,7 @@ def _number(value: object) -> float | None:
     return float(value)
 
 
-def worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
+def worth(duel: Mapping[str, Any], price: int, days: object, zero_days_free: bool = False) -> float | None:
     """A price with its delivery days, valued in the worst case. None = cannot value it safely.
 
     The sign of `your_days_weight` is not verified yet, so we assume the worst: days always cost us.
@@ -62,6 +69,8 @@ def worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
     if not _two_issue(duel):
         return float(price)
     n_days, weight = _number(days), _number(duel.get("your_days_weight"))
+    if zero_days_free and n_days == 0:  # v2: 0 days cost nothing whatever the weight, even a missing one (B2c)
+        return float(price)
     if n_days is None or weight is None or not duel_days_ok(n_days):  # days outside 0 to 10: never valued
         return None
     penalty = abs(weight) * n_days

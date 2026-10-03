@@ -56,6 +56,14 @@ class Guardrails(BaseModel):
     duel_floor_margin: float = 0.05
     duel_endgame_ticks: int = 2
     duel_inside_limit: bool = True
+    duel_policy: Literal["v1", "v2"] = "v1"
+    duel_max_own_offers: int = Field(default=3, ge=1)
+    duel_stall_ticks: int = Field(default=3, ge=1)
+    duel_open_wait_ticks: int = Field(default=0, ge=0)
+    duel_free_offers: int = Field(default=16, ge=0)
+    duel_answer_share: float = Field(default=0.2, ge=0, le=1)
+    duel_accept_margin_ticks: int = Field(default=1, ge=0)
+    duel_days_signed: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
@@ -92,7 +100,15 @@ ENFORCED_BY: dict[str, str] = {
     "duel_anchor": "agents.duelist.duel_move",
     "duel_floor_margin": "agents.duelist.duel_move",
     "duel_endgame_ticks": "agents.duelist.duel_move",
-    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move",
+    "duel_inside_limit": "guardrails.check (duelist.duel_action) + agents.duelist.duel_move + agents.duel_v2",
+    "duel_policy": "cli duel run + runtime duel_move + agents.duel_jev (v2: agents.duel_v2.plan_moves)",
+    "duel_max_own_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_stall_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_open_wait_ticks": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_free_offers": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_answer_share": "agents.duel_v2.duel_plan (v2 only)",
+    "duel_accept_margin_ticks": "agents.duel_v2.duel_plan + plan_moves (v2 only)",
+    "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
@@ -466,23 +482,28 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
-        v.extend(_duel_limit_violations(action))
+        v2 = rules.duel_policy == "v2"
+        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
 
 
-def _duel_limit_violations(action: Action) -> list[str]:
+def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:
     """A duel deal must be strictly better than our limit (a seller above its cost, a buyer below its value),
-    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here."""
+    after its days at |weight| each against us: the same worst case as `duelist.worth`, recomputed here.
+    `signed` (`duel_days_signed`, v2 only): the weight is primas gained (+) or lost (−) per day instead.
+    `zero_days_free` (v2 only): 0 days cost nothing under either sign, so a missing weight does not block them."""
     if action.price is None or action.limit is None or action.role not in ("seller", "buyer"):
         return ["cannot value the duel move (price, limit or role missing): duel_inside_limit"]
-    if action.days is not None and action.days_weight is None:
+    missing = action.days is not None and action.days_weight is None
+    if missing and (action.days or not zero_days_free):  # v2: 0 days cost nothing whatever the weight (B2c)
         return ["days without your_days_weight: cannot value the duel move (duel_inside_limit)"]
     if action.days is not None and not duel_days_ok(action.days):
         return [f"days {action.days} outside 0 to {DUEL_DAYS_MAX}: cannot value the duel move (duel_inside_limit)"]
     if action.days_weight is not None and not math.isfinite(action.days_weight):
         return [f"your_days_weight {action.days_weight}: cannot value the duel move (duel_inside_limit)"]
-    penalty = abs(action.days_weight or 0.0) * (action.days or 0.0)
+    weight = action.days_weight or 0.0
+    penalty = (-weight if signed else abs(weight)) * (action.days or 0.0)
     seller = action.role == "seller"
     worth = action.price - penalty if seller else action.price + penalty
     if (worth > action.limit) if seller else (worth < action.limit):

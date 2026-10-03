@@ -237,3 +237,81 @@ def test_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_site(duel
     assert client.sent == [] and "duel_inside_limit" in " ".join(result.output.split())
     (row,) = decision_rows(tmp_path)
     assert row["status"] == "rejected"
+
+
+@pytest.mark.parametrize("jev", [False, True])
+def test_duel_run_under_v2_holds_in_silence_and_jev_cannot_take_the_planners_accept(duel_cli, monkeypatch, jev):
+    from dataclasses import replace
+
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert client.sent == []  # the rival's 110 just arrived: v2 waits, and Jev's "accept" is not a legal move
+    output = " ".join(result.output.split())
+    assert "silence is free" in output and ("not a legal move" in output) == jev
+
+
+def test_a_bug_in_the_v2_planner_holds_every_duel(duel_cli, monkeypatch):
+    from dataclasses import replace
+
+    from bazaar_agent.agents import duel_v2
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    monkeypatch.setattr(duel_v2, "plan_moves", lambda *a, **kw: 1 / 0)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "planner failed (ZeroDivisionError)" in result.output and client.sent == []
+
+
+def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cli, monkeypatch):
+    """r2 bite X17: the taker claims the team's accept 2 s into the tick; the duel books its accept first."""
+    from dataclasses import replace
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import duel_jev
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    order: list[str] = []
+    reserve, pick = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick
+    monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
+    monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert order == ["reserve", "jev"] and client.sent == [("accept", 95)]  # booked once, before Jev, then sent
+
+
+def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monkeypatch):
+    """r2 bite B2b: a duel row that makes the policy raise skips that duel only."""
+    from bazaar_agent.agents import duelist
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "duel": 94}, {**LIVE, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    real = duelist.duel_move
+
+    def flaky(d, *a, **kw):
+        if d.get("duel") == 94:
+            raise ValueError("malformed row")
+        return real(d, *a, **kw)
+
+    monkeypatch.setattr(duelist, "duel_move", flaky)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "duel 94: skipped this tick (ValueError)" in result.output and client.sent[0][:2] == ("say", 95)
