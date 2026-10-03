@@ -66,7 +66,12 @@ Both 15 s runs used the same simulator seed, so the same 36 duel scenarios (6 se
 | sends refused by the sim: the rival had just accepted that duel (settles next tick) | 13 | 5 |
 | sends lost to a local network error (Errno 49, socket exhaustion) | 1 offer | 0 |
 
-RESULTS_30S
+**At 30 s ticks** (v2 recommended, same seed and scenarios, 80 ticks): identical to the 15 s run.
+- 30 / 36 deals, 118.8 sim points, 0.398 pie share per duel, 1.33 rounds per deal, 0 outside our limit.
+- 23 duel and 5 taker accepts, 0 lost to the cap, 0 missed ticks or skipped duels.
+- 5 sends refused because the rival had just accepted, and 1 clock read lost to Errno 49.
+
+The duel tick never ran short of time at 15 s or at 30 s, so the outcome does not depend on the tick speed in that range.
 
 **What it shows end to end:**
 - v2 with the B11 settings keeps the zoo's lift on the live loop: 1.5× the points with a near-equal deal rate, about 5 fewer rounds per deal, and no outside-limit close.

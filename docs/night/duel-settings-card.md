@@ -31,7 +31,7 @@
   - 0.5 scores 0.365 on W2a's rivals, but fails the deal-rate bar in W2b's arena (0.930), so **0.3 is the safe pick**.
   - Against an exploiter that never backs down it costs a little (0.154 → 0.141). It pays unless more than 89 % of informed rivals are that stubborn.
 - **Days** (B8): if the real game scores days the simulator's way, valuing them gives v2 +3–10 % P per two-issue duel.
-- **End to end** (local sim, 6 concurrent duels on one deadline, zoo + exploiter rivals, taker alongside, 15 s ticks, same 36 scenarios): v2 recommended scores 118.8 sim points vs v1's 79.1 (1.50×). Pie share per duel 0.40 vs 0.24; deal rate 0.83 vs 0.86; 1.3 vs 6.9 rounds per deal; 0 outside our limit for both. v1 lost 11 accepts to the one-per-tick cap and v2 none. No missed ticks, and no slot clash with the taker.
+- **End to end** (local sim, 6 concurrent duels on one deadline, zoo + exploiter rivals, taker alongside, 15 s ticks, same 36 scenarios): v2 recommended scores 118.8 sim points vs v1's 79.1 (1.50×). Pie share per duel 0.40 vs 0.24; deal rate 0.83 vs 0.86; 1.3 vs 6.9 rounds per deal; 0 outside our limit for both. v1 lost 11 accepts to the one-per-tick cap and v2 none. No missed ticks, and no slot clash with the taker. At 30 s ticks the result is identical.
 
 **Jev**: every number here was run with `--no-jev`. Jev may pick among v2's legal moves (B7, unit-tested), but nothing has measured it end to end. Running `--no-jev` is the measured path.
 
