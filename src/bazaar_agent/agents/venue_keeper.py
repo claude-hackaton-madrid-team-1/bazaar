@@ -33,7 +33,15 @@ from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import VENUE_COST, Guardrails, runs_venue
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import Clock
-from bazaar_agent.venue import AlreadyOpened, KeyVault, Opened, VenueSpec, broker_client, open_venue
+from bazaar_agent.venue import (
+    AlreadyOpened,
+    KeyVault,
+    Opened,
+    VenueSpec,
+    broker_client,
+    may_have_landed,
+    open_venue,
+)
 
 RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; a network error may have opened it)
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
@@ -103,6 +111,8 @@ class VenueKeeper:
         self.opened: Opened | None = None  # the venue this process opened, its key kept in memory too
         self.opened_tick = 0
         self.held_claim = False  # the opening claim is still ours after a network error
+        self._marked: set[str] = set()  # venues we run without a key, already marked in the vault
+        self._warned = -REMIND_TICKS
         self.retry_tick = 0
         self.final: str | None = None  # a refusal that ends our attempts (venue_exists, ...)
         self.reminded = -REMIND_TICKS
@@ -115,6 +125,8 @@ class VenueKeeper:
         """Never raises: a bug or an outage here must not cost the maker its tick."""
         try:
             venue = self._venue(clock, snap)
+            if venue is not None and snap is not None:
+                self._check_reserve(clock, snap)
             if venue is None and snap is not None:
                 venue = self._maybe_open(clock, snap, window)
             if venue is not None:
@@ -130,6 +142,18 @@ class VenueKeeper:
         # No reads this tick, or the lists lag our own opening: keep brokering it. Gone from both for longer
         # (closed by hand): stop, and never open another from this process (`_maybe_open`).
         return self.opened.venue if snap is None or clock.tick - self.opened_tick <= LIST_LAG_TICKS else None
+
+    def _check_reserve(self, clock: Clock, snap: Snapshot) -> None:
+        """We run a venue but /me does not say so (it still carries `starter_broker_key`?): every writer keeps
+        the 270 P bond reserve on top of the floor. Say so, so a human sets `venue_bond_reserve` = 0."""
+        if runs_venue(snap.me) or not self.rules.allow_venue_open or not self.rules.venue_bond_reserve:
+            return
+        if clock.tick - self._warned >= REMIND_TICKS:
+            self._warned = clock.tick
+            self.log(
+                f"tick {clock.tick} venue: we run a venue but /api/me does not show it as ours, so every purchase "
+                f"still keeps cash_floor + venue_bond_reserve: set venue_bond_reserve = 0 in GUARDRAILS.md"
+            )
 
     # ------------------------------------------------------------ opening it, once
 
@@ -223,7 +247,7 @@ class VenueKeeper:
             self.log(f"tick {clock.tick} venue: opening refused {e.code}; not trying again")
             return
         self.retry_tick = clock.tick + RETRY_TICKS
-        self.held_claim = e.code == "network"  # it may have landed: the lists will say before the retry
+        self.held_claim = may_have_landed(e)  # it may have opened: the lists will say before the retry
         self.log(f"tick {clock.tick} venue: opening refused {e.code}; trying again at tick {self.retry_tick}")
 
     # ------------------------------------------------------------ the broker
@@ -238,6 +262,9 @@ class VenueKeeper:
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
             if key is None:
+                if venue not in self._marked:  # it counts as opened: never another after it closes
+                    self.vault.mark(venue, clock.tick)
+                    self._marked.add(venue)
                 if clock.tick - self.reminded >= REMIND_TICKS:
                     self.reminded = clock.tick
                     self.log(f"tick {clock.tick} venue: we run {venue} but hold NO broker key for it: ask the desk")

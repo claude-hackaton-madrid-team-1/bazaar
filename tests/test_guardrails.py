@@ -235,3 +235,8 @@ def test_dealer_price_caps_replace_a_rarity_cap_for_that_dealer_only():
 def test_a_bad_dealer_price_caps_entry_fails_fast(value):
     with pytest.raises(gr.GuardrailsError, match="dealer_price_caps"):
         gr.parse_guardrails(f"- `dealer_price_caps` = {value} — x")
+
+
+def test_a_me_venue_marked_starter_false_is_ours_whatever_the_stall_key_says():
+    me = {"venue": {"venue": "v09", "status": "open", "starter": False}, "starter_broker_key": "bk_" + "Stale0ne"}
+    assert gr.runs_venue(me) is True

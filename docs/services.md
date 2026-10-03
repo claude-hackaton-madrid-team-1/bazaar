@@ -257,12 +257,19 @@ MCP/runtime: all through `guardrails.check()`) keeps `cash_floor + venue_bond_re
 once `/api/me` shows our venue the floor is 100.
 
 **The broker key** comes back once, in the opening's answer. It is saved at once to the shared Postgres
-table `venue_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
+table `venue_broker_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
 from the answer before anything is logged, and kept in memory if both saves fail (the log then says
 "NOWHERE"). It is never logged, printed, put in a decision or execution row, published on `/state` or
 `/events` (broker and venue rows show only their kind and status there), or sent to any host but its own.
-No public route reads `venue_keys`. A venue we run without its key logs "NO broker key" every 20 ticks:
+No public route reads `venue_broker_keys`. A venue we run without its key logs "NO broker key" every 20 ticks:
 ask the desk.
+
+**Once, for the whole game.** The automatic opening happens once per target: a venue closed or suspended
+later (by hand, by the organisers, or between days) is reopened only by hand (`bazaar venue open --live`).
+The once-only claim lives in the database the maker writes to, so run the LIVE maker only on Railway (a
+laptop maker on the local default database does not share it). If the maker logs "we run a venue but
+/api/me does not show it as ours", `/me` still carries `starter_broker_key` after our opening: set
+`venue_bond_reserve = 0` so purchases stop keeping the 270 P reserve.
 
 **Turn it off**: `allow_venue_open = false` in `GUARDRAILS.md` (redeploy) stops the opening and every
 broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes back after a cooldown; a
