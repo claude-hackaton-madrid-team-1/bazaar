@@ -20,6 +20,7 @@ is on; our offers stay strictly inside our limit (PR #60), and `guardrails.check
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -395,11 +396,18 @@ def _by_urgency(dids: list[int], plans: Mapping[int, V2Plan]) -> list[int]:
     return sorted(dids, key=lambda did: (plans[did].ticks_left, plans[did].pace, -plans[did].value))
 
 
+@functools.cache
+def _guardrails_params() -> V2Params:
+    from bazaar_agent.guardrails import load_guardrails
+
+    return V2Params.from_rules(load_guardrails().rules)
+
+
 def single_duel_move(duel: dict[str, Any], tick: int, started_tick: int) -> DuelMove:
-    """v2 at its default knobs for ONE duel, with `duelist.duel_move`'s signature (the W2a zoo's policy shape,
+    """v2 at GUARDRAILS.md's knobs for ONE duel, with `duelist.duel_move`'s signature (the W2a zoo's policy shape,
     `scripts/duel_zoo.py --gate bazaar_agent.agents.duel_v2:single_duel_move`). No other duel competes for the
-    accept here: the live loops call `plan_moves` with every live duel."""
+    accept here: the live loops, and a batch harness, call `plan_moves` with every live duel."""
     did = duel_id(duel)
     if did is None:
         return DuelMove("hold", reason="duel without an id")
-    return plan_moves([duel], tick, {did: started_tick})[did]
+    return plan_moves([duel], tick, {did: started_tick}, _guardrails_params())[did]
