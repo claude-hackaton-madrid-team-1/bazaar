@@ -230,35 +230,46 @@ Railway-generated domain of service `bazaar-live` (generated once by hand; liste
   `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
   (`Origin`), under per-address and global rate limits and a daily character budget.
 
-## Our venue: from build only to live
+## Our venue: opened by the maker at game hour 6.5
 
-Everything for our own market is built and tested, and blocked: `allow_venue_open = false` in
-`GUARDRAILS.md` makes `guardrails.check()` refuse `venue_open`, `venue_fee`, `venue_announce` and every
-`broker_match`, even with `--live`. Closing (`venue_close`) never waits for the switch, so a venue opened
-by hand can always be closed. The kill switch (`trading_enabled = false`, `touch .local/PAUSE`) stops all of them.
+Our board venue runs inside the **maker** on Railway (`bazaar-maker`, no new service). Every maker tick,
+before its own offers, `agents/venue_keeper.py`:
 
-1. **Check the cash.** Opening takes the 250 P bond + 20 P fee, and the guardrail keeps cash at or above
-   `cash_floor` (270) afterwards: with today's floor we need **540 P** to open. The floor was set to
-   reserve exactly the venue's 270 P, so whoever flips the switch decides whether to lower it first.
-2. **Flip the switch** in `GUARDRAILS.md` (`allow_venue_open` = true), run `uv run bazaar rules`, commit.
-3. **Open a board venue** (a broker acts only on `board`; on `auto` the engine crosses first and earns
-   what the free stall earns, half the bench points). Dry run first, then live:
-   `uv run bazaar venue open --name "..." --fee-bps 0` → read the line → add `--live`.
-   The broker key comes back once: it is saved to `.local/broker.env` (mode 0600) as
-   `BAZAAR_BROKER_KEY` with `BAZAAR_VENUE`, and never printed. For a Railway service, copy it into the
-   service's variables by hand (`BAZAAR_BROKER_KEY`, `BAZAAR_VENUE`). Team venues start trading at +3 h.
-4. **Run the broker**: `uv run bazaar broker run` (dry run: `decisions` rows with `dry_run = true`,
-   `.local/agents/broker_ticks.jsonl` and `broker_sessions.jsonl`), then `uv run bazaar broker run --live`.
-   It reads `/api/broker/book` once per tick, never matches our own offers or two offers of one maker, and
-   sends the exact maximum-surplus matching (bench first) at the midpoint price.
-5. **Fees** change with `uv run bazaar venue fee <bps> [--fee-per-card N] --live` (effective after the
-   public notice); `uv run bazaar venue announce "..." --live` posts a notice with the broker key.
-6. **Watch** `uv run bazaar venue status` (switch, venue row, what the broker would match) and the
-   per-session lines `Market Test bNN over: pairs, quoted surplus`.
+1. **Finds the venue we run**: `/api/me` `venue` and the public `/api/venues` (owner `t01`, not the house,
+   not a starter stall, `open` or `closing`).
+2. **Opens it once** when we run none, `allow_venue_open = true` and `/api/clock` `t_hours` has reached
+   `venue_open_after_game_hours` (6.5, about 11:30 Madrid, before the h7.0 Market Test at 12:00): a
+   `board` venue, 0 bps + 0 P per card, named "Team 1 market". It is tick-driven: no wall clock. The opening
+   goes through `guardrails.check()`: cash must stay at or above `cash_floor` (100) after the 250 P bond +
+   20 P fee, never a second venue, never before that game hour. Before the request goes out, the shared
+   Postgres must be able to hold the broker key (else it waits `RETRY_TICKS` = 10 ticks). A refused opening
+   costs nothing and is retried 10 ticks later; `venue_exists` stops it for good.
+3. **Brokers its book every tick**: `GET /api/broker/book`, then the exact maximum-surplus matching (bench
+   first, ties in book order like the stall, never two offers of one maker, never ours, never an order
+   already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.
+
+**The bond reserve.** Until we run a venue, every purchase by every writer (taker, maker, duels, dealer,
+MCP/runtime: all through `guardrails.check()`) keeps `cash_floor + venue_bond_reserve` = 370 P in cash;
+once `/api/me` shows our venue the floor is 100.
+
+**The broker key** comes back once, in the opening's answer. It is saved at once to the shared Postgres
+table `venue_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
+from the answer before anything is logged, and kept in memory if both saves fail (the log then says
+"NOWHERE"). It is never logged, printed, put in a decision or execution row, published on `/state` or
+`/events` (broker and venue rows show only their kind and status there), or sent to any host but its own.
+No public route reads `venue_keys`. A venue we run without its key logs "NO broker key" every 20 ticks:
+ask the desk.
+
+**Turn it off**: `allow_venue_open = false` in `GUARDRAILS.md` (redeploy) stops the opening and every
+broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes back after a cooldown; a
+Market Test session counts the best venue open during it). The kill switch stops all of it.
+
+**By hand** (laptop, dry run unless `--live`): `uv run bazaar venue status | open | close | fee | announce`
+and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`
+(an in-process `bazaar_sim`, the maker live against it, our efficiency next to the stall's per session).
 
 A real broker key (`bk_...`) is only sent to `https://bazaar.causaprima.ai`, a simulator key (`simbk-...`)
-only to another host: the broker works unchanged against PR #55's `bazaar-sim` (`/api/broker/book`,
-`/api/broker/matches`, `/api/broker/announce`, `bench_offers`, `bench.started` / `bench.finished`).
+only to another host; against the simulator the real `BAZAAR_BROKER_KEY` is never loaded.
 
 ## Not public
 
