@@ -652,7 +652,7 @@ def test_a_ledger_outage_inside_the_desk_still_stops_the_taker_tick(tmp_path):
 
     t.team_desk.proposals = down  # type: ignore[method-assign]
     t.on_tick(clock())
-    assert any("no write this tick (fail closed)" in line for line in lines)  # not swallowed by the desk guard
+    assert any("no further write this tick (fail closed)" in line for line in lines)  # not swallowed by the desk
 
 
 def test_after_a_restart_a_desk_turned_off_withdraws_and_refunds_what_it_withdrew(tmp_path):

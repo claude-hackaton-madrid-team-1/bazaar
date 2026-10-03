@@ -255,6 +255,31 @@ def test_the_taker_sells_into_a_rich_bid_only_when_asked(tmp_path):
     assert any("sell LAT-09 #5 into m9's bid 77" in line for line in lines)
 
 
+def test_a_sell_into_a_bid_passes_the_accept_gate_and_a_block_never_takes_the_slot(tmp_path, monkeypatch):
+    # #146's S1 gate covers every accept, the sell side of `accept_bids` too: the decision row carries the
+    # inspection, and a block sends nothing and leaves the team's accept slot free.
+    from bazaar_agent.agents import taker as tk
+    from bazaar_agent.agents.accept_gate import Gate
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock, rows
+
+    rich = {"rastro": [board_bid(77, "LAT-09", 70, maker="m9")]}
+    ok = SellTeam.make()
+    sell_taker(tmp_path / "ok", ok, rich)[0].on_tick(clock())
+    assert ok.sent == [("accept", 77, [5])]
+    (row,) = [r for r in rows(tmp_path / "ok") if r.get("kind") == "accept_bid" and r.get("chosen")]
+    assert (row["inputs"]["inspector"]["verdict"], row["inputs"]["inspector"]["offer_id"]) == ("clean", 77)
+
+    monkeypatch.setattr(tk, "bid_gate", lambda *a: Gate("board", 77, "block", ("it pays 60, our decision priced 70",)))
+    blocked = SellTeam.make()
+    t, lines = sell_taker(tmp_path / "blocked", blocked, rich)
+    t.on_tick(clock())
+    assert blocked.sent == [] and t.ledger.accept_items(100) == []
+    (row,) = [r for r in rows(tmp_path / "blocked") if r.get("kind") == "accept_bid"]
+    assert (row["status"], row["chosen"], row["inputs"]["inspector"]["verdict"]) == ("rejected", False, "block")
+    assert any("inspector block on bid 77" in line for line in lines)
+
+
 def test_the_taker_never_sells_below_its_bar_or_a_copy_already_offered(tmp_path):
     from tests.agent_fakes import bid as board_bid
     from tests.agent_fakes import clock, our_ask
