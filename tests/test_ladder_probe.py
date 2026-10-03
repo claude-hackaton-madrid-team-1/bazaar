@@ -209,3 +209,11 @@ def test_the_gate_is_asked_at_most_once_per_refresh_window(tmp_path):
     assert len(asks) == 1
     t.on_tick(clock(tick=TICK + 5))
     assert len(asks) == 2
+
+
+def test_a_dealer_whose_card_fails_on_its_official_value_is_not_read_again_this_hour(tmp_path):
+    team = ValueTeam(value=7.0)  # below her lowest common fill (8): no probe
+    t, _ = taker(tmp_path, team, gate("yes", refresh=100)[0])
+    for tick in range(TICK, TICK + 5):  # one game hour (t_hours 1.5), the gate cached at yes
+        t.on_tick(clock(tick=tick))
+    assert team.value_reads == ["LAV-02"] and probe_rows(tmp_path) == []

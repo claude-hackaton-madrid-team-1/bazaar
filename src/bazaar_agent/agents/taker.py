@@ -1016,6 +1016,9 @@ class Taker:
         if not gate.allows(LADDER_PROBE, clock.tick, state):
             return book
         probes = plan_probes(market, opens, self.rules, room, skip, value_of)  # values cached for the tick
+        # A dealer whose card fails once its official value is read rests for the hour too: no GET
+        # /api/me/value every tick on the shared key while the gate stays yes (#212 review).
+        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip)}
         moves = [p.move() for p in probes]
         for p, mv in zip(probes, moves, strict=True):
             self._probed.add((p.dealer, hour))
