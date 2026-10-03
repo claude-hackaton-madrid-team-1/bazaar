@@ -198,6 +198,18 @@ later, wins; a row never moves backwards. `holdings_state` (one row per world, k
 The evals' `snapshots` (one row per tick) follows the winning `me_snapshots` row of the real game (or of a
 simulator in its own database).
 
+## Other teams' multipliers (Postgres, AF1)
+
+`team_affinity` (key `(team, set_code, source)`): `multiplier`, `source` (`said` | `inferred`), `confidence`,
+`tick`, `thread_id`, `quote`, `updated_at`. **said**: what a team wrote in a team thread, parsed from untrusted
+words (`team_affinity.parse`; confidence 0.5, 0.25 with an injection shape); `quote` is their message, scrubbed and
+cut to 200 characters. Words may lie: nothing reads these rows back into a decision. **inferred**: one consistent
+assignment per team from the rival affinity map, with each set's probability, every 10 ticks (teams with no signal
+have no rows). The taker's team desk writes both off the tick, and asks each team once per game day (`round`) in its
+first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / By the way, which set is your ×1.6?".
+`team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
+through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
+
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or

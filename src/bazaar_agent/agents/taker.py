@@ -782,6 +782,7 @@ class Taker:
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),
             scan=snap.scan,
+            round=snap.clock.round,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:

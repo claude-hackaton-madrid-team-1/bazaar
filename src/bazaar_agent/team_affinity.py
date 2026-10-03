@@ -4,8 +4,9 @@ Every team holds the same six multipliers, shuffled (RULES.md "Your values are p
 is a team's ×1.6 tells us what it will pay. The team desk asks once per team per game day, in the words of its
 first message in a thread (`ask_line`); the structured offer never changes. Their answers are untrusted words
 ("words persuade, structure binds"): `parse` keeps only a set named next to a multiplier of the shared multiset,
-drops a set or a value claimed twice, and stores the scrubbed quote. `inferred_rows` turns the rival affinity map
-(`affinity.affinity_map`) into rows of their own source, so the table always has something to show.
+in a plain statement (no question, no "your", no negation), drops a set or a value claimed twice, and stores the
+scrubbed quote. `inferred_rows` turns the rival affinity map (`affinity.affinity_map`) into rows of their own
+source: one consistent assignment per team with any signal, so the table has something to show.
 
 Stored in `team_affinity` (schema.sql), one row per (team, set_code, source), read by `bazaar affinity --teams`,
 the `team_affinity_board` view (DataGrip) and bazaar-live. Writes run off the tick (`AffinityBook`): a failed or
@@ -14,8 +15,11 @@ slow write is logged and never holds a send. Nothing here changes a price.
 
 from __future__ import annotations
 
+import itertools
+import math
 import re
 import threading
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -23,7 +27,9 @@ from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from bazaar_agent.affinity import AffinityMap
+import psycopg
+
+from bazaar_agent.affinity import AffinityMap, TeamAffinity
 from bazaar_agent.llm.chooser import folded, injection_flags
 from bazaar_agent.telemetry import scrub
 
@@ -36,20 +42,27 @@ TOLERANCE = 0.05  # how far a stated number may sit from a multiplier of the mul
 MADRID = ZoneInfo("Europe/Madrid")
 
 # Codes are matched in capitals only ("mal" and "sal" are Spanish words); names on the accent-free folded text.
+# "retiro" and "latina" are words too ("me retiro": I walk away): lower case only after their article.
 CODES = r"\b(LAV|SAL|MAL|RET|LAT|CHA)\b"
 NAMES = {
-    "LAV": r"lavapies",
-    "SAL": r"salamanca",
-    "MAL": r"malasana",
-    "RET": r"(?:el\s+)?retiro",
-    "LAT": r"(?:la\s+)?latina",
-    "CHA": r"chamberi",
+    "LAV": r"(?i:lavapies)",
+    "SAL": r"(?i:salamanca)",
+    "MAL": r"(?i:malasana)",
+    "RET": r"(?i:el\s+retiro)|Retiro|RETIRO",
+    "LAT": r"(?i:la\s+latina)|Latina|LATINA",
+    "CHA": r"(?i:chamberi)",
 }
-SET_TOKEN = re.compile(CODES + "|" + "|".join(f"(?i:\\b(?P<{k}>{v})\\b)" for k, v in NAMES.items()))
+SET_TOKEN = re.compile(CODES + "|" + "|".join(f"\\b(?P<{k}>{v})\\b" for k, v in NAMES.items()))
+# A sentence ends at ? ! ; a line break, an opening ¿ or ¡, or a full stop before a space (never inside "1.6").
+SENTENCE_END = re.compile(r"[?!;\n¿¡]|\.(?=\s|$)")
+# A pair in a sentence that talks about OUR sets ("vuestro ×1,6 es LAV, ¿verdad?") or denies one ("not LAT") is
+# no claim of theirs.
+YOURS = re.compile(r"\b(?:vuestr[oa]s?|tus?|your|yours|ustedes)\b", re.IGNORECASE)
+NEGATION = re.compile(r"\b(?:no|not|ni|nor|nunca|never|jamas|tampoco|isnt|arent)\b|n't\b", re.IGNORECASE)
 # "×1.6", "x1,3", "*1.1", "1,6", "1.60": one digit 0-2, a dot or comma, one or two digits, inside no longer number.
 MULTIPLIER = re.compile(r"(?<![\d.,])(?:[x×*]\s?)?([0-2])[.,](\d{1,2})(?![\d])", re.IGNORECASE)
 WINDOW = 16  # the most characters between a set and its multiplier
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+QUOTE_WINDOW = QUOTE_MAX + 64  # what the quote reads: a key shape starting inside the kept 200 is still whole
 
 
 @dataclass(frozen=True)
@@ -113,20 +126,31 @@ def _pair(sets: list[tuple[int, int, str]], values: list[tuple[int, int, float]]
     return out
 
 
+def _statements(text: str) -> list[str]:
+    """The sentences that can carry a claim of theirs: no question, no "your", no negation."""
+    out, start, opened_question = [], 0, False
+    for m in SENTENCE_END.finditer(text):
+        question = opened_question or m.group() == "?"
+        out.append((text[start : m.start()], question))
+        opened_question, start = m.group() == "¿", m.end()
+    out.append((text[start:], opened_question))
+    return [s for s, question in out if not question and not YOURS.search(s) and not NEGATION.search(s)]
+
+
 def parse(text: str | None, multiset: Sequence[float] = ()) -> list[Claim]:
     """The (set, multiplier) pairs a message states, from untrusted text: a set code or barrio name next to a
-    multiplier of the shared multiset. A set given two values, or a value used more often than the multiset
-    holds it, is dropped whole (a contradiction is no answer). At most one claim per set."""
+    multiplier of the shared multiset, inside one plain statement (`_statements`). A set given two values, or a
+    value used more often than the multiset holds it, is dropped whole (a contradiction is no answer). At most
+    one claim per set."""
     if not text:
         return []
-    plain = folded(text[:READ_MAX])
-    sets, values = _tokens(plain)
-    pairs = _pair(sets, values)
     by_set: dict[str, set[float]] = {}
-    for code, i in pairs:
-        value = _plausible(values[i][2], multiset)
-        if value is not None:
-            by_set.setdefault(code, set()).add(value)
+    for sentence in _statements(folded(text[:READ_MAX])):
+        sets, values = _tokens(sentence)
+        for code, i in _pair(sets, values):
+            value = _plausible(values[i][2], multiset)
+            if value is not None:
+                by_set.setdefault(code, set()).add(value)
     claims = {code: next(iter(vals)) for code, vals in by_set.items() if len(vals) == 1}
     room = Counter(round(a, 2) for a in multiset)
     used = Counter(round(v, 2) for v in claims.values())
@@ -135,10 +159,12 @@ def parse(text: str | None, multiset: Sequence[float] = ()) -> list[Claim]:
 
 
 def quote_of(text: str) -> str:
-    """Their words as stored: scrubbed (secrets, key shapes), no control characters, NUL or lone surrogate,
-    at most `QUOTE_MAX` characters."""
-    clean = CONTROL.sub(" ", text).encode("utf-8", "replace").decode("utf-8")
-    return scrub(clean)[:QUOTE_MAX]
+    """Their words as stored, at most `QUOTE_MAX` characters: only the first `QUOTE_WINDOW` read (bounded work,
+    the masking patterns are slow on long runs), compatibility forms normalised BEFORE the scrub (a fullwidth
+    key shape is caught), control, format and bidi characters, NUL and lone surrogates turned to spaces."""
+    window = unicodedata.normalize("NFKC", text[:QUOTE_WINDOW])[:QUOTE_WINDOW]
+    kept = "".join(" " if unicodedata.category(ch) in ("Cc", "Cf", "Cs") and ch != "\n" else ch for ch in window)
+    return scrub(kept)[:QUOTE_MAX]
 
 
 def said_rows(
@@ -152,15 +178,28 @@ def said_rows(
     return [Row(team, c.set_code, c.multiplier, "said", confidence, tick, thread_id, quote) for c in claims]
 
 
-def inferred_rows(amap: AffinityMap, tick: int) -> list[Row]:
-    """Per team and set, the likeliest multiplier of the posterior and its probability."""
+def _assignment(ta: TeamAffinity, multiset: Sequence[float]) -> dict[str, float]:
+    """The multiset dealt to the team's sets, each multiplier used as often as the multiset holds it, that best
+    agrees with the posterior (the most probable product of the per-set marginals)."""
+
+    def score(perm: tuple[float, ...]) -> float:
+        return sum(
+            math.log(max(1e-9, ta.distribution.get(s, {}).get(a, 0.0))) for s, a in zip(ta.sets, perm, strict=True)
+        )
+
+    best = max(sorted(set(itertools.permutations(multiset))), key=score)
+    return dict(zip(ta.sets, best, strict=True))
+
+
+def inferred_rows(amap: AffinityMap, tick: int, multiset: Sequence[float]) -> list[Row]:
+    """Per team with any signal, one consistent assignment (`_assignment`), each set with its marginal
+    probability. A team we saw nothing of has only the prior: no rows (we know nothing about it)."""
     out = []
     for team, ta in sorted(amap.teams.items()):
-        for set_code in ta.sets:
-            dist = ta.distribution.get(set_code) or {}
-            if not dist:
-                continue
-            value, p = max(dist.items(), key=lambda kv: (kv[1], kv[0]))
+        if ta.signals == 0 or len(ta.sets) != len(multiset):
+            continue
+        for set_code, value in _assignment(ta, multiset).items():
+            p = ta.distribution.get(set_code, {}).get(value, 0.0)
             out.append(Row(team, set_code, float(value), "inferred", round(float(p), 4), tick))
     return out
 
@@ -175,22 +214,44 @@ def game_day(now: datetime | None = None) -> str:
 COLUMNS = ("team", "set_code", "multiplier", "source", "confidence", "tick", "thread_id", "quote", "updated_at")
 
 
-def save(conn: Any, rows: Iterable[Row]) -> int:
-    """Upsert rows in key order (no deadlock between writers); an older tick never overwrites a newer row."""
-    batch = sorted({r.key: r for r in rows}.values(), key=lambda r: r.key)
-    if not batch:
-        return 0
+UPSERT = (
+    "insert into team_affinity (team, set_code, multiplier, source, confidence, tick, thread_id, quote) "
+    "values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict (team, set_code, source) do update set "
+    "multiplier = excluded.multiplier, confidence = excluded.confidence, tick = excluded.tick, "
+    "thread_id = excluded.thread_id, quote = excluded.quote, updated_at = now() "
+    "where excluded.tick >= team_affinity.tick"
+)
+
+
+def _upsert(conn: Any, batch: Sequence[Row]) -> None:
     with conn.cursor() as cur:
         cur.executemany(
-            "insert into team_affinity (team, set_code, multiplier, source, confidence, tick, thread_id, quote) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict (team, set_code, source) do update set "
-            "multiplier = excluded.multiplier, confidence = excluded.confidence, tick = excluded.tick, "
-            "thread_id = excluded.thread_id, quote = excluded.quote, updated_at = now() "
-            "where excluded.tick >= team_affinity.tick",
+            UPSERT,
             [(r.team, r.set_code, r.multiplier, r.source, r.confidence, r.tick, r.thread_id, r.quote) for r in batch],
         )
     conn.commit()
-    return len(batch)
+
+
+def save(conn: Any, rows: Iterable[Row]) -> int:
+    """Upsert rows in key order (no deadlock between writers); an older tick never overwrites a newer row.
+    A row Postgres refuses (data or constraint) is dropped alone, never holding the others back. Returns the
+    number of rows stored; a connection error raises (the book tries the batch again)."""
+    batch = sorted({r.key: r for r in rows}.values(), key=lambda r: r.key)
+    if not batch:
+        return 0
+    try:
+        _upsert(conn, batch)
+        return len(batch)
+    except (psycopg.DataError, psycopg.IntegrityError):
+        conn.rollback()
+    stored = 0
+    for row in batch:
+        try:
+            _upsert(conn, [row])
+            stored += 1
+        except (psycopg.DataError, psycopg.IntegrityError):
+            conn.rollback()
+    return stored
 
 
 def read(conn: Any) -> list[dict[str, Any]]:
@@ -199,19 +260,50 @@ def read(conn: Any) -> list[dict[str, Any]]:
     return [dict(zip(COLUMNS, row, strict=True)) for row in rows]
 
 
+def said_teams(conn: Any) -> set[str]:
+    """Teams whose words already named a multiplier: never asked again, after a restart too."""
+    rows = conn.execute("select distinct team from team_affinity where source = 'said'").fetchall()
+    conn.commit()
+    return {str(r[0]) for r in rows}
+
+
 # ---------------------------------------------------------------- the writer, off the tick
 
-Writer = Callable[[list[Row]], None]
+Writer = Callable[[list[Row]], int | None]  # rows stored (None: all of them)
+STUCK_TICKS = 10  # a write still running this long is reported once (a hung connection: nothing more is stored)
 
 
 class AffinityBook:
-    """Rows queued during the tick (one per key, the newest), written on a daemon thread after the sends."""
+    """Rows queued during the tick (one per key, the newest), written on a daemon thread after the sends.
 
-    def __init__(self, write: Writer | None, log: Callable[[str], None]) -> None:
+    `load_told` (the teams whose 'said' rows are stored) runs once, on its own daemon thread: until it answered,
+    `told_ready` is unset and the desk asks nobody (it never waits for it)."""
+
+    def __init__(
+        self,
+        write: Writer | None,
+        log: Callable[[str], None],
+        load_told: Callable[[], Iterable[str]] | None = None,
+    ) -> None:
         self.write, self.log = write, log
         self._queue: dict[tuple[str, str, str], Row] = {}
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
+        self._started: int | None = None  # the tick the running write started
+        self._stuck_logged = False
+        self.told: frozenset[str] = frozenset()
+        self.told_ready = threading.Event()
+        if load_told is None:
+            self.told_ready.set()
+        else:
+            threading.Thread(target=self._load, args=(load_told,), name="team-affinity-told", daemon=True).start()
+
+    def _load(self, load_told: Callable[[], Iterable[str]]) -> None:
+        try:
+            self.told = frozenset(load_told())
+        except Exception as e:  # noqa: BLE001 — without it we may ask a team twice; never a reason to stop
+            self.log(f"team affinity: stored answers unreadable ({type(e).__name__}); asking as if none")
+        self.told_ready.set()
 
     def add(self, rows: Iterable[Row]) -> None:
         if self.write is not None:
@@ -219,20 +311,29 @@ class AffinityBook:
                 self._queue.update({r.key: r for r in rows})
 
     def flush(self, tick: int) -> None:
-        if self.write is None or not self._queue or (self._worker is not None and self._worker.is_alive()):
-            return  # the previous write still runs: the queue waits for the next tick
+        if self.write is None or not self._queue:
+            return
+        if self._worker is not None and self._worker.is_alive():  # the queue waits for the next tick
+            if self._started is not None and tick - self._started >= STUCK_TICKS and not self._stuck_logged:
+                self._stuck_logged = True
+                self.log(f"tick {tick} team affinity: the write started at tick {self._started} still runs")
+            return
         with self._lock:
             batch, self._queue = list(self._queue.values()), {}
         write = self.write
 
         def run() -> None:
             try:
-                write(batch)
+                stored = write(batch)
+                unique = len({r.key for r in batch})
+                if stored is not None and stored < unique:
+                    self.log(f"tick {tick} team affinity: {unique - stored} row(s) refused by Postgres, dropped")
             except Exception as e:  # noqa: BLE001 — storage is for reading later; never a reason to stop trading
                 self.log(f"tick {tick} team affinity: {len(batch)} row(s) not stored ({type(e).__name__})")
                 with self._lock:  # tried again at the next flush, unless a newer row for the same key came in
                     for r in batch:
                         self._queue.setdefault(r.key, r)
 
+        self._started, self._stuck_logged = tick, False
         self._worker = threading.Thread(target=run, name="team-affinity-store", daemon=True)
         self._worker.start()

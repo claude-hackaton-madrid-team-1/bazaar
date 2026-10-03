@@ -58,6 +58,13 @@ def test_set_codes_and_barrio_names_next_to_a_multiplier_are_read(text, expected
         "LAV 1.6 y LAV 1.3",  # a set given two values: no answer
         "LAV 1.6 y SAL 1.6",  # one value claimed by two sets: neither
         "LAV " + "y " * 20 + "1.6",  # too far apart
+        "Vuestro ×1,6 es LAV, ¿verdad?",  # a guess about OUR sets (review #217)
+        "Is your 1.6 LAV?",
+        "¿LAV ×1,6?",  # a question is no claim
+        "Our 1.6 is not LAT",  # a denial
+        "No, LAV 1,6 no",
+        "Me retiro: 1,0 de margen",  # "me retiro" is "I walk away", not El Retiro
+        "una cumbia latina 1,1",
         "",
         None,
     ],
@@ -83,6 +90,24 @@ def test_the_quote_is_scrubbed_cut_to_200_and_free_of_nul_and_lone_surrogates():
     quote.encode("utf-8")  # storable
 
 
+def test_a_statement_after_a_question_is_still_read():
+    assert pairs("¿Y el vuestro? El nuestro es LAV ×1.6") == [("LAV", 1.6)]
+    assert pairs("LAV is 1.6. SAL is 1.3.") == [("LAV", 1.6), ("SAL", 1.3)]
+    assert pairs("El Retiro 0,7; La Latina 0,5") == [("LAT", 0.5), ("RET", 0.7)]
+
+
+def test_a_hostile_quote_costs_little_and_hides_no_key_or_control_character():
+    import time
+
+    started = time.perf_counter()
+    quote = ta.quote_of("LAV ×1.6 " + "\u33c2" * 1191)  # "㏂" grows to "a.m." under NFKC (security review #217)
+    assert time.perf_counter() - started < 0.05 and len(quote) <= ta.QUOTE_MAX
+    for key in ("ｔｋ－ａｂ１２－ｃｄ３４", "tk\ufe63ab12\ufe63cd34"):  # fullwidth and small hyphen
+        assert "ab12" not in ta.quote_of(f"LAV ×1.6 {key}")
+    shown = ta.quote_of("LAV ×1.6 \x9b31m \x9d8;;x \u202egnp.exe \x1b[2J")
+    assert not any(ch in shown for ch in "\x9b\x9d\u202e\x1b")
+
+
 def test_a_long_message_is_read_up_to_its_first_thousand_characters():
     assert pairs("x" * 2000 + " LAV ×1.6") == []
     assert pairs("LAV ×1.6 " + "x" * 2000) == [("LAV", 1.6)]
@@ -95,21 +120,24 @@ def test_without_a_known_multiset_any_number_between_0_3_and_2_is_kept():
 # ---------------------------------------------------------------- inferred rows
 
 
-def test_inferred_rows_take_each_sets_likeliest_multiplier_and_its_probability():
-    a = TeamAffinity(
-        "t07",
-        ("LAV", "SAL"),
-        {"LAV": 0.7, "SAL": 0.3},
-        {"LAV": 1.4, "SAL": 0.9},
-        {"LAV": {1.6: 0.7, 0.5: 0.3}, "SAL": {1.6: 0.3, 0.5: 0.7}},
-        {},
-        3,
-    )
-    rows = ta.inferred_rows(AffinityMap({"t07": a}), TICK)
+def affinity_of(team: str, dist: dict, signals: int = 3) -> TeamAffinity:
+    sets = tuple(dist)
+    return TeamAffinity(team, sets, {s: dist[s].get(1.6, 0.0) for s in sets}, {}, dist, {}, signals)
+
+
+def test_inferred_rows_are_one_assignment_each_multiplier_once_with_its_probability():
+    # Both sets' marginal mode is 1.6 (review #217): the assignment gives it to one set only.
+    a = affinity_of("t07", {"LAV": {1.6: 0.6, 0.5: 0.4}, "SAL": {1.6: 0.55, 0.5: 0.45}})
+    rows = ta.inferred_rows(AffinityMap({"t07": a}), TICK, (0.5, 1.6))
     assert [(r.team, r.set_code, r.multiplier, r.source, r.confidence) for r in rows] == [
-        ("t07", "LAV", 1.6, "inferred", 0.7),
-        ("t07", "SAL", 0.5, "inferred", 0.7),
+        ("t07", "LAV", 1.6, "inferred", 0.6),
+        ("t07", "SAL", 0.5, "inferred", 0.45),
     ]
+
+
+def test_a_team_we_saw_nothing_of_gets_no_inferred_rows():
+    prior = affinity_of("t11", {"LAV": {1.6: 0.5, 0.5: 0.5}, "SAL": {1.6: 0.5, 0.5: 0.5}}, signals=0)
+    assert ta.inferred_rows(AffinityMap({"t11": prior}), TICK, (0.5, 1.6)) == []
 
 
 # ---------------------------------------------------------------- the writer, off the tick
@@ -137,6 +165,42 @@ def test_the_book_writes_off_the_tick_and_retries_a_failed_batch():
     assert written == [row]
 
 
+def test_a_write_still_running_after_ten_ticks_is_reported_once():
+    release = threading.Event()
+    logs: list[str] = []
+    book = ta.AffinityBook(lambda rows: release.wait(5) and None, logs.append)
+    book.add([ta.Row(THEM, "LAV", 1.6, "said", 0.5, TICK)])
+    book.flush(TICK)
+    book.add([ta.Row(THEM, "SAL", 1.3, "said", 0.5, TICK + 1)])
+    for tick in range(TICK + 1, TICK + 15):
+        book.flush(tick)
+    release.set()
+    book._worker.join(2)
+    assert logs == [f"tick {TICK + 10} team affinity: the write started at tick {TICK} still runs"]
+
+
+def test_rows_postgres_refused_are_counted_in_the_log():
+    logs: list[str] = []
+    book = ta.AffinityBook(lambda rows: len(rows) - 1, logs.append)
+    book.add([ta.Row(THEM, "LAV", 1.6, "said", 0.5, TICK), ta.Row(THEM, "SAL", 1.3, "said", 0.5, TICK)])
+    book.flush(TICK)
+    book._worker.join(2)
+    assert logs == [f"tick {TICK} team affinity: 1 row(s) refused by Postgres, dropped"]
+
+
+def test_stored_answers_load_off_the_tick_and_a_failed_load_asks_as_if_none():
+    book = ta.AffinityBook(lambda rows: None, print, lambda: {"t05"})
+    assert book.told_ready.wait(2) and book.told == {"t05"}
+
+    def down():
+        raise OSError("db down")
+
+    logs: list[str] = []
+    failed = ta.AffinityBook(lambda rows: None, logs.append, down)
+    assert failed.told_ready.wait(2) and failed.told == frozenset()
+    assert logs == ["team affinity: stored answers unreadable (OSError); asking as if none"]
+
+
 def test_a_book_without_a_database_keeps_nothing():
     book = ta.AffinityBook(None, print)
     book.add([ta.Row(THEM, "LAV", 1.6, "said", 0.5, TICK)])
@@ -148,8 +212,9 @@ def test_a_book_without_a_database_keeps_nothing():
 
 
 class Sink(ta.AffinityBook):
-    def __init__(self) -> None:
-        super().__init__(lambda rows: None, print)
+    def __init__(self, told=None) -> None:
+        super().__init__(lambda rows: None, print, None if told is None else (lambda: told))
+        self.told_ready.wait(2)
         self.rows: list[ta.Row] = []
         self.flushed = threading.Event()
 
@@ -226,6 +291,62 @@ def test_their_answer_is_stored_once_and_they_are_never_asked_again(tmp_path):
     assert d.affinity.flushed.is_set()
 
 
+def test_a_team_whose_answer_is_stored_is_not_asked_after_a_restart(tmp_path):
+    team = Talky()
+    d, _ = asking_desk(tmp_path, team)
+    d.affinity = Sink(told={THEM})  # read from team_affinity at start
+    d.converse(replace(view(), me=OUR_ME), set())
+    assert team.texts and "×1" not in team.texts[0] and d.asked == {}
+
+
+def test_nobody_is_asked_until_the_stored_answers_are_loaded(tmp_path):
+    team = Talky()
+    d, _ = asking_desk(tmp_path, team)
+    d.affinity.told_ready.clear()
+    d.converse(replace(view(), me=OUR_ME), set())
+    assert team.texts and "×1" not in team.texts[0] and d.asked == {}
+
+
+def test_the_game_day_is_the_clocks_round_when_it_names_one(tmp_path):
+    team = Talky()
+    d, _ = asking_desk(tmp_path, team)
+    d.converse(replace(view(), me=OUR_ME, round=2), set())
+    assert d.asked == {THEM: "round 2"} and team.texts[0].endswith(ta.ask_line(MULTISET))
+
+
+def test_unreadable_words_are_logged_and_never_cost_the_tick(tmp_path, monkeypatch):
+    team = Talky()
+    d, lines = asking_desk(tmp_path, team)
+
+    def boom(*args, **kw):
+        raise RuntimeError("parser bug")
+
+    monkeypatch.setattr(ta, "said_rows", boom)
+    said = {"id": 9001, "sender": THEM, "tick": TICK, "text": "LAV ×1.6"}
+    inbound = thread(tid=51, team=THEM, opened_by=THEM, messages=[said])
+    d.proposals(replace(view([inbound]), me=OUR_ME))
+    assert any("words of t05 in thread 51 not read (RuntimeError)" in line for line in lines)
+
+
+def test_a_failing_affinity_store_never_replaces_the_ticks_own_exception(tmp_path, monkeypatch):
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    team = Talky()
+    d, lines = asking_desk(tmp_path, team)
+
+    def ledger_down(v, taken):
+        raise LedgerUnavailable("ledger down")
+
+    def flush_down(tick):
+        raise RuntimeError("flush bug")
+
+    monkeypatch.setattr(d, "_converse", ledger_down)
+    monkeypatch.setattr(d.affinity, "flush", flush_down)
+    with pytest.raises(LedgerUnavailable):
+        d.converse(replace(view(), me=OUR_ME), set())
+    assert any("affinity rows not handed over (RuntimeError)" in line for line in lines)
+
+
 def test_the_desk_without_a_database_never_asks(tmp_path):
     team = Talky()
     d, _ = desk(tmp_path, team)
@@ -237,7 +358,9 @@ def test_inferred_multipliers_are_written_every_ten_ticks_even_with_the_desk_off
     team = Talky()
     d, _ = desk(tmp_path, team, team_threads_enabled=False)
     d.affinity = Sink()
-    a = TeamAffinity("t07", ("LAV",), {"LAV": 1.0}, {"LAV": 1.6}, {"LAV": {1.6: 1.0}}, {}, 1)
+    a = affinity_of(
+        "t07", {s: {m: (0.9 if m == OUR_ME["affinity"][s] else 0.02) for m in MULTISET} for s in OUR_ME["affinity"]}
+    )
     calls: list[int] = []
 
     def fake_map(*args, **kw):
@@ -248,10 +371,24 @@ def test_inferred_multipliers_are_written_every_ten_ticks_even_with_the_desk_off
     for tick in (TICK, TICK + 5, TICK + 10):
         d.converse(replace(view(tick=tick), me=OUR_ME), set())
     assert len(calls) == 2 and team.sent == []
-    assert [(r.team, r.set_code, r.source, r.tick) for r in d.affinity.rows] == [
-        ("t07", "LAV", "inferred", TICK),
-        ("t07", "LAV", "inferred", TICK + 10),
-    ]
+    rows = [(r.team, r.set_code, r.multiplier, r.tick) for r in d.affinity.rows if r.set_code == "LAV"]
+    assert rows == [("t07", "LAV", 1.6, TICK), ("t07", "LAV", 1.6, TICK + 10)] and len(d.affinity.rows) == 12
+
+
+def test_the_plans_affinity_map_is_reused_for_the_inferred_rows(tmp_path, monkeypatch):
+    team = Talky()
+    d, _ = asking_desk(tmp_path, team)
+    a = affinity_of(
+        "t07", {s: {m: (0.9 if m == OUR_ME["affinity"][s] else 0.02) for m in MULTISET} for s in OUR_ME["affinity"]}
+    )
+    d._amap = (TICK - 2, AffinityMap({"t07": a}))  # built by this tick's plan two ticks ago
+
+    def never(*args, **kw):
+        raise AssertionError("a second affinity map was built")
+
+    monkeypatch.setattr("bazaar_agent.affinity.affinity_map", never)
+    d.converse(replace(view(), me=OUR_ME), set())
+    assert {(r.set_code, r.multiplier, r.tick) for r in d.affinity.rows} >= {("LAV", 1.6, TICK - 2)}
 
 
 def test_a_failing_affinity_map_is_logged_and_never_stops_the_tick(tmp_path, monkeypatch):
@@ -303,16 +440,19 @@ def test_rows_upsert_by_team_set_source_never_backwards_and_the_board_pairs_them
 
 
 @pytest.mark.integration
-def test_a_quote_over_200_characters_is_refused_by_the_table(database_url, schema):  # noqa: F811
-    import psycopg
-
+def test_a_row_the_table_refuses_is_dropped_alone(database_url, schema):  # noqa: F811
     from bazaar_agent import db
 
     conn = open_in(database_url, schema)
     try:
         db.init_schema(conn)
-        with pytest.raises(psycopg.errors.CheckViolation):
-            ta.save(conn, [ta.Row("t05", "SAL", 1.6, "said", 0.5, 120, 51, "x" * 201)])
+        bad = ta.Row("t05", "SAL", 1.6, "said", 0.5, 120, 51, "x" * 201)  # over the CHECK on quote
+        good = ta.Row("t07", "LAV", 1.6, "inferred", 0.6, 120)
+        assert ta.save(conn, [bad, good]) == 1
+        assert [(r["team"], r["source"]) for r in ta.read(conn)] == [("t07", "inferred")]
+        assert ta.said_teams(conn) == set()
+        ta.save(conn, [replace(bad, quote="SAL ×1.6")])
+        assert ta.said_teams(conn) == {"t05"}
     finally:
         conn.close()
 

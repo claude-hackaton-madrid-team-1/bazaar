@@ -198,6 +198,7 @@ class DeskView:
     max_tick_seconds: float = 60.0  # /api/clock: dates a refund in the hour of its spend (`refund_row`)
     jev: Callable[[dict[str, Any]], JevAdvice] = no_jev  # `team_swap_worth_it`, inside the taker's tick budget
     scan: Sequence[dict[str, Any]] = ()  # the stored card scan: who holds the cards we miss (`bazaar supply scan`)
+    round: int | None = None  # /api/clock `round`: the game day a multiplier question is asked on (AF1)
 
 
 @dataclass
@@ -285,6 +286,7 @@ class TeamDesk:
         self.told: set[str] = set()  # teams whose words named a multiplier: not asked again
         self._read_msgs: set[Any] = set()  # their messages already parsed (id, or thread/tick/text)
         self._inferred_tick: int | None = None
+        self._amap: tuple[int, af.AffinityMap] | None = None  # the plan's affinity map and its tick (reused)
 
     # ------------------------------------------------------------ reads
 
@@ -357,9 +359,17 @@ class TeamDesk:
         return sorted(out, key=lambda a: -a.verdict.ours)[:1]  # one accept per tick for the whole team
 
     def _listen(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> None:
-        """Their multipliers, if their words name any (`team_affinity.parse`: untrusted text, read once each)."""
+        """Their multipliers, if their words name any (`team_affinity.parse`: untrusted text, read once each).
+        A failure here is logged: it never costs the tick its accepts."""
         if self.affinity is None or not TEAM_ID.match(team):
             return
+        try:
+            self._read_their_words(v, tid, team, payload)
+        except Exception as e:  # noqa: BLE001 — a report for later; the message is marked read, never retried
+            self.log(f"tick {v.tick} team desk: words of {team} in thread {tid} not read ({type(e).__name__})")
+
+    def _read_their_words(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> None:
+        assert self.affinity is not None
         multiset = af.multipliers_from(v.me)
         for m in payload.get("messages") or []:
             if not isinstance(m, dict) or m.get("sender") != team or not isinstance(m.get("text"), str):
@@ -377,23 +387,32 @@ class TeamDesk:
                 self.log(f"tick {v.tick} team desk: {team} says {said} (thread {tid}; words, not structure)")
 
     def _remember_inferred(self, v: DeskView) -> None:
-        """The rival affinity map's likeliest multipliers, stored every `INFERRED_EVERY` ticks (source 'inferred')."""
+        """The rival affinity map as one assignment per team, stored every `INFERRED_EVERY` ticks (source
+        'inferred'); the plan's own map is reused while it is current."""
         if self.affinity is None or (self._inferred_tick is not None and v.tick - self._inferred_tick < INFERRED_EVERY):
             return
         self._inferred_tick = v.tick
+        multiset = af.multipliers_from(v.me)
         try:
-            amap = af.affinity_map(
-                v.events, af.catalog_sets(v.catalog), af.multipliers_from(v.me), v.catalog, exclude=[v.us]
-            )
+            if self._amap is not None and v.tick - self._amap[0] < self.plan_ttl:
+                tick, amap = self._amap
+            else:
+                tick = v.tick
+                amap = af.affinity_map(v.events, af.catalog_sets(v.catalog), multiset, v.catalog, exclude=[v.us])
+            self.affinity.add(ta.inferred_rows(amap, tick, multiset))
         except Exception as e:  # noqa: BLE001 — a report for later; never a reason to stop the tick
             self.log(f"tick {v.tick} team desk: no inferred multipliers ({type(e).__name__})")
-            return
-        self.affinity.add(ta.inferred_rows(amap, v.tick))
+
+    def _day(self, v: DeskView) -> str:
+        """The game day: /api/clock `round` when the clock names one, else the Madrid date."""
+        return f"round {v.round}" if v.round is not None else self.today()
 
     def _question(self, v: DeskView, team: str) -> str | None:
         """The multiplier question for our first message in a thread: once per team per game day, never to a
-        team that already told us."""
-        if self.affinity is None or team in self.told or self.asked.get(team) == self.today():
+        team that already told us (stored answers included, once they are loaded: until then nobody is asked)."""
+        if self.affinity is None or not self.affinity.told_ready.is_set():
+            return None
+        if team in self.told or team in self.affinity.told or self.asked.get(team) == self._day(v):
             return None
         return ta.ask_line(af.multipliers_from(v.me))
 
@@ -518,9 +537,16 @@ class TeamDesk:
         try:
             self._converse(v, taken)
         finally:  # after the sends: what we heard and inferred is written off the tick
-            if self.affinity is not None:
-                self._remember_inferred(v)
-                self.affinity.flush(v.tick)
+            self._store_affinity(v)
+
+    def _store_affinity(self, v: DeskView) -> None:
+        if self.affinity is None:
+            return
+        try:  # never replaces an exception of the tick in flight (a ledger outage stays one)
+            self._remember_inferred(v)
+            self.affinity.flush(v.tick)
+        except Exception as e:  # noqa: BLE001 — storage is for reading later
+            self.log(f"tick {v.tick} team desk: affinity rows not handed over ({type(e).__name__})")
 
     def _converse(self, v: DeskView, taken: set[int]) -> None:
         self._check_refunds(v)  # also while the desk is off
@@ -964,7 +990,7 @@ class TeamDesk:
                     self._refund(v, {"id": self._synthetic, **refused})
                 return
             if question is not None:  # sent (or maybe landed): not asked again today
-                self.asked[talk.team] = self.today()
+                self.asked[talk.team] = self._day(v)
             offer_id = (body or {}).get("offer")  # lost on the way back: the next tick reads it from the thread
             talk.offer_id = offer_id if isinstance(offer_id, int) else None
         talk.step += 1
@@ -1106,6 +1132,7 @@ class TeamDesk:
             amap = af.affinity_map(
                 v.events, af.catalog_sets(v.catalog), af.multipliers_from(v.me), v.catalog, exclude=[v.us]
             )
+            self._amap = (v.tick, amap)
             rastro = next((x for x in v.venues if x.id == HOUSE_VENUE), None)
             # Swaps only, one thread at a time: the plan-wide share rule (25 % of a plan's volume per team) would
             # refuse any plan of fewer than four teams. Fairness here is per deal (`swaps.judge`) and, when it

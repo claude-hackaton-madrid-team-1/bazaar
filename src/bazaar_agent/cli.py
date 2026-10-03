@@ -360,6 +360,7 @@ def _team_affinity(as_json: bool) -> None:
 
     try:
         with db.connect(app="bazaar-affinity", connect_timeout_s=5) as conn:
+            conn.read_only = True
             rows = ta.read(conn)
     except Exception as e:  # noqa: BLE001 — a read-only report: say why and stop
         err_console.print(f"team_affinity unreadable: {db.redact(str(e))}")
@@ -2888,11 +2889,16 @@ def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
     from bazaar_agent import db
     from bazaar_agent import team_affinity as ta
 
-    def write(rows: list[Any]) -> None:
+    def write(rows: list[Any]) -> int:
         with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
-            ta.save(conn, rows)
+            return ta.save(conn, rows)
 
-    return ta.AffinityBook(write, kw["log"]) if shared else None
+    def told() -> set[str]:
+        with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
+            conn.read_only = True
+            return ta.said_teams(conn)
+
+    return ta.AffinityBook(write, kw["log"], told) if shared else None
 
 
 @agent_app.command("taker")
