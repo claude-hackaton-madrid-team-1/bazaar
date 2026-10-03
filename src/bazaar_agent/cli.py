@@ -709,7 +709,7 @@ def rules_show() -> None:
     state = (
         "[red]PAUSED[/red]" if pause.exists() or not loaded.rules.trading_enabled else "[green]trading enabled[/green]"
     )
-    console.print(f"Kill switch: {state} (touch {loaded.rules.pause_file} to stop every write)")
+    console.print(f"Kill switch: {state} (touch {loaded.rules.pause_file} to stop the writes run from this checkout)")
 
 
 @rules_app.command("check")

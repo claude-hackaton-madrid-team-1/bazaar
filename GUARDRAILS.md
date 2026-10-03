@@ -11,7 +11,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 
 ## Kill switch
 - `trading_enabled` = true — false stops every write (bids, accepts, listings, duel moves); reads continue.
-- `pause_file` = .local/PAUSE — if this file exists, every write of the processes on that machine or volume is refused (`touch .local/PAUSE` stops the agents run from that checkout; each Railway service has its own: README "Pause writes").
+- `pause_file` = .local/PAUSE — if this file exists, every write of the processes run from that checkout is refused (`touch .local/PAUSE` stops the agents started there; another checkout or worktree, and each Railway service, has its own: README "Pause writes").
 
 ## Money
 - `cash_floor` = 270 — never let a purchase take cash below this (venue bond 250 + 20 opening fee for level 2).

@@ -788,7 +788,8 @@ then redeploy `bazaar-duels`.
     `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE` (PAUSE lives on each service's own
     volume: "Pause writes" above pauses all of them). Then make it a dry run:
     `railway variable delete BAZAAR_LIVE --service bazaar-taker` (or `bazaar-maker`), check
-    `railway variable list --service bazaar-taker` no longer lists it, and that `/health` says
+    `railway variable list --service bazaar-taker --json | jq -e 'has("BAZAAR_LIVE") | not'` prints `true`
+    (never the plain `variable list`: it prints every secret), and that `/health` says
     `mode: dry` after the redeploy (if it still says `live`, `railway redeploy --service bazaar-taker
     --yes`). `rm` the PAUSE file once the dry run is confirmed.
   - **Neither withdraws our open offers.** A dry run sends nothing (no cancels) and PAUSE holds by design,

@@ -16,10 +16,10 @@ one of our private numbers (see "Public by design"). Phoenix is read-only behind
 Both agents are **LIVE since Sat 2026-10-03 01:45 Madrid**: `BAZAAR_LIVE=1` is set by hand on
 `bazaar-taker` and `bazaar-maker` (they trade from the 09:00 opening), and `GET /health` says
 `"mode": "live"`. Without that variable an agent is a dry run: it logs what it *would* do and publishes
-only its outline (no prices, see "Public by design"). To stop one: `railway variable delete BAZAAR_LIVE
---service bazaar-taker` (it redeploys in dry run), or that service's kill switch `railway ssh --service
-bazaar-taker -- touch /app/.local/PAUSE`, per service. Neither withdraws our open offers: `bazaar sell
-cancel` does (README, "Production on Railway").
+only its outline (no prices, see "Public by design"). To stop one: first its kill switch, which holds
+at once (`railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`; each service has its own),
+then `railway variable delete BAZAAR_LIVE --service bazaar-taker` (it redeploys in dry run). Neither
+withdraws our open offers: `bazaar sell cancel` does (README, "Production on Railway").
 
 ## Taker and maker: HTTP
 
