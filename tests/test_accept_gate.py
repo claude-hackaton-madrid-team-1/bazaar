@@ -189,3 +189,20 @@ def test_a_rival_offer_that_moved_in_our_favour_is_still_accepted():
     assert fewer_days.allowed
     buyer = duel_gate(duel(role="buyer", limit=90), duel(price=60, role="buyer", limit=90), DuelMove("accept", 70))
     assert buyer.allowed  # a buyer gains when the price falls
+
+
+def test_non_finite_duel_numbers_are_refused_never_raised():
+    from bazaar_agent.agents.accept_gate import duel_accept_check
+
+    assert not duel_gate(duel(), duel(price=float("inf")), DuelMove("accept", 70)).allowed
+    nan_weight = {**duel(price=70, days=2, issues=("price", "days")), "your_days_weight": float("nan")}
+    g = duel_accept_check(
+        lambda: {"duels": [nan_weight]}, duel(price=70, days=2, issues=("price", "days")), 12, DuelMove("accept", 70)
+    )
+    assert not g.allowed
+
+
+def test_a_dealer_copy_of_a_lesser_rarity_than_its_card_is_refused_like_on_a_board():
+    t = thread({"assets": [{"id": 9, "ref": "LAV-08", "rarity": "common"}]}, "LAV-08, 21 P")
+    g = dealer_gate(t, "trile", 802, 21, t["topic"], CARDS)
+    assert not g.allowed and "the copy says common; the catalog has LAV-08 as uncommon" in g.reason

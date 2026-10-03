@@ -220,3 +220,26 @@ def test_duel_run_drops_an_accept_whose_re_read_took_the_rest_of_the_tick(duel_c
     assert client.sent == [] and "the re-read took the rest of tick" in " ".join(result.output.split())
     (row,) = decision_rows(tmp_path)
     assert row["status"] == "expired" and row["inputs"]["inspector"]["verdict"] == "clean"
+
+
+def test_duel_run_re_reads_once_per_tick_and_a_failed_re_read_fails_every_accept(duel_cli):
+    """Security audit P2: a refused re-read is never retried per duel inside the tick (no 429 burst)."""
+    from bazaar_agent.sdk import BazaarError
+
+    cli, client, asked, tmp_path = duel_cli
+    two = [{**d, "duel": n} for n in (95, 96) for d in client.payload]
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) > 1:
+            raise BazaarError("rate_limited", "slow down", 429)
+        return {"duels": deepcopy(two)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 2  # the tick's read, then ONE re-read for both accepts
+    rows = decision_rows(tmp_path)
+    assert [r["status"] for r in rows] == ["rejected", "rejected"]
+    assert all("could not be read again" in r["inputs"]["inspector"]["findings"][0] for r in rows)

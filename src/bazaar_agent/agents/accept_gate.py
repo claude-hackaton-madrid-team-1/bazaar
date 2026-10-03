@@ -12,6 +12,7 @@ words say. Pure functions, no network: the callers pass what they read. GUARDRAI
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -136,7 +137,7 @@ def duel_gate(decided: Mapping[str, Any], fresh: Mapping[str, Any] | None, move:
     rival = offer if isinstance(offer, dict) else {}
     offer_id = rival.get("id") if isinstance(rival.get("id"), int) else None
     price = rival.get("price")
-    if not isinstance(price, int | float) or isinstance(price, bool):
+    if not isinstance(price, int | float) or isinstance(price, bool) or not math.isfinite(price):
         return _block("duel", offer_id, "the rival has no standing priced offer")
     limit, role = fresh.get("your_limit"), fresh.get("role")
     worth = effective_price(dict(fresh), int(price))
@@ -172,4 +173,7 @@ def duel_accept_check(read_duels: Callable[[], Any], decided: Mapping[str, Any],
         return _block("duel", None, f"the duel could not be read again ({type(e).__name__})")
     duels = payload.get("duels") if isinstance(payload, Mapping) else None
     fresh = next((d for d in duels or [] if isinstance(d, dict) and duel_id(d) == did), None)
-    return duel_gate(decided, fresh, move)
+    try:
+        return duel_gate(decided, fresh, move)
+    except (ArithmeticError, ValueError, TypeError) as e:  # a non-finite days weight, a malformed shape
+        return _block("duel", None, f"the duel could not be judged ({type(e).__name__})")

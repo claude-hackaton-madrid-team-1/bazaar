@@ -406,3 +406,27 @@ def test_the_gate_refuses_a_dealer_trick_even_if_the_desks_own_check_is_bypassed
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
     assert row["status"] == "rejected" and row["inputs"]["inspector"]["verdict"] in ("block", "flag")
     assert any("inspector" in line and "offer 802" in line for line in lines)
+
+
+def test_a_malformed_dealer_offer_is_refused_and_never_costs_the_desk_its_tick(tmp_path, monkeypatch):
+    """Security audit P2: the gate fails closed on a payload it cannot read; the other threads still talk."""
+    from bazaar_agent.agents import taker as taker_module
+
+    def careless(conv, thread, max_ticks):
+        if not thread.get("standing_offers"):
+            return plan_conversation(conv, thread, max_ticks)
+        offer = thread["standing_offers"][0]
+        return DeskMove(conv, Move("accept", 21, offer["id"], "careless desk"), 21, True, offer_id=offer["id"])
+
+    monkeypatch.setattr(taker_module, "plan_conversation", careless)
+    broken = {"id": 802, "maker": "abuela", "status": "open", "final": True, "give": ["not", "a", "dict"], "want": 21}
+    team = FakeTeam()
+    t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [broken]}
+    t.on_tick(at(team, TICK + 1))
+    assert ("accept", 802) not in team.sent
+    assert any("unreadable offer" in line for line in lines)
+    assert any(
+        f"tick {TICK + 1} taker:" in line and "accept candidate" in line for line in lines
+    )  # tick ran to the end

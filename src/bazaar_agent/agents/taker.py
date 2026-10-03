@@ -473,9 +473,18 @@ class Taker:
             self.log(f"tick {tick} taker: offer inspection failed ({type(e).__name__}); desk continues")
 
     def _gate(self, run: _TickRun, p: AcceptProposal) -> Gate | None:
-        """The accept gate on the exact offer this accept binds (None: `inspect_accepts` is off)."""
+        """The accept gate on the exact offer this accept binds (None: `inspect_accepts` is off). A payload the
+        gate cannot read refuses the accept (fail closed) and never costs the desk its tick."""
         if not self.rules.inspect_accepts:
             return None
+        try:
+            return self._gate_unchecked(run, p)
+        except Exception as e:  # a malformed counterparty payload: no accept, the desk goes on
+            return Gate(
+                "dealer" if p.desk else "board", p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",)
+            )
+
+    def _gate_unchecked(self, run: _TickRun, p: AcceptProposal) -> Gate:
         if p.desk is not None:
             topic = p.desk.conv.topic
             return dealer_gate(p.thread or {}, p.source, p.offer_id, p.price, topic, self._card_index(run))

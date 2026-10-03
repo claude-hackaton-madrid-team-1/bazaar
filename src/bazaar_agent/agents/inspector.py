@@ -108,12 +108,17 @@ NEGATION_BEFORE = (
 NEGATION_AFTER = (
     r"^[^.!?]*(?:agotad|sold out|out of stock|no (?:me )?(?:queda|tengo|hay)|is gone|are gone|se acab|se fue|vendid)"
 )
+# A negator right before the mention: "no rare card left", "I have no X for you", "ni un cromo raro", "ningún X".
+# Only right before it: "No lo dudes: X" is still a claim of X.
+NEGATION_RIGHT_BEFORE = r"(?:\bno|\bni(?:\s+una?)?|\bning[uú]n[oa]?|\bnot\s+an?|\bnone\s+of\s+the)\s+$"
 
 
 def _negated_at(low: str, start: int, end: int) -> bool:
-    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X'."""
+    """The words around [start, end) deny it: 'no me queda X', 'X is gone', 'en vez de X', 'no X left'.
+    The patterns run on short windows only: NEGATION_BEFORE is quadratic on a whole text (S1 audit)."""
     before, after = low[max(0, start - 30) : start], low[end : end + 25]
-    return bool(re.search(NEGATION_BEFORE, before) or re.search(NEGATION_AFTER, after))
+    negators = (NEGATION_BEFORE, NEGATION_RIGHT_BEFORE)
+    return any(re.search(p, before) for p in negators) or bool(re.search(NEGATION_AFTER, after))
 
 
 CARD_NOUNS = r"(?:card|cromo|carta|one|piece|pieza)"
@@ -231,6 +236,7 @@ def inspect_offer(
         findings.append("it gives cash on a buy")
     if want.get("assets") or want.get("types") or want.get("cards"):
         findings.append(f"it also wants our {_bound_items(want)}")
+    findings += _rarity_mismatches(give, cards)
     other = _other_item(bound, _bound_kinds(give), spec, cards)
     if other:
         findings.append(other)
@@ -249,6 +255,16 @@ def inspect_offer(
         findings.append(claim)
     certain = lesser and claim is not None and rank is not None
     return Inspection(dealer, oid, message_id, asked, tuple(bound), tuple(findings), "flag" if certain else "block")
+
+
+def _rarity_mismatches(give: Mapping[str, Any], cards: CardIndex) -> list[str]:
+    """A copy whose own rarity is not its card's catalog rarity (the board gate refuses the same)."""
+    out = []
+    for a in give.get("assets") or []:
+        info = cards.by_ref.get(str(a.get("ref"))) if isinstance(a, dict) else None
+        if info is not None and a.get("rarity") and a["rarity"] != info.rarity:
+            out.append(f"the copy says {a['rarity']}; the catalog has {info.ref} as {info.rarity}")
+    return out
 
 
 def _other_item(bound: list[str], kinds: list[str], spec: Mapping[str, Any], cards: CardIndex) -> str | None:

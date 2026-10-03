@@ -278,3 +278,22 @@ def test_a_refused_flag_is_never_re_posted_and_a_server_error_is_retried():
         for _ in range(2):
             flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=send, log=lambda _: None)
         assert len(calls) == tries  # 4xx: refused for good; no response: it may have landed; 5xx: try again
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Sorry, no rare card left today. Take this one for 25.",
+        "I have no rare card for you, hijo. This one, 25 P.",
+        "Ay, ni un cromo raro me queda. Este, 25.",
+        "Ningún cromo raro hoy, cariño. Te doy este por 25.",
+        "No Teatro Valle-Inclán left, sorry. 25 P for this one.",
+    ],
+)
+def test_honest_out_of_stock_words_block_but_never_flag(text):
+    """Security audit #5: a negator right before the mention denies it; a flag here would cost points."""
+    o = offer({"types": ["card:LAV-03"]}, {"cash": 25})
+    topic = (
+        {"buy": {"rarity": "rare", "set": "LAV"}} if "raro" in text or "rare" in text else {"buy": {"card": "LAV-08"}}
+    )
+    assert inspect_offer(o, topic, text, CARDS, message_id=12).verdict == "block"
