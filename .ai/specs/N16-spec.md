@@ -35,12 +35,16 @@ becomes a `tactic` lesson that can switch that tactic off for that counterparty 
    The counterparty's text is never echoed.
 2. `agents/bluff.py` — the chooser and its learning (`TacticBook`): per counterparty (dealer id, duel rival
    alias, team), default ON, picks the eligible tactic with the best UCB1 score over its tactic lessons
-   (deterministic: ties broken by a seeded hash of counterparty, conversation, step). Rewards per message:
-   counterparty price moved toward us +1, held 0, moved away −0.5; deal +1 (+0.5 within 3 of our messages:
-   rounds saved); counterparty walked −1; cooloff, strike or a flag on our message −10 and that tactic is off
-   for that counterparty for the rest of the game day (`clock.round`); two such penalties turn every bluff off
-   for that counterparty for the day; no gain (≥ 3 uses, mean ≤ 0) turns that tactic off for the day.
-3. Kill switches: `BAZAAR_BLUFF=0` (env, declared `preserve()` on the services that write words) and
+   (deterministic: ties broken by a seeded hash of counterparty, conversation, step), with a `plain` control
+   arm (today's words) as the baseline. Rewards per message: counterparty price moved toward us +1, held 0
+   (a new offer at the same price), moved away −0.5, no answer before our next message: nothing; deal +1
+   (+0.5 within 3 of our messages: rounds saved); counterparty walked −1; cooloff, strike or a flag on our
+   message −10 (one lesson per message) and that tactic is off for that counterparty for the rest of the game
+   day (`clock.round`); two such penalties turn every tactic off for that counterparty for the day; no gain
+   (≥ 3 uses today, mean ≤ 0) turns that tactic off for the day. The taker reads strikes and flags from its
+   feed; `duel run` and `dealer buy` read the keyless feed after their sends.
+3. Kill switches: `BAZAAR_BLUFF=0` (env, fail closed: only unset/1/true/on/yes leave tactics on; declared
+   `preserve()` on the services that write words) and
    `bluff_enabled` in GUARDRAILS.md (validated by `uv run bazaar rules`). Either off → every message uses
    today's template words.
 4. Learning in the N3 store: each tactic outcome is a `Learning(kind="tactic", source="outcome", team=us)`

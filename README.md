@@ -592,18 +592,23 @@ offer. It never writes an accept, so an accept is never delayed by a bluff.
   the counterparty's own structured price (`mirror`, `calibrated_question`), or one invented from our
   price. It is never our limit, max or value. The counterparty's words are never parsed or quoted.
 - **Chooser** (`agents/bluff.py`): one deterministic bandit (UCB1) per counterparty: each dealer, duel
-  rival and team. Each tactic is tried once, then the one with the best learned value wins. Ties are
-  broken by a seeded hash, so the simulator and the tests are reproducible.
+  rival and team. A `plain` arm (today's words, no tactic) is the control every tactic is measured
+  against. Each arm is tried once, then the one with the best learned value wins. Ties are broken by a
+  seeded hash, so the simulator and the tests are reproducible.
 - **Learning:** every scored message becomes a `tactic` row in `learnings` (`source = outcome`). The
   scores: their next price moved toward us +1, held 0, moved away −0.5, deal +1 (+0.5 within 3
-  messages), they walked −1. A cooloff, a strike or a flag on our message scores −10 and turns that
-  tactic off for that counterparty for the rest of the day. Two penalties in a day mute every tactic to
-  it. Three tries with no gain turn a tactic off for the day. N3's recall never returns `tactic` rows,
-  so they never reach Jev or the words context.
+  messages), they walked −1. A message still unanswered when we send the next one scores nothing. A
+  cooloff, a strike or a flag on our message scores −10 and turns that tactic off for that counterparty
+  for the rest of the day. Two penalties in a day mute every tactic to it. Three tries with no gain turn
+  a tactic off for the day. The taker reads strikes and flags from its feed. `duel run` and
+  `dealer buy` read the keyless feed after their sends. A flag can only be matched when the game's
+  answer to our send carries our message id; that is unverified on the real game. N3's recall never
+  returns `tactic` rows, so they never reach Jev or the words context.
 - **Private:** the tactic id and why it was picked go to the decision row under input keys that
   `/state`, `/events` and `/health` never list.
 - **Kill switches:** `BAZAAR_BLUFF=0` on a service turns its tactics off without a code deploy (the
-  variable is declared `preserve()` in `.railway/railway.py`). `bluff_enabled` = false in GUARDRAILS.md
+  variable is declared `preserve()` in `.railway/railway.py`). Only unset, 1, true, on or yes leave them
+  on; any other value turns them off. `bluff_enabled` = false in GUARDRAILS.md
   turns them off everywhere at the next deploy. Either one brings back today's words.
 
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
@@ -1045,14 +1050,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
+- [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
 - [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
 - [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
 - [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
 - [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
 - [2026-10-03] gotcha — a dealer thread's topic is chosen by the team that opened it (N3 security review)
 - [2026-10-03] finding — the hybrid recall finds the right lesson on Friday's real outcomes (N3)
-- [2026-10-03] gotcha — jsonb rejects NUL and lone surrogates: one bad string fails the whole batch
-- [2026-10-03] gotcha — `create index if not exists` takes a ShareLock even when the index exists
 
 <!-- BAZAAR:STATUS:END -->
 

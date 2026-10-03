@@ -131,12 +131,22 @@ def test_the_structured_price_is_in_every_message_and_other_numbers_are_theirs_o
         assert all(n == quoted or 1 <= n <= 50 for n in found), (tid, text)
 
 
-def test_an_invented_number_never_equals_a_private_number():
+def test_a_tactic_whose_invented_number_would_equal_a_private_number_is_skipped_not_shifted():
     p = 50
     plain = render("outside_option", p, side="buy", language="es", kind="dealer", counterparty="chato")
     (alt,) = numbers_in(plain) - {p}
-    moved = render("outside_option", p, side="buy", language="es", kind="dealer", counterparty="chato", avoid={alt})
-    assert moved is not None and alt not in numbers_in(moved) and p in numbers_in(moved)
+    assert (
+        render("outside_option", p, side="buy", language="es", kind="dealer", counterparty="chato", avoid={alt}) is None
+    )
+    assert render("outside_option", p, side="buy", language="es", kind="dealer", counterparty="chato", avoid={alt + 1})
+
+
+def test_abuela_is_abuela_whatever_the_case_of_her_id():
+    for cp in ("Abuela", " ABUELA "):
+        assert set(eligible("dealer", cp, "buy")) == ABUELA_ALLOWED
+        assert render("budget_cap", 9, side="buy", language="es", kind="dealer", counterparty=cp) is None
+        text = render("kind_gratitude", 9, side="buy", language="es", kind="dealer", counterparty=cp)
+        assert text is not None and "Carmen" in text
 
 
 def test_a_tactic_that_cannot_invent_a_plausible_number_does_not_render():

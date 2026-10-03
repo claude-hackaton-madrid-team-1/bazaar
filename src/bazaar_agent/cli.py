@@ -372,11 +372,12 @@ def dealer_buy(
         tm.event("ledger", {"kind": "spend", "tick": tick, "price": price, "item": item})
 
     advisor = _jev_advisor(item, settings, rules.jev_timeout_s) if jev and rules.jev_can_accept_early else None
-    us = str(client.me().get("id") or "") or None
+    us = _our_team_id(client)
     shared = ledger.where.startswith("postgres")
     bluff = _tactic_book(
         rules, _learning_store("bazaar-dealer-buy", console.print) if shared else None, us, console.print
     )
+    public = public_client(settings)  # keyless: strikes and flags on our tactics, after each send
     with traces.trace_negotiation(dealer, topic, plan) as observer:
         out = negotiate(
             client,
@@ -391,6 +392,7 @@ def dealer_buy(
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             bluff=bluff,
+            events=public.feed_window,
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
@@ -500,6 +502,7 @@ def duel_run(
     say = lambda m: console.print(escape(m))  # noqa: E731
     book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say)
     chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    public = public_client(settings)  # keyless feed reads: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -664,6 +667,11 @@ def duel_run(
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if store.read_finished(duels):
             save_finished(c.tick)
+        if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
+            try:
+                book.events(public.feed_window(200), us, c.tick)
+            except Exception as e:  # the feed is advisory here: the duels go on without it
+                console.print(f"  bluff: feed unavailable ({type(e).__name__})")
         book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
 
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"

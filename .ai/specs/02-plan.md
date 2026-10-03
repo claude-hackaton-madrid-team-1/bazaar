@@ -125,6 +125,28 @@ Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, ev
 
 ## Per-task steps (Phase 0 in detail; later tasks get theirs at `/plan` time)
 
+### N16 — Strategic bluffing (steps; spec: [N16-spec.md](./N16-spec.md))
+Files: `src/bazaar_agent/agents/{tactics,bluff}.py`, `learn/model.py`, `guardrails.py`, `GUARDRAILS.md`,
+`agents/{taker,dealer}.py`, `cli.py`, `.railway/railway.py`, `tests/test_{tactics,bluff}.py`
+- Step 1 — Tactic bank: ids, es/en templates without digits, invented numbers from the structured price only,
+  collision-free with private numbers, Abuela kindness only. · **Acceptance:** tests: no digit in a template, one
+  language per message, no private number or counterparty text in any rendered message.
+- Step 2 — Chooser + learning: `TacticBook` (UCB1 per counterparty, seeded ties, rewards, cooloff/flag/strike
+  penalties, no-gain and day-scoped disables), lessons as `Learning(kind="tactic")` through the N3 store.
+  · **Acceptance:** tests: deterministic pick, best learned tactic wins, a cooloff disables for the day,
+  lessons round-trip through `LearningStore` memory.
+- Step 3 — Kill switches: `bluff_enabled` in GUARDRAILS.md + `Guardrails`, `BAZAAR_BLUFF` env,
+  `preserve()` in IaC. · **Acceptance:** `uv run bazaar rules` output; IaC allow-list test.
+- Step 4 — Wiring: taker dealer bids, `dealer buy`, `duel run --play`; tactic id + counterparty in the decision
+  row (private keys); outcomes observed each tick; flush after the sends. · **Acceptance:** property test
+  (structured move identical with and without a tactic), accept-beats-bluff test, `/state` never shows a tactic.
+- Step 5 — Simulator run with tactics on (`BAZAAR_SIM=local`). · **Acceptance:** transcript lines pasted in the PR.
+- Step 6 — Scope addition (coordinator): vendor `negotiation` + `influence-psychology` (wondelai/skills, MIT)
+  under `.ai/skills/`, add the psychology tactics (labeling, calibrated questions, accusation audit, no-oriented
+  questions, reciprocity, safe mirroring, scarcity, social proof), Abuela's allow-list; Ackerman + precise numbers
+  as an N14 proposal in `98-nice-to-haves.md`. · **Acceptance:** byte-identical to upstream (blob SHAs); tests:
+  both languages, Abuela allow-list, mirroring echoes only the safe token, the audit opens only.
+
 ### #21 — Feed capture ⟸ start here (no key needed)
 Files: `src/bazaar_agent/collector.py`, `tests/test_collector.py`
 - Step 1 — Poll `/api/feed?limit=1000` once per tick (from `/api/clock.next_tick_in`), append new
@@ -165,28 +187,6 @@ Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
-
-### N16 — Strategic bluffing (steps; spec: [N16-spec.md](./N16-spec.md))
-Files: `src/bazaar_agent/agents/{tactics,bluff}.py`, `learn/model.py`, `guardrails.py`, `GUARDRAILS.md`,
-`agents/{taker,dealer}.py`, `cli.py`, `.railway/railway.py`, `tests/test_{tactics,bluff}.py`
-- Step 1 — Tactic bank: ids, es/en templates without digits, invented numbers from the structured price only,
-  collision-free with private numbers, Abuela kindness only. · **Acceptance:** tests: no digit in a template, one
-  language per message, no private number or counterparty text in any rendered message.
-- Step 2 — Chooser + learning: `TacticBook` (UCB1 per counterparty, seeded ties, rewards, cooloff/flag/strike
-  penalties, no-gain and day-scoped disables), lessons as `Learning(kind="tactic")` through the N3 store.
-  · **Acceptance:** tests: deterministic pick, best learned tactic wins, a cooloff disables for the day,
-  lessons round-trip through `LearningStore` memory.
-- Step 3 — Kill switches: `bluff_enabled` in GUARDRAILS.md + `Guardrails`, `BAZAAR_BLUFF` env,
-  `preserve()` in IaC. · **Acceptance:** `uv run bazaar rules` output; IaC allow-list test.
-- Step 4 — Wiring: taker dealer bids, `dealer buy`, `duel run --play`; tactic id + counterparty in the decision
-  row (private keys); outcomes observed each tick; flush after the sends. · **Acceptance:** property test
-  (structured move identical with and without a tactic), accept-beats-bluff test, `/state` never shows a tactic.
-- Step 5 — Simulator run with tactics on (`BAZAAR_SIM=local`). · **Acceptance:** transcript lines pasted in the PR.
-- Step 6 — Scope addition (coordinator): vendor `negotiation` + `influence-psychology` (wondelai/skills, MIT)
-  under `.ai/skills/`, add the psychology tactics (labeling, calibrated questions, accusation audit, no-oriented
-  questions, reciprocity, safe mirroring, scarcity, social proof), Abuela's allow-list; Ackerman + precise numbers
-  as an N14 proposal in `98-nice-to-haves.md`. · **Acceptance:** byte-identical to upstream (blob SHAs); tests:
-  both languages, Abuela allow-list, mirroring echoes only the safe token, the audit opens only.
 
 ---
 

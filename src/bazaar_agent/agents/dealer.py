@@ -246,6 +246,19 @@ class _SafeObserver(Observer):
         self._call("finished", outcome)
 
 
+FEED_WINDOW = 200  # feed events read after a send to see a strike or a flag on our last tactic
+
+
+def _bluff_events(bluff: TacticBook, events: Callable[[int], list[dict[str, Any]]] | None, tick: int, log: Any) -> None:
+    """After the send: a strike or a flag on one of our tactic messages switches that tactic off. Never raises."""
+    if events is None or not bluff.wants_events():
+        return
+    try:
+        bluff.events(events(FEED_WINDOW), bluff.us, tick)
+    except Exception as e:  # the feed is advisory here: the negotiation goes on without it
+        log(f"tick {tick}: feed for the bluff book unavailable ({type(e).__name__})")
+
+
 def negotiate(
     client: Any,
     dealer: str,
@@ -261,12 +274,14 @@ def negotiate(
     observer: Observer | None = None,
     words_fn: WordsFn = template_words,
     bluff: TacticBook | None = None,
+    events: Callable[[int], list[dict[str, Any]]] | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
     always the structured `price` of the message, set here. `bluff` (N16) picks a tactic for a bid's
-    words only, after `decide()` and the guard set the move; it is scored on her next move.
+    words only, after `decide()` and the guard set the move; it is scored on her next move. `events`
+    (the keyless public feed window) is read after the send, so a strike or a flag on a tactic counts.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -369,6 +384,7 @@ def negotiate(
             obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
         if bluff is not None:
+            _bluff_events(bluff, events, clock.tick, log)
             bluff.flush()  # after the send: the lessons go to the store
 
     tick = obs.wrap_tick(on_tick)

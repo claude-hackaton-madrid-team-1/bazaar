@@ -13,7 +13,7 @@ from copy import deepcopy
 import pytest
 from typer.testing import CliRunner
 
-from bazaar_agent.agents.bluff import ENV, TacticBook
+from bazaar_agent.agents.bluff import ENV, PLAIN, Counterparty, TacticBook
 from bazaar_agent.agents.dealer import BidPlan, negotiate
 from bazaar_agent.agents.duelist import DUEL_WORDS, DuelMove, duel_choice
 from bazaar_agent.agents.status import StatusHub, public_decision
@@ -24,6 +24,7 @@ from tests.test_dealer import FakeDealerClient
 from tests.test_duel_jev import LIVE
 
 TACTIC_IDS = tuple(t.id for t in TACTICS)
+CHATO_CP = Counterparty.dealer("chato")
 
 
 def on() -> TacticBook:
@@ -83,7 +84,7 @@ def test_the_taker_sends_the_same_moves_with_and_without_tactics(tmp_path):
     for (_, _, price), text in zip([s for s in bluffed.sent if s[0] == "say"], bluffed.texts, strict=True):
         assert price in numbers_in(text)  # ...and every one carries its structured price
     bids = [r for r in rows(tmp_path / "bluff") if r.get("kind") == "dealer_bid"]
-    assert bids and all(r["inputs"]["tactic"] in ABUELA_ALLOWED for r in bids)  # abuela: her allow-list only
+    assert bids and all(r["inputs"]["tactic"] in ABUELA_ALLOWED | {PLAIN} for r in bids)  # her allow-list only
     assert all(r["inputs"]["tactic_counterparty"] == "dealer:abuela" for r in bids)
 
 
@@ -157,11 +158,26 @@ def test_negotiate_structured_moves_are_identical_with_and_without_a_tactic_prop
             assert price == plan.max_price or plan.max_price not in numbers_in(text), (case, plan, text)
 
 
-def test_negotiate_gives_abuela_kindness_and_chato_a_bluff():
-    _, _ = play("abuela", [30, 29, 28], BidPlan(6, 1, 10), book := on())
-    assert book.lessons and all(lr.detail["tactic"] in ABUELA_ALLOWED for lr in book.lessons.values())
-    _, _ = play("chato", [30, 29, 28], BidPlan(6, 1, 10), book := on())
-    assert book.lessons and not any(BY_ID[lr.detail["tactic"]].kindness for lr in book.lessons.values())
+def picked(dealer: str, asks: list[int]) -> list[str]:
+    """The tactic `negotiate()` picked for each bid (its `words tactic` log lines)."""
+    lines: list[str] = []
+    negotiate(
+        TextDealer(asks),
+        dealer,
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 12),
+        log=lines.append,
+        sleep=lambda _: None,
+        bluff=on(),
+    )
+    return [line.split("words tactic ")[1].split(" ")[0] for line in lines if "words tactic " in line]
+
+
+def test_negotiate_gives_abuela_her_allow_list_and_chato_bluffs():
+    to_abuela = picked("abuela", [30, 29, 28, 27, 26, 25])
+    assert to_abuela and set(to_abuela) <= ABUELA_ALLOWED | {PLAIN}
+    to_chato = [t for t in picked("chato", [30, 29, 28, 27, 26, 25]) if t != PLAIN]
+    assert to_chato and not any(BY_ID[t].kindness for t in to_chato)
 
 
 # ---------------------------------------------------------------- duels
@@ -191,12 +207,24 @@ def duel_cli(monkeypatch, tmp_path):
     class TextDuels(DuelClient):
         def duel_say(self, did, text, price=None, days=None):
             self.sent.append(("say", did, price, days, text))
+            return {"ok": True, "message": 777}  # our message id, as the simulator answers
+
+        def duels(self, done=False):  # the runner's first tick also reads `?done=true`
+            return {"duels": []} if done else super().duels()
+
+    class Feed:  # the keyless public feed, canned: no network in unit tests
+        events: list[dict] = []
+
+        def feed_window(self, limit):
+            return deepcopy(Feed.events)
 
     client = TextDuels([{**LIVE, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}])
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    monkeypatch.setattr(cli, "public_client", lambda settings: Feed())
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
+    client.feed = Feed
     return cli, client, tmp_path
 
 
@@ -235,3 +263,29 @@ def test_duel_run_accepts_a_good_rival_offer_without_any_tactic(duel_cli, monkey
     assert client.sent == [("accept", 95)]  # inside our limit in the endgame: accepted, no words at all
     (row,) = duel_rows(tmp_path)
     assert row["kind"] == "duel_accept" and "tactic" not in row["inputs"]
+
+
+def test_duel_run_reads_a_flag_on_our_tactic_message_after_its_sends(duel_cli, monkeypatch):
+    cli, client, tmp_path = duel_cli
+    monkeypatch.setenv(ENV, "1")
+    client.feed.events = [{"id": 31, "type": "flag.raised", "tick": 134, "payload": {"team": "t05", "message": 777}}]
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "bluff: a team flagged our message 777" in " ".join(result.output.split())
+
+
+def test_dealer_buy_reads_a_strike_after_its_send_and_turns_that_tactic_off():
+    book = on()
+    strike = {"id": 5, "type": "persona.strike", "tick": 100, "payload": {"persona": "chato", "team": "t01"}}
+    negotiate(
+        TextDealer([30, 29, 28]),
+        "chato",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 12),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        bluff=book,
+        events=lambda limit: [strike],
+    )
+    (penalty,) = [lr for lr in book.lessons.values() if lr.detail["result"] == "strike"]
+    assert book.arms(CHATO_CP)[penalty.detail["tactic"]].off_today() is not None

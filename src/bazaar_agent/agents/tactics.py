@@ -5,8 +5,9 @@ the text: the structured price (and days, and every accept) is decided and guard
 any tactic is rendered, and nothing here can see or change it. Every number a tactic prints is the message's
 structured price (`{p}`), the counterparty's OWN structured price (`{their}`, public to both sides: the one
 safe token we mirror), or a number invented from our price (`{alt}`). No template holds a digit, so our limit,
-`your_value` or a set multiplier cannot reach the text, and an invented number that happens to equal one of
-them is moved (`avoid`). The counterparty's words are never parsed or quoted.
+`your_value` or a set multiplier cannot reach the text, and a tactic whose invented number would equal one of
+them is not used for that message (`avoid`): moving the number by one would hint where the private one sits.
+The counterparty's words are never parsed or quoted.
 
 Three families. Kindness (Abuela: "Abuela likes kindness"). Psychology, from the vendored `negotiation`
 (Voss) and `influence-psychology` (Cialdini) skills in `.ai/skills/`: labeling, calibrated questions, an
@@ -36,18 +37,16 @@ ALT_DEALER = {"chato": "Abuela Carmen"}  # where a walk threat to this dealer sa
 DEFAULT_ALT_DEALER = "Chato"
 ELSEWHERE_DEAL = {"es": "a otro trato", "en": "to another deal"}  # a duel or team: there are always other deals
 ELSEWHERE_DEALER = {"es": "con {other}", "en": "to {other}"}
-ALT_TRIES = 4  # invented numbers tried below the price before a tactic gives up
 _NUMBER = re.compile(r"\d+")
 
 
-def _below(share: float) -> Callable[[int], Iterable[int]]:
-    """Invented numbers a little below the structured price: `share` of it, then one lower each try."""
+def _below(share: float) -> Callable[[int], int]:
+    """An invented number a little below the structured price: `share` of it lower, at least one."""
 
-    def candidates(price: int) -> Iterable[int]:
-        delta = max(1, round(price * share))
-        return (price - d for d in range(delta, delta + ALT_TRIES))
+    def invent(price: int) -> int:
+        return price - max(1, round(price * share))
 
-    return candidates
+    return invent
 
 
 @dataclass(frozen=True)
@@ -55,7 +54,7 @@ class Tactic:
     id: str
     family: Family
     lines: Mapping[str, Mapping[str, str]]  # side -> language -> template
-    invent: Mapping[str, Callable[[int], Iterable[int]]]  # side -> `{alt}` candidates from our price
+    invent: Mapping[str, Callable[[int], int]]  # side -> how `{alt}` is invented from our price
     abuela: bool = False  # on Abuela's allow-list (kindness, labeling, calibrated questions)
     others: bool = True  # for every other counterparty (the kindness lines name Carmen: hers only)
     first_only: bool = False  # an accusation audit opens a conversation, never later
@@ -76,13 +75,13 @@ def _t(
     buy: tuple[str, str] | None,
     sell: tuple[str, str] | None,
     *,
-    invent: Mapping[str, Callable[[int], Iterable[int]]] | None = None,
+    invent: Mapping[str, Callable[[int], int]] | None = None,
     abuela: bool = False,
     others: bool = True,
     first_only: bool = False,
     quotes_their: bool = False,
 ) -> Tactic:
-    """A tactic from its (es, en) lines per side; `invent` maps a side to its `{alt}` candidates."""
+    """A tactic from its (es, en) lines per side; `invent` maps a side to how its `{alt}` is invented."""
     lines: dict[str, dict[str, str]] = {}
     for side, pair in (("buy", buy), ("sell", sell)):
         if pair is not None:
@@ -152,8 +151,8 @@ TACTICS: tuple[Tactic, ...] = (
         "calibrated_question",
         "psychology",
         (
-            "¿Cómo voy a pagar {their} por un solo cromo, {n}? Le ofrezco {p}.",
-            "How am I supposed to pay {their} for one card, {n}? I can offer {p}.",
+            "¿Cómo voy a pagar {their}, {n}? Le ofrezco {p}.",
+            "How am I supposed to pay {their}, {n}? I can offer {p}.",
         ),
         (
             "¿Cómo voy a dejarlo en {their}, {n}? Mi precio es {p}.",
@@ -299,7 +298,7 @@ def language_of(language: str) -> str:
 
 
 def abuela_only(kind: str, counterparty: str) -> bool:
-    return kind == "dealer" and counterparty in ABUELA
+    return kind == "dealer" and counterparty.strip().lower() in ABUELA
 
 
 def allowed(tactic: Tactic, kind: str, counterparty: str) -> bool:
@@ -314,16 +313,15 @@ def eligible(kind: str, counterparty: str, side: str) -> tuple[str, ...]:
 def _elsewhere(kind: str, counterparty: str, language: str) -> str:
     if kind != "dealer":
         return ELSEWHERE_DEAL[language]
-    other = ALT_DEALER.get(counterparty, DEFAULT_ALT_DEALER)
+    other = ALT_DEALER.get(counterparty.strip().lower(), DEFAULT_ALT_DEALER)
     return ELSEWHERE_DEALER[language].format(other=other)
 
 
 def _invented(tactic: Tactic, side: str, price: int, avoid: frozenset[int]) -> int | None:
-    """The first invented number below the price that is at least 1 and not a private number."""
-    for alt in tactic.invent[side](price):
-        if 1 <= alt < price and alt not in avoid:
-            return alt
-    return None
+    """The invented number below the price; None when it is below 1 or equals a private number (the tactic is
+    then not used for this message, never shifted: a shifted number would point at the private one)."""
+    alt = tactic.invent[side](price)
+    return alt if 1 <= alt < price and alt not in avoid else None
 
 
 def _their_fits(side: str, price: int, their: int | None) -> bool:
@@ -358,7 +356,7 @@ def render(
     lang = language_of(language)
     fields = {
         "p": str(price),
-        "n": NAMES.get(counterparty, NEUTRAL_NAME[lang]) if kind == "dealer" else NEUTRAL_NAME[lang],
+        "n": NAMES.get(counterparty.strip().lower(), NEUTRAL_NAME[lang]) if kind == "dealer" else NEUTRAL_NAME[lang],
         "place": PLACE["dealer" if kind == "dealer" else "other"][lang],
         "elsewhere": _elsewhere(kind, counterparty, lang),
         "their": str(their) if tactic.quotes_their else "",

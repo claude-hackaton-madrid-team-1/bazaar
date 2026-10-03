@@ -11,6 +11,7 @@ from bazaar_agent.agents.bluff import (
     MUTE_AFTER,
     NO_GAIN_TRIES,
     PENALTY,
+    PLAIN,
     Choice,
     Counterparty,
     TacticBook,
@@ -63,7 +64,7 @@ def test_the_choice_is_deterministic_for_a_seed_and_history():
 
 def test_untried_tactics_rotate_then_the_best_learned_one_wins():
     b = book(seed=3)
-    fitting = [t for t in eligible("dealer", "chato", "buy") if t != "accusation_audit"]  # every step after the 1st
+    fitting = [t for t in eligible("dealer", "chato", "buy") if t != "accusation_audit"] + [PLAIN]  # after the 1st
     used = [play(b, CHATO, "thread:1", 1 + i, 33, 33, 100 + 2 * i).tactic for i in range(len(fitting))]
     assert sorted(used) == sorted(fitting)  # each one tried once before any is repeated
     winner = used[1]
@@ -91,7 +92,7 @@ def test_abuela_never_gets_a_non_kindness_tactic_whatever_the_history():
     b = book(seed=1)
     for step in range(60):
         c = b.choose(ABUELA, rnd.choice(("buy", "sell")), "thread:5", step, rnd.randint(1, 60))
-        assert c.tactic is None or c.tactic in ABUELA_ALLOWED, c
+        assert c.tactic is None or c.tactic in ABUELA_ALLOWED | {PLAIN}, c
         b.sent(c, their_price=rnd.randint(1, 60), their_offer=step, tick=step)
         b.observe("thread:5", their_price=rnd.randint(1, 60), their_offer=step + 1000, tick=step)
 
@@ -107,7 +108,7 @@ def test_a_cooloff_disables_that_tactic_for_that_dealer_for_the_rest_of_the_day(
     for n in range(20):
         assert b.choose(CHATO, "buy", f"thread:{n + 2}", 1, 30, their_price=33).tactic != c.tactic
     other = Counterparty.dealer("mercader")  # only for chato: another dealer still gets it, tried last
-    fitting = [t for t in eligible("dealer", "mercader", "buy") if t != "accusation_audit"]
+    fitting = [t for t in eligible("dealer", "mercader", "buy") if t != "accusation_audit"] + [PLAIN]
     tried = [play(b, other, "thread:40", 1 + i, 33, 33, 300 + 2 * i).tactic for i in range(len(fitting))]
     assert tried[-1] == c.tactic and sorted(tried) == sorted(fitting)
     b.begin_tick(500, day=3)  # a new game day: the tactic may be tried again (its mean stays low)
@@ -189,13 +190,14 @@ def test_rewards_toward_held_away_deal_and_walked():
     assert [lr.detail["reward"] for lr in walked.lessons.values()] == [-1.0]
 
 
-def test_an_unanswered_message_is_scored_held_when_we_send_the_next_one():
+def test_an_unanswered_message_teaches_nothing_and_a_same_price_answer_is_a_hold():
     b = book()
-    first = b.choose(CHATO, "buy", "thread:1", 0, 30)
+    first = b.choose(RIVAL, "buy", "duel:1", 0, 30)
     b.sent(first, their_price=33, their_offer=1, tick=100)
-    b.observe("thread:1", their_price=33, their_offer=1, tick=101)  # same offer: no answer yet
-    assert b.lessons == {}
-    b.sent(b.choose(CHATO, "buy", "thread:1", 1, 31), their_price=33, their_offer=1, tick=102)
+    b.observe("duel:1", their_price=33, their_offer=1, tick=101)  # same offer: no answer yet
+    b.sent(b.choose(RIVAL, "buy", "duel:1", 1, 31), their_price=33, their_offer=1, tick=102)
+    assert b.lessons == {}  # a rival slower than one tick is not a hold
+    b.observe("duel:1", their_price=33, their_offer=2, tick=103)  # a new offer at the same price: a hold
     assert [lr.detail["result"] for lr in b.lessons.values()] == ["held"]
 
 
@@ -217,7 +219,8 @@ def test_neutral_closes_and_our_own_walk_teach_nothing():
     [
         (Guardrails(bluff_enabled=False), {}, "bluff_enabled = false"),
         (Guardrails(), {ENV: "0"}, f"{ENV}=0"),
-        (Guardrails(), {ENV: " off "}, f"{ENV}=0"),
+        (Guardrails(), {ENV: " off "}, f"{ENV}=off"),
+        (Guardrails(), {ENV: "disabled"}, f"{ENV}=disabled"),  # an unknown value turns them off (fail closed)
     ],
 )
 def test_the_kill_switches_turn_every_tactic_off(rules, env, why):
@@ -226,7 +229,9 @@ def test_the_kill_switches_turn_every_tactic_off(rules, env, why):
         c = b.choose(cp, side, "thread:1", 0, 30)
         assert c.tactic is None and why in c.reason
         assert c.words(plain)(WordsRequest(cp.id, 30)) == "plain 30"
-    assert enabled(Guardrails(), {ENV: "1"}) == (True, "on") and enabled(None, {}) == (True, "on")
+    for on in ("1", "true", " YES ", "on", ""):
+        assert enabled(Guardrails(), {ENV: on}) == (True, "on")
+    assert enabled(None, {}) == (True, "on")
 
 
 def test_the_env_switch_is_read_at_every_choice(monkeypatch):
@@ -383,3 +388,77 @@ def test_tactic_lessons_round_trip_through_postgres_between_two_processes(databa
     assert reader.load() == 1 and reader.arms(CHATO)[c.tactic].penalties_today == 1
     assert all(reader.choose(CHATO, "buy", f"thread:{n}", 0, 30).tactic != c.tactic for n in range(2, 12))
     writer_store.close()
+
+
+def test_two_penalties_inside_one_conversation_both_count_and_mute_the_dealer():
+    b = book()
+    strike = {"type": "persona.strike", "payload": {"persona": "chato", "team": US}}
+    first = b.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33)
+    b.sent(first, their_price=33, their_offer=1, tick=100)
+    b.events([{**strike, "id": 1}], US, 101)
+    second = b.choose(CHATO, "buy", "thread:1", 2, 31, their_price=33)
+    assert second.tactic != first.tactic
+    b.sent(second, their_price=33, their_offer=2, tick=102)
+    b.events([{**strike, "id": 2}], US, 103)
+    arms = b.arms(CHATO)
+    assert arms[first.tactic].penalties_today == 1 and arms[second.tactic].penalties_today == 1
+    muted = b.choose(CHATO, "buy", "thread:2", 0, 30)
+    assert muted.tactic is None and "muted" in muted.reason
+
+
+def test_a_cooloff_long_after_our_last_tactic_is_not_blamed_on_it():
+    b = book()
+    c = b.choose(CHATO, "buy", "thread:1", 1, 30, their_price=33)
+    b.sent(c, their_price=33, their_offer=1, tick=100)
+    b.ended("thread:1", status="closed", closed_reason="cooloff", tick=130)
+    assert b.lessons == {}
+
+
+def test_a_down_store_is_retried_at_most_once_every_few_ticks():
+    from bazaar_agent.learn.store import RETRY_EVERY
+
+    attempts = []
+
+    def refuse():  # type: ignore[no-untyped-def]
+        attempts.append(1)
+        raise OSError("db down")
+
+    b = book(store=LearningStore(refuse))
+    for tick in range(100, 120):
+        b.begin_tick(tick, 1)
+        c = b.choose(CHATO, "buy", f"thread:{tick}", 1, 30, their_price=33)
+        b.sent(c, their_price=33, their_offer=1, tick=tick)
+        b.observe(f"thread:{tick}", their_price=31, their_offer=2, tick=tick)
+        b.flush()
+    assert 1 <= len(attempts) <= 20 // RETRY_EVERY + 1, len(attempts)
+
+
+def test_a_flag_is_learned_once_and_a_replayed_or_old_flag_teaches_nothing():
+    store = LearningStore()
+    first = book(store=store)
+    first.begin_tick(100, 1)
+    c = first.choose(RIVAL, "sell", "duel:9", 0, 90)
+    first.sent(c, their_price=70, their_offer=1, tick=100, message=4242)
+    flag = {"id": 9, "type": "flag.raised", "tick": 101, "payload": {"team": "t05", "message": 4242}}
+    first.events([flag], US, 101)
+    first.flush()
+    restarted = book(store=store)  # Saturday: a redeploy replays the archived feed
+    restarted.begin_tick(900, 2)
+    restarted.load()
+    restarted.events([flag], US, 900)
+    assert restarted.arms(RIVAL)[c.tactic].penalties_today == 0  # Friday's flag stays Friday's
+    fresh = book()
+    fresh.sent(fresh.choose(RIVAL, "sell", "duel:9", 0, 90), their_price=70, their_offer=1, tick=500, message=7)
+    fresh.events([{"id": 3, "type": "flag.raised", "tick": 300, "payload": {"message": 7}}], US, 500)
+    assert fresh.lessons == {}  # an event far older than our message: a replay
+
+
+def test_the_plain_control_arm_is_todays_words_and_wins_where_lying_does_not_pay():
+    b = book(seed=4)
+    plain = Choice(CHATO, "buy", "thread:1", 1, 30, PLAIN, "forced", their=33)
+    assert plain.words(lambda r: f"template {r.price}")(WordsRequest("chato", 30)) == "template 30"
+    for i in range(60):  # only the plain words move Chato; every bluff pushes him away
+        c = b.choose(CHATO, "buy", "thread:1", 1 + i, 30, their_price=33)
+        b.sent(c, their_price=33, their_offer=1000 + i, tick=200 + 2 * i)
+        b.observe("thread:1", their_price=31 if c.tactic == PLAIN else 35, their_offer=2000 + i, tick=201 + 2 * i)
+    assert [b.choose(CHATO, "buy", f"thread:{n}", 1, 30, their_price=33).tactic for n in range(2, 6)] == [PLAIN] * 4

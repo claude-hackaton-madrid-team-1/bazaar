@@ -390,3 +390,14 @@ LLM duel rivals; the no-gain rule switches a tactic off where it earns nothing.
 BAZAAR_SIM=local has a fixed address, so two workers running `scripts/sim_smoke.py` at once collide
 ("address already in use", the second sim exits 3). Wait until `lsof -iTCP:8765 -sTCP:LISTEN` is empty; never
 kill another worktree's simulator.
+
+### [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
+`DuelStore.read_finished` is True on a runner's first tick, so `duel run` calls `client.duels(done=True)`; the
+`DuelClient` fake in tests/test_jev_journal.py takes no `done`, and the TypeError is swallowed by `run_per_tick`
+("tick loop: tick N failed"), so code placed after it in `on_tick` never ran in those tests. A fake for
+`duel run` needs `duels(self, done=False)` (tests/test_bluff_wiring.py does).
+
+### [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
+`git merge origin/main` in a scratch worktree printed "Resolved '.ai/memory.md' using previous resolution": a
+reviewer's earlier scratch merge had recorded it. Check the result (`git diff HEAD`) before trusting a rerere
+resolution; `git rerere forget <path>` drops a bad one.
