@@ -10,13 +10,16 @@ from types import MappingProxyType
 import pytest
 from typer.testing import CliRunner
 
+from bazaar_agent import cli as cli_module
 from bazaar_agent.agents.jev_journal import JevJournal, question_fn
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.config import REPO_ROOT
+from bazaar_agent.guardrails import Ledger
 from bazaar_agent.jev import JevUsageError, JudgeResult, Verdict, log_tally, read_log
 from tests.test_duel_jev import LIVE, FakeJev
 
 PACK = REPO_ROOT / "questions" / "duels.json"
+REAL_LEDGER = cli_module._ledger  # before any fixture replaces it
 PROBS = MappingProxyType({"accept": 0.91, "counter": 0.07, "hold": 0.02})
 
 
@@ -79,8 +82,8 @@ class DuelClient:
     def clock(self):
         return {"tick": 134, "next_tick_in": 40.0, "tick_seconds": 60.0, "t_hours": 2.2}
 
-    def duels(self):
-        return {"duels": deepcopy(self.payload)}
+    def duels(self, done=False):
+        return {"duels": [] if done else deepcopy(self.payload)}  # `?done=true`: none finished yet
 
     def duel_accept(self, did):
         self.sent.append(("accept", did))
@@ -114,6 +117,8 @@ def duel_cli(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     monkeypatch.setattr(cli, "_jev_fns", fake_fns)
+    # Stands in for the shared ledger a live run needs (which ledger a process may use: tests/test_ledger.py).
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
     monkeypatch.setattr(db, "connect", down)
     monkeypatch.setattr(db, "connect_ready", down)
     return cli, client, asked, tmp_path
@@ -151,6 +156,50 @@ def test_duel_run_log_only_records_would_moves_and_sends_nothing(duel_cli):
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert client.sent == [] and decision_rows(tmp_path)[0]["dry_run"] is True
+
+
+class ReserveFails(Ledger):
+    """Reads work, the accept reservation hits a dropped connection."""
+
+    def reserve_accept(self, tick, t_hours, price, item, limit):
+        from bazaar_agent.ledger_pg import LedgerUnavailable
+
+        raise LedgerUnavailable("accept reservation failed (OperationalError)")
+
+
+@pytest.mark.parametrize("broken", ["down", "reserve"])
+def test_a_ledger_failure_costs_the_duel_its_write_this_tick_never_the_loop(duel_cli, monkeypatch, broken):
+    import psycopg
+
+    from bazaar_agent import ticks
+    from bazaar_agent.ledger_pg import PgLedger
+
+    cli, client, asked, tmp_path = duel_cli
+
+    def refused():
+        raise psycopg.OperationalError("the server closed the connection")
+
+    ledger = PgLedger(refused, "duels") if broken == "down" else ReserveFails(tmp_path / "ledger.jsonl")
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
+    loop_errors = []
+    run = ticks.run_per_tick
+    monkeypatch.setattr(cli, "run_per_tick", lambda *a, **k: run(*a, **k, on_error=lambda *e: loop_errors.append(e)))
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert loop_errors == [] and client.sent == []  # the tick ended normally and nothing was sent
+    assert "no accept this tick (fail closed)" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "rejected" and row["guardrail"].startswith("ledger unavailable:")
+
+
+def test_duel_run_play_refuses_without_the_shared_ledger(duel_cli, monkeypatch):
+    cli, client, asked, tmp_path = duel_cli
+    monkeypatch.setattr(cli, "_ledger", REAL_LEDGER)  # the real choice: DATABASE_URL is the local default here
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 1 and client.sent == []
+    assert "refusing to trade: live trading needs the team's shared ledger" in " ".join(result.output.split())
+    log_only = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1"])  # sends nothing: the file is fine
+    assert log_only.exit_code == 0, log_only.output
 
 
 def test_a_bug_in_the_jev_layer_never_costs_a_duel_its_move(duel_cli, monkeypatch):

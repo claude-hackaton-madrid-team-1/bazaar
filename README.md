@@ -519,9 +519,10 @@ The maker owns our **board** offers: a hand-listed offer that is not a strategy 
 stop the maker before trading by hand. Offers inside a dealer thread belong to the taker's desk.
 
 **One accept per tick for the whole team, across machines.** The guardrail ledger is the Postgres
-`ledger` table (`bazaar db init` creates it; the JSONL file only when Postgres is unreachable at
-start). `bazaar-duels`, the taker, `dealer buy` and the CLI all reserve accepts through
-`ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
+`ledger` table (`bazaar db init` creates it). A live process against the real game refuses to start
+unless DATABASE_URL is the shared (non-local) Postgres, and fails closed while it is unreachable; only a
+dry run (or a simulator) may count on the JSONL file. `bazaar-duels`, the taker, `dealer buy` and the
+CLI all reserve accepts through `ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
 take the same slot. **Duels first**: the duel player decides right after the tick lands; the taker
 waits until 2 s into the tick (15 % on fast ticks) and steps back when a `duel:<id>` accept is already
 recorded for the tick. The maker never accepts. Spend per game hour and packs per hour come from the
@@ -578,11 +579,28 @@ already reads the shared `feed_events` table plus the public 500-event window ev
 that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
 keeps growing while the laptop sleeps, with no new service and no extra game call.
 
+**The LLM pass (free text only, opt-in).** Off until RUNTIME.md `llm_read_feed = true` (it spends the same
+subscription or key as everything else). Then dealer words, organiser notices, venue notices, a dealer's update
+note and a level's teaser go, as quoted data in one JSON array, to the model Jev picks for `read_feed` (capped
+at Haiku or Sonnet unless a model is pinned), on a background thread inside the taker: one bounded call (8
+texts of ONE kind, 1,500 tokens, 25 s) at most every `read_feed_every_ticks` (10) ticks, doubled after each
+failure, organiser notices first, never while `.local/PAUSE` exists, never in a tick. Our code keeps only a
+learning about the text's own speaker (an organiser notice may also name a dealer or venue we know), with a
+plausible expiry, confidence capped at 0.7, stored as its own `source: llm` row, bound to nobody: **an LLM
+reading never blocks a dealer** and never takes a place in the blocker recall. `--no-llm-read` (or
+`BAZAAR_LLM_READ=0`, declared `preserve()` on Railway) turns it off for one process.
+
+**The maker reads fee notices.** A venue owner may announce a fee from a later tick ("v04 will charge 0% from
+T161"). The maker (`--learn`, default on, `BAZAAR_LEARN=0` turns it off) scores each venue at the worse of its
+fee now and a fee announced to take effect within a listing's life (40 ticks), and leaves out a venue that is
+closing, from the events it already reads: no database and no extra call.
+
 ```sh
 uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
 uv run bazaar learnings --all --subject v04 --json
 uv run bazaar learnings --kind cooloff --kind quota --tick 180
 uv run bazaar learnings --save             # also upsert them into the shared learnings table
+uv run bazaar learnings --llm 24           # also read the newest 24 free texts with the runtime LLM
 ```
 
 ### Learner (auto-evolve): lessons from outcomes and the hybrid recall (N3)
@@ -1037,9 +1055,11 @@ then redeploy `bazaar-duels`.
 
 - **The guardrail ledger is shared.** Accepts per tick, spend per game hour and listings per tick
   live in the Postgres `ledger` table, so `bazaar-duels`, `bazaar-taker`, `bazaar-maker` and a laptop's
-  `dealer buy` see one count (see "Autonomous agents"). A process that cannot reach Postgres at start
-  falls back to its own `ledger.jsonl` and says so in its log; a ledger failure mid-run sends nothing
-  that tick (fail closed).
+  `dealer buy` see one count (see "Autonomous agents"). Every service that runs live needs
+  `DATABASE_URL` set to the shared Postgres: without it a live process exits at start ("refusing to
+  trade"). The ledger reconnects after a drop (retried at most every 15 s); while Postgres is down a live
+  process sends nothing (fail closed), and a dry run counts on its own `ledger.jsonl` until Postgres answers.
+  The log line `ledger: postgres ledger table on <host>:<port> (shared, …)` says which one is in use.
 - **Live or dry run** (a team decision, not a deploy). **The taker and the maker are LIVE since
   Sat 2026-10-03 01:45 Madrid** (`BAZAAR_LIVE=1` set by hand on both; nothing trades before the doors
   open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
@@ -1132,7 +1152,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
-| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 ⬜: LLM pass over free text, embeddings, `trader_behaviors`, Jev/words context, maker fee notices, MCP tool; PR 3 🔵: our dealer threads + `closed_reason` into `threads`/`messages` from the answers the taker already reads (0 extra requests) |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 PR 1: deterministic reader (`bazaar_agent.learn`), `learnings` columns + `recall()`, the taker skips dealers under a blocker, the taker archives the feed window, `bazaar learnings`; PR 2 🔵: LLM pass over free text (background thread in the taker, Jev's `read_feed` model, never blocks), maker fee notices; embeddings, `trader_behaviors`, Jev/words context and the MCP tool moved to N3; PR 3 🔵: our dealer threads + `closed_reason` into `threads`/`messages` from the answers the taker already reads (0 extra requests) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
@@ -1192,12 +1212,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 - [2026-10-03] gotcha — `bazaar-sim serve` without SIM_DATABASE_URL persists its world in .local/sim
 - [2026-10-03] finding — Chato's final is his limit, and a step-1 ladder from low gets it (N14a)
+- [2026-10-03] gotcha — a raw `@` or `/` in a Postgres password moves part of it into libpq's host
+- [2026-10-03] finding — a real-game live writer now has no per-process ledger at all (#156, takes over #62)
 - [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
 - [2026-10-03] finding — six duels on one deadline can run out of accept ticks
 - [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
 - [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
-- [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
-- [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1210,6 +1230,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | Sat 07:05 | `415c924` |
+| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | Sat 06:57 | `8b02ddc` |
 | [#150](../../pull/150) | feat(duels): D1 duel player for Duels II, takeover of Marius's #60 #86 #103 #113 #115 #130 (defaults unchanged) | Sat 06:50 | `b1a0bb1` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
@@ -1220,15 +1242,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#91](../../pull/91) | feat: the agents score their own settled decisions (evals inside the tick loop, no service) | Sat 06:07 | `26c40fd` |
 | [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | Sat 05:57 | `829c67e` |
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | Sat 05:51 | `523bb9b` |
-| [#153](../../pull/153) | docs: hard rule, parallel by default (sub-agents or Jev orchestrates) | Sat 05:45 | `e0c1a65` |
-| [#149](../../pull/149) | chore(iac): preserve TTS_DAILY_CHARS on bazaar-live | Sat 05:35 | `f3d6970` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#164](../../pull/164) | feat(n17): bazaar team-checks — spec Q1-Q6 from stored data, read-only (N17-10) | `ogarciarevett/n17-live-checks` |
 | [#163](../../pull/163) | B27: duel settings card + e2e runner + one done-read per tick (into #150) | `night/b27-card` |
-| [#162](../../pull/162) | fix(ledger): one shared, recoverable ledger for every real-game live writer (#156, takes over #62) | `ogarciarevett/ledger-156` |
 | [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
 | [#160](../../pull/160) | docs(pitch): Sunday presentation pack, first draft (P1) | `ogarciarevett/docs-pitch` |
 | [#159](../../pull/159) | DO NOT MERGE: B27 duel stack integration (merge order #60→#86→#103→#113→#115→#130) + settings card | `night/b27-duel-stack` |

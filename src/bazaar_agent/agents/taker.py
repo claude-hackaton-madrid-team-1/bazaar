@@ -73,7 +73,7 @@ from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import (
@@ -354,11 +354,12 @@ class Taker:
         try:
             snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
             threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
+            ensure_writable(self.ledger)  # no game write at all while the shared ledger is down
             self._tick(snap, threads, window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} taker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
-            self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
+            self.log(f"tick {clock.tick} taker: {e}; no further write this tick (fail closed)")
         except Exception:
             self._after_sends(clock.tick)
             raise
@@ -401,7 +402,9 @@ class Taker:
             )
             return
         if self.learner is not None:
-            run.blocks = self.learner.blocks(snap.events, snap.us, clock)
+            known: dict[str, Any] = {str(d.get("id")): "dealer" for d in snap.dealers if d.get("id")}
+            known.update({v.id: "venue" for v in snap.venues})
+            run.blocks = self.learner.blocks(snap.events, snap.us, clock, known)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)

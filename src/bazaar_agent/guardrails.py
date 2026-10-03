@@ -6,8 +6,8 @@ first. A denied action is not sent; the caller turns it into a walk or a hold. A
 threads stay as they are. `kill_switch()` answers "is it on right now?": it re-reads `trading_enabled`
 from GUARDRAILS.md on every call (cached by mtime) and checks the pause file. An append-only ledger
 shared by all processes counts spend per game hour and accepts per tick: the Postgres `ledger` table
-when DATABASE_URL is reachable (`ledger_pg.open_ledger`, shared across machines), else
-`.local/ledger.jsonl` (this machine).
+(`ledger_pg.open_ledger`, shared across machines; required by a live process), or `.local/ledger.jsonl`
+(this machine, dry run only).
 """
 
 from __future__ import annotations
@@ -286,7 +286,8 @@ LedgerKind = Literal["spend", "accept", "listing"]
 class LedgerStore(Protocol):
     """What the guardrails read and the agents write: the JSONL file or the shared Postgres table."""
 
-    where: str
+    @property
+    def where(self) -> str: ...  # where the counts live, for logs: "file ledger.jsonl", "postgres ledger table on …"
 
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None: ...
     def spent_since(self, t_hours: float) -> int: ...
