@@ -257,3 +257,11 @@ def test_v2_plays_zero_days_without_a_weight_and_v1_still_holds():
     assert gr.check(duel_action(unweighted, move), ctx, gr.Guardrails(duel_policy="v2")).allowed
     assert duel_move(unweighted, 110, 100).kind == "hold"  # #60's v1, unchanged: it cannot value days
     assert not gr.check(duel_action(unweighted, move), ctx, gr.Guardrails()).allowed
+
+
+def test_an_explicit_price_only_duel_stays_price_only_even_with_a_weight():
+    from bazaar_agent.agents.duelist import _two_issue
+
+    assert not _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 0}})
+    assert _two_issue({"issues": ["price"], "your_days_weight": 2.0, "rival_offer": {"price": 90, "days": 4}})
+    assert _two_issue({"your_days_weight": 2.0, "rival_offer": {"price": 90}})  # no issues list: the weight decides

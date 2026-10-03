@@ -522,7 +522,8 @@ def duel_run(
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
         if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
-            params = replace(params, accept_margin=params.accept_margin + gap - 1)
+            # capped (r1): ten failed reads must not turn every duel into "accept the first offer inside"
+            params = replace(params, accept_margin=params.accept_margin + min(gap - 1, MISSED_TICKS_CAP))
         planned: dict[int, DuelMove] = {}
         if params is not None:
             try:
@@ -530,7 +531,10 @@ def duel_run(
             except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
                 console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
                 planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
-        booked: set[int] = set()  # v2: the planner's accept takes the team's slot now, before Jev and the taker
+        # v2: the planner's accept takes the team's slot now, before Jev and the taker (r2 X17). The ledger is
+        # append-only, so a booked slot is not released: it goes unused only if this tick's time runs out or the
+        # send fails (Jev's only legal move for that duel is the accept).
+        booked: set[int] = set()
         for planned_id, m in planned.items() if play else ():
             d = next(x for x in duels if duel_id(x) == planned_id)
             ctx = gr.Context(
@@ -633,6 +637,9 @@ def duel_run(
     finally:
         duel_traces.close("stopped")
         decisions.close()
+
+
+MISSED_TICKS_CAP = 2  # v2 accepts at most this many ticks earlier after a gap in the duel loop
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
