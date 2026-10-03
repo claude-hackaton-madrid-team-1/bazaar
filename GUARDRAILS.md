@@ -55,6 +55,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `arb_enabled` = false — true lets the taker buy a card (held or not) ONLY to resell it at once: a standing bid for the same card on another venue (or another maker), re-read just before the accept, that we hit with priority next tick. Both legs pass every other rule (cash floor, caps, counterparty share, kill switch, accept slot); the two makers differ.
 - `arb_min_net_spread` = 3 — the exit bid minus its fee, minus the ask and its fee, must be at least this many primas.
 - `arb_max_inventory_p` = 60 — primas in arbitrage buys whose extra copy we still hold (an exit that vanished leaves the card to the maker's sell flow and keeps counting here until it is sold).
+- `arb_party_cooldown_ticks` = 240 — ring guard: a team on either side of one of our arbitrages is in no other for this many ticks (a pair that keeps handing one side the whole pie is scored as an even split).
 - `dup_buy_enabled` = false — true lets the taker buy one more copy of a card we hold when it pays for itself: our value of one more copy (`/api/me/value`, book × affinity × 0.25 or 0.1) minus the ask and its fee is at least `dup_min_surplus`.
 - `dup_min_surplus` = 3 — the least surplus, in primas, of a duplicate buy.
 - `dup_max_spend_per_hour` = 40 — primas we may spend on duplicate buys in one game hour (inside `max_spend_per_game_hour`).

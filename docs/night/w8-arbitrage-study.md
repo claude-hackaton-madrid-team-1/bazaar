@@ -14,18 +14,18 @@
 | ask | filled | 28 |
 | ask | open | 35 |
 | bid | cancelled | 69 |
-| bid | expired | 82 |
-| bid | filled | 15 |
-| bid | open | 8 |
+| bid | expired | 86 |
+| bid | filled | 10 |
+| bid | open | 9 |
 
-Bids standing at least k ticks: ≥1 ticks 99%, ≥2 ticks 81%, ≥3 ticks 66%
+Bids standing at least k ticks: ≥1 ticks 99%, ≥2 ticks 81%, ≥3 ticks 67%
 
 ## Crossings (ask + bid for one card, different makers, same tick; net ≥ 3 P)
 
 | fees | overlapping pairs | gross > 0 | net ≥ min | executable | fit 1 accept/tick | net P |
 |---|---:|---:|---:|---:|---:|---:|
-| fees as charged | 67 | 2 | 0 | 0 | 0 | 0 |
-| every fee at 0 (a 0 bps team venue) | 67 | 2 | 0 | 0 | 0 | 0 |
+| fees as charged | 68 | 2 | 0 | 0 | 0 | 0 |
+| every fee at 0 (a 0 bps team venue) | 68 | 2 | 0 | 0 | 0 | 0 |
 
 Tape exits (not executable, a ceiling): 1 asks cost less, fee included, than the most a team had paid for the card before; 1 P of margin in all.
 

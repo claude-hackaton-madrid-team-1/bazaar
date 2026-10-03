@@ -399,7 +399,9 @@ def arb_scan(
             console.print(f"[yellow]board {vid} refused {e.code}; skipped[/yellow]")
             continue
         offers += [replace(o, maker=makers.get(o.id, o.maker)) for o in board_offers(payload, vid, us)]
-    ours = {o.id for o in offers if o.maker == us}
+    ours = {o.id for o in offers if o.maker == us}  # a board shows pseudonyms: our ids come from /me/offers
+    if not me_file:
+        ours |= {int(o["id"]) for o in _my_offers(_team_client()) if isinstance(o.get("id"), int)}
     market = build_market(me, catalog, [], [])
     net = rules.arb_min_net_spread if min_net is None else min_net
     surplus = rules.dup_min_surplus if min_surplus is None else min_surplus

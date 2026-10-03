@@ -12,8 +12,8 @@ PR #101 is stacked on #72 and includes #79 until #79 merges. W8 alone: `git diff
 | | count |
 |---|---:|
 | Public plain offers (all on El Rastro: no team venue traded on Friday, they open at +3 h) | 462 asks, 174 bids |
-| Card-ticks with both an ask and a bid standing | 161, median ask − bid gap **+6 P** (p10 +4 P) |
-| Ask/bid pairs for one card from different makers standing in the same tick | 67 |
+| Card-ticks with both an ask and a bid standing | 168, median ask − bid gap **+6 P** (p10 +4 P) |
+| Ask/bid pairs for one card from different makers standing in the same tick | 68 |
 | … crossed (bid > ask), gross | **2** (MAL-04 9 → 10, +1 P) |
 | … net ≥ 3 P after El Rastro's 5 % + 1 P on both legs | **0** |
 | … net ≥ 1 P if every fee had been 0 (a 0 bps team venue) | 2 pairs, 1 executable (bid still there the next tick), **1 P** |
@@ -52,24 +52,33 @@ rare at under a quarter of its usual price. Flip `dup_buy_enabled` only if the s
 dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_price_for` has no cap for them, so
 `check()` refuses every epic buy.
 
-## What shipped (all off by default; existing tests unchanged; 855 tests green)
+## What shipped (all off by default; existing tests unchanged; 867 tests green)
 
 - **GUARDRAILS.md** (no existing value changed): `arb_enabled` false, `arb_min_net_spread` 3, `arb_max_inventory_p` 60,
-  `dup_buy_enabled` false, `dup_min_surplus` 3, `dup_max_spend_per_hour` 40. `guardrails.check()` enforces them:
+  `arb_party_cooldown_ticks` 240, `dup_buy_enabled` false, `dup_min_surplus` 3, `dup_max_spend_per_hour` 40.
+  `guardrails.check()` enforces them:
   a buy claims its exception (`Action.held_buy`, `exit_net`, `next_copy_value`) and still meets every other rule
   (cash floor, price caps, hourly spend, accept slot, kill switch, W4's per-counterparty cap on both legs).
 - **Ledger**: tagged spend rows in the existing `ledger` table (no schema change, read only when a switch is on):
   `dup:REF`, and `arb:REF:ASSET:BID:VENUE:PRICE:SELLER:BUYER`. Inventory = rows whose exact copy (asset id) is still
   ours; the ring guard and pending exits are rebuilt from these rows after a restart or on another machine.
 - **Taker**: duplicate asks; arbitrage buys whose exit bid is on another venue or from another maker, both makers
-  resolved to team ids from the feed, not a pair traded in the last 240 ticks (ring guard), resale ≥ the sell floor.
-  The exit bid is **re-read just before the buy**. Once that exact copy is in `/me`, the exit **takes the accept
+  resolved to team ids from the feed. Ring guard: neither team was on either side of one of our arbitrages in the
+  last 240 ticks. The exit bid must still stand next tick (`expires_tick`). The exit leg's own guardrails (sell floor,
+  W4's counterparty share for the bid's maker) are **checked before the buy**. The exit bid is **re-read just before
+  the buy**. Once that exact copy is in `/me`, the exit **takes the accept
   first** and hands over that copy (`accept(bid, assets=[id])`). A vanished bid, or no exit within 3 ticks, leaves the card
   to the maker's sell flow (never below `sell_min_value_ratio`).
 - **Maker**: no new ask for a copy with a pending exit (4 ticks), so the exit accept cannot fail on a listed copy.
-- **Review**: an independent review of `c2d1c50..HEAD` found that exits and inventory were keyed on copy *counts*
-  (wrong copy sold, exit never firing, closed rows revived). Fixed by tracking the asset id, with 4 regression tests.
-- **CLI**: `bazaar arb study STREAM [--me FILE]` (offline) and `bazaar arb scan` (reads only).
+- **Reviews**: an independent review found that exits and inventory were keyed on copy *counts* (wrong copy sold,
+  exit never firing, closed rows revived). Fixed by tracking the asset id, with 4 regression tests. r1's review
+  (defaults byte-identical over a 400-run taker differential and 20k `check()` calls) found three mediums. All three
+  are fixed with tests: the exit bid's expiry, a buy whose exit would be refused, and a ring guard per team rather
+  than per pair. Jev is not asked about held-card buys: it values cards we keep, and would veto every duplicate and
+  arbitrage.
+- Exits run first in the tick, before the dealer desk and the board reads (tight on 15 s ticks).
+- **CLI**: `bazaar arb study [STREAM] [--me FILE]` (no file: the agents' feed history, read-only) and
+  `bazaar arb scan [--near N]` (reads only; lists the closest misses and whether the taker would take each one).
 
 ## End to end in the local simulator (#55, in-process on 127.0.0.1; `docs/night/w8_sim_e2e.py`)
 
@@ -91,6 +100,10 @@ rounds up, so our cost estimate (8) was 1 P above the sim's charge (7): conserva
   "ring flags" (an even split for a pair that keeps handing one side the whole pie) are documented, in the openapi.
 - The exit sells even below the buy's cost (a fee raised in between) as long as it clears the sell floor: the cost
   is sunk, and the resale scores `proceeds − your_value`, which beats keeping a duplicate.
+- **Who pays the fee on a bid accept** is verified on the tape only for ask accepts (the accepting side pays). For
+  the exit (accepting a bid) we assume the same and charge ourselves the fee. If the bid's maker pays instead, our
+  proceeds are higher: the assumption errs on the safe side.
+- Duplicate buys don't see a copy that is accepted but not yet settled (bounded by `dup_max_spend_per_hour`).
 - The exit uses the accept slot one tick after the buy; a duel that takes that slot delays it, up to 3 ticks.
 
 ## What Marius decides

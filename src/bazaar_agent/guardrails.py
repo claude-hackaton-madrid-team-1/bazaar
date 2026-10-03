@@ -67,6 +67,7 @@ class Guardrails(BaseModel):
     dup_buy_enabled: bool = False
     dup_min_surplus: float = Field(default=3.0, ge=0)
     dup_max_spend_per_hour: int = Field(default=40, ge=0)
+    arb_party_cooldown_ticks: int = Field(default=240, ge=0)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -105,6 +106,7 @@ ENFORCED_BY: dict[str, str] = {
     "arb_enabled": "guardrails.check (Action.held_buy = arb) + agents.taker arbitrage legs",
     "arb_min_net_spread": "guardrails.check (Action.exit_net, re-read before the accept)",
     "arb_max_inventory_p": "guardrails.check (Context.arb_inventory: the ledger's arb: rows whose copy is in /me)",
+    "arb_party_cooldown_ticks": "agents.taker.arb_candidates (ring guard, from the ledger's arb: rows)",
     "dup_buy_enabled": "guardrails.check (Action.held_buy = dup) + agents.taker duplicate asks",
     "dup_min_surplus": "guardrails.check (Action.next_copy_value − all-in price)",
     "dup_max_spend_per_hour": "guardrails.check (Context.dup_spent_last_hour from the ledger's dup: spend rows)",

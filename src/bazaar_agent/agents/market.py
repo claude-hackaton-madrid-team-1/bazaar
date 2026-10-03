@@ -104,6 +104,11 @@ def parse_offer(o: dict[str, Any], venue: str | None = None) -> BoardOffer | Non
     return None
 
 
+def standing_at(o: BoardOffer, tick: int) -> bool:
+    """Will the offer still stand on `tick` (an offer expires at its `expires_tick`)? Unknown expiry: yes."""
+    return o.expires_tick is None or o.expires_tick > tick
+
+
 def board_offers(payload: dict[str, Any], venue: str, us: str) -> list[BoardOffer]:
     """Open plain offers on one venue that we may accept (open to anyone, or addressed to us)."""
     rows = []

@@ -3,6 +3,7 @@ arbitrage (buy a standing ask, sell into a standing bid on another venue the nex
 
 from copy import deepcopy
 
+from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import TakerConfig
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, rows
 from tests.test_strategy import ME
@@ -212,3 +213,54 @@ def test_a_restarted_taker_rebuilds_the_exit_and_the_ring_guard_from_the_ledger(
     third, _, _ = taker(tmp_path, team, public, live=True, **ARB)
     third.on_tick(at(team, TICK + 2))
     assert team.sent == [("accept", 1), ("accept", 2, [900])]
+
+
+def test_jev_is_not_asked_about_a_held_card_buy(tmp_path):
+    # Jev values a card we keep; a duplicate or an arbitrage is decided by its own guards, so a Jev that
+    # would say no to anything is never asked (and never vetoes it)
+    asked = []
+
+    def jev(state):
+        asked.append(state)
+        return JevAdvice("no", 0.9, reason="we already hold this card")
+
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(boards=crossing_boards()), live=True, jev=jev, **ARB)
+    t.on_tick(at(team, TICK))
+    assert team.sent == [("accept", 1)] and asked == []
+
+
+def test_an_exit_bid_that_expires_before_next_tick_is_no_exit(tmp_path):
+    boards = crossing_boards()
+    boards["v02"] = [bid(2, "LAV-01", 16, venue="v02", maker="t17", expires=TICK + 1)]
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(boards=boards), live=True, **ARB)
+    t.on_tick(at(team, TICK))
+    assert team.sent == [] and t.exits == {}
+
+
+def test_no_buy_when_the_exit_would_be_refused_by_the_counterparty_cap(tmp_path):
+    # share 0.25 of max(volume, 20) = 5 P per team: the buy from t06 (5 P) passes, the exit to t17 (16 P) would not
+    team = FakeTeam()
+    rules = {**ARB, "max_counterparty_share": 0.25, "counterparty_cap_base": 20}
+    t, lines, _ = taker(tmp_path, team, FakePublic(boards=crossing_boards()), live=True, **rules)
+    t.on_tick(at(team, TICK))
+    assert team.sent == [] and t.exits == {}
+    assert any("the exit would be refused" in line and "t17" in line for line in lines)
+
+
+def test_the_ring_guard_rests_each_team_not_only_each_pair(tmp_path):
+    team, public = FakeTeam(), FakePublic(boards=crossing_boards())
+    t, _, _ = taker(tmp_path, team, public, live=True, **ARB)
+    t.on_tick(at(team, TICK))
+    assert team.sent == [("accept", 1)]
+    t.exits.clear()
+    # another seller (t08) into the same exit buyer (t17): t17 is resting
+    public.boards["rastro"] = [ask(5, "LAV-01", 5, asset=905, maker="t08")]
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent == [("accept", 1)]
+    # with the cooldown at 0 the same crossing goes through
+    team2 = FakeTeam()
+    t2, _, _ = taker(tmp_path / "nocool", team2, public, live=True, **{**ARB, "arb_party_cooldown_ticks": 0})
+    t2.on_tick(at(team2, TICK + 1))
+    assert team2.sent == [("accept", 5)]
