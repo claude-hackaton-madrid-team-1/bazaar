@@ -1300,9 +1300,12 @@ def duel_run(
             if did is None:
                 return
             gate: Gate | None = None
-            offer = d.get("rival_offer")
-            key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
-            injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
+            try:  # S1: tagged, never obeyed; a tagger bug never costs a duel its move
+                offer = d.get("rival_offer")
+                key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
+                injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
+            except Exception as e:  # noqa: BLE001 - calibration only
+                console.print(f"  duel {did}: injection tagging failed ({type(e).__name__}); the move goes on")
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
                 pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
