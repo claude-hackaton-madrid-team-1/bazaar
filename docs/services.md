@@ -75,8 +75,8 @@ probabilities) still goes to the Postgres `decisions` table and to Phoenix, both
 
 `wss://bazaar-taker-production.up.railway.app/events` and `wss://bazaar-maker-production.up.railway.app/events`.
 
-- One JSON message per event, in the same envelope as the web dashboard's live feed (spec 003 on
-  `feat/web-live`): `{id, tick, t, type, scope, actor, agent, payload}`. Ids are negative and made up,
+- One JSON message per event, in the same envelope as the game feed that
+  [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live) relays to its game screens (agent, negotiations, album, market, debug): `{id, tick, t, type, scope, actor, agent, payload}`. Ids are negative and made up,
   so they never collide with game event ids.
 - A client that joins late first receives the last **200** events, then everything new as it happens.
 - Event types:
