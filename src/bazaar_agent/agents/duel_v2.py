@@ -181,10 +181,19 @@ def rounds_spent(duel: Mapping[str, Any]) -> int:
 
 
 def ignored(duel: Mapping[str, Any]) -> bool:
-    """True when the rival has priced nothing since our last priced message: it is not answering us."""
-    ours = [m["tick"] for m in _priced(duel, ours=True) if isinstance(m.get("tick"), int)]
-    theirs = [m["tick"] for m in _priced(duel, ours=False) if isinstance(m.get("tick"), int)]
-    return bool(ours) and bool(theirs) and max(ours) >= max(theirs)
+    """True when the rival has priced nothing since our last priced message: it is not answering us.
+
+    "Since" follows the order the game lists the messages, not their ticks: a rival that answers in the same tick
+    (listed after ours) is answering. Comparing ticks called such a mirror rival quiet, and each "free" step down
+    became a round (duel 2507, Duels I: 7 rounds with `duel_max_own_offers` = 3)."""
+    ours = {id(m) for m in _priced(duel, ours=True)}
+    theirs = {id(m) for m in _priced(duel, ours=False)}
+    if not ours or not theirs:
+        return False
+    order = [id(m) for m in duel.get("messages") or [] if isinstance(m, dict)]
+    last_ours = max(i for i, key in enumerate(order) if key in ours)
+    last_theirs = max(i for i, key in enumerate(order) if key in theirs)
+    return last_ours > last_theirs
 
 
 def quiet(duel: Mapping[str, Any], tick: int, silent_ticks: int) -> bool:
