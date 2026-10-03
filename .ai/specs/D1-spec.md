@@ -2,7 +2,7 @@
 
 - Task id: D1 (migrated from GitHub issue(s) #5, #7)
 - Priority: P0
-- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday. #150 (Sat 06:50) merged Marius's duel chain: two-issue offers strictly inside our limit (#60 + review fixes), duel policy v2, B11 squeeze mitigations and the days-sign latch, behind GUARDRAILS flags. Omar set `duel_policy` = v2 live with #170 (Sat ~10:00; Jev had stayed undecided at 0.76 on the 0.90 bar); B11 (`duel_endgame_min_share`) and `duel_days_auto` stay OFF. Simulator proof: `docs/night/d1-sim-proof.md` (2,904 duels, 0 outside our limit, v2 1.55x v1 in the Duels II shape). Open: criterion 3 (calibration, #91 merged), #151 / #165 for the 23:00 window, #173 (duel-log surrogate fix), a days flip only on real evidence.
+- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday. #150 (Sat 06:50) merged Marius's duel chain: two-issue offers strictly inside our limit (#60 + review fixes), duel policy v2, B11 squeeze mitigations and the days-sign latch, behind GUARDRAILS flags. Omar set `duel_policy` = v2 live with #170 (Sat ~10:00; Jev had stayed undecided at 0.76 on the 0.90 bar); B11 (`duel_endgame_min_share`) and `duel_days_auto` stay OFF. Simulator proof: `docs/night/d1-sim-proof.md` (2,904 duels, 0 outside our limit, v2 1.55x v1 in the Duels II shape). Sim harness #151 merged (Sat 10:42). Open: criterion 3 (calibration, #91 merged), #165 for the 23:00 window, #173 (duel-log surrogate fix), a days flip only on real evidence.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
