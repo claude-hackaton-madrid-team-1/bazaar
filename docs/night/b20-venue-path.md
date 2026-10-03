@@ -28,7 +28,11 @@ Per session: 0.375 at the stall's level, 0.75 at the top-three mean. The edge nu
 
 > **Open at 09:00. Board with the edge broker if #84 is merged and `BAZAAR_BENCH_POLICY=edge` is set on `bazaar-maker` before 09:00; otherwise auto.**
 
-The keeper opens once and never reopens, and switching mid-day means closing, a 10-tick cooldown, 20 P, and a hand-opened venue whose key the keeper's vault does not hold. So the mechanism is chosen once.
+**The choice is firm for the day.** The mechanism is set only at opening (RULES.md and the SDK offer `set_fee`, nothing else). Undoing it means a close, a 10-tick cooldown before the bond comes back, the 20 P fee again, the 270 P reserve again (which the floor will likely refuse), and a hand-opened venue whose key the keeper's vault does not hold.
+
+- **"Edge live" means** `bazaar-maker` already runs `BAZAAR_BENCH_POLICY=edge` and its startup log says `venue keeper: broker bench edge`. Anything less means auto.
+- **Choosing auto knowingly gives up** the edge (+0.17 default world, up to +1.5) and the limit probe (+0.4 to +1.2 if limits are honoured) for all of Saturday.
+- **Opening at 09:00 costs little if the stall counts:** with the exact broker it is one more session exposed to maker downtime (≈ −0.02 at 5 %), and with the edge it adds +0.02 to +0.34 (W1b).
 
 ### GUARDRAILS.md diff (for Marius to approve; not applied)
 
