@@ -80,3 +80,21 @@ def test_v1_never_goes_signed_even_when_the_rules_say_so(tmp_path):
     assert rules_t.duel_days_signed  # the flag flips ...
     action = gr.Action("duel_offer", "1", price=95, limit=100, role="seller", days=10, days_weight=2.0)
     assert not gr.check(action, CTX, rules_t).allowed  # ... but the guard keeps #60's worst case for v1
+
+
+def test_the_runtimes_duel_move_follows_the_latch_too(tmp_path):
+    from tests.agent_fakes import clock
+    from tests.runtime_fakes import Public, Team, backend
+    from tests.test_runtime_tools import run
+
+    two = duel(weight=2.0) | {"duel": 7, "started_tick": 100, "deadline_tick": 112}
+    rules = gr.Guardrails(duel_policy="v2", duel_days_auto=True)
+    b = backend(tmp_path, live=True, team=Team(duels=[two]), rules=rules, public=Public(now=clock(tick=101)))
+    assert dd.real_game(b.settings.bazaar_url)
+    moved, _ = run(b, "duel_move", {"duel_id": 7})
+    assert moved["request"]["kind"] == "offer" and moved["request"]["days"] == 10
+    assert dd.latch(b.settings.data_dir).verdict == "signed"
+    off = backend(tmp_path / "off", live=True, team=Team(duels=[two]), rules=gr.Guardrails(duel_policy="v2"),
+                  public=Public(now=clock(tick=101)))  # fmt: skip
+    today, _ = run(off, "duel_move", {"duel_id": 7})
+    assert today["request"]["days"] == 0

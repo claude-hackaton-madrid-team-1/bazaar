@@ -130,3 +130,38 @@ def test_the_wrapper_reprices_offers_only_and_keeps_moves_it_cannot_reprice():
     assert accept(d, 4, 0) == Move("accept", 140)
     worst = dd.days_aware(lambda duel, tick, started: Move("offer", 120, 0), signed=False)
     assert worst(d, 4, 0) == Move("offer", 120, 0)
+
+
+def done(weight: float, result: float, role: str = "seller", price: int = 120, days: int = 5) -> dict:
+    """A finished real deal: limit 100, 2 rounds at decay 0.08 (kept 0.8464)."""
+    return duel(role=role, your_days_weight=weight, status="deal", price=price, days=days, result=result, rounds=2,
+                decay_per_round=0.08)  # fmt: skip
+
+
+def test_a_finished_deals_score_shows_how_the_game_counts_days():
+    kept = 0.92**2
+    assert dd.scored_evidence(done(2.0, round((20 + 10) * kept, 1)), True) == "signed"  # 5 days at +2 added 10
+    assert dd.scored_evidence(done(2.0, round((20 - 10) * kept, 1)), True) == "cost"  # they cost 10
+    assert dd.scored_evidence(done(-2.0, round((20 + 10) * kept, 1)), True) == "reversed"  # -2 a day added 10
+    assert dd.scored_evidence(done(-2.0, round((20 - 10) * kept, 1)), True) == "unknown"  # signed or cost: same
+    assert dd.scored_evidence(done(2.0, round(20 * kept, 1)), True) == "unknown"  # days not scored at all
+    assert dd.scored_evidence(done(2.0, round(30 * kept, 1)), False) == "unknown"  # the simulator: no evidence
+    assert dd.scored_evidence(done(2.0, round(30 * kept, 1), days=0), True) == "unknown"
+    buyer = done(2.0, round((100 - 80 + 10) * kept, 1), role="buyer", price=80)
+    assert dd.scored_evidence(buyer, True) == "signed"
+
+
+def test_a_score_that_disagrees_with_the_text_is_a_conflict(tmp_path):
+    switch = dd.latch(tmp_path)
+    assert switch.observe([duel(days_meaning=SIM_TEXT)], True) == "signed"
+    assert switch.observe([done(2.0, round(10 * 0.92**2, 1))], True) == "conflict"
+
+
+def test_two_processes_on_one_file_never_undo_each_other(tmp_path):
+    run, runtime = dd.latch(tmp_path), dd.latch(tmp_path)  # `duel run` and the runtime, both started at unknown
+    run.observe([duel(days_meaning=SIM_TEXT)], True)
+    runtime.observe([duel(days_meaning="each day costs you primas")], True)  # merges the file first: conflict
+    assert dd.latch(tmp_path).verdict == "conflict"
+    run.observe([duel(days_meaning=SIM_TEXT)], True)  # the stale "signed" in memory does not win
+    assert run.verdict == "conflict" and dd.latch(tmp_path).verdict == "conflict"
+    assert [p.name for p in (tmp_path / "duels").iterdir()] == ["days_sign.json"]  # no temp file left behind

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import statistics
 from collections.abc import Callable, Iterable, Mapping
@@ -80,6 +81,50 @@ def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     return "unknown"
 
 
+SCORE_TOLERANCE = 0.5  # P: a result comes rounded to 0.1 and is divided by what decay kept (≥ 0.4 in practice)
+
+
+def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
+    """What a FINISHED real two-issue deal with days says, from how the game scored it (W2b's suggestion): the
+    practice payloads score `result = surplus × (1 - decay) ** rounds`, so `result / kept - (price vs limit)` is
+    what the days added. `signed` when that is +weight × days with weight > 0; `cost` when it is -|weight| × days
+    with weight > 0 (the worst case is the truth); `reversed` when it is -weight × days with weight < 0; anything
+    else, a negative weight that cannot tell signed from cost included, is `unknown`."""
+    if not real_game or not two_issue(duel) or duel.get("status") != "deal":
+        return "unknown"
+    price, days, result = _number(duel.get("price")), _number(duel.get("days")), _number(duel.get("result"))
+    weight, limit = _number(duel.get("your_days_weight")), _number(duel.get("your_limit"))
+    rounds, decay = _number(duel.get("rounds")), _number(duel.get("decay_per_round"))
+    if price is None or days is None or result is None or weight is None or limit is None:
+        return "unknown"
+    if rounds is None or decay is None or not days or not weight:
+        return "unknown"
+    kept = (1 - decay) ** rounds
+    if kept <= 0:
+        return "unknown"
+    base = price - limit if duel.get("role") == "seller" else limit - price
+    added = result / kept - base
+    fits = {
+        name
+        for name, expected in (("signed", weight * days), ("cost", -abs(weight) * days), ("reversed", -weight * days))
+        if abs(added - expected) <= SCORE_TOLERANCE
+    }
+    if weight > 0:
+        return "signed" if fits == {"signed"} else "cost" if fits == {"cost", "reversed"} else "unknown"
+    return "reversed" if fits == {"reversed"} else "unknown"
+
+
+def _merge(a: Verdict, b: Verdict) -> Verdict:
+    """Two verdicts into one: a conflict sticks, unknown yields, two known ones that differ conflict."""
+    if "conflict" in (a, b):
+        return "conflict"
+    if a == "unknown":
+        return b
+    if b == "unknown" or a == b:
+        return a
+    return "conflict"
+
+
 @dataclass
 class DaysSwitch:
     """The first real evidence about the sign, latched and persisted. `signed(allowed)` is what a policy reads."""
@@ -105,29 +150,46 @@ class DaysSwitch:
         return cls(verdict=verdict, duel=raw.get("duel"), text=raw.get("text"), path=path)
 
     def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> Verdict:
-        """Read every payload: the first real evidence latches; a later real payload that disagrees is a conflict."""
+        """Read every payload, live or finished: its text and, for a finished deal, its score. The first real
+        evidence latches; later evidence that disagrees is a conflict, for good. Another process's verdict in the
+        file is merged in first, so `duel run` and the runtime never undo each other."""
+        self.refresh()
+        before = self.verdict
         for duel in duels:
-            seen = evidence(duel, real_game)
-            if seen == "unknown" or self.verdict == "conflict":
-                continue
-            if self.verdict == "unknown":
-                self.verdict, self.duel, self.text = seen, duel.get("duel"), duel.get("days_meaning")
-                self._save()
-            elif seen != self.verdict:
-                self.verdict = "conflict"
-                self._save()
+            for seen in (evidence(duel, real_game), scored_evidence(duel, real_game)):
+                if seen == "unknown":
+                    continue
+                merged = _merge(self.verdict, seen)
+                if self.verdict == "unknown":
+                    self.duel, self.text = duel.get("duel"), duel.get("days_meaning")
+                self.verdict = merged
+        if self.verdict != before:
+            self._save()
         return self.verdict
+
+    def refresh(self) -> None:
+        """Merge the verdict on disk (another process may have written it) into this one."""
+        if self.path is None:
+            return
+        disk = DaysSwitch.load(self.path)
+        if disk.verdict != "unknown" and self.verdict == "unknown":
+            self.duel, self.text = disk.duel, disk.text
+        self.verdict = _merge(self.verdict, disk.verdict)
 
     def signed(self, allowed: bool) -> bool:
         """Value days with their sign only when allowed (a guardrail) AND a real payload said so."""
         return allowed and self.verdict == "signed"
 
     def _save(self) -> None:
+        """Merge with the file, then replace it atomically (a temp file and `os.replace`)."""
         if self.path is None:
             return
+        self.refresh()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {k: v for k, v in asdict(self).items() if k != "path"}
-        self.path.write_text(json.dumps(record, ensure_ascii=False))
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False))
+        os.replace(tmp, self.path)
 
 
 LATCH_FILE = Path("duels") / "days_sign.json"  # under Settings.data_dir (.local, never committed)

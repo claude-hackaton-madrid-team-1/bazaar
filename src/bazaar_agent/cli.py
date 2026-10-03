@@ -444,6 +444,7 @@ def duel_run(
     rec = Recorder("duels", decisions, play, lambda line: None)  # the duel loop prints its own lines
     log_path = settings.data_dir / "duels" / "duels.jsonl"
     days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
+    done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
     real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
@@ -515,7 +516,13 @@ def duel_run(
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
         verdict_before = days_switch.verdict
-        days_switch.observe(duels, real)
+        finished: list[dict[str, Any]] = []
+        if real and days_switch.verdict == "unknown" and c.tick % done_every_ticks == 0:  # a scored deal is proof
+            try:
+                finished = [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)]
+            except BazaarError as e:
+                console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+        days_switch.observe([*duels, *finished], real)
         if days_switch.verdict != verdict_before:
             console.print(
                 f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
