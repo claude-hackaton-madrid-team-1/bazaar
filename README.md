@@ -939,7 +939,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers. |
-| `uv run bazaar venue open` | Open our venue: 250 P bond + 20 P; saves the broker key (0600), never prints it. |
+| `uv run bazaar venue open` | Open our venue: 250 P bond + 20 P; saves the broker key (Postgres + 0600 file), never prints it. |
 | `uv run bazaar venue close` | Close our venue; the bond comes back after a cooldown (a session counts the best venue open in it). |
 | `uv run bazaar venue fee` | Announce new fees on our venue; they take effect after the public notice. |
 | `uv run bazaar venue announce` | Post a notice on our venue with the broker key. |
