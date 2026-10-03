@@ -279,7 +279,7 @@ def test_the_view_is_replaced_only_by_a_newer_version_and_never_fails_the_schema
     def comment():
         return conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
 
-    assert comment() == "rival_board v2"
+    assert comment() == "rival_board v3"
     # a newer checkout appended a column: this older file cannot drop it, so it warns and init_schema goes on
     body = conn.execute("select pg_get_viewdef(to_regclass('rival_board'))").fetchone()[0].rstrip().rstrip(";")
     conn.execute(f"create or replace view rival_board as select v.*, 1 as newer_column from ({body}) v")
@@ -290,7 +290,7 @@ def test_the_view_is_replaced_only_by_a_newer_version_and_never_fails_the_schema
     assert "newer_column" in [d.name for d in conn.execute("select * from rival_board limit 0").description]
     conn.execute("comment on view rival_board is 'rival_board v9'")
     conn.commit()
-    db.init_schema(conn)  # stored v9 >= v2: nothing to replace, no lock taken
+    db.init_schema(conn)  # stored v9 >= v3: nothing to replace, no lock taken
     assert comment() == "rival_board v9"
 
 
@@ -309,12 +309,12 @@ def test_a_reader_holding_the_view_delays_the_replacement_2_s_at_most(conn, data
         assert time.monotonic() - started < 10
         stored = conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0]
         assert stored == "rival_board v0"  # not replaced this time; the next start tries again
-        assert "rival_board v2 not applied (canceling statement due to lock timeout)" in caplog.text  # logged, not lost
+        assert "rival_board v3 not applied (canceling statement due to lock timeout)" in caplog.text  # logged, not lost
     finally:
         reader.close()
     db.init_schema(conn)
     assert (
-        conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0] == "rival_board v2"
+        conn.execute("select obj_description(to_regclass('rival_board'), 'pg_class')").fetchone()[0] == "rival_board v3"
     )
 
 
@@ -336,3 +336,39 @@ def test_a_copy_in_an_open_offer_of_ours_is_not_spare(conn):
     listing(conn, 21, offer("t01", give_assets=["SAL-01"], want_cash=25))  # the last spare listed too
     t09 = board(conn)["t09"]
     assert (t09["we_have_for_them"], t09["move_kind"], t09["move_get"]) == ([], "buy", "LAT-04")  # no swap left
+
+
+def test_a_copy_in_a_thread_offer_of_ours_is_not_spare_while_it_stands(conn):
+    seed(conn)
+    copies = [{"id": 2, "ref": "SAL-01"}, {"id": 11, "ref": "SAL-01"}]
+    sale = {
+        "offer": {"id": 900, "maker": "t01", "to": "abuela", "expires_tick": 102, "venue": None,
+                  "give": {"cash": 0, "types": [], "assets": copies}, "want": {"cash": 6, "types": [], "assets": []}}
+    }  # fmt: skip
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into feed_events (id, tick, type, actor, payload) values (30, 99, 'thread.message', 't01', %s)",
+            (json.dumps({"thread": 7, "sender": "t01", "offer": sale["offer"]}),),
+        )
+    conn.commit()
+    assert board(conn)["t09"]["we_have_for_them"] == []  # 3 copies: one kept, two in our dealer offer
+    with conn.cursor() as cur:
+        cur.execute("update feed_events set payload = jsonb_set(payload, '{offer,expires_tick}', '100') where id = 30")
+    conn.commit()
+    assert board(conn)["t09"]["we_have_for_them"][0]["spare"] == 2  # lapsed at tick 100: both copies free again
+
+
+def test_a_team_above_us_is_guarded_and_a_listing_that_wants_more_has_no_price(conn):
+    seed(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "update leaderboard_snapshots set rank = 15 where team = 't01' and tick = 100"
+        )  # t07 (11) is 4 above
+    conn.commit()
+    t07 = board(conn)["t07"]
+    assert (t07["guard_reason"], t07["suggested_move"]) == ("near", "don't trade: ranked above us (rank 11, ours 15)")
+    tricky = offer("t11", give_cash=40, want_types=["card:SAL-01"])
+    tricky["offer"]["want"]["assets"] = [{"id": 7, "ref": "LAV-01"}]  # also wants our only LAV-01
+    listing(conn, 20, tricky)
+    t11 = board(conn)["t11"]
+    assert t11["they_want"] == [{"ref": "SAL-01", "price": None, "tick": 99}] and t11["move_kind"] != "sell"
