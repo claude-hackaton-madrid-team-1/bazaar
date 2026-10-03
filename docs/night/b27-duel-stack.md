@@ -36,7 +36,29 @@ Run by `scripts/duel_e2e.py`, which refuses any target but 127.0.0.1, any real k
 - **Sim**: `bazaar-sim`, 3 seller/buyer pairs per team per session (6 concurrent duels on one deadline), rivals drawn from the zoo plus the two exploiters, decay 0.08, sessions every 13 ticks, odd sessions price-only and even ones two-issue.
 - **Agents**: `bazaar duel run --play --no-jev` and `bazaar agent taker --live --no-jev` against that simulator, sharing one ledger (JSONL) and so the team's one accept per tick.
 
-_Runs in progress at the time of this commit: the table lands in the next commit._
+Both 15 s runs used the same simulator seed, so the same 36 duel scenarios (6 sessions × 6 concurrent duels; the first is practice, half are two-issue) and the same rivals:
+
+| 80 ticks, 15 s | v1 (today's GUARDRAILS) | **v2 recommended** (v2, endgame 1, min_share 0.3) |
+|---|---|---|
+| deals / duels | 31 / 36 (0.86) | 30 / 36 (0.83) |
+| sim points, scored sessions | 79.1 | **118.8 (1.50×)** |
+| mean pie share per duel, after decay | 0.242 | **0.398 (1.64×)** |
+| mean gain per deal (P, before decay) | 24.4 | 29.5 |
+| rounds per deal | 6.94 | **1.33** |
+| deals outside our limit | 0 | 0 |
+| duel accepts / taker accepts (one shared ledger) | 20 / 5 | 23 / 5 |
+| duel accepts refused by the one-per-tick cap | **11** (several duels on one deadline, first come) | **0** (the planner queues them) |
+| missed ticks, skipped duels, slot taken by the taker | 0, 0, 0 | 0, 0, 0 |
+| sends refused by the sim: the rival had just accepted that duel (settles next tick) | 13 | 5 |
+| sends lost to a local network error (Errno 49, socket exhaustion) | 1 offer | 0 |
+
+RESULTS_30S
+
+**What it shows end to end:**
+- v2 with the B11 settings keeps the zoo's lift on the live loop: 1.5× the points with a near-equal deal rate, about 5 fewer rounds per deal, and no outside-limit close.
+- With 6 duels per deadline, v1 lost 11 accepts to the team's one-per-tick cap; v2 lost none.
+- The taker and the duel loop shared the ledger without one slot clash.
+- The machine had about 22,000 TIME_WAIT sockets (≈30 night sessions), so a few local requests failed with Errno 49. The loop logged "clock read failed … continuing" (1 tick in the v2 run) and lost no duel.
 
 ## 4. What Marius must decide
 1. **Merge the chain** (#60 → #86 → #103 → #113 → #115 → #130) before Duels I, then set the card's values and restart `duel run`.

@@ -34,7 +34,7 @@ Each PR sits on the previous one, and the chain merges with no conflicts in this
   - 0.5 scores 0.365 on W2a's rivals, but fails the deal-rate bar in W2b's arena (0.930), so **0.3 is the safe pick**.
   - Against an exploiter that never backs down it costs a little (0.154 → 0.141). It pays unless more than 89 % of informed rivals are that stubborn.
 - **Days** (B8): if the real game scores days the simulator's way, valuing them gives v2 +3–10 % P per two-issue duel.
-- **End to end** (local sim, 6 concurrent duels, taker alongside, 15 s ticks): see `docs/night/b27-duel-stack.md`.
+- **End to end** (local sim, 6 concurrent duels on one deadline, zoo + exploiter rivals, taker alongside, 15 s ticks, same 36 scenarios): v2 recommended scores 118.8 sim points vs v1's 79.1 (1.50×). Pie share per duel 0.40 vs 0.24; deal rate 0.83 vs 0.86; 1.3 vs 6.9 rounds per deal; 0 outside our limit for both. v1 lost 11 accepts to the one-per-tick cap and v2 none. No missed ticks, and no slot clash with the taker.
 
 ## Warnings
 - **`duel_days_auto` = true is only as good as the first real evidence.**
