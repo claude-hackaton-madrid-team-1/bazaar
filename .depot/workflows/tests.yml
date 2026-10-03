@@ -1,0 +1,31 @@
+# Depot CI Migration
+# Source: .github/workflows/tests.yml
+#
+# Changes made:
+# - Changed runs-on from "blacksmith-4vcpu-ubuntu-2404" to "depot-ubuntu-latest" in job "test"
+
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: depot-ubuntu-latest # was: blacksmith-4vcpu-ubuntu-2404. Nonstandard GitHub runner label detected, changed to default Depot runner.
+    timeout-minutes: 10
+    steps:
+      - uses: useblacksmith/checkout@v1
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the project and its dev tools (pyproject.toml + uv.lock)
+        run: uv sync --locked
+      - name: Lint and types
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+          uv run black --check src tests scripts
+          uv run mypy src
+      - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
+        run: uv run pytest tests -v -rs

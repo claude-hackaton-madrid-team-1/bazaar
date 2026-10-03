@@ -1357,6 +1357,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 merged #218; the edge policy is OFF by default (`BAZAAR_BENCH_POLICY` = exact) |
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 | [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
+| [TL1](TL1-spec.md) (new) | The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger `taller:` rows, CLI included), the duel/bench guard, the received card credited in the score impact | 2 | 🔵 PR #259 (feat/taller-harden) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1420,14 +1421,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+- [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+- [2026-10-04] build-error: PR #263 merge verification separator
+- [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+- [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
+- [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+- [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
 - [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
-- [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
-- [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
-- [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
-- [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
-- [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
-- [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
-- [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1440,42 +1441,27 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
-| [#172](../../pull/172) | docs: the game screens live in bazaar-live now | Sat 10:24 | `7b0a0ce` |
-| [#131](../../pull/131) | Omar's order (merge all approved). N16 bluffing in the words: both reviewers APPROVE round 2; narrow pr-reviewer APPROVE on 2d9f262 (issuecomment-5966874029); later rounds only merge main (import/docs unions; test fixture pins v1 like #170). Gate 3229 passed + smoke; CI green. Tactics: on for dealer words, off for duels under v2; kill switch BAZAAR_BLUFF / bluff_enabled. | Sat 10:20 | `7cb41ae` |
-| [#171](../../pull/171) | Open our venue now: allow_venue_open = true from game hour 3.0, cash_floor 100 | Sat 10:19 | `d113167` |
-| [#170](../../pull/170) | Omar's order (live session): duel_policy v2. pr-reviewer: all four safety checks verified (issuecomment-5967024103); its only P1 (merge conflict in sim_smoke.py/README with #123) resolved exactly as the reviewer tested (main's swaps step + the PR's duel-to-deadline block); gate 3150 passed, smoke duels deal inside limit (gains 26, 27); CI green. | Sat 10:12 | `90b0bdf` |
-| [#169](../../pull/169) | Omar's rule: keep 270 for a custom market. pr-reviewer APPROVE (issuecomment-5966943243) on 755d7ee; 5070da4 fixes its two P2s (venue-opening procedure text, open-offers test at 380); CI green. | Sat 10:06 | `4549454` |
-| [#123](../../pull/123) | Merged during the session on Omar's order. Lands the N17 stack (#137 + #138 + #123). pr-reviewer APPROVE on all three (issuecomment-5966897383, -5966898127, -5966898346) + security-auditor APPROVE (issuecomment-5966879686); 3eafaf7 only merges main (docs-only conflicts, PR code delta 0 lines); gate 3139 passed + smoke; CI green. Defaults OFF: team_threads_enabled=false, accept_bids=false. | Sat 10:00 | `6fc5bb9` |
-| [#144](../../pull/144) | Merged during the session on Omar's order. pr-reviewer narrow APPROVE on a544fac (issuecomment-5966900707) after round-2 APPROVE on 40e956d; CI green. | Sat 09:51 | `5c673cb` |
-| [#158](../../pull/158) | Merged during the session on Omar's order. pr-reviewer round 5 APPROVE on e71c337 (issuecomment-5966784280), security round 2 APPROVE; CI green. dealer_final_lift stays 0 (Jev decides the lift separately). | Sat 09:31 | `be431cd` |
-| [#139](../../pull/139) | Merged during the session on Omar's order. pr-reviewer narrow APPROVE on 002ac37 (issuecomment-5966722003) after the approved 3af3641; CI test + sim-smoke green; tracing on/off identical moves. | Sat 09:22 | `fdeb199` |
-| [#71](../../pull/71) | Merged during the session on Omar's order (09:07). pr-reviewer + security narrow APPROVE on e265626/1accc4e; 24b8583 only merges main (#146): code diff identical (0 lines), gate 2829 passed, smoke passed, CI green. allow_venue_open=false, effective cash floor 100. | Sat 09:14 | `04ce5d6` |
-| [#154](../../pull/154) | Merged during the session on Omar's order (09:07). Approved on this exact head; CI green. | Sat 09:08 | `d64952e` |
-| [#146](../../pull/146) | Merged during the session on Omar's order (09:07: merge everything approved ASAP). Approved on this exact head; CI green. | Sat 09:08 | `f9a193b` |
+| [#265](../../pull/265) | feat: Sunday guardrails (uncommon 30, rare 105, dealer_sell reset after 40 ticks) | Sun 01:13 | `e0f3ca6` |
+| [#263](../../pull/263) | feat(broker): one live non-crossing match probe in the Market Test (off by default) | Sun 00:41 | `19457c9` |
+| [#264](../../pull/264) | docs: points ledger and bazaar-points skill | Sun 00:34 | `166f9ca` |
+| [#262](../../pull/262) | fix: keep the decider and the team desk moving on 15 s ticks | Sun 00:29 | `ceef0f7` |
+| [#259](../../pull/259) | fix(taller): harden SA1's Workshop (TL1) | Sun 00:25 | `2bcc094` |
+| [#257](../../pull/257) | feat(broker): try to beat the stall in the Market Test (probe policy, off by default) | Sun 00:18 | `000cc58` |
+| [#261](../../pull/261) | feat: record the full Market Test bench book each tick | Sun 00:17 | `2c8b726` |
+| [#258](../../pull/258) | fix(guardrails): no_buyback_ticks skips unread sales on a simulator; a stale tape fails closed | Sun 00:13 | `deca8e7` |
+| [#260](../../pull/260) | docs: SAL-07 loss is price - your_value (measured); tag round rule [audit] | Sun 00:08 | `fc9cd61` |
+| [#230](../../pull/230) | docs: sync the repo with the rules audit (scoring, rounds, venue on, floor 5, hard rules) | Sun 00:02 | `9e4acc5` |
+| [#256](../../pull/256) | batch: Saturday close | Sat 23:54 | `6267eca` |
+| [#255](../../pull/255) | feat(buy-targets): a human orders an epic via MCP approve; the agents buy it from a team, always below our value | Sat 22:49 | `dd19e18` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
-| [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
-| [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
-| [#165](../../pull/165) | fix(duels): D1 follow-up: days-latch pre-flip hardening and duel-loop resilience (after 23:00) | `ogarciarevett/d1-duel-followups` |
-| [#164](../../pull/164) | feat(n17): bazaar team-checks — spec Q1-Q6 from stored data, read-only (N17-10) | `ogarciarevett/n17-live-checks` |
-| [#163](../../pull/163) | B27: duel settings card + e2e runner + one done-read per tick (into #150) | `night/b27-card` |
-| [#161](../../pull/161) | fix(dealer): close-retry and settle edge cases left open on #72 (P2/P3 follow-up) | `takeover/pr72-followup` |
-| [#160](../../pull/160) | docs(pitch): Sunday presentation pack, first draft (P1) | `ogarciarevett/docs-pitch` |
-| [#159](../../pull/159) | DO NOT MERGE: B27 duel stack integration (merge order #60→#86→#103→#113→#115→#130) + settings card | `night/b27-duel-stack` |
-| [#157](../../pull/157) | perf(agents): every agent inside Sunday's 15 s tick: Jev answer cache, concurrent reads, tick profiler (SP1) | `ogarciarevett/work-speed-sp1` |
-| [#155](../../pull/155) | feat(supply): supply map, pack EV with our album need, open or keep a sealed pack (N14b, part 2) | `ogarciarevett/feat-n14b-supply-packs` |
-| [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
-| [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
-| [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
-| [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
-| [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
-| [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
-| [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
-| [#128](../../pull/128) | feat(ops): maker cancel cap, per-service tick offset, injection detector gaps (B10) | `night/b10-ops-hardening` |
-| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
+| [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
+| [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
+| [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
+| [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | `feat/injection-log` |
+| [#231](../../pull/231) | fix: bench policy edge needs BAZAAR_BENCH_EDGE_CONFIRM=yes on the maker (DO NOT MERGE before tick 1190) | `fix/bench-edge-needs-confirm` |
 
 <!-- BAZAAR:ACTIVITY:END -->

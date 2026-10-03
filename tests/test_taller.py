@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from bazaar_agent import move_impact
 from bazaar_agent.agents import taller as tl
 from bazaar_agent.agents.taker import Taker, TakerConfig
-from bazaar_agent.guardrails import Action, Context, Guardrails, check, load_guardrails
+from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check, load_guardrails
 from bazaar_agent.level_watch import LevelWatch
 from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
 from tests.test_strategy import ME
@@ -245,8 +245,8 @@ def test_no_craft_before_the_sentinel_saw_the_level_active_or_with_the_switch_of
 def test_the_hourly_cap_stops_a_second_craft_in_the_same_game_hour(tmp_path):
     team, _ = run_taker(tmp_path, news=News(LEVELS), ticks=3, taller_enabled=True, max_taller_per_game_hour=1)
     assert len(crafts(team)) == 1  # the fake /me still shows the spares: only the cap stops the next ones
-    refused = [r for r in rows(tmp_path) if r.get("kind") == "taller" and r["status"] == "rejected"]
-    assert len(refused) == 1 and "max_taller_per_game_hour 1" in refused[0]["guardrail"]  # said once, not per tick
+    assert team.reads.count("duels") == 1  # at the cap (shared ledger) the step sends no request at all
+    assert [e["item"] for e in Ledger(tmp_path / "ledger.jsonl").entries()] == ["taller:SAL-01,LAV-01,LAV-01"]
 
 
 def test_a_dry_run_sends_nothing_and_says_the_craft_once(tmp_path):

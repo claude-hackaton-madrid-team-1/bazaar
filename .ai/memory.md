@@ -1194,3 +1194,54 @@ at tick 948 (coordinator's decode of `/me`; score 28.25 → 23.98, rank 5 → 12
 "never score": the page cards we had bought from teams were revalued at the new `your_value`. Our reading (inferred, not in the audit): team-acquired cards are
 marked at the current `your_value`, not frozen at the trade. Lesson: a rules-text inference that touches the album gets
 checked against the live `/api/me` score before it is acted on. `protect_page_sets` lists every set (hard rule).
+
+
+### [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
+symptom: on main, `scripts/sim_smoke.py` failed at `dealer buy LAT-01` with "no_buyback_ticks ... (our sales
+unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the impact board cannot read our sales, and
+the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
+from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
+ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))`; the JSONL ledger has no such check, so a new kind
+passes every file-ledger test and fails live with `CheckViolation` (found by the #236 reviews). A Workshop craft is
+booked as `spend` at price 0 with item `taller:<refs>` and counted by prefix (`count_since(kind, t_hours, prefix)`).
+
+### [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
+From `decisions`/`executions` (read-only). Taker rejections: `max_price_uncommon` 341 (204 ticks, asks 27-33 vs cap 26,
+ticks 174-310), `cash_floor` 100 + `max_spend` 72 (all before the Sat 16:35 loosening: floor 100/50, hourly 150), `max_price_rare`
+71 (ticks 684-724, asks 98-104 vs 95), jev undecided below 0.75 on team swaps 231 (ticks 576-1322, Jev 0.26-0.44). The taker's
+256-tick gap (502 to 758) was cash stuck at 81 under floor 50. The maker's 59-tick LAT-10 sell 86 refusal (973-1277) is
+`max_score_loss_per_move` asking for a human approval (a hard rule, kept). `dealer_sell` breaker held 948-1065 until a manual reset.
+Two real bugs: (1) the taker runs BAZAAR_DECIDER=llm and `needed_budget_s` = 13 s, but a 15 s tick leaves ~10 s: every Jev-gated
+move would read "no tick budget for jev" (20 team opens already did at 30 s ticks); `decider()` now answers Jev below
+BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
+offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
+
+### [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+Claim-only storage made `opened_before()` true (regression: `2 failed, 22 deselected`) → it excluded `_claim`
+but counted `_once:bench_match_probe` → exclude the literal `_once:` prefix from both venue count and load.
+Keep real keyless venue markers; an in-memory SQL regression covers both states and target isolation.
+Validation also hit local Postgres contention: the full suite stalled inside psycopg, then a retry failed
+the `rival_board` lock-timing test; the parallel coverage run hit a schema lock timeout in approvals setup.
+Both affected tests passed alone (`2 passed in 2.89s`); the final full gate without competing coverage passed:
+`5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.
+
+### [2026-10-04] build-error: PR #263 merge verification separator
+The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
+The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.
+
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it. Existing sell guards remain binding. Two replay tests pin their historical cap to 26.
+PR #265 is limited to these three guardrail changes; duel sending and request budgets match origin/main.
+
+### [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
+The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
+showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.

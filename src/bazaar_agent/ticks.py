@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from bazaar_agent.jev.decider import note_tick_seconds
+
 AFTER_TICK_S = 0.3  # settle margin after a tick lands, so reads see the settled state
 PAUSED_POLL_S = 5.0
 CLOSED_POLL_MAX_S = 300.0
@@ -187,6 +189,7 @@ def run_per_tick(
             sleep(min(ERROR_BACKOFF_MAX_S, 2.0 ** (failures - 1)))
             continue
         failures = 0
+        note_tick_seconds(clock.tick_seconds if clock.is_live else None)
         started = time.monotonic()
         if clock.is_live and clock.tick != last_tick:
             try:
