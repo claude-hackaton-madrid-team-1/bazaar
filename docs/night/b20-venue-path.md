@@ -1,6 +1,6 @@
 # B20: the fastest safe path to an open venue
 
-Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at e489449 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
+Night of 3–4 Oct 2026. Branch `night/b20-venue-path`, draft PR, base #71 at ffb0877 (the venue keeper). It reconciles #71 with W1b's B2 runbook (#92, already rebased on e489449) and uses W1a/B1's bench numbers (#77, #94). **Proposal only: no GUARDRAILS.md value is changed.** The one new parameter defaults to today's behaviour.
 
 ## The premise needs one correction
 
@@ -69,7 +69,7 @@ Per session: 0.375 at the stall's level, 0.75 at the top-three mean. The edge nu
 - `venue_mechanism` guardrail, `board` by default. The keeper opens an `auto` venue when it says so, and then starts no broker (a broker cannot act on auto).
 - `bazaar broker watch` (read-only): logs the Market Test's `bench_offers` once a tick from the free stall's book (key from `/api/me`, scrubbed from telemetry) or our own (`--ours`), keeping any unknown offer field such as an expiry. It never sends anything.
 - `bazaar broker calibrate`: per run, it reports arrivals, stays, crossed vs left (on the stall a crossed pair vanishes one relax step apart), firm share, relax step and extra fields. These are exactly W1a's unverified model inputs.
-- Tests: 5 new (keeper auto, watch, calibration). Gates: 1,966 passed, ruff, black and mypy clean.
+- Tests: 6 new (keeper auto and listed mechanism, watch, calibration). Gates: 1,976 passed, ruff, black and mypy clean.
 
 ## Risks
 
