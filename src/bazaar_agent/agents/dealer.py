@@ -78,6 +78,15 @@ class Negotiation:
             self.opening_ask, self.bids_at_opening = ask, len(self.bids)
         self.lowest_ask = ask if self.lowest_ask is None else min(self.lowest_ask, ask)
 
+    def bid_cap(self) -> int | None:
+        """The highest bid that can never close at her opening price: one below it until she came down,
+        then her lowest ask (a bid there closes below her opening). None before she named a price."""
+        if self.opening_ask is None:
+            return None
+        if self.lowest_ask is not None and self.lowest_ask < self.opening_ask:
+            return self.lowest_ask
+        return self.opening_ask - 1
+
     def may_take(self, ask: int) -> bool:
         """Her ask may be taken: it is below her opening ask, so the deal captures part of her range. At her
         opening price it would score nothing on the ladder and count nothing toward the next level."""
@@ -132,6 +141,11 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
     if nxt is None:
         return Move("walk", reason="no higher bid left inside our limit")
+    cap = neg.bid_cap()
+    if cap is not None and nxt > cap:  # e.g. no ask of hers stands this tick: never bid up to her opening
+        if cap <= (neg.bids[-1] if neg.bids else 0):
+            return Move("wait", reason=f"no bid left below her opening ask {neg.opening_ask}")
+        return Move("bid", cap, reason=f"capped below her opening ask {neg.opening_ask}")
     return Move("bid", nxt, reason="small distinct step up")
 
 
@@ -435,6 +449,8 @@ def negotiate(
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
             send_by = time.monotonic() + action_budget_s(fresh)
+            if move.kind == "accept" and hold(f"tick {clock.tick}, before reserving the accept slot"):
+                return  # never take the team's accept slot (the duel player's too) while the switch is on
             if move.kind == "accept" and reserve is not None and not reserve(move, fresh):
                 move = meet_ask(neg, ask)  # same price the guard allowed: the dealer may accept OUR offer
                 log(f"tick {fresh.tick}: the team's accept slot is taken this tick → {move.kind} {move.price or ''}")

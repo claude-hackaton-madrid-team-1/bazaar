@@ -419,3 +419,17 @@ def test_negotiate_replays_lav03_and_walks_from_her_opening_ask_with_a_lower_reo
     assert client.sent == [6] and client.accepted == [] and client.closed
     assert (out.status, out.price, out.reopen_start) == ("walked", None, 5)
     assert any("→ walk  (she held her opening ask 7: no counter left below it)" in line for line in logs)
+
+
+def test_with_no_ask_standing_we_never_bid_up_to_her_opening_ask():
+    # pr-reviewer #72 row 2: opening 9, our 6, 7, 8, a tick with no standing offer of hers → we bid 9,
+    # and if she takes it, the deal is at her opening price (scores nothing).
+    assert decide(neg(bids=[6, 7, 8], opened=(9, 1)), None, None, False) == Move(
+        "wait", reason="no bid left below her opening ask 9"
+    )
+    wide = neg(start=6, step=5, max_price=20, bids=[6], opened=(9, 1))
+    assert decide(wide, None, None, False) == Move("bid", 8, reason="capped below her opening ask 9")
+    came_down = neg(step=5, max_price=20, bids=[6], opened=(12, 1))
+    came_down.see_ask(10)  # she conceded to 10: a bid at 10 closes below her opening
+    assert decide(came_down, None, None, False) == Move("bid", 10, reason="capped below her opening ask 12")
+    assert decide(neg(), None, None, False).kind == "bid"  # before she named a price: no cap

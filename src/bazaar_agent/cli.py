@@ -381,6 +381,9 @@ def dealer_buy(
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
+        if stops := gr.kill_switch(rules):  # opening a thread is a write: no reopen while the switch is on
+            console.print(f"she held her opening ask; not reopening: kill switch on ({'; '.join(stops)})")
+            break
         console.print(f"she held her opening ask on thread {out.thread}: reopening lower, first bid {out.reopen_start}")
         plan = replace(plan, start=out.reopen_start)
     colour = "green" if out.status == "deal" else "red"
