@@ -145,3 +145,24 @@ def test_learnings_round_trip_through_postgres(database_url, schema):  # noqa: F
     assert reader.recall("abuela", {"quota"}, 200, team=US)[0].key() == refusal.key()
     writer.close()
     reader.close()
+
+
+def test_the_schema_is_tried_once_at_open_and_a_failure_keeps_the_table_as_it_is():
+    lines: list[str] = []
+    calls: list[str] = []
+
+    class Conn(BrokenConn):
+        def rollback(self) -> None:
+            calls.append("rollback")
+
+    def init(conn: object) -> None:
+        calls.append("init")
+        raise psycopg.errors.LockNotAvailable("lock timeout")
+
+    store = LearningStore(lambda: Conn(), lines.append, init_schema=init)  # type: ignore[arg-type,return-value]
+    assert store.open() == "postgres learnings + memory"
+    store._conn = None  # a reconnect later (a dropped connection) never re-runs the schema
+    store.begin_tick(9)
+    store.open()
+    assert calls == ["init", "rollback"]
+    assert lines == ["learnings: schema init failed (LockNotAvailable); using the table as it is"]
