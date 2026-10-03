@@ -1059,6 +1059,19 @@ range; the SG1 ladder probe plans nothing until fills drop or a card's official 
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
 
+### [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
+Three live `judge()` calls on the laptop's subscription token (duels.json 2 questions, negotiation.json 3 questions):
+7955, 6197 and 9067 ms, each a fresh Claude Code CLI process with structured output. Verdicts came back in Jev's shape
+and cleared the bars (duel_move accept 0.78 vs 0.75; negotiation_move accept 0.75). An 8 s budget would drop about a
+third of them: the default is 12 s, and the duel and maker gates ask only with timeout + 1 s of the tick left.
+
+### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read
+refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused rate_limited` (a lost duel tick scores 0).
+Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
+service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
+429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.
+
 ### [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
 Sessions 1-3 (ticks 201-217, 441-457, 681-697): `bench.finished` comes on the TEAM stream only (not the public
 feed) as `{venue, session, efficiency, auto_baseline, matches}`: 0.899/0.899 (v08, the stall), 0.967/0.967 and
@@ -1066,4 +1079,4 @@ feed) as `{venue, session, efficiency, auto_baseline, matches}`: 0.899/0.899 (v0
 session, start_tick}` and NO run id, so `BenchSessions` opens sessions from the book only. A match answers
 `{"queued": true, "settles_at_tick": tick + 1}`. Matched ids: buyers b35-4..9, b52-0..5; sellers b35-13..17,
 b52-13..19 (ten a side?). On `bazaar_sim.bench`, exact equals the stall on every book; #84's edge without a guard
-realises less than the stall on 4-26 % of books (mean below it with 20 traders); `scripts/bench_edge_proof.py`.
+realises less than the stall on 2-26 % of books (mean below it with 20 traders); `scripts/bench_edge_proof.py`.

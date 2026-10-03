@@ -19,6 +19,22 @@ first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 
 Endpoints, event envelope and examples for the dashboard: [`docs/services.md`](docs/services.md).
 
+**One key, staggered ticks.** Every service shares our key's 5 req/s (bursts of 20). Started together at the tick
+boundary they passed it (Sat ticks 646-650: `maker: read refused rate_limited … nothing sent`, `/api/duels refused
+rate_limited`), so each tick loop wakes `BAZAAR_TICK_OFFSET_S` seconds after the tick (default 0; at most 10 s and
+40 % of the tick). Recommended, set by hand per Railway service (declared `preserve()` in `.railway/railway.py`):
+
+| Service | `BAZAAR_TICK_OFFSET_S` | Why |
+|---|---|---|
+| `bazaar-duels` | `0` | first: duels have deadlines and an unanswered duel scores 0 |
+| `bazaar-taker` | `2.5` | |
+| `bazaar-maker` | `5` | never accepts, so it can wait |
+| `bazaar-mcp` | `7.5` | its tools answer requests (no tick loop today): the value only matters for one it may run later |
+
+A `429` on the duels read is re-read once after the server's wait (else 1.2 s), only with ≥ 8 s of the tick left;
+nothing loops on a 429. Laptop CLI commands share the same key: **run them one at a time**, never alongside each
+other in a busy tick.
+
 ## Simulator (test every agent while the game is closed)
 
 `bazaar-sim` is an HTTP API that behaves like `https://bazaar.causaprima.ai`: the same routes, the
@@ -444,6 +460,31 @@ options below remain for a Phoenix outside Railway.
    `OTEL_EXPORTER_OTLP_TRACES_HEADERS` in the shell environment (the exporter reads these from
    the environment, not from `.env`). This path is untested: check it against Arize's docs before
    relying on it.
+
+## Decider switch: Jev or Claude Opus (`BAZAAR_DECIDER`)
+
+Every verdict comes from `bazaar_agent.jev.judge()`. `BAZAAR_DECIDER=llm` sends the same masked state and
+questions to Claude instead of TypeSafe's Jev and returns the same verdicts under the same bars, so every
+caller (taker, maker, duels, team desk, pack gate, dealer buy, the model chooser) follows it. Guardrails, the
+official value cap, the cash floor, human approval, breakers and the ledger still gate every send. Spec:
+[`LD1-spec.md`](.ai/specs/LD1-spec.md).
+
+| variable | default | meaning |
+|---|---|---|
+| `BAZAAR_DECIDER` | `jev` | `llm` = Claude decides; anything else = Jev |
+| `BAZAAR_DECIDER_MODEL` | `opus-5-5` | alias or Claude id (API key first, else the subscription token) |
+| `BAZAAR_DECIDER_TIMEOUT_S` | `12` | whole-call budget (1-60), then `undecided request_timeout` |
+| `BAZAAR_DECIDER_CACHE_S` | `30` | reuse an answer for the same questions, bars and state |
+| `BAZAAR_DECIDER_MAX_CALLS` / `_WINDOW_S` | `8` / `30` | call starts per window per process, then `decider_call_cap` |
+| `BAZAAR_DECIDER_MAX_CONCURRENT` | `3` | calls in flight per process |
+
+Read from the process environment (not `.env`): export it on a laptop, set it per service on Railway.
+The caps are per process, and taker, maker and duels share ONE subscription token: turn `llm` on one service
+first (duels), watch `request_timeout` / `rate_limited` / `decider_call_cap` in the decision logs, then the
+others. A usage-limit answer pauses that process's Claude calls until the window resets (every verdict is then
+`undecided`, the words fall back to templates). Gates ask only with timeout + 1 s of the tick left. The prompt
+tells Claude to commit at or above the bar unless the options are equal, so gates that used to stay closed on
+an undecided Jev (pack slot, team swap) will decide far more often: still inside every guardrail.
 
 ## Runtime LLM (talk to it, let it write the words, steer it)
 
@@ -1272,7 +1313,8 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
-| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY=exact\|edge` on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
+| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1336,13 +1378,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+- [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+- [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 - [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
 - [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
 - [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
 - [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
 - [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
-- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
-- [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
 
 <!-- BAZAAR:STATUS:END -->
 

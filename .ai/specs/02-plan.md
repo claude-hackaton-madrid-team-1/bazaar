@@ -130,7 +130,8 @@ negotiates well.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
-| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY=exact\|edge` on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
+| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -556,6 +557,14 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   tests/test_strategy_gate.py (maker section).
 - Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
   key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+
+### LD1 — BAZAAR_DECIDER: Claude Opus instead of Jev, behind an env switch ([spec](LD1-spec.md))
+- Step 1 — `jev/decider.py` (switch, timeout, `needed_budget_s`) and the `judge()` branch. · **Acceptance:** unset
+  asks Jev only; `llm` never calls TypeSafe (tests/jev/test_decider.py).
+- Step 2 — `llm/decider.py`: masked prompt, structured answers in Jev's shape, cache, call cap, timeout. ·
+  **Acceptance:** verdict parity and failure tests.
+- Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
+  **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
 
 ## Parallel-work notes
 

@@ -42,6 +42,7 @@ from bazaar_agent.agents.duelist import (
 from bazaar_agent.agents.duelist import _number as _number  # finite only: NaN days never abort a tick (#60 r2)
 from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
+from bazaar_agent.jev.decider import needed_budget_s
 
 MOVE_QUESTION = "duel_move"
 DAYS_QUESTION = "rival_cares_about_days"
@@ -481,7 +482,7 @@ class DuelJev:
     ) -> dict[tuple[int, str], JevAdvice]:
         answers: dict[tuple[int, str], JevAdvice] = {}
         todo: list[tuple[int, str, JevFn, dict[str, Any], tuple[object, ...]]] = []
-        budget_ok = left() >= self.config.min_budget_s
+        budget_ok = left() >= needed_budget_s(self.config.min_budget_s)
         for ask in asks:
             did, question, _, _, key = ask
             cached = self._cache.get((did, question, key))

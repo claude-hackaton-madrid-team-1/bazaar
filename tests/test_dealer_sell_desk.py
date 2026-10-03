@@ -566,3 +566,21 @@ def test_a_walked_card_comes_back_after_the_retry_window_or_when_our_floor_drops
     late = clock().model_copy(update={"t_hours": 2.5})
     assert sell_desk._retry_ok(cand, late)
     assert sell_desk._retry_ok(desk.Candidate(**{**cand.__dict__, "dealer": "chato"}), clock())
+
+
+def test_an_llm_gate_answer_that_used_up_the_tick_opens_nothing_late(tmp_path, monkeypatch):
+    """BAZAAR_DECIDER=llm (LD1, #213 security round 2): the open_thread waits for the next tick when the gate's
+    ask ran past the maker's live window, whatever the tick-start snapshot said."""
+    monkeypatch.setenv("BAZAAR_DECIDER", "llm")
+    now = [1000.0]
+
+    def slow_yes(name, state):
+        now[0] += 39.5  # the snapshot said 40 s left; the answer leaves 0.5 s, then the window closes
+        now[0] += 1.0
+        return JevAdvice("yes", 0.9)
+
+    team = FakeTeam(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, strategy_jev=slow_yes, dealer_sell_enabled=True)
+    m.now = lambda: now[0]
+    m.on_tick(clock())
+    assert opened(team) == []
