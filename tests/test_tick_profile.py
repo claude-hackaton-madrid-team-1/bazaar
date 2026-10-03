@@ -70,3 +70,40 @@ def test_a_run_refuses_any_target_but_a_local_simulator(monkeypatch, tmp_path):
     monkeypatch.setenv("BAZAAR_SIM", "local")
     with pytest.raises(SystemExit, match="agent must be one of"):
         tp.run("broker", 8915, tmp_path, [])
+
+
+def test_a_run_refuses_when_the_settings_target_is_not_the_local_simulator(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from bazaar_agent import config
+
+    monkeypatch.setenv("BAZAAR_SIM", "local")
+    monkeypatch.setattr(config, "LOCAL_SIM_URL", config.LOCAL_SIM_URL)  # restored after the test
+    monkeypatch.setattr(config, "load_settings", lambda: SimpleNamespace(bazaar_url=config.DEFAULT_URL))
+    with pytest.raises(SystemExit, match="the target is not the local simulator"):
+        tp.run("taker", 8915, tmp_path, [])
+    assert not list(tmp_path.iterdir())  # refused before anything was patched or written
+
+
+def test_a_run_refuses_a_database_that_is_not_on_this_machine():
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    def settings(url):
+        return SimpleNamespace(database_url=SecretStr(url))
+
+    assert tp._local_database(settings("postgresql://bazaar:bazaar@localhost:5433/bazaar_sp1"))
+    assert tp._local_database(settings("postgresql://u:p@127.0.0.1:5432/x"))
+    assert not tp._local_database(settings("postgresql://u:p@postgres.railway.internal:5432/bazaar_sim"))
+
+
+def test_the_simulator_command_refuses_a_busy_port():
+    import socket
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = taken.getsockname()[1]
+        with pytest.raises(SystemExit, match="is busy"):
+            tp.serve_sim(port, 15.0)

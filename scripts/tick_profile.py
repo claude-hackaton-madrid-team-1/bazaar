@@ -1,14 +1,16 @@
 """Tick profiler (SP1): run one agent against a LOCAL simulator and log where each tick's time goes.
 
-    uv run python scripts/tick_profile.py run taker --port 8815 --out .local/sp1 -- --live --max-ticks 40
-    uv run python scripts/tick_profile.py run maker --port 8815 --out .local/sp1 -- --live --max-ticks 40
-    uv run python scripts/tick_profile.py run duels --port 8815 --out .local/sp1 -- --play --max-ticks 40
+    uv run python scripts/tick_profile.py sim --port 8915 --tick-seconds 15     # its own simulator, refuses a busy port
+    uv run python scripts/tick_profile.py run taker --port 8915 --out .local/sp1 -- --live --max-ticks 40
+    uv run python scripts/tick_profile.py run maker --port 8915 --out .local/sp1 -- --live --max-ticks 40
+    uv run python scripts/tick_profile.py run duels --port 8915 --out .local/sp1 -- --play --max-ticks 40
     uv run python scripts/tick_profile.py report .local/sp1
 
 SP1_LATENCY_MS=120 adds that much to every simulator request (a real request's cost; the local sim answers
 in ~1 ms), and SP1_JEV_LATENCY_MS to every Jev call (a slow Jev API). SP1_GUARDRAILS=<file> reads that rule
 book instead of GUARDRAILS.md (a scenario, e.g. Sunday with the venue open and no bond reserve).
 
+Run the agents with BAZAAR_SIM=local and BAZAAR_SIM_DATABASE_URL on a local database (it refuses a remote one).
 `run` patches the process before the CLI starts, so the agent runs unchanged: it only ever talks to
 `http://127.0.0.1:<port>` (BAZAAR_SIM=local, with the local address moved to `--port`), and it refuses to
 start against anything else. One JSONL row per tick (`<agent>.ticks.jsonl`): wall time against the tick's
@@ -134,7 +136,7 @@ def _patch_http(rec: _Recorder, base: str, latency_s: float) -> None:
 
     def urlopen(req: Any, *args: Any, **kwargs: Any) -> Any:
         url = req.full_url if isinstance(req, urllib.request.Request) else str(req)
-        if not url.startswith(base):
+        if not url.startswith(base + "/"):  # exactly this host and port (":881" never matches ":8815")
             return real(req, *args, **kwargs)
         keyed = isinstance(req, urllib.request.Request) and req.has_header("X-team-key")
         method = req.get_method() if isinstance(req, urllib.request.Request) else "GET"
@@ -231,6 +233,31 @@ def _patch_ticks(rec: _Recorder) -> None:
     traces.per_tick = per_tick  # type: ignore[assignment]
 
 
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _local_database(settings: Any) -> bool:
+    """True when the agents' Postgres is on this machine (its URL is never printed)."""
+    from urllib.parse import urlsplit
+
+    return (urlsplit(settings.database_url.get_secret_value()).hostname or "") in LOOPBACK
+
+
+def serve_sim(port: int, tick_seconds: float) -> None:
+    """A fresh in-memory simulator on `port`, refusing a port something already answers on (another worker's
+    simulator: our agents would trade in its world). Runs until Ctrl-C."""
+    import socket
+    import subprocess
+
+    with socket.socket() as probe:
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            raise SystemExit(f"127.0.0.1:{port} is busy: pick a free port (8900+), never share a simulator")
+    env = {**os.environ, "SIM_DATABASE_URL": "memory", "SIM_TICK_SECONDS": str(tick_seconds), "PORT": str(port)}
+    env.setdefault("SIM_DUEL_FIRST_TICK", "3")
+    env.setdefault("SIM_DUEL_TICKS", "40")
+    subprocess.run([sys.executable, "-m", "bazaar_sim", "serve", "--port", str(port)], env=env, check=False)
+
+
 def run(agent: str, port: int, out: Path, args: list[str], latency_ms: float = 0.0) -> None:
     if agent not in AGENTS:
         raise SystemExit(f"agent must be one of {sorted(AGENTS)}")
@@ -240,8 +267,14 @@ def run(agent: str, port: int, out: Path, args: list[str], latency_ms: float = 0
     from bazaar_agent import config
 
     config.LOCAL_SIM_URL = base  # the simulator on --port, never the real game
-    if config.load_settings().bazaar_url != base:
+    settings = config.load_settings()
+    if settings.bazaar_url != base:
         raise SystemExit("refusing to profile: the target is not the local simulator")
+    if not _local_database(settings):
+        raise SystemExit(
+            "refusing to profile: the agents write ledger and decision rows; point BAZAAR_SIM_DATABASE_URL at a "
+            "database on this machine (a shared one would mix this run into teammates' simulator runs)"
+        )
     rules_file = os.environ.get("SP1_GUARDRAILS")
     if rules_file:  # a scenario's own rule book (e.g. Sunday: the venue is open, no bond reserve)
         from bazaar_agent import guardrails
@@ -380,6 +413,9 @@ def main(argv: list[str]) -> None:
             print(json.dumps(summary, indent=2))
         else:
             _print(summary)
+        return
+    if len(argv) >= 3 and argv[0] == "sim" and argv[1] == "--port":
+        serve_sim(int(argv[2]), float(argv[4]) if argv[3:4] == ["--tick-seconds"] and len(argv) > 4 else 15.0)
         return
     if len(argv) >= 6 and argv[0] == "run" and argv[2] == "--port" and argv[4] == "--out":
         rest = argv[6:]
