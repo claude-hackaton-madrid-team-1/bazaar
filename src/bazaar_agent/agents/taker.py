@@ -111,6 +111,7 @@ from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.news import NewsSentinel
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.pack_open import choose, sealed_packs
@@ -446,6 +447,7 @@ class Taker:
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
         bluff: TacticBook | None = None,
+        news: NewsSentinel | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -459,6 +461,8 @@ class Taker:
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
+        self.news = news  # Radio Rastro + the schedule: logged and stored after the sends; no behaviour change
+        self._news_view: tuple[int, list[Any], dict[str, Any]] | None = None  # this tick's (tick, feed, catalog)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -517,6 +521,8 @@ class Taker:
             self.thread_store.flush(tick)
         if self.bluff is not None:
             self.bluff.flush()
+        if self.news is not None and self._news_view is not None and self._news_view[0] == tick:
+            self.news.on_tick(*self._news_view)  # never raises; at most 2 keyless GETs every 10 ticks
         self.feed.archive_pending()
 
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
@@ -527,6 +533,7 @@ class Taker:
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock
+        self._news_view = (clock.tick, snap.events, snap.catalog)
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
         for listed in threads:  # GET /api/me/threads, already read: our open dealer threads

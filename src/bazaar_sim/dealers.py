@@ -6,6 +6,9 @@ What the real threads showed (`bazaar curves`, ticks 0-160):
 - El Chato opens uncommons at 33, rares at 97, silver packs at 188; he holds your first move, then
   moves one per small step and matches a big one ("Six from you. Six from me").
 - Neither concedes on a repeated or backward price. When buying, both quote once and never move.
+- Doña Pilar (level 3, a collector; modelled on the real /api/dealers entry, not on a feed) sells only gold packs
+  and buys uncommon+ cards: over book (x1.2) for the sets she loves (SAL, RET), under book (x0.9) for the rest.
+  Like every buyer here she quotes once and never moves.
 - When patience runs out the dealer names a `final` offer; anything but taking it makes it walk.
 - A bid that reaches the secret limit is accepted at once ("Deal!"): the dealer takes OUR offer.
 
@@ -43,6 +46,9 @@ class Style:
     cooloff_ticks: int
     kindness_discount: int  # the floor drops this much once per conversation for a kind team
     spam_penalty: bool  # the same words again without a new price cost patience
+    loved_sets: tuple[str, ...] = ()  # a collector pays `love_mult` x book for these sets' cards
+    love_mult: float = 1.0
+    love_rarities: tuple[str, ...] = ("uncommon", "rare", "epic")
 
 
 ABUELA = Style(
@@ -75,7 +81,24 @@ CHATO = Style(
     kindness_discount=0,
     spam_penalty=True,
 )
-STYLES = {s.dealer: s for s in (ABUELA, CHATO)}
+PILAR = Style(
+    "pilar",
+    {"uncommon": 1.15, "rare": 1.1, "epic": 1.1},
+    {"uncommon": (0.92, 1.0), "rare": (0.95, 1.02), "epic": (0.95, 1.02), "pack": (0.93, 0.97)},
+    buy_open=0.9,
+    patience=6,
+    buy_patience=3,
+    matches_moves=True,
+    generosity=0.5,
+    memory=0.7,
+    cooloff_at=-3.0,
+    cooloff_ticks=40,
+    kindness_discount=0,
+    spam_penalty=True,
+    loved_sets=("SAL", "RET"),
+    love_mult=1.2,
+)
+STYLES = {s.dealer: s for s in (ABUELA, CHATO, PILAR)}
 
 ABUELA_LINES = {
     "open": ("Hola, cariño, have you eaten? {name} for {p} P. A good start for your album.",),
@@ -106,7 +129,18 @@ CHATO_LINES = {
     "accept_buy": ("Hecho. {p} P for {name}.",),
     "walk": ("Bueno. Next stall, amigo.",),
 }
-LINES = {"abuela": ABUELA_LINES, "chato": CHATO_LINES}
+PILAR_LINES = {
+    "open": ("Doña Pilar, encantada. {name}: {p} P. It is a fine piece.",),
+    "open_buy": ("Ah, {name}. For my album I can offer {p} P.", "{name}... {p} P, and not a céntimo more."),
+    "move": ("Very well, {p} P. Only because you have taste.", "You move {d}, I move {c}: {p} P."),
+    "hold": ("{p} P. I know exactly what it is worth.", "Still {p} P, joven."),
+    "final": ("{p} P. My last word, and I keep my word.",),
+    "final_buy": ("{p} P. My last word, and I keep my word.",),
+    "accept": ("Trato hecho: {name} for {p} P.",),
+    "accept_buy": ("Trato hecho. {p} P for your {name}; it goes in my album.",),
+    "walk": ("Then we are done. Buenas tardes.",),
+}
+LINES = {"abuela": ABUELA_LINES, "chato": CHATO_LINES, "pilar": PILAR_LINES}
 
 
 @dataclass(frozen=True)
@@ -130,6 +164,13 @@ def mood_delta(text: str | None) -> float:
     return delta
 
 
+def buy_share(style: Style, set_code: str, rarity: str) -> float:
+    """The share of book a dealer bids for one card: a collector's loved sets beat book, the rest get `buy_open`."""
+    if set_code in style.loved_sets and rarity in style.love_rarities:
+        return style.love_mult
+    return style.buy_open
+
+
 def carried_mood(style: Style, mood: float) -> float:
     """What a dealer still feels when a new conversation opens."""
     return round(mood * style.memory, 3)
@@ -146,10 +187,13 @@ def start(
     opening: int | None,
     assets: list[int],
     rng: random.Random,
+    bid: int | None = None,
 ) -> Negotiation:
-    """A fresh conversation's secret limit and patience. `opening` overrides the computed opening ask."""
+    """A fresh conversation's secret limit and patience. `opening` overrides the computed opening ask.
+
+    When buying, `bid` (already weighted per card with `buy_share`) overrides `list_price x buy_open`."""
     if side == "buy":
-        bid = max(1, round(list_price * style.buy_open))
+        bid = max(1, bid if bid is not None else round(list_price * style.buy_open))
         return Negotiation(
             side="buy",
             item=item,

@@ -885,3 +885,11 @@ bonus; a wrong one costs points.
 `docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
 `docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
+
+### [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
+`/api/levels` (tick ~330): Radio Rastro active since game hour 3.675; `news.posted` events (payload id, source, headline,
+body) are in `/api/feed` too, so the taker's sentinel reads them at no request cost and backfills `/api/news` +
+`/api/schedule` once per 10 ticks. `/api/dealers`: Doña Pilar `kind: "collector"`, level 3, opens to all at game hour
+5.508; she sells only `sobre_oro` (list 420, 1/team/hour) and buys uncommon/rare/epic (SAL, RET loved). Our taker never
+buys her pack while `max_price_pack` = 20; selling to her needs `bazaar dealer sell --dealer pilar` (no runner sells
+to dealers). Schedule: "Salamanca fever: Pilar pays 25 % over book for Salamanca" from game hour 9.15 to 11.15.
