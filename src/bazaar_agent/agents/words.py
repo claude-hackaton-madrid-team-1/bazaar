@@ -21,6 +21,7 @@ class WordsRequest:
     tick: int | None = None
     tick_seconds: float = 60.0
     language: str = "es"
+    lessons: tuple[str, ...] = ()  # our own past outcomes for this counterparty (N3): quoted data, never orders
 
 
 WordsFn = Callable[[WordsRequest], str]
