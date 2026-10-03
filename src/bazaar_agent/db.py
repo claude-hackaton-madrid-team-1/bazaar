@@ -107,8 +107,13 @@ def _storable(p: Print) -> Print:
         raise ValueError("a tape number out of range")
     if not 0 <= p.settlement <= INT8:
         raise ValueError("a settlement id out of range")
-    if any("\x00" in str(v) for v in (p.venue, p.persona, p.buyer, p.seller, p.ref)):
-        raise ValueError("NUL in a tape field")
+    for text in (p.venue, p.persona, p.buyer, p.seller, p.ref):
+        if text is not None and not isinstance(text, str):
+            raise ValueError("a tape text field that is not text")
+        if text is not None and "\x00" in text:
+            raise ValueError("NUL in a tape field")
+        if text is not None:
+            text.encode("utf-8")  # a lone surrogate: UnicodeEncodeError, a ValueError
     return p
 
 
