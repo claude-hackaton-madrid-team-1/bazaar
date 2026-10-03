@@ -248,10 +248,10 @@ def with_name(template: str, price: int, name: str) -> str:
     return text
 
 
-def words(step: int, price: int, dealer: str = "", tone: str = "") -> str:
+def words(step: int, price: int, dealer: str = "", tone: str = "", name: str | None = None) -> str:
     """Kind, varied words for a bid (terse ones for a `terse` dealer). The structured price is what binds; the
-    text never changes it."""
-    name = DEALER_NAMES.get(dealer, "")
+    text never changes it. `name` (the address from `dealer_memory.address_for`) overrides `DEALER_NAMES`."""
+    name = DEALER_NAMES.get(dealer, "") if name is None else name
     pool = TERSE_WORDS if tone == "terse" else KIND_WORDS
     return with_name(pool[step % len(pool)], price, name)
 
@@ -259,7 +259,7 @@ def words(step: int, price: int, dealer: str = "", tone: str = "") -> str:
 def template_words(request: WordsRequest) -> str:
     """The default `WordsFn`: our Spanish templates in the dealer's tone, addressed to it, with the structured
     price."""
-    return words(request.step, request.price, request.counterparty, request.tone)
+    return words(request.step, request.price, request.counterparty, request.tone, request.address or None)
 
 
 def bid_words(words_fn: WordsFn, base: WordsRequest, thread: dict[str, Any], clock: Any, send_by: float) -> str:

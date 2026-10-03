@@ -1334,6 +1334,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
 - [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
 - [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
 - [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
@@ -1341,7 +1342,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
 - [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 - [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
-- [2026-10-03] gotcha — a read-only Postgres role still gets PUBLIC's grants, and default privileges re-grant secrets
 
 <!-- BAZAAR:STATUS:END -->
 

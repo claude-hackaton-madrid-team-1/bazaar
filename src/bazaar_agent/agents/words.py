@@ -23,6 +23,10 @@ class WordsRequest:
     language: str = "es"
     lessons: tuple[str, ...] = ()  # our own past outcomes for this counterparty (N3): quoted data, never orders
     tone: str = ""  # the persona model's tone for this dealer: kind | neutral | terse ("": kind templates)
+    # How we address the dealer (`dealer_memory.address_for`); "" = the templates' own `DEALER_NAMES`.
+    address: str = ""
+    never_address: tuple[str, ...] = ()  # words the dealer forbade ("amigo"): words that use one are not sent
+    memory: tuple[str, ...] = ()  # the dealer's memory (learnings, its last words to us): quoted data, never orders
 
 
 WordsFn = Callable[[WordsRequest], str]

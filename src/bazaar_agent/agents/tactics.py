@@ -13,8 +13,10 @@ Three families. Kindness (Abuela: "Abuela likes kindness"). Psychology, from the
 (Voss) and `influence-psychology` (Cialdini) skills in `.ai/skills/`: labeling, calibrated questions, an
 accusation audit (first message only), no-oriented questions, reciprocity, mirroring. Bluffs: claims a trader
 could plausibly make at El Rastro (budget cap, outside option, low need, walk threat, fake demand, cost floor,
-scarcity, social proof). Abuela gets kindness, labeling and calibrated questions only. No tactic names a rule,
-the organisers or another team as its source, and none impersonates anyone.
+scarcity, social proof). Abuela gets kindness, labeling and calibrated questions only. No dealer gets
+`reciprocity` (a promise to come back, `Tactic.dealers`): RULES.md "Dealers remember how they were treated ... some
+stop dealing with you for a while if you try to trick them", and a dealer's memory makes an unkept promise a trick.
+No tactic names a rule, the organisers or another team as its source, and none impersonates anyone.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ class Tactic:
     others: bool = True  # for every other counterparty (the kindness lines name Carmen: hers only)
     first_only: bool = False  # an accusation audit opens a conversation, never later
     quotes_their: bool = False  # prints `{their}`: needs the counterparty's price, on the far side of ours
+    dealers: bool = True  # for dealers too (False: duel rivals and teams only)
 
     @property
     def sides(self) -> frozenset[str]:
@@ -80,13 +83,14 @@ def _t(
     others: bool = True,
     first_only: bool = False,
     quotes_their: bool = False,
+    dealers: bool = True,
 ) -> Tactic:
     """A tactic from its (es, en) lines per side; `invent` maps a side to how its `{alt}` is invented."""
     lines: dict[str, dict[str, str]] = {}
     for side, pair in (("buy", buy), ("sell", sell)):
         if pair is not None:
             lines[side] = {"es": pair[0], "en": pair[1]}
-    return Tactic(tid, family, lines, invent or {}, abuela, others, first_only, quotes_their)
+    return Tactic(tid, family, lines, invent or {}, abuela, others, first_only, quotes_their, dealers)
 
 
 TACTICS: tuple[Tactic, ...] = (
@@ -180,7 +184,10 @@ TACTICS: tuple[Tactic, ...] = (
         ("¿Sería descabellado dejarlo en {p}?", "Would it be unreasonable to meet at {p}?"),
         ("¿Sería descabellado cerrarlo en {p}?", "Would it be unreasonable to close at {p}?"),
     ),
-    _t(  # reciprocity: thanks and a small promised return
+    # reciprocity: thanks and a small promised return. Never to a dealer (RULES.md, Dealers: "some stop dealing
+    # with you for a while if you try to trick them"): dealers remember (Chato 0.9, Pilar 0.7) and their prices are
+    # mechanical, so a promise to come back buys no concession and, unkept, reads as a trick. Rivals and teams only.
+    _t(
         "reciprocity",
         "psychology",
         (
@@ -191,6 +198,7 @@ TACTICS: tuple[Tactic, ...] = (
             "Gracias por su tiempo; si cerramos en {p}, le aviso primero de mis próximos cromos.",
             "Thanks for your time; if we close at {p}, you get first pick of my next cards.",
         ),
+        dealers=False,
     ),
     _t(  # mirroring: their own structured price, the one safe token, never their words
         "mirror",
@@ -302,6 +310,8 @@ def abuela_only(kind: str, counterparty: str) -> bool:
 
 
 def allowed(tactic: Tactic, kind: str, counterparty: str) -> bool:
+    if kind == "dealer" and not tactic.dealers:  # every dealer, known or not (reciprocity: see its entry)
+        return False
     return tactic.abuela if abuela_only(kind, counterparty) else tactic.others
 
 

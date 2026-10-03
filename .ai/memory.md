@@ -1058,3 +1058,10 @@ events are 10-12 while our official value of a missing RET common is 7 (LAT 5), 
 range; the SG1 ladder probe plans nothing until fills drop or a card's official value rises. Strategy gates on the
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
+
+### [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
+Same questions plus `risk_posture: aggressive`: decided keep_50 (0.79), keep_0 lift (0.93) and keep_v19 (0.75,
+v19 stays open for the benches). Undecided, so kept: dealer_sell_enabled (0.41), max_price_uncommon (0.51),
+duplicates_reserve (list_duplicates 0.60, was 0.87 in a looser earlier ask), podium_venue_rule (avoid_unless_2x
+0.74, one hundredth under the bar). Strategy gates: ladder_probe 0.36, dealer_sell 0.70 (leaning yes). A verdict is
+asked once and applied as given; re-asking until it says yes would launder the bar.

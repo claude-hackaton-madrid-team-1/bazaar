@@ -5,7 +5,9 @@ It reads the live feed the way a person reads the "On air · Live feed" panel of
 until which tick, which venue will charge what from which tick, which dealer opened, when the clock
 paused, how duels over each item ended. Structure only: a field the server set (`until_tick`,
 `reason`, `fee_bps`, ...) is a fact; free text (organiser notices, dealer words) is kept as quoted
-`text` and interpreted later by the LLM pass, never acted on here.
+`text` and interpreted later by the LLM pass, never acted on here. One exception: a dealer's fixed etiquette
+phrase ("no me llame amigo") becomes a `behaviour` learning that only forbids a word in our messages
+(`etiquette.py`).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from bazaar_agent.learn.etiquette import etiquette_learnings
 from bazaar_agent.learn.model import SUBJECT_PATTERN, Kind, Learning, SubjectKind
 
 Event = dict[str, Any]
@@ -431,6 +434,7 @@ class FeedReader:
     newest: int = 0
     topics: dict[int, str] = field(default_factory=dict)
     duels: dict[str, DuelTally] = field(default_factory=dict)
+    etiquette: set[str] = field(default_factory=set)  # the etiquette learnings already read (dedupe keys)
 
     def read(self, events: Iterable[Event], hour: GameHour | None = None) -> list[Learning]:
         out: list[Learning] = []
@@ -442,6 +446,7 @@ class FeedReader:
             try:  # one malformed event is skipped; it never costs the learnings read around it
                 self._remember(e, touched)
                 learned = read_event(e, self.us, hour, self.topics)
+                out += self._etiquette(e)
             except Exception:
                 continue
             if learned is not None:
@@ -449,6 +454,14 @@ class FeedReader:
         if len(self.topics) > TOPICS_MAX:  # the newest threads only: an old thread's close is history
             self.topics = {t: self.topics[t] for t in sorted(self.topics)[-TOPICS_MAX // 2 :]}
         return out + [d for item in sorted(touched) if (d := self._duel_learning(item)) is not None]
+
+    def _etiquette(self, e: Event) -> list[Learning]:
+        """How a dealer asked to be addressed ("no me llame amigo"), once per dealer and address."""
+        fresh = [lr for lr in etiquette_learnings(e) if lr.key() not in self.etiquette]
+        if len(self.etiquette) > TOPICS_MAX:
+            self.etiquette.clear()  # a repeat after this is one more idempotent upsert, never a second row
+        self.etiquette.update(lr.key() for lr in fresh)
+        return fresh
 
     def _remember(self, e: Event, touched: set[str]) -> None:
         p = _payload(e)

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from bazaar_agent.agents.dealer import Move, settled_price, with_name
+from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_sell import (
     SELL_WORDS,
     AskPlan,
@@ -222,6 +223,9 @@ class SellTalk:
     ticks: int = 0
     accepted_ticks: int = 0
     price: int | None = None
+    # How we address the dealer (`dealer_memory.address_for`); None: its published name (`cand.name`) as before.
+    address: str | None = None
+    memory: dict[str, Any] = field(default_factory=dict)  # the dealer's memory when the thread opened (facts)
     neg: SellNegotiation = field(init=False)
 
     def __post_init__(self) -> None:
@@ -231,10 +235,16 @@ class SellTalk:
     def done(self) -> bool:
         return self.status in ENDED
 
+    @property
+    def name(self) -> str:
+        return (self.cand.name or "") if self.address is None else self.address
+
     def _decide(self, clock: Any, move: str, line: str, reason: str, **extra: Any) -> int:
         c = self.cand
         inputs = {"dealer": c.dealer, "asset_id": c.asset_id, "ref": c.ref, "rarity": c.rarity, "floor": c.floor}
         inputs |= {"start": self.plan.start, "asks": list(self.neg.asks)}
+        if move == "open_thread":  # what was recalled about the dealer before the thread opened
+            inputs |= {"dealer_memory": self.memory, "dealer_address": self.name}
         return int(
             self.hooks.rec.decide(
                 clock.tick,
@@ -381,7 +391,7 @@ class SellTalk:
 
     def _ask(self, clock: Any, price: int, why: str) -> None:
         c, tid = self.cand, self.tid
-        text = words(len(self.neg.asks), price, c.name)
+        text = words(len(self.neg.asks), price, self.name)
         did = self._decide(clock, "say", f"ask {c.dealer} {price} for {c.ref}", why, price=price)
         request = {"thread": tid, "price": price}
         if self.hooks.rec.send(did, clock.tick, "say", request, lambda: self.client.say(tid, text, price=price)):
@@ -389,7 +399,7 @@ class SellTalk:
 
     def _walk(self, clock: Any, why: str) -> None:
         c, tid = self.cand, self.tid
-        name = c.name or ""
+        name = self.name
         did = self._decide(clock, "close_thread", f"walk from {c.dealer} on {c.ref}", why)
         # A kind last word first (dealers remember kindness), then the close: the walk itself.
         bye = with_name(WALK_WORDS, 0, name)
@@ -427,8 +437,10 @@ class SellDesk:
         hooks: Callable[[Candidate], SellHooks],
         load: Callable[[Any], SellMarket | None] | None = None,
         gate: StrategyGate | None = None,
+        learnings: Any = None,
     ) -> None:
         self.team, self.rules, self.rec, self.live, self.log = team, rules, rec, live, log
+        self.learnings = learnings  # a `LearningStore` for the dealers' memory; None: the feed window's words only
         self.hooks, self.load = hooks, load
         self.gate = gate  # Jev `dealer_sell_duplicates_worth_it` (SG1): None = no Jev, no new sell thread
         self.talk: SellTalk | None = None
@@ -514,6 +526,13 @@ class SellDesk:
         personas = parse_personas(getattr(snap, "dealers", None) or [])
         return personas or None, read_fever(self.rules, self.events_path, snap.clock.t_hours)
 
+    def recall(self, c: Candidate, snap: Any, personas: Mapping[str, Persona] | None) -> tuple[DealerMemory, str]:
+        """The dealer's memory (memory only, no I/O) and how we address it; its published name from `/api/dealers`
+        when the persona model is on, else the sell data's name (`traders.name`)."""
+        tick = int(snap.clock.tick)
+        memory = recall_dealer(self.learnings, c.dealer, snap.events, us=getattr(snap, "us", None), tick=tick)
+        return memory, address_for(c.dealer, memory, {c.dealer: c.name, **(personas or {})})
+
     def on_tick(self, snap: Any, params: Any, locked: Iterable[int]) -> None:
         if not self.rules.dealer_sell_enabled:
             return
@@ -561,6 +580,7 @@ class SellDesk:
             return
         c = found[0]
         plan = plan_for(c.fill, c.floor, self.rules)
+        memory, address = self.recall(c, snap, personas)
         if not self.live:
             if (c.asset_id, c.dealer) not in self._said:
                 self._said.add((c.asset_id, c.dealer))
@@ -568,7 +588,8 @@ class SellDesk:
                     clock.tick,
                     "dealer_sell",
                     f"open sell thread with {c.dealer}: {c.ref} #{c.asset_id}, asks {ask_schedule(plan)}",
-                    inputs={"dealer": c.dealer, "asset_id": c.asset_id, "ref": c.ref, "floor": c.floor},
+                    inputs={"dealer": c.dealer, "asset_id": c.asset_id, "ref": c.ref, "floor": c.floor}
+                    | {"dealer_memory": memory.facts(), "dealer_address": address},
                     reason=f"spare {c.rarity}; {c.dealer} typically pays {c.expected:g}, we lose {c.value:g} "
                     f"({market.source})",
                     guardrail="allowed",
@@ -584,6 +605,8 @@ class SellDesk:
             self.hooks(c),
             self.rules.dealer_max_ticks_per_thread,
             self.rules.dealer_sell_final_min_first_ask_share,
+            address=address,
+            memory=memory.facts(),
         )
         self.opened_at.append((clock.t_hours, c.dealer))
         self.talk.step(clock, snap.me)

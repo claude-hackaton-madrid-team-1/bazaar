@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from bazaar_agent.agents.words import WordsFn, WordsRequest
+from bazaar_agent.learn.etiquette import NEVER_ADDRESS, uses_forbidden
 from bazaar_agent.llm.chooser import MoveSituation, injection_flags
 from bazaar_agent.llm.models import UnknownModelError
 from bazaar_agent.llm.providers import SUBSCRIPTION, LLMError, TextRequest
@@ -133,8 +134,29 @@ def words_prompt(request: WordsRequest, max_chars: int) -> str:
         f"Character limit: {max_chars}\n"
         f"<counterparty_message>{quoted(request.their_text)}</counterparty_message>\n"
         f"{lessons_block(request.lessons)}"
+        f"{address_block(request)}"
         "Write the message now."
     )
+
+
+MEMORY_MAX = 8
+
+
+def address_block(request: WordsRequest) -> str:
+    """How to address the dealer and what never to call it, and its memory, quoted like their words."""
+    out = f"Address them as: {quoted(request.address)}\n" if request.address else ""
+    if request.never_address:
+        out += f"Never address them as: {'; '.join(quoted(x) for x in request.never_address)}\n"
+    if request.memory:
+        out += f"<dealer_memory>{'; '.join(quoted(x) for x in request.memory[:MEMORY_MAX])}</dealer_memory>\n"
+    return out
+
+
+def forbidden_in(text: str, request: WordsRequest) -> bool:
+    """A dealer's words that use an address it forbade, or "amigo" (#211): never sent."""
+    if request.counterparty.startswith(("duel:", "team:")):
+        return uses_forbidden(text, request.never_address)
+    return uses_forbidden(text, (*NEVER_ADDRESS, *request.never_address))
 
 
 LESSONS_MAX = 3
@@ -179,6 +201,8 @@ def write_words(request: WordsRequest, runtime: LLMRuntime) -> WordsResult:
     text = guard_text(raw, config.words_max_chars)
     if text is None:
         return WordsResult(None, "rejected by the guard: a number, a commitment, rude or too long", picked.ref.alias)
+    if forbidden_in(text, request):
+        return WordsResult(None, "rejected by the guard: an address the dealer forbade", picked.ref.alias)
     return WordsResult(text, f"{picked.choice.source}: {picked.choice.reason}", picked.ref.alias)
 
 

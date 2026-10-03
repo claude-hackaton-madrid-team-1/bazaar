@@ -555,6 +555,13 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   tests/test_strategy_gate.py (maker section).
 - Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
   key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+- Step 6 — risk posture: `risk_posture` (GUARDRAILS.md) in every strategy state; guardrail review re-run with it
+  plus `duplicates_reserve_choice`, `close_v19_choice`, `podium_venue_rule_choice` (all undecided or keep).
+- Step 7 — dealer memory (`agents/dealer_memory.py`, `learn/etiquette.py`): newest 5 behaviour/lesson learnings +
+  last 3 dealer texts in the dealer_open row, the offer Jev state and the words; address from etiquette
+  learnings, then the persona name, then DEALER_NAMES. · **Acceptance:** tests/test_dealer_memory.py, test_etiquette.py.
+- Step 8 — no `reciprocity` tactic for dealers; a sell thread holds at its floor while her bid still rises.
+  · **Acceptance:** tests/test_tactics_reciprocity.py, tests/test_dealer_sell_hold.py.
 
 ## Parallel-work notes
 

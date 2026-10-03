@@ -140,3 +140,15 @@ def test_a_final_below_half_our_first_ask_walks_even_above_our_floor():
     neg2.asks.append(20)
     neg2.see_bid(5)
     assert decide_sell(neg2, 10, 300, True, final_min=10).kind == "accept"
+
+
+def test_every_state_jev_reads_carries_the_risk_posture(tmp_path):
+    seen: list[dict] = []
+
+    def ask(name, state):
+        seen.append(state)
+        return JevAdvice("no", 0.1)
+
+    rec = Recorder("taker", DecisionLog(tmp_path), True, lambda line: None)
+    StrategyGate(ask, rec, 10, "aggressive").allows(LADDER_PROBE, 100, lambda: {"cash": 81})
+    assert seen == [{"cash": 81, "risk_posture": "aggressive"}]
