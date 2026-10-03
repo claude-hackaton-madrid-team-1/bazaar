@@ -442,9 +442,10 @@ class Maker:
                 self.jev.watch.watch(offer_id, advice, PRICE_QUESTION, self._expires(run))
         if t.side == "bid":
             run.spent += t.price
-        run.offers.append(
-            {"id": -1, "status": "open", "maker": run.snap.us, "give": listing.give, "want": listing.want}
-        )
+        give = listing.give  # our open offers this tick; an ask names its card (protect_page_sets counts it)
+        if listing.asset_id is not None:
+            give = {**give, "assets": [{"id": listing.asset_id, "ref": listing.ref}]}
+        run.offers.append({"id": -1, "status": "open", "maker": run.snap.us, "give": give, "want": listing.want})
         run.open_total += 1
         run.listings_left -= 1
         run.posted.append(t.ref)

@@ -185,6 +185,18 @@ def test_our_only_copy_of_a_new_page_card_is_never_a_sell_move():
 # ---------------------------------------------------------------- the agents, across the release
 
 
+def test_an_ask_the_maker_posted_this_tick_does_not_block_a_new_pages_duplicate(tmp_path):
+    # #145 re-review P3: the in-tick row of a posted ask named no card, so the fail-closed count refused
+    # every later protected sell that tick. Both the LAT-09 ask and the RET-01 duplicate go out.
+    team = FakeTeam(me=released_ret(ME, copies=2))
+    kw = {**parts(tmp_path), "rules": PROTECT, "feed": MarketFeed(lambda n: deepcopy(RET_EVENTS))}
+    Maker(team, FakePublic(events=RET_EVENTS), live=True, log=lambda line: None, now=lambda: 1000.0, **kw).on_tick(
+        clock()
+    )
+    listed = [s[1]["assets"][0] for s in team.sent if s[0] == "list_offer" and s[1].get("assets")]
+    assert 5 in listed and ({300, 301} & set(listed))
+
+
 def test_page_watch_reports_a_page_once_and_nothing_on_the_first_tick():
     watch = PageWatch()
     assert watch.new(ME) == ()
