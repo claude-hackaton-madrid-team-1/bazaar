@@ -1005,7 +1005,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — the simulator refuses a duel message after the rival accepted in the same tick
 - [2026-10-03] finding — six duels on one deadline can run out of accept ticks
 - [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
-- [2026-10-03] gotcha — the local simulator's port is hardcoded, so parallel workers collide on 8765
+- [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
 - [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
 - [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 - [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only

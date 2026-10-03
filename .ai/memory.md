@@ -419,10 +419,9 @@ browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title o
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
 
-### [2026-10-03] gotcha — the local simulator's port is hardcoded, so parallel workers collide on 8765
-`BAZAAR_SIM=local` is `LOCAL_SIM_URL = http://127.0.0.1:8765` (config.py) and `scripts/sim_smoke.py` serves 8765, with no
-override. With several workers on one laptop, run the smoke or a proof from a scratch `git worktree` whose `config.py` and
-`sim_smoke.py` are patched to your own port (D1 used 8805 for the smoke, 8811-8824 for proofs), never committed.
+### [2026-10-03] gotcha — your own simulator port, without touching 8765 (adds to the two entries above)
+Run the smoke or a proof from a scratch `git worktree` whose `config.py` `LOCAL_SIM_URL` and `scripts/sim_smoke.py`
+`SIM`/`PORT` are patched to your own port (D1: 8805 for the smoke, 8811-8824 for proofs). Never commit that patch.
 
 ### [2026-10-03] finding — D1 proof on the live simulator: v2 beats v1, 0 deals outside our limit (decay 0.08)
 `duel run --play --no-jev` over HTTP against `bazaar-sim` (3 seller/buyer pairs per team on one deadline, 12-tick duels,
