@@ -129,12 +129,11 @@
           "mark": "✓"
         },
         {
-          "text": "bazaar-monitor: back on (drift)",
-          "mark": "◐"
+          "text": "monitor: CLI only (service removed)"
         },
         {
-          "text": "bazaar-mcp ✓ · sim, evals",
-          "mark": "◑"
+          "text": "bazaar-mcp ✓ · bazaar-sim ✓ (#55)",
+          "mark": "✓"
         },
         {
           "text": "bazaar-live: folder trust",
@@ -327,14 +326,20 @@
     {
       "status": "wip",
       "label": "worker",
-      "title": "bazaar-sim",
-      "body": "Down until #55 merges (the service builds from main). Now: rebase, conflicts, and the BAZAAR_SIM=1 flag with hard-coded URLs."
+      "title": "Simulator as the merge gate",
+      "body": "bazaar-sim is live (#55): BAZAAR_SIM=1 targets it with a sim- key. Now: a CI smoke job that runs the agents against a local sim on every PR."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Evals on Railway",
-      "body": "Code merged (#58). Now: the bazaar-evals service, taking bazaar-monitor down again, and BAZAAR_LIVE kept by the IaC."
+      "title": "Evals inside the agents",
+      "body": "No separate service: taker, maker and duels score their own settled decisions. BAZAAR_LIVE kept by the IaC (#73)."
+    },
+    {
+      "status": "wip",
+      "label": "review",
+      "title": "Marius's live fixes before 09:00",
+      "body": "#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, three leaks left for a follow-up."
     }
   ],
   "not_started": [
@@ -394,6 +399,12 @@
       "name": "bazaar-mcp",
       "urls": [
         "https://bazaar-mcp-production.up.railway.app/mcp"
+      ]
+    },
+    {
+      "name": "bazaar-sim",
+      "urls": [
+        "https://bazaar-sim-production-1d48.up.railway.app"
       ]
     }
   ]
