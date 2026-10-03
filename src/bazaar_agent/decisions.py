@@ -182,6 +182,70 @@ class DecisionLog:
         row = {"decision_id": decision_id, "tick": tick, "sdk_method": method, "request": request}
         self._append("executions.jsonl", {**row, "response": response, "error_code": error_code})
 
+    def thread_trails(self, agent: str, since_tick: int) -> dict[int, ThreadTrail]:
+        """What this log remembers of `agent`'s live threads with a decision at or after `since_tick`: the
+        memory a restarted process has of the threads the one before it drove. Postgres and this machine's
+        JSONL are both read (a write falls back to the file while Postgres is down). Raises nothing: an
+        unreadable store remembers nothing."""
+        rows: list[tuple[Any, ...]] = []
+        conn = self._db()
+        if conn is not None:
+            try:
+                rows += conn.execute(
+                    "select thread_id, tick, kind, candidates->>'item', chosen->>'price' from decisions "
+                    "where agent = %s and thread_id is not null and tick >= %s and dry_run is not true order by id",
+                    (agent, since_tick),
+                ).fetchall()
+            except psycopg.Error as e:
+                self._failed("thread read", e)
+        path = self.dir / "decisions.jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("update") or row.get("agent") != agent or row.get("dry_run"):
+                continue
+            if not isinstance(row.get("thread_id"), int) or int(row.get("tick") or -1) < since_tick:
+                continue
+            move = row.get("move") if row.get("chosen") else None
+            price = move.get("price") if isinstance(move, dict) else None
+            rows.append((row["thread_id"], row["tick"], row.get("kind"), (row.get("inputs") or {}).get("item"), price))
+        trails: dict[int, ThreadTrail] = {}
+        for thread_id, tick, kind, item, price in rows:
+            old = trails.get(int(thread_id), ThreadTrail(int(thread_id), "", int(tick)))
+            prices = [p for p in (old.top_price, _int(price)) if p is not None]
+            trails[int(thread_id)] = ThreadTrail(
+                old.thread_id,
+                str(item or old.item),
+                max(old.last_tick, int(tick)),
+                max(prices) if prices else None,
+                old.closed or kind == THREAD_CLOSED,
+            )
+        return trails
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
+
+
+THREAD_CLOSED = "dealer_closed"  # the decision kind that wraps a thread up: its deal (if any) is booked
+
+
+@dataclass(frozen=True)
+class ThreadTrail:
+    """One of an agent's threads as its decisions remember it (`DecisionLog.thread_trails`)."""
+
+    thread_id: int
+    item: str
+    last_tick: int
+    top_price: int | None = None  # the highest price we bid or accepted there
+    closed: bool = False  # a THREAD_CLOSED row: the thread was wrapped up and its deal booked
+
+
+def _int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
