@@ -537,3 +537,36 @@ def test_without_71s_rule_the_venue_opens_and_the_floor_then_blocks_the_buys():
     s = pages.cash_plan("v", 353, 4, grants, [want("LAV-09", "teams", 75)], RULES, venue_hour=4, venue_floor_rule=False)
     assert s.venue_opened == 4 and s.held == ("LAV-09",)
     assert s.steps[-1].note == "cash 233 − 75 < floor 270"
+
+
+def test_a_what_if_or_w3s_dealer_cap_unblocks_only_that_dealer():
+    assert pages.parse_caps("chato:rare=93, chato:uncommon=31") == {("chato", "rare"): 93, ("chato", "uncommon"): 31}
+    with pytest.raises(ValueError, match="dealer:rarity=price"):
+        pages.parse_caps("chato=93")
+    assert pages.dealer_cap(RULES, "rare", "chato") == 80
+    assert pages.dealer_cap(RULES, "rare", "chato", {("chato", "rare"): 93}) == 93
+    assert pages.dealer_cap(RULES, "rare", "abuela", {("chato", "rare"): 93}) == 80
+
+    class W3Rules(Guardrails):  # #81's guardrails expose `dealer_caps`
+        @property
+        def dealer_caps(self):
+            return {("chato", "rare"): 90}
+
+    assert pages.dealer_cap(W3Rules(), "rare", "chato") == 90
+    page = next(
+        p
+        for p in pages.page_economics(ME, CATALOG, EVENTS, DEALERS, PARAMS, RULES, what_if={("chato", "rare"): 93})
+        if p.set_code == "LAV"
+    )
+    assert by_source(missing(page, "LAV-10"), "chato").blocked is None
+    assert by_source(missing(page, "LAV-10"), "teams").blocked == "max_price_rare 80 < team price 112"  # teams: 80
+
+
+def test_the_card_that_completes_a_page_waits_for_the_other_legs_or_it_completes_nothing():
+    legs = [
+        want("LAV-09", "chato", 200, channel="ladder", finishing=True),  # above the hour cap: never fits
+        want("LAV-10", "teams", 75, finishing=True, completes=True, page_bonus=70),
+    ]
+    s = pages.cash_plan("p", 1000, 4, [], legs, RULES)
+    assert s.bought == () and s.trade_surplus == 0
+    assert s.steps[-1].note == "waits for the page's other legs: LAV-09"

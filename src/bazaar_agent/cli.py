@@ -1197,6 +1197,9 @@ def plan_pages(
     chasers_file: str | None = typer.Option(
         None, "--chasers", help="JSON {set: [team, ...]}: who chases each set (e.g. from `bazaar affinity`)"
     ),
+    what_if_caps: str = typer.Option(
+        "", "--what-if-caps", help="Plan as if these dealer caps held, e.g. chato:rare=93,chato:uncommon=31"
+    ),
     venue_floor_rule: bool = typer.Option(
         True, "--venue-floor-rule/--no-venue-floor-rule", help="PR #71: the bond + fee keep cash ≥ cash_floor"
     ),
@@ -1238,6 +1241,10 @@ def plan_pages(
         chasers = parsed(chasers_file, "{set: [team, ...]}", pg.chasers_from, None)
     if multipliers_file:
         expected = parsed(multipliers_file, "{team: {set: multiplier}}", pg.multipliers_from, None)
+    try:
+        caps = pg.parse_caps(what_if_caps)
+    except ValueError as e:
+        _fail(str(e))
     plan = pg.build_plan(
         me,
         catalog,
@@ -1254,6 +1261,7 @@ def plan_pages(
         chasers=chasers,
         expected=expected,
         venue_floor_rule=venue_floor_rule,
+        what_if_caps=caps,
     )
     if as_json:
         typer.echo(json.dumps(pg.plan_dict(plan), indent=2, ensure_ascii=False))

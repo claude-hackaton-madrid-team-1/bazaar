@@ -11,7 +11,7 @@ Night of 3 Oct 2026. Draft PR #87, base `main`. Nothing touched the live game.
 | Question | Answer |
 |---|---|
 | Is finishing a page worth it, for score? | **No, not under today's caps.** All 7 missing rares fail at `max_price_rare` 80. Chato fills at 82–93. The team holders' reservations are 94–106 (book × W4's expected multiplier). |
-| Which page, if the caps move? | **LAV.** It is 7/10 and needs LAV-08 plus two rares. With a Chato rare cap of 93 (W3's `dealer_price_caps` line), the page costs about 204 P for +370 P of private value (+106 of it the bonus). That value scores nothing by itself. |
+| Which page, if the caps move? | **LAV.** It is 7/10 and needs LAV-08 plus two rares. With a Chato rare cap of 93 (W3's `dealer_price_caps` line), the page costs about 204 P for +370 P of private value (+106 of it the bonus). That value scores nothing by itself. `--what-if-caps chato:rare=93` gives the timing under floor 270 with no venue: W4's plan takes LAV-08, LAV-09 comes from Chato on Saturday, LAV-10 on Sunday (the cash floor), and Saturday's spend is 225 P. |
 | Cash at Saturday 09:03 | 353 + 150 grant = **503 P**. The 150 P grant and the pack are verified in the `/api/schedule` fixture; Sunday adds another 150 P. With `cash_floor` 270, **233 P can be spent**. |
 | Venue Saturday morning | **Refused by our own guardrails.** PR #71's check makes the venue need bond + fee + floor = 540 P, and we have 503. |
 | What the 233 P should buy | W4's 7 trades (82 P, expected +80 P of trade surplus), then W3's three best Abuela deals on page cards W4 doesn't buy (~54 P). Hold the rest (~88 P Saturday, ~238 P by Sunday) for decision B (see the decisions section). |
@@ -87,7 +87,7 @@ A. **`cash_floor` after the venue decision.**
    - If we never open a venue, 270 P sits idle all weekend.
    - Either way, after the decision the floor should drop to a small buffer (e.g. 30). Not changed tonight.
 
-B. **Chato** (W3's `dealer_price_caps`). Uncommons at a cap of 31 give the level-2 ladder points for about 87 P. Rares at a cap of 93 cost 181 P for about the same points, plus a completed LAV page (not scored).
+B. **Chato** (W3's `dealer_price_caps`). Uncommons at a cap of 31 give the level-2 ladder points for about 87 P. Rares at a cap of 93 cost 181 P for about the same points, plus a completed LAV page (not scored). `bazaar plan pages --what-if-caps chato:rare=93,chato:uncommon=31` plans either one without touching GUARDRAILS.md.
 
 C. **Venue timing.** Decide after the 10:00 Market Test result.
 

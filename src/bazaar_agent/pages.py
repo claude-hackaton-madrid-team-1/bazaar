@@ -180,10 +180,28 @@ class Source:
     note: str = ""
 
 
-def _cap(rules: Guardrails, rarity: str, value: float, min_surplus: float) -> tuple[int, int | None]:
-    cap = rules.max_price_for(rarity)
-    top = math.floor(value - min_surplus)
-    return (min(top, cap) if cap is not None else top), cap
+DealerCaps = Mapping[tuple[str, str], int]  # (dealer, rarity) -> cap
+
+
+def dealer_cap(rules: Guardrails, rarity: str, dealer: str, what_if: DealerCaps | None = None) -> int | None:
+    """The guardrail cap a dealer buy meets: a what-if, else W3's `dealer_price_caps` (#81, read when the
+    loaded guardrails have it), else `max_price_<rarity>`."""
+    own = dict(getattr(rules, "dealer_caps", None) or {})
+    own.update(what_if or {})
+    cap = own.get((dealer, rarity))
+    return cap if cap is not None else rules.max_price_for(rarity)
+
+
+def parse_caps(text: str) -> dict[tuple[str, str], int]:
+    """ "chato:rare=93,chato:uncommon=31" -> {("chato", "rare"): 93, ...}; a bad entry raises ValueError."""
+    out: dict[tuple[str, str], int] = {}
+    for entry in filter(None, (e.strip() for e in text.split(","))):
+        who, _, price = entry.partition("=")
+        dealer, _, rarity = who.partition(":")
+        if not (dealer and rarity and price.isdigit() and int(price) >= 1):
+            raise ValueError(f"cap {entry!r}: use dealer:rarity=price, e.g. chato:rare=93")
+        out[(dealer.strip(), rarity.strip())] = int(price)
+    return out
 
 
 def dealer_sources(
@@ -193,6 +211,7 @@ def dealer_sources(
     table: Mapping[tuple[str, str], DealerFills],
     params: StrategyParams,
     rules: Guardrails,
+    what_if: DealerCaps | None = None,
 ) -> list[Source]:
     """Each unlocked dealer that sells this card's rarity for its set, priced at the median fill any team got."""
     out = []
@@ -205,7 +224,9 @@ def dealer_sources(
         low, mid = (seen.low, seen.mid) if seen else (None, None)
         price = mid if mid is not None else float(q.list_price)
         basis = f"{q.dealer} fills ×{len(seen.fills)} {low}–{max(seen.fills)}" if seen and seen.fills else "list"
-        top, cap = _cap(rules, card.rarity, value, params.min_buy_surplus)
+        cap = dealer_cap(rules, card.rarity, q.dealer, what_if)
+        top = math.floor(value - params.min_buy_surplus)
+        top = min(top, cap) if cap is not None else top
         blocked = None
         if cap is not None and low is not None and cap < low:
             blocked = f"max_price_{card.rarity} {cap} < lowest {q.dealer} fill {low}"
@@ -391,11 +412,12 @@ def card_economics(
     rules: Guardrails,
     expected: Multipliers | None = None,
     tape: TeamTape | None = None,
+    what_if: DealerCaps | None = None,
 ) -> CardEconomics:
     aff = m.affinity.get(card.set_code, 1.0)
     share = strategy.bonus_shares(m, card.set_code).get(card.ref, 0.0) * params.page_bonus_weight
     value = card.book * aff
-    sources: list[Source] = dealer_sources(m, card, value + share, table, params, rules)
+    sources: list[Source] = dealer_sources(m, card, value + share, table, params, rules, what_if)
     team = team_source(m, card, value + share, asks, params, rules, expected, tape)
     if team is not None:
         sources.append(team)
@@ -479,12 +501,13 @@ def page_economics(
     rules: Guardrails,
     chasers: Mapping[str, Sequence[str]] | None = None,
     expected: Multipliers | None = None,
+    what_if: DealerCaps | None = None,
 ) -> list[PageEconomics]:
     """Every released page, best first: what is missing, from whom, at what price, and whether to finish it.
     `chasers` (set -> teams) replaces the feed's top-set guess and `expected` (team -> set -> multiplier)
     prices each holder, both e.g. from W4's affinity map."""
     m = market_for(me, catalog, events, dealers, chasers)
-    return pages_of(m, events, params, rules, expected)
+    return pages_of(m, events, params, rules, expected, what_if)
 
 
 def market_for(
@@ -505,6 +528,7 @@ def pages_of(
     params: StrategyParams,
     rules: Guardrails,
     expected: Multipliers | None = None,
+    what_if: DealerCaps | None = None,
 ) -> list[PageEconomics]:
     table = dealer_fill_table(events)
     asks = open_asks(events, m.tick)
@@ -513,7 +537,9 @@ def pages_of(
     for set_code in m.released:
         page = strategy.page_cards(m, set_code)
         missing = [
-            card_economics(m, c, table, asks, params, rules, expected, tape) for c in page if m.held.get(c.ref, 0) == 0
+            card_economics(m, c, table, asks, params, rules, expected, tape, what_if)
+            for c in page
+            if m.held.get(c.ref, 0) == 0
         ]
         bonus = strategy.page_bonus_of(m, set_code) * params.page_bonus_weight
         verdict, why = page_verdict(missing, bonus)
@@ -868,6 +894,14 @@ def cash_plan(
                 still.append(w)
                 continue
             price = w.source.price
+            if w.completes:  # the card that completes the page comes last, or it completes nothing
+                before = [
+                    x.card.ref for x in pending if x is not w and x not in done and x.finishing and x.page == w.page
+                ]
+                if before:
+                    still.append(w)
+                    held_why[w.card.ref] = f"waits for the page's other legs: {', '.join(before)}"
+                    continue
             # a team leg of a page we finish waits until the page's other team legs fit as well: a lone rare
             # bought without the card that completes the page earns its book value, not the bonus
             reserve = 0.0
@@ -995,13 +1029,14 @@ def build_plan(
     chasers: Mapping[str, Sequence[str]] | None = None,
     expected: Multipliers | None = None,
     venue_floor_rule: bool = True,
+    what_if_caps: DealerCaps | None = None,
 ) -> PagePlan:
     """Pages, the buy order and the cash plan: the venue at the open, later, on Sunday or never (with W3's
     ladder slots and W4's trades as given), the no-venue plan with our planned sells, a consolidated plan
     (W3's best three only, then W4's trades, then pages), and the venue plans at a what-if cash floor."""
     dealers = list(dealers)
     m = market_for(me, catalog, events, dealers, chasers)
-    pages = pages_of(m, events, params, rules, expected)
+    pages = pages_of(m, events, params, rules, expected, what_if_caps)
     grants = grants_from(schedule, now_hours)
     body = schedule.get("body", schedule)
     hour_now = now_hours if now_hours is not None else float(body.get("now_hours") or 0)
@@ -1038,6 +1073,9 @@ def build_plan(
     if what_if_floor is not None:
         scenarios += [run(f"{n} · what-if cash_floor {what_if_floor}", v, floor=what_if_floor) for n, v in venues[:2]]
     notes = []
+    if what_if_caps:
+        caps = ", ".join(f"{d}:{r}={p}" for (d, r), p in what_if_caps.items())
+        notes.append(f"what-if dealer caps {caps}: not in GUARDRAILS.md, so a buy at these prices is still refused")
     packs = unopened_packs(me)
     if packs:
         notes.append(f"open first ({', '.join(packs)}): free, and a pull changes what is missing")
