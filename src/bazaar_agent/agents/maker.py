@@ -6,6 +6,8 @@ Album first (`/api/me`), then:
     gives up, which the strategy's ask already includes);
   - BIDS for missing page cards only teams hold, below their value to us, with the cash every open
     offer already promises counted, so open bids can never take cash below `cash_floor`;
+  - with `buy_targets_enabled`, a BID for each buy target (`buy_targets.py`: an off-page card a human approved
+    buying), at its ladder price, public, at that exact price (no Jev price);
   - each on the venue with the best expected fill (`market.best_venue`: El Rastro or a busier, cheaper
     team venue), never our own venue (`self_venue`);
   - with `max_counterparty_share` on (GUARDRAILS.md, #14), an offer anyone may take is posted only while no
@@ -42,6 +44,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
+from bazaar_agent import buy_targets
 from bazaar_agent import buyers as buyer_rank
 from bazaar_agent.agents.dealer_sell_data import SellMarket
 from bazaar_agent.agents.dealer_sell_desk import Candidate, SellDesk, SellHooks, standard_hooks
@@ -114,6 +117,9 @@ class MakerConfig:
     # (every one of our listings since Friday, and t02/t06/t13's): ask for 80 to keep an ask up ~40 ticks.
     offer_ttl_ticks: int = 80
     reprice_min_change: float = 0.05  # reprice when the target moved by at least 5 % (and 1 P)
+
+
+HOLDERS_EVERY = 10  # ticks between two walks of the feed for a buy target's holders (a hint for the record)
 
 
 @dataclass(frozen=True)
@@ -328,6 +334,9 @@ class Maker:
         self._lapsing: dict[int, _Bid] = {}  # gone at or after expiry without the card: refunded next tick
         self._spent_at: dict[int, tuple[int, float]] = {}  # bid id -> (tick, t_hours) of the spend we booked
         self.values = OfficialValues.of(team)  # GET /api/me/value: every bid capped at it (Day-2 hint 1)
+        self.buy_targets = buy_targets.TargetBook()  # off-page cards a human approved buying (`buy_targets.py`)
+        self._target_notes: dict[str, str] = {}  # card -> why its target bid was last not set (logged once each)
+        self._holder_notes: dict[str, tuple[int, str]] = {}  # card -> (tick, the teams the feed places it with)
         # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
         self._run: _MakerRun | None = None
         # Buyer rank (`buyer_rank_enabled`): the leaderboard's ranks (read every LEADERBOARD_EVERY ticks), the
@@ -420,9 +429,11 @@ class Maker:
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
         targets = self._relisted(snap, targets, mine)
         held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
-        margin = self.rules.official_value_margin
+        targets = self._with_buy_targets(snap, targets, held)
+        rarities = card_rarities(snap.catalog)
 
         def above_value(o: OpenOffer) -> str | None:  # our bids, re-capped every tick (review #177 P2)
+            margin = self.rules.value_margin_for(rarities.get(o.ref))  # an epic: strictly below our value
             return over_cap(o.price, o.ref, self.values, clock.tick, held.get(o.ref, 0), margin)
 
         actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
@@ -445,6 +456,49 @@ class Maker:
             f"{'LIVE' if self.live else 'dry run'}"
             + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")
         )
+
+    # ------------------------------------------------------------ buy targets (`buy_targets.py`)
+
+    def _with_buy_targets(self, snap: Snapshot, targets: list[Target], held: Counter[str]) -> list[Target]:
+        """A bid for each buy target, first (a human ordered it), at its ladder price and for anyone: posted at that
+        exact price (`final`: no Jev price, no hold). A target whose ceiling cannot be set (no official value read,
+        nothing left under it) gets no bid this tick, so a standing one is cancelled."""
+        tick = snap.clock.tick
+        found = self.buy_targets.active(self.rules, tick, snap.catalog, held)
+        if not found:
+            return targets
+        cards = {t.card for t in found}
+        bids: list[Target] = []
+        for bt in found:
+            official = self.values.value(bt.card, tick, held.get(bt.card, 0))
+            top = buy_targets.ceiling(bt, official, self.rules)
+            if top is None or official is None:
+                why = "official value unread" if official is None else "no ceiling under our value and the caps"
+                if self._target_notes.get(bt.card) != why:
+                    self._target_notes[bt.card] = why
+                    self.log(f"tick {tick} maker: buy target {bt.card}: no bid ({why})")
+                continue
+            self._target_notes.pop(bt.card, None)
+            price = buy_targets.ladder_price(bt, top, tick, self.rules)
+            reason = f"{buy_targets.describe(bt, top, tick, self.rules)}; holders {self._holders(snap, bt.card)}"
+            bids.append(Target("bid", bt.card, bt.rarity, price, None, official, 1e6, reason, final=True))
+        return bids + [t for t in targets if not (t.side == "bid" and t.ref in cards)]
+
+    def _holders(self, snap: Snapshot, card: str) -> str:
+        """The teams the feed and the card scan place a copy with (for the decision row; the bid is public)."""
+        from bazaar_agent.supply import supply_map
+
+        tick = snap.clock.tick
+        cached = self._holder_notes.get(card)
+        if cached is not None and tick - cached[0] < HOLDERS_EVERY:  # the whole feed is walked: not every tick
+            return cached[1]
+        try:
+            supply = supply_map(snap.catalog, snap.me, snap.events, snap.scan).cards.get(card)
+        except Exception as e:  # noqa: BLE001 — a hint for the record: never costs the bid
+            return f"unknown ({type(e).__name__})"
+        found = ", ".join(f"{team}×{n}" for team, n in supply.holders) if supply and supply.holders else "unknown"
+        self._holder_notes[card] = (tick, found)
+        return found
 
     # ------------------------------------------------------------ asks relisted after a lapse (agents.relist)
 
@@ -472,6 +526,7 @@ class Maker:
             cost = max(
                 ask_floor(t.value, self.rules),
                 sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
+                self.rules.exception_min(t.ref),  # protect_page_exceptions: never relisted below its MIN
             )
             venue = best_venue(snap.venues, snap.us, t.price)
             median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None

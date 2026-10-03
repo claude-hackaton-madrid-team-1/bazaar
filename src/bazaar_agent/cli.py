@@ -890,7 +890,7 @@ def dealer_buy(
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
-    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan)  # a trickster's FINAL is not its limit
+    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan, client)  # a trickster's FINAL is not its limit
 
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, the thread stays open, next tick decides again):
@@ -1149,11 +1149,14 @@ def _dealer_personas(settings: Any) -> list[dict[str, Any]]:
     return [d for d in body.get("personas") or body.get("dealers") or [] if isinstance(d, dict)]
 
 
-def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any) -> Any:
+def _forgiving_plan(
+    settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any, client: Any
+) -> Any:
     """`dealer buy`'s plan against a forgiving dealer (agents/trickster.py): its FINAL is not its limit. Its persona
-    comes from `/api/dealers`: unreadable, nothing is opened (fail closed: a fake final could be taken as a limit).
-    Its fills come from the feed history the agents read (`_history`): none, and its asks are never taken (we only
-    bid). Every other dealer's plan comes back unchanged."""
+    comes from `/api/dealers`: unreadable, or the dealer not listed there, and nothing is opened (fail closed: a fake
+    final could be taken as a limit). Its fills come from the feed history the agents read (`_history`), OTHER teams'
+    only, as in the taker: our team id comes from BAZAAR_TEAM_ID, `.local/team_id` or one /me read, and unknown means
+    nothing is opened. No fill known: its asks are never taken (we only bid). Every other dealer's plan is unchanged."""
     from rich.markup import escape
 
     from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving, note
@@ -1164,14 +1167,20 @@ def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: s
         persona = parse_personas(_dealer_personas(settings)).get(dealer)
     except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
         _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
-    if persona is None or not is_forgiving(persona, rules):
+    if persona is None:
+        _fail(f"refusing to trade: {dealer} is not listed in /api/dealers: is its FINAL its limit?")
+        return plan  # not reached: `_fail` exits
+    if not is_forgiving(persona, rules):
         return plan
+    us = resolve_team_id(settings.team_id, settings.data_dir, client.me, lambda m: console.print(escape(m)))
+    if us is None:  # our own buys would count in its range (#228 review: our 63 made 63 acceptable)
+        _fail(f"refusing to trade: our team id is unknown, so our own fills cannot be left out of {dealer}'s range")
     try:
         events = _history(None, live=True)
     except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
         console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
         events = []
-    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules)
+    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules, us)
     console.print(escape(f"{dealer} forgives (kind {persona.kind}): {note(shaped)}"))
     return shaped
 
@@ -1302,6 +1311,7 @@ def duel_run(
     off = "duel_policy v2 sends template words only" if v2 else None
     book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say, off)
     chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    refused: dict[int, str] = {}  # duel id -> the server's refusal code this tick (for its decision row)
     feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
@@ -1336,6 +1346,7 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            refused[did] = str(e.code)
             if move.kind == "accept":  # a 4xx cost nothing (RULES.md): the slot is the team's again
                 release_refused_accept(ledger, c.tick, f"duel:{did}", e.code, e.status)
             duel_traces.refused(did, e)
@@ -1369,7 +1380,9 @@ def duel_run(
             f"duel_{move.kind}",
             f"duel {duel_id(d)} {move.kind} {move.price or ''}",
             inputs=inputs,
-            reason=move.reason + (f"; {pick.why}" if pick is not None else ""),
+            reason=move.reason
+            + (f"; {pick.why}" if pick is not None else "")
+            + (f"; refused {code}" if row_id is not None and (code := refused.pop(row_id, None)) else ""),
             guardrail=guardrail,
             chosen=move.kind != "hold" and status in ("approved", "done"),
             status=status,
@@ -2368,18 +2381,26 @@ def taller_cmd(
 ) -> None:
     """The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`).
 
-    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
-    hourly cap counts the taker's crafts only). Dry run by default."""
+    The same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch, the
+    hourly cap shared with every process (the shared ledger, booked before the send) and the hold on an accept still
+    settling that cannot name its copy. Unlike the taker it does not wait for a duel deadline or a Market Test
+    (`bazaar deploy-guard` says when). Dry run by default."""
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents import taller as tl
 
     client, me = _team_me()
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
     rules, ledger, ctx, commitments = _sell_context(client, me, live)
-    busy = set(commitments.listed) | tl.sell_thread_assets(client.my_threads("open").get("threads") or [])
-    accepted = {i for t in (ctx.tick - 1, ctx.tick) for i in ledger.accept_items(t) if ":" not in i and "-" in i}
-    busy |= {int(a["id"]) for a in me.get("assets") or [] if a.get("ref") in accepted and isinstance(a.get("id"), int)}
+    try:  # the taker's busy set: offers, sell threads, accepts of this and the last tick (no team-desk memory here)
+        threads = (client.my_threads("open") or {}).get("threads") or []
+        busy = set(commitments.listed) | tl.busy_copies(me, _my_offers(client), threads, ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    except BazaarError as e:
+        _fail(f"our offers or threads could not be read ({escape(str(e.code))}): nothing sent")
     public = public_client(load_settings())
     catalog = public.catalog()
     if not assets:
@@ -2396,14 +2417,23 @@ def taller_cmd(
     if len(rarities) != 1:
         _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
     action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
-    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    try:  # the shared ledger: every process's crafts this hour, and accepts still settling (fail closed)
+        done, hold = tl.crafts_last_hour(ledger, ctx.t_hours), tl.unnamed_settling(ledger, ctx.tick)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+    verdict = gr.check(
+        action, replace(ctx, sellable=tl.free_counts(me, busy), taller_last_hour=done, taller_hold=hold), rules
+    )
     console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
     if not verdict.allowed or not live:
         if verdict.allowed:
             console.print("[dim]dry run: nothing sent (add --live)[/dim]")
         return
     try:
+        tl.book_craft(ledger, ctx.tick, ctx.t_hours, refs)  # before the send: the shared hourly cap
         answer = tl.craft(client, assets)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
     except BazaarError as e:
         _fail(f"refused: {escape(tl.clean(str(e.code), 40))} ({escape(tl.clean(str(e.message)))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
@@ -3115,7 +3145,8 @@ def agent_maker(
     from bazaar_agent.learn.venues import VenueNotices
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        market = _venue_keeper(team, settings, kw) if venue else None
+        matrix = _latest_matrix(kw, settings)  # one read of the taker's matrix for the maker and our notice
+        market = _venue_keeper(team, settings, kw, matrix) if venue else None
         notices = VenueNotices(kw["log"]) if learn else None
         jev_ = _maker_jev(settings, kw["rules"]) if jev else None
         sell_market = None  # the dealer sell desk's dealers and curves: Postgres when shared, else API + feed
@@ -3132,7 +3163,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
-            latest_matrix=_latest_matrix(kw, settings),
+            latest_matrix=matrix,
             **kw,
         )
 
@@ -3142,11 +3173,12 @@ def agent_maker(
 # ---------------------------------------------------------------- our venue and its broker (#11, #12)
 
 
-def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
-    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key)."""
+def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any], matrix: Any = None) -> Any:
+    """Our venue inside the maker: the key vault on the shared Postgres (a redeploy keeps the key); its notice
+    names the cards in the team matrix the maker reads (`matrix`: a LatestMatrix, or None)."""
     from bazaar_agent import db
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_GAME_HOURS, VenueKeeper
+    from bazaar_agent.agents.venue_keeper import ANNOUNCE_EVERY_TICKS, VenueKeeper
 
     return VenueKeeper(
         team,
@@ -3159,7 +3191,8 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
         log=kw["log"],
         hub=kw.get("hub"),
         stats_dir=settings.data_dir / "agents",
-        announce_every_game_hours=ANNOUNCE_EVERY_GAME_HOURS,
+        announce_every_ticks=ANNOUNCE_EVERY_TICKS,
+        matrix=matrix.current if matrix is not None else None,
     )
 
 

@@ -1,7 +1,7 @@
 # RO1 — Read-only Postgres login for teammates  (per-task spec)
 
 - Task id: RO1 (coordinator brief, 2026-10-03)
-- Status: 🔵 PR #184
+- Status: 🔵 merged #184
 - Backlog source: local (`.ai/specs`). Indexed in: [`02-plan.md`](./02-plan.md)
 
 ## Goal

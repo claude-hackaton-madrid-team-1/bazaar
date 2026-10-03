@@ -74,6 +74,16 @@ def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | N
     return None
 
 
+def venue_invite(venue: str) -> str:
+    """One plain, true line inviting a team to our market (Omar, Sat 21:55: "hay que convencerlos de usar nuestro
+    market"): our venue's fee is 0 % (GUARDRAILS `allow_venue_open`, 0 bps) and our broker matches crossing asks and
+    bids every tick, while El Rastro charges the accepting side 5 % + 1 P per card (RULES.md). No claim beyond that."""
+    return (
+        f"Por cierto: en nuestro mercado {venue} la comisión es 0 % (en El Rastro, 5 % + 1 P por cromo) y nuestro "
+        "bróker cruza pujas y ofertas cada tick. Publica allí tus ofertas cuando quieras."
+    )
+
+
 def team_words(req: WordsRequest) -> str:
     """Template words for a swap proposal. They persuade; the structured offer is set by code."""
     if req.step == 0:
@@ -278,6 +288,8 @@ class TeamDesk:
         self._tried: set[int] = set()  # threads whose read was tried this tick (refused ones included)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self.matrix: TeamMatrix | None = None  # the taker's team matrix, set each tick (`team_matrix.py`)
+        self.ranks: dict[str, int] = {}  # the leaderboard's ranks, set by the taker (`buyers.leaderboard_ranks`)
+        self.answered: Counter[str] = Counter()  # teams that wrote back after our proposal in our threads
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._synthetic = 0  # negative ids for the refund of a send the server refused
@@ -425,7 +437,10 @@ class TeamDesk:
     def _observe(self, v: DeskView, talk: Talk, payload: dict[str, Any]) -> None:
         """What changed in one of our threads: their last word, our standing offer, and whether they took it
         (from the thread, or from our offers: the server may drop an accepted offer from `standing_offers`)."""
-        talk.heard_tick = max(talk.heard_tick, self._heard(payload, v.us))
+        heard = self._heard(payload, v.us)
+        if heard > talk.heard_tick and heard > talk.sent_tick >= 0:
+            self.answered[talk.team] += 1  # they answer us: a likelier partner (`_priority`)
+        talk.heard_tick = max(talk.heard_tick, heard)
         if talk.offer_id is None and (mine := _ours_open(payload, v.us)) is not None:
             talk.offer_id = int(mine["id"])  # a send whose answer was lost, or a thread adopted after a restart
             want, give = mine.get("want") or {}, mine.get("give") or {}
@@ -1024,6 +1039,14 @@ class TeamDesk:
                 old = talk.offer_id
                 body = self.rec.send(did, v.tick, "cancel", {"offer": old}, partial(self.team.cancel, old))
                 if body is None:
+                    if self.rec.last_code == "offer_not_open":
+                        # It lapsed or was taken and no read shows it: cancelling it again every tick (36 times
+                        # on Sat 3 Oct, offer 13205 for 241 ticks) never frees the thread. Keep its spend booked
+                        # (it may have settled), read the thread for its end, and free the slot for a new offer.
+                        self._check_later(v, talk.thread_id, self._talk_offer(talk))
+                        talk.offer_id = None
+                        self.log(f"tick {v.tick} team desk: offer {old} is not open: no new offer this tick")
+                        return
                     self.log(f"tick {v.tick} team desk: cancel of offer {old} refused: no new offer this tick")
                     return  # never two standing offers in one thread; the next tick reads what stands
                 self._after_cancel(v, talk.thread_id, self._talk_offer(talk), body)
@@ -1038,6 +1061,8 @@ class TeamDesk:
             question = self._question(v, talk.team) if talk.step == 0 else None
             if question is not None:  # words only: the structured offer below is the same with or without it
                 text = f"{text} {question}"
+            if (venue := self.rules.team_words_venue_invite.strip()) and venue.lower() != "none":
+                text = f"{text} {venue_invite(venue)}"  # words only, as the question
             body = self.rec.send(
                 did,
                 v.tick,
@@ -1227,14 +1252,30 @@ class TeamDesk:
         # `team_desk_never_trade`: the podium and the teams ranked around us are never planned (Sat 3 Oct: the
         # desk proposed SAL-03 to t17, a direct rival missing it).
         threads = [t for t in threads if not self.rules.never_trades_with(t.counterparty)]
-        trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
+        trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages, self.answered, self.ranks)))
         self._plan = _Plan(v.tick, trades, worth, pages, {ref: c.book for ref, c in m.cards.items()})
         return trades
 
     @staticmethod
-    def _priority(t: Trade, pages: Mapping[str, PageNeed]) -> tuple[Any, ...]:
-        """Among the planned swaps (`build_plan` already kept only the closest pages' cards while it could), the
-        page closest to complete first, then our affinity for it, then the expected gain: completing a page is
-        what scores (Omar, Sat 3 Oct)."""
+    def _priority(
+        t: Trade,
+        pages: Mapping[str, PageNeed],
+        answered: Mapping[str, int] | None = None,
+        ranks: Mapping[str, int] | None = None,
+    ) -> tuple[Any, ...]:
+        """Who first (Omar, Sat 21:55: "si les ganamos en negociación a los más débiles vamos a subir"): a team that
+        answered our proposals before (likelier to take one), then the weaker team by the leaderboard (a higher rank
+        number; unknown ranks last), then, among the planned swaps (`build_plan` already kept only the closest
+        pages' cards while it could), the page closest to complete, our affinity for it and the expected gain.
+        Their share of any swap stays capped by `team_swap_max_their_share` in `swaps.judge`."""
         page = pages.get(set_of(t.refs[1]) or "")
-        return (*(page.rank() if page is not None else (99, 0.0)), -t.expected, t.counterparty, t.refs)
+        replies = (answered or {}).get(t.counterparty, 0)
+        weaker = (ranks or {}).get(t.counterparty, 0)
+        return (
+            -min(replies, 3),
+            -weaker,
+            *(page.rank() if page is not None else (99, 0.0)),
+            -t.expected,
+            t.counterparty,
+            t.refs,
+        )

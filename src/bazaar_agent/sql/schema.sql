@@ -349,6 +349,16 @@ create table if not exists leaderboard_snapshots (
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
 
+-- The Market Test bench book as the broker read it, one row per raw bench offer per tick (`agents/bench_capture.py`):
+-- arrivals, lifetimes and the relax curve can be read off it. `offer` keeps every field the server sent.
+-- `world`: "real" (the simulator writes only its JSONL). `quote`: a seller's ask or a buyer's bid.
+create table if not exists bench_books (
+  world text not null, run text not null, tick int not null, offer_id text not null,
+  side text not null check (side in ('sell','buy')), quote int, venue text, fee_bps int, fee_per_card int,
+  offer jsonb not null, read_at timestamptz not null default now(),
+  primary key (world, run, tick, offer_id));
+create index if not exists bench_books_run_tick on bench_books (run, tick);
+
 -- Other teams' set multipliers (AF1, `team_affinity.py`): what a team SAID in a team thread (untrusted words,
 -- parsed; `quote` is their scrubbed message, at most 200 characters) and what we INFERRED from the feed
 -- (`affinity.affinity_map`: the likeliest multiplier and its probability). One row per team, set and source.
@@ -409,12 +419,13 @@ end $$;
 -- in a swap) in the last 60 feed ticks and has not bought since; "they have": copies it asked cash for (or gave in a
 -- swap) in that window and has not sold since. A price comes only from a listing still live (not lapsed, not cancelled,
 -- open to anyone or to us). Values are estimates: a page card we miss is worth book × our set multiplier to us, one of
--- our spare copies its `your_value` (a copy in an open offer of ours is not spare); a card a team wants is worth book ×
+-- our spare copies its `your_value` (a copy in an open offer of ours, on a board or in a thread, is not spare); a card a team wants is worth book ×
 -- the highest multiplier to it (every team has the same six multipliers, shuffled; page bonuses are unknown), a copy it
 -- lists nothing. Accepting their bid or ask, we pay the venue's fee, ceil(price × bps / 10000 + per card): El Rastro's
 -- 500 bps + 1 P, any other venue at the caps (1000 bps + 5 P); a swap we offer is accepted, and paid, by them (as
 -- agents/market.py prices fees). The move never gives value away (our gain > 0) and never helps a guarded
--- team (top 5, within 3 ranks of us, or any team while our rank is unknown) unless our gain is at least twice theirs.
+-- team (top 5, within 3 ranks of us or above us, or any team while our rank is unknown) unless our gain is at least
+-- twice theirs. A listing that also wants an asset, a `cards` list or gives `types` is not a plain bid or ask: no price.
 -- Every feed field is hostile: shapes are checked, refs must be catalog cards, cash outside [0, 100000) drops a listing.
 --
 -- Replaced only when this version is newer than the one stored in the view's comment, with a short lock wait, and never
@@ -423,7 +434,7 @@ end $$;
 -- every change; new columns go last (`create or replace view` only appends).
 do $do$
 declare
-  board_version constant int := 2;
+  board_version constant int := 4;
   stored int := coalesce(substring(obj_description(to_regclass(format('%I.rival_board', current_schema())), 'pg_class')
                                    from '^rival_board v(\d{1,9})$')::int, 0);
 begin
@@ -460,7 +471,7 @@ with lb as (
 ), cancelled as (
   select distinct case when jsonb_typeof(c.payload -> 'offer') = 'number' then (c.payload ->> 'offer')::numeric end as offer_id
     from feed_events c cross join now_tick n
-   where c.type = 'offer.cancelled' and c.tick >= n.tick - 60
+   where c.type = 'offer.cancelled' and c.tick >= n.tick - 300
 ), listing as (
   select e.id, e.tick, o ->> 'maker' as team,
          case when jsonb_typeof(o -> 'id') = 'number' then (o ->> 'id')::numeric end as offer_id,
@@ -470,7 +481,15 @@ with lb as (
          case when jsonb_typeof(o -> 'give' -> 'assets') = 'array' then o -> 'give' -> 'assets' else '[]'::jsonb end as gives,
          case when jsonb_typeof(o -> 'want' -> 'types') = 'array' then o -> 'want' -> 'types' else '[]'::jsonb end as wants,
          case when jsonb_typeof(o -> 'give' -> 'cash') = 'number' then (o -> 'give' ->> 'cash')::numeric end as give_cash,
-         case when jsonb_typeof(o -> 'want' -> 'cash') = 'number' then (o -> 'want' ->> 'cash')::numeric end as want_cash
+         case when jsonb_typeof(o -> 'want' -> 'cash') = 'number' then (o -> 'want' ->> 'cash')::numeric end as want_cash,
+         -- what agents/market.py's parse_offer also refuses: a listing wanting a given asset or a card list, giving types,
+         -- or carrying any other key on either side (packs, ...)
+         coalesce(o -> 'want' -> 'assets', '[]'::jsonb) = '[]'::jsonb and coalesce(o -> 'want' -> 'cards', '[]'::jsonb) = '[]'::jsonb
+           and coalesce(o -> 'give' -> 'types', '[]'::jsonb) = '[]'::jsonb
+           and case when jsonb_typeof(o -> 'give') = 'object' and jsonb_typeof(o -> 'want') = 'object'
+                    then not exists (select 1 from jsonb_object_keys(o -> 'give') k where k not in ('cash', 'types', 'assets'))
+                         and not exists (select 1 from jsonb_object_keys(o -> 'want') k where k not in ('cash', 'types', 'assets', 'cards'))
+                    else false end as plain
     from feed_events e
    cross join lateral (select e.payload -> 'offer' as o) x
    where e.type = 'offer.listed' and jsonb_typeof(x.o) = 'object' and e.tick >= (select tick from now_tick) - 60
@@ -490,21 +509,34 @@ with lb as (
          ceil(coalesce(l.give_cash, 0) * l.fee_bps / 10000.0 + l.fee_per_card - 1e-9) as bid_fee,
          ceil(coalesce(l.want_cash, 0) * l.fee_bps / 10000.0 + l.fee_per_card - 1e-9) as ask_fee
     from still_open l
+), our_offers as (
+  -- every offer of ours that may still stand, on a board or in a thread (a dealer sale, a team swap): the last 300 ticks
+  select e.id, e.tick,
+         case when jsonb_typeof(o -> 'id') = 'number' then (o ->> 'id')::numeric end as offer_id,
+         case when jsonb_typeof(o -> 'expires_tick') = 'number' then (o ->> 'expires_tick')::numeric end as expires_tick,
+         case when jsonb_typeof(o -> 'give' -> 'assets') = 'array' then o -> 'give' -> 'assets' else '[]'::jsonb end as gives
+    from feed_events e
+   cross join lateral (select e.payload -> 'offer' as o) x
+   where e.type in ('offer.listed', 'thread.message') and jsonb_typeof(x.o) = 'object'
+     and x.o ->> 'maker' = (select team from our_id) and e.tick >= (select tick from now_tick) - 300
 ), committed as (
-  -- our own copies in an open offer of ours (an ask, a swap, to anyone): not spare while it stands
-  select a ->> 'ref' as ref, count(*) as n
-    from listed l cross join lateral jsonb_array_elements(l.gives) a
-   where l.open and l.team = (select team from our_id) and jsonb_typeof(a) = 'object'
-   group by a ->> 'ref'
+  -- our copies in an offer of ours not lapsed or cancelled (one with no expiry counts for 60 ticks): not spare while
+  -- it stands; a copy in two offers counts once
+  select a.v ->> 'ref' as ref, count(distinct coalesce(a.v ->> 'id', 'event ' || f.id || '/' || a.n)) as n
+    from our_offers f cross join lateral jsonb_array_elements(f.gives) with ordinality a(v, n)
+   where jsonb_typeof(a.v) = 'object'
+     and (f.expires_tick > (select tick from now_tick) or (f.expires_tick is null and f.tick >= (select tick from now_tick) - 60))
+     and not exists (select 1 from cancelled c where c.offer_id = f.offer_id)
+   group by a.v ->> 'ref'
 ), wanted as (
   -- a bid (cash for card:X) or a swap (a copy for card:X); the price is the latest live cash bid for X
   select l.team, substr(t.ref, 6) as ref, max(l.tick) as tick,
          (array_agg(l.give_cash order by l.tick desc, l.id desc)
-            filter (where l.live and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
-                      and l.give_cash > 0))[1] as price,
+            filter (where l.live and l.plain and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
+                      and l.give_cash > 0 and coalesce(l.want_cash, 0) = 0))[1] as price,
          (array_agg(l.bid_fee order by l.tick desc, l.id desc)
-            filter (where l.live and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
-                      and l.give_cash > 0))[1] as fee
+            filter (where l.live and l.plain and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
+                      and l.give_cash > 0 and coalesce(l.want_cash, 0) = 0))[1] as fee
     from listed l cross join lateral jsonb_array_elements_text(l.wants) t(ref)
    where t.ref like 'card:%'
    group by l.team, substr(t.ref, 6)
@@ -515,11 +547,11 @@ with lb as (
   -- an ask (a copy for cash) or a swap (a copy for card:Y); the price is the latest live cash ask for that card
   select l.team, a ->> 'ref' as ref, max(l.tick) as tick,
          (array_agg(l.want_cash order by l.tick desc, l.id desc)
-            filter (where l.live and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
-                      and l.want_cash > 0))[1] as price,
+            filter (where l.live and l.plain and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
+                      and l.want_cash > 0 and coalesce(l.give_cash, 0) = 0))[1] as price,
          (array_agg(l.ask_fee order by l.tick desc, l.id desc)
-            filter (where l.live and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
-                      and l.want_cash > 0))[1] as fee
+            filter (where l.live and l.plain and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
+                      and l.want_cash > 0 and coalesce(l.give_cash, 0) = 0))[1] as fee
     from listed l cross join lateral jsonb_array_elements(l.gives) a
    where jsonb_typeof(a) = 'object'
    group by l.team, a ->> 'ref'
@@ -563,7 +595,8 @@ with lb as (
 ), guard as (
   select b.team,
          case when b.rank <= 5 then 'top5'
-              when (select u.rank from us u) is null or abs(b.rank - (select u.rank from us u)) <= 3 then 'near' end as reason
+              when (select u.rank from us u) is null or b.rank < (select u.rank from us u)
+                   or abs(b.rank - (select u.rank from us u)) <= 3 then 'near' end as reason
     from board b
 ), best as (
   select distinct on (m.team) m.*
@@ -628,6 +661,7 @@ select b.team, b.tick, b.rank, b.score, b.negotiating, b.market, b.level, b.page
          else case
                 when g.reason = 'top5' then format('don''t trade: top-5 rival (rank %s)', b.rank)
                 when g.reason = 'near' and u.rank is null then format('don''t trade: our rank is unknown (theirs %s)', b.rank)
+                when g.reason = 'near' and u.rank - b.rank > 3 then format('don''t trade: ranked above us (rank %s, ours %s)', b.rank, u.rank)
                 when g.reason = 'near' then format('don''t trade: within 3 ranks of us (rank %s, ours %s)', b.rank, u.rank)
                 else 'nothing to trade yet: watch their bids' end
        end as suggested_move,

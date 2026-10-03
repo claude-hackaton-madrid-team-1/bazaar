@@ -2,7 +2,7 @@
 
 - Task id: T1 (migrated from GitHub issue(s) #14)
 - Priority: P1
-- Status: 🔵 taken over in N17: Marius's #79 (per-counterparty cap, affinity map, swaps) and #98 (rival profiles, opportunity scanner) are being landed with fixes, then team-to-team swap threads.
+- Status: 🔵 taken over in N17: Marius's #79 (per-counterparty cap, affinity map, swaps) landed as #137 and team-to-team swap threads as #123 (ON since #188); the per-counterparty cap exists but is off (`max_counterparty_share` = 1.0 in GUARDRAILS.md).
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
@@ -11,6 +11,11 @@ Know what each card is worth to us and to each team, and trade where the private
 
 ## Acceptance criteria (each MUST be testable)
 - [ ] 1. See N17 (.ai/specs/N17-spec.md, PR #123).
+
+Superseded Sat 3 Oct (rules audit): `your_value` is the collection value lost by removing that copy. On a complete page, our
+only copy of a page card already carries the whole page bonus; duplicates never carry it (`STRATEGY.md`, "The economics").
+Every card buy is also capped at the official value of one more copy (`official_value_margin`, `/api/me/value?card=`).
+A card scores only when it moves (`docs/briefing.md`, "Scoring").
 
 ## Source (the original issue text, verbatim)
 

@@ -2,6 +2,8 @@
 
     GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, ledger, tick, last_tick_at}
                  ledger: shared | down (a live agent sends nothing until it answers) | local file
+                 taker only, once its activity check ran (`activity.py`): activity ok|stalled|idle|unknown,
+                 stalled_for_ticks, idle_reason (/state carries the same three; never the blocker: it names our limit)
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
@@ -28,6 +30,7 @@ import asyncio
 import contextlib
 import itertools
 import json
+import re
 import threading
 import time
 from collections import deque
@@ -66,6 +69,8 @@ MOVE_FIELDS = frozenset(
 REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
 # Our venue's broker sees a private book (pseudonyms, the Market Test's bench): its rows show only that a match
 # or an opening happened and how it ended, never an offer id, a quote, a maker or a price.
+ACTIVITY_LABELS = frozenset({"activity", "idle_reason"})  # plus stalled_for_ticks (an int)
+ACTIVITY_LABEL = re.compile(r"[a-z0-9_]{1,40}")
 PRIVATE_KINDS = frozenset({"broker_match", "venue_open"})
 PRIVATE_METHODS = frozenset({"broker_match", "open_venue"})
 VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain values (card refs)
@@ -180,6 +185,15 @@ def public_view(parts: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _activity_field(key: str, value: object) -> bool:
+    """One of the four public activity fields with a plain value: a tick count, or a coarse label."""
+    if value is None:
+        return key == "stalled_for_ticks" or key in ACTIVITY_LABELS
+    if key == "stalled_for_ticks":
+        return isinstance(value, int) and not isinstance(value, bool)
+    return key in ACTIVITY_LABELS and isinstance(value, str) and ACTIVITY_LABEL.fullmatch(value) is not None
+
+
 class StatusHub:
     """What the server shows. Written by the tick loop (any thread), read by the server thread."""
 
@@ -204,6 +218,7 @@ class StatusHub:
         self._last_tick_at: str | None = None
         self._view: dict[str, Any] = {}
         self._doors: dict[str, Any] = {}
+        self._activity: dict[str, Any] = {}
         self._clients: set[ServerConnection] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -220,6 +235,13 @@ class StatusHub:
         with self._lock:
             self._doors = {k: payload.get(k) for k in ("doors", "paused", "next_opens", "tick_seconds")}
             self._doors["server_tick"] = payload.get("tick")
+
+    def activity(self, payload: dict[str, Any] | None) -> None:
+        """The taker's activity check (`activity.ActivityReport.public`), allow-listed and type-checked again:
+        a state, a tick count and two coarse labels, never a price, card or limit. None clears it."""
+        clean = {k: v for k, v in (payload or {}).items() if _activity_field(k, v)}
+        with self._lock:
+            self._activity = clean
 
     def view(self, **parts: Any) -> None:
         """The agent's live view: `threads=[...]` (taker) or `open_offers=[...]` (maker), allow-listed."""
@@ -277,6 +299,7 @@ class StatusHub:
                 "tick": self._tick,
                 "last_tick_at": self._last_tick_at,
                 **self._doors,
+                **self._activity,
             }
 
     def state(self) -> dict[str, Any]:
@@ -288,6 +311,7 @@ class StatusHub:
                 "t_hours": self._t,
                 "team": self._us,
                 "last_tick_at": self._last_tick_at,
+                **self._activity,
                 **self._view,
                 "decisions": list(self._decisions),
             }

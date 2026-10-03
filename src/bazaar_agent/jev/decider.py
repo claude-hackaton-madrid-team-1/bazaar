@@ -25,19 +25,46 @@ DEFAULT_DECIDER: Decider = "jev"
 DEFAULT_TIMEOUT_S = 12.0  # an Opus answer through the Claude Code CLI took 6.2-9.1 s (3 live calls, 2026-10-03)
 TIMEOUT_RANGE_S = (1.0, 60.0)
 BUDGET_MARGIN_S = 1.0  # time left in the tick after the answer, to still send the move
+MIN_TICK_VARIABLE = "BAZAAR_DECIDER_MIN_TICK_S"
+DEFAULT_MIN_TICK_S = 30.0  # the LLM decider needs a tick this long: its answer takes 6-9 s, the window is ~tick - 4.5 s
+MIN_TICK_RANGE_S = (0.0, 3600.0)
 
 _log = logging.getLogger(__name__)
 _warned: set[str] = set()
+_tick_seconds: float | None = None  # the length of the tick this process runs in (ticks.run_per_tick sets it)
+
+
+def note_tick_seconds(seconds: float | None) -> None:
+    """The tick length the loop is running at; the LLM decider steps aside on ticks too short for it."""
+    global _tick_seconds
+    _tick_seconds = seconds if seconds is not None and math.isfinite(seconds) and seconds > 0 else None
 
 
 def decider(environ: Mapping[str, str] | None = None) -> Decider:
-    """`llm` only when BAZAAR_DECIDER says so; anything else is Jev, the behaviour before the switch."""
+    """`llm` only when BAZAAR_DECIDER says so; anything else is Jev, the behaviour before the switch.
+
+    Also Jev when the loop's ticks are shorter than BAZAAR_DECIDER_MIN_TICK_S (default 30 s): on a 15 s tick an
+    LLM call (6-9 s, budget 12 s + margin) never fits the window, so every gated move was dropped as "no tick
+    budget for jev". Jev answers in ~0.3 s under the same bars. An unknown tick length (a CLI call) keeps the LLM."""
     raw = (os.environ if environ is None else environ).get(DECIDER_VARIABLE, "")
     value = raw.strip().lower()
     if value not in ("", "jev", "llm") and value not in _warned:
         _warned.add(value)  # once per value: a typo must not read as "llm is on"
         _log.warning("%s=%r is neither jev nor llm: Jev decides", DECIDER_VARIABLE, value[:20])
-    return "llm" if value == "llm" else DEFAULT_DECIDER
+    if value != "llm":
+        return DEFAULT_DECIDER
+    floor = env_float(MIN_TICK_VARIABLE, DEFAULT_MIN_TICK_S, *MIN_TICK_RANGE_S, environ=environ)
+    if _tick_seconds is not None and _tick_seconds < floor:
+        if "short-tick" not in _warned:
+            _warned.add("short-tick")
+            _log.warning(
+                "%.0f s ticks are shorter than %s=%.0f: Jev decides instead of the LLM",
+                _tick_seconds,
+                MIN_TICK_VARIABLE,
+                floor,
+            )
+        return DEFAULT_DECIDER
+    return "llm"
 
 
 def env_float(name: str, default: float, low: float, high: float, environ: Mapping[str, str] | None = None) -> float:
