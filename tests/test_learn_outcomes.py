@@ -261,3 +261,59 @@ def test_lessons_are_marked_written_only_once_postgres_took_them():
     assert state.changed([CHATO]) == [CHATO]  # not written yet (an outage): offered again
     state.written([CHATO])
     assert state.changed([CHATO]) == []
+
+
+@pytest.mark.integration
+def test_lessons_from_a_pass_during_an_outage_are_written_by_the_next_pass(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from bazaar_agent.learn.outcomes import PassState, learn_once
+    from tests.test_db import open_in
+
+    def connect():
+        return open_in(database_url, schema)
+
+    with connect() as conn:
+        db.init_schema(conn)
+        db.load_events(conn, feed())
+    down = {"on": True}
+
+    def store_connect():
+        if down["on"]:
+            raise OSError("postgres down")
+        return connect()
+
+    state, store = PassState(), LearningStore(store_connect)
+    learn_once(connect, store, None, US, 80, state=state)
+    with connect() as conn:
+        assert conn.execute("select count(*) from learnings").fetchone() == (0,)
+    down["on"] = False
+    store._down, store._tried_tick = False, None  # the next retry window
+    learn_once(connect, store, None, US, 90, state=state)
+    with connect() as conn:
+        assert conn.execute("select count(*) from learnings").fetchone() == (2,)  # the lesson and the curve
+
+
+@pytest.mark.integration
+def test_a_where_on_a_number_matches_in_postgres_as_in_memory(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+    from bazaar_agent.learn.curves import curve_stats
+    from tests.test_db import open_in
+    from tests.test_learn_lessons import MARKET, OURS, lessons_from, outcomes
+
+    learned = [lr for lr in lessons_from(outcomes(), curve_stats(OURS + MARKET), {}, US, 120) if lr.kind == "lesson"]
+    store = LearningStore(lambda: open_in(database_url, schema), init_schema=db.init_schema)
+    store.record(learned)
+    reader = LearningStore(lambda: open_in(database_url, schema))
+    hits = reader.candidates(
+        kinds=None,
+        subjects=None,
+        sources=None,
+        subject_kind=None,
+        team=US,
+        tick=None,
+        where=(("thread", "115"),),
+        limit=10,
+    )
+    assert [lr.detail["thread"] for lr in hits] == [115]
+    store.close()
+    reader.close()

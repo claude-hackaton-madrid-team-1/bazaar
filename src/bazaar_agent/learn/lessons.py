@@ -30,6 +30,19 @@ _SLUG = re.compile(r"[^A-Za-z0-9_.:\-]+")
 _TEAM = re.compile(r"[A-Za-z0-9_.:\-]{1,64}")
 
 
+def clean(detail: Mapping[str, Any]) -> dict[str, Any]:
+    """Detail as Postgres jsonb takes it: no None, and a NaN or an infinity (a duel's numeric column can hold
+    one) dropped, so one odd number never makes the store refuse a whole batch of lessons."""
+    out: dict[str, Any] = {}
+    for k, v in detail.items():
+        if v is None or (isinstance(v, float) and not math.isfinite(v)):
+            continue
+        if isinstance(v, list):
+            v = [x for x in v if not (isinstance(x, float) and not math.isfinite(x))]
+        out[k] = v
+    return out
+
+
 def slug(name: str) -> str:
     """A rival alias ("Rival Azul") as a learning subject ("rival_azul")."""
     return _SLUG.sub("_", name.strip()).strip("_").lower()[:64] or "unknown"
@@ -138,7 +151,7 @@ def dealer_lesson(o: Outcome, stats: CurveStats | None, us: str) -> Learning | N
         confidence=_confidence(stats.threads if stats else 0),
         text=_cap(text),
         source="outcome",
-        detail={k: v for k, v in detail.items() if v is not None},
+        detail=clean(detail),
     )
 
 
@@ -200,7 +213,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
         confidence=0.7,
         text=_cap(text),
         source="outcome",
-        detail={k: v for k, v in detail.items() if v is not None},
+        detail=clean(detail),
     )
 
 
@@ -242,7 +255,7 @@ def trade_lesson(o: Outcome, us: str) -> Learning | None:
         confidence=0.6,
         text=_cap(text),
         source="outcome",
-        detail={k: v for k, v in detail.items() if v is not None},
+        detail=clean(detail),
     )
 
 
@@ -260,21 +273,23 @@ def behaviour_learning(stats: CurveStats, us: str, tick: int) -> Learning:
         confidence=_confidence(stats.threads),
         text=_cap(stats.describe()),
         source="outcome",
-        detail={
-            "pattern": "concession",
-            "price_class": stats.price_class,
-            "threads": stats.threads,
-            "fills": len(stats.fills),
-            "floor": stats.floor,
-            "fill_p25": stats.fill_q(0.25),
-            "fill_p50": stats.fill_q(0.5),
-            "fill_p75": stats.fill_q(0.75),
-            "opening": stats.opening,
-            "patience": stats.patience,
-            "concession": stats.concession,
-            "finals": stats.finals,
-            "evidence_threads": list(stats.thread_ids[-20:]),
-        },
+        detail=clean(
+            {
+                "pattern": "concession",
+                "price_class": stats.price_class,
+                "threads": stats.threads,
+                "fills": len(stats.fills),
+                "floor": stats.floor,
+                "fill_p25": stats.fill_q(0.25),
+                "fill_p50": stats.fill_q(0.5),
+                "fill_p75": stats.fill_q(0.75),
+                "opening": stats.opening,
+                "patience": stats.patience,
+                "concession": stats.concession,
+                "finals": stats.finals,
+                "evidence_threads": list(stats.thread_ids[-20:]),
+            }
+        ),
     )
 
 
