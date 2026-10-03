@@ -218,18 +218,18 @@ def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
     return [o for rows in response.values() if isinstance(rows, list) for o in rows if isinstance(o, dict)]
 
 
+PROMISED = (None, "open", "queued", "accepted")  # offer statuses whose cash and cards are still ours to deliver
+
+
 def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
-    """Our open or queued offers. An offer counts as ours unless another team addressed it to us, so an
+    """Our open, queued or accepted-but-not-settled offers (an accepted offer settles at the next tick: its copy
+    and its cash are still promised). An offer counts as ours unless another team addressed it to us, so an
     unknown maker fails closed: its cash and cards are counted as committed. A thread settles at most one
     deal, so it counts once, at its biggest open bid (`one_per_thread`); every asset it lists stays listed.
-    For the sell count only, an ask of ours a team accepted is gone too: it settles at the next tick, while
-    /api/me still shows it."""
+    An ask of ours a team accepted is among them: it settles at the next tick while /api/me still shows its
+    copy, so that copy is neither free to sell nor counted twice."""
     offers = list(offers)
-    ours = [
-        o
-        for o in offers
-        if o.get("status") in (None, "open", "queued") and not (o.get("to") == us and o.get("maker") != us)
-    ]
+    ours = [o for o in offers if o.get("status") in PROMISED and not (o.get("to") == us and o.get("maker") != us)]
     cash, wanted, thread_cash, thread_packs = 0, [], 0, 0
     for o in one_per_thread(ours):
         give, want = o.get("give") or {}, o.get("want") or {}
@@ -245,8 +245,7 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
         for a in (o.get("give") or {}).get("assets") or []
         if isinstance(asset_id := a.get("id") if isinstance(a, dict) else a, int)
     }
-    settling = [o for o in offers if o.get("status") == "accepted" and o.get("maker") == us]
-    given = [a for o in ours + settling for a in (o.get("give") or {}).get("assets") or []]
+    given = [a for o in ours for a in (o.get("give") or {}).get("assets") or []]  # accepted asks included once
     named = tuple(str(a["ref"]) for a in given if isinstance(a, dict) and a.get("ref"))
     return Commitments(
         cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs, named, len(given) - len(named)

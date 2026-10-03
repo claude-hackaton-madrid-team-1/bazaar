@@ -320,6 +320,17 @@ def test_the_last_free_copy_carries_the_page_bonus_even_when_its_twin_is_in_our_
     assert ("accept", 81, [3]) in rich.sent  # 30 - fee 3 - 11.2 = +15.8: the free copy, never #4
 
 
+def test_a_copy_in_our_accepted_ask_is_not_free_until_it_settles(tmp_path):
+    # security-auditor #138 P1: a rival accepted our ask on #4; the offer reads `accepted` until the next tick
+    # and its copy looked free, so the taker sold #3 too (+6.8 shown, -3.2 real once both settle).
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock, our_ask
+
+    pending = SellTeam.make(offers=[{**our_ask(9, 4, "LAT-03", 30), "status": "accepted"}])
+    sell_taker(tmp_path, pending, {"rastro": [board_bid(80, "LAT-03", 10, maker="m9")]})[0].on_tick(clock())
+    assert not [s for s in pending.sent if s[0] == "accept"]
+
+
 def test_the_scanner_prices_a_sell_from_our_free_copies_only():
     o = BoardOffer(80, "rastro", "t18", "bid", "LAT-03", 10, None, None, 60, 20)
     args = (market(), ME, PARAMS, Guardrails(), AMAP, VENUES["rastro"], ctx())
