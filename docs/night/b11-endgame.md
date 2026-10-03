@@ -81,7 +81,7 @@ fails the 0.95 bar. So 0.3 is the conservative point; Marius can take 0.4–0.5 
 
 ## Risks
 - **A bet that exploiters give in when refused.** Against an oracle that never backs off (1 P to the very end), every setting
-  is worse than today: 0.150 → 0.134 at 0.3. We still close, at 1 P on the last tick, but after an extra round. Nothing at
+  is worse than today: 0.154 → 0.141 at 0.3 (W2a, 3 seeds). We still close, at 1 P on the last tick, but after an extra round. Nothing at
   the last tick can beat a rival that knows our limit and never gives in; only not revealing the limit can.
 - **The mirror threat is weaker than feared.** The practice pairs share the item, not the numbers. In duels 85 and 273 the
   rival paid 138 and 171, above the buyer limit we held in the paired duels (126, 148). Paired duels also run at the
