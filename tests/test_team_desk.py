@@ -441,3 +441,33 @@ def test_trading_disabled_in_guardrails_holds_the_desk(tmp_path, monkeypatch):
     d, _ = desk(tmp_path, team, trading_enabled=False)
     d.converse(view(), set())
     assert team.sent == []
+
+
+def test_after_a_walk_the_team_rests_and_a_stuck_accepted_deal_frees_its_slot(tmp_path):
+    from bazaar_agent.agents.team_desk import REST_TICKS
+
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.plan_ttl = 10**6  # keep the injected plan: the rest, not an empty plan, must be what stops a reopening
+    d.converse(view(), set())
+    quiet = thread(messages=[{"sender": US, "tick": TICK}])
+    for tick in range(TICK + 1, TICK + 4):
+        d.proposals(view([quiet], tick=tick))
+        d.converse(view([quiet], tick=tick), set())
+    assert team.sent[-1] == ("close_thread", 42)
+    team.sent.clear()
+    for tick in range(TICK + 4, TICK + 3 + REST_TICKS):  # the same plan, the team rests: no reopening
+        d.proposals(view(tick=tick))
+        d.converse(view(tick=tick), set())
+    assert team.sent == []
+    d.converse(view(tick=TICK + 3 + REST_TICKS), set())
+    assert team.sent[0] == ("open_thread", THEM, TOPIC, "rastro")
+    stuck = Team()
+    d2, _ = desk(tmp_path / "stuck", stuck)
+    d2.converse(view(), set())
+    d2.talks[42].accepted = True  # we (or they) accepted, and the deal never settled
+    open_ = thread(messages=[{"sender": US, "tick": TICK}])
+    for tick in range(TICK + 1, TICK + 5):
+        d2.proposals(view([open_], tick=tick))
+        d2.converse(view([open_], tick=tick), set())
+    assert ("close_thread", 42) in stuck.sent

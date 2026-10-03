@@ -50,6 +50,7 @@ from bazaar_agent.trade_desk import PlanParams, Trade, build_plan, dealer_prices
 TEAM_THREADS_ENV = "BAZAAR_TEAM_THREADS"  # "0" turns the desk off at the next tick
 HOUSE_VENUE = "rastro"
 TOPIC = {"trade": "cards"}  # public with the thread: never the card we want
+REST_TICKS = 20  # after a walk, the team is left alone this long (no reopening every few ticks)
 
 
 def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | None:
@@ -157,6 +158,7 @@ class TeamDesk:
         self._payloads: dict[int, dict[str, Any]] = {}
         self._closed: set[int] = set()  # threads we closed this tick: still in this tick's list, never adopted
         self._refused: set[int] = set()  # their offers we refused (logged once)
+        self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self._plan: _Plan | None = None
 
     # ------------------------------------------------------------ reads
@@ -277,7 +279,9 @@ class TeamDesk:
             self.log(f"tick {v.tick} team desk: thread {tid} with {talk.team} ended ({status})")
 
     def _next_move(self, v: DeskView, talk: Talk) -> None:
-        if talk.accepted:
+        if talk.accepted:  # a deal settles at the next tick; one that did not (all or nothing) frees the slot
+            if v.tick - max(talk.sent_tick, talk.heard_tick) > self.rules.team_thread_idle_ticks:
+                self._walk(v, talk, "an accepted deal did not settle")
             return
         if talk.step >= self.rules.team_thread_max_messages:
             self._walk(v, talk, f"{talk.step} proposals sent (team_thread_max_messages)")
@@ -325,6 +329,7 @@ class TeamDesk:
         if room <= 0:
             return
         busy_teams = {self._other(t, v.us) for t in self._team_threads(v)}
+        busy_teams |= {team for team, until in self.rest_until.items() if v.tick < until}
         used = {k.trade.asset_id for k in self.talks.values()} | {k.trade.refs[1] for k in self.talks.values()}
         listed = open_commitments(v.offers, v.us).listed
         for trade in self._trades(v):
@@ -469,6 +474,7 @@ class TeamDesk:
     def _walk(self, v: DeskView, talk: Talk, why: str) -> None:
         if self._close(v, talk.thread_id, talk.team, why):
             self.talks.pop(talk.thread_id, None)
+            self.rest_until[talk.team] = v.tick + REST_TICKS
 
     def _close(self, v: DeskView, tid: int, team: str, why: str) -> bool:
         verdict = check(Action("close_thread", str(tid)), v.ctx(tid), self.rules)
