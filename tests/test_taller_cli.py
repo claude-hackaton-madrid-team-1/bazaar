@@ -75,7 +75,9 @@ def test_live_sends_exactly_one_conversion_and_books_it(taller_cli, tmp_path):
     result = CliRunner().invoke(cli.app, ["taller", "--live"])
     assert result.exit_code == 0, result.output
     assert team.sent == [("taller", [11, 12, 13])]  # id 10, the oldest copy, is the one we keep
-    assert [e["kind"] for e in ledger.entries()] == ["taller"]
+    assert [(e["kind"], e["price"], e["item"]) for e in ledger.entries()] == [
+        ("spend", 0, "taller:LAT-03,LAT-03,LAT-03")
+    ]
     assert "pulled: RET-06" in result.stdout
     assert {r["sdk_method"] for r in rows(tmp_path, "executions.jsonl")} == {"taller"}
 

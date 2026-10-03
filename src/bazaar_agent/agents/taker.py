@@ -88,7 +88,6 @@ from bazaar_agent.agents.runtime import (
     window_for,
 )
 from bazaar_agent.agents.seller import (
-    UNSETTLED_TICKS,
     Commitments,
     committed_context,
     offers_in,
@@ -144,7 +143,7 @@ from bazaar_agent.strategy import (
 )
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
-from bazaar_agent.taller import TALLER_KIND, convert, plan_taller, taller_context
+from bazaar_agent.taller import CARD_REF, TALLER_ITEM, convert, plan_taller, settling, taller_context
 from bazaar_agent.team_affinity import AffinityBook
 from bazaar_agent.ticks import Clock, action_budget_s
 from bazaar_agent.watchdog import Watchdog
@@ -152,6 +151,7 @@ from bazaar_agent.watchdog import Watchdog
 OFFER_QUESTION = "offer_is_worth_accepting"  # questions/negotiation.json: the taker's advisory accept check
 THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
 TALLER_MIN_LEFT_S = 10.0  # El Taller: no conversion with less of the tick left (capped at 40 % of a short tick)
+TALLER_RETRY_TICKS = 10  # El Taller: after a conversion not sent (refused, dry run), the next try
 
 
 @dataclass(frozen=True)
@@ -548,6 +548,8 @@ class Taker:
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._pack_notes: set[tuple[int, str]] = set()  # (asset, verdict) already recorded and not sent
         self._pack_refused: set[int] = set()  # sealed packs the server refused to open: never sent again
+        self._taller_next = 0  # El Taller: the first tick of the next try (after one not sent)
+        self._taller_stop = False  # El Taller took cash: no more conversions in this process
         self._dry_accepts: dict[int, int] = {}
         self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
         self._flag_rows: dict[int, tuple[int, bool]] = {}  # message id -> (its flag row, approved): a 429 reuses it
@@ -963,38 +965,35 @@ class Taker:
         """At most one El Taller conversion a tick, after every other send, behind `taller_enabled`: three free
         spares of one rarity (`taller.plan_taller`, deterministic: no Jev, no LLM) for one card of the next. Never
         in the `deploy_guard_duel_ticks` before a live duel's deadline nor near a Market Test or a scheduled event
-        (`deploy_guard.verdict`), never on a short tick, and never the team's accept slot. Album first: planned
-        again on a fresh /me, then /me is read once more to see the pull."""
-        if not self.rules.taller_enabled:
+        (`deploy_guard.verdict`), never on a short tick, never the team's accept slot. Album first: /me and our
+        offers are read again (the desk and the maker may have offered a copy since the tick began), then /me once
+        more to see the pull. A conversion not sent (refused, dry run) waits TALLER_RETRY_TICKS; a cash drop stops
+        conversions in this process until a restart (the cost is unpublished)."""
+        if not self.rules.taller_enabled or self._taller_stop or run.snap.clock.tick < self._taller_next:
             return
         clock = run.snap.clock
         if run.window.left() < max(self.config.jev_min_budget_s, min(TALLER_MIN_LEFT_S, clock.tick_seconds * 0.4)):
             return
         if plan_taller(run.snap.me, run.offers, self.rules, run.snap.catalog) is None:
             return  # nothing to feed in: no request at all
-        if self.ledger.count_since(TALLER_KIND, clock.t_hours - 1.0) >= self.rules.max_taller_per_game_hour:
+        if self.ledger.count_since("spend", clock.t_hours - 1.0, TALLER_ITEM) >= self.rules.max_taller_per_game_hour:
             return
         try:
             blocked = deploy_guard.verdict(self.team.duels(), self.team.schedule(), clock.model_dump(), self.rules)
-            me = self.team.me()
+            if not blocked.safe:
+                self.log(f"tick {clock.tick} taker: El Taller waits: {'; '.join(blocked.reasons)[:160]}")
+                return
+            me, offers = self.team.me(), offers_in(self.team.my_offers())
         except BazaarError as e:
             self.log(f"tick {clock.tick} taker: El Taller skipped, a read failed ({e.code})")
             return
-        if not blocked.safe:
-            self.log(f"tick {clock.tick} taker: El Taller waits: {'; '.join(blocked.reasons)[:160]}")
+        held_back, hold = settling(self.ledger, clock.tick, me)
+        plan = plan_taller(me, offers, self.rules, run.snap.catalog, held_back)
+        if plan is None or hold or not run.window.open():
+            if hold:
+                self.log(f"tick {clock.tick} taker: El Taller waits: {hold}")
             return
-        plan = plan_taller(me, run.offers, self.rules, run.snap.catalog)
-        if plan is None or not run.window.open():
-            return
-        recent = {
-            item.split(":")[-1]
-            for t in range(clock.tick - UNSETTLED_TICKS, clock.tick + 1)
-            for item in self.ledger.accept_items(t)
-        }
-        if busy := sorted(set(plan.refs) & recent):  # a sale of ours may still be settling one of these copies
-            self.log(f"tick {clock.tick} taker: El Taller waits: {', '.join(busy)} in an accept still settling")
-            return
-        ctx = taller_context(me, run.offers, clock.tick, clock.t_hours, self.ledger, self.rules)
+        ctx = taller_context(me, offers, clock.tick, clock.t_hours, self.ledger, self.rules)
         done = convert(
             self.team,
             plan,
@@ -1007,19 +1006,30 @@ class Taker:
             live=self.live,
         )
         if done.result is None:
+            self._taller_next = clock.tick + TALLER_RETRY_TICKS
             return
+        self._after_taller(clock.tick, plan.refs, me)
+
+    def _after_taller(self, tick: int, refs: list[str], me: dict[str, Any]) -> None:
         try:
             after = self.team.me()  # album first: what the pull added
         except BazaarError as e:
-            self.log(f"tick {clock.tick} taker: /me after El Taller failed ({e.code}); the next tick reads it")
+            self.log(f"tick {tick} taker: /me after El Taller failed ({e.code}); the next tick reads it")
             return
         before = {a.get("id") for a in me.get("assets") or [] if isinstance(a, dict)}
         new = [
-            str(a.get("ref")) for a in after.get("assets") or [] if isinstance(a, dict) and a.get("id") not in before
+            ref
+            for a in after.get("assets") or []
+            if isinstance(a, dict) and a.get("id") not in before and CARD_REF.match(ref := str(a.get("ref")))
         ]
-        self.log(
-            f"tick {clock.tick} taker: El Taller {', '.join(plan.refs)} -> {', '.join(new) or 'nothing new in /me'}"
-        )
+        self.log(f"tick {tick} taker: El Taller {', '.join(refs)} -> {', '.join(new) or 'no new card in /me'}")
+        cash_before, cash_after = me.get("cash"), after.get("cash")
+        if isinstance(cash_before, int) and isinstance(cash_after, int) and cash_after < cash_before:
+            self._taller_stop = True
+            self.log(
+                f"tick {tick} taker: WARN El Taller cash {cash_before} -> {cash_after}: it costs cash, so this "
+                "process converts no more until a restart (set taller_enabled = false or trip breaker taller)"
+            )
 
     # ------------------------------------------------------------ (b) the dealer desk
 

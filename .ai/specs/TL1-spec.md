@@ -27,10 +27,11 @@ or stock for ladder sales to Pilar (L3) and Chato (L2), always above `your_value
    the lowest set multiplier (/me `affinity`), then the lowest `your_value`; the three may be different cards.
 2. `guardrails.check()` kind `taller`: refuses with `taller_enabled` false, with the hourly count unread or at
    `max_taller_per_game_hour` (shared ledger rows `taller`), anything but three copies of one common/uncommon
-   rarity, and any input that is the last free copy of its card (every set). The kill switch and a tripped
-   `taller` breaker hold it.
+   rarity, any input that is the last free copy of its card (every set; our open offers and the accepts still
+   settling count as given, an accept that cannot name its copy holds every conversion), and inputs whose loss
+   priced at 0 passes `max_score_loss_per_move`. The kill switch and a tripped `taller` breaker hold it.
 3. `TeamBazaar.taller(assets)`: one POST, never re-sent after a 429, a 5xx or a network error.
-4. Taker: at most one conversion per tick, after its other sends; album first (fresh /me before, /me after);
+4. Taker: at most one conversion per tick, after its other sends; album first (fresh /me and offers before, /me after);
    skipped on a short tick, at the hourly cap, and while `deploy_guard.verdict` (live duel deadlines within
    `deploy_guard_duel_ticks`, Market Test benches, scheduled events) is unsafe; never the team's accept slot.
 5. Maker: while `taller_enabled`, no NEW ask for a spare common; an ask already open is never cancelled for it.
@@ -40,4 +41,4 @@ or stock for ladder sales to Pilar (L3) and Chato (L2), always above `your_value
 ## Out of scope / follow-ups
 - The MCP tool (`taller` in `runtime/tools.py`) is not wired in this PR.
 - First live use is by the coordinator, by hand: `uv run bazaar taller --live`, recording the real answer.
-- No `bazaar_sim` route: `scripts/sim_smoke.py` does not run a conversion.
+- `bazaar_sim` has a minimal `POST /api/taller` (our model, not the real answer); the smoke may or may not hit it.

@@ -13,6 +13,7 @@ then the lowest `your_value`.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -20,15 +21,19 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from bazaar_agent.agents.seller import Commitments, committed_context, open_commitments
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, context_from
+from bazaar_agent.agents.seller import UNSETTLED_TICKS, Commitments, committed_context, open_commitments
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, context_from, is_pack
 
 INPUTS = 3  # copies per conversion
 # The rarities we feed in, in order: a common triple first (→ an uncommon), then an uncommon triple (→ a rare).
 # Rares and above are never fed in: a spare rare sells to Pilar or Chato for more than a lucky pull is worth.
 TALLER_RARITIES: tuple[str, ...] = ("common", "uncommon")
 NEXT_RARITY = {"common": "uncommon", "uncommon": "rare", "rare": "epic", "epic": "legendary"}
-TALLER_KIND = "taller"  # the decisions kind, the ledger row kind and the guardrails action kind
+TALLER_KIND = "taller"  # the decisions kind and the guardrails action kind
+# The ledger row of a conversion: kind `spend` at price 0 (the shared table's kinds are fixed: no migration), its
+# item `taller:<refs>`. It adds nothing to any spend or pack count; `count_since` counts it by this prefix.
+TALLER_ITEM = "taller:"
+CARD_REF = re.compile(r"^[A-Z]{3}-\d{2}$")
 
 
 class TallerResult(BaseModel):
@@ -38,7 +43,7 @@ class TallerResult(BaseModel):
 
     def pulled(self) -> list[str]:
         """The card refs the answer names, wherever it puts them (`card`, `cards`, `asset`, `pulled`, ...)."""
-        return sorted(set(_refs(self.model_dump())))
+        return sorted({r for r in _refs(self.model_dump()) if CARD_REF.match(r)})
 
 
 def _refs(value: Any) -> Iterable[str]:
@@ -126,16 +131,49 @@ def free_spares(
     return out
 
 
+def settling(ledger: LedgerStore, tick: int, me: Mapping[str, Any]) -> tuple[Commitments, str | None]:
+    """The copies an accept of the last UNSETTLED_TICKS may still hand over (/me shows them until it settles), from
+    the shared ledger: `sell:<asset>` names its copy, a plain card ref counts against that card, a `duel:` moves no
+    card and a pack is not a card. Any other `<kind>:<id>` (a team swap's `team:<thread>`) cannot name its copy:
+    the reason no conversion goes this tick (fail closed)."""
+    by_id = {a.get("id"): str(a.get("ref")) for a in me.get("assets") or [] if isinstance(a, Mapping)}
+    assets: set[int] = set()
+    refs: list[str] = []
+    opaque: set[str] = set()
+    for t in range(tick - UNSETTLED_TICKS, tick + 1):
+        for item in ledger.accept_items(t):
+            kind, _, rest = item.partition(":")
+            if not item or kind == "duel" or is_pack(item):
+                continue
+            if not rest:
+                refs.append(item)
+            elif kind == "sell" and rest.isdigit():
+                assets.add(int(rest))
+                if int(rest) in by_id:
+                    refs.append(by_id[int(rest)])
+            else:
+                opaque.add(item)
+    why = f"accept {', '.join(sorted(opaque))} still settling may hand over a copy we cannot name" if opaque else None
+    return Commitments(listed=frozenset(assets), listed_refs=tuple(refs)), why
+
+
+def _with(commitments: Commitments, extra: Commitments) -> Commitments:
+    listed = commitments.listed | extra.listed
+    return replace(commitments, listed=listed, listed_refs=commitments.listed_refs + extra.listed_refs)
+
+
 def plan_taller(
     me: Mapping[str, Any],
     open_offers: Iterable[dict[str, Any]],
     rules: Guardrails,
     catalog: Mapping[str, Any] | None = None,
+    held_back: Commitments | None = None,
 ) -> TallerPlan | None:
-    """The best three free spares of one rarity to convert, or None (switch off, or no triple of free spares)."""
+    """The best three free spares of one rarity to convert, or None (switch off, or no triple of free spares).
+    `held_back`: copies an accept may still hand over (`settling`)."""
     if not rules.taller_enabled:
         return None
-    commitments = open_commitments(open_offers, str(me.get("id") or ""))
+    commitments = _with(open_commitments(open_offers, str(me.get("id") or "")), held_back or Commitments())
     spares = free_spares(me, commitments, catalog)
     for rarity in TALLER_RARITIES:
         pool = [s for s in spares if s.rarity == rarity]
@@ -155,12 +193,13 @@ def plan_from_ids(
     assets: Sequence[int],
     open_offers: Iterable[dict[str, Any]],
     catalog: Mapping[str, Any] | None = None,
+    held_back: Commitments | None = None,
 ) -> TallerPlan:
     """A plan for three hand-picked asset ids (`bazaar taller a b c`). The guardrails still check it: one rarity,
     never a last copy, the switch and the hourly cap."""
     if len(assets) != INPUTS or len(set(assets)) != INPUTS:
         raise TallerError(f"El Taller takes {INPUTS} different asset ids, got {list(assets)}")
-    commitments = open_commitments(open_offers, str(me.get("id") or ""))
+    commitments = _with(open_commitments(open_offers, str(me.get("id") or "")), held_back or Commitments())
     affinity = me.get("affinity") if isinstance(me.get("affinity"), Mapping) else {}
     cards = [a for a in me.get("assets") or [] if isinstance(a, Mapping) and a.get("kind") == "card"]
     by_id = {a.get("id"): a for a in cards}
@@ -171,7 +210,7 @@ def plan_from_ids(
         if a is None:
             raise TallerError(f"asset {asset_id} is not a card we hold (read /api/me)")
         if asset_id in commitments.listed:
-            raise TallerError(f"asset {asset_id} is in one of our open offers")
+            raise TallerError(f"asset {asset_id} is in one of our open offers or an accept still settling")
         ref, value = str(a.get("ref")), _value(a)
         mult = affinity.get(ref.split("-", 1)[0].upper()) if isinstance(affinity, Mapping) else None
         multiplier = float(mult) if isinstance(mult, int | float) and not isinstance(mult, bool) else 1.0
@@ -188,12 +227,14 @@ def taller_context(
     ledger: LedgerStore,
     rules: Guardrails,
 ) -> Context:
-    """The guardrail context of a conversion: /me (read just before), the copies our open offers give
-    (`sellable`), the kill switch, and the conversions every process booked this game hour."""
-    offers = list(open_offers)
+    """The guardrail context of a conversion: /me and our open offers (both read just before), the copies those
+    offers and the accepts still settling may hand over (`sellable`, `taller_hold`), the kill switch, and the
+    conversions every process booked this game hour."""
+    held_back, hold = settling(ledger, tick, me)
     base = context_from(dict(me), tick, t_hours, ledger, rules)
-    ctx = committed_context(base, open_commitments(offers, str(me.get("id") or "")))
-    return replace(ctx, tallers_last_hour=ledger.count_since(TALLER_KIND, t_hours - 1.0))
+    ctx = committed_context(base, _with(open_commitments(open_offers, str(me.get("id") or "")), held_back))
+    done = ledger.count_since("spend", t_hours - 1.0, TALLER_ITEM)
+    return replace(ctx, tallers_last_hour=done, taller_hold=hold)
 
 
 def taller_action(plan: TallerPlan) -> Action:
@@ -221,9 +262,9 @@ def convert(
     t_hours: float,
     live: bool,
 ) -> Converted:
-    """Check, record and (live) send ONE conversion: the one code path of the taker, `bazaar taller` and the MCP
-    tool. The ledger row is booked BEFORE the send, so a refusal over-counts the hourly cap (fail safe), never
-    under-counts it. The answer is recorded raw (`executions`, scrubbed) and its pulled card in a decisions row."""
+    """Check, record and (live) send ONE conversion: the one code path of the taker and `bazaar taller`. The
+    ledger row is booked BEFORE the send, so a refusal over-counts the hourly cap (fail safe), never under-counts
+    it. The raw answer is in `executions`; the card refs it names go into a `taller_pulled` decisions row."""
     verdict = check(taller_action(plan), ctx, rules)
     status = "approved" if verdict.allowed else "rejected"
     refs = ", ".join(plan.refs)
@@ -249,16 +290,16 @@ def convert(
     )
     if not verdict.allowed or not live:
         return Converted(plan, verdict, False, None, did)
-    ledger.record(TALLER_KIND, tick, t_hours, 0, ",".join(plan.refs))
+    ledger.record("spend", tick, t_hours, 0, TALLER_ITEM + ",".join(plan.refs))
     body = rec.send(did, tick, TALLER_KIND, {"assets": plan.assets}, lambda: team.taller(plan.assets))
-    result = TallerResult.model_validate(body) if body is not None else None
-    if result is not None:
+    result = None if body is None else TallerResult.model_validate(body if isinstance(body, dict) else {"result": body})
+    if result is not None:  # the raw answer is in `executions`; only the card refs it names are kept here
         pulled = result.pulled()
         rec.decide(
             tick,
             "taller_pulled",
             f"El Taller pulled {', '.join(pulled) or 'a card the answer does not name'} for {refs}",
-            inputs={"assets": plan.assets, "refs": plan.refs, "pulled": pulled, "response": result.model_dump()},
+            inputs={"assets": plan.assets, "refs": plan.refs, "pulled": pulled},
             reason="luck, never scored",
             guardrail="-",
             chosen=False,

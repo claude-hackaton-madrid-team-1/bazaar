@@ -12,6 +12,7 @@ import pytest
 from bazaar_agent.agents.seller import open_commitments
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, breaker_scope, check, last_copy_refusals
 from bazaar_agent.taller import (
+    TALLER_ITEM,
     TALLER_KIND,
     TallerError,
     TallerResult,
@@ -353,26 +354,27 @@ def test_taller_action_carries_the_refs_and_rarity() -> None:
 # ---------------------------------------------------------------- ledger
 
 
-def test_count_since_counts_only_rows_of_that_kind_after_t(tmp_path) -> None:
+def test_count_since_counts_rows_of_that_kind_and_prefix_after_t(tmp_path) -> None:
     ledger = Ledger(tmp_path / "l.jsonl")
-    assert ledger.count_since("taller", 0.0) == 0  # no file yet
-    ledger.record("taller", 1, 1.0, 0, "LAV-01,LAV-01,LAV-01")
-    ledger.record("taller", 2, 2.5, 0, "LAT-03,LAT-03,LAT-03")
+    assert ledger.count_since("spend", 0.0, TALLER_ITEM) == 0  # no file yet
+    ledger.record("spend", 1, 1.0, 0, TALLER_ITEM + "LAV-01,LAV-01,LAV-01")
+    ledger.record("spend", 2, 2.5, 0, TALLER_ITEM + "LAT-03,LAT-03,LAT-03")
     ledger.record("spend", 3, 2.6, 10, "LAV-01")
     ledger.record("accept", 3, 2.6, 10, "LAV-01")
-    ledger.record("taller", 4, 3.0, 0, "SAL-01,SAL-01,SAL-01")
-    assert ledger.count_since("taller", 2.0) == 2
-    assert ledger.count_since("taller", 2.5) == 1  # strictly after
-    assert ledger.count_since("taller", 0.0) == 3
-    assert ledger.count_since("taller", 3.0) == 0
-    assert ledger.count_since("spend", 2.0) == 1
+    ledger.record("spend", 4, 3.0, 0, TALLER_ITEM + "SAL-01,SAL-01,SAL-01")
+    assert ledger.count_since("spend", 2.0, TALLER_ITEM) == 2
+    assert ledger.count_since("spend", 2.5, TALLER_ITEM) == 1  # strictly after
+    assert ledger.count_since("spend", 0.0, TALLER_ITEM) == 3
+    assert ledger.count_since("spend", 3.0, TALLER_ITEM) == 0
+    assert ledger.count_since("spend", 2.0) == 3
+    assert ledger.spent_since(0.0) == 10 and not ledger.packs_since(0.0)  # a conversion row adds no spend, no pack
 
 
 def test_taller_context_reads_the_hourly_count_and_the_free_copies(tmp_path) -> None:
     ledger = Ledger(tmp_path / "l.jsonl")
-    ledger.record(TALLER_KIND, 1, 0.5, 0, "x")  # older than the hour
-    ledger.record(TALLER_KIND, 2, 1.5, 0, "y")
-    ledger.record(TALLER_KIND, 3, 2.0, 0, "z")
+    ledger.record("spend", 1, 0.5, 0, TALLER_ITEM + "x")  # older than the hour
+    ledger.record("spend", 2, 1.5, 0, TALLER_ITEM + "y")
+    ledger.record("spend", 3, 2.0, 0, TALLER_ITEM + "z")
     me = me_of(*copies("LAV-01", 1, 4))
     ctx = taller_context(me, [our_ask(70, {"id": 4, "ref": "LAV-01"})], 10, 2.2, ledger, ON)
     assert ctx.tallers_last_hour == 2
@@ -453,8 +455,8 @@ def test_convert_live_sends_once_books_once_and_records_the_pull(tmp_path) -> No
     assert rec.sends == [(1, 10, TALLER_KIND, {"assets": plan.assets})]
     rows = ledger.entries()
     assert len(rows) == 1
-    assert rows[0]["kind"] == TALLER_KIND and rows[0]["item"] == "LAV-01,LAV-01,LAV-01" and rows[0]["price"] == 0
-    assert ledger.count_since(TALLER_KIND, 1.0) == 1
+    assert (rows[0]["kind"], rows[0]["item"], rows[0]["price"]) == ("spend", TALLER_ITEM + "LAV-01,LAV-01,LAV-01", 0)
+    assert ledger.count_since("spend", 1.0, TALLER_ITEM) == 1
     assert out.result is not None and out.result.pulled() == ["RET-06"]
     assert [d["kind"] for d in rec.decisions] == [TALLER_KIND, "taller_pulled"]
     assert rec.decisions[1]["inputs"]["pulled"] == ["RET-06"]
@@ -495,7 +497,7 @@ def test_convert_books_the_ledger_row_before_the_send(tmp_path) -> None:
     assert plan is not None
     with pytest.raises(RuntimeError):
         convert(team, plan, ctx_of({"LAV-01": 4}), ON, rec, ledger, tick=10, t_hours=2.0, live=True)
-    assert ledger.count_since(TALLER_KIND, 1.0) == 1  # over-counts the hourly cap, never under-counts it
+    assert ledger.count_since("spend", 1.0, TALLER_ITEM) == 1  # over-counts the hourly cap, never under-counts it
 
 
 def test_convert_with_no_answer_records_no_pull(tmp_path) -> None:

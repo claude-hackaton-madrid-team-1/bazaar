@@ -1145,3 +1145,9 @@ for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at ti
 it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
 (ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
 (MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))` and the JSONL ledger has no such check, so a new row
+kind passes every file-ledger test and fails live with `CheckViolation` (`LedgerUnavailable`: the process stops writing
+for the tick). Found by the #236 reviews before any live use. El Taller books `spend` at price 0 with item `taller:<refs>`
+and counts by prefix (`count_since(kind, t_hours, prefix)`); a new kind needs a migration plus a `PgLedger` test.

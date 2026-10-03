@@ -2691,27 +2691,36 @@ def taller_cmd(
         catalog = public_client(settings).catalog()
     except BazaarError:
         catalog = None  # /me carries each copy's rarity; the catalog only fills a gap
+    ledger = _ledger("taller", live)
+    try:
+        held_back, hold = tl.settling(ledger, now.tick, me)
+    except LedgerUnavailable as e:
+        _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
+        return
+    if hold:
+        console.print(f"[yellow]wait[/yellow]: {escape(hold)}")
     if assets:
         try:
-            plan = tl.plan_from_ids(me, assets, offers, catalog)
+            plan = tl.plan_from_ids(me, assets, offers, catalog, held_back)
         except tl.TallerError as e:
             _fail(escape(str(e)))
             return
     else:
-        found = tl.plan_taller(me, offers, rules, catalog)
+        found = tl.plan_taller(me, offers, rules, catalog, held_back)
         if found is None:
             off = "" if rules.taller_enabled else " (taller_enabled = false)"
             console.print(f"no spare triple of commons or uncommons to convert{off}")
             return
         plan = found
-    console.print(f"plan: {plan.rarity} x{len(plan.spares)} -> one {plan.pulls} (your_value {plan.your_value})")
+    rarity, pulls = escape(plan.rarity), escape(plan.pulls)
+    console.print(f"plan: {rarity} x{len(plan.spares)} -> one {pulls} (your_value {plan.your_value})")
     for s in plan.spares:
-        console.print(f"  asset {s.asset_id} {escape(s.ref)} {s.rarity} your_value {s.your_value} ({s.copies} held)")
+        line = f"  asset {s.asset_id} {escape(s.ref)} {escape(s.rarity)} your_value {s.your_value} ({s.copies} held)"
+        console.print(line)
     decisions = DecisionLog(settings.data_dir, lambda: db.connect(app="bazaar-taller"), console.print)
     decisions.begin_tick(now.tick)
     rec = Recorder("taller", decisions, live, lambda line: console.print(escape(line), highlight=False))
     try:
-        ledger = _ledger("taller", live)
         ctx = tl.taller_context(me, offers, now.tick, now.t_hours, ledger, rules)
         done = tl.convert(client, plan, ctx, rules, rec, ledger, tick=now.tick, t_hours=now.t_hours, live=live)
     except LedgerUnavailable as e:

@@ -498,7 +498,7 @@ class LedgerStore(Protocol):
     def packs_since(self, t_hours: float) -> Counter[str]: ...
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
-    def count_since(self, kind: str, t_hours: float) -> int: ...  # rows of `kind` after `t_hours`
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int: ...  # rows after `t_hours`
     def accept_items(self, tick: int) -> list[str]: ...
     def accept_rows(self, tick: int) -> list[tuple[str, int]]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
@@ -548,8 +548,12 @@ class Ledger:
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
 
-    def count_since(self, kind: str, t_hours: float) -> int:
-        return sum(1 for e in self.entries() if e.get("kind") == kind and e["t_hours"] > t_hours)
+    def count_since(self, kind: str, t_hours: float, prefix: str = "") -> int:
+        return sum(
+            1
+            for e in self.entries()
+            if e.get("kind") == kind and e["t_hours"] > t_hours and str(e.get("item") or "").startswith(prefix)
+        )
 
     def accept_items(self, tick: int) -> list[str]:
         """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
@@ -764,6 +768,8 @@ class Context:
     approvals: ApprovalBook | None = None
     # El Taller conversions booked in the shared ledger this game hour. None: not read, so a conversion is refused.
     tallers_last_hour: int | None = None
+    # Why no El Taller conversion may go this tick (an accept still settling hands over a copy we cannot name).
+    taller_hold: str | None = None
     # Our copies and complete pages from /api/me (`context_from`): each copy's your_value for the score impact guard.
     cards: move_impact.OurCards | None = None
     # How we got each copy and k (`impact_board`). None: read this process's board for `tick` (fail closed).
@@ -1080,7 +1086,35 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     if str(action.rarity or "") not in ("common", "uncommon"):
         v.append(f"El Taller input rarity {action.rarity!r}: only commons or uncommons are fed in")
     v.extend(last_copy_refusals(refs, ctx.held if ctx.sellable is None else ctx.sellable))
+    if ctx.taller_hold:
+        v.append(ctx.taller_hold)
+    if not v:  # last, so the impact facts are read only for a conversion every other rule allows
+        v.extend(_taller_impact(refs, action, ctx, rules))
     return v
+
+
+def _taller_impact(refs: list[str], action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """`max_score_loss_per_move` for the copies a conversion consumes: each leaves at price 0 to no team, so a copy
+    bought from a team (or of unknown origin: the worst case) costs its your_value (`move_impact.sell_impact`). The
+    worst copy of each card is priced; unread facts are the worst case, and a copy with no value refuses."""
+    if rules.max_score_loss_per_move <= 0 or ctx.ranking:
+        return []
+    from bazaar_agent import impact_board
+
+    facts = ctx.impact if ctx.impact is not None else impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
+    total = 0.0
+    for ref in refs:
+        impact = move_impact.sell_impact(
+            ctx.cards, ref, action.rarity, 0, None, facts, rules.score_per_neg_point_fallback, 0.0
+        )
+        if impact.score is None:
+            return [f"{ref}: no value for the copy, its score impact is unknown (max_score_loss_per_move)"]
+        total += impact.score
+    if total >= -rules.max_score_loss_per_move:
+        return []
+    return [
+        f"El Taller inputs cost about {total:.2f} score (max_score_loss_per_move {rules.max_score_loss_per_move:g})"
+    ]
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.

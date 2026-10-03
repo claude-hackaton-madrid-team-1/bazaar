@@ -102,6 +102,7 @@ from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
+from bazaar_agent.taller import TALLER_ITEM, TALLER_RARITIES
 from bazaar_agent.team_matrix_store import LatestMatrix
 from bazaar_agent.ticks import Clock
 
@@ -171,14 +172,19 @@ def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guard
     return kept
 
 
-def taller_stock(targets: Iterable[Target], mine: Iterable[OpenOffer], rules: Guardrails) -> list[Target]:
-    """While `taller_enabled`, spare commons are El Taller stock: no NEW ask for a common. An ask already open keeps
-    its target, so `plan_offers` never cancels it to free a copy: it fills or lapses by itself."""
+def taller_stock(
+    targets: Iterable[Target], mine: Iterable[OpenOffer], rules: Guardrails, converted: bool = False
+) -> list[Target]:
+    """While `taller_enabled`, spare commons are El Taller stock: no NEW ask for a common. `converted` (a
+    conversion booked in the last two ticks, which our /me may predate): no new ask for an uncommon either, so an
+    ask never offers the copy a conversion left us as the last one. An ask already open keeps its target, so
+    `plan_offers` never cancels it to free a copy: it fills or lapses by itself."""
     targets = list(targets)
     if not rules.taller_enabled:
         return targets
+    held = TALLER_RARITIES if converted else ("common",)
     standing = {o.asset_id for o in mine if o.side == "ask"}
-    return [t for t in targets if not (t.side == "ask" and t.rarity == "common" and t.asset_id not in standing)]
+    return [t for t in targets if not (t.side == "ask" and t.rarity in held and t.asset_id not in standing)]
 
 
 def _other_copy(t: Target, me: dict[str, Any], rules: Guardrails, asked: set[int | None]) -> Target | None:
@@ -429,7 +435,9 @@ class Maker:
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
         targets = self._relisted(snap, targets, mine)
-        targets = taller_stock(targets, mine, self.rules)  # spare commons go to El Taller (TL1)
+        since = clock.t_hours - 2 * clock.tick_seconds / 3600
+        converted = self.rules.taller_enabled and self.ledger.count_since("spend", since, TALLER_ITEM) > 0
+        targets = taller_stock(targets, mine, self.rules, converted)  # spare commons go to El Taller (TL1)
         held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
         margin = self.rules.official_value_margin
 
