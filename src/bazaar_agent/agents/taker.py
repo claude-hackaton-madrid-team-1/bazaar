@@ -718,6 +718,7 @@ class Taker:
             return
         try:
             after = self.team.thread(conv.thread_id)
+            self._keep(after, run.snap, conv)  # the read we just made: how the thread really ended
         except BazaarError as e:
             self.log(
                 f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} unreadable after a refused walk ({e.code})"

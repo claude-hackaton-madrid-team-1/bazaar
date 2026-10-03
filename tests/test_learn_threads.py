@@ -216,5 +216,33 @@ def test_a_thread_the_server_refuses_costs_only_itself(database_url, schema, mon
     assert store.flush(6) == 1 and store.buffer == {}  # 41 written thread by thread, 42 logged and dropped
     with open_in(database_url, schema) as conn:
         assert [r[0] for r in conn.execute("select id from threads").fetchall()] == [41]
-    assert any(line.startswith("threads: thread 42 failed (") for line in lines)
+    assert any(line.startswith("threads: thread 42 failed (") and line.endswith("dropped") for line in lines)
     store.close()
+
+
+def test_a_refused_walk_keeps_how_the_thread_really_ended(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.sdk import BazaarError
+    from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, parts
+
+    class Spy(ThreadStore):
+        def flush(self, tick: int) -> int:
+            return 0
+
+    class Team(FakeTeam):
+        def close_thread(self, tid):  # type: ignore[no-untyped-def]
+            self.sent.append(("close_thread", tid))
+            self.thread_payloads[tid] = {**THREAD, "id": tid, "status": "deal", "closed_reason": "deal"}
+            raise BazaarError("network", "the close answer was lost")
+
+    store = Spy(None)
+    team = Team()
+    t = Taker(team, FakePublic(), live=True, log=lambda line: None, now=lambda: 1000.0, sleep=lambda s: None,
+              config=TakerConfig(max_dealer_threads=3), thread_store=store, **parts(tmp_path))  # fmt: skip
+    t.on_tick(clock())
+    for tick in range(TICK + 1, TICK + 20):
+        team.now = clock(tick=tick)
+        t.on_tick(team.now)
+        if ("close_thread", 5000) in team.sent:
+            break
+    assert store.buffer[5000].thread["status"] == "deal"  # not the open read from before the walk

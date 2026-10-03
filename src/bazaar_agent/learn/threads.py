@@ -254,21 +254,22 @@ class ThreadStore:
                             cur.executemany(THREAD_UPSERT, threads)
                         if messages:
                             cur.executemany(MESSAGE_UPSERT, messages)
-            except psycopg.OperationalError as e:
-                self._fail("write", e)
+            except (psycopg.DataError, psycopg.IntegrityError, ValueError) as e:  # this thread's own data
+                self._fail(f"thread {tid}", e, dropped=True)
+            except psycopg.Error as e:  # the database, not the thread: stop, keep the rest, retry in 5 ticks
+                self._fail("connection", e)
                 conn.close()
                 self._conn, self._down_at = None, tick
                 return written
-            except (psycopg.Error, ValueError) as e:
-                self._fail(f"thread {tid}", e)
             else:
                 written += len(threads)
             del self.buffer[tid]
         return written
 
-    def _fail(self, what: str, error: Exception) -> None:
+    def _fail(self, what: str, error: Exception, dropped: bool = False) -> None:
         if what not in self._failed:
-            self._log(f"threads: {what} failed ({type(error).__name__}); trading goes on, the answers wait")
+            fate = "dropped" if dropped else "the answers wait"
+            self._log(f"threads: {what} failed ({type(error).__name__}); trading goes on, {fate}")
         self._failed.add(what)
 
     def close(self) -> None:
