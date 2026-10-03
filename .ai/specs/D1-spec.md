@@ -2,7 +2,7 @@
 
 - Task id: D1 (migrated from GitHub issue(s) #5, #7)
 - Priority: P0
-- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday; two-issue offers inside our limit in #60; the days module and post-duel calibration are open. Duels II (price + delivery days) is Saturday 18:00.
+- Status: 🔵 the duel player is live on Railway (`duel run --play`, Jev duel_move) since Friday. #150 (Sat 06:50) merged Marius's duel chain: two-issue offers strictly inside our limit (#60 + review fixes), duel policy v2, B11 squeeze mitigations and the days-sign latch, all behind GUARDRAILS flags that stay OFF (Jev undecided twice at the 0.90 bar), so v1 plays Duels II (Sat 18:00, 16-tick duels, decay 0.08). Simulator proof: `docs/night/d1-sim-proof.md` (2,904 duels, 0 outside our limit, v2 1.55x v1 in the Duels II shape). Open: criterion 3 (calibration, #91 merged), the pre-flip latch hardening branch, a flip on real evidence.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
