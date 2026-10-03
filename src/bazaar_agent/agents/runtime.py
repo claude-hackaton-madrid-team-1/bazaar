@@ -154,7 +154,11 @@ class MarketFeed:
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
-    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, dict) else None
+    return (
+        frozenset(str(p.get("set")) for p in pages if isinstance(p, dict)) if isinstance(pages, list) else frozenset()
+    )
 
 
 class PageWatch:

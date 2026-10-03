@@ -138,7 +138,9 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
         for a in (o.get("give") or {}).get("assets") or []
         if isinstance(asset_id := a.get("id") if isinstance(a, dict) else a, int)
     }
-    settling = [o for o in offers if o.get("status") == "accepted" and o.get("maker") == us]
+    settling = [  # accepted, settling next tick; ours unless another team addressed it to us (as `ours`)
+        o for o in offers if o.get("status") == "accepted" and not (o.get("to") == us and o.get("maker") != us)
+    ]
     given = [a for o in ours + settling for a in (o.get("give") or {}).get("assets") or []]
     named = tuple(str(a["ref"]) for a in given if isinstance(a, dict) and a.get("ref"))
     return Commitments(

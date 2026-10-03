@@ -337,8 +337,6 @@ class Taker:
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
-        if fresh := self.pages.new(snap.me):
-            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -349,6 +347,8 @@ class Taker:
                 f"{len(self.convs)} dealer thread(s) stay open): {'; '.join(stops)}"
             )
             return
+        if fresh := self.pages.new(snap.me):  # after the hold: a page seen while holding is said when we act
+            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan)
         self._open(run, book, threads)
@@ -447,8 +447,9 @@ class Taker:
             {"asset": choice.pack.asset_id},
             lambda: self.team.open_pack(choice.pack.asset_id),
         )
-        if body is None:  # refused (asset_locked, not_owner, ...): logged by send, never retried
+        if body is None:  # refused (asset_locked, not_owner, a network blip, ...): never re-sent by this process
             self._pack_refused.add(choice.pack.asset_id)
+            self.log(f"tick {tick} taker: {choice.pack.pack} #{choice.pack.asset_id} stays sealed until a restart")
         pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
         if pulled:
             self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")

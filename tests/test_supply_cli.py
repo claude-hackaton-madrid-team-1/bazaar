@@ -115,3 +115,11 @@ def test_a_refused_clock_ends_the_scan_cleanly(run):
     result, out = run("scan")
     assert result.exit_code == 1 and "/api/clock refused: bad_key (401); nothing scanned" in out
     assert "Traceback" not in out
+
+
+def test_a_scan_refused_partway_keeps_the_ids_it_did_not_reach(run):
+    # #155 re-review P3: a scan refused at id 200 replaced 271 rows with 199.
+    run("scan", "--rate", "2", "--gap", "2")
+    run.team.refuse_from = 200
+    result, out = run("scan", "--rate", "2")
+    assert "refused at id 200" in out and len(read_scan_file(run.folder / "scan.jsonl")) == 271

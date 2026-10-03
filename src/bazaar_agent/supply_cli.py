@@ -142,7 +142,7 @@ def scan_ids(
 @supply_app.command("scan")
 def scan_cmd(
     rate: float = typer.Option(1.0, help="Requests per second, at most 2 (the key's 5 req/s is shared by all of us)"),
-    from_id: int = typer.Option(1, help="First id; ids below it are kept from the previous scan"),
+    from_id: int = typer.Option(1, help="First id; every id not read again is kept from the previous scan"),
     max_id: int = typer.Option(3000, help="Never read past this id"),
     gap: int = typer.Option(5, help="Stop after this many unknown ids in a row past id 270"),
     save: bool = typer.Option(False, "--save", help="Also store the scan in Postgres (supply_assets)"),
@@ -154,7 +154,6 @@ def scan_cmd(
     settings = load_settings()
     folder = settings.data_dir / "supply"
     previous = read_scan_file(folder / SCAN_FILE)
-    kept = [r for r in previous if int(r["id"]) < from_id]
     console.print(f"scanning from id {from_id} at {rate:g} req/s (~{START_ASSETS / rate:.0f} s for 270 ids)")
     team = team_client(settings, retries=0)  # a 429 stops the scan: the SDK must not retry it either
     try:
@@ -166,7 +165,8 @@ def scan_cmd(
     if not rows:
         console.print(f"nothing read ({escape(why)}): {SCAN_FILE} and Postgres are left as they were")
         raise typer.Exit(1)
-    scan = sorted(kept + rows, key=lambda r: int(r["id"]))
+    merged = {int(r["id"]): r for r in previous} | {int(r["id"]): r for r in rows}  # a partial scan loses nothing
+    scan = [merged[i] for i in sorted(merged)]
     path = write_scan_file(folder, scan)
     diff = scan_diff(previous, scan)
     console.print(
