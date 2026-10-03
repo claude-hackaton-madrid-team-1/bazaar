@@ -38,7 +38,7 @@ accept is not legal, and counter only within the caps.
 | check | decays 0.06/0.08 (plan) | decays 0.08/0.10 (what is left) | bar |
 |---|---|---|---|
 | mean result v2/v1 | **1.420 ✅** (seeds 7/11/13: 1.420 / 1.432 / 1.432) | **1.550 ✅** (seeds: 1.550 / 1.575 / 1.566) | ≥ 1.40 |
-| … if we move before the rival in a tick | 1.33 (3-seed mean 1.325 before the double last offer, 1.340 after) | **1.44** | |
+| … if we move before the rival in a tick | 1.34 (seed 7) | **1.44** (seeds 7/11/13, before the double last offer) | |
 | … with `duel_accept_margin_ticks` = 0 | 1.534 | 1.679 | |
 | deal rate vs conceders | 0.999 (v1 0.992) ✅ | 0.999 (v1 0.993) ✅ | ≥ v1 |
 | deal rate vs one-shot | 0.895 (bar 0.789) ✅ | 0.877 (bar 0.777) ✅ | ≥ 0.9 × v1 |
