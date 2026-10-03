@@ -314,3 +314,12 @@ def test_the_maker_builds_its_venue_keeper_with_the_bench_options_from_the_envir
     )
     assert keeper.broker_config.bench_policy == "edge" and keeper.broker_config.pace_s == 0.2
     assert any("broker bench edge" in line for line in lines)
+
+
+def test_the_keepers_startup_line_names_the_probe_setting_only_under_the_edge(tmp_path, monkeypatch):
+    monkeypatch.setenv("BAZAAR_BENCH_CROSS", "limit")
+    monkeypatch.setattr(cli, "_db_connect", lambda app: None)
+    lines = []
+    kw = {"rules": Guardrails(), "decisions": DecisionLog(tmp_path), "live": False, "log": lines.append}
+    cli._venue_keeper(object(), Settings(data_dir=tmp_path, team_id="t01"), kw)
+    assert lines == ["venue keeper: broker bench exact; BAZAAR_BENCH_POLICY / _PRESET / _CROSS change it"]

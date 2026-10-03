@@ -1412,8 +1412,9 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any]) -> Any:
 
     config = bench_config_from_env(BrokerConfig(pace_s=0.2), log=kw["log"])
     kw["log"](
-        f"venue keeper: broker bench {config.bench_policy} ({config.bench_preset}, accepts by {config.bench_cross}); "
-        "BAZAAR_BENCH_POLICY / _PRESET / _CROSS change it"
+        f"venue keeper: broker bench {config.bench_policy}"
+        + (f" ({config.bench_preset}, accepts by {config.bench_cross})" if config.bench_policy == "edge" else "")
+        + "; BAZAAR_BENCH_POLICY / _PRESET / _CROSS change it"
     )
     return VenueKeeper(
         team,
