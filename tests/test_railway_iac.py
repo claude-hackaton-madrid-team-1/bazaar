@@ -43,6 +43,7 @@ LIVE_SHOW_VARIABLES = {
     "SHOW_DUELS": {"type": "preserve"},
     "TRANSCRIPT_SPEAK_QUOTES": {"type": "preserve"},
     "TRANSCRIPT_STREAMS_PER_ADDRESS": {"type": "preserve"},
+    "TTS_DAILY_CHARS": {"type": "preserve"},
 }
 VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
