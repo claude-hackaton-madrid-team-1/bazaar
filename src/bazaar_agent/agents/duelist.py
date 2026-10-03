@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook
+from bazaar_agent.agents.tactics import Side, private_numbers
 from bazaar_agent.agents.words import WordsRequest
 
 ANCHOR = 0.6  # open this far beyond our limit (fraction of the limit)
@@ -121,6 +123,38 @@ def rival_text(duel: dict[str, Any]) -> str | None:
         if isinstance(text, str) and text.strip():
             return text
     return None
+
+
+def rival_offer(duel: dict[str, Any]) -> tuple[int | None, int | None]:
+    """(price, offer id) of the rival's standing offer, read defensively."""
+    offer = duel.get("rival_offer")
+    if not isinstance(offer, dict):
+        return None, None
+    oid = offer.get("id")
+    return _rival_price(duel), oid if isinstance(oid, int) and not isinstance(oid, bool) else None
+
+
+def duel_choice(book: TacticBook | None, duel: dict[str, Any], did: int, move: DuelMove, step: int) -> Choice | None:
+    """The bluff tactic for an OFFER's text (N16). An accept or a hold gets none: an accept that is already good
+    is sent as it is, never delayed or replaced by a bluff. The price and days stay the move's own."""
+    role = duel.get("role")
+    if book is None or move.kind != "offer" or move.price is None or role not in ("seller", "buyer"):
+        return None
+    private = private_numbers(duel.get("your_limit"), duel.get("your_days_weight"))
+    side: Side = "sell" if role == "seller" else "buy"
+    return book.choose(Counterparty.rival(duel.get("rival"), did), side, f"duel:{did}", step, move.price, avoid=private)
+
+
+def observe_duel(book: TacticBook | None, duel: dict[str, Any], did: int, tick: int) -> None:
+    """Score our last duel tactic: the rival's next offer, or the duel's end (deal / no deal)."""
+    if book is None:
+        return
+    if duel_done(duel):
+        status = duel.get("status")
+        book.ended(f"duel:{did}", status=status if isinstance(status, str) else None, closed_reason=None, tick=tick)
+        return
+    price, offer_id = rival_offer(duel)
+    book.observe(f"duel:{did}", their_price=price, their_offer=offer_id, tick=tick)
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:

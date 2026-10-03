@@ -62,6 +62,18 @@ def enabled(rules: Guardrails | None, env: Mapping[str, str] | None = None) -> t
     return True, "on"
 
 
+def message_id(body: object) -> int | None:
+    """Our message's id from the server's answer to a send (`message`, as the simulator answers; unverified on
+    the real game, whose write answers are `Ok` objects): a flag on it is then matched to its tactic."""
+    if not isinstance(body, Mapping):
+        return None
+    for key in ("message", "message_id"):
+        value = body.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
 def _slug(name: str) -> str:
     cleaned = _SLUG.sub("_", name.strip()).strip("_").lower()[:64]
     return cleaned if cleaned and _SUBJECT.fullmatch(cleaned) else "unknown"

@@ -139,6 +139,7 @@ def test_no_private_number_ever_reaches_the_text_property():
 def test_private_numbers_cover_round_floor_and_ceil_and_skip_none():
     assert private_numbers(80, 157.4, None) == frozenset({80, 157, 158})
     assert private_numbers(12.5) == frozenset({12, 13})
+    assert private_numbers("80", True, float("nan"), float("inf")) == frozenset()
 
 
 def test_leaks_ignores_the_structured_price_itself():

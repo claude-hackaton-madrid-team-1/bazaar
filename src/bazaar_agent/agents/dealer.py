@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from bazaar_agent.agents.bluff import Counterparty, TacticBook, message_id
+from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 
 MoveKind = Literal["accept", "bid", "walk", "wait"]
@@ -258,11 +260,13 @@ def negotiate(
     on_deal: DealHook | None = None,
     observer: Observer | None = None,
     words_fn: WordsFn = template_words,
+    bluff: TacticBook | None = None,
 ) -> Outcome:
     """Open one thread and play it out, one move per tick. Returns when it closes or times out.
 
     `words_fn` writes each bid's text (the templates by default, or the runtime LLM); the price is
-    always the structured `price` of the message, set here.
+    always the structured `price` of the message, set here. `bluff` (N16) picks a tactic for a bid's
+    words only, after `decide()` and the guard set the move; it is scored on her next move.
     """
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
@@ -274,6 +278,7 @@ def negotiate(
     item = requested_item(topic)
     opened = client.open_thread(dealer, topic=topic)
     tid = int(opened["id"])
+    conversation = f"thread:{tid}"
     obs.opened(tid)
     log(f"thread {tid} opened with {dealer}: {topic} · plan {plan}")
     state: dict[str, Any] = {"status": "open", "price": None, "ticks": 0, "accepted": False}
@@ -287,6 +292,11 @@ def negotiate(
         state["status"] = thread.get("status", "open")
         if state["status"] != "open":
             log(f"tick {clock.tick}: thread {state['status']} ({thread.get('closed_reason') or '-'})")
+            if bluff is not None:
+                reason = thread.get("closed_reason")
+                why = reason if isinstance(reason, str) else None
+                bluff.ended(conversation, status=state["status"], closed_reason=why, tick=clock.tick)
+                bluff.flush()
             if state["status"] == "deal":
                 state["price"] = state["price"] or (neg.bids[-1] if neg.bids else None)
                 if on_deal is not None and state["price"] is not None:
@@ -301,6 +311,9 @@ def negotiate(
         if problem:
             log(f"tick {clock.tick}: ignoring offer {offer_id}: {problem}")
             ask, offer_id, final = None, None, False
+        if bluff is not None:
+            bluff.begin_tick(clock.tick, clock.round)
+            bluff.observe(conversation, their_price=ask, their_offer=offer_id, tick=clock.tick)
         move = decide(neg, ask, offer_id, final)
         if advisor is not None and action_budget_s(clock) > 4.0:
             move = apply_advice(move, advisor(neg, ask, final), neg, ask, offer_id)
@@ -324,9 +337,15 @@ def negotiate(
                 log(f"tick {clock.tick}: tick budget spent before sending, re-deciding next tick")
                 return
             send_by = time.monotonic() + action_budget_s(fresh)
-        text = None
+        text, choice = None, None
         if move.kind == "bid" and move.price is not None:
-            text = bid_words(words_fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
+            if bluff is not None:
+                avoid = private_numbers(plan.max_price)
+                cp = Counterparty.dealer(dealer)
+                choice = bluff.choose(cp, "buy", conversation, len(neg.bids), move.price, avoid=avoid)
+                log(f"tick {clock.tick}: words tactic {choice.tactic or 'none'} ({choice.reason})")
+            fn = choice.words(words_fn) if choice is not None else words_fn
+            text = bid_words(fn, WordsRequest(dealer, move.price, len(neg.bids), item), thread, clock, send_by)
             if time.monotonic() > send_by:
                 log(f"tick {clock.tick}: the words took the rest of the tick, re-deciding next tick")
                 return
@@ -336,14 +355,20 @@ def negotiate(
                 client.accept(move.offer_id)
                 state["accepted"], state["price"] = True, move.price
             elif move.kind == "bid" and move.price is not None and text is not None:
-                client.say(tid, text, price=move.price)
+                body = client.say(tid, text, price=move.price)
                 neg.bids.append(move.price)
+                if bluff is not None and choice is not None:
+                    bluff.sent(choice, their_price=ask, their_offer=offer_id, tick=clock.tick, message=message_id(body))
             elif move.kind == "walk":
                 client.close_thread(tid)
                 state["status"] = "walked"
+                if bluff is not None:
+                    bluff.dropped(conversation)
         except BazaarError as e:
             obs.refused(e)
             log(f"tick {clock.tick}: refused {e.code} ({e.message[:80]}), retry next tick")
+        if bluff is not None:
+            bluff.flush()  # after the send: the lessons go to the store
 
     tick = obs.wrap_tick(on_tick)
     run_per_tick(client.clock, tick, max_ticks=max_ticks, stop=lambda: state["status"] != "open", sleep=sleep)

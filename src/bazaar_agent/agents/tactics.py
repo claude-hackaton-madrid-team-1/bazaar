@@ -257,11 +257,12 @@ def leaks(text: str, private: Iterable[int], price: int) -> bool:
     return bool((numbers_in(text) - {price}) & set(private))
 
 
-def private_numbers(*values: float | int | None) -> frozenset[int]:
-    """Our private numbers as the integers a text could show: each value, rounded down and up."""
+def private_numbers(*values: object) -> frozenset[int]:
+    """Our private numbers as the integers a text could show: each value, rounded down and up. Anything that is
+    not a finite number (None, a string from an odd payload) is skipped."""
     out: set[int] = set()
     for value in values:
-        if value is None or not math.isfinite(float(value)):
+        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
             continue
         out.update({math.floor(value), math.ceil(value), round(value)})
     return frozenset(out)
