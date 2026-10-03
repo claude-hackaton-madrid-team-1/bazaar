@@ -1936,6 +1936,43 @@ def db_load(live: bool = typer.Option(True, help=LIVE_HELP)) -> None:
     console.print(f"[green]loaded[/green] {counts}")
 
 
+@db_app.command("readonly-user")
+def db_readonly_user(
+    password_stdin: bool = typer.Option(False, "--password-stdin", help="Read the password from stdin (one line)"),
+) -> None:
+    """Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL.
+
+    Generates a strong password unless --password-stdin; prints its connection URL once."""
+    import getpass
+
+    import psycopg
+    from rich.markup import escape
+
+    from bazaar_agent import pgconn
+    from bazaar_agent import readonly_user as ro
+
+    raw = ro.generate_password()
+    if password_stdin:  # a terminal gets a prompt that does not echo; a pipe is read as one line
+        raw = getpass.getpass("password: ") if sys.stdin.isatty() else sys.stdin.readline().rstrip("\r\n")
+    try:
+        password = ro.check_password(raw)
+        url = load_settings().require_database_url()
+        target = pgconn.describe(url)
+    except (ro.PasswordError, ConfigError, pgconn.DatabaseUrlError) as e:
+        _fail(escape(str(e)))
+    if target.host.endswith(".railway.internal"):
+        err_console.print("DATABASE_URL is Railway's private host: teammates need the public proxy URL", markup=False)
+    try:
+        with pgconn.connect(url, app="bazaar-readonly-user") as conn:
+            ro.apply(conn, password)
+    except psycopg.Error as e:
+        detail = (pgconn.redact(str(e), url).strip().splitlines() or ["?"])[0]  # first line: never the CONTEXT
+        _fail(escape(f"cannot apply {ro.ROLE} on {target}: {detail}"))
+    err_console.print(f"{ro.ROLE} ready on {target.host}:{target.port}/{target.dbname} (SELECT only)", markup=False)
+    err_console.print("connection URL (shown once; share it privately, never in git or chat):", markup=False)
+    console.print(ro.connection_url(target, password), markup=False, highlight=False, soft_wrap=True)
+
+
 @db_app.command("tables")
 def db_tables() -> None:
     """Every table with its row count."""

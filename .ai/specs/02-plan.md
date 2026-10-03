@@ -123,6 +123,7 @@ negotiates well.
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
+| [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -457,6 +458,13 @@ deals per level, and a sale to a dealer is a dealer deal. RULES.md "Dealers": de
 - Step 3 — `negotiate_sell` + CLI: guardrails on every ask and accept (with `sellable`), S1 gate, accept slot,
   kill switch, Recorder rows. · **Acceptance:** fake-dealer tests; private sim deal.
 - Step 4 — taker plan behind `dealer_sell_enabled` (default false). · ⬜ not started.
+
+### RO1 — Read-only Postgres login for teammates (PR #184)
+- Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
+  revoked. · **Acceptance:** integration tests on local docker (throwaway role + schema).
+- Step 2 — CLI `bazaar db readonly-user`: password generated or read (prompt / pipe), SCRAM verifier only, URL
+  printed once. · **Acceptance:** CLI test + manual run on local docker.
+- Step 3 — docs (`docs/services.md`). The coordinator runs it on Railway after the merge.
 
 ## Parallel-work notes
 
