@@ -102,7 +102,11 @@ def test_a_simulator_target_without_a_database_still_buys(monkeypatch):
     assert not gr.check(REBUY, ctx(), RULES).allowed  # a readable sale still refuses the buy-back
 
 
-def test_the_target_is_read_from_the_settings(monkeypatch):
+def test_the_target_is_read_from_the_settings(monkeypatch, tmp_path):
+    empty = tmp_path / "empty.env"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("BAZAAR_ENV_FILE", str(empty))  # a laptop's .env never decides this test
+    monkeypatch.delenv("BAZAAR_URL", raising=False)
     monkeypatch.setattr(gr, "_TARGET", {})
     monkeypatch.setenv("BAZAAR_SIM", "1")
     assert gr.simulator_target() is True

@@ -667,3 +667,7 @@ lands: **intel/** (N2), **jev/** (N5), **executor.py** (#10/#24), **agents/broke
 **agents/duelist.py** (#5/#7), **CLI + skill/commands** (N4). Too coupled to split: `models.py`,
 `schema.sql` and `decide/policy.py`. One owner each, merged first. Phase 0 tasks are small and
 time-critical: do them directly, no team fan-out.
+
+### MI1b — no_buyback_ticks on the simulator and on a stale tape (PR #258)
+- Unread sales are skipped on a simulator target (`guardrails.simulator_target`), and a tape more than 3 ticks behind
+  is unread on the real game (fail closed). · **Acceptance:** tests/test_no_buyback.py; sim smoke green.

@@ -1183,3 +1183,10 @@ cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 
 and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
 1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
 every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).
+
+### [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
+symptom: on main, `scripts/sim_smoke.py` failed at `dealer buy LAT-01` with "no_buyback_ticks ... (our sales
+unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the impact board cannot read our sales, and
+the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
+from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
+ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
