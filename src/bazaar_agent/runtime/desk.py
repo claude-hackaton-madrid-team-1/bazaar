@@ -9,12 +9,18 @@ the built-in general-purpose subagent and nested subagents are off, and every ca
 `Desk.ask()` sends one operator turn and returns the answer, every tool call (who called what), and any
 failure as an `LLMError`: no CLI, a rejected token, the plan's usage limit, a rate limit, a timeout.
 `bazaar ask` then falls back to its intent parser, and `bazaar agent chat` says the desk is offline.
+
+Before each turn the desk asks its planner (`runtime.desk_models`: Jev, cached, or the pin) which model
+runs the orchestrator and each subagent. Subagent models live in the session's `AgentDefinition`s, sent
+when the CLI starts, so a turn whose subagent choices differ starts a new session; a turn where only the
+orchestrator's model changes switches it in place (`ClaudeSDKClient.set_model`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import tempfile
 from collections.abc import Callable
@@ -36,10 +42,10 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
-from bazaar_agent.llm.models import ModelRef, Pin, resolve
 from bazaar_agent.llm.providers import LLMError
 from bazaar_agent.runtime.agents import AGENT_TOOL, DESK, DESK_SPEC, agent_definitions
 from bazaar_agent.runtime.claude import LOCKED_ENV, TOKEN_VARIABLE, Outcome, RedactedEnv, outcome_error
+from bazaar_agent.runtime.desk_models import DeskModels
 from bazaar_agent.runtime.hooks import Guard
 from bazaar_agent.runtime.tools import SERVER, TOOLS, answer
 
@@ -55,17 +61,8 @@ def _drop(_line: str) -> None:
 
 @dataclass(frozen=True)
 class DeskConfig:
-    model: ModelRef
     max_turns: int
     timeout_s: float
-
-
-def desk_model(pin: Pin | None, default: str) -> ModelRef:
-    """A pinned Claude model (flag, BAZAAR_LLM_RUNTIME, RUNTIME.md), else RUNTIME.md `desk_model`. The
-    desk runs on the Claude Code CLI, so a pinned OpenAI model is ignored here."""
-    if pin is not None and pin.model.provider == "anthropic":
-        return pin.model
-    return resolve(default)
 
 
 def desk_env(token: str | None, timeout_s: float) -> RedactedEnv:
@@ -81,17 +78,19 @@ def desk_env(token: str | None, timeout_s: float) -> RedactedEnv:
     return env
 
 
-def desk_options(guard: Guard, server: Any, token: str | None, config: DeskConfig, cwd: Path) -> ClaudeAgentOptions:
+def desk_options(
+    guard: Guard, server: Any, token: str | None, config: DeskConfig, cwd: Path, models: DeskModels
+) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=DESK_SPEC.prompt,
-        model=config.model.model_id,
+        model=models.orchestrator.model_id,
         tools=[AGENT_TOOL],
         allowed_tools=[AGENT_TOOL, *(spec.mcp_name for spec in TOOLS)],
         disallowed_tools=list(BLOCKED_BUILTINS),
         permission_mode="dontAsk",
         mcp_servers={SERVER: server},
         hooks=guard.hooks(),
-        agents=agent_definitions(),
+        agents=agent_definitions(models.subagent_ids()),
         setting_sources=[],
         strict_mcp_config=True,
         max_turns=config.max_turns,
@@ -102,11 +101,18 @@ def desk_options(guard: Guard, server: Any, token: str | None, config: DeskConfi
     )
 
 
+def with_models(options: ClaudeAgentOptions, models: DeskModels) -> ClaudeAgentOptions:
+    """The same locked session with another orchestrator model and other subagent models."""
+    return dataclasses.replace(
+        options, model=models.orchestrator.model_id, agents=agent_definitions(models.subagent_ids())
+    )
+
+
 @dataclass(frozen=True)
 class DeskEvent:
-    """One line of the transcript: a tool call, its answer, or the desk's text."""
+    """One line of the transcript: the models chosen, a tool call, its answer, or the desk's text."""
 
-    kind: str  # "call" | "answer" | "text"
+    kind: str  # "models" | "call" | "answer" | "text"
     agent: str
     name: str = ""
     detail: str = ""
@@ -119,6 +125,7 @@ class DeskReply:
     error: LLMError | None = None
     turns: int | None = None
     cost_usd: float | None = None
+    ran_on: dict[str, str] = field(default_factory=dict)  # agent -> the model id its replies came from
 
 
 def _short(value: Any, limit: int = 240) -> str:
@@ -138,7 +145,7 @@ class _Transcript:
         self.error: str | None = None
         self.limit: RateLimitInfo | None = None
 
-    def _event(self, event: DeskEvent) -> None:
+    def event(self, event: DeskEvent) -> None:
         self.reply.events.append(event)
         self.emit(event)
 
@@ -147,6 +154,8 @@ class _Transcript:
             if message.error:
                 self.error = str(message.error)
             agent = self.subagents.get(message.parent_tool_use_id or "", DESK)
+            if message.model:
+                self.reply.ran_on.setdefault(agent, message.model)
             for block in message.content:
                 self._block(agent, block)
         elif isinstance(message, UserMessage) and isinstance(message.content, list):
@@ -167,11 +176,11 @@ class _Transcript:
             if block.name in (AGENT_TOOL, "Task"):
                 self.subagents[block.id] = str(block.input.get("subagent_type") or "?")
                 detail = _short(block.input.get("prompt") or "")
-                self._event(DeskEvent("call", agent, f"→ {self.subagents[block.id]}", detail))
+                self.event(DeskEvent("call", agent, f"→ {self.subagents[block.id]}", detail))
             else:
-                self._event(DeskEvent("call", agent, block.name.removeprefix(f"mcp__{SERVER}__"), _short(block.input)))
+                self.event(DeskEvent("call", agent, block.name.removeprefix(f"mcp__{SERVER}__"), _short(block.input)))
         elif isinstance(block, TextBlock) and agent == DESK and block.text.strip():
-            self._event(DeskEvent("text", agent, "", block.text.strip()))
+            self.event(DeskEvent("text", agent, "", block.text.strip()))
 
     def _result(self, agent: str, block: ToolResultBlock) -> None:
         name = self.names.get(block.tool_use_id, "?")
@@ -184,14 +193,16 @@ class _Transcript:
             )
         else:
             detail = ("error: " if block.is_error else "") + _short(str(block.content or ""))
-        self._event(DeskEvent("answer", agent, name.removeprefix(f"mcp__{SERVER}__"), detail or "ok"))
+        self.event(DeskEvent("answer", agent, name.removeprefix(f"mcp__{SERVER}__"), detail or "ok"))
 
 
 ClientFactory = Callable[[ClaudeAgentOptions], Any]
+Planner = Callable[[str], DeskModels]
 
 
 class Desk:
-    """One conversation with the desk (`ClaudeSDKClient` keeps it across turns)."""
+    """One conversation with the desk (`ClaudeSDKClient` keeps it across turns). With a `plan`, every
+    turn first picks the models (`runtime.desk_models.DeskModelPicker.pick`, which never raises)."""
 
     def __init__(
         self,
@@ -200,10 +211,14 @@ class Desk:
         timeout_s: float,
         client_factory: ClientFactory = ClaudeSDKClient,
         emit: Callable[[DeskEvent], None] = lambda event: None,
+        plan: Planner | None = None,
+        models: DeskModels | None = None,
     ) -> None:
         self.options, self.timeout_s, self.emit = options, timeout_s, emit
         self._factory = client_factory
         self._client: Any = None
+        self._plan = plan
+        self.models = models
 
     async def _connected(self) -> Any:
         if self._client is None:
@@ -229,10 +244,26 @@ class Desk:
         return transcript.reply
 
     async def _turn(self, text: str, transcript: _Transcript) -> None:
+        if self._plan is not None:
+            await self._use(await asyncio.to_thread(self._plan, text), transcript)
         client = await self._connected()
         await client.query(text)
         async for message in client.receive_response():
             transcript.take(message)
+
+    async def _use(self, models: DeskModels, transcript: _Transcript) -> None:
+        """Run this turn on `models`: same subagents → keep the session (switch the orchestrator in place
+        if it changed); other subagent models → a new session, since its definitions are fixed at start."""
+        previous, self.models = self.models, models
+        self.options = with_models(self.options, models)
+        transcript.event(DeskEvent("models", DESK, "", models.summary()))
+        if self._client is None or previous is None:
+            return
+        if models.subagent_ids() != previous.subagent_ids():
+            transcript.event(DeskEvent("models", DESK, "", "subagent models changed: new desk session"))
+            await self.close()
+        elif models.orchestrator != previous.orchestrator:
+            await self._client.set_model(models.orchestrator.model_id)
 
     async def close(self) -> None:
         client, self._client = self._client, None

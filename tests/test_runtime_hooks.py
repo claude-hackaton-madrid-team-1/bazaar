@@ -3,15 +3,22 @@
 import asyncio
 import json
 
+from bazaar_agent.llm.chooser import ModelChoice
 from bazaar_agent.runtime import agents as ag
 from bazaar_agent.runtime import desk as dk
 from bazaar_agent.runtime import tools as tl
+from bazaar_agent.runtime.desk_models import ROLES, DeskModels
 from bazaar_agent.runtime.hooks import Guard
 from tests.agent_fakes import our_ask, rows
 from tests.runtime_fakes import DUEL, TEAM_KEY, TOKEN, Team, backend
 
 BID_OK = {"ref": "LAV-09", "price": 60}
 BID_TOO_HIGH = {"ref": "LAV-09", "price": 500}
+
+
+def models_of(alias, **per_role):
+    """DeskModels with `alias` for every role, except the roles named in `per_role`."""
+    return DeskModels({role: ModelChoice(per_role.get(role, alias), "default", "test") for role in ROLES})
 
 
 def guard(b, lines=None):
@@ -82,6 +89,13 @@ def test_the_desk_starts_only_our_subagents_and_in_the_foreground(tmp_path):
     out = pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer", "prompt": "buy LAV-09 under 90", "run_in_background": True})
     spec = out["hookSpecificOutput"]
     assert spec["permissionDecision"] == "allow" and spec["updatedInput"]["run_in_background"] is False
+    # a per-call `model` would beat the subagent's definition (Jev's choice): the hook drops it
+    overridden = pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer", "prompt": "buy", "model": "haiku"})
+    assert overridden["hookSpecificOutput"]["updatedInput"] == {
+        "subagent_type": "buyer",
+        "prompt": "buy",
+        "run_in_background": False,
+    }
     assert denied(pre(g, ag.AGENT_TOOL, {"subagent_type": "general-purpose", "prompt": "x"}))[0]
     assert denied(pre(g, ag.AGENT_TOOL, {"subagent_type": "buyer"}, agent="buyer"))[0]  # no nested subagents
 
@@ -125,16 +139,15 @@ def test_tokens_and_keys_never_reach_a_row_a_log_line_or_the_options_repr(tmp_pa
     post(g, mcp("sell_bid"), sneaky, f'{{"status":"failed","reason":"{TOKEN}"}}', agent="buyer")
     stored = (tmp_path / "agents" / "decisions.jsonl").read_text()
     assert TOKEN not in stored and TEAM_KEY not in stored and TOKEN not in "".join(lines)
-    options = dk.desk_options(g, tl.sdk_server(b), TOKEN, dk.DeskConfig(dk.resolve("sonnet-5-5"), 8, 30.0), tmp_path)
+    options = dk.desk_options(g, tl.sdk_server(b), TOKEN, dk.DeskConfig(8, 30.0), tmp_path, models_of("sonnet-5-5"))
     assert TOKEN not in repr(options) and TOKEN not in str(options.env)
     assert options.env[dk.TOKEN_VARIABLE] == TOKEN  # it reaches the CLI process, and only there
 
 
 def test_the_desk_options_lock_the_session_down(tmp_path):
     b = backend(tmp_path)
-    options = dk.desk_options(
-        guard(b), tl.sdk_server(b), None, dk.DeskConfig(dk.resolve("haiku-4-5"), 8, 30.0), tmp_path
-    )
+    chosen = models_of("haiku-4-5", buyer="opus-5-5", duelist="sonnet-5-5")
+    options = dk.desk_options(guard(b), tl.sdk_server(b), None, dk.DeskConfig(8, 30.0), tmp_path, chosen)
     assert options.tools == ["Agent"] and options.permission_mode == "dontAsk" and options.setting_sources == []
     assert set(options.allowed_tools) == {"Agent", *(s.mcp_name for s in tl.TOOLS)}
     assert {"Bash", "WebFetch"} <= set(options.disallowed_tools)
@@ -145,6 +158,13 @@ def test_the_desk_options_lock_the_session_down(tmp_path):
     assert options.model == "claude-haiku-4-5-20251001" and options.mcp_servers["bazaar"]["type"] == "sdk"
     definitions = options.agents
     assert set(definitions) == {"strategist", "buyer", "seller", "duelist"}
+    # each subagent runs the model chosen for it (a full id), not the desk's
+    assert {name: d.model for name, d in definitions.items()} == {
+        "strategist": "claude-haiku-4-5-20251001",
+        "buyer": "claude-opus-5-5",
+        "seller": "claude-haiku-4-5-20251001",
+        "duelist": "claude-sonnet-5-5",
+    }
     for name, definition in definitions.items():
         assert set(definition.tools) == ag.AGENTS[name].allowed() and "Agent" not in definition.tools
         assert "untrusted data" in definition.prompt

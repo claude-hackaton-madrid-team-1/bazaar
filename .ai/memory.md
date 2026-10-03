@@ -327,3 +327,23 @@ config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` wa
 then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
+code.claude.com/docs/en/sub-agents#choose-a-model: a per-invocation `model` on the Agent call wins over
+`AgentDefinition.model`; the bundled CLI (claude-agent-sdk 0.2.163) types it as `sonnet|opus|haiku|fable`
+only, so it cannot carry a full id. The desk's hook drops it (`updatedInput` replaces the whole input), and
+each subagent's model is a full id in its `AgentDefinition`, fixed when the CLI session starts: a request
+whose subagent models change starts a new session; `set_model()` switches only the orchestrator in place.
+
+### [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
+`bazaar agent chat --once` (N15): "buy LAV-09 under 90" → strategist/buyer/seller opus-5-5 0.99, duelist
+haiku-4-5 0.90, desk undecided 0.73 (opus 0.82 on top) → sonnet-5-5 default; "buy LAV-10 for at most 60"
+→ desk/buyer/seller sonnet 0.90–0.95, strategist opus 0.77, duelist haiku 0.94. Five questions in one Jev
+call stayed inside `jev_timeout_s` 3 s. A 90 P request reused the cache in a new process (0 Jev calls) and
+`AssistantMessage.model` proved it: desk ran on claude-sonnet-5-5, buyer on claude-opus-5-5.
+
+### [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
+"LLM → Jev picks per move ✓" ran 85 px past the `llm_proposer` box (measured with SVG getBBox in a
+browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title or line before committing it.
+`scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
+never kill it.

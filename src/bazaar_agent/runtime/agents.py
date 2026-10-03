@@ -131,17 +131,20 @@ def who_may_call() -> dict[str, tuple[str, ...]]:
     return {name: tuple(agent for agent, spec in AGENTS.items() if name in spec.tools) for name in BY_NAME}
 
 
-def agent_definitions(model: str = "inherit", max_turns: int = 8) -> dict[str, Any]:
+def agent_definitions(models: Mapping[str, str] | None = None, max_turns: int = 8) -> dict[str, Any]:
     """`AgentDefinition`s for `ClaudeAgentOptions(agents=...)`: `tools` lists only our MCP names, so a
-    subagent has no built-in tool at all and cannot spawn subagents of its own."""
+    subagent has no built-in tool at all and cannot spawn subagents of its own. `models` maps a subagent
+    to the model id Jev chose for it (`runtime.desk_models`); a missing one inherits the desk's model.
+    `AgentDefinition.model` takes an alias or a full model id (code.claude.com/docs/en/agent-sdk/subagents)."""
     from claude_agent_sdk import AgentDefinition
 
+    chosen = models or {}
     return {
         spec.name: AgentDefinition(
             description=spec.description,
             prompt=spec.prompt,
             tools=sorted(spec.allowed()),
-            model=model,
+            model=chosen.get(spec.name, "inherit"),
             maxTurns=max_turns,
             background=False,
         )

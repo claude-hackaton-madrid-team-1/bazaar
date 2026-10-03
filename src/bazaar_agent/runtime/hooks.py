@@ -4,7 +4,9 @@ PreToolUse (code.claude.com/docs/en/agent-sdk/hooks), for every call from the de
 1. the caller's allow-list (`agents.allow_lists()`): `agent_type` names the subagent, and is absent on
    the desk's own thread. A tool outside the caller's list is denied, whatever the permission rules say.
 2. `Agent` may only start one of our subagents, and in the foreground (`run_in_background: false`
-   through `updatedInput`), so the desk reports an answer instead of a task id.
+   through `updatedInput`), so the desk reports an answer instead of a task id. A `model` the desk's LLM
+   puts on the call is dropped: it would win over the subagent's definition, which carries Jev's choice
+   (code.claude.com/docs/en/sub-agents#choose-a-model).
 3. every write tool runs `actions.check_write()` with the live /me, clock, open offers and shared
    ledger, and is denied with the violated rules. A read failure denies too: never trade blind.
 A hook deny wins over every allow rule and permission mode (code.claude.com/docs/en/agent-sdk/permissions).
@@ -102,7 +104,7 @@ class Guard:
         kind = tool_input.get("subagent_type")
         if kind not in self.subagents:
             return deny(f"subagent {kind!r} is not one of ours: {', '.join(sorted(self.subagents))}")
-        updated = {**tool_input, "run_in_background": False}
+        updated = {**{k: v for k, v in tool_input.items() if k != "model"}, "run_in_background": False}
         return {"hookSpecificOutput": {"hookEventName": PRE, "permissionDecision": "allow", "updatedInput": updated}}
 
     def _check(self, spec: ToolSpec, tool_input: dict[str, Any]) -> tuple[bool, str, int]:

@@ -52,14 +52,14 @@
       "mark": "✓"
     },
     "llm_proposer": {
-      "title": "LLM → Sonnet 5.5",
+      "title": "LLM → Jev picks",
       "status": "done",
       "lines": [
         {
           "text": "Claude via subscription ✓ (#51)"
         },
         {
-          "text": "Jev picks the model",
+          "text": "tick loop: Jev per move",
           "mark": "✓"
         },
         {
@@ -67,7 +67,7 @@
           "mark": "✓"
         },
         {
-          "text": "desk + subagents (#59)",
+          "text": "desk + subagents: Jev per request",
           "mark": "✓"
         },
         {
@@ -143,7 +143,7 @@
       "mark": "✓"
     },
     "llm_runtime": {
-      "title": "LLM → Sonnet 5.5",
+      "title": "LLM → Jev picks",
       "status": "done",
       "lines": [
         {
@@ -155,7 +155,7 @@
           "mark": "✓"
         },
         {
-          "text": "desk + 4 subagents",
+          "text": "desk + subagents: Jev per request (N15)",
           "mark": "✓"
         },
         {
