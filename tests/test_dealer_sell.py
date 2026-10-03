@@ -9,6 +9,7 @@ from bazaar_agent.agents.dealer_sell import (
     check_floor,
     copy_to_sell,
     dealer_buys,
+    dealer_refusal,
     decide_sell,
     latest_dealer_bid,
     negotiate_sell,
@@ -285,4 +286,33 @@ def test_cli_refuses_a_floor_under_your_value_an_only_copy_and_a_dealer_that_doe
     upside = sell_cli("MAL-02", "--start", "5", "--min", "6")
     assert upside.exit_code == 1 and "bad plan" in upside.output
     nobody = sell_cli("MAL-02", "--start", "12", "--min", "6", "--dealer", "chato")
-    assert nobody.exit_code == 1 and "does not buy" in nobody.output
+    assert nobody.exit_code == 1 and "chato is not among the dealers" in " ".join(nobody.output.split())
+
+
+PILAR = {
+    "id": "pilar",
+    "kind": "collector",
+    "status": "active",
+    "menu": {
+        "buys": [
+            {"rarity": "rare", "sets": ["SAL", "RET"]},
+            {"rarity": "uncommon", "sets": "released"},
+        ]
+    },
+}
+
+
+def test_a_collector_with_set_scoped_lines_counts_as_a_buyer():
+    assert dealer_buys(PILAR, "rare", "SAL") and not dealer_buys(PILAR, "rare", "MAL")
+    assert dealer_buys(PILAR, "uncommon", "MAL") and not dealer_buys(PILAR, "common", "SAL")
+    assert dealer_buys({"menu": {"buys": [{"rarity": ["rare", "epic"], "sets": "SAL"}]}}, "epic", "SAL")
+
+
+def test_dealer_refusal_needs_an_active_unlocked_buyer():
+    rare = {"id": 9, "ref": "SAL-10", "rarity": "rare", "set": "SAL"}
+    me = {"unlocked": ["abuela", "chato", "pilar"]}
+    assert dealer_refusal("pilar", [PILAR], me, rare) is None
+    assert "not unlocked" in dealer_refusal("pilar", [PILAR], {"unlocked": ["abuela"]}, rare)
+    assert "announced" in dealer_refusal("pilar", [{**PILAR, "status": "announced"}], me, rare)
+    assert "not among" in dealer_refusal("vault", [PILAR], me, rare)
+    assert "does not buy" in dealer_refusal("pilar", [PILAR], me, {**rare, "ref": "MAL-10", "set": "MAL"})

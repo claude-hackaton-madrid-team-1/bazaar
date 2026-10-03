@@ -210,10 +210,37 @@ def see_bids(neg: SellNegotiation, thread: dict[str, Any], dealer: str, asset_id
     neg.awaiting_reply = bool(senders) and senders[-1] != dealer
 
 
-def dealer_buys(dealer: Mapping[str, Any], rarity: str | None) -> bool:
-    """The dealer's menu (`GET /api/dealers/{id}`) buys this rarity."""
-    buys = (dealer.get("menu") or {}).get("buys") or []
-    return rarity is not None and any(isinstance(b, dict) and b.get("rarity") == rarity for b in buys)
+def dealer_buys(dealer: Mapping[str, Any], rarity: str | None, set_code: str | None = None) -> bool:
+    """The dealer's menu (`GET /api/dealers`) buys this rarity in this set. Any kind of persona counts (Doña
+    Pilar is a "collector"); a line's `rarity` may be one or a list, its `sets` "released" (any) or set codes."""
+    for line in (dealer.get("menu") or {}).get("buys") or []:
+        if not isinstance(line, dict):
+            continue
+        raw, sets = line.get("rarity"), line.get("sets")
+        rarities: list[Any] = raw if isinstance(raw, list) else [raw]
+        scope: list[Any] | None = (
+            sets if isinstance(sets, list) else None if sets in (None, "released", "all") else [sets]
+        )
+        if rarity is not None and rarity in rarities and (scope is None or set_code in scope):
+            return True
+    return False
+
+
+def dealer_refusal(dealer_id: str, personas: list[Any], me: Mapping[str, Any], copy: Mapping[str, Any]) -> str | None:
+    """Why this dealer cannot buy this copy from us now (None = it can): not in play, not unlocked for us
+    (`/api/me` `unlocked`), or its menu does not buy that rarity in that set."""
+    found = next((p for p in personas if isinstance(p, dict) and p.get("id") == dealer_id), None)
+    if found is None:
+        return f"{dealer_id} is not among the dealers (GET /api/dealers)"
+    if found.get("status", "active") != "active":
+        return f"{dealer_id} is {found.get('status')}, not active yet"
+    unlocked = me.get("unlocked")
+    if isinstance(unlocked, list) and dealer_id not in unlocked:
+        return f"{dealer_id} is not unlocked for us yet (/api/me unlocked: {unlocked})"
+    rarity, code = copy.get("rarity"), copy.get("set") or str(copy.get("ref") or "").split("-", 1)[0]
+    if not dealer_buys(found, rarity, code):
+        return f"{dealer_id} does not buy {rarity} cards of {code} (GET /api/dealers menu.buys)"
+    return None
 
 
 def copy_to_sell(me: Mapping[str, Any], ref: str) -> dict[str, Any]:

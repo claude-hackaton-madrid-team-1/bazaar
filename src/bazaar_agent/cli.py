@@ -836,7 +836,9 @@ def dealer_sell(
     floor: int = typer.Option(..., "--min", min=1, help="Hard floor: never sell below this (≥ the copy's your_value)"),
     start: int = typer.Option(..., help="Opening ask"),
     step: int = typer.Option(1, min=1, help="Drop per tick (small steps earn small steps)"),
-    dealer: str = typer.Option("abuela", help="Dealer id (its menu must buy this rarity)"),
+    dealer: str = typer.Option(
+        "abuela", help="Dealer id: abuela, chato, pilar, ... (its menu must buy this rarity and set)"
+    ),
     live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
 ) -> None:
     """Sell one duplicate to a dealer (a ladder deal): falling distinct asks, hard floor, never at her opening bid."""
@@ -850,7 +852,7 @@ def dealer_sell(
         ask_schedule,
         check_floor,
         copy_to_sell,
-        dealer_buys,
+        dealer_refusal,
         negotiate_sell,
         sell_topic,
     )
@@ -871,9 +873,8 @@ def dealer_sell(
         _fail(str(e))
     rarity, asset_id = asset.get("rarity"), int(asset["id"])
     personas = public_client(settings).dealers().get("personas") or []
-    menu = next((p for p in personas if isinstance(p, dict) and p.get("id") == dealer), None)
-    if menu is None or not dealer_buys(menu, rarity):
-        _fail(f"{dealer} does not buy {rarity} cards (GET /api/dealers menu.buys)")
+    if refusal := dealer_refusal(dealer, personas, me, asset):
+        _fail(refusal)
     topic = sell_topic(asset_id)
     if not live:
         console.print(
