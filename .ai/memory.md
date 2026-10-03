@@ -327,3 +327,14 @@ config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` wa
 then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
+On #77's realistic bench (1,000 books × normal/hard × quote/limit rule) the exact matcher's efficiency is
+identical to the stall's on all 4,000 (0.793 / 0.791 mean, 0 better, 0 worse): 0.5 session points, what the
+free stall earns. On main's static bench too (`scripts/sim_market_test.py`: b1 0.892 vs 0.892, b2 1.0 vs 1.0).
+Ties must follow the book order (stable sort, as the stall): sorting by id lost 2 of 200 books to the stall.
+Beating the stall needs #84's edge (limit estimates, probes): opening our board venue alone buys the hook.
+
+### [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
+`BAZAAR_SIM=local` is hardcoded to :8765, so two workers cannot each run their own local sim through it.
+`scripts/sim_market_test.py` and `tests/test_sim_venue.py` serve `bazaar_sim` in-process on a free port instead.

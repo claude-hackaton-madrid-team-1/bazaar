@@ -324,6 +324,8 @@ class BrokerAgent:
         self.history.append(stats)
         tm.event("broker.tick", asdict(stats))
         self._append("broker_ticks.jsonl", asdict(stats))
+        if not stats.proposed:  # an empty book: the stats file has the row, the console stays quiet
+            return
         verb = "matched" if self.live else "would match"
         self.log(
             f"tick {stats.tick} broker: {stats.proposed} proposed (surplus {stats.proposed_surplus}), "
