@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#103](../../pull/103) | Night B11: endgame squeeze mitigations for duel v2 (behind params, defaults = today) | `night/b11-endgame` |
 | [#102](../../pull/102) | night(B6): Saturday hour-by-hour playbook + bazaar timeline (clock resume/jump columns) | `night/b6-saturday-playbook` |
 | [#101](../../pull/101) | W8: cross-venue arbitrage and duplicate buys, guarded and off by default (stacked on #72) | `night/w8-arbitrage` |
 | [#100](../../pull/100) | feat(dealer): seeded step jitter for dealer bids, default off (B12, stacked on #81) | `night/b12-dealer-jitter` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#79](../../pull/79) | feat(trade-desk): rival affinity map, per-counterparty cap, 09:00 dry-run trade plan (W4) | `night/w4-trade-desk` |
 | [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
 | [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
-| [#72](../../pull/72) | fix(agents): dealer ladder never at the opening ask, kill switch holds, cash and spend accounting (#61 + #68 + #72) | `fix/cash-spend-accounting` |
 
 <!-- BAZAAR:ACTIVITY:END -->
