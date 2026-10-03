@@ -9,6 +9,10 @@
     replay            its conservative replay on the 12 unanswered practice duels beats the baseline's
 
 Every check is reported with its value and threshold, so a no-go says by how much.
+
+The checks score each duel alone, as the plan defines them: none applies the team's one accept per tick across
+duels that share a deadline. Run `duel_zoo.run_batches` / `duel_replay.replay_groups` (the report script's accept
+section) for that: a policy that waits for the endgame passes here and halves there.
 """
 
 from __future__ import annotations

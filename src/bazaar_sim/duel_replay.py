@@ -21,6 +21,8 @@ Where we moved every tick, a tit-for-tat rival and a time-based one look alike: 
 
 from __future__ import annotations
 
+import copy
+import functools
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -37,6 +39,12 @@ Counterfactual = Literal["conservative", "consistent"]
 
 
 def load(path: Path = FIXTURE) -> list[dict[str, Any]]:
+    """The payloads, parsed once per file and copied per caller (the report script asks dozens of times)."""
+    return copy.deepcopy(_parsed(path))
+
+
+@functools.cache
+def _parsed(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text())
     rows = data["duels"] if isinstance(data, Mapping) else data
     return [dict(r) for r in rows]
@@ -93,7 +101,7 @@ def scenario_for(duel: Mapping[str, Any], duel_ticks: int = PRACTICE_TICKS) -> z
         limit=int(duel["your_limit"]),
         rival_limit=int(duel["your_limit"]),
         style="replay",
-        decay=float(duel.get("decay_per_round") or 0.06),
+        decay=float(decay) if isinstance(decay := duel.get("decay_per_round"), int | float) else 0.06,
         duel_ticks=duel_ticks,
         two_issues="days" in issues,
         days_weight=float(weight) if isinstance(weight, int | float) else None,

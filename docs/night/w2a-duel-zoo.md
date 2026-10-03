@@ -30,7 +30,7 @@ duel_gate.go_no_go(candidate, baseline, n=200, decays=(0.06, 0.08))  # the plan'
 | Classifier on its own styles, silent | linear 200/200, convex 198/200, one_shot 200/200, no_show 200/200; holdout vs v1 147/200 |
 | Realism (median, zoo vs real) | final gap toward us: linear 0.38 vs 0.39, one-shot 0.18 vs 0.11, tit-for-tat 0.25 vs 0.22, holdout 0.34 vs 0.36 (fraction of our limit) |
 | Noise | sd of mean P/duel over 5 seeds: 0.07 (v1) to 0.14 (v2); sd of the v2/v1 lift 0.005 |
-| Gates | 857 tests pass; ruff, black, mypy clean |
+| Gates | 862 tests pass; ruff, black, mypy clean |
 
 ## What the zoo says
 
@@ -84,3 +84,5 @@ Follow-ups, not done tonight to avoid w1a's files:
 - Play the two-issue grid once for both days truths.
 - `duel_replay.FIXTURE` points from `src/` into `tests/fixtures/`.
 - Add a README line for the new env vars.
+- `/api/schedule` still advertises `duels.DECAY` (0.06) when `SIM_DUEL_DECAY` is set. The fix is one line in `views.py`, next to w1a's edit there.
+- The live sim limits accepts per duel, not per team. The zoo's `play_batch` applies RULES.md's one accept per tick, and the go/no-go checks score each duel alone (see finding 6).

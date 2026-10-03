@@ -151,3 +151,11 @@ def test_replaying_the_real_deadline_groups_with_one_accept_per_tick():
     # Deadline 132: 5, 6, 119 and 120 all want the last two ticks; 5 and 6 come first in duel order.
     assert capped[119].record.result == capped[120].record.result == 0.0
     assert capped[119].record.errors.count("accept_cap") == 2
+
+
+def test_a_replayed_duel_keeps_a_zero_decay_and_callers_get_their_own_copy():
+    rows = replay.load()
+    rows[0]["your_limit"] = -1  # a caller's edit never reaches the next caller
+    assert replay.load()[0]["your_limit"] != -1
+    free = dict(by_id()[6], decay_per_round=0.0)
+    assert replay.scenario_for(free).decay == 0.0

@@ -66,6 +66,7 @@ DECAYS = (0.06, 0.08, 0.10)  # Duels I, Duels II, Sunday
 DUEL_TICKS = (12, 16)
 LIMIT_MEANING = {"seller": "never sell below your cost", "buyer": "never pay above your value"}
 SIM_START, SIM_END = 0.9, 0.35  # duels.RIVAL_START / RIVAL_END
+MIN_PRICE, MAX_PRICE = 1, 10_000_000  # validate.MIN_PRICE / MAX_PRICE
 
 
 class Move(Protocol):
@@ -100,7 +101,7 @@ def single(batch: BatchPolicy) -> Policy:
     """A batch policy asked about one duel at a time (no other duel competes for the accept)."""
 
     def policy(duel: dict[str, Any], tick: int, started_tick: int) -> Move:
-        return batch([duel], tick, {duel["duel"]: started_tick})[duel["duel"]]
+        return batch([duel], tick, {duel["duel"]: started_tick}).get(duel["duel"], HOLD)  # left out = hold
 
     return policy
 
@@ -576,13 +577,13 @@ def _apply(d: _Duel, move: Move | None, tick: int, can_accept: bool = True) -> b
         return True
     elif kind == "offer":
         price, days = getattr(move, "price", None), getattr(move, "days", None)
-        if not isinstance(price, int) or isinstance(price, bool) or price < 1:
-            d.errors.append("invalid_price")
+        if not isinstance(price, int) or isinstance(price, bool) or not MIN_PRICE <= price <= MAX_PRICE:
+            d.errors.append("invalid_price")  # as validate.price refuses it live
             return False
         if sc.two_issues and days is None:
             d.errors.append("missing_days")
             return False
-        if days is not None and (not isinstance(days, int) or not 0 <= days <= 10):
+        if days is not None and (isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= 10):
             d.errors.append("invalid_days")
             return False
         d.your_offer = d.offer(price, days or 0, tick)

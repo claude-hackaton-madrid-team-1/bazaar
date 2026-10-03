@@ -425,3 +425,20 @@ def test_a_batch_policy_plans_every_live_duel_once_per_tick():
     assert zoo.play_batch(zoo.endgame_accept, scs) == zoo.play_batch(None, scs, batch=zoo.per_duel(zoo.endgame_accept))
     one = zoo.single(planner)
     assert zoo.play(one, scs[0])[0].deal
+
+
+def test_offers_the_simulator_would_refuse_are_refused_offline_too():
+    sc = scenario(two_issues=True, days_weight=1.0, rival_days_weight=1.0, style="no_show")
+    for move, error in [
+        (zoo.Act("offer", 120, True), "invalid_days"),  # a bool is not a day
+        (zoo.Act("offer", 10_000_001, 0), "invalid_price"),
+        (zoo.Act("offer", 0, 0), "invalid_price"),
+    ]:
+        record, _ = zoo.play(Script(move), sc)
+        assert record.errors == (error,) and record.our_messages == 0
+
+
+def test_a_planner_that_leaves_a_duel_out_holds_it():
+    quiet = zoo.single(lambda duels, tick, first_seen: {})
+    record, final = zoo.play(quiet, scenario(style="no_show"))
+    assert record.status == "no_deal" and final["messages"] == [] and not record.errors
