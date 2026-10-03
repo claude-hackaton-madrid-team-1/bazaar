@@ -6,6 +6,7 @@ Skipped when Postgres is unreachable. No game API and no real Phoenix: annotatio
 from __future__ import annotations
 
 import json
+import secrets
 from collections.abc import Iterator
 from typing import Any
 
@@ -25,6 +26,24 @@ from tests.evals.test_phoenix import FakePhoenix, client, span
 from tests.test_db import open_in
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def private_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Advisory locks are database-wide: a per-test namespace keeps other sessions' evals out of these tests."""
+    from bazaar_agent.evals import inline
+
+    namespace = secrets.token_hex(4)
+    monkeypatch.setattr(inline, "lock_key", lambda agent: f"pytest-{namespace}:bazaar-evals:{agent}")
+
+
+def lock(conn: psycopg.Connection, agent: str) -> bool:
+    from bazaar_agent.evals.inline import lock_key
+
+    row = conn.execute("select pg_try_advisory_lock(hashtext(%s))", (lock_key(agent),)).fetchone()
+    return bool(row and row[0])
+
+
 # The throwaway-schema fixtures of test_db.py: every test gets its own schema, dropped afterwards.
 database_url, schema, conn = test_db.database_url, test_db.schema, test_db.conn
 
@@ -411,7 +430,7 @@ def test_a_second_process_of_the_same_kind_skips_while_the_first_scores(
     setup = open_in(database_url, schema)
     db.init_schema(setup)
     holder = open_in(database_url, schema)
-    holder.execute("select pg_advisory_lock(hashtext('bazaar-evals:taker'))")
+    assert lock(holder, "taker")
     logs: list[str] = []
     evals = TickEvals(
         "taker", 1, lambda: open_in(database_url, schema), lambda c: OURS, lambda: None, logs.append, lambda w: w()
@@ -427,9 +446,40 @@ def test_a_second_process_of_the_same_kind_skips_while_the_first_scores(
 
 def test_the_cli_pass_scores_only_the_kinds_no_agent_is_scoring(cli_db: None, database_url: str, schema: Any) -> None:
     holder = open_in(database_url, schema)
-    holder.execute("select pg_advisory_lock(hashtext('bazaar-evals:duels'))")
+    assert lock(holder, "duels")
     ran = CliRunner().invoke(evals_cli.evals_app, ["run", "--no-phoenix"])
     holder.close()
     assert ran.exit_code == 0, ran.output
     assert "the duels agent is scoring duel right now" in ran.output
     assert "scored dealer 6, trade 1" in ran.output and "duel" not in ran.output.split("scored")[1].split("·")[0]
+
+
+def test_the_cli_pass_releases_its_locks_and_timeouts_even_when_the_annotator_fails(
+    cli_db: None, database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = open_in(database_url, schema)
+
+    def broken(phoenix: bool) -> Any:
+        raise RuntimeError("config error mid-run")
+
+    monkeypatch.setattr(evals_cli, "_annotator", broken)
+    with pytest.raises(RuntimeError):
+        evals_cli._pass(conn, None, True, False)
+    other = open_in(database_url, schema)
+    got = [
+        other.execute("select pg_try_advisory_lock(hashtext(%s))", (f"bazaar-evals:{a}",)).fetchone()[0]
+        for a in ("duels", "taker", "maker")
+    ]
+    assert got == [True, True, True]  # nothing left held for the agents
+    assert conn.execute("show idle_session_timeout").fetchone()[0] in ("0", "0ms")
+    other.close()
+    conn.close()
+
+
+def test_evals_run_json_stays_pure_json_when_a_kind_is_busy(cli_db: None, database_url: str, schema: Any) -> None:
+    holder = open_in(database_url, schema)
+    assert lock(holder, "duels")
+    ran = CliRunner().invoke(evals_cli.evals_app, ["run", "--no-phoenix", "--json"])
+    holder.close()
+    assert ran.exit_code == 0
+    assert json.loads(ran.stdout)["scored"] == {"dealer": 6, "trade": 1}

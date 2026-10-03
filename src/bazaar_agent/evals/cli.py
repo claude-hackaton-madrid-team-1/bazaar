@@ -28,6 +28,7 @@ evals_app = typer.Typer(
     no_args_is_help=True, help="Evals: score settled duels, dealer deals, trades (Postgres + Phoenix)"
 )
 console = Console()
+err_console = Console(stderr=True)  # warnings: `--json` keeps stdout pure JSON
 
 
 def register(app: typer.Typer) -> None:
@@ -35,7 +36,7 @@ def register(app: typer.Typer) -> None:
 
 
 def _warn(message: str) -> None:
-    console.print(f"[yellow]{escape(message)}[/yellow]")
+    err_console.print(f"[yellow]{escape(message)}[/yellow]")
 
 
 def _connect() -> psycopg.Connection:
@@ -109,19 +110,27 @@ def _held_targets(conn: psycopg.Connection) -> set[str]:
 
 
 def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_json: bool) -> None:
+    from bazaar_agent.evals.inline import IDLE_SESSION_TIMEOUT
     from bazaar_agent.evals.run import run_once
 
-    targets = _held_targets(conn)
-    if not targets:
-        _warn("evals: every agent kind is scoring right now (their locks are held); nothing to do")
-        return
-    annotator = _annotator(phoenix)
+    # Like the agents: a laptop that sleeps mid-pass loses its session, and the locks with it.
+    conn.execute(f"set idle_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+    conn.execute(f"set idle_in_transaction_session_timeout = '{IDLE_SESSION_TIMEOUT}'")
+    conn.commit()
+    annotator = None
     try:
+        targets = _held_targets(conn)
+        if not targets:
+            _warn("evals: every agent kind is scoring right now (their locks are held); nothing to do")
+            return
+        annotator = _annotator(phoenix)
         summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn, targets=targets)
     finally:
         if annotator is not None:
             annotator.close()
         conn.execute("select pg_advisory_unlock_all()")
+        conn.execute("reset idle_session_timeout")  # the --every-ticks connection idles between passes
+        conn.execute("reset idle_in_transaction_session_timeout")
         conn.commit()
     if as_json:
         console.print_json(json.dumps(summary.__dict__, default=list))
