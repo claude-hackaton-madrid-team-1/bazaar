@@ -327,3 +327,22 @@ config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` wa
 then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
+`GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
+`cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)
+`cancelled`, her 681 (7) `settled` — her OPENING ask, so that deal scored nothing on the ladder. The deal
+price is the `settled` offer in the messages (`dealer.settled_price`); `open_commitments` counts one offer
+per thread (the most cash) in case an old bid still reads open mid-thread (not observed live yet).
+
+### [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+`t_hours` is game time played (tick 159 → 2.65 h at 60 s ticks) and the pace changes (60 s Fri, 30 s Sat).
+Back-dating a cancelled bid's refund by `ticks × tick_seconds` after a 60 → 30 s change dated it 5 min
+after its spend (hour's spend read −40). `refund_row` now uses `/api/clock` `max_tick_seconds` (+1 tick
+for the rounded `t_hours`); an unknown created tick books no refund in the window.
+
+### [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+`BAZAAR_SIM=local uv run bazaar agent taker --live` said "ledger: shared Postgres table": the default
+`DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
+real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
+address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.

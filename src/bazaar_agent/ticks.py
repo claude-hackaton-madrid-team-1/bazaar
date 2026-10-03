@@ -31,6 +31,7 @@ class Clock(BaseModel):
     model_config = ConfigDict(extra="allow")
     tick: int
     tick_seconds: float = 60.0
+    max_tick_seconds: float = 60.0  # the slowest pace the organisers may set (RULES.md: 5-60 s)
     next_tick_in: float = 1.0
     paused: bool = False
     doors: str = "open"

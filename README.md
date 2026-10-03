@@ -900,7 +900,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar status` | Our cash, level, score, album pages with missing cards, and cards (GET /api/me). |
 | `uv run bazaar threads` | Our negotiation threads (GET /api/me/threads): who, what, status and the last message. |
 | `uv run bazaar thread` | One whole conversation (GET /api/threads/{id}): every message with sender, text and price. |
-| `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max. |
+| `uv run bazaar dealer buy` | Buy one card or pack from a dealer: rising distinct bids, hard max, never at her opening ask. |
 | `uv run bazaar duel run` | Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit. |
 | `uv run bazaar duel done` | Read our finished duels once (`/api/duels?done=true`, one request) and store them for the evals. |
 | `uv run bazaar rules show` | Every guardrail from GUARDRAILS.md, its value, and the code that enforces it. |
@@ -923,21 +923,22 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
-| `uv run bazaar sell cancel` | Withdraw one of our open offers. |
+| `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
+| `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+- [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+- [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
 - [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
 - [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
 - [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
 - [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
 - [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
-- [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
-- [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
-- [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
 
 <!-- BAZAAR:STATUS:END -->
 

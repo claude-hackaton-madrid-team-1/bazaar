@@ -18,10 +18,14 @@ from bazaar_agent.agents.dealer import (
     Negotiation,
     decide,
     latest_dealer_offer,
+    meet_ask,
     newest_dealer_offer,
     offer_terms_problem,
+    settled_price,
 )
 from bazaar_agent.strategy import Move as StrategyMove
+
+ACCEPT_SETTLE_TICKS = 2  # an accept settles on the next tick; still open after this many, it did not land
 
 
 @dataclass
@@ -39,6 +43,7 @@ class Conversation:
     ticks: int = 0
     accepted_tick: int | None = None
     accepted_price: int | None = None
+    reopened: bool = False  # this thread already is the lower reopen after she held her opening ask
 
     @property
     def topic(self) -> dict[str, dict[str, str]]:
@@ -66,13 +71,16 @@ class DeskMove:
         return self.conv.value - (self.ask or 0)
 
 
-def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: int) -> DeskMove:
+def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: int, tick: int) -> DeskMove:
     """The one move for this tick. `wait` when the thread is closed or our accept is settling."""
     status = str(thread.get("status") or "open")
     if status != "open":
         return DeskMove(conv, Move("wait", reason=f"thread {status}"), status=status)
-    if conv.accepted_tick is not None:
+    if conv.accepted_tick is not None and tick - conv.accepted_tick < ACCEPT_SETTLE_TICKS:
         return DeskMove(conv, Move("wait", reason="accepted, waiting for settlement"))
+    # An accept that never settled (the thread is still open) must not block this dealer forever. Its price
+    # goes too: a later deal may be one of our higher bids, and `deal_price` reads what settled.
+    conv.accepted_tick, conv.accepted_price = None, None
     ask, offer_id, final = latest_dealer_offer(thread, conv.dealer)
     newest = newest_dealer_offer(thread, conv.dealer)
     problem = offer_terms_problem(newest, conv.item) if newest is not None else None
@@ -85,13 +93,20 @@ def plan_conversation(conv: Conversation, thread: dict[str, object], max_ticks: 
 
 
 def meet_the_ask(dm: DeskMove) -> DeskMove:
-    """Our accept slot went elsewhere this tick: offer exactly her ask instead (inside our max), so the
-    dealer can accept OUR offer. Only when it is a new, higher price; otherwise wait."""
-    last = dm.conv.neg.bids[-1] if dm.conv.neg.bids else 0
-    ask = dm.ask
-    if ask is not None and last < ask <= dm.conv.neg.plan.max_price:
-        return DeskMove(dm.conv, Move("bid", ask, reason="accept slot used: meet her ask"), ask, dm.final)
-    return DeskMove(dm.conv, Move("wait", reason="accept slot used this tick"), ask, dm.final, offer_id=dm.offer_id)
+    """Our accept slot went elsewhere this tick: offer exactly her ask instead (`dealer.meet_ask`: a new,
+    higher price inside our max, never her opening price), so the dealer can accept OUR offer; else wait."""
+    move = meet_ask(dm.conv.neg, dm.ask)
+    return DeskMove(dm.conv, move, dm.ask, dm.final, offer_id=None if move.kind == "bid" else dm.offer_id)
+
+
+def deal_price(conv: Conversation, thread: dict[str, object]) -> int | None:
+    """What a settled deal cost: the thread's settled offer, else the most we may have agreed (our accept,
+    or our last bid, which the dealer may have taken): over-counts the spend, never under-counts it."""
+    settled = settled_price(thread)
+    if settled is not None:
+        return settled
+    known = [p for p in (conv.accepted_price, conv.neg.bids[-1] if conv.neg.bids else None) if p is not None]
+    return max(known) if known else None
 
 
 @dataclass(frozen=True)
