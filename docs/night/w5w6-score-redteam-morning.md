@@ -100,3 +100,37 @@ model that writes our words and the desk's hints.
 **Not covered:** `llm/intent.py` and `steering.py` (they read our operator, not a counterparty); whether the live
 desk agent obeys (a real model; its tools hand it only marked `untrusted_text`, covered); the `duel run` CLI loop
 (built from the covered pieces); our own broker announcements (code in PR #71, not on `main`).
+
+## 3. Per-tick request budget (`bazaar budget`): sustained GO, tick-edge burst NO-GO at the ceiling
+
+`src/bazaar_agent/rate_budget.py` declares each loop's ceiling of calls per tick, by bucket; `tests/test_rate_budget.py`
+(16 tests) runs each loop one tick on the fakes behind a counting proxy and fails when a loop makes more calls than
+it declares. `team_client()` sends the key on every call, its `clock()` included; the monitor's clock/feed, boards
+and evals are keyless (60/s per address); the broker (PR #71) has its own key, assumed a separate bucket (the
+stricter reading is computed too).
+
+| Loop | Team-key calls/tick, steady | Ceiling | Where the ceiling comes from |
+|---|---|---|---|
+| monitor | 2 | 2 | `/me` + one stream retry |
+| taker | 10 (measured) | 16 | 4 reads + 3 per dealer thread (max 3) + fresh clock, accept, cancel |
+| maker | 7 | **45** | 3 reads + **cancels uncapped** (28 measured in one tick) + 12 posts |
+| duels (3 live) | 6 (measured) | 6 (9 with 6 live) | clock, `/duels`, `?done=true`, one move per duel |
+| broker (PR #71) | 1 (+17 broker key) | 1 | clock + book + ≤ 15 matches (counted from the branch) |
+| **total** | **26** | **70** | |
+
+| Setup | 30 s tick | 15 s tick | Burst right after the tick (bucket 20 + 5/s) |
+|---|---|---|---|
+| steady | 0.87 req/s | 1.73 req/s | 22 calls, 0 refused |
+| every loop at its ceiling | 2.33 | 4.67 | 64 calls, **12 refused (429)** |
+| ceiling + 3 `dealer buy` | 2.83 | **5.67 (> 5)** | 79 calls, 27 refused |
+| steady, taker + maker on 2 laptops | 1.43 | 2.87 | 35 calls, **11 refused** |
+
+**Verdict.** Sustained ≤ 5 req/s: GO for one copy of each service, even at the ceiling on Sunday (7 % headroom);
+NO-GO with 3+ `dealer buy` processes on top on Sunday. Burst ≤ 20: GO on a steady tick, NO-GO at the ceiling or with
+a second laptop: every loop wakes at the same instant after the tick and the maker fires up to 45 calls back to
+back. A 429 costs nothing by itself, but the SDK retries (adds calls) and a refused accept is a missed deal.
+
+**Proposals for Marius (none changes today's behaviour):** (1) stagger loop starts after the tick (duels 0 s,
+monitor/broker 0.5 s, dealer 1 s, taker 2 s, maker 4 s): the model drops the ceiling burst to 0 refused, last call at
+10.6 s inside a 15 s tick; (2) cap the maker's writes per tick (new parameter, default uncapped); (3) never run taker
++ maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).
