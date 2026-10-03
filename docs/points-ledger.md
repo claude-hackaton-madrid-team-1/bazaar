@@ -46,7 +46,7 @@ A gain made while we led in neg_points moved the board ~0 (ticks 376 and 386: +4
 | # | Move type | Raw | Board effect | Per move / per live tick | Verdict |
 |---|---|---|---|---|---|
 | 1 | Market Test at the stall's level (6 sessions x 16 ticks) | bench 0.5 | **+7.5** held (29 % of score) | 0 effort; v19 exact broker = free stall (sessions 1 to 3: efficiency equal to the auto baseline, BE1) | Floor, not a lead. t10 reached 12.5 (+5.0 over us) |
-| 2 | Duels (Duels I + II, 2 x 193 live ticks) | 42.37 | about +7.5 total, but **Duels II about +0.1** | 84 deals; share 0.56 (I), 0.48 (II) | Saturated: no more to take |
+| 2 | Duels (Duels I + II, 2 x 193 live ticks) | 42.37 | about +7.5 total, but **Duels II about +0.1** | 84 deals; share 0.56 (I), 0.48 (II) | ESTIMATE: saturated in Saturday's round; Sunday UNVERIFIED |
 | 3 | Dealer ladder, **Pilar sales at her final** (LAV-06 19, MAL-08 20, SAL-10 70, ticks 718/726/737) | +0.139 | **+3.34** (+1.21, +1.06, +1.07) | **+1.1 per deal**, 24 board per ladder point | Best move per settlement of the weekend |
 | 4 | Dealer ladder, Pícaros buys (LAV-09 58, MAL-10 59, LAV-10 63) | +0.142 | **+2.05** (+0.73, +0.66, +0.66) | +0.7 per deal, 14 board per ladder point | Good, but LAV-10 was a fake final |
 | 5 | Team trades, dup rare sold to a team (LAT-10 86, SAL-10 76, LAT-09 68) | +55.6 / +44.3 / +33.0 | +1.97 / +0.67 / 0.00 | best raw per move; board depends on the cap | Real, front-loaded; see section 4 |
@@ -94,6 +94,12 @@ Other costs: **idle drift** (no event of ours in the window): the 27 refresh win
 
 ## 4. Team trades (neg_points): every move, raw +100.2
 
+For a buy, surplus is the acquired server `your_value` minus total purchase cost, including fees we pay.
+For a sell, surplus is net sale proceeds minus the server `your_value` lost with that copy. Net proceeds deduct
+any fees we pay; with none, the sale formula is `price - your_value`. The buy formula has the opposite direction:
+MAL-07 bought for 14 at tick 311 earned **+13.2**, as recorded below. A team-sourced copy sold to a dealer can also
+change `neg_points`, as SAL-07 did at tick 948.
+
 | Tick | Move | Raw neg_points | Board at next refresh |
 |---|---|---|---|
 | 160 | buy MAL-02 for 3 (rastro, t06) | +5.7 | ramp |
@@ -126,8 +132,10 @@ ESTIMATE: with k 0.035 to 0.048 and a 15-point weight, the top-3 mean of neg_poi
 - Surplus kept by rounds (`duels`, deals): 0 rounds 24.7 to 35.5 P, 1 round 21.5 to 24.2, 2 rounds 20 to 25, 4 rounds 8 to 10
   (decay 0.06 in Duels I, 0.08 in Duels II): **the deals closed in 1.5 to 2 rounds are where the share was**.
 - Our first priced offer sits **0.54 to 0.55 of our limit beyond it** (sellers +54 %, buyers -53 %, Duels I and II).
-- ESTIMATE: duels are saturated for us. +27 raw in Duels II moved the board ~0, which is what a component at the top-3
-  mean looks like. Duels were worth the 7.5 they hold; more duel points do not pay.
+- ESTIMATE: duels were saturated for us in Saturday's round. +27 raw in Duels II moved the board ~0, consistent with
+  a component at that round's top-3 mean. This does not establish saturation in Sunday's round. Whether duel points
+  restart is UNVERIFIED (`docs/briefing.md`, "Scoring"). Before deprioritizing duels, require current-round evidence
+  of saturation; otherwise preserve duels-first accepts and use remaining ticks for dealers.
 - Duels ate 386 of 1,286 Saturday ticks (30 %); the other **900 (70 %) had no duel live**.
 
 ## 6. Idle time

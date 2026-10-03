@@ -33,7 +33,7 @@ mean a component adds nothing, below it every point counts**.
 |---|---|---|---|
 | Duels | `duel_points` | 7.5 | sum of one pie share per deal: `surplus x (1 - decay) ** rounds`, no cash or card moves |
 | Dealer ladder | `ladder_points` | 7.5 | per dealer and price class, the share of the dealer's range we captured; **best 3 deals per level, a missing one is 0, higher levels weigh more, restarts every round** |
-| Team trades | `neg_points` | 15 | `price - your_value` on every settlement with another team (also a team-sourced copy sold to a dealer) |
+| Team trades | `neg_points` | 15 | Buy: acquired `your_value` minus total purchase cost, including fees we pay. Sell: net sale proceeds minus the copy's `your_value` lost (also a team-sourced copy sold to a dealer). |
 | Market Test | `bench_points` | 22.5 of market | your best venue per session; the stall's level = 0.5, the mean of the top 3 = full |
 | Organic | `mm_points` | 7.5 of market | value created between OTHER teams on our venue |
 
@@ -46,8 +46,10 @@ SAL-07 sale to Pilar changed 134.2 to 44.6 at tick 948. Check prospective impact
 
 1. **Market Test at the stall's level: +7.5 of our 25.65 (29 %)**, for free. t10 (1st) took 12.5: **+5.0 is the largest
    unclaimed item** and it needs a broker that beats the auto stall, not more trades.
-2. **Duels: about 7.5, saturated.** Duels I (15.02 raw, 27 of 34 deals) moved the board +2.7; Duels II (+27.35 raw, 57 of
-   68) moved it about +0.1. More duel points do not pay once we are at the top-3 mean.
+2. **Duels: about 7.5, Saturday saturation is an ESTIMATE.** Duels I (15.02 raw, 27 of 34 deals) moved the board +2.7;
+   Duels II (+27.35 raw, 57 of 68) moved it about +0.1. More duel points do not pay once we are at the current round's
+   top-3 mean. Sunday's saturation and whether duel points restart are UNVERIFIED; retain duels-first accepts
+   unless current-round evidence establishes saturation.
 3. **Pilar sales at her final: +1.1 board each (3 deals = +3.3).** Best single move per settlement.
 4. **Pícaros buys at 55 to 63: +0.7 each**, 40 to 60 % of their range (one was a fake final).
 5. **Team trades: +100.2 raw.** Selling a duplicate rare to a team that needs it at 2 to 3x our `your_value`
@@ -86,7 +88,7 @@ maker already run rows 2 and 5 on their own.
 |---|---|---|---|---|
 | 1 | **Sell a spare card to Pilar, ask until she finalises** (uncommons 14 to 30, rares 50 to 87, epics 140 to 199; start high, step down 1 to 2 P per distinct bid, take her `final: true` only if the sale floor and nonnegative impact hold) | `uv run bazaar dealer sell CARD --dealer pilar --live` (hand only after `bazaar impact`; `dealer_sell_enabled` is false) | `protect_page_sets` (never the last copy), `sell_min_value_ratio` 1.0, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 | 3 finals = +3.3 board; SAL-07 at 29 = -4.27 |
 | 2 | **Dealer ladder buys, step 1 from low**: open at the lowest fill seen, never at her opening ask, climb by distinct bids until her final | taker (`agent taker --live`) or `dealer buy CARD --start P --max P --dealer D` | `max_price_*`, `official_value_margin` 0, `max_spend_per_game_hour` 250, `trickster_*` | Abuela commons 6 to 9 = 60 %; Pícaros rare 55 to 58 = 60 % |
-| 3 | **Complete a page by buying the rare or epic from a team or dealer below our value** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 250 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
+| 3 | **Buy a missing page card from a team or dealer below our value, including fees. Evaluate epics separately: they do not complete pages.** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 250 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
 | 4 | **Sell a duplicate to the team that needs it** (the page-completing buyer pays 2 to 3x our value) | `bazaar buyers`, `bazaar swaps`, `sell list CARD`, `sell swap` | `max_counterparty_share`, `team_swap_*`, `watchdog_max_swaps_per_team` 3, human approval for rares | +33 to +55 raw per rare; `buyer_rank_enabled` is false |
 | 5 | **Ladder by level, three per round**: Abuela, Chato, Pilar, Pícaros; Banco feasibility is UNVERIFIED, see below | `dealer buy`, `agent taker` | level caps and quotas per dealer (`bazaar dealers`) | 16 of 74 threads settled; 3 deals per level = the component |
 | 6 | **Workshop only for a missing rare** | `bazaar taller` | `taller_enabled`, `max_taller_per_game_hour` 2 | luck; never scores by itself |
@@ -160,7 +162,10 @@ or an `auto` venue beside it (`max_venues` 2, opened by hand). **Never merge or 
   at the round start with +150 P: scan `cards_heartbeat` for the 12 new cards and buy page cards below `your_value`.
 - [ ] Round 3 first 40 minutes (160 ticks) is the ramp: ladder deals count by the share of the day played; do the best three early.
 - [ ] **Duels III about 13:34** (12 ticks, decay 0.10, at most 4 at once): freeze main from 13:15; `duel run --play`;
-  duel points are saturated, so do not trade the ladder slot for them: keep dealer threads on non-accept ticks.
+  check the active round in `/api/schedule` and current-round score evidence before deprioritizing duels. Saturday's
+  totals do not establish Sunday's saturation, and whether duel points restart is UNVERIFIED. Unless current-round
+  evidence establishes saturation, preserve duels-first accepts and use remaining ticks for dealer accepts;
+  dealer messages may continue within the per-thread and shared request limits.
 - [ ] Throughout: one move per tick that changes a raw leg (ledger section 6): a legal Pilar sale at her final, a Pícaros
   buy, a page-completing buy, a duplicate sold to the team that needs it. Skip if no candidate passes every hard rule.
 - [ ] The briefing says the dealer stalls close at game hour 21.65 (the finale): read `/api/clock` and `/api/schedule` for the
