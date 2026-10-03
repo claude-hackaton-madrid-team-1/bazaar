@@ -225,7 +225,7 @@ def local_sim_url(port: str | None) -> str:
     workers' simulators). Always loopback: the port is the only part that moves, and only for BAZAAR_SIM=local."""
     if port is None:
         return LOCAL_SIM_URL
-    if not port.isdigit() or not 1024 <= int(port) <= 65535:
+    if not (port.isascii() and port.isdigit()) or not 1024 <= int(port) <= 65535:  # "²".isdigit() is True
         raise ConfigError("BAZAAR_SIM_PORT must be a port number from 1024 to 65535 (the laptop simulator's port).")
     return f"http://127.0.0.1:{int(port)}"
 

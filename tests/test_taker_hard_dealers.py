@@ -245,3 +245,12 @@ def test_two_commitments_in_one_tick_never_take_cash_below_the_floor(tmp_path):
     roomy = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"], "cash": 310})  # 40 above: both fit
     two_dealer_taker(tmp_path / "roomy", roomy, threads=3).on_tick(clock())
     assert [s for s in roomy.sent if s[0] == "say"] == [("say", 5000, 25), ("say", 5001, 10)]
+
+
+def test_a_card_another_process_is_negotiating_gets_no_second_thread(tmp_path):
+    # security #158 r2 P3-B: the cards of every open thread of ours are busy, not only this process's
+    other = {"id": 900, "with": "abuela", "status": "open", "topic": {"buy": {"card": "LAV-08"}}}
+    team = FakeTeam(me=CHATO_ME, threads=[other])
+    t, _, _ = taker(tmp_path, team, lift=0.15)
+    t.on_tick(clock())
+    assert not [s for s in team.sent if s[0] == "open_thread" and s[2] == {"buy": {"card": "LAV-08"}}]

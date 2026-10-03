@@ -30,6 +30,7 @@ from bazaar_agent.agents.dealer import (
     apply_advice,
     bid_words,
     reopen_start,
+    requested_item,
     template_words,
 )
 from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
@@ -492,7 +493,12 @@ class Taker:
         moves = self._unblocked(run, moves, busy)
         cash_room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
         moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
-        for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
+        # Every card in a thread of ours is busy, this process's or another's (security #158 r2 P3-B): with the
+        # lift on, two dealers may sell one card, and two threads for it could both close.
+        busy_items = {c.item for c in self.convs.values()} | {
+            item for t in threads if (item := requested_item(t.get("topic") or {})) is not None
+        }
+        for op in openings(moves, busy, busy_items, room):
             self._open_one(run, op, ctx)
 
     def _unblocked(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:

@@ -13,7 +13,7 @@ LIFT = parse_guardrails("- `dealer_final_lift` = 0.15 — x").rules
 SURPLUS = 8.0
 # Chato's uncommons, Friday ticks 99-159 (feed): fills 28-32, opening 33, a final after ~6 bids.
 FILLS = (28, 28, 29, 29, 31, 32)
-CURVE = CurveStats("chato", "card:uncommon", 13, FILLS, (33,) * 11, 3, 6.0, 1.0, None, (187, 228, 253))
+CURVE = CurveStats("chato", "card:uncommon", 13, FILLS, (33,) * 11, 3, 6.0, 1.0, None, (187, 228, 253), 0, FILLS)
 
 
 def chato_move(value=45.0, ladder=(26, 26, 1)):
@@ -155,7 +155,8 @@ def test_openings_never_open_two_threads_for_one_card_in_the_same_tick():
 
 def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lift_is_skipped():
     rare = replace(chato_move(value=157.0, ladder=(80, 80, 1)), ref="LAV-10", rarity="rare", price=91.0)
-    rares = CurveStats("chato", "card:rare", 15, (82, 89, 90, 91, 93), (97,) * 15, 4, 5.0, 1.5, None, (201, 219))
+    rare_fills = (82, 89, 90, 91, 93)
+    rares = CurveStats("chato", "card:rare", 15, rare_fills, (97,) * 15, 4, 5.0, 1.5, None, (201, 219), 0, rare_fills)
     plan = plan_dealer_buy(rare, None, rares, LIFT, SURPLUS, room=83)  # cash 353 - floor 270
     assert plan.move is None and plan.skip == "cash: what we may still commit is below chato card:rare fills ~91"
     assert plan_dealer_buy(rare, None, rares, LIFT, SURPLUS, room=120).final_max == 92
@@ -195,3 +196,10 @@ def test_the_patience_play_runs_only_where_the_dealer_fills_above_our_top():
     assert plan.changed_by == [
         "dealer_final_lift 0.15: take a final up to 29 after 4 bids (our bids stay at or under 26)"
     ]
+
+
+def test_a_fill_at_the_dealers_opening_ask_is_not_price_history():
+    # security #158 r2 P3-A: one rival paying the opening ask as is says nothing about the dealer's limit
+    opening_only = CurveStats("nuevo", "card:uncommon", 1, (33,), (33,), 0, None, None, None, (9,), 0, ())
+    mv = replace(chato_move(), source="nuevo")  # its fills ~28 sit above our top 26
+    assert plan_dealer_buy(mv, None, opening_only, LIFT, SURPLUS, room=100).skip.startswith("no price history")

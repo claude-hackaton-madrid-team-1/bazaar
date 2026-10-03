@@ -132,7 +132,9 @@ def plan_dealer_buy(
         return DealerPlan(mv)
     # The lift only for a dealer and class with price history (fills seen): an unknown dealer (an L4 trickster)
     # never gets a final above the cap on its first conversations.
-    history = bool(curve is not None and curve.fills) or bool(policy is not None and policy.fills)
+    # Only informative fills count (security #158 r2 P3-A): a rival paying a new dealer's opening ask as is says
+    # nothing about its limit and must not unlock the lift. A policy's fills are informative ones already.
+    history = bool(curve is not None and curve.informative_fills) or bool(policy is not None and policy.fills)
     ladder, notes, reasons = mv.ladder, list[Note](), list[str]()
     if policy is not None:
         planned, why = policy.plan(ladder)
