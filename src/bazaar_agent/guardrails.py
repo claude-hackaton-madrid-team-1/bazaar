@@ -77,6 +77,14 @@ class Guardrails(BaseModel):
     protect_page_sets: str = "none"
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
+    team_threads_enabled: bool = False
+    team_threads_max_open: int = Field(default=2, ge=0, le=6)
+    team_threads_dealer_reserve: int = Field(default=3, ge=0, le=6)
+    team_thread_max_messages: int = Field(default=12, ge=1, le=100)
+    team_thread_idle_ticks: int = Field(default=3, ge=1)
+    team_swap_min_surplus: float = Field(default=3.0, ge=0)
+    team_swap_max_their_share: float = Field(default=0.6, gt=0, le=1)
+    team_swap_max_our_share: float = Field(default=0.85, gt=0, le=1)
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -128,6 +136,14 @@ ENFORCED_BY: dict[str, str] = {
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
+    "team_threads_enabled": "agents.team_desk (read every tick, with BAZAAR_TEAM_THREADS=0 as the kill flag)",
+    "team_threads_max_open": "agents.team_desk (openings)",
+    "team_threads_dealer_reserve": "agents.team_desk (openings leave these conversation slots to dealers)",
+    "team_thread_max_messages": "agents.team_desk (walks after this many of our messages)",
+    "team_thread_idle_ticks": "agents.team_desk (closes a silent thread)",
+    "team_swap_min_surplus": "swaps.judge (every proposal and accept)",
+    "team_swap_max_their_share": "swaps.judge (every proposal and accept)",
+    "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
 }
 
 
