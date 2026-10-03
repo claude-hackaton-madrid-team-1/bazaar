@@ -78,8 +78,9 @@ class StepJitter:
         if self.jump_max <= base or rng.random() >= (self.jump_share if below else self.band_jump_share):
             return base
         jump = rng.randint(base + 1, self.jump_max)
-        if below:
-            return max(base, min(jump, plan.start - last))
+        if below:  # land at most on the start, and never on or within the band gap of her ask
+            top = plan.start if ask is None else min(plan.start, ask - max(1, self.band_gap))
+            return max(base, min(jump, top - last))
         if self.band_gap and (ask is None or last + jump > ask - self.band_gap):
             return base
         return jump
@@ -96,11 +97,14 @@ def make_jitter(
     seed: int,
     max_price: int,
 ) -> StepJitter | None:
-    """The jitter for a plan whose max is `max_price`, or None when every knob is off (today's ladder).
-    `min_step` is `min_step_pct` of the max, our stand-in for the item's book (the max sits at or above
-    the dealer's list price for every class we buy, so the minimum is never too small). Seed 0 draws a
-    seed once per process: a committed seed plus the public thread id would let anyone replay our bids."""
-    if start_spread <= 0 and jump_share <= 0 and band_jump_share <= 0:
+    """The jitter for a plan whose max is `max_price`, or None when no knob can change a bid (today's
+    ladder). A below-start jump needs a first bid under the start, so `jump_share` alone is off: on its
+    own it would only raise the steps to `min_step`. `min_step` is `min_step_pct` of the max, our
+    stand-in for the item's book: for every class W3 plans (Abuela 12 / 25 / 24 against list 10 / 25 / 26,
+    El Chato 31 / 93 against 30 / 90) 2 % of either rounds up to the same step; a plan whose max sits far
+    under the list price would get too small a minimum. Seed 0 draws a seed once per process: a committed
+    seed plus the public thread id would let anyone replay our bids."""
+    if start_spread <= 0 and band_jump_share <= 0:
         return None
     return StepJitter(
         seed or PROCESS_SEED,

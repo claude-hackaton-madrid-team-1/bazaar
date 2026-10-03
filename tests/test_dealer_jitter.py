@@ -275,3 +275,17 @@ def test_a_band_gap_allows_a_jump_only_while_her_ask_is_far_above_where_it_lands
         assert far.next_bid() in (24, 25)  # a jump: her ask 35 is at least 3 above 24 or 25
         assert near.next_bid() == 23  # 24 or 25 would land within 3 of her ask 26: the base step
         assert Negotiation(always, bids=[22], salt=salt).next_bid() == 23  # no ask seen yet: no jump
+
+
+def test_a_below_start_jump_alone_changes_nothing_so_it_stays_off():
+    alone = dict(start_spread=0, jump_share=1.0, band_jump_share=0.0, jump_max=3, band_gap=0, min_step_pct=0.02)
+    assert make_jitter(seed=7, max_price=93, **alone) is None  # type: ignore[arg-type]
+
+
+def test_a_below_start_jump_never_lands_on_or_near_her_ask():
+    plan = jittered(BidPlan(21, 1, 25), 3, start_spread=6, jump_share=1.0, jump_max=6, band_gap=2)
+    for salt in map(str, range(300)):
+        neg = Negotiation(plan, bids=[15], salt=salt)
+        neg.see_ask(19)  # she came down under our start
+        nxt = neg.next_bid()
+        assert nxt is not None and nxt <= 17  # at most her ask − gap, never the start 21

@@ -289,7 +289,9 @@ def dealer_buy(
     dealer: str = typer.Option("abuela", help="Dealer id"),
     live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
     jev: bool = typer.Option(False, help="Ask Jev negotiation_move each tick (advisory, inside the limit)"),
-    jitter: bool = typer.Option(False, help="Randomise the steps with STRATEGY.md's dealer_jitter_* knobs (B12)"),
+    jitter: bool | None = typer.Option(
+        None, "--jitter/--no-jitter", help="Randomise the steps (B12). Default: as STRATEGY.md's dealer_jitter_* knobs"
+    ),
 ) -> None:
     """Buy one card or pack from a dealer: rising distinct bids, accept at our next bid, hard max."""
     from bazaar_agent import guardrails as gr
@@ -298,10 +300,10 @@ def dealer_buy(
 
     rules = _rules().rules
     plan = BidPlan(start, step, max_price)
-    if jitter:
-        drawn = dealer_jitter(_strategy().params, max_price)
-        if drawn is None:
-            _fail("--jitter: every dealer_jitter_* knob in STRATEGY.md is 0, nothing to randomise")
+    drawn = dealer_jitter(_strategy().params, max_price) if jitter is not False else None
+    if jitter and drawn is None:
+        _fail("--jitter: every dealer_jitter_* knob in STRATEGY.md is 0, nothing to randomise")
+    if drawn is not None:
         plan = replace(plan, jitter=drawn)
     topic = {"buy": {"pack": item}} if "-" not in item else {"buy": {"card": item}}
     rarity = _rarity_of(item)
@@ -311,7 +313,8 @@ def dealer_buy(
     if not live:
         schedule = bid_schedule(plan)
         console.print(
-            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}{' (one draw)' if jitter else ''}, "
+            f"[yellow]dry run[/yellow] {dealer} {topic}: bids {schedule}"
+            f"{' (one draw: the live thread draws its own from its id)' if drawn else ''}, "
             "accept any ask ≤ next bid, "
             f"walk above {max_price}. Add --live to trade."
         )

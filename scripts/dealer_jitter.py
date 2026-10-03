@@ -8,7 +8,8 @@ and today's lowest-fill ladders (`ladder_floor_quantile` = 0). Dealers: W3's mod
 team's Friday threads (`tests/fixtures/evals/dealer_threads.json`), under W3's rule and under B12's
 step-capped rule, plus the real threads replayed with their limit at the top and bottom of their bracket.
 A level passes when, in every gated cell (Abuela) and at both reply speeds, share ≥ `--share-bar` × the
-deterministic plan's. A missed deal scores 0, so the deal rate is inside the share; its change is shown.
+deterministic plan's (a missed deal scores 0, so the deal rate is inside the share), and a deal takes at most
+`--max-extra-ticks` more ticks on average at two ticks per round.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -58,11 +60,13 @@ def base_key(src: str, c: Cell) -> BaseKey:
     return (src, c.dealer, c.price_class, c.plan, c.rule)
 
 
-def gate(cells: Sequence[Tagged], base: dict[BaseKey, Cell], bar: float) -> dict[str, Any]:
+def gate(cells: Sequence[Tagged], base: dict[BaseKey, Cell], bar: float, max_ticks: float) -> dict[str, Any]:
     """The worst change against the deterministic plan over `cells` (one round per tick and two), and
     whether it passes: share ≥ `bar` × the plan's at both speeds (a missed deal is share 0, so the deal
-    rate is inside it; its change is reported, not gated)."""
+    rate is inside it), and a deal takes at most `max_ticks` more ticks on average at two ticks per round
+    (Friday's Abuela answered on the next tick 72 % of the time; Abuela allots 8 deals per hour)."""
     worst = {"share_ratio": 9.0, "lag_share_ratio": 9.0, "deal": 0.0, "lag_deal": 0.0, "fill": 0.0, "lag_fill": 0.0}
+    worst["extra_ticks"] = 0.0
     for src, c in cells:
         b = base[base_key(src, c)]
         worst["share_ratio"] = min(worst["share_ratio"], c.ratio(b))
@@ -71,7 +75,9 @@ def gate(cells: Sequence[Tagged], base: dict[BaseKey, Cell], bar: float) -> dict
         worst["lag_deal"] = min(worst["lag_deal"], c.lagged.deal_rate - b.lagged.deal_rate)
         worst["fill"] = min(worst["fill"], c.summary.fill_within - b.summary.fill_within)
         worst["lag_fill"] = min(worst["lag_fill"], c.lagged.fill_within - b.lagged.fill_within)
-    ok = min(worst["share_ratio"], worst["lag_share_ratio"]) >= bar
+        if c.lagged.mean_ticks is not None and b.lagged.mean_ticks is not None:
+            worst["extra_ticks"] = max(worst["extra_ticks"], c.lagged.mean_ticks - b.lagged.mean_ticks)
+    ok = min(worst["share_ratio"], worst["lag_share_ratio"]) >= bar and worst["extra_ticks"] <= max_ticks
     return {**{k: round(v, 3) for k, v in worst.items()}, "pass": ok}
 
 
@@ -105,6 +111,7 @@ def main() -> None:
     ap.add_argument("--runs", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--share-bar", type=float, default=0.95)
+    ap.add_argument("--max-extra-ticks", type=float, default=1.0, help="per deal, at two ticks per round")
     ap.add_argument("--replays", type=int, default=10, help="jitter draws per real thread replayed")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--json", type=Path)
@@ -121,9 +128,12 @@ def main() -> None:
             print(f"{key} {family} done", flush=True)
 
     base = {base_key(src, c): c for src, c in cells if c.level == OFF.name}
+    by_level: dict[str, list[Tagged]] = defaultdict(list)
+    for src, c in cells:
+        by_level[c.level].append((src, c))
     frontier = []
     for level in lv:
-        mine = [(src, c) for src, c in cells if c.level == level.name]
+        mine = by_level[level.name]
         abuela = [(src, c) for src, c in mine if (c.dealer, c.price_class) in W3]
         chato = [(src, c) for src, c in mine if (c.dealer, c.price_class) in CHATO]
         w3_model = [c for src, c in abuela if src == "model:w3" and c.rule == "w3"]
@@ -137,8 +147,8 @@ def main() -> None:
                     "jump_max": level.jump_max,
                     "band_gap": level.band_gap,
                 },
-                "abuela": gate(abuela, base, args.share_bar),
-                "chato": gate(chato, base, args.share_bar),
+                "abuela": gate(abuela, base, args.share_bar, args.max_extra_ticks),
+                "chato": gate(chato, base, args.share_bar, args.max_extra_ticks),
                 "mean_share_ratio": round(mean(c.ratio(base[base_key(src, c)]) for src, c in abuela), 3),
                 "hit_next": round(mean(c.predict.hit_rate for c in w3_model), 3),
                 "hit_first": round(mean(c.predict.first_hit_rate for c in w3_model), 3),
@@ -173,6 +183,7 @@ COLUMNS = (
     ("worst share ×", lambda f: f"{f['abuela']['share_ratio']:.3f}"),
     ("worst share × (2 ticks/round)", lambda f: f"{f['abuela']['lag_share_ratio']:.3f}"),
     ("worst deal Δ", lambda f: f"{min(f['abuela']['deal'], f['abuela']['lag_deal']):+.3f}"),
+    ("worst extra ticks per deal (2 ticks/round)", lambda f: f"{f['abuela']['extra_ticks']:+.2f}"),
     ("worst fill-8 Δ (2 ticks/round)", lambda f: f"{f['abuela']['lag_fill']:+.3f}"),
     ("mean share ×", lambda f: f"{f['mean_share_ratio']:.3f}"),
     ("Chato worst share ×", lambda f: f"{min(f['chato']['share_ratio'], f['chato']['lag_share_ratio']):.3f}"),
@@ -190,7 +201,8 @@ def render(frontier: list[dict[str, Any]]) -> list[str]:
         "",
         "Gate (Abuela common, uncommon, pack; W3's and today's plans; W3's fitted dealers, the step-capped ones",
         "and the real threads replayed at the top and bottom of their bracket; one round per tick and two):",
-        "share ≥ 0.95 × the deterministic plan's in every cell (a missed deal scores 0; deal and fill changes shown).",
+        "share ≥ 0.95 × the deterministic plan's in every cell (a missed deal scores 0) and at most +1 tick per deal",
+        "at two ticks per round (deal and fill changes shown).",
         "`hit` = a rival's exact-price hit rate on our bids (W3 plans, fitted dealers); today's ladder: 1.000.",
         "",
         "| " + " | ".join(head) + " |",

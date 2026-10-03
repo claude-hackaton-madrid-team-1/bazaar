@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from statistics import mean
 
-from bazaar_agent.agents.dealer import BidPlan, Negotiation, StepJitter, decide
+from bazaar_agent.agents.dealer import BidPlan, Negotiation, StepJitter, decide, make_jitter
 from bazaar_agent.ladder import Conversation
 from bazaar_agent.ladder_replay import DealerModel, Episode, Result, Summary, draw, episode_from, play, summarise
 
@@ -56,19 +56,27 @@ class Level:
     band_gap: int = 0
     force: bool = False  # build the jitter even with every share at 0: the minimum step alone
 
-    @property
-    def off(self) -> bool:
-        return not self.force and self.start_spread <= 0 and self.jump_share <= 0 and self.band_jump_share <= 0
-
     def plan(self, plan: BidPlan, seed: int) -> BidPlan:
-        """`plan` with this level's jitter drawn from `seed` (unchanged when the level is off)."""
-        if self.off:
-            return plan
-        min_step = max(1, math.ceil(self.min_step_pct * plan.max_price - 1e-9))
-        jitter = StepJitter(
-            seed, self.start_spread, self.jump_share, self.band_jump_share, self.jump_max, min_step, self.band_gap
-        )
-        return replace(plan, jitter=jitter)
+        """`plan` with this level's jitter drawn from `seed`, built as the runtime builds it
+        (`dealer.make_jitter`); unchanged when the level is off."""
+
+        def build(spread: int) -> StepJitter | None:
+            return make_jitter(
+                start_spread=spread,
+                jump_share=self.jump_share,
+                band_jump_share=self.band_jump_share,
+                jump_max=self.jump_max,
+                band_gap=self.band_gap,
+                min_step_pct=self.min_step_pct,
+                seed=seed,
+                max_price=plan.max_price,
+            )
+
+        jitter = build(self.start_spread)
+        if jitter is None and self.force:  # the minimum step alone: built on, then the spread taken back
+            on = build(1)
+            jitter = None if on is None else replace(on, start_spread=0)
+        return plan if jitter is None else replace(plan, jitter=jitter)
 
 
 OFF = Level("off")
@@ -89,7 +97,8 @@ class StepCapped:
         self.offer_id = 1
 
     def answer(self, bid: int) -> str | None:
-        ep, step = self.ep, bid - self.last_bid if self.last_bid is not None else 0
+        ep, first = self.ep, self.last_bid is None
+        step = 0 if self.last_bid is None else bid - self.last_bid
         self.bids += 1
         self.last_bid = bid
         if bid >= ep.limit or (self.ask is not None and bid >= self.ask):
@@ -106,7 +115,8 @@ class StepCapped:
                 give = ep.first_drop
             else:
                 give = ep.later_drops[(self.counters - 2) % len(ep.later_drops)]
-            give = min(give, step) if step >= self.min_step else 0
+            if not first:  # our first price is a move from nothing: her first counter to it is not capped
+                give = min(give, step) if step >= self.min_step else 0
             self.ask = max(ep.limit, self.ask - give)
         if self.bids >= ep.patience:
             self.final = True
@@ -276,7 +286,7 @@ class Cell:
 
     def ratio(self, base: Cell, *, lagged: bool = False) -> float:
         mine, theirs = (self.lagged, base.lagged) if lagged else (self.summary, base.summary)
-        return mine.mean_share / theirs.mean_share if theirs.mean_share else 0.0
+        return mine.mean_share / theirs.mean_share if theirs.mean_share else 1.0  # nothing to lose
 
 
 def replay_episodes(convs: Iterable[Conversation], dealer: str, price_class: str, at: str) -> list[Episode]:
