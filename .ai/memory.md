@@ -419,6 +419,12 @@ browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title o
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
 
+### [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
+The simulator numbers duels and threads from 1 like the game, so sim duel 85 is not our duel 85. A
+simulator run must never write scores onto the real Phoenix traces: with `BAZAAR_SIM`, the agents'
+in-loop evals and `bazaar evals run` keep their outcomes in the simulator's Postgres (no annotation),
+and every trace goes to the `<project>-sim` Phoenix project (telemetry.tracing_config).
+
 ### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
 `docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
 "0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).

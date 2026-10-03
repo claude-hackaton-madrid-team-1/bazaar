@@ -23,7 +23,7 @@ its money? The game's rule is ours too: words persuade, structure binds.
 
 **ES:** Nuestra historia es una. Nuestros agentes *negocian con lenguaje*. *Ejecutan acuerdos verificables*: una oferta estructurada,
 unas reglas ejecutables, un único libro de cuentas compartido. *Aprenden de los resultados*: puntuamos cada negociación, la convertimos en
-una lección y la recuperamos antes de la siguiente. Y Jev decide cuándo actuar. [C1][C3][C4]
+una lección y la recuperamos antes de la siguiente. Y Jev decide cuándo actuar. [C1][C3][C4] Del aprendizaje, hoy solo diré lo que está probado: el bucle está construido y reproducido sobre los datos reales del viernes. [C38]
 Lo importante es que cada pieza limita a las otras. El lenguaje puede equivocarse, así que la estructura obliga. La estructura puede ser
 demasiado rígida, así que los resultados la enseñan. Y cuando Jev no supera su umbral, dice «indeciso» y se ejecuta lo seguro.
 {{Si el aprendizaje no está desplegado el sábado: «el bucle de aprendizaje está construido y probado sobre los datos reales del viernes;
@@ -31,7 +31,7 @@ lo que enseñamos hoy de él es esa reproducción». [C38]}}
 
 **EN:** Our story is one story. Our agents *negotiate through language*. They *execute verifiable agreements*: a structured offer,
 executable rules, one shared ledger. They *learn from outcomes*: we score every negotiation, turn it into a lesson and recall it before
-the next one. And Jev decides when to act.
+the next one. And Jev decides when to act. On learning, today I will only say what is proven: the loop is built and reproduced on Friday's real data. [C38]
 What matters is that each piece limits the others. Language can be wrong, so structure binds. Structure can be too rigid, so outcomes
 teach it. And when Jev does not clear its bar, it says "undecided" and the safe default runs.
 {{If the learner is not deployed on Saturday: "the learning loop is built and tested on Friday's real data; what we show today is that
@@ -42,14 +42,12 @@ reproduction." [C38]}}
 **ES:** Primera prueba: un trato real, no una simulación. {{Sábado, tick N: compramos CARTA a DEALER por X primas, hilo T, liquidación S.}}
 *(Respaldo, viernes: tick 55, Abuela, la carta LAV-03. Nuestra puja fue 6, su precio 7, y cerramos en 3 ticks.* [C10]*)*
 Mirad las cinco líneas. La oferta que vimos. Nuestra puja y su respuesta, en el hilo. El visto bueno de las reglas, que fijó el número
-dentro de un límite. La liquidación, que es una fila pública que cualquiera puede buscar. Y el efecto en la puntuación. El modelo escribió
-las palabras; el precio lo puso el código; el trato se cerró sobre una oferta estructurada que las dos partes aceptaron.
+dentro de un límite. La liquidación, que es una fila pública que cualquiera puede buscar. Y el efecto en la puntuación. El precio lo puso el código dentro de un límite; el trato se cerró sobre una oferta estructurada que las dos partes aceptaron. {{Si es un trato del sábado con la capa de lenguaje: «las palabras las escribió el modelo». El trato de respaldo del viernes lo hizo el ejecutor determinista, sin LLM: no digas que el modelo escribió nada.}}
 
 **EN:** First proof: a real deal, not a simulation. {{Saturday, tick N: we bought CARD from DEALER for X primas, thread T, settlement S.}}
 *(Fallback, Friday: tick 55, Abuela, card LAV-03. Our bid was 6, her ask 7, and we closed in 3 ticks.* [C10]*)*
 Look at the five lines. The offer we saw. Our bid and her reply, in the thread. The guardrail verdict, which let a number through inside
-a limit. The settlement, which is a public row anyone can look up. And the effect on the score. The model wrote the words; code set the
-price; the deal closed on a structured offer both sides agreed.
+a limit. The settlement, which is a public row anyone can look up. And the effect on the score. Code set the price inside a limit; the deal closed on a structured offer both sides agreed. {{If it is a Saturday deal with the words layer: "the model wrote the words". The Friday fallback deal ran on the deterministic runner, no LLM: do not say the model wrote anything.}}
 
 ## 4 · Prueba 2: una oferta engañosa / Proof 2: a deceptive offer (1:00)
 
@@ -59,7 +57,7 @@ El texto dice: «La Dama de Serrano, la legendaria. Solo 120». La oferta estruc
 compara las dos antes de aceptar. Resultado: rechazada, y no gastamos el único accept del tick. [C21]
 Alrededor: 168 casos hostiles por todos los caminos que leen texto de la contraparte, cero campos vinculantes cambiados. [C24] El
 inspector no marcó ninguna de las 1.022 ofertas honestas del viernes. [C22] Y el cortafuegos que bloquea una escritura fuera de política
-ya está en producción; en una prueba con el Claude Code real bloqueó una compra por encima del tope. [C2][C26]
+ya está integrado en main; en una prueba con el Claude Code real bloqueó una compra por encima del tope. [C2][C26]
 {{Si hay un Trickster real el sábado y el inspector lo rechazó: sustituir todo el párrafo por ese caso, con su hilo y la fila de decisión.}}
 
 **EN:** Second proof, and I start with what we do not know: nobody has attacked us for real yet. Friday had zero injection attempts in
@@ -67,7 +65,7 @@ ya está en producción; en una prueba con el Claude Code real bloqueó una comp
 The text says: "La Dama de Serrano, the legendary. Only 120." The structured offer, the part that binds, links a common card. The
 inspector compares the two before accepting. Result: refused, and we do not spend the tick's single accept. [C21]
 Around it: 168 hostile cases through every path that reads counterparty text, zero binding fields changed. [C24] The inspector flagged
-none of Friday's 1,022 honest offers. [C22] And the guard that blocks an out-of-policy write is already in production; in a test with the
+none of Friday's 1,022 honest offers. [C22] And the guard that blocks an out-of-policy write is merged on main; in a test with the
 real Claude Code it blocked a buy above our cap. [C2][C26]
 {{If a real Trickster appears on Saturday and the inspector refused it: replace this whole paragraph with that case, its thread and the
 decision row.}}
@@ -116,7 +114,7 @@ from Saturday afternoon, of a real deal."
 
 **ES:** Tres lecciones. Una: medir antes de adivinar; la regla de los duelos, la de desbloqueo de niveles y hasta el reloj los sacamos de
 nuestros propios datos. [C6][C7] Dos: hablar menos rinde más, porque el silencio es gratis cuando hablar tiene un coste. Tres: los
-resultados negativos cuentan; el arbitraje entre mercados tuvo cero cruces rentables el viernes. Lo que haríamos distinto: leer la regla
+resultados negativos cuentan; el arbitraje entre mercados tuvo cero cruces rentables el viernes. [C66] Lo que haríamos distinto: leer la regla
 del descuento en el primer duelo, no después; sacar la pantalla del operador antes de salir en vivo; y fusionar menos con el juego abierto.
 Para Causa Prima: los términos vinculantes viven en un archivo de política revisado, nunca en un prompt; el tiempo de negociar tiene
 precio, que en una factura son días de pago; y se puede negociar importe contra plazo. Y cada decisión se puede auditar.
@@ -124,7 +122,7 @@ Cierro con la frase: el lenguaje negocia, la estructura obliga, los resultados e
 
 **EN:** Three lessons. One: measure before you guess; the duel rule, the level-unlock rule and even the clock came from our own data.
 [C6][C7] Two: talking less earns more, because silence is free when talking has a cost. Three: negative results count; cross-market
-arbitrage had zero profitable crossings on Friday. What we would do differently: read the decay rule on the first duel, not after; ship
+arbitrage had zero profitable crossings on Friday. [C66] What we would do differently: read the decay rule on the first duel, not after; ship
 the operator screen before going live; and merge less while the game is open. For Causa Prima: binding terms live in a reviewed policy
 file, never in a prompt; the time of negotiating has a price, which on an invoice is days of float; and amount can be traded against
 payment terms. And every decision can be audited.

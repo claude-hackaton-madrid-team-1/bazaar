@@ -45,7 +45,7 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   4. **Jev**: decides when to act; below its bar it says "undecided" and the safe default runs. [C4]
 - **Say:** the point is not four tools; it is that each one limits the others. Language can be wrong, so structure binds. Structure can be
   too rigid, so outcomes teach it. Learning can drift, so Jev gates acting and guardrails bound it.
-- **Do not claim** the learner is running live unless C38's PENDING row has become REAL (see `claims.md` §G).
+- **Say only** that the learning loop is built and reproduced on Friday's real data. **Do not claim** the learner is running live unless C38's PENDING row has become REAL (see `claims.md` §G).
 - **Badge:** REAL (architecture), PENDING (learning loop) until verified.
 
 ## Slide 3 · Proof 1: a real deal and its settlement (1:00)
@@ -59,8 +59,7 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 - **Today's placeholder (REAL, Friday):** LAV-03 from Abuela at 7 P, thread 99, tick 55; bid 6, ask 7, accepted in 3 ticks. [C10]
 - **Saturday replacement [C13, PENDING]:** the best clean deal of the afternoon (a dealer deal where the learned ladder or the inspector
   mattered). Chosen using `evidence.md` §3; replace the placeholder text and the screenshot.
-- **Say:** this is not a simulation. It is a thread id and a settlement id you can look up on the board. The model wrote the words; the
-  number was set by code inside a limit; the deal closed on a structured offer both sides agreed.
+- **Say:** this is not a simulation. It is a thread id and a settlement id you can look up on the board. Code set the number inside a limit (say "the model wrote the words" only for a Saturday deal that used the words layer; the Friday fallback ran on the deterministic runner); the deal closed on a structured offer both sides agreed.
 - **Badge:** REAL.
 
 ## Slide 4 · Proof 2: a deceptive offer, stopped (1:00)
@@ -110,8 +109,7 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 - **Three learnings, one line each:**
   1. Measure before you guess: the duel decay rule, the unlock rule and the clock were all found in our own data. [C6][C7]
   2. Talk less, earn more: silence is free under a decay rule. [C32]
-  3. Honest negatives count: cross-venue arbitrage had 0 profitable crossings on Friday; pages could not be finished under our caps.
-     (`docs/pitch/story.md` Act 4)
+  3. Honest negatives count: cross-venue arbitrage had 0 profitable crossings on Friday; pages could not be finished under our caps. [C66]
 - **What we would do differently:** read the decay rule on the first practice duel; ship the operator screen before going live; merge less
   while live, because each merge redeploys the trading services.
 - **Why it matters to Causa Prima:** binding terms in a reviewed policy file, never in a prompt; price the time of talking (days of float

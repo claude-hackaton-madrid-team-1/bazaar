@@ -12,7 +12,7 @@ Saturday 04:30 facts may be stale). Commands here were checked against the code 
 | Check | How | If it fails |
 |---|---|---|
 | Services up | `curl -s https://bazaar-taker-production.up.railway.app/health` and the maker's; `curl -s https://bazaar-live-production.up.railway.app/health` | Go straight to the backup recording |
-| Phoenix logged in, trace open | https://phoenix-production-6aa3.up.railway.app, project `bazaar`, user `admin@localhost` (password is in Railway only; never on a slide or in the repo). Keep two tabs open: the chosen trace, and the Spans list | Screenshot of the trace (taken Saturday) |
+| Phoenix logged in, trace open | https://phoenix-production-6aa3.up.railway.app, project `bazaar`, login and password are in Railway only; never on a slide or in the repo. Keep two tabs open: the chosen trace, and the Spans list | Screenshot of the trace (taken Saturday) |
 | Bazaar Live sound gate clicked once | Open the URL, click "Start the show with sound" (or "Watch muted"), then leave it | `?mock=1&speed=2` plays recorded fixtures; say it is a recording |
 | `/state` shows only sent rows | Open `https://bazaar-taker-production.up.railway.app/state` and read it **before** the room | Do not show it; use the screenshot |
 | Database answers | `uv run bazaar db tables` (never show the URL) | Skip any on-screen SQL; use screenshots |
