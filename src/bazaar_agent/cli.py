@@ -1175,6 +1175,40 @@ def _jsonl_file(path: str) -> list[Event]:
     return sorted(events, key=lambda e: e["id"])
 
 
+@plan_app.command("levels")
+def plan_levels(
+    dealers_file: str | None = typer.Option(None, "--dealers", help=f"{FILE_HELP} (GET /api/dealers, or a list)"),
+    feed_file: str | None = typer.Option(None, "--feed", help="Read the feed from this JSONL capture"),
+    team: str = typer.Option("t01", "--team", help="Our team id"),
+    live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
+) -> None:
+    """The dealer levels (B21): each level's timeline from the feed (announced, activated, open to all),
+    which counting rule matches the server's 'N deals' unlock texts, and what each dealer's early unlock
+    needs from us (`GET /api/dealers` unlock) with our deals so far. Read-only."""
+    from bazaar_agent import level_path as lp
+
+    events = _jsonl_file(feed_file) if feed_file else _events(live)
+    personas = _json_file(dealers_file) if dealers_file else public_client(load_settings()).dealers()
+    dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
+    for t in lp.timelines(events):
+        console.print(
+            f"{t.name} ({t.dealer}): announced tick {t.announced}, activated tick {t.activated}, open to all "
+            f"tick {t.opened_to_all} (head start {t.head_start_hours} h); {t.early} teams early, {t.late} late"
+        )
+    for f in lp.fit_rules(events):
+        against = f" · contradicted by {', '.join(f.contradicted_by)}" if f.contradicted_by else ""
+        console.print(f"  rule '{f.rule}': matches {f.exact} of {f.teams} unlock counts{against}")
+    for r in lp.requirements(dealers, events, team):
+        need = (
+            f"{r.min_deals} deals with {r.deals_with} (ours {r.ours}, {r.missing} to go)"
+            if r.deals_with
+            else "open from the start"
+        )
+        console.print(
+            f"{r.dealer}: level {r.level} · {r.status} · early unlock: {need} · open to all at {r.open_to_all_at}"
+        )
+
+
 @plan_app.command("packs")
 def plan_packs(
     me_file: str | None = typer.Option(None, "--me", help=f"{FILE_HELP} (GET /api/me)"),

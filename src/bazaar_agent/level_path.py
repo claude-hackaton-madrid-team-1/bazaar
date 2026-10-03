@@ -1,0 +1,207 @@
+"""Levels: how the dealer ladder opened on Friday, read from the feed, and what the next early unlock needs.
+
+RULES.md: a level opens "at once to the teams that earned it (for a dealer, a few good deals with the one
+before: a deal at the dealer's opening price does not count, a negotiated one does) and to everyone
+after a head start". The feed shows it happen: `level.announced` (a teaser), `level.activated` (how it
+works, `opens_to_all_in_hours`), one `level.unlocked` per team (with a `why`: "4 deals with abuela", or
+"open to everyone now") and `persona.open_to_all`. `GET /api/dealers` carries each dealer's rule in
+`unlock` (`early_deals_with`, `early_min_deals`, `early_min_level`, `open_to_all_at`).
+
+This module lists those events, tests candidate counting rules against every team's "N deals" (which
+deals did the server count?), and counts our own deals toward the next level. Pure functions, no network.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from bazaar_agent import intel
+
+WHY = re.compile(r"(\d+) deals? with (\w+)")
+
+
+@dataclass(frozen=True)
+class Unlock:
+    team: str
+    tick: int
+    dealer: str  # the dealer this unlock opened
+    level: int | None
+    why: str
+    deals: int | None  # "N deals with <previous>": the count the server gave
+    previous: str | None  # the dealer those deals were with
+    open_to_all: bool  # unlocked by the head start running out, not by deals
+
+
+def unlocks(events: Iterable[intel.Event]) -> list[Unlock]:
+    out = []
+    for e in events:
+        if e.get("type") != "level.unlocked":
+            continue
+        p = e.get("payload") or {}
+        why = str(p.get("why") or "")
+        m = WHY.search(why)
+        level = p.get("level")
+        out.append(
+            Unlock(
+                str(p.get("team")),
+                int(e.get("tick", 0)),
+                str(p.get("persona") or p.get("level") or "?"),
+                int(level) if isinstance(level, int) else None,
+                why,
+                int(m[1]) if m else None,
+                m[2] if m else None,
+                "everyone" in why,
+            )
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class Timeline:
+    """One level's Friday: when it was announced, activated and opened to everyone (ticks)."""
+
+    dealer: str
+    name: str
+    teaser: str
+    announced: int | None
+    activated: int | None
+    opened_to_all: int | None
+    head_start_hours: float | None
+    how: str | None
+    early: int  # teams unlocked by deals
+    late: int  # teams unlocked when it opened to everyone
+
+
+def timelines(events: Sequence[intel.Event]) -> list[Timeline]:
+    info: dict[str, dict[str, Any]] = {}
+    for e in events:
+        kind, p = e.get("type"), e.get("payload") or {}
+        if kind in ("level.announced", "level.activated", "persona.open_to_all"):
+            dealer = str(p.get("persona") or p.get("level") or "?")
+            d = info.setdefault(dealer, {"name": p.get("name") or dealer, "teaser": p.get("teaser") or ""})
+            key = {"level.announced": "announced", "level.activated": "activated"}.get(str(kind), "opened")
+            d.setdefault(key, int(e.get("tick", 0)))
+            if kind == "level.activated":
+                d["how"], d["head"] = p.get("how"), p.get("opens_to_all_in_hours")
+    found = unlocks(events)
+    return [
+        Timeline(
+            dealer,
+            str(d["name"]),
+            str(d["teaser"]),
+            d.get("announced"),
+            d.get("activated"),
+            d.get("opened"),
+            d.get("head"),
+            d.get("how"),
+            sum(1 for u in found if u.dealer == dealer and not u.open_to_all),
+            sum(1 for u in found if u.dealer == dealer and u.open_to_all),
+        )
+        for dealer, d in info.items()
+    ]
+
+
+Rule = Callable[[intel.DealerThread], bool]
+
+# Candidate answers to "which deals did the server count?", each over one team's settled deals with the
+# previous dealer up to its unlock tick.
+RULES: dict[str, Rule] = {
+    "every deal": lambda t: True,
+    "buys": lambda t: t.side == "buy",
+    "not at the opening price": lambda t: t.fill_price != t.opening_ask,
+    "buys not at the opening price": lambda t: t.side == "buy" and t.fill_price != t.opening_ask,
+    "buys where we bid": lambda t: t.side == "buy" and bool(t.team_prices),
+}
+
+
+@dataclass(frozen=True)
+class RuleFit:
+    rule: str
+    exact: int  # teams whose count under this rule equals the server's "N deals"
+    teams: int
+    misses: tuple[tuple[str, int, int], ...]  # (team, server count, rule count)
+    contradicted_by: tuple[str, ...]  # teams never unlocked by deals although this rule gives them the minimum
+
+
+def deals_with(threads: Sequence[intel.DealerThread], team: str, dealer: str, up_to: int) -> list[intel.DealerThread]:
+    return [
+        t
+        for t in threads
+        if t.team == team and t.dealer == dealer and t.fill_price is not None and (t.fill_tick or 0) <= up_to
+    ]
+
+
+def fit_rules(events: Sequence[intel.Event], minimum: int = 3) -> list[RuleFit]:
+    """Each candidate counting rule against every team's server count. A team that only got in when the
+    level opened to everyone, while a rule credits it `minimum` deals before activation, contradicts it."""
+    threads = intel.dealer_threads(events)
+    found = unlocks(events)
+    counted = [u for u in found if u.deals is not None and u.previous]
+    late = [u for u in found if u.open_to_all]
+    activated = {t.dealer: t.activated for t in timelines(events)}
+    out = []
+    for name, rule in RULES.items():
+        misses = []
+        for u in counted:
+            n = sum(1 for t in deals_with(threads, u.team, str(u.previous), u.tick) if rule(t))
+            if n != u.deals:
+                misses.append((u.team, int(u.deals or 0), n))
+        previous = next((u.previous for u in counted), None)
+        contradicted = tuple(
+            u.team
+            for u in late
+            if previous
+            and sum(1 for t in deals_with(threads, u.team, previous, activated.get(u.dealer) or u.tick) if rule(t))
+            >= minimum
+        )
+        out.append(RuleFit(name, len(counted) - len(misses), len(counted), tuple(misses), contradicted))
+    return sorted(out, key=lambda f: (len(f.contradicted_by), -f.exact))
+
+
+@dataclass(frozen=True)
+class Requirement:
+    """What `GET /api/dealers` says a dealer needs for an early unlock, and our progress."""
+
+    dealer: str
+    level: int | None
+    status: str
+    deals_with: str | None
+    min_deals: int | None
+    min_level: int | None
+    open_to_all_at: Any
+    ours: int | None  # our deals with `deals_with` so far (buys not at the opening price)
+
+    @property
+    def missing(self) -> int | None:
+        return None if self.min_deals is None or self.ours is None else max(0, self.min_deals - self.ours)
+
+
+def requirements(dealers: Iterable[Mapping[str, Any]], events: Sequence[intel.Event], team: str) -> list[Requirement]:
+    threads = intel.dealer_threads(events)
+    out = []
+    for d in dealers:
+        unlock = d.get("unlock") or {}
+        previous = unlock.get("early_deals_with")
+        ours = None
+        if previous:
+            ours = sum(
+                1
+                for t in deals_with(threads, team, str(previous), 10**9)
+                if t.side == "buy" and t.fill_price != t.opening_ask
+            )
+        out.append(
+            Requirement(
+                str(d.get("id")),
+                d.get("level") if isinstance(d.get("level"), int) else None,
+                str(d.get("status") or "?"),
+                str(previous) if previous else None,
+                unlock.get("early_min_deals"),
+                unlock.get("early_min_level"),
+                unlock.get("open_to_all_at"),
+                ours,
+            )
+        )
+    return out
