@@ -325,7 +325,8 @@ Railway service has its own: "Pause writes" under "Production on Railway").
 
 Market making is 30 % of the score: the Market Test (every two hours every venue gets the same synthetic
 book; we score the share of possible gains our broker realises) and the value other teams create on our
-venue. On Railway the **maker** opens our `board` venue (0 bps) by itself on the first tick at or past game
+venue. **Off for now** (`allow_venue_open = false`, team decision Sat 06:08: our broker only equals the free
+stall, which opening would replace; no bond reserve is held while off). When switched on, the **maker** opens our `board` venue (0 bps) by itself on the first tick at or past game
 hour 6.5 (`venue_open_after_game_hours`, ~11:30 Madrid, before the 12:00 Market Test), once, and then runs
 its broker every tick: exact maximum-surplus matching, bench first, ties in book order like the free stall
 (so never below it on the same book), never two offers of one maker, never ours. Until the venue is open
@@ -1067,6 +1068,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
 - [2026-10-03] gotcha — stored /me loses `starter_broker_key`: read `has_starter_stall`
 - [2026-10-03] gotcha — /api/me: a venue next to `starter_broker_key` is the free stall, not ours
 - [2026-10-03] build-error — one Postgres blip locked the broker-key vault out of Postgres for good
@@ -1074,7 +1076,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — the exact matcher realised less than the stall on 2 of 200 sim benches
 - [2026-10-03] gotcha — another worker's simulator holds 127.0.0.1:8765 (BAZAAR_SIM=local)
 - [2026-10-03] finding — the exact broker equals the free stall on every modelled bench; only an edge beats it
-- [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
 
 <!-- BAZAAR:STATUS:END -->
 

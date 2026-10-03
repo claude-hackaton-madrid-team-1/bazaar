@@ -39,7 +39,7 @@ def test_price_caps_cash_floor_spend_cap_and_album():
     rules = REAL.rules
     assert gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), rules).allowed
     assert "max_price_common" in str(gr.check(gr.Action("bid", "LAV-03", "common", 13), ctx(), rules))
-    assert "cash_floor" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=300), rules))
+    assert "cash_floor" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=150), rules))
     assert "max_spend" in str(gr.check(gr.Action("buy", "LAV-03", "common", 9), ctx(spent_last_hour=145), rules))
     assert "already hold LAV-01" in str(gr.check(gr.Action("buy", "LAV-01", "common", 5), ctx(), rules))
 
@@ -101,11 +101,20 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
 VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
 
 
-def test_the_committed_file_opens_our_venue_at_game_hour_6_5_and_reserves_the_bond_until_then():
+def test_the_committed_file_keeps_our_venue_off_and_holds_no_bond_reserve():
+    """Team decision Sat 06:08: #71 ships with allow_venue_open = false. While it is false NO reserve is held:
+    the floor every writer sees is `cash_floor` alone (guardrails.effective_cash_floor zeroes the reserve)."""
     rules = REAL.rules
-    assert rules.allow_venue_open is True
+    assert rules.allow_venue_open is False
     assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (100, 270, 6.5)
-    assert gr.Guardrails().allow_venue_open is False  # the model's default stays off: only the file turns it on
+    for has_venue in (False, True):
+        c = ctx(cash=400, has_venue=has_venue)
+        assert gr.effective_cash_floor(rules, c) == rules.cash_floor
+        assert gr.floor_text(rules, c) == f"cash_floor {rules.cash_floor}"
+    # a buy that leaves cash_floor + 1 is allowed: it would be refused if the 270 reserve were applied
+    leaves_101 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=161), rules)
+    assert leaves_101.allowed, leaves_101
+    assert gr.Guardrails().allow_venue_open is False  # the model's default stays off too
 
 
 def test_allow_venue_open_false_refuses_every_venue_write_but_close():

@@ -463,3 +463,39 @@ def test_a_pause_that_lands_during_the_claim_stops_the_opening_and_gives_the_cla
     monkeypatch.setattr(vn.KeyVault, "claim", claim_then_pause)
     k.on_tick(snap().clock, snap(), window())
     assert team.opened == [] and store == {}
+
+
+def test_with_the_committed_switch_off_the_maker_never_sends_the_venue_opening(tmp_path):
+    """Team decision Sat 06:08: GUARDRAILS.md ships allow_venue_open = false. The maker, live, at game hour
+    7.0 with plenty of cash and a healthy vault, never POSTs /api/venues and never touches the vault."""
+    from bazaar_agent.agents.maker import Maker
+    from bazaar_agent.guardrails import load_guardrails
+    from tests.agent_fakes import FakePublic, FakeTeam, clock, parts
+
+    committed = load_guardrails().rules
+    assert committed.allow_venue_open is False
+
+    class OpeningTeam(FakeTeam):
+        def open_venue(self, *a, **kw):
+            raise AssertionError("POST /api/venues sent while allow_venue_open = false")
+
+    team, store = OpeningTeam(), {}
+    keeper_ = vk.VenueKeeper(
+        team,
+        settings=Settings(data_dir=tmp_path),
+        rules=committed,
+        vault=vn.KeyVault(tmp_path, lambda: FakeConn(store)),
+        decisions=DecisionLog(tmp_path),
+        live=True,
+        log=lambda line: None,
+    )
+    m = Maker(team, FakePublic(), live=True, log=lambda line: None, market=keeper_, **parts(tmp_path))
+    for tick in (400, 401, 420):
+        c = clock(tick=tick)
+        keeper_.on_tick(
+            Clock(tick=tick, t_hours=7.0, tick_seconds=30.0, next_tick_in=25.0),
+            snap(tick=tick, t_hours=7.0, cash=900),
+            window(),
+        )
+        m.on_tick(c)
+    assert store == {} and keeper_.opened is None

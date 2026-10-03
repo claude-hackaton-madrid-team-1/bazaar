@@ -51,8 +51,8 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
 
 ## Our venue (market making, #11)
-- `allow_venue_open` = true — the maker opens our BOARD venue (0 bps) once and runs its broker every tick; false refuses opening, fee changes, announcements and every broker match, even with `--live` (closing stays allowed).
-- `venue_bond_reserve` = 270 — while a planned venue is not open yet, every purchase keeps `cash_floor` + this in cash (bond 250 + opening fee 20); once we run a venue the floor is `cash_floor` alone.
+- `allow_venue_open` = false — OFF by team decision (Sat 06:08: opening replaces the free stall, and a broker that only matches as well as the stall earns the same half of the bench points; reopen it in a closed-door window once the broker is verified live). While false: no opening, fee change, announcement or broker match, even with `--live` (closing stays allowed), and NO bond reserve is held: the floor is `cash_floor` alone. True: the maker opens our BOARD venue (0 bps) once and runs its broker every tick.
+- `venue_bond_reserve` = 270 — only while `allow_venue_open` is true and the venue is not open yet: every purchase keeps `cash_floor` + this in cash (bond 250 + opening fee 20); with the switch off, or once we run a venue, the floor is `cash_floor` alone.
 - `venue_open_after_game_hours` = 6.5 — the maker opens the venue on the first tick with `/api/clock` `t_hours` at or past this (~11:30 Madrid, before the h7.0 Market Test at 12:00); never earlier, never twice. Opening keeps cash ≥ `cash_floor` after the 270.
 
 ## Principles (read by agents, not enforced in code yet)

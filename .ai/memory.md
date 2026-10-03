@@ -548,3 +548,9 @@ reserve stays, our opening is not blocked). Unverified live: if the key stays af
 `guardrails.runs_venue` would take the free stall for our venue (bond reserve gone, h6.5 opening refused).
 It now keeps `has_starter_stall: true` in the key's place. A snapshot written by older code has neither:
 deploy taker and maker together, and pull before a laptop uses the shared database.
+
+### [2026-10-03] finding — #71 ships with our venue OFF (allow_venue_open = false), by team decision
+Sat 06:08: opening our venue replaces the free stall (RULES.md "Your own market"), and our exact broker only
+equals the stall (0.5 of the bench points) in every simulation, unverifiable live before opening. While the
+switch is off no bond reserve is held (`effective_cash_floor` = `cash_floor` 100). Turn it on only in a
+closed-door window with Omar, once the broker has an edge (#84) or organic trades to serve.

@@ -426,6 +426,7 @@ def runs_venue(me: dict[str, Any]) -> bool:
 def effective_cash_floor(rules: Guardrails, ctx: Context) -> int:
     """`cash_floor`, plus `venue_bond_reserve` while a planned venue (`allow_venue_open`) is not open yet:
     every purchase leaves the bond and opening fee in cash until the venue opens. The same for every writer."""
+    # Zero unless a venue is planned: with allow_venue_open = false no bond reserve is ever held.
     reserve = rules.venue_bond_reserve if rules.allow_venue_open and not ctx.has_venue else 0
     return rules.cash_floor + reserve
 

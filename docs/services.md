@@ -269,7 +269,14 @@ Railway-generated domain of service `bazaar-live` (generated once by hand; liste
   `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
   (`Origin`), under per-address and global rate limits and a daily character budget.
 
-## Our venue: opened by the maker at game hour 6.5
+## Our venue: opened by the maker at game hour 6.5 (OFF for now)
+
+**Switched off by team decision (Sat 06:08):** `allow_venue_open = false` in `GUARDRAILS.md`. Opening our
+venue replaces the free stall on the spot (RULES.md), and a broker that only matches as well as the stall
+earns the same half of the bench points; ours equals the stall in every simulation and cannot be verified
+live before opening. While off: nothing below opens or matches, and NO bond reserve is held (the floor is
+`cash_floor` alone). Turning it on is a closed-door decision with Omar once the broker has an edge or
+organic trades to serve. What follows is what happens when it is on.
 
 Our board venue runs inside the **maker** on Railway (`bazaar-maker`, no new service). Every maker tick,
 before its own offers, `agents/venue_keeper.py`:
