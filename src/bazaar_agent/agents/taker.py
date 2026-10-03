@@ -54,6 +54,7 @@ from bazaar_agent.agents.market import (
     tradable_venues,
 )
 from bazaar_agent.agents.runtime import (
+    KEEPS_THE_ACCEPT,
     JevAdvice,
     JevFn,
     MarketFeed,
@@ -322,6 +323,7 @@ class Taker:
         self._dry_accepts: dict[int, int] = {}
         self._restart_checked = False  # the threads of the process before this one were wrapped up
         self._restart_ticks = 0  # ticks spent on that (a thread read refused is tried again, a few times)
+        self._accepts_stop: str | None = None  # why no more accepts are tried this tick (rate limit, lost race)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -656,9 +658,13 @@ class Taker:
         clock = run.snap.clock
         limit = accept_limit(clock, self.rules)
         used = self.ledger.accepts_in_tick(clock.tick) if self.live else self._dry_accepts.get(clock.tick, 0)
+        self._accepts_stop = None
         for p in rank_accepts(proposals):
             if used >= limit:
                 self._skip(run, p, f"accept quota {limit}/tick used", "rejected")
+                continue
+            if self._accepts_stop is not None:
+                self._skip(run, p, self._accepts_stop, "rejected")
                 continue
             if p.ref in {a.ref for a in run.accepted}:
                 self._skip(run, p, f"already buying {p.ref} this tick", "rejected")
@@ -713,7 +719,8 @@ class Taker:
             self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected", jev)
             return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, p.price, p.ref, limit):
-            self._skip(run, p, "another process took the team's accept this tick", "rejected", jev)
+            self._accepts_stop = "another process took the team's accept this tick"  # no clock read per proposal
+            self._skip(run, p, self._accepts_stop, "rejected", jev)
             return False
         kind = "accept_ask" if p.source == "board" else "dealer_accept"
         where = f"on {p.inputs.get('venue')}" if p.source == "board" else f"from {p.source}"
@@ -735,6 +742,13 @@ class Taker:
             self._commit(run, p.price, p.ref, skip_thread)
             return True
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
+        if body is None and self.rec.refusal not in KEEPS_THE_ACCEPT:
+            # Refused, so it cost nothing (RULES.md): the team's accept is free again, for the next candidate
+            # or a duel; after a rate limit no more accepts are tried this tick.
+            self.ledger.release_accept(clock.tick, p.ref)
+            if self.rec.refusal in RATE_LIMITED:
+                self._accepts_stop = f"accept refused {self.rec.refusal}: no more accepts this tick"
+            return False
         if body is None and not self.rec.maybe_landed:
             return True  # the reserved slot stays spent: an accept that may have landed is never retried
         # Accepted, or lost on the way back (a network error): booked as bought (fail safe for the caps).
@@ -910,6 +924,7 @@ class Taker:
             self._quiet.pop(thread_id, None)
 
 
+RATE_LIMITED = ("rate_limited", "too_many_requests", "too_many_failures")
 RESTART_TICKS = 5  # ticks the restart wrap-up may take (3 thread reads each) before it gives up on refusals
 
 

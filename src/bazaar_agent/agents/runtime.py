@@ -27,6 +27,10 @@ DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unr
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -198,6 +202,7 @@ class Recorder:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.refusal: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
         self,
@@ -296,11 +301,11 @@ class Recorder:
         spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
-        self.maybe_landed = False
+        self.maybe_landed, self.refusal = False, None
         try:
             response = call()
         except BazaarError as e:
-            self.maybe_landed = e.code in MAYBE_LANDED
+            self.maybe_landed, self.refusal = e.code in MAYBE_LANDED, e.code
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})
