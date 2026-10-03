@@ -641,7 +641,7 @@
             "title": "Dealer ladder: walk, not the opening ask (N14)",
             "start": "2026-10-03T09:00",
             "end": "2026-10-03T13:00",
-            "status": "todo",
+            "status": "done",
             "priority": "P1",
             "owner": "Marius"
           },

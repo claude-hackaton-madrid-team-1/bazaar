@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from bazaar_agent import guardrails as gr
 from bazaar_agent.agents.dealer import BidPlan, bid_schedule
 from bazaar_agent.agents.seller import (
     Listing,
@@ -115,11 +116,9 @@ def _denied(*reasons: str) -> Verdict:
 
 
 def kill_switch(b: Backend) -> list[str]:
-    """`touch .local/PAUSE` or `trading_enabled = false` stops every write, cancels included."""
-    reasons = [] if b.rules.trading_enabled else ["trading_enabled = false"]
-    if (REPO_ROOT / b.rules.pause_file).exists():
-        reasons.append(f"pause file {b.rules.pause_file} exists")
-    return reasons
+    """`touch .local/PAUSE` or `trading_enabled = false` holds every write, cancels included. Read live
+    (`guardrails.kill_switch`): a GUARDRAILS.md edit counts on the next call, without a restart."""
+    return list(gr.kill_switch(b.rules))
 
 
 @dataclass(frozen=True)
@@ -211,6 +210,7 @@ def _plan_duel(b: Backend, clock: Clock, read_at: float, args: DuelMoveArgs) -> 
         t_hours=clock.t_hours,
         accepts_this_tick=b.ledger.accepts_in_tick(clock.tick),
         paused=(REPO_ROOT / b.rules.pause_file).exists(),
+        stops=gr.kill_switch(b.rules),
     )
     action = duel_action(duel, move)  # the price and days we would agree to, with our limit and role
     detail = {"duel": duel, "move": move}
@@ -367,16 +367,18 @@ def _cancel(b: Backend, args: SellCancelArgs, planned: Planned, clock: Clock | N
 
 def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
     """A withdrawn bid gives its spend back, in the game hour it was spent: a refund booked now would
-    make this hour's spend negative and loosen max_spend_per_game_hour."""
+    make this hour's spend negative and loosen max_spend_per_game_hour. Only a board bid was booked as
+    spend when posted: a dealer-thread bid never was (it counts while open, through `open_commitments`),
+    so cancelling one books nothing."""
     give, want = offer.get("give") or {}, offer.get("want") or {}
     wanted = want.get("cards") or want.get("types")
-    if not give.get("cash") or not wanted:
+    if not give.get("cash") or not wanted or offer.get("thread") is not None:
         return {}
-    created = offer.get("created_tick")
-    ticks_ago = clock.tick - created if isinstance(created, int) and created <= clock.tick else 0
-    t_hours = clock.t_hours - ticks_ago * clock.tick_seconds / 3600
-    tick = clock.tick - ticks_ago
-    return _book(b, [("spend", tick, t_hours, -int(give["cash"]), str(wanted[0]).split(":")[-1])])
+    ref = str(wanted[0]).split(":")[-1]
+    row = gr.refund_row(
+        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.max_tick_seconds
+    )
+    return _book(b, [row])
 
 
 def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None) -> dict[str, Any]:
