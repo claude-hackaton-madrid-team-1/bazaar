@@ -1202,3 +1202,9 @@ unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the 
 the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
 from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
 ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+### [2026-10-04] build-error — motion pitch browser and check tooling
+Computer-use and graph reads required unavailable approval; local Chrome failed its sandbox handshake → used the web-access cloud Chrome fallback, muted public reads only. Re-injecting HTML into one document retained its script context and broke the QA harness → navigate to a fresh blank page before each injection. A quoting edit broke the capture self-check → fixed with a triple-quoted JavaScript string. PPTX finalizer lacked RUNTIME_NODE_MODULES → passed the supplied runtime path. No game or Railway writes.
+
+### [2026-10-04] build-error — pitch recording fallback
+WebM capture could not encode without ffmpeg and the system Python lacked Pillow → captured checked real board frames and encoded a GIF with the bundled presentation Python runtime. The source is the muted idle board while doors are closed, not a trade recording.

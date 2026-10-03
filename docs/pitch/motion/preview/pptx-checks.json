@@ -1,0 +1,11 @@
+{
+  "slide_count": 7,
+  "package_findings": 0,
+  "layout_findings": 0,
+  "layout_warnings": 0,
+  "font_policy_pass": true,
+  "artifact_import_pass": true,
+  "sha256": "33762cd967f8a2046e6d6bda964afade090451f3c6e11048f5a837dbf1dd6c9d",
+  "byte_count": 583098,
+  "native_PowerPoint_rendering_verified": false
+}
