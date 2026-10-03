@@ -461,16 +461,17 @@ class SellDesk:
         when, floor = seen
         return clock.t_hours - when >= self.rules.dealer_sell_retry_game_hours or c.floor < floor
 
-    def gate_on(self, snap: Any) -> bool:
+    def gate_on(self, snap: Any, left: Callable[[], float] | None = None) -> bool:
         """A new sell thread only on Jev's decided yes (SG1), asked again every `strategy_jev_refresh_ticks`;
-        a thread already open plays on whatever the gate says."""
+        a thread already open plays on whatever the gate says. `left` is the maker's live tick window."""
         if self.gate is None:
             return False
         tick = int(snap.clock.tick)
         # BAZAAR_DECIDER=llm: an ask may take the LLM's whole timeout, so a due ask waits for a tick with room
-        # (Jev keeps its 3 s budget unchecked here, as before: needed_budget_s(0.0) is 0 for Jev).
-        left = float(getattr(snap.clock, "next_tick_in", 0.0) or 0.0)
-        if self.gate.due(DEALER_SELL, tick) and left < needed_budget_s(0.0):
+        # (Jev keeps its 3 s budget unchecked here, as before: needed_budget_s(0.0) is 0 for Jev). The live
+        # window, not the snapshot's: the maker's own Jev price calls may have used most of the tick.
+        now_left = left() if left is not None else float(getattr(snap.clock, "next_tick_in", 0.0) or 0.0)
+        if self.gate.due(DEALER_SELL, tick) and now_left < needed_budget_s(0.0):
             return False
         return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap))
 
@@ -521,7 +522,7 @@ class SellDesk:
         personas = parse_personas(getattr(snap, "dealers", None) or [])
         return personas or None, read_fever(self.rules, self.events_path, snap.clock.t_hours)
 
-    def on_tick(self, snap: Any, params: Any, locked: Iterable[int]) -> None:
+    def on_tick(self, snap: Any, params: Any, locked: Iterable[int], left: Callable[[], float] | None = None) -> None:
         if not self.rules.dealer_sell_enabled:
             return
         clock = snap.clock
@@ -536,7 +537,7 @@ class SellDesk:
         self.opened_at = [(h, d) for h, d in self.opened_at if h > clock.t_hours - 1.0]
         if len(self.opened_at) >= self.rules.dealer_sell_max_per_game_hour:
             return
-        if not self.gate_on(snap):
+        if not self.gate_on(snap, left):
             return
         market = self.market_for(snap)
         threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
@@ -583,6 +584,8 @@ class SellDesk:
                     status="approved",
                     move={"open_thread": {"dealer": c.dealer, "topic": sell_topic(c.asset_id)}},
                 )
+            return
+        if left is not None and left() <= 0:  # the gate's ask took the rest of the tick: open next tick, never late
             return
         self.talk = SellTalk(
             self.team,

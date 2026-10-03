@@ -161,3 +161,5 @@ def test_an_llm_decider_asks_the_dealer_sell_gate_only_with_its_timeout_of_the_t
     assert SellDesk.gate_on(llm_desk, snap) is False and llm_asked == []
     roomy = SimpleNamespace(clock=SimpleNamespace(tick=100, next_tick_in=20.0))
     assert SellDesk.gate_on(llm_desk, roomy) is True and len(llm_asked) == 1
+    stale, stale_asked = desk()  # the snapshot says 20 s, the maker's live window 2 s: no ask
+    assert SellDesk.gate_on(stale, roomy, left=lambda: 2.0) is False and stale_asked == []

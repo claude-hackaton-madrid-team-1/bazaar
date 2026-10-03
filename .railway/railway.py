@@ -67,6 +67,8 @@ def runtime_env() -> dict:
         "BAZAAR_DECIDER_TIMEOUT_S": preserve(),
         "BAZAAR_DECIDER_MAX_CALLS": preserve(),
         "BAZAAR_DECIDER_MAX_CONCURRENT": preserve(),
+        "BAZAAR_DECIDER_CACHE_S": preserve(),
+        "BAZAAR_DECIDER_WINDOW_S": preserve(),
     }
 
 

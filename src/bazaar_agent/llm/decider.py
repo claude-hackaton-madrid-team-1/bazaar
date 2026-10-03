@@ -93,7 +93,7 @@ class DeciderLimits:
     cache_s: float = 30.0
     max_calls: int = 8
     window_s: float = 30.0
-    max_concurrent: int = 4
+    max_concurrent: int = 3
 
     @classmethod
     def from_env(cls) -> DeciderLimits:
@@ -102,7 +102,7 @@ class DeciderLimits:
             cache_s=env_float("BAZAAR_DECIDER_CACHE_S", 30.0, 0.0, 300.0),
             max_calls=int(env_float("BAZAAR_DECIDER_MAX_CALLS", 8, 0, 120)),
             window_s=env_float("BAZAAR_DECIDER_WINDOW_S", 30.0, 1.0, 600.0),
-            max_concurrent=int(env_float("BAZAAR_DECIDER_MAX_CONCURRENT", 4, 1, 16)),
+            max_concurrent=int(env_float("BAZAAR_DECIDER_MAX_CONCURRENT", 3, 1, 16)),
         )
 
 
