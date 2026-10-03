@@ -55,6 +55,7 @@ class SimConfig:
     player_teams: int = 8
     rivals: int = 6
     chato_open_ticks: int = 360  # El Chato opens to everyone after this many ticks (earlier: 3 deals)
+    pilar_open_ticks: int = 720  # Doña Pilar opens to everyone after this many ticks (earlier: 3 Chato deals)
     duel_first_tick: int = 6
     duel_every_ticks: int = 90
     duel_ticks: int = 12
@@ -75,6 +76,7 @@ class SimConfig:
             player_teams=max(1, min(12, _env_int("SIM_PLAYER_TEAMS", 8))),
             rivals=max(0, min(8, _env_int("SIM_RIVALS", 6))),
             chato_open_ticks=_env_int("SIM_CHATO_OPEN_TICKS", 360),
+            pilar_open_ticks=_env_int("SIM_PILAR_OPEN_TICKS", 720),
             duel_first_tick=_env_int("SIM_DUEL_FIRST_TICK", 6),
             duel_every_ticks=max(5, _env_int("SIM_DUEL_EVERY_TICKS", 90)),
             duel_ticks=max(3, _env_int("SIM_DUEL_TICKS", 12)),
@@ -122,6 +124,7 @@ class World:
         state = WorldState(seed=config.seed)
         state.clock = ClockState(tick_seconds=config.tick_seconds, tick_started_at=now(), booted_at=now())
         state.chato_open_tick = config.chato_open_ticks
+        state.pilar_open_tick = config.pilar_open_ticks
         world = cls(state, config, now)
         world._found()
         return world
@@ -186,6 +189,19 @@ class World:
     def hour(self) -> int:
         """The game hour a quota counts in."""
         return int(self.state.clock.t_seconds // 3600)
+
+    def open_to_all_tick(self, dealer_id: str) -> int | None:
+        """The tick a gated dealer opens to every team (None: always open, or never scheduled)."""
+        if dealer_id == "chato":
+            return self.state.chato_open_tick
+        if dealer_id == "pilar":
+            tick = self.state.pilar_open_tick
+            return self.config.pilar_open_ticks if tick is None else tick
+        return None
+
+    def open_to_all(self, dealer_id: str) -> bool:
+        at = self.open_to_all_tick(dealer_id)
+        return at is not None and self.tick >= at
 
     def emit(self, kind: str, payload: dict[str, Any], *, actor: str = "", scope: str = "public") -> Event:
         event = Event(

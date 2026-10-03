@@ -220,15 +220,17 @@ def schedule_view(w: World) -> dict[str, Any]:
             upcoming.append(
                 {"action": kind, "at_hours": round(at_tick * hours_per_tick, 3), "note": note, "params": params}
             )
-    if w.tick < w.state.chato_open_tick:
-        upcoming.append(
-            {
-                "action": "persona",
-                "at_hours": round(w.state.chato_open_tick * hours_per_tick, 3),
-                "note": "El Chato opens to everyone",
-                "params": {"enabled": True, "id": "chato", "open_to_all": True},
-            }
-        )
+    for dealer_id in ("chato", "pilar"):
+        at = w.open_to_all_tick(dealer_id)
+        if at is not None and w.tick < at:
+            upcoming.append(
+                {
+                    "action": "persona",
+                    "at_hours": round(at * hours_per_tick, 3),
+                    "note": f"{catalog.raw_dealers()[dealer_id]['name']} opens to everyone",
+                    "params": {"enabled": True, "id": dealer_id, "open_to_all": True},
+                }
+            )
     upcoming.sort(key=lambda u: u["at_hours"])
     return {"now_hours": round(w.t_hours, 3), "upcoming": upcoming}
 
@@ -237,10 +239,10 @@ def dealer_view(w: World, dealer_id: str) -> dict[str, Any]:
     data = dict(catalog.raw_dealers()[dealer_id])
     data.pop("teaser", None)
     data.pop("how", None)
-    if dealer_id == "chato":
-        hours = w.state.chato_open_tick * w.config.tick_seconds / 3600.0
-        data["open_to_all"] = w.tick >= w.state.chato_open_tick
-        data["unlock"] = {**data["unlock"], "open_to_all_at": round(hours, 3)}
+    at = w.open_to_all_tick(dealer_id)
+    if at is not None:
+        data["open_to_all"] = w.tick >= at
+        data["unlock"] = {**data["unlock"], "open_to_all_at": round(at * w.config.tick_seconds / 3600.0, 3)}
     return data
 
 
@@ -249,21 +251,23 @@ def dealers_view(w: World) -> dict[str, Any]:
 
 
 def levels_view(w: World) -> dict[str, Any]:
-    chato = catalog.raw_dealers()["chato"]
-    left = max(0.0, (w.state.chato_open_tick - w.tick) * w.config.tick_seconds / 3600.0)
-    return {
-        "levels": [
+    levels = []
+    for dealer_id in ("chato", "pilar"):
+        data = catalog.raw_dealers()[dealer_id]
+        at = w.open_to_all_tick(dealer_id) or 0
+        left = max(0.0, (at - w.tick) * w.config.tick_seconds / 3600.0)
+        levels.append(
             {
-                "id": "chato",
+                "id": dealer_id,
                 "kind": "persona",
-                "name": chato["name"],
+                "name": data["name"],
                 "state": "active",
-                "teaser": chato["teaser"],
-                "how": chato["how"],
+                "teaser": data["teaser"],
+                "how": data["how"],
                 "opens_to_all_in_hours": round(left, 3),
             }
-        ]
-    }
+        )
+    return {"levels": levels}
 
 
 def venue_view(w: World, vid: str) -> dict[str, Any]:
