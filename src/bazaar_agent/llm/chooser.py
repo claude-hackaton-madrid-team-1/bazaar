@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -51,11 +52,30 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
 }
 
 
+WORD = re.compile(r"\w+")
+
+
+def odd_unicode(text: str) -> bool:
+    """Invisible or direction-changing characters, or a word that mixes Latin letters with another script
+    (a Cyrillic "а" inside "асcept"): the shapes that hide a word from a pattern or from a reader."""
+    if any(unicodedata.category(ch) == "Cf" for ch in text):
+        return True
+    for word in WORD.findall(text):
+        scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
+        if "LATIN" in scripts and len(scripts) > 1:
+            return True
+    return False
+
+
 def injection_flags(text: str | None) -> tuple[str, ...]:
-    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input)."""
+    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input). The patterns
+    read the NFKC-folded text without invisible characters, so fullwidth digits or a zero-width space do not
+    hide a shape; `odd_unicode` names the hiding itself."""
     if not text:
         return ()
-    return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(text))
+    folded = "".join(ch for ch in unicodedata.normalize("NFKC", text) if unicodedata.category(ch) != "Cf")
+    found = [name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(folded)]
+    return tuple(found + (["odd_unicode"] if odd_unicode(text) else []))
 
 
 def stakes_bucket(value_at_risk: int) -> str:

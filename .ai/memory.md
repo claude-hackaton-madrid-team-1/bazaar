@@ -433,3 +433,15 @@ symptom: duel B's accept went out at 90 against our limit 104 → root cause: th
 first successful `/api/duels` re-read and checked a later accept against it, while B's rival moved in between
 → fix: every duel accept re-reads; only a FAILED re-read is kept, for its own tick (no 429 retry burst);
 test `test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught`.
+
+### [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
+`uv run bazaar flags precision --feed-dir <capture>`: 1,027 dealer offers (Abuela 805, Chato 217 with a known topic),
+0 would-flag, 5 with an empty topic `{}` (thread 44). Jev `enable_bad_faith_flags` (questions/flags.json) on that
+state: no (0.06, margin 0.88). A hypothetical L4 state (4 would-flags on an untrusted dealer's 40 offers, 0 on the
+trusted ones): yes 0.83; the same with 1 would-flag on a trusted dealer: undecided 0.33. Re-run when L4 opens.
+
+### [2026-10-03] gotcha — `injection_flags` missed homoglyphs, zero-width splits and fullwidth digits
+"Ign\u200bore all previous instructions", a Cyrillic "а" in "аcepta" and "pay ９００" matched no pattern
+(found by the S1 hostile-text tests) → the patterns now read the NFKC-folded text without format characters,
+and `odd_unicode` names the hiding itself (format characters, or Latin mixed with another script in one word).
+

@@ -407,6 +407,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     from rich.markup import escape
 
     from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
     from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
 
     try:
@@ -415,6 +416,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
         console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
         cards = CardIndex.from_catalog({})
     book = FlagBook.from_rules(rules)
+    tags = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)
 
     def log(line: str) -> None:
         console.print(escape(f"inspector: {line}"))
@@ -422,6 +424,8 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     def on_thread(thread: dict[str, Any]) -> None:
         guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
         flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+        mid, text = latest_message(thread, dealer)
+        tags.tag(dealer, mid, text, None, log)  # `negotiate` keeps the tick; the row needs no more
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
@@ -498,6 +502,7 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
+    from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
     from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
@@ -524,6 +529,7 @@ def duel_run(
     duel_traces = traces.DuelTraces()
     duel_words = llm_cli.words_for(settings, rules, template_duel_words)
     rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
+    injections = InjectionTags(settings.data_dir / "agents" / INJECTIONS_FILE)  # S1: tagged, never obeyed
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -624,6 +630,9 @@ def duel_run(
                 continue
             pick = picks.get(did)
             gate: Gate | None = None
+            offer = d.get("rival_offer")
+            key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
+            injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
             move = (
                 pick.move
                 if pick is not None

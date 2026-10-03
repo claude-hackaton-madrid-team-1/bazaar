@@ -31,6 +31,7 @@ from bazaar_agent.agents.desk import (
     plan_conversation,
     topic_for,
 )
+from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.market import BoardOffer, OpenOffer, Venue, board_offers, our_open_offers, tradable_venues
 from bazaar_agent.agents.runtime import (
@@ -301,6 +302,7 @@ class Taker:
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
         self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
+        self.injections = InjectionTags(decisions.dir / INJECTIONS_FILE)  # S1: tagged, never obeyed
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -441,6 +443,8 @@ class Taker:
             thread = self.team.thread(conv.thread_id)
             conv.ticks += 1
             self._inspect(run, conv, thread)
+            mid, text = latest_message(thread, conv.dealer)
+            self.injections.tag(conv.dealer, mid, text, run.snap.clock.tick, self.log)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread)
             if dm.status != "open":
                 self._finished(run, conv, thread)
