@@ -13,15 +13,25 @@ import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from bazaar_agent.agents.runtime import live_mode
 from bazaar_agent.album import album_view
-from bazaar_agent.config import REPO_ROOT, Settings
+from bazaar_agent.config import Settings
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
-from bazaar_agent.guardrails import ENFORCED_BY, Context, Guardrails, LedgerStore, context_from, load_guardrails
+from bazaar_agent.guardrails import (
+    ENFORCED_BY,
+    Context,
+    Guardrails,
+    LedgerStore,
+    context_from,
+    kill_switch,
+    load_guardrails,
+)
+from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.llm.chooser import injection_flags
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -63,6 +73,7 @@ class Backend:
         spawn: Spawner = _detached,
         server: bool = False,
         log: Callable[[str], None] = lambda message: None,
+        holdings: Holdings | None = None,
     ) -> None:
         self.settings, self.rules, self.log, self.spawn = settings, rules, log, spawn
         self.live = live_mode(False) if live is None else live
@@ -70,12 +81,15 @@ class Backend:
         self.shared_ledger_only = server or self.live
         self.pending: list[tuple[str, int, float, int, str]] = []  # ledger rows of sent requests, not yet written
         self._team, self._public, self._ledger, self._decisions = team, public, ledger, decisions
+        # A client handed in (tests, an embedding caller) gets no shared database unless holdings come too.
+        self._holdings, self._shared_holdings = holdings, team is None
         self._build = threading.Lock()
         # One write at a time: the ledger connection and the per-tick quotas are shared by every tool call.
         self.write_lock = threading.RLock()
         self._catalog: tuple[int, dict[str, Any]] | None = None
         self.dealer_runs: dict[str, Any] = {}  # dealer -> the live `dealer buy` child this process started
         self.duel_said: set[tuple[int, int]] = set()  # (duel, tick): one message per duel per tick
+        self.duel_first_seen: dict[int, int] = {}  # duel -> the first tick we read it (the payload has no start)
 
     @property
     def team(self) -> Any:
@@ -98,12 +112,26 @@ class Backend:
 
     @property
     def ledger(self) -> LedgerStore:
-        """The shared Postgres ledger (reopened after a failure), else the JSONL file unless shared-only."""
+        """The shared Postgres ledger (it reconnects by itself), else the JSONL file unless shared-only.
+
+        Shared-only (live, or the remote server): `open_ledger(live=True)` refuses a DATABASE_URL that is not
+        the shared one; against a simulator it may fall back to the file, which shared-only refuses here."""
         with self._build:
             if self._ledger is None:
-                from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
+                from bazaar_agent.ledger_pg import LedgerNotShared, LedgerUnavailable, PgLedger, open_ledger
 
-                opened = open_ledger(self.settings.data_dir, source=SOURCE, log=self.log)
+                try:
+                    opened = open_ledger(
+                        self.settings.data_dir,
+                        source=SOURCE,
+                        live=self.shared_ledger_only,
+                        database_url=self.settings.database_url.get_secret_value(),
+                        game_url=self.settings.bazaar_url,
+                        log=self.log,
+                    )
+                except LedgerNotShared as e:  # callers see the runtime's one fail-closed message
+                    self.log(f"runtime: {e}")
+                    raise LedgerUnavailable("the shared Postgres ledger is not configured") from None
                 if self.shared_ledger_only and not isinstance(opened, PgLedger):
                     raise LedgerUnavailable("the shared Postgres ledger is unreachable")
                 self._ledger = opened
@@ -147,12 +175,14 @@ class Backend:
             self.pending.pop(0)
 
     def failed(self, error: BaseException) -> None:
-        """After a ledger failure, drop the connection: the next call reopens it (Postgres came back)."""
-        from bazaar_agent.ledger_pg import LedgerUnavailable
+        """After a ledger failure, reopen the ledger on the next call. A `PgLedger` is kept: it reconnects by
+        itself, at most once per `pgconn.RETRY_EVERY_S`, where a fresh open would try again at once."""
+        from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger
 
         if isinstance(error, LedgerUnavailable):
             with self._build:
-                self._ledger = None
+                if not isinstance(self._ledger, PgLedger):
+                    self._ledger = None
 
     @property
     def decisions(self) -> DecisionLog:
@@ -166,15 +196,48 @@ class Backend:
                 )
             return self._decisions
 
+    @property
+    def holdings(self) -> Holdings:
+        """Album first, shared: /me from the Postgres snapshot while provably current, else live (stored)."""
+        with self._build:
+            if self._holdings is None:
+                from bazaar_agent import holdings as hd
+                from bazaar_agent.identity import remember_team_id, resolve_team_id
+
+                team = resolve_team_id(self.settings.team_id, self.settings.data_dir, None)
+                if self._shared_holdings:
+                    hd.name_process("mcp" if self.server else "runtime")
+                    remember = partial(remember_team_id, self.settings.data_dir)
+                    self._holdings = hd.for_process(
+                        lambda: self.team.me(), self.rules, self.settings, team=team, on_team=remember
+                    )
+                else:
+                    reader = "mcp" if self.server else "runtime"
+                    self._holdings = hd.Holdings(
+                        lambda: self.team.me(), hd.SharedDb(None), reader=reader, rules=self.rules
+                    )
+            return self._holdings
+
+    def me_now(self) -> MeRead:
+        """Our holdings now (album first). The tick comes from the public clock (no key call); unknown = live."""
+        try:
+            now: Clock | None = self.clock()
+        except Exception as e:  # the clock is only the freshness test: without it, /me is read live
+            self.log(f"runtime: clock unavailable ({type(e).__name__}); /me read live")
+            now = None
+        return self.holdings.me(now)
+
     def clock(self) -> Clock:
         return Clock.model_validate(self.public.clock())
 
     def catalog(self, tick: int) -> dict[str, Any]:
-        """`/api/catalog`, re-read at most every CATALOG_TICKS game ticks (every caller shares 5 req/s)."""
+        """`/api/catalog`, re-read at most every CATALOG_TICKS game ticks (every caller shares 5 req/s);
+        each fresh read is stored in `cards` (catalog_db)."""
         cached = self._catalog
         if cached is None or tick < cached[0] or tick - cached[0] >= CATALOG_TICKS:
             cached = (tick, self.public.catalog())
             self._catalog = cached
+            self.holdings.observe_catalog(tick, cached[1])
         return cached[1]
 
     def events(self) -> list[Event]:
@@ -231,8 +294,10 @@ def untrusted(text: str | None) -> dict[str, Any] | None:
 
 
 def status(b: Backend) -> dict[str, Any]:
-    """`bazaar status`: cash, level, score, album pages with missing cards, duplicates, our cards."""
-    me = b.team.me()
+    """`bazaar status`: cash, level, score, album pages with missing cards, duplicates, our cards; `holdings`
+    says where /me came from (the Postgres snapshot, its tick and age, or a live read and why)."""
+    read = b.me_now()
+    me = read.me
     score = me.get("score") or {}
     cards = sorted((a for a in me.get("assets") or [] if a.get("kind") == "card"), key=lambda a: str(a.get("ref")))
     pages = [
@@ -246,7 +311,7 @@ def status(b: Backend) -> dict[str, Any]:
             "missing": [{"ref": m.ref, "rarity": m.rarity, "value_to_us": m.value_to_us} for m in p.missing],
             "duplicates": list(p.duplicates),
         }
-        for p in album_view(me, b.public.catalog())
+        for p in album_view(me, b.catalog(read.tick or 0))
     ]
     card_rows = [
         {"asset": a.get("id"), "ref": a.get("ref"), "rarity": a.get("rarity"), "your_value": a.get("your_value")}
@@ -260,7 +325,69 @@ def status(b: Backend) -> dict[str, Any]:
         "rank": score.get("rank"),
         "pages": pages,
         "cards": _cut(card_rows, 60),
+        "holdings": read.meta(),
     }
+
+
+def holdings(b: Backend) -> dict[str, Any]:
+    """What we hold, from the shared Postgres snapshot while it is provably current (else /me, stored): our
+    cards with asset ids, duplicates, missing page cards (value to us), sealed packs, cash, level, affinity."""
+    from bazaar_agent.holdings import parse_me, summary
+
+    read = b.me_now()
+    me = parse_me(read.me)
+    if me is None:
+        return {"holdings": read.meta(), "error": "the /api/me payload did not validate"}
+    held = summary(me)
+    missing = [
+        {"set": p.set_code, "ref": m.ref, "name": m.name, "rarity": m.rarity, "value_to_us": m.value_to_us}
+        for p in album_view(read.me, b.catalog(read.tick or 0))
+        for m in p.missing
+    ]
+    return {
+        "team": me.id,
+        "cash": read.me.get("cash"),
+        "level": me.level,
+        "affinity": me.affinity,
+        "pages": held["pages"],
+        "missing": _cut(missing, 60),
+        "duplicates": held["duplicates"],
+        "packs": held["packs"],
+        "cards": _cut(held["cards"], 80),
+        "holdings": read.meta(),
+    }
+
+
+def cards(b: Backend, set_code: str | None = None, rarity: str | None = None, ref: str | None = None) -> dict[str, Any]:
+    """The card catalog from Postgres (`cards`, kept by the agents and this server), else `/api/catalog`."""
+    import psycopg
+
+    from bazaar_agent import catalog_db
+    from bazaar_agent.holdings import READ_DEADLINE_S
+
+    shared = b.holdings.shared  # taken here: the job runs on the worker and must not wait for Backend._build
+
+    def from_db(conn: Any) -> list[dict[str, Any]]:
+        if conn is None:
+            return []
+        try:
+            return catalog_db.read_cards(conn, set_code, rarity, ref)
+        except psycopg.Error as e:  # the catalog is public: the live read below still answers
+            shared.failed(e)
+            return []
+
+    ok, rows = shared.call(from_db, READ_DEADLINE_S)
+    if ok and rows:
+        return {"source": "db", **_cut(rows, 80)}
+    now = b.clock().tick
+    live = [
+        r
+        for r in catalog_db.rows_as_dicts(catalog_db.card_rows(b.catalog(now)), now)
+        if (not set_code or r["set"] == set_code)
+        and (not rarity or r["rarity"] == rarity)
+        and (not ref or r["ref"] == ref)
+    ]
+    return {"source": "live", **_cut(live, 80)}
 
 
 def clock(b: Backend) -> dict[str, Any]:
@@ -340,6 +467,49 @@ def traders(b: Backend) -> dict[str, Any]:
         return _cut(db.trader_rows(conn))
 
 
+_recall: Any = None  # one hybrid recall per server process (the models load once, in the background)
+_recall_lock = threading.Lock()
+
+
+def learnings(b: Backend, query: str, subject: str | None = None, limit: int = 5) -> dict[str, Any]:
+    """`bazaar learnings --query`: the lessons the agents would recall, and the learned dealer ladders."""
+    global _recall
+    from bazaar_agent import db
+    from bazaar_agent.learn.embed import shared_models
+    from bazaar_agent.learn.evolve import policies_from
+    from bazaar_agent.learn.recall import HybridRecall, Query
+    from bazaar_agent.learn.store import LearningStore
+
+    def connect() -> Any:
+        return db.connect(b.settings.database_url.get_secret_value(), app="bazaar-runtime")
+
+    models = shared_models()
+    models.warm()
+    with _recall_lock:  # two first calls at once build one recall, one connection
+        if _recall is None:
+            _recall = HybridRecall(LearningStore(connect), models)
+    subjects = (subject,) if subject else None
+    found = _recall.recall(Query(query, subjects=subjects, k=limit, budget_s=5.0))
+    policies = policies_from(_recall.store.recall(None, {"policy"}, None, subject_kind="dealer", limit=200))
+    return {
+        "status": found.status,
+        "models": models.status,
+        "elapsed_ms": found.elapsed_ms,
+        "lessons": found.as_quoted(limit),
+        "ladders": [
+            {
+                "dealer": p.dealer,
+                "class": p.price_class,
+                "ladder": str(p.ladder) if p.ladder else "skip",
+                "why": p.reason,
+                "since_tick": p.tick,
+                "replay": dict(p.replay),
+            }
+            for p in sorted(policies.values(), key=lambda p: p.key)
+        ],
+    }
+
+
 def alerts(b: Backend, limit: int = 20) -> dict[str, Any]:
     """`bazaar alerts`: the monitor's latest alerts (new dealers, level changes, announcements)."""
     from bazaar_agent.monitor import read_alerts
@@ -363,7 +533,7 @@ def rules(b: Backend) -> dict[str, Any]:
     from bazaar_agent.llm.steering import STEERABLE, STEERING_FILE, load_steering
 
     loaded = load_guardrails()
-    paused = (REPO_ROOT / b.rules.pause_file).exists() or not b.rules.trading_enabled
+    stops = kill_switch(b.rules)
     steering = load_steering(b.settings.data_dir / STEERING_FILE)
     return {
         "rules": [
@@ -371,7 +541,7 @@ def rules(b: Backend) -> dict[str, Any]:
             for r in loaded.lines
         ],
         "principles": list(loaded.principles),
-        "kill_switch": "paused" if paused else "trading enabled",
+        "kill_switch": f"holding: {'; '.join(stops)}" if stops else "trading enabled",
         "live": b.live,
         "steerable": {name: bound.meaning for name, bound in STEERABLE.items()},
         "steering": None if steering is None else {**asdict(steering), "deltas": dict(steering.deltas)},
@@ -429,7 +599,7 @@ def strategy(b: Backend, limit: int = 5) -> dict[str, Any]:
     from bazaar_agent.pack_gate import jev_pack_judge
     from bazaar_agent.strategy import load_strategy
 
-    me = b.team.me()
+    me = b.me_now().me
     book_, ctx = playbook_now(
         me,
         b.commitments(me),

@@ -103,6 +103,14 @@ def test_a_refused_request_is_a_tool_span_with_the_error_code(spans):
     assert failed[0].status.status_code is StatusCode.ERROR
 
 
+def test_a_walk_closes_the_thread_inside_a_tool_span(spans):
+    client = ChattyAbuela([12, 10, 9])
+    out = traced_run(client, guard=lambda move, _tid: "over the cap")
+    assert (out.status, client.closed) == ("walked", True)
+    closes = [t for t in by_kind(spans, "TOOL") if t.attributes["tool.name"] == "close_thread"]
+    assert len(closes) == 1 and closes[0].attributes["bazaar.ok"] is True
+
+
 class _Log:
     def decide(self, d: Decision) -> int:
         return 1

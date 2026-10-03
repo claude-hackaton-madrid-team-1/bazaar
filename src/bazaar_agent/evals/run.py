@@ -6,7 +6,7 @@ Market Test (a stub until we run a venue). Reads Postgres only: no game API call
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field, replace
 
 import httpx
@@ -16,7 +16,7 @@ from bazaar_agent.evals import inputs, store
 from bazaar_agent.evals.dealers import learned_ranges, score_thread
 from bazaar_agent.evals.duels import score_duel
 from bazaar_agent.evals.market import score_market_test
-from bazaar_agent.evals.model import Outcome, day_of, jev_question
+from bazaar_agent.evals.model import TARGETS, Outcome, day_of, jev_question
 from bazaar_agent.evals.phoenix import PhoenixAnnotator, annotation_payload, span_query
 from bazaar_agent.evals.trades import score_trade
 from bazaar_agent.intel import dealer_threads
@@ -43,7 +43,7 @@ def duel_outcomes(
     for d in inputs.duels(conn, since_tick):
         try:
             found = score_duel(d, closures.get(d.get("duel", -1)))
-        except (TypeError, ValueError, KeyError, AttributeError) as e:
+        except (TypeError, ValueError, KeyError, AttributeError, ArithmeticError) as e:  # 1e400 → OverflowError
             warn(f"evals: duel {d.get('duel')!r} skipped, unreadable payload ({type(e).__name__})")
             continue
         if found is not None:
@@ -54,7 +54,7 @@ def duel_outcomes(
 def dealer_outcomes(conn: psycopg.Connection, ours: str, since_tick: int | None) -> list[Outcome]:
     ranges = learned_ranges(inputs.curve_rows(conn))
     levels = inputs.dealer_levels(conn)
-    threads = [t for t in dealer_threads(inputs.dealer_events(conn), ours) if t.ours]
+    threads = [t for t in dealer_threads(inputs.dealer_events(conn, ours), ours) if t.ours]
     return [score_thread(t, ranges, levels) for t in threads if since_tick is None or (t.last_tick or 0) >= since_tick]
 
 
@@ -91,25 +91,33 @@ def score_all(
     ours: str | None,
     since_tick: int | None = None,
     warn: Callable[[str], None] = lambda message: None,
+    targets: Collection[str] = TARGETS,
 ) -> list[Outcome]:
+    """Every settled outcome of `targets` (all four by default; an agent passes only its own)."""
     openings = inputs.day_openings(conn)
 
     def day(tick: int | None) -> str | None:
         return day_of(tick, openings)
 
-    found = duel_outcomes(conn, since_tick, warn)
-    if ours:
-        found += dealer_outcomes(conn, ours, since_tick) + trade_outcomes(conn, ours, since_tick)
-    found += market_outcomes(conn, day)
+    found = duel_outcomes(conn, since_tick, warn) if "duel" in targets else []
+    if ours and "dealer" in targets:
+        found += dealer_outcomes(conn, ours, since_tick)
+    if ours and "trade" in targets:
+        found += trade_outcomes(conn, ours, since_tick)
+    if "market_test" in targets:
+        found += market_outcomes(conn, day)
     return [replace(o, day=o.day or day(o.tick)) for o in found]
 
 
 def annotate(
-    conn: psycopg.Connection, annotator: PhoenixAnnotator, warn: Callable[[str], None]
+    conn: psycopg.Connection,
+    annotator: PhoenixAnnotator,
+    warn: Callable[[str], None],
+    targets: Collection[str] = TARGETS,
 ) -> tuple[int, tuple[str, ...], int]:
     """(outcomes annotated, Phoenix annotation ids, outcomes with no span this time)."""
     annotated, ids, missed = 0, [], 0
-    for p in store.pending_annotations(conn):
+    for p in store.pending_annotations(conn, targets):
         query = span_query(p)
         if query is None:
             store.mark_missed(conn, p.target, p.subject, never=True)
@@ -137,14 +145,15 @@ def run_once(
     since_tick: int | None = None,
     annotator: PhoenixAnnotator | None = None,
     warn: Callable[[str], None] = lambda message: None,
+    targets: Collection[str] = TARGETS,
 ) -> RunSummary:
-    outcomes = score_all(conn, ours, since_tick, warn)
+    outcomes = score_all(conn, ours, since_tick, warn, targets)
     changed = store.upsert_outcomes(conn, outcomes)
-    notes = _notes(outcomes, ours)
+    notes = _notes(outcomes, ours, targets)
     summary = RunSummary(ours, _count(outcomes), changed, notes=notes)
     if annotator is None:
         return summary
-    done, ids, missed = annotate(conn, annotator, warn)
+    done, ids, missed = annotate(conn, annotator, warn, targets)
     return replace(summary, annotated=done, annotation_ids=ids, no_span=missed, phoenix="on")
 
 
@@ -155,13 +164,13 @@ def _count(outcomes: Iterable[Outcome]) -> dict[str, int]:
     return counts
 
 
-def _notes(outcomes: list[Outcome], ours: str | None) -> tuple[str, ...]:
+def _notes(outcomes: list[Outcome], ours: str | None, targets: Collection[str] = TARGETS) -> tuple[str, ...]:
     notes = []
     if not ours:
         notes.append("our team id is unknown (no BAZAAR_TEAM_ID, no /me snapshot): dealer and trade evals skipped")
     unpriced = [o.subject for o in outcomes if o.target == "duel" and o.score is None]
     if unpriced:
         notes.append(f"{len(unpriced)} duel deal(s) without a price yet: run `bazaar duel done` once")
-    if not any(o.target == "market_test" for o in outcomes):
+    if "market_test" in targets and not any(o.target == "market_test" for o in outcomes):
         notes.append("Market Test: no venue and no official efficiency yet (stub)")
     return tuple(notes)

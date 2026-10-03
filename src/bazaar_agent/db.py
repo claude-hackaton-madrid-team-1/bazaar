@@ -35,9 +35,9 @@ def init_schema(conn: psycopg.Connection) -> bool:
     return pgvector_version(conn) is not None
 
 
-def connect_ready(app: str) -> psycopg.Connection:
+def connect_ready(app: str, connect_timeout_s: int | None = None) -> psycopg.Connection:
     """A connection to DATABASE_URL with the schema applied: what a long-running writer opens."""
-    conn = connect(app=app)
+    conn = connect(app=app, connect_timeout_s=connect_timeout_s)
     try:
         init_schema(conn)
     except BaseException:
@@ -66,14 +66,82 @@ def table_counts(conn: psycopg.Connection) -> list[tuple[str, int]]:
 
 def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, int]:
     """Insert raw events and their settlements (tape). Safe on any subset: conflicts are ignored."""
-    events = sorted(events, key=lambda e: e["id"])
-    prints: list[Print] = sorted(tape(events), key=lambda p: p.settlement)
     with conn.cursor() as cur:
+        counts = insert_events(cur, events)
+    conn.commit()
+    return counts
+
+
+def jsonb_safe(value: Any) -> Any:
+    """Strings Postgres `jsonb` accepts: no NUL, no lone surrogate. One such string in a feed payload would
+    otherwise fail the whole batch, tick after tick, until the event left the window."""
+    if isinstance(value, str):
+        return value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {jsonb_safe(str(k)): jsonb_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [jsonb_safe(v) for v in value]
+    return value
+
+
+INT4 = 2**31 - 1
+INT8 = 2**63 - 1
+
+
+def _event_row(e: Event) -> tuple[Any, ...]:
+    """One feed_events row; raises (ValueError, TypeError, ...) for an event Postgres would refuse."""
+    tick = e.get("tick")
+    if not isinstance(e["id"], int) or not 0 <= e["id"] <= INT8:
+        raise ValueError(f"event {e.get('id')!r}: the id must be a bigint")
+    if tick is not None and (not isinstance(tick, int) or not -INT4 <= tick <= INT4):
+        raise ValueError(f"event {e['id']}: the tick must be an int")
+    if not all(v is None or isinstance(v, str) for v in (e.get("type"), e.get("actor"))):
+        raise ValueError(f"event {e['id']}: type and actor must be text")
+    payload = json.dumps(jsonb_safe(e.get("payload")), allow_nan=False)  # NaN / Infinity: jsonb refuses them
+    return (e["id"], tick, jsonb_safe(e.get("type")), jsonb_safe(e.get("actor")), payload)
+
+
+def _storable(p: Print) -> Print:
+    """A tape print Postgres accepts: ints in range, no NUL in its text (raises ValueError otherwise)."""
+    if any(not -INT4 <= value <= INT4 for value in (p.tick, p.price, p.fee)):
+        raise ValueError("a tape number out of range")
+    if not 0 <= p.settlement <= INT8:
+        raise ValueError("a settlement id out of range")
+    for text in (p.venue, p.persona, p.buyer, p.seller, p.ref):
+        if text is not None and not isinstance(text, str):
+            raise ValueError("a tape text field that is not text")
+        if text is not None and "\x00" in text:
+            raise ValueError("NUL in a tape field")
+        if text is not None:
+            text.encode("utf-8")  # a lone surrogate: UnicodeEncodeError, a ValueError
+    return p
+
+
+def _usable(events: Iterable[Event]) -> tuple[list[tuple[Any, ...]], list[Print]]:
+    """The rows and tape prints of every event that can be stored; a bad event is skipped, never the batch."""
+    rows: list[tuple[Any, ...]] = []
+    prints: list[Print] = []
+    for e in events:
+        try:
+            row = _event_row(e)
+            printed = [_storable(p) for p in tape([e])]
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        rows.append(row)
+        prints += printed
+    return sorted(rows, key=lambda r: r[0]), sorted(prints, key=lambda p: p.settlement)
+
+
+def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str, int]:
+    """`load_events` without the commit: the caller owns the transaction (the taker's feed archive)."""
+    rows, prints = _usable(events)
+    if rows:
         cur.executemany(
             "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s) "
             "on conflict (id) do nothing",
-            [(e["id"], e.get("tick"), e.get("type"), e.get("actor"), json.dumps(e.get("payload"))) for e in events],
+            rows,
         )
+    if prints:
         cur.executemany(
             "insert into tape (settlement_id, tick, venue, persona, buyer, seller, items, card_id, price, "
             "fee) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (settlement_id) do nothing",
@@ -93,8 +161,7 @@ def load_events(conn: psycopg.Connection, events: Iterable[Event]) -> dict[str, 
                 for p in prints
             ],
         )
-    conn.commit()
-    return {"feed_events": len(events), "tape": len(prints)}
+    return {"feed_events": len(rows), "tape": len(prints)}
 
 
 def load_curves(conn: psycopg.Connection, events: Iterable[Event], ours: str | None = None) -> int:

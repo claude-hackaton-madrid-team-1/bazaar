@@ -19,10 +19,10 @@ from bazaar_agent.agents.words import WordsFn
 from bazaar_agent.config import Settings, load_settings
 from bazaar_agent.guardrails import Guardrails, GuardrailsError, load_guardrails
 from bazaar_agent.jev import JevUsageError, load_questions
-from bazaar_agent.llm.chooser import QUESTION_FILE, ModelChoice, model_question, read_choices
-from bazaar_agent.llm.config import LoadedRuntime, RuntimeConfigError, load_runtime
+from bazaar_agent.llm.chooser import DESK_QUESTION_ID, QUESTION_FILE, ModelChoice, model_question, read_choices
+from bazaar_agent.llm.config import LoadedRuntime, RuntimeConfig, RuntimeConfigError, load_runtime
 from bazaar_agent.llm.intent import Clarification, Intent, command_for, guardrail_action, parse_request, rarity_of
-from bazaar_agent.llm.models import ALIASES, UnknownModelError, pinned_model, resolve
+from bazaar_agent.llm.models import ALIASES, Pin, UnknownModelError, pinned_model, resolve
 from bazaar_agent.llm.providers import (
     CREDENTIAL_VARIABLES,
     ROUTE_LABELS,
@@ -111,6 +111,23 @@ def words_for(settings: Settings, rules: Guardrails, fallback: WordsFn) -> Words
     return llm_words(runtime, fallback, log=lambda line: console.print(escape(line)))
 
 
+def runtime_for(settings: Settings, rules: Guardrails, purpose: str) -> LLMRuntime | None:
+    """The runtime LLM for a background job (the feed reader), built before the first tick; None without one."""
+    try:
+        loaded = load_runtime()
+        runtime = build_runtime(settings, loaded.config, rules, cli_pin=STATE["pin"])
+        runtime.warm()
+    except (RuntimeConfigError, UnknownModelError, LLMError) as e:
+        console.print(f"[yellow]{purpose}: runtime LLM off ({escape(str(e))})[/yellow]")
+        return None
+    aliases = (*loaded.config.runtime_models, loaded.config.runtime_model_default)
+    if not any(credential_for(resolve(alias).provider, settings) is not None for alias in aliases):
+        console.print(f"[yellow]{purpose}: runtime LLM off (no credential for any runtime model)[/yellow]")
+        return None
+    console.print(f"{purpose}: runtime LLM, {claude_auth(settings)}, model from Jev's read_feed choice")
+    return runtime
+
+
 def claude_auth(settings: Settings) -> str:
     """Which credential Claude models use, by variable name only (never a value)."""
     credential = credential_for("anthropic", settings)
@@ -157,12 +174,16 @@ def llm_show(last: int = typer.Option(10, help="How many logged model choices to
             f"Model: Jev chooses among {', '.join(config.runtime_models)} (design bar 0.75); "
             f"default [bold]{config.runtime_model_default}[/bold]"
         )
+    console.print(_desk_line(config, pin))
     _print_models(settings, config.runtime_models, config.runtime_model_default)
     console.print(claude_auth(settings) + _sdk_note(settings))
     jev = "set" if settings.typesafe_api_key else "[red]not set[/red] (Jev undecided → default model)"
     console.print(f"TYPESAFE_API_KEY (Jev model choice): {jev}")
+    desk_candidates = tuple(m for m in config.runtime_models if resolve(m).provider == "anthropic")
     try:
-        model_question(load_questions(QUESTION_FILE), config.runtime_models)
+        pack = load_questions(QUESTION_FILE)
+        model_question(pack, config.runtime_models)
+        model_question(pack, desk_candidates, DESK_QUESTION_ID)
         console.print(f"Question pack {QUESTION_FILE.name}: [green]criteria for every candidate[/green]")
     except (JevUsageError, RuntimeConfigError) as e:
         console.print(f"[red]Question pack: {e}[/red]")
@@ -173,6 +194,22 @@ def llm_show(last: int = typer.Option(10, help="How many logged model choices to
         else "Steering: none"
     )
     _print_choices(read_choices(settings.data_dir / CHOICE_LOG, last))
+
+
+def _desk_line(config: RuntimeConfig, pin: Pin | None) -> str:
+    """Who picks the desk's models: a pinned Claude model or RUNTIME.md `desk_model`, else Jev per request."""
+    from bazaar_agent.runtime.desk_models import desk_pin
+
+    chosen = desk_pin(None, pin, config.desk_model)
+    if chosen is not None:
+        alias, source = chosen.model.alias, chosen.source
+        return f"Desk: [bold]{alias}[/bold] for the orchestrator and every subagent, pinned by {source}"
+    claude = ", ".join(m for m in config.runtime_models if resolve(m).provider == "anthropic")
+    defaults = ", ".join(f"{role} {model}" for role, model in config.desk_role_defaults.items())
+    return (
+        f"Desk: Jev picks per request (`{DESK_QUESTION_ID}`, one call for every role) among {claude}; "
+        f"undecided → {defaults}"
+    )
 
 
 def _sdk_note(settings: Settings) -> str:
@@ -208,21 +245,17 @@ def _print_choices(rows: list[dict[str, Any]]) -> None:
     if not rows:
         console.print("No model choices logged yet (.local/llm/model-choices.jsonl).")
         return
-    t = Table(title=f"Last {len(rows)} model choices (full Jev float map)")
+    t = Table(title=f"Last {len(rows)} model choices: runtime moves and desk roles (full Jev float map)")
     for col in ("tick", "kind", "bucket", "model", "source", "conf", "floats", "reason"):
         t.add_column(col)
-    for r in rows:
-        conf = r.get("confidence")
-        t.add_row(
-            str(r.get("tick")),
-            str(r.get("kind")),
-            str(r.get("bucket")),
-            str(r.get("model")),
-            str(r.get("source")),
-            "-" if conf is None else f"{float(conf):.3f}",
-            _floats(r.get("probabilities")),
-            escape(str(r.get("reason"))),
-        )
+    for r in rows:  # the log is shared by several processes: every cell is escaped, every float guarded
+        cells = (escape(str(r.get(k))) for k in ("tick", "kind", "bucket", "model", "source"))
+        try:
+            conf = "-" if r.get("confidence") is None else f"{float(r['confidence']):.3f}"
+            floats = _floats(r.get("probabilities"))
+        except (TypeError, ValueError, ArithmeticError, AttributeError):
+            conf, floats = "?", "unreadable"
+        t.add_row(*cells, conf, escape(floats), escape(str(r.get("reason"))))
     console.print(t)
 
 

@@ -7,11 +7,12 @@ structure binds: the listing IS the structured offer (`give` / `want`) a counter
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, is_pack
 
 MAX_PRICE = 10_000_000  # RULES.md: whole primas from 1 to 10,000,000
 
@@ -92,11 +93,17 @@ def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro")
 
 @dataclass(frozen=True)
 class Commitments:
-    """What our open offers already promise: cash out, cards we bid for, assets we listed."""
+    """What our open offers already promise: cash out, cards we bid for, assets we listed. `thread_cash` and
+    `thread_packs` are the part of it in dealer threads: a thread bid is booked as spend only when its deal
+    settles, so the spend and pack caps count it here (a board bid is booked in the ledger when posted)."""
 
     cash: int = 0
     wanted: tuple[str, ...] = ()
     listed: frozenset[int] = frozenset()
+    thread_cash: int = 0
+    thread_packs: int = 0
+    listed_refs: tuple[str, ...] = ()  # the card of each asset our asks give (open, or accepted and settling)
+    unnamed_listed: int = 0  # such assets whose offer row does not name the card
 
 
 def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -106,28 +113,79 @@ def offers_in(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
     """Our open or queued offers. An offer counts as ours unless another team addressed it to us, so an
-    unknown maker fails closed: its cash and cards are counted as committed."""
-    cash, wanted, listed = 0, [], set()
-    for o in offers:
-        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
-            continue
+    unknown maker fails closed: its cash and cards are counted as committed. A thread settles at most one
+    deal, so it counts once, at its biggest open bid (`one_per_thread`); every asset it lists stays listed.
+    For the sell count only, an ask of ours a team accepted is gone too: it settles at the next tick, while
+    /api/me still shows it."""
+    offers = list(offers)
+    ours = [
+        o
+        for o in offers
+        if o.get("status") in (None, "open", "queued") and not (o.get("to") == us and o.get("maker") != us)
+    ]
+    cash, wanted, thread_cash, thread_packs = 0, [], 0, 0
+    for o in one_per_thread(ours):
         give, want = o.get("give") or {}, o.get("want") or {}
+        refs = [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
         cash += int(give.get("cash") or 0)
-        wanted += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
-        for a in give.get("assets") or []:
-            asset_id = a.get("id") if isinstance(a, dict) else a
-            if isinstance(asset_id, int):
-                listed.add(asset_id)
-    return Commitments(cash, tuple(wanted), frozenset(listed))
+        wanted += refs
+        if o.get("thread") is not None and give.get("cash"):
+            thread_cash += int(give["cash"])
+            thread_packs += sum(1 for ref in refs if is_pack(ref))
+    listed = {
+        asset_id
+        for o in ours
+        for a in (o.get("give") or {}).get("assets") or []
+        if isinstance(asset_id := a.get("id") if isinstance(a, dict) else a, int)
+    }
+    settling = [o for o in offers if o.get("status") == "accepted" and o.get("maker") == us]
+    given = [a for o in ours + settling for a in (o.get("give") or {}).get("assets") or []]
+    named = tuple(str(a["ref"]) for a in given if isinstance(a, dict) and a.get("ref"))
+    return Commitments(
+        cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs, named, len(given) - len(named)
+    )
+
+
+def one_per_thread(offers: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every offer outside a thread, and one per thread: the one giving the most cash (the newest on a tie).
+    Each bid in a dealer thread is a new offer; if the old ones still read `open`, counting them all would
+    deny real moves (a bid of 8 after one of 7 is 8 at risk, not 15)."""
+
+    def rank(o: dict[str, Any]) -> tuple[int, int]:
+        oid = o.get("id")
+        return int((o.get("give") or {}).get("cash") or 0), oid if isinstance(oid, int) else -1
+
+    out: list[dict[str, Any]] = []
+    best: dict[Any, dict[str, Any]] = {}
+    for o in offers:
+        tid = o.get("thread")
+        if tid is None:
+            out.append(o)
+        elif tid not in best or rank(o) > rank(best[tid]):
+            best[tid] = o
+    return out + list(best.values())
 
 
 def committed_context(ctx: Context, commitments: Commitments) -> Context:
-    """The guardrail context as if every open offer fills: less cash, and the cards we bid for held.
-    Two open bids cannot both pass the cash floor, and a second bid for the same card is refused."""
+    """The guardrail context as if every open offer fills: less cash, the cards we bid for held, and our
+    dealer-thread bids spent this game hour. Two open bids cannot both pass the cash floor or the spend
+    cap, and a second bid for the same card is refused.
+    For a sell, the copies we could still sell: what we hold now (a bid may never fill) minus the copies
+    already in our asks, so two asks cannot take a new page's last card (`protect_page_sets`). An ask that
+    does not name its card counts against every card (fail closed)."""
     held = dict(ctx.held)
     for ref in commitments.wanted:
         held[ref] = held.get(ref, 0) + 1
-    return replace(ctx, cash=ctx.cash - commitments.cash, held=held)
+    listed = Counter(commitments.listed_refs)
+    sellable = {ref: n - listed[ref] - commitments.unnamed_listed for ref, n in ctx.held.items()}
+    return replace(
+        ctx,
+        cash=ctx.cash - commitments.cash,
+        held=held,
+        spent_last_hour=ctx.spent_last_hour + commitments.thread_cash,
+        packs_last_hour=ctx.packs_last_hour + commitments.thread_packs,
+        sellable=sellable,
+    )
 
 
 @dataclass(frozen=True)
