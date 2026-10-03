@@ -36,6 +36,10 @@ def rival(*offers: tuple[int, int, int]) -> list[dict]:
         ("Primas per delivery day", True, "unknown"),  # the openapi's words: no direction
         ("primas each delivery day costs you", True, "cost"),
         ("primas you gain per delivery day", True, "unknown"),  # a gain alone: can a weight be negative? not said
+        ("primas it costs (+) or saves you per day", True, "reversed"),  # + is a cost: the other convention
+        ("positive weights mean you gain primas per day", True, "signed"),
+        ("positive weights cost you primas per day", True, "reversed"),
+        ("primas you gain or lose per delivery day", True, "unknown"),  # no sign tied to either
     ],
 )
 def test_only_a_real_payload_that_names_a_gain_and_a_loss_confirms_the_sign(meaning, real, verdict):
@@ -51,6 +55,12 @@ def test_the_switch_latches_the_first_real_evidence_and_persists_it(tmp_path):
     assert switch.signed(allowed=True) and not switch.signed(allowed=False)
     again = dd.DaysSwitch.load(path)
     assert (again.verdict, again.duel, again.text) == ("signed", 8, SIM_TEXT)
+
+
+def test_a_reversed_convention_latches_and_keeps_the_switch_off(tmp_path):
+    switch = dd.DaysSwitch.load(tmp_path / "days.json")
+    assert switch.observe([duel(days_meaning="primas it costs (+) or saves you per day")], True) == "reversed"
+    assert not switch.signed(True)
 
 
 def test_real_payloads_that_disagree_switch_it_off_for_good(tmp_path):

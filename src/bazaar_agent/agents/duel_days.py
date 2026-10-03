@@ -7,9 +7,10 @@ simulator is not evidence: Friday's real practice payloads had `days_meaning: nu
 which way the weight points, every day must be valued at the worst case (|weight| against us, PR #60).
 `DaysSwitch` latches the first real evidence:
 
-    signed   the text names both a gain and a loss per day (the simulator's wording, but from the real game)
+    signed   the text ties a gain to "(+)" / "positive" (the simulator's wording, but from the real game)
+    reversed the text ties a cost to "(+)": the opposite of v2's convention, so the switch stays off
     cost     the text only speaks of a cost per day: the worst case is the truth, keep it
-    unknown  no text (null), or any text read from the simulator
+    unknown  no text (null), any text read from the simulator, or a text with no sign tied to a gain or a cost
     conflict two real payloads disagree: never signed again (the safe side)
 
 It persists to a small JSON file, so a restart keeps the verdict. The caller passes `real_game` (from
@@ -34,11 +35,15 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-Verdict = Literal["signed", "cost", "unknown", "conflict"]
+Verdict = Literal["signed", "reversed", "cost", "unknown", "conflict"]
 DAYS_MAX = 10  # RULES.md: delivery day 0 to 10
 PRIOR_WEIGHT = 2.0  # E|weight| when weights are uniform on -4..4 (the simulator's draw): a rival's unknown magnitude
-GAIN = re.compile(r"\bgain|\(\s*\+\s*\)|\bearn", re.IGNORECASE)
-LOSS = re.compile(r"\blose|\bloss|\(\s*[-−]\s*\)|\bcost|\bpay", re.IGNORECASE)
+_GAIN, _LOSS = r"(?:gain|earn)\w*", r"(?:lose|loss|cost|pay)\w*"
+_PLUS = r"\(\s*\+\s*\)"
+PLUS_GAIN = re.compile(rf"{_GAIN}\s*{_PLUS}|positive\W+(?:\w+\W+){{0,3}}?{_GAIN}", re.IGNORECASE)
+PLUS_LOSS = re.compile(rf"{_LOSS}\s*{_PLUS}|positive\W+(?:\w+\W+){{0,3}}?{_LOSS}", re.IGNORECASE)
+LOSS = re.compile(_LOSS, re.IGNORECASE)
+GAIN = re.compile(_GAIN, re.IGNORECASE)
 
 
 def _number(value: object) -> float | None:
@@ -55,14 +60,21 @@ def two_issue(duel: Mapping[str, Any]) -> bool:
 
 
 def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
-    """What one payload says about the sign of `your_days_weight`. Only a real two-issue payload counts."""
+    """What one payload says about the sign of `your_days_weight`, in v2's convention (a positive weight is primas
+    WE gain per day: `duel_v2.value_of`, the guard, the simulator's utility). Only a real two-issue payload counts.
+
+    signed    a gain is tied to "(+)" or "positive" ("gain (+) or lose (-)", the simulator's words)
+    reversed  a cost or loss is tied to "(+)" or "positive": the opposite convention, so the switch stays off
+    cost      only a cost or loss, no gain: every day costs, the worst case is the truth
+    unknown   anything else, including a gain and a loss with no sign tied to either
+    """
     text = duel.get("days_meaning")
     if not real_game or not two_issue(duel) or not isinstance(text, str) or not text.strip():
         return "unknown"
-    gain, loss = bool(GAIN.search(text)), bool(LOSS.search(text))
-    if gain and loss:
-        return "signed"
-    if loss:
+    plus_gain, plus_loss = bool(PLUS_GAIN.search(text)), bool(PLUS_LOSS.search(text))
+    if plus_gain != plus_loss:
+        return "signed" if plus_gain else "reversed"
+    if LOSS.search(text) and not GAIN.search(text):
         return "cost"
     return "unknown"
 
@@ -82,7 +94,12 @@ class DaysSwitch:
             raw = json.loads(path.read_text())
         except (OSError, ValueError):
             return cls(path=path)
-        verdicts: dict[str, Verdict] = {"signed": "signed", "cost": "cost", "conflict": "conflict"}
+        verdicts: dict[str, Verdict] = {
+            "signed": "signed",
+            "reversed": "reversed",
+            "cost": "cost",
+            "conflict": "conflict",
+        }
         verdict = verdicts.get(str(raw.get("verdict")), "unknown")
         return cls(verdict=verdict, duel=raw.get("duel"), text=raw.get("text"), path=path)
 
