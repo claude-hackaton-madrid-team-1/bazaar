@@ -2623,7 +2623,13 @@ def agent_maker(
         market = _venue_keeper(team, settings, kw) if venue else None
         notices = VenueNotices(kw["log"]) if learn else None
         jev_ = _maker_jev(settings, kw["rules"]) if jev else None
-        return Maker(team, public, jev=jev_, market=market, notices=notices, **kw)
+        sell_market = None  # the dealer sell desk's dealers and curves: Postgres when shared, else API + feed
+        if kw["ledger"].where.startswith("postgres"):
+            from bazaar_agent import db
+            from bazaar_agent.agents.dealer_sell_data import db_loader
+
+            sell_market = db_loader(lambda: db.connect(app="bazaar-maker-sell", connect_timeout_s=3), kw["log"])
+        return Maker(team, public, jev=jev_, market=market, notices=notices, sell_market=sell_market, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 
