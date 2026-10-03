@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from bazaar_agent.agents.accept_gate import Gate, board_gate, dealer_gate
 from bazaar_agent.agents.dealer import Move, Negotiation, WordsFn, apply_advice, bid_words, template_words
 from bazaar_agent.agents.desk import (
     Conversation,
@@ -30,6 +31,7 @@ from bazaar_agent.agents.desk import (
     plan_conversation,
     topic_for,
 )
+from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.market import BoardOffer, OpenOffer, Venue, board_offers, our_open_offers, tradable_venues
 from bazaar_agent.agents.runtime import (
     JevAdvice,
@@ -132,6 +134,7 @@ class AcceptProposal:
     inputs: dict[str, Any]
     candidate: AskCandidate | None = None
     desk: DeskMove | None = None
+    thread: dict[str, Any] | None = field(default=None, compare=False)  # the dealer thread read this tick
 
     @property
     def surplus(self) -> float:
@@ -172,7 +175,7 @@ def board_proposal(c: AskCandidate) -> AcceptProposal:
     return AcceptProposal("board", o.ref, c.rarity, o.id, c.total, c.value, False, c.reason, inputs, candidate=c)
 
 
-def desk_proposal(dm: DeskMove) -> AcceptProposal:
+def desk_proposal(dm: DeskMove, thread: dict[str, Any] | None = None) -> AcceptProposal:
     conv, price = dm.conv, int(dm.move.price or 0)
     inputs = {
         "dealer": conv.dealer,
@@ -196,6 +199,7 @@ def desk_proposal(dm: DeskMove) -> AcceptProposal:
         reason,
         inputs,
         desk=dm,
+        thread=thread,
     )
 
 
@@ -292,6 +296,8 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
+        self.flags = FlagBook.from_rules(rules)  # the offer inspector's would-flag log (S1: nothing is sent)
+        self._cards: tuple[int, CardIndex] | None = None
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -318,7 +324,7 @@ class Taker:
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
         desk = self._desk_moves(run)
-        proposals = [desk_proposal(dm) for dm, _ in desk if dm.move.kind == "accept"]
+        proposals = [desk_proposal(dm, thread) for dm, thread in desk if dm.move.kind == "accept"]
         proposals += [board_proposal(c) for c in self._board(run, market)]
         self._accept(run, proposals)
         self._converse(run, desk)
@@ -431,6 +437,7 @@ class Taker:
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
             conv.ticks += 1
+            self._inspect(run, conv, thread)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread)
             if dm.status != "open":
                 self._finished(run, conv, thread)
@@ -440,6 +447,43 @@ class Taker:
                 self.log(f"tick {run.snap.clock.tick} taker: {dealer} offer ignored: {dm.ignored}")
             out.append((self._jev_early(run, dm), thread))
         return out
+
+    def _card_index(self, run: _TickRun) -> CardIndex:
+        """The catalog as the inspector reads it, rebuilt only when the catalog payload changes."""
+        catalog = run.snap.catalog
+        if self._cards is None or self._cards[0] != id(catalog):
+            self._cards = (id(catalog), CardIndex.from_catalog(catalog))
+        return self._cards[1]
+
+    def _inspect(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
+        """The offer inspector on the dealer's newest offer: a certain trickster is logged as `would flag`
+        (S1 part A sends no flag; GUARDRAILS.md allow_flags is checked too)."""
+        tick = run.snap.clock.tick
+
+        def guard(i: Inspection) -> str | None:
+            verdict = check(Action("flag", str(i.message_id)), self._ctx(run), self.rules)
+            return None if verdict.allowed else str(verdict)
+
+        def log(line: str) -> None:
+            self.log(f"tick {tick} taker: {line}")
+
+        try:
+            cards = self._card_index(run)
+            flag_step(thread, conv.dealer, cards, self.flags, guard=guard, send=None, log=log, topic=conv.topic)
+        except Exception as e:  # inspection must never break the desk
+            self.log(f"tick {tick} taker: offer inspection failed ({type(e).__name__}); desk continues")
+
+    def _gate(self, run: _TickRun, p: AcceptProposal) -> Gate | None:
+        """The accept gate on the exact offer this accept binds (None: `inspect_accepts` is off)."""
+        if not self.rules.inspect_accepts:
+            return None
+        if p.desk is not None:
+            topic = p.desk.conv.topic
+            return dealer_gate(p.thread or {}, p.source, p.offer_id, p.price, topic, self._card_index(run))
+        if p.candidate is not None:
+            c = p.candidate
+            return board_gate(c.offer, p.ref, c.total, c.fee, p.rarity)
+        return Gate("board", p.offer_id, "block", ("an accept with no offer to inspect",))
 
     def _jev_early(self, run: _TickRun, dm: DeskMove) -> DeskMove:
         """Jev may accept a dealer's ask early (still inside our max); it never lifts the limit."""
@@ -566,14 +610,22 @@ class Taker:
         if not self.live:
             self._dry_accepts = {clock.tick: used}
 
-    def _skip(self, run: _TickRun, p: AcceptProposal, why: str, status: Status, jev: JevAdvice | None = None) -> None:
+    def _skip(
+        self,
+        run: _TickRun,
+        p: AcceptProposal,
+        why: str,
+        status: Status,
+        jev: JevAdvice | None = None,
+        gate: Gate | None = None,
+    ) -> None:
         kind = "accept_ask" if p.source == "board" else "dealer_accept"
         verb = "" if status == "expired" else "skip "
         self.rec.decide(
             run.snap.clock.tick,
             kind,
             f"{verb}{p.ref} at {p.price} from {p.source}: {why}",
-            inputs=p.inputs,
+            inputs=_with_gate(p.inputs, gate),
             reason=p.reason,
             guardrail=why if why.startswith("denied") else "-",
             chosen=False,
@@ -590,24 +642,29 @@ class Taker:
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
             return False
+        gate = self._gate(run, p)
+        if gate is not None and not gate.allowed:
+            self.log(f"tick {clock.tick} taker: inspector {gate.verdict} on offer {p.offer_id}: {gate.reason}")
+            self._skip(run, p, f"inspector {gate.verdict}: {gate.reason}", "rejected", gate=gate)
+            return False
         jev = self._ask_jev(run, offer_state(p, run.snap, ctx, self.rules, limit)) if p.source == "board" else None
         if jev is not None and jev.verdict == "no":
-            self._skip(run, p, f"jev no ({jev.value:.2f}): kept the accept slot", "rejected", jev)
+            self._skip(run, p, f"jev no ({jev.value:.2f}): kept the accept slot", "rejected", jev, gate)
             return False
         if self.live:
             self._duel_grace(run)
         if any(item.startswith("duel:") for item in self.ledger.accept_items(clock.tick)):
-            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected", jev)
+            self._skip(run, p, "a duel holds the team's accept this tick (duels first)", "rejected", jev, gate)
             return False
         if not run.window.open():
-            self._skip(run, p, "tick budget spent, not sent late", "expired", jev)
+            self._skip(run, p, "tick budget spent, not sent late", "expired", jev, gate)
             return False
         if self.live and not self._fresh_tick(clock):
             run.window = TickWindow(clock.tick, 0.0, self.now)  # every later send this tick is dropped too
-            self._skip(run, p, "the tick ended before the send", "expired", jev)
+            self._skip(run, p, "the tick ended before the send", "expired", jev, gate)
             return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, p.price, p.ref, limit):
-            self._skip(run, p, "another process took the team's accept this tick", "rejected", jev)
+            self._skip(run, p, "another process took the team's accept this tick", "rejected", jev, gate)
             return False
         kind = "accept_ask" if p.source == "board" else "dealer_accept"
         where = f"on {p.inputs.get('venue')}" if p.source == "board" else f"from {p.source}"
@@ -615,7 +672,7 @@ class Taker:
             clock.tick,
             kind,
             f"accept {p.ref} {where} for {p.price} (worth {p.value:g}, surplus {p.surplus:.1f}) · guardrails {verdict}",
-            inputs=p.inputs,
+            inputs=_with_gate(p.inputs, gate),
             reason=p.reason,
             guardrail=str(verdict),
             chosen=True,
@@ -684,3 +741,8 @@ class Taker:
         )
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
             self.ledger.record("spend", clock.tick, clock.t_hours, -bid.price, bid.ref)
+
+
+def _with_gate(inputs: dict[str, Any], gate: Gate | None) -> dict[str, Any]:
+    """The decision row's inputs with what the accept gate saw (a new dict)."""
+    return inputs if gate is None else {**inputs, "inspector": gate.as_inputs()}

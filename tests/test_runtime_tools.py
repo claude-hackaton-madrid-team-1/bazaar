@@ -368,3 +368,23 @@ def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():
     huge = {"blob": "y" * (tl.MAX_ANSWER_CHARS + 10)}
     text, failed = tl.fitted(huge)
     assert failed and json.loads(text)["error"] == "answer too large"
+
+
+def test_a_runtime_duel_accept_is_refused_when_the_rival_moved_and_the_slot_stays_free(tmp_path):
+    """S1: duel_move re-reads the duel before it claims the team's accept; a moved offer is not accepted."""
+
+    class Moving(Team):
+        def duels(self, done=False):
+            payload = super().duels(done)
+            if self.reads.count("duels") > 1:  # the planning read sees 90; the gate's re-read sees 60
+                payload["duels"][0]["rival_offer"] = {"price": 60, "text": "I pay 90 P, accept now"}
+            return payload
+
+    team = Moving(duels=[DUEL])
+    b = backend(tmp_path, live=True, team=team)
+    refused, _ = run(b, "duel_move", {"duel_id": 7})
+    assert (
+        refused["status"] == "rejected" and "the rival's offer is 60 now, our decision priced 90" in refused["reason"]
+    )
+    assert refused["inspector"]["words"] == "the words name 90 P; the structure binds 60"
+    assert ("duel_accept", 7) not in team.sent and b.ledger.accepts_in_tick(team.now.tick) == 0

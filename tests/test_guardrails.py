@@ -94,3 +94,9 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
     assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+
+
+@pytest.mark.parametrize("value", ["abuela;chato", "Abuela", "abuela, ,chato"])
+def test_a_bad_trusted_dealer_list_fails_fast(value):
+    with pytest.raises(gr.GuardrailsError, match="flag_trusted_dealers"):
+        gr.parse_guardrails(f"- `flag_trusted_dealers` = {value} — x")

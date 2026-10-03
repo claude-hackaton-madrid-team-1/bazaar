@@ -370,6 +370,13 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         return outcome(planned, "approved", dry_run=True, request=request, command="uv run bazaar duel run --play")
     from bazaar_agent.sdk import BazaarError
 
+    if move.kind == "accept" and b.rules.inspect_accepts:  # S1: re-read the duel before the slot is claimed
+        from bazaar_agent.agents.accept_gate import duel_accept_check
+
+        gate = duel_accept_check(b.team.duels, planned.detail["duel"], args.duel_id, move)
+        if not gate.allowed:
+            why = f"inspector {gate.verdict}: {gate.reason}"
+            return outcome(planned, "rejected", reason=why, request=request, inspector=gate.as_inputs())
     limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
     if move.kind == "accept" and not b.ledger.reserve_accept(
         clock.tick, clock.t_hours, 0, f"duel:{args.duel_id}", limit

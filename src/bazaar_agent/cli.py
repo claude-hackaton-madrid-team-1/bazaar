@@ -390,12 +390,42 @@ def dealer_buy(
             max_ticks=rules.dealer_max_ticks_per_thread,
             observer=observer,
             words_fn=llm_cli.words_for(settings, rules, template_words),
+            **_offer_inspector(settings, dealer, topic, rules),
         )
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} bids {list(out.bids)} "
         f"in {out.ticks} ticks"
     )
+
+
+def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: Any) -> dict[str, Any]:
+    """`negotiate`'s offer inspector (S1): the would-flag log on every thread read and the accept gate.
+    No flag is sent from here; with `inspect_accepts` false only the older structure check runs."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.inspector import CardIndex, FlagBook, flag_step
+
+    try:
+        cards = CardIndex.from_catalog(public_client(settings).catalog())
+    except BazaarError as e:  # without names the gate still refuses a swap; it only cannot grade it a flag
+        console.print(f"[yellow]catalog refused {e.code}: the inspector reads structure only[/yellow]")
+        cards = CardIndex.from_catalog({})
+    book = FlagBook.from_rules(rules)
+
+    def log(line: str) -> None:
+        console.print(escape(f"inspector: {line}"))
+
+    def on_thread(thread: dict[str, Any]) -> None:
+        guard = lambda _: None if rules.allow_flags else "allow_flags = false"  # noqa: E731
+        flag_step(thread, dealer, cards, book, guard=guard, send=None, log=log, topic=topic)
+
+    def inspect(thread: dict[str, Any], move: Any) -> str | None:
+        gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
+        return None if gate.allowed else f"{gate.verdict}: {gate.reason}"
+
+    return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
 
 
 def _rules() -> Any:
@@ -455,6 +485,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.accept_gate import Gate, duel_accept_check
     from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duelist import (
         DuelMove,
@@ -517,13 +548,21 @@ def duel_run(
             return "failed"
 
     def record(
-        d: dict[str, Any], move: DuelMove, pick: DuelPick | None, tick: int, status: Status, guardrail: str = "allowed"
+        d: dict[str, Any],
+        move: DuelMove,
+        pick: DuelPick | None,
+        tick: int,
+        status: Status,
+        guardrail: str = "allowed",
+        gate: Gate | None = None,
     ) -> None:
         """One `decisions` row per duel per tick: the state Jev read, its verdict and floats, what we did."""
         offer = d.get("rival_offer")
         rival = offer if isinstance(offer, dict) else {}
         inputs = pick.state.get("duel", {}) if pick is not None else {}
         inputs = inputs or {"role": d.get("role"), "our_limit": d.get("your_limit"), "rival_price": rival.get("price")}
+        if gate is not None:
+            inputs = {**inputs, "inspector": gate.as_inputs()}
         if pick is not None and pick.days is not None:
             inputs = {**inputs, "jev_days": pick.days.as_dict()}
         rec.decide(
@@ -580,6 +619,7 @@ def duel_run(
             if did is None:
                 continue
             pick = picks.get(did)
+            gate: Gate | None = None
             move = (
                 pick.move
                 if pick is not None
@@ -610,6 +650,12 @@ def duel_run(
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     continue
+                if move.kind == "accept" and rules.inspect_accepts:  # before the accept slot is claimed
+                    gate = duel_accept_check(client.duels, d, did, move)
+                    if not gate.allowed:
+                        console.print(f"  duel {did}: INSPECTOR {gate.verdict}: {escape(gate.reason)}")
+                        record(d, move, pick, c.tick, "rejected", f"inspector {gate.verdict}: {gate.reason}", gate)
+                        continue
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
                 if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
                     console.print(f"  duel {did}: another process took the team's accept this tick")
@@ -622,7 +668,7 @@ def duel_run(
                 + (f" · {escape(pick.why)}" if pick is not None else "")
             )
             status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
-            record(d, move, pick, c.tick, status)
+            record(d, move, pick, c.tick, status, gate=gate)
         duel_traces.end_tick(duel_id(d) for d in duels)
         if duel_jev is not None:
             try:

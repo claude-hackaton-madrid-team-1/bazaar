@@ -260,3 +260,67 @@ def test_words_address_the_dealer_we_are_talking_to():
     assert any("Chato" in t for t in texts)
     assert any("Carmen" in words(step, 9, "abuela") for step in range(6))
     assert all("Carmen" not in words(step, 9, "nuevo") for step in range(6))  # unknown dealer: neutral
+
+
+def test_on_thread_sees_every_read_and_a_failing_inspector_never_breaks_the_deal():
+    from bazaar_agent.agents.dealer import negotiate
+
+    seen, lines = [], []
+
+    def inspector(thread):
+        seen.append(thread["status"])
+        raise RuntimeError("boom")
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        on_thread=inspector,
+    )
+    assert (out.status, out.price) == ("deal", 9) and len(seen) >= 4
+    assert any("offer inspection failed (RuntimeError)" in line for line in lines)
+
+
+def test_the_accept_gate_runs_before_the_guard_and_a_refusal_never_accepts_nor_claims_the_slot():
+    from bazaar_agent.agents.dealer import negotiate
+
+    guarded, lines = [], []
+
+    def guard(move):
+        guarded.append(move.kind)
+        return None
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        max_ticks=6,
+        guard=guard,
+        inspect=lambda thread, move: "block: it binds LAV-01",
+    )
+    assert client.accepted == [] and "accept" not in guarded and out.status != "deal"
+    assert any("INSPECTOR refused the accept of offer" in line and "LAV-01" in line for line in lines)
+
+
+def test_the_real_gate_lets_the_offer_we_priced_through():
+    from bazaar_agent.agents.accept_gate import dealer_gate
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.agents.inspector import CardIndex
+
+    topic = {"buy": {"card": "LAV-03"}}
+
+    def inspect(thread, move):
+        gate = dealer_gate(thread, "abuela", move.offer_id, move.price, topic, CardIndex.from_catalog({}))
+        return None if gate.allowed else gate.reason
+
+    client = FakeDealerClient(asks=[12, 10, 9])
+    out = negotiate(client, "abuela", topic, BidPlan(6, 1, 10), log=print, sleep=lambda _: None, inspect=inspect)
+    assert (out.status, out.price) == ("deal", 9) and client.accepted == [503]

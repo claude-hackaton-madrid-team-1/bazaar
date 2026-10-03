@@ -2,6 +2,7 @@
 
 from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation
 from bazaar_agent.agents.desk import Conversation, DeskMove, meet_the_ask, openings, plan_conversation
+from bazaar_agent.agents.inspector import FlagBook
 from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
@@ -315,3 +316,67 @@ def test_a_pack_thread_opens_only_on_jevs_yes_with_time_to_ask(tmp_path):
     t2.pack_judge = judge
     t2.on_tick(clock(next_tick_in=5.0))  # 3 s of budget: no time for Jev, so no pack
     assert asked == ["sobre_barrio"] and not [s for s in late.sent if s[0] == "open_thread"]
+
+
+# ---------------------------------------------------------------- the accept gate (S1)
+
+
+def test_a_board_copy_of_a_lesser_rarity_than_its_card_is_never_accepted(tmp_path):
+    bait = ask(2, "LAV-08", 20, asset=901, rarity="common")  # LAV-08 is an uncommon: the copy says common
+    team = FakeTeam()
+    t, lines, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [bait]}), live=True)
+    t.on_tick(clock())
+    assert team.sent == [] and ledger.accept_items(TICK) == []
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask"]
+    assert (row["status"], row["chosen"], row["inputs"]["inspector"]["verdict"]) == ("rejected", False, "block")
+    assert row["inputs"]["inspector"]["findings"] == ["the copy says common; the catalog has LAV-08 as uncommon"]
+    assert any("inspector block on offer 2" in line for line in lines)
+
+
+def test_the_inspect_accepts_kill_flag_keeps_the_older_checks_only(tmp_path):
+    bait = ask(2, "LAV-08", 20, asset=901, rarity="common")
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(boards={"rastro": [bait]}), live=True, inspect_accepts=False)
+    t.on_tick(clock())
+    assert team.sent == [("accept", 2)]
+    assert "inspector" not in next(r for r in rows(tmp_path) if r.get("kind") == "accept_ask")["inputs"]
+
+
+def test_a_clean_dealer_accept_carries_the_inspection_in_its_decision_row(tmp_path):
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())
+    offer = {"id": 801, "maker": "abuela", "status": "open", "final": True}
+    offer |= {"give": {"types": ["card:LAV-08"]}, "want": {"cash": 21}}
+    message = {"message": 9000, "sender": "abuela", "text": "LAV-08, 21 P, cariño", "offer": offer}
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [offer]}
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[-1] == ("accept", 801)
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_accept"]
+    assert row["inputs"]["inspector"] == {
+        "kind": "dealer",
+        "offer_id": 801,
+        "message_id": 9000,
+        "verdict": "clean",
+        "findings": [],
+        "words": None,
+    }
+
+
+def test_a_dealer_trickster_is_never_accepted_and_only_logged_as_would_flag(tmp_path):
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}  # a common, for the LAV-08 we asked
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    for allow in (False, True):
+        team = FakeTeam()
+        root = tmp_path / str(allow)
+        root.mkdir()
+        config = TakerConfig(max_dealer_threads=3)
+        t, lines, _ = taker(root, team, FakePublic(), live=True, config=config, allow_flags=allow)
+        t.flags = FlagBook(trusted=frozenset())  # the fake trickster plays Abuela, a trusted dealer by default
+        t.on_tick(clock())
+        team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+        t.on_tick(at(team, TICK + 1))
+        assert ("accept", 802) not in team.sent and not [s for s in team.sent if s[0] == "flag"]
+        (would,) = [line for line in lines if "would flag message 9001" in line]
+        assert ("allow_flags" in would) is (not allow) and ("dry run" in would) is allow

@@ -167,3 +167,31 @@ def test_a_bug_in_the_jev_layer_never_costs_a_duel_its_move(duel_cli, monkeypatc
     assert result.exit_code == 0, result.output
     assert "duel jev failed (RuntimeError): today's moves this tick" in result.output
     assert client.sent[0][:2] == ("say", 95)  # today's counter still went out
+
+
+def test_duel_run_refuses_an_accept_when_the_rival_moved_its_offer_after_our_read(duel_cli):
+    """S1: the accept binds the offer standing when it lands, so the duel is read again first."""
+    cli, client, asked, tmp_path = duel_cli
+    reads = []
+    lowered = [{**LIVE, "rival_offer": {"id": 703, "price": 105, "tick": 134, "days": 0}}]
+
+    def duels():
+        reads.append(1)
+        return {"duels": deepcopy(client.payload if len(reads) == 1 else lowered)}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(reads) == 2
+    assert "INSPECTOR block" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert (row["kind"], row["status"]) == ("duel_accept", "rejected")
+    assert row["inputs"]["inspector"]["findings"] == ["the rival's offer is 105 now, our decision priced 110"]
+
+
+def test_duel_run_records_the_clean_inspection_on_a_sent_accept(duel_cli):
+    cli, client, asked, tmp_path = duel_cli
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "done" and row["inputs"]["inspector"]["verdict"] == "clean"
