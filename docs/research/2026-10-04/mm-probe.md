@@ -1,6 +1,6 @@
 # Market making with the probe: what Saturday measured, and Sunday's plan (sat-mm-probe)
 
-Written Sun 4 Oct 2026, 00:15–00:45 Madrid (revised after the advisor pass), by the `sat-mm-probe` research session for Team 1 (t01). Read-only on the game.
+Written Sun 4 Oct 2026, 00:15–00:45 Madrid, revised ~01:30 after review (`_sat-review/review-mm-probe.md`: 2 HIGH, 8 MED, 2 LOW, all addressed in place; §9 lists what changed and the one point partly argued), by the `sat-mm-probe` research session for Team 1 (t01). Read-only on the game.
 The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next opening 09:00).
 
 ## Three ambiguities, read these first
@@ -14,12 +14,12 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
 
 ## TL;DR
 
-- **The probe has never run live, and it now runs by default.** No evidence was found that the h13 hand probe was sent: there is no local log, no transcript or shell-history call, and `bench_points` stayed exactly 0.500. PR #257 merged at 00:18, and bazaar-maker is already on `BAZAAR_BENCH_POLICY=probe`: its keeper line reads `broker bench probe (exact + non-crossing probes)`, and the maker is waiting for 09:00. Sunday's first bench is the hard test (12 traders, firmer, more impatient), and it becomes the probe's first live test.
+- **The probe has never run live, and it now runs by default.** No evidence was found that the h13 hand probe was sent: there is no local log, no transcript or shell-history call, and `bench_points` stayed exactly 0.500. PR #257 merged at 00:18, and bazaar-maker is already on `BAZAAR_BENCH_POLICY=probe`: its keeper line reads `broker bench probe (exact + non-crossing probes)`, and the maker is waiting for 09:00. Sunday's first bench is the hard test (12 traders, firmer, more impatient), and it becomes the probe's first live test. **Its "stop after 8 refusals" latch can never fire** (6 probes per session cap, and refusals count toward them), so under the quote rule it sends 6 refused matches in *every* session: use the manual rule in §3.1 (switch to `exact` before h15 if h14.65 shows refusals and nothing gone).
 - **Saturday's bench result: 6 of 6 sessions at exactly the stall (bench_points 0.500).** Our broker made 25 pairs; the server returned no error code on any of the 25 (`executions`), and every response body inspected (4, ticks 1405–1412) read `{"queued": true, "settles_at_tick": T+1}`. The `edge` setting was live in the environment for h11, but it never overrode exact: all 6 h11 pairs carry the exact reason string. No team beat the stall all day: every team above 7.50 on the board has trades on its venue.
-- **Organic flow on v19 was zero.** Since tick 612 no other team listed anything on v19, so it had 0 listings, 0 trades and 0 traders. 37 generic notices on Saturday drew no response. The venues that fill run on *addressed* listings and resident buyers (v07: 390 of its 552 listings were addressed), not on fees, because every venue already charges 0. Our venue's name cannot change (PATCH sets the fee only). The two new levers, the MM2 "wanted cards" notice (#238) and the venue invite inside swap proposals (#251), merged at 23:25 and have never run live.
+- **Organic flow on v19 was zero, and organic credit elsewhere was fragile.** v19 had 0 trades all day; its 15 outside listings (all asks, 6–10 tick expiry) came 3–20 ticks after our notices, but no bidder was ever there. On other venues credit was neither per-trade nor permanent: t12 (v02, 11 trades) fell 12.43 → 7.50 at tick 910, t07 (v11) went 7.50 → 9.35 → 7.50 by tick 1210, t05 (v10, 2 trades) never showed credit, and v13/v15 had hundreds of addressed listings and 0 trades. Fee is not a lever below 0 (v02 went to the 5 P/card maximum at tick 941 and traded no more). The new levers (MM2 "wanted cards" notice #238, venue invite in swap proposals #251) merged at 23:25 and have never run live.
 - **Sunday expected value (final leaderboard points; ranges, not promises):**
-  - Book A (probe): **+1.1 to +2.7 expected**. That figure is already weighted by P(limit) 0.4–0.6 and by P(sessions above the stall | limit) ≈ 0.5. If the server checks hidden limits, the probe is worth +2.8 to +4.5; if it checks quotes, 0. The low end assumes per-session bench averaging, the high end the round-average reading fitted on Saturday. Cash at risk 0; worst case about −0.03 per session.
-  - Book B (organic on v19): +0.6 to +1.3 (estimate; v19's measured base rate is 0).
+  - Book A (probe): **+1.0 to +2.5 expected**, weighted over three server worlds: hidden limits checked (P 0.35–0.55: worth +2.8 to +4.5), quotes checked (P 0.35–0.55: 0), nothing checked (P ≈ 0.1: about −0.1 to −0.3, capped at one session by the §3.1 rule). The low end assumes per-session bench averaging, the high end the round-average reading fitted on Saturday. Cash at risk 0.
+  - Book B (organic on v19): **+0.05 to +0.25** (was +0.6 to +1.3 before review): P(a first trade on v19 on Sunday) 0.05–0.35 × ≈ +0.65 final of credit that survives, measured on Saturday's low-volume venues including the two that lost it.
   - Book C (our quoting): about +0.2 final (+0.33 on the board) per 10 P of surplus on a sale. **New measurement:** one team sale (LAT-10, tick 1304) showed that gains do count, at k ≈ 0.033 board per neg_point, against 0.048 on the loss side.
 - **Before anything else at 09:00:** read `/api/clock` and `/api/schedule`. The schedule pins "Sunday opens" and "Round 3 starts" at t 16.65, while the clock froze at 13.367. If round 3 starts at the 09:00 opening, the two remaining round-2 benches (h14.65, h15) change rounds or never run, and every round-2 number above moves. Then:
   - keep `probe`;
@@ -31,7 +31,7 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
 ## 1. Method and data windows actually seen
 
 - **Postgres** (shared ledger, read-only session `default_transaction_read_only=on`, helper `mm-probe/q.py`, URL never printed):
-  - `decisions` (broker_match, venue_announce, maker post_ask/bid), `executions` (match responses), `me_snapshots` (t01, ticks 159–1445), `leaderboard_snapshots` (last real snapshot at tick 1430), `feed_events` (ticks 160–1445 = round 2 = Saturday; 8,422 `offer.listed`, 793 settlements, 429 notices), `cards`.
+  - `decisions` (broker_match, venue_announce, maker post_ask/bid), `executions` (match responses), `me_snapshots` (t01, ticks 159–1445), `leaderboard_snapshots` (last real snapshot at tick 1430), `feed_events` (whole table ticks 0–1445: 8,422 `offer.listed`, 793 settlements, 429 notices; Saturday ticks 160–1445: 7,670 / 601 / 426), `cards`.
   - Saturday window: ticks 160–1445, 09:00–23:00 Madrid, with three pauses (ticks 284, 630, 1201).
 - **Railway**, read-only, run from an already-linked scratch directory: `railway variables --service bazaar-maker --kv` filtered to `BAZAAR_(BENCH|LIVE|SIM|VENUE|DECIDER)`, `railway deployment list`, and a 25 s `railway logs` tail. **Window seen:** only the current container's start-up (≈ 00:18 Sunday, 9 lines). Saturday's maker logs were **not** read, because the CLI returns the current deployment only.
 - **Keyless game GETs, 22 in total** (zero keyed requests; listed in `mm-probe/evidence/keyless_requests.log`): `/api/venues`, `/api/clock`, `/api/schedule` at 00:21, then `/api/venues/{v}/offers` for 19 venues at 1 req/s, 00:21–00:22.
@@ -54,12 +54,12 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
   | Probes per tick | 4 |
   | Tries per pair | 3, never twice at one price |
   | Probes per session | 6 |
-  | Refusals before it stops | 8 with nothing gone; after that, exact only for the life of the process |
+  | Refusals before it stops | 8 with nothing gone (`give_up_after`), **unreachable**: see below |
 
 - **What the probe tests:** whether `POST /api/broker/matches` checks the *quotes* (openapi: "ask ≤ price and price + fee ≤ bid") or the traders' *hidden limits*. The kit's own broker docstring points to limits ("a quote is not a limit … a broker that estimates those limits … beats the stall", `vendor/bazaar-kit/starter_broker.py:88-91`, quoted in MM_STRATEGY §2.0).
   - Under the quote rule every probe is refused and the score equals the exact broker's.
   - Under the limit rule a settled probe takes gains that the stall can never take.
-- **Caveat:** the `quote_rule` latch lives in process memory, so a maker restart allows another 8 refusals. Each refusal is a 4xx that "costs nothing and moves nothing" (RULES.md:150).
+- **The process-wide stop never fires (review finding, verified in code).** A probe refused at the POST counts in `run.sent` as well as `run.refused` (`bench_probe.py:151-153`, `broker.py:489-491`), a queued one counts in `sent` (`bench_probe.py:139`), and `plan()` caps each run at `max_per_run − sent` = 6 (`:117`). So `refused ≤ sent ≤ 6 < 8 = give_up_after` in every run, and the `quote_rule` latch (`:155-156`) is unreachable with the defaults; the tests only exercise it with `give_up_after` 1 or 3 (`tests/test_bench_probe.py:79,110,184`). The reviewer ran 4 all-refused runs: 6 refusals each, latch still off. **Under the quote rule the broker therefore sends 6 refused non-crossing matches in every session, all day.** Each costs nothing in score ("costs nothing and moves nothing", RULES.md:150); the cost is optics (RULES.md:84). BENCH_BEAT_STALL's "≤ 8 refused POSTs per process" carries the same error. The fix is in §3.1 (manual rule) and §5 (code).
 
 ### 2.2 What Saturday's bench actually measured
 
@@ -84,13 +84,28 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
   - b69: 35 co-present pairs, 20 never crossed. b69-8 bid 61 against b69-11 ask 63 (gap 2) was provable, and b69-8 against b69-10 (gap 5) had both sides leave unmatched.
   - Replayed under the limit rule with the probe's geometry (`evidence/replay_real_books.txt`, rows `prod G20N4K8`): b52 efficiency **+0.062 over the stall** (above it in 100 % of limit draws), b69 **+0.023** (56 %). Under the quote rule: +0.000 on both. The h11 book (b87) shows 0 near-misses, but only because just our matched traders were reconstructed.
 - **Inventory risk: none on the bench.** Bench offers are synthetic, cash-only and card-less. The broker spends no cash and holds no card (`MARKET_TEST_H11_READY.md` §5).
-- **Hygiene.** One generic notice went out at tick 1166, inside the h11 bench (`feed_events` venue.announcement). It was harmless, but the keeper does not hold notices during a bench.
+- **Hygiene.** Three notices went out inside a bench: ticks 445 (h5), 923 (h9) and 1166 (h11) (`feed_events` venue.announcement, 39 v19 notices in ticks 332–1421). Harmless to the score, but the keeper has no bench hold (§5).
 
 ### 2.3 What Saturday measured for organic flow (v19)
 
 - **v19:** 0 trades, 0 traders, 0 pairs (`/api/venues` 00:21). Only 15 listings by others ever: 13 from a t15 burst at ticks 373–381, and 2 from t04 for MAL-06 at 29 and 27 P at ticks 550 and 612. Nothing after 612 (`feed_events` offer.listed venue=v19).
-- **Notices:** 11 notices from tick 1110 to the close, all with the same generic text ("0 % fee … our broker pairs crossing bids and asks every tick, at the midpoint"), and 37 accepted plus 16 refused `wait` over the day. Response: 0 listings.
+- **Notices:** 39 v19 notices in the feed (ticks 332–1421; `decisions`: 37 done, 16 refused `wait`), the last 11 from tick 1110 with one generic text ("0 % fee … our broker pairs crossing bids and asks every tick, at the midpoint"). **Response by timing:** t15's 13 asks at 373–381 came 12–20 ticks after the notice at 361; t04's asks at 550 and 612 came 3 and 10 ticks after notices at 547 and 602. All 15 were single-card asks with 6–10 tick expiry, and no bidder was ever on v19. Honest reading: notices may draw sellers; the missing piece is a standing buyer. Nothing listed after tick 612 (the evening notices drew nothing).
 - **Team-venue trades on Saturday:** 42 settlements in total. v02 11, v07 11, v21 6, v01 3, v11 3, v16 2, v10 2, v06 2, v14 1, v17 1. Most were commons at 4–10 P; two 0 P swaps on v11 counted too.
+- **Organic credit is neither per-trade nor permanent** (`leaderboard_snapshots` market column, ticks 610–1430):
+
+  | Owner (venue) | Trades | Market path | Note |
+  |---|---|---|---|
+  | t12 (v02) | 11 | 12.43 at 900 → **7.50 at 910**, 7.25 at close | fell right after v02 trades at 898 and 903; v02's busiest stretch was a t14 burst (five 9 P commons, 591–598), the shape RULES.md:132 describes; then fee 10 % + 5 P/card at 941, 0 % + 5 P/card at 1051, no trade after 903 |
+  | t07 (v11) | 3 | 7.50 → **9.35 at 670** (0 P swap at 669) → 9.17 at 1150 → **7.50 at 1210** | fell right after a 0 P swap on v11 at 1202 |
+  | t05 (v10) | 2 (ticks 311, 398) | 7.50 from 610 (first snapshot) to close | any credit before 610 unseen |
+  | t14 (v14) | 1 | +1.80 kept | |
+  | t17 (v17) | 1 | +1.14 kept | |
+  | t08 (v06) | 2 | +0.95 kept | |
+  | t16 (v16) | 2 | +2.66 kept | |
+  | t06 / t09 / t10 | 3 / 6 / 11 | +4.37 / +3.39 / +5.00 (cap) | |
+  | v15 / v13 (starter stalls) | 0 | – | 160 and 396 listings, mostly addressed, 0 trades |
+
+  3 of the 10 venues that traded ended with no organic credit, and the two visible wipes each came within 10 ticks of a trade on that venue. **Inferred mechanism (not verified):** credit is the venue's value created at private values, floored at 0, so a later value-destroying trade (or an organiser review under RULES.md:132) can erase it.
 - **Where the listings went** (non-Rastro, Saturday):
 
   | Venue | Listings | Addressed | Makers |
@@ -103,13 +118,13 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
   | v15 | 160 | 160 | 4 |
   | v19 | 15 | 0 | 2 |
 
-  Most of this flow is three teams' agents posting **addressed** offers on other teams' venues: t08 on v07, v21, v01, v02 and v11; t05 on v07 and v15; t13 on v13, v02, v11 and v07.
-- **What their agents read (inferred).** These routers do not simply follow trades: t05 first posted on v07 at tick 260, before v07's first trade at 351, and t08 posted on v01 at 231, before its first trade at 286. They never picked v19, which opened at tick 262. Each picked venues that opened early (100–201) or a team's starter stall. Possible readings: ordering by venue id or age, or by name and description. None is verified. All public venues are at 0 bps, so **fee is not a differentiator**: fees cannot go below 0, and rebates are "feeding" (RULES.md:131-132).
+  Most of this flow is three teams' agents posting **addressed** offers on other teams' venues: t08 on v07, v21, v01, v02 and v11; t05 on v07 and v15; t13 on v13, v02, v11 and v07. Addressed listings correlate with trades on v07/v21/v01 but did **not** produce trades on v15 or v13, so they are not sufficient.
+- **What their agents read (inferred).** These routers do not simply follow trades: t05 first posted on v07 at tick 260, before v07's first trade at 351, and t08 posted on v01 at 231, before its first trade at 286. They never picked v19, which opened at tick 262. Each picked venues that opened early (100–201) or a team's starter stall. Possible readings: ordering by venue id or age, or by name and description. None is verified. Every open team venue is at 0 bps and all but v02 at 0 P per card (v02: 5 P/card, the maximum, since tick 1051, after 10 % + 5 P at 941; no trade after 903). So **fee is not a lever below 0**: it cannot go negative, and rebates are "feeding" (RULES.md:131-132); a high fee may hurt.
 - **Venue names and descriptions** are the parseable fields (`/api/venues`: `name` ≤ 40 chars, `description`, `fee_bps`, `mechanism`, `trades`, `traders`).
   - Ours: "Team 1 market", described as "Board venue, 0 % fee: crossing offers are matched every tick".
   - The fullest one: v07, "Team 10 · fair broker, 0 fee", described as "Zero fees. A broker matches every crossing pair card by card at the midpoint, any copy included. Built by Team 10 for everyone."
   - Only the fee can be changed after opening (openapi `PATCH /api/venues/{vid}` = "Venue Fee").
-- **Value of one trade:** the first trade on an empty venue moved four venues' market by +1.40 / +1.48 / +1.85 / +2.22 displayed (MM_PLAN §1, MARKET_MOVES §6), mean +1.74 displayed, which is ≈ +1.04 final (× 1.5 / 2.5). Later trades decay. The cap is 7.5 round points per round (t10 sat there all evening).
+- **Value of a first trade, re-derived with the failures:** the earlier figure (+1.74 displayed ≈ +1.04 final per first trade, MM_PLAN §1) was measured only on venues that moved. Over Saturday's six low-volume venues (1–3 trades: v14 +1.80, v17 +1.14, v06 +0.95, v16 +2.66, v10 0, v11 0 at the close) the mean surviving credit is **≈ +1.09 displayed ≈ +0.65 final** (× 1.5 / 2.5), range 0 to +1.6 final. The cap is 7.5 round points per round (t10 sat there all evening).
 - **Final Saturday board** (`leaderboard_snapshots` tick 1430), market column:
 
   | Team | Market | Venue |
@@ -133,6 +148,7 @@ The doors are closed (`/api/clock` at 00:21: tick 1445, t 13.367, paused, next o
 Sources: `evidence/market_stats.out` and `feed_events` with actor t01. Listing prices are public on the feed.
 
 - **Our quotes:** 218 asks (161 public and 41 addressed on El Rastro, 16 on other teams' venues), 4 public El Rastro bids at the close (an approved off-page order: it holds cash while it stands), and 1 bid on v02.
+- **Team desk (threads and swaps):** 83 team threads opened on Saturday, **all on `venue: "rastro"`** (`executions` joined to `team_open`), 92 `team_offer` sends done, 37 failed, 3 rejected; #250 ("trade with every team") is on main. No settlement is attributable to a desk deal (settlement payloads carry no thread key; our 13 Saturday settlements all look like board trades), so this is inferred.
 - **Our fills:** **4 team sales**, 255 P in total (fee 19), so ≈ 1.8 % of asks filled. We also made 9 team buys (144 P on El Rastro, plus one each on v02 and v10). The maker's 59 rejected asks were all one card held back by its own floor (`decisions` post_ask rejected).
 - **The whole market, Saturday medians in P** (non-addressed listings, team trades with cash > 0):
 
@@ -210,57 +226,63 @@ The schedule (`/api/schedule` at 00:21) lists the hard test at 14.65 and a test 
 - **Kill conditions** (roll back to `exact` only inside a gap, never inside a window):
   1. `/api/me` `bench_points` < 0.500 after a session, meaning we went below the stall. Expected cost ≈ −0.03 final, so this is hygiene, not panic.
   2. Any organiser warning: a feed `announcement`, or a refusal text that names a rule rather than a price. Roll back at once and tell the organisers it was ≤ 6 bounded probes.
-  3. No `bench probe` keeper line within 100 s of a restart, or two maker containers overlapping near a bench. In that case do nothing more, because an overlap inside a bench is the one way to lose a whole session.
-  4. Do **not** roll back merely because probes were refused: under the quote rule the probe stops itself after 8 refusals and costs nothing.
+  3. **The h14.65 readout rule (replaces the old "it stops itself").** In the gap after h14.65 (S1: 10:23–10:33; under S2, after the first Sunday bench that runs), read the maker log (`railway logs --service bazaar-maker`, lines `bench probe … QUEUED / REFUSED <code> / gone / dropped`) and `me_snapshots.score->>'bench_points'` (read-only DB):
+     - ≥ 1 `REFUSED <code>` with a quote- or price-shaped code and 0 `gone` → **set `BAZAAR_BENCH_POLICY=exact` on bazaar-maker before h15** (a Railway variable change = maker redeploy, inside the gap only). Quote rule shown; this stops 6 refused matches per session for the rest of the day.
+     - ≥ 1 `gone` and `bench_points` > 0.500 → keep `probe` (limit rule shown).
+     - ≥ 1 `gone` and `bench_points` < 0.500 → set `exact` (the "nothing checked" world, or probes outside a limit settled).
+     - `gone` with `bench_points` exactly 0.500, or only `dropped` → ambiguous; keep `probe` (cost ≤ one session's small loss).
+- **Precondition (not a kill condition):** the keeper logs `bench probe (exact + non-crossing probes)` within 100 s of any restart, and no two maker containers overlap near a bench. If either fails, change nothing more: an overlap inside a bench is the one way to lose a whole session.
 - **Readout after each session:** the maker logs `bench probe … QUEUED`, `… REFUSED <code>`, then `gone` or `dropped` next tick. `/api/me` `bench_points` > 0.500 proves the limit rule. From Sunday, `bench_books` (#261) stores the whole book, so the session can be replayed afterwards.
-- **P&L (final points)**, with P(limit) between 0.4 and 0.6 (the MM_STRATEGY prior; no new evidence moves it) and P(sessions above the stall | limit) ≈ 0.5 (sim 0.50–0.58; real books 100 % / 56 %):
+- **P&L (final points).** Three server worlds: limits checked P 0.35–0.55, quotes checked P 0.35–0.55, nothing checked P ≈ 0.1 (the probe's own premise that openapi's "ask ≤ price and price + fee ≤ bid" may not be enforced allows this one too). P(sessions above the stall | limit) ≈ 0.5 (sim 0.50–0.58; real books 100 % / 56 % of simulated limit draws):
 
-  | Reading of the bench score | S1: round 2 (h14.65 + h15) | S1: round 3 (h17 + h19) | S1 total | S2: round 3 only (h17, h19, h21) |
+  | Reading of the bench score, limit world | S1: round 2 (h14.65 + h15) | S1: round 3 (h17 + h19) | S1 total | S2: round 3 only (h17, h19, h21) |
   |---|---|---|---|---|
-  | B, round average (fitted ±0.004, BBS §1): any positive round margin lifts the round 0.5 → 1.0 = +4.5 final | +0.9 to +1.35 | +0.9 to +1.35 | **+1.8 to +2.7** | +0.9 to +1.35 |
-  | A, per-session average: a session above the stall = +0.56 final in round 2 (8 sessions), +2.25 in round 3 (2 sessions) | +0.23 to +0.34 | +0.9 to +1.35 | **+1.1 to +1.7** | ≈ +0.9 to +1.35 (1.5 per session × 3) |
-  | Quote rule (P 0.4–0.6) | 0 | 0 | 0 | 0 |
-  | Downside, either rule | ≤ −0.03 per session (dropped probes remove ≤ 6 near-miss traders) | | | a second venue would floor it, but is unproven (§4 R5) |
+  | B, round average (fitted ±0.004, BBS §1): any positive round margin lifts the round 0.5 → 1.0 = +4.5 final | +0.8 to +1.25 | +0.8 to +1.25 | **+1.6 to +2.5** | +0.8 to +1.25 |
+  | A, per-session average: a session above the stall = +0.56 final in round 2 (8 sessions), +2.25 in round 3 (2 sessions) | +0.2 to +0.3 | +0.8 to +1.25 | **+1.0 to +1.55** | ≈ +0.8 to +1.25 (1.5 per session × 3) |
+  | Quote world (P 0.35–0.55) | 0 (6 refused POSTs per session until the §3.1 rule switches to exact) | 0 | 0 | 0 |
+  | Nothing-checked world (P ≈ 0.1) | up to 6 midpoint probes per session settle; those outside a hidden limit realise negative gains (mid-gain −10 to −2 P on the b52/b69 pairs with gaps 17–21) and pull the session below the stall: ≈ −0.1 (reading A) to −0.3 (reading B) per round, capped at one session by the §3.1 rule → EV ≈ −0.01 to −0.03 | | | |
+  | Limit world, dropped probes | ≤ −0.03 per session (a probe queued then dropped may remove a near-miss pair) | | | |
 
-  I lean on reading B (it fits t03/t13 at ±0.004). The pitch must not quote "+4.5" on its own.
+  Total EV (S1): +1.0 to +2.5 after weighting by P(limit) and netting the third world (previously +1.1 to +2.7 with P(limit) 0.4–0.6 and two worlds). I lean on reading B (it fits t03/t13 at ±0.004). The pitch must not quote "+4.5" on its own.
 
 ### 3.2 Book B: organic flow on v19 (the "market it to agents" half)
 
-What attracts flow, from §2.3:
-1. A counterparty on the same venue, best of all a **resident bidder**.
-2. **Addressed** deals hosted on the venue.
+What §2.3 supports (correlation, with counterexamples):
+1. A counterparty on the same venue, best of all a **resident bidder**: v19's 15 asks came after notices and died with no buyer.
+2. **Team threads and swaps between other teams hosted on v19.** RULES.md:60 and :64 say every team-to-team trade happens on a venue and threads are opened on one, so a thread deal between two other teams opened on v19 counts for our venue. Nothing we send asks for this yet.
 3. A concrete, actionable line.
 
-Fee is not a lever (all venues are at 0; a rebate is feeding). Midpoint pairing is our one honest price argument: a crossing ask of 10 and bid of 14 settle at 12, so **each side gains 2 P compared with lifting the other's quote, and nobody pays El Rastro's 5 % + 1 P**.
+Addressed listings alone are not enough (v13, v15: hundreds, 0 trades), and credit that lands can be wiped (t12, t07). Fee is not a lever below 0 (a rebate is feeding; v02's 5 P/card maximum coincided with no further trades). Midpoint pairing is our one honest price argument: a crossing ask of 10 and bid of 14 settle at 12, so **each side gains 2 P compared with lifting the other's quote, and nobody pays El Rastro's 5 % + 1 P**.
 
 **Message wording.** Each message must stay ≤ 240 chars, name only public facts and never instruct another team's agent (v24's "migrate open book — POST …" style invites flags):
 - *Near-miss matchmaking* (hand, approved one by one; the best notice type, MM_STRATEGY §3.2):
   > `RET-03: bid 6 on v21 (#18518), ask 10 on El Rastro (#18425). Meet at 8 on v19: 0 fee, our broker pairs crossing quotes at the midpoint every tick. Taking it on El Rastro costs the taker 1.4 P more.`
 
   Send it only while a live near-miss with a gap ≤ 5 P exists. At the close there were 0 (`evidence/spreads_close.out`), so check the books first.
-- *Echo a real listing* (whenever anyone lists on v19):
-  > `On v19 now: bid N for CARD (#id). Sellers: list CARD on v19 at N or less and our broker pairs you this tick, 0 fee, at the midpoint.`
+- *Echo a real listing*: **dropped as a hand action.** Saturday's v19 listings expired in 6–10 ticks, which is 1.5–2.5 min at 15 s ticks, too short for a hand-approved notice. Only worth it automated in the keeper (a code item, §5, low priority).
 - *The MM2 automatic notice* (#238, live from 09:00, `agents/venue_notice.py:59-82`): "… Wanted now: A, B, C (teams miss them for a page). Post asks and bids here, public or addressed." It names cards we hold that other teams miss.
   - It reaches holders who want to sell, but buyers are not on v19, so on its own it is one-sided.
   - It goes out every 10 ticks (2.5 min at 15 s ticks), which is the server's measured cadence: 95 of 297 Saturday notice gaps were exactly 10 ticks, none below (`venue_keeper.py:64-67`). It is capped at 24 per game hour.
-- *The resident bidder invite* (one private thread, hand-sent, Sunday 09:05): to the most active public buyer (t06, t04, t16 per MM_STRATEGY §3.2):
-  > "mirror your standing bids on v19: same bid, 0 fee, our broker pairs at the midpoint every tick; sellers on El Rastro pay 5 % + 1 P to hit you, here 0."
+- *The resident bidder invite* (one thread, hand-sent, Sunday 09:05) to the most active public buyer (t06, t04, t16 per MM_STRATEGY §3.2). **Open the thread on `rastro`, not v19**: we cannot trade on our own venue (RULES.md:76), so a thread of ours on v19 cannot close a deal and the open may be refused; the desk opens all its threads on `rastro` for the same reason.
+  > "mirror your standing bids on v19, and open your threads and swaps with other teams there: 0 % fee, our broker pairs crossing quotes at the midpoint every tick; on El Rastro the side that accepts pays 5 % + 1 P per card."
 
-  It is an invitation only: no payment, rebate or reciprocity (RULES.md:131). It uses one of 6 thread slots, which are shared with dealer threads.
-- *The swap-proposal invite* (#251, `team_words_venue_invite` = v19): one true line in every team-desk proposal. It is already on.
+  It is an invitation only: no payment, rebate or reciprocity (RULES.md:131). It uses one of 6 conversations per team (RULES.md:109), shared with dealer threads and with the desk (`team_threads_max_open` 2, GUARDRAILS.md:106), so send it when the desk holds a free slot and close it after the message.
+- *The swap-proposal invite* (#251, `team_words_venue_invite` = v19; text in `agents/team_desk.py:77-82`): one line in every desk proposal, in Spanish, inviting the team to post its offers on v19. **It does not ask them to host their team threads and swaps there.** Suggested added clause (code + taker redeploy, §5): "… y abre allí tus hilos y cambios con otros equipos: comisión 0 %." ("… and open your threads and swaps with other teams there: 0 % fee.")
 
-Design rules:
+Design rules (**hand guidance only**: the live keeper posts every 10 ticks, `ANNOUNCE_EVERY_TICKS` at `venue_keeper.py:66`, with no bench hold; the code change is in §5):
 - **Target:** near-misses only.
-- **Cadence:** one notice per 20–40 ticks while a fresh near-miss exists, silence otherwise. On Saturday, notice count did not separate venues (MM_DEEP §6).
+- **Cadence:** hand notices only while a fresh near-miss exists, silence otherwise. On Saturday, notice count did not separate venues (MM_DEEP §6).
 - **Windows:** right after the CHA release and the +150 P grant, when demand is fresh and every team has cash (S1: 12:16–13:30; S2: 09:00–10:00).
 
-**P&L (estimate, MM_STRATEGY §3.4; v19's measured base rate over ~1,180 ticks: 0 trades):**
+**P&L, re-derived after review.** EV = P(≥ 1 trade between other teams on v19 on Sunday) × the credit that survives. Surviving credit for a low-volume venue ≈ +0.65 final (range 0 to +1.6; §2.3, including v10 and v11 at 0). P(≥ 1 trade) is my estimate against v19's measured base rate of 0 trades in ~1,180 Saturday ticks (15 asks, no bid):
 
-| Plan | Expected final points |
-|---|---|
-| Hand notices only | ≈ +0.6 |
-| Plus a resident bidder | +1.0 to +1.3 |
-| Nothing | ≈ +0.05 |
+| Plan | P(≥ 1 trade) | Expected final points |
+|---|---|---|
+| Nothing new (MM2 notice + swap invite run by themselves) | 0.03–0.08 | ≈ +0.02 to +0.05 |
+| Plus hand near-miss notices | 0.05–0.15 | ≈ +0.03 to +0.1 |
+| Plus a resident bidder who mirrors bids, and the thread-hosting clause | 0.15–0.35 | ≈ +0.1 to +0.25 |
+
+The previous table (+0.6 to +1.3) used MM_STRATEGY §3.4's probabilities and the survivor-only +1.04; both were too high.
 
 Cash at risk: 0. Inventory: none. We are never a party.
 
@@ -272,20 +294,23 @@ Cash at risk: 0. Inventory: none. We are never a party.
   - Charge above that only to a team for which the card completes a page. `team_matrix` `missing_for_page` already ranks those teams, and the maker has `buyer_rank_enabled` (off). Keep in mind that addressed asks filled 6 % against 19 % for public ones on Friday (GUARDRAILS.md:137).
 - **Inventory limits:** none to set.
   - Buys are capped at the official value of one more copy (`official_value_margin` 0), and off-page cards strictly below it. Sales must not lose score (`max_score_loss_per_move` 0.001), and `no_buyback_ticks` is 480.
-  - So every fill is ≥ 0 in neg_points by construction, and we never carry resale inventory. Spread capture in primas is not the game; capture of private-value differences is.
+  - So every fill is ≥ 0 in neg_points **as estimated by `move_impact`** (the guard's estimate, which the SAL-07 incident showed can be wrong), and we never carry resale inventory. Adverse selection is bounded, not absent: a fill means the counterparty values the card more than our ask, which is an opportunity cost (we could have asked more), not a score loss. Spread capture in primas is not the game; capture of private-value differences is.
+- **Channels and caps:** the maker's asks, the desk's threads and swaps, R2's invite and the taker all use the team key (5 req/s shared, `max_accepts_per_tick` 1 shared with duels); the probe and venue notices use the broker key, whose separate bucket is assumed, not tested (MARKET_TEST_H11_READY blocker 3).
 - **Cash at risk:** the cash behind standing bids (the approved off-page order) plus the venue bond. Both are bounded by `max_spend_per_game_hour` 250 and `cash_floor` 5.
 - **P&L:** at k_gain ≈ 0.033 board per neg_point, a sale with +10 P of surplus over our value ≈ +0.33 displayed ≈ **+0.2 final**. Whether round 3 resets `neg_points` is unknown (KSE §5).
+- **Desk:** threads and swaps stay on `rastro` (never v19, `self_venue`). Hosting our own deals on another team's 0-fee venue saves the fee but hands that team organic credit (our v02 and v10 buys on Saturday did); on `rastro` nobody gets credit.
 - **Kill conditions:** already in the guards (score-loss refusal, breakers).
 
 ## 4. Recommendations for Sunday, ranked by expected points
 
 | # | Recommendation | Expected (final) | Concrete change | Risk |
 |---|---|---|---|---|
-| R1 | **Keep `BAZAAR_BENCH_POLICY=probe` on bazaar-maker**, and touch nothing in the §3.0 windows | +1.1 to +2.7 expected (+2.8 to +4.5 if limits rule, 0 if quotes rule) | none (already live). Leave the probe caps alone: a cap change is code + redeploy. At 09:00, run the §3.0 clock check before anything else | Tail risk that organisers read non-crossing matches as rule-breaking (RULES.md:84, bond cut and the venue scores 0 afterwards). The first live run is the hard test |
-| R2 | **One resident-bidder invite (hand, 09:05)** and near-miss notices only when a live gap ≤ 5 P exists | +0.6 to +1.3 (estimate) | `POST /api/threads {"with": <buyer>, "venue": "v19"}` + 1 message; `uv run bazaar venue announce "<text>" --live` (§3.2 templates) | Uses a thread slot shared with dealer threads. Fair play: invitation only |
+| R1 | **Keep `BAZAAR_BENCH_POLICY=probe` on bazaar-maker**, and touch nothing in the §3.0 windows | +1.0 to +2.5 expected (+2.8 to +4.5 if limits rule, 0 if quotes rule, ≈ −0.1 to −0.3 if nothing is checked) | none now. At 09:00, run the §3.0 clock check first. **After h14.65, apply the §3.1 readout rule** (switch to `exact` before h15 on refusals with nothing gone, or on `gone` with bench_points < 0.5) | Under the quote rule the latch never fires, so without the manual rule it sends 6 refused matches per session all day: the RULES.md:84 optics risk (bond cut, venue scores 0 afterwards). The first live run is the hard test |
+| R2 | **One resident-bidder invite (hand, 09:05)**, asking for mirrored bids *and* hosted threads/swaps on v19, plus near-miss notices only when a live gap ≤ 5 P exists | +0.1 to +0.25 (estimate, §3.2) | `POST /api/threads {"with": <buyer>, "venue": "rastro"}` + 1 message (§3.2 text), then close it; `uv run bazaar venue announce "<text>" --live` | One of 6 conversations, shared with dealer threads and the desk (max 2 open). Fair play: invitation only. **Hand notices from a laptop:** set `BAZAAR_VENUE=v19` and `BAZAAR_BROKER_KEY` in the environment, since `config.py:235-237` otherwise reads `.local/broker.env` |
 | R3 | **Ask the organisers in person at 09:00** whether a bench match priced inside both hidden limits is accepted when the quotes do not cross | De-risks R1 (and settles R5) | none | Free. Do not wait for the answer |
+| R3b | **Fix the probe's stop in code (optional, Marius's call)** | protects optics; 0 points | `bench_probe.py:142-156`: count POST refusals (code ≠ `dropped`) separately and latch `quote_rule` when a run has ≥ 4 of them and nothing queued, instead of `refused ≥ give_up_after` (8, unreachable). Do **not** just set `DEFAULT_GIVE_UP_AFTER` ≤ 6 at `:39`: drops count as refusals, so under the limit rule six drops in one run would wrongly stop probing for the day. Test in `tests/test_bench_probe.py` with the **default** `ProbeConfig`: 4 POST-refused probes in run b1 → `quote_rule` true and `plan()` empty for run b2; 6 `dropped` → latch stays off | Code + maker redeploy (only in a gap, before 10:12 or between benches); the latch lives in process memory, so a restart resets it. Not needed if the §3.1 manual rule is applied |
 | R4 | **Price maker asks to the trade print, by need** | ≈ +0.2 per +10 P surplus sale | `buyer_rank_enabled` stays false unless Marius wants addressed asks (GUARDRAILS.md:137); the relist steps already move toward the median fill (GUARDRAILS.md:30) | Addressed asks fill less often |
-| R5 | **Do not open a second (auto "hedge") venue** until the organisers confirm that a team may run two at once (add it to the R3 question) | 0 now; would remove the probe's ≤ −0.03 per session downside if allowed | none. `max_venues` 2 (GUARDRAILS.md:98) stays, unused | Evidence against: no owner ever had two venues open in `feed_events` (t13's v22→v23→v24 each opened on the tick the previous one closed; t02 reopened only after v04's refund; t14's v25 replaced its starter stall), and `bazaar_sim/broker.py:56` refuses a second opening with `venue_exists` ("you already run …"). If the server *replaces* instead, an opening would close v19 and the probe would run on nothing. `/me` `bench_venue` is the readout if it is ever tried |
+| R5 | **Do not open a second (auto "hedge") venue** until the organisers confirm that a team may run two at once (add it to the R3 question) | 0 now; if allowed, it would floor the nothing-checked world (≈ −0.1 to −0.3) and the ≤ −0.03 drops, via "best venue open" (RULES.md:81) | none. `max_venues` 2 (GUARDRAILS.md:98) stays, unused | Evidence against: no owner ever had two venues open in `feed_events` (t13's v22→v23→v24 each opened on the tick the previous one closed; t02 reopened only after v04's refund; t14's v25 replaced its starter stall), and `bazaar_sim/broker.py:56` refuses a second opening with `venue_exists` ("you already run …"). If the server *replaces* instead, an opening would close v19 and the probe would run on nothing. `/me` `bench_venue` is the readout if it is ever tried: read it right after opening and close the second venue before the next bench unless it still says `v19`, because if `bench_venue` moved to an auto venue it would cap us at the stall and zero R1. Costs 20 P plus 250 P bond held against `cash_floor` 5, cash that otherwise funds negotiating buys. The CLI saves the new venue's broker key to `.local/broker.env` (`venue.py` `save_broker_key`), so later hand notices from that machine would go to the new venue unless `BAZAAR_VENUE`/`BAZAAR_BROKER_KEY` are set |
 | R6 | **Leave `BAZAAR_BENCH_GUARD_MARGIN=5`** unless the policy variable is changed anyway (then delete both in the same redeploy) | 0 | Railway bazaar-maker | Every variable change redeploys the maker; never inside a window |
 | R7 | **Never pause the maker or touch the kill switch during a bench** | protects 0.5 per session | process | `broker.py:248`: the broker reads the kill switch and pause file per match, so a pause during a bench stops matching and the board venue scores below the stall for that session |
 
@@ -295,9 +320,11 @@ Cash at risk: 0. Inventory: none. We are never a party.
 |---|---|---|---|
 | `allow_venue_open` (GUARDRAILS.md:95) | true | none; keep true | false stops every broker match and notice: the board venue then matches nothing (below the stall), with no bond reserve |
 | `max_venues` (:98) | 2 | none; do not act on it (R5) | its premise (two venues at once) is unverified; opening a second venue may be refused or may replace v19 |
-| `BAZAAR_BENCH_POLICY` (Railway, maker) | probe | none | `exact` = today's 0.5. `edge` scored 0.000–0.003 live in sim terms (MM_DEEP §2); and **main has no confirm gate for it** (#231's `BAZAAR_BENCH_EDGE_CONFIRM` is not on main): a typo-free `edge` goes live on the next redeploy |
+| `BAZAAR_BENCH_POLICY` (Railway, maker) | probe | `exact` after h14.65 **if** the §3.1 rule says so (gap only) | `exact` = Saturday's 0.5. `edge` never ran a live bench; its 0.000–0.003 is a simulator column with live-style expiries (MM_DEEP §2), and **main has no confirm gate for it** (#231's `BAZAAR_BENCH_EDGE_CONFIRM` is not on main): a typo-free `edge` goes live on the next redeploy |
 | `BAZAAR_BENCH_GUARD_MARGIN` | 5 | optional delete, bundled with any other maker variable change | a redeploy |
-| Probe caps (`bench_probe.py:36-40`) | 20 / 4 / 3 / 8 / 6 | none | code + redeploy |
+| Probe caps (`bench_probe.py:36-40`) | gap 20 / per tick 4 / tries 3 / give-up 8 / per session 6 | none for the caps; the stop logic fix is R3b | code + redeploy; give-up 8 > per-session 6 makes the stop unreachable |
+| Notice cadence (`venue_keeper.py:66-67`) | every 10 ticks, ≤ 24 per game hour, no bench hold | optional: skip `_maybe_announce` while the book holds `bench_offers` (`venue_keeper.py:389`) | code + maker redeploy; three Saturday notices fell inside benches, harmless to the score |
+| Swap invite text (`team_desk.py:77-82`) | "post your offers on v19" | optional: add "and open your threads and swaps with other teams there" | code + taker redeploy; words only |
 | `team_words_venue_invite` (:117) | v19 | none | `none` removes the only automatic invite to teams we already talk to |
 | `deploy_guard_bench_ticks` (:145) | 10 | consider 20 for Sunday (10 ticks is only 2.5 min at 15 s; a maker handover overlap takes 58–100 s) | a GUARDRAILS.md commit redeploys everything; do it before 09:00 or not at all |
 | `max_score_loss_per_move` (:158), `official_value_margin` (:27), `protect_page_sets` (:47) | as is | none (they make Book C safe) | — |
@@ -306,31 +333,34 @@ Cash at risk: 0. Inventory: none. We are never a party.
 
 ### 6.1 For the judges: one paragraph plus numbers
 
-> **Market making as an experiment with a kill switch.** Six Market Tests on Saturday told us our broker exactly tied the free stall: 25 pairs, every one queued, 0 refused, bench points 0.500 in all six. A simulation showed that even a broker that *knows* every hidden limit ties too, if it waits for quotes to cross. The gains it leaves are pairs whose quotes almost meet, gaps of 1–5 primas, whose traders walk away. We found the one rule nobody had tested: does the server accept a match priced inside both traders' hidden limits when their quotes do not cross? We shipped a probe that sends the stall's exact plan first and unchanged, then at most six near-miss pairs per session at the midpoint. It stops itself after eight refusals and puts no cash at risk. Replayed on two real books under the limit rule it beats the stall by 2.3 and 6.2 efficiency points; under the quote rule it is the stall, by construction. On the venue side we measured why venues fill: it is not fees, which are all zero, but addressed deals and resident buyers. So our venue's notices now name the cards other teams miss, and every swap we propose invites the other team onto our market.
+> **Market making as a bounded experiment.** Our broker ran five Market Tests on Saturday and tied the free stall exactly in all five: 25 pairs, every one queued, 0 refused, bench points 0.500. A simulation showed that even a broker that *knows* every hidden limit ties too, if it waits for quotes to cross. The gains it leaves are pairs whose quotes almost meet, gaps of 1–5 primas, whose traders walk away. So we built a bounded test of a rule we had never seen tested: does the server accept a match priced inside both traders' hidden limits when their quotes do not cross? The probe sends the stall's exact plan first and unchanged, then at most six near-miss pairs per session at the midpoint, with no cash at risk, and we read the result after the first session and switch it off if the server refuses. Replayed on two real books with simulated hidden limits, it beats the stall in expectation by 6.2 and 2.3 efficiency points (above it in 100 % and 56 % of draws); under the quote rule it is the stall, by construction. On the venue side we learned that fees don't win flow (almost every venue charges 0) and that venue credit can vanish as fast as it comes. From Sunday our venue's notices name the cards other teams miss, and every swap we propose invites the other team onto our market.
 
 Numbers that hold up, each with its source in §2:
 
 | Number | Source |
 |---|---|
-| 6 / 6 sessions at exactly the stall; 25 pairs, 0 refusals | `me_snapshots`, `executions` |
+| 5 / 5 broker sessions at exactly the stall (plus h3 on the auto starter stall); 25 pairs, 0 refusals | `me_snapshots`, `executions` |
 | Truth bound: 0.876 vs the stall's 0.878 | MM_DEEP §2 |
 | Near-miss gaps of 1–2 P that were provably inside both limits | real books b52, b69 |
-| Replay under the limit rule: +0.062 / +0.023 efficiency | `evidence/replay_real_books.txt` |
-| ≤ 6 probes per session, stops after 8 refusals, 0 cash at risk | `bench_probe.py:36-40` |
-| 42 team-venue trades on Saturday across 10 venues, 22 of them on v07 and v02; fee 0 everywhere | `feed_events`, `/api/venues` |
+| Replay with simulated hidden limits (books rebuilt from 5–10 s reads): +0.062 (b52, 100 % of draws above) / +0.023 (b69, 56 %) mean efficiency | `evidence/replay_real_books.txt` |
+| ≤ 6 probes per session, 0 cash at risk; switched off by hand after the first session if refused | `bench_probe.py:36-40`, §3.1 |
+| 42 team-venue trades on Saturday across 10 venues; 3 of those 10 venues ended with no organic credit (t12's v02 lost 4.9 displayed at tick 910 despite 11 trades) | `feed_events`, `leaderboard_snapshots` |
 | v07: 390 of 552 listings addressed | `feed_events` |
 
 **Do not claim:**
 - that we beat the stall (unproven until a probe settles);
-- "+4.5" on its own (it is +1.1 to +2.7 expected: +2.8 to +4.5 if limits rule, 0 if quotes rule);
-- that the wanted notice works (never run live).
+- "+4.5" on its own (it is +1.0 to +2.5 expected: +2.8 to +4.5 if limits rule, 0 if quotes rule);
+- that the wanted notice works (never run live);
+- that venues fill "because of addressed deals" (v13 and v15 had hundreds and 0 trades);
+- that the probe "stops itself" (§2.1).
 
-If a probe settles on Sunday, the claim becomes "first team above the stall", which shows on the public board as market 7.50 → ≈ 15 under reading B.
+If a probe settles on Sunday, the claim becomes "first team above the stall". Under reading B, while round 2 is the newest finished round, that shows on the public board as market 7.50 → ≈ 15: Friday had no Market Test (market 0 for every team, weight 0.5), so the display is (0.5 × 0 + 22.5) / 1.5. Once round 3 counts, the display mixes rounds and the jump is smaller unless round 3 is lifted too.
 
 ### 6.2 For other teams' agents: venue copy (what to put where)
 
 - **v19 name and description:** fixed at opening ("Team 1 market"), cannot change; only the fee can (PATCH). A better-named second venue is not an option unless the organisers confirm two venues (R5).
 - **Notices:** use the §3.2 templates. Each one should name a card, a side, a price, an offer id and our venue id, the fields an agent can act on. Never use imperative API instructions aimed at other agents.
+- **Threads and swaps:** the one ask we have never made: "host your team threads and swaps with other teams on v19: 0 % fee, against El Rastro's 5 % + 1 P per card" (in R2's invite and, after a code change, in the desk's invite line).
 
 ## 7. Open questions for Marius
 
@@ -338,7 +368,9 @@ If a probe settles on Sunday, the claim becomes "first team above the stall", wh
 2. **Was the h13 hand probe sent?** If yes, what did the script print (REFUSED code, or QUEUED then gone/dropped)? A refusal code would settle the quote rule tonight and make R1 worth 0 (harmless to keep). A QUEUED result followed by 0.500 would be the ambiguous case.
 3. **Second venue (R5):** do you want the organisers asked whether a team may run two venues at once? Until then, keep `max_venues` 2 unused.
 4. **Resident-bidder invite (R2):** approve the thread text and the target team.
-5. **Organisers (R3):** will you ask in person, and should we tell them up front that the probe is bounded to 6 per session?
+5. **Organisers (R3):** will you ask in person, and should we tell them up front that the probe is bounded to 6 per session and switched off by hand after one session if refused?
+7. **Probe stop (R3b):** apply the manual §3.1 rule only, or also ship the code fix (maker redeploy in a gap)?
+8. **Desk invite text:** add the "host your threads and swaps on v19" clause (taker redeploy)?
 6. **`deploy_guard_bench_ticks` 10 → 20** for 15 s ticks: commit before 09:00, or leave it?
 
 ## 8. What I could NOT verify
@@ -352,3 +384,21 @@ If a probe settles on Sunday, the claim becomes "first team above the stall", wh
 - **Whether the server allows two venues per team** (R5): evidence leans no (no precedent; our simulator refuses), but the real server's answer was never observed.
 - **The gain-side k** rests on one event (LAT-10, tick 1304) with duel drift netted out by eye from neighbouring refreshes.
 - **Sunday wall times:** they assume 240 ticks per game hour at 15 s ticks and no organiser re-timing.
+- **Why t12 and t07 lost their credit** (value-destroying trades, an organiser review, or something else): the timing is measured, the mechanism is inferred.
+- **The probe's behaviour under refusals** was reproduced by the reviewer in a scratch run; I verified the code path by reading (`bench_probe.py:117,139,151-156`), not by running it.
+- **P(nothing checked) ≈ 0.1** is a guess; it exists as a world because the probe's premise is that openapi's rule may not be enforced.
+
+## 9. Revision after review (what changed)
+
+| Finding | Status | Where |
+|---|---|---|
+| 1 HIGH: the 8-refusal stop can never fire | fixed: §2.1 explains it, kill condition 4 replaced by the h14.65 readout rule (§3.1), code fix as R3b with file, line, test and why `give_up_after` ≤ 6 alone is wrong, pitch corrected | TL;DR, §2.1, §3.1, §4, §5, §6.1 |
+| 2 HIGH: organic credit not per-trade nor permanent | fixed: counterexample table (t12, t07, t05, v13, v15), first-trade value re-derived on all low-volume venues (+0.65 final, not +1.04), Book B EV cut to +0.05 to +0.25, "venues fill on addressed listings" qualified, v02 removed from the pitch's success numbers | TL;DR, §2.3, §3.2, §6.1 |
+| 3 fee 0 everywhere | fixed (v02: 10 % + 5 P at 941, 0 % + 5 P at 1051, no trade after 903) | TL;DR, §2.3, §3.2 |
+| 4 notices "no response", hygiene count | fixed: responses by timing (all asks, no bidder), 3 notices inside benches, echo template dropped as a hand action | §2.2, §2.3, §3.2 |
+| 5 hedge venue | already reversed before this review (78696eac: "do not open"); added the `bench_venue` consequence, the post-open check, the CLI key trap and the cash cost | §4 R5 |
+| 6 third server world | added (nothing checked, P ≈ 0.1) with its downside and the kill rule that caps it | TL;DR, §3.1 |
+| 7 threads and swaps channel | added: desk numbers (83 threads, all on `rastro`), the thread-hosting ask, R2 opened on `rastro`, slot interplay | §2.4, §3.2, §3.3, §4, §6.2 |
+| 8 pitch overclaims | fixed: 5 broker sessions, "a bounded test of a rule we had never seen tested", "in expectation with simulated limits" in b52-then-b69 order, "from Sunday" | §6.1 |
+| 9 design rules not in code | fixed: cadence marked hand guidance, keeper code change named; kill condition 3 restated as a precondition | §3.1, §3.2, §5 |
+| 10 data windows and wording | fixed: Saturday counts 7,670 / 601 / 426; edge row; `move_impact` estimate and adverse selection; key and caps line. **Partly argued:** the displayed "≈ 15" holds while round 2 is the newest finished round, because Friday's market is 0 for everyone in the denominator; qualified for once round 3 counts | §1, §3.3, §5, §6.1 |
