@@ -447,6 +447,11 @@ def duel_run(
     handled: list[int] = []  # the last tick this loop handled (v2 widens its accept margin after a gap)
     duel_traces = traces.DuelTraces()
     v2 = rules.duel_policy == "v2"
+    if v2 and rules.duel_endgame_min_share > 0 and rules.duel_endgame_ticks != 1:
+        console.print(
+            f"[yellow]duel_endgame_min_share {rules.duel_endgame_min_share} with duel_endgame_ticks "
+            f"{rules.duel_endgame_ticks}: B11 measured it with 1 (2 lets squeezes through, 0 loses deals)[/yellow]"
+        )
     # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
     duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
 
@@ -522,7 +527,7 @@ def duel_run(
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
         if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
-            params = replace(params, accept_margin=params.accept_margin + gap - 1)
+            params = replace(params, missed=gap - 1)
         planned: dict[int, DuelMove] = {}
         if params is not None:
             try:

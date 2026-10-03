@@ -301,3 +301,18 @@ def test_v2_plays_zero_days_without_a_weight_and_v1_still_holds():
     assert gr.check(duel_action(unweighted, move), ctx, gr.Guardrails(duel_policy="v2")).allowed
     assert duel_move(unweighted, 110, 100).kind == "hold"  # #60's v1, unchanged: it cannot value days
     assert not gr.check(duel_action(unweighted, move), ctx, gr.Guardrails()).allowed
+
+
+def test_missed_ticks_accept_earlier_but_never_drop_to_the_floor_earlier():
+    """r1 on #103: B4's missed-tick bump must not move the last-offer window (#86 offers its curve at D − 5/D − 4)."""
+    from dataclasses import replace as with_
+
+    stalled = duel(rival=[(100, 60), (101, 70)], ours=[(100, 160)])  # seller cost 100, deadline 112
+    for missed in (0, 2):
+        params = with_(V2Params(), missed=missed)
+        for tick in (107, 108):  # D − 5, D − 4
+            move = duel_plan(stalled, tick, 100, params).move
+            assert move.kind != "offer" or move.price > 105, (missed, tick, move)  # no floor before D − 3
+    inside = duel(rival=[(100, 60), (105, 120)], ours=[(100, 160)])
+    assert duel_plan(inside, 108, 100, with_(V2Params(), missed=2)).move.kind == "accept"  # 4 left ≤ 1 + 2 + 1
+    assert duel_plan(inside, 108, 100).move.kind != "accept"

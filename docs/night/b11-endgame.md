@@ -88,6 +88,26 @@ fails the 0.95 bar. So 0.3 is the conservative point; Marius can take 0.4–0.5 
   same time, so a "learn in A, squeeze in B" learner cannot be sequential.
 - All exploiters are models (ours and W2a's), and the settings were chosen on them (in-sample).
 
+- **Squeezes close on D − 1.** With `duel_endgame_ticks` = 1, a refused squeeze that never gives in closes on D − 1, the
+  riskiest tick: whether an accept made there settles before the deadline is unverified. Several squeezed duels sharing a
+  deadline would also compete for D − 1's one accept. After missed ticks (B4), the refusal ends that many ticks earlier.
+- **Two different oracle models.** W2a's `oracle_squeezer` offers our limit ± 1 on D − 3..D − 1 and, refused, backs off on
+  the last tick to 20–50 % of the pie (or never, in its "stubborn" variant). Ours offers our limit + 1 P, then 5 % and
+  15 % of its pie estimate, and half of ours are greedy (never take our offer). The names match; the models do not.
+- Jev may still pick `counter` while v2 refuses a squeeze. That is inside our limit and within the round cap, but it costs a round.
+
+## Fixed after review (r1)
+- The last-offer window no longer moves with B4's missed-tick bump. Missed ticks are now their own value
+  (`V2Params.missed`). They widen the accept window and end the squeeze refusal earlier, but our floor never comes earlier
+  than #86's (regression test included).
+- `duel run` warns when `duel_endgame_min_share` > 0 and `duel_endgame_ticks` ≠ 1 (0.936 deals at 0).
+- `duel_jitter_seed` can come from BAZAAR_DUEL_JITTER_SEED instead of the committed file.
+
+## Gate on W2a's harness (exact command)
+With this branch and #97 side by side:
+`PYTHONPATH=<this>/src:<w2a>/src python scripts/duel_exploit.py --policy today=bazaar_agent.duel_arena:b11_today --policy rec=bazaar_agent.duel_arena:b11_eg1_share03 --decays 0.08 0.10`
+(run from the #97 checkout; `b11_*` are one-duel presets in `duel_arena.py`).
+
 ## What Marius must decide
 1. Set `duel_endgame_min_share` = 0.3 and `duel_endgame_ticks` = 1 with v2, or go to 0.4 for more protection at ~4 % fewer
    honest deals?

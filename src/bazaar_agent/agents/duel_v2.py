@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import math
+import os
 import random
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -56,6 +57,7 @@ class V2Params:
     free_offers: int = 16  # duel_free_offers
     answer_share: float = 0.2  # duel_answer_share
     accept_margin: int = 1  # duel_accept_margin_ticks
+    missed: int = 0  # ticks the loop just missed (r2 B4): accept and give in that much earlier, never price lower
     min_share: float = 0.0  # duel_endgame_min_share
     jitter: float = 0.0  # duel_jitter
     jitter_seed: int = 0  # duel_jitter_seed
@@ -76,7 +78,7 @@ class V2Params:
             accept_margin=rules.duel_accept_margin_ticks,
             min_share=rules.duel_endgame_min_share,
             jitter=rules.duel_jitter,
-            jitter_seed=rules.duel_jitter_seed,
+            jitter_seed=int(os.environ.get("BAZAAR_DUEL_JITTER_SEED") or rules.duel_jitter_seed),
             days_signed=rules.duel_days_signed,
         )
 
@@ -294,14 +296,15 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 
     acceptable, on_table = _acceptable(duel, signed)
     threshold = squeeze_threshold(duel, history, params)
-    squeezed = acceptable is not None and on_table < threshold and left > params.endgame_ticks
+    # After missed ticks (B4) the true last tick may be missed too: the squeeze refusal ends that much earlier.
+    squeezed = acceptable is not None and on_table < threshold and left > params.endgame_ticks + params.missed
     if squeezed:
         acceptable, on_table = None, 0.0  # a squeeze (B11): wait; our last offer leaves the rival a fair way out
     if acceptable is not None:
         pace = recent_pace(history, tick, params.stall_ticks)
         plan = lambda move: V2Plan(move, acceptable, on_table, stalled, left, pace)  # noqa: E731
         step = mean_step(history)
-        if left <= params.accept_margin + 1 or (endgame and stalled):
+        if left <= params.accept_margin + params.missed + 1 or (endgame and stalled):
             return plan(replace(acceptable, reason="endgame, inside limit"))
         if endgame and ours <= theirs:  # still conceding, and the last safe accept tick is still ahead
             return plan(DuelMove("hold", reason=f"endgame, rival still conceding ({on_table:g}): accept later"))
@@ -340,7 +343,7 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         return send(target, "the rival went quiet: step down for free")
     if squeezed and left > 2:  # one fair offer at D − 2 is enough: against a squeezer each one costs a round
         return wait
-    if 2 <= left <= params.accept_margin + 2:  # the rival's last chances to take a deal from us: no deal scores 0
+    if 2 <= left <= max(params.endgame_ticks, 2) + 1:  # the rival's last chances to take a deal: no deal scores 0
         # Said twice (D − 3 and D − 2) so it is still the rival's freshest offer in its endgame, whichever of us
         # moves first within a tick; it costs a round only in a duel that would otherwise score nothing. Never
         # below `duel_endgame_min_share` of the pie: the offer a squeezing rival can still take at its last tick.
@@ -420,7 +423,7 @@ def plan_moves(
     queue = sorted((p.ticks_left, -p.value, did) for did, p in plans.items() if p.acceptable is not None)
     chosen: list[int] = []
     for position, (left, _, _) in enumerate(queue, start=1):
-        room = max(1, left - params.accept_margin) * slots  # accept ticks left, keeping the margin
+        room = max(1, left - params.accept_margin - params.missed) * slots  # accept ticks left, keeping the margin
         if position >= room:  # the duels up to here need every remaining slot: accept the most urgent now
             urgent = [did for _, _, did in queue[:position] if did not in chosen]
             chosen.extend(_by_urgency(urgent, plans)[: slots - len(chosen)])
