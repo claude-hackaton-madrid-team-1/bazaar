@@ -298,22 +298,10 @@
   },
   "waiting_on_you": [
     {
-      "status": "todo",
-      "label": "decision",
-      "title": "Market Test venue + broker",
-      "body": "Up to 30 points. Build-only now (tested on the simulator), then you decide on the 270 P venue bond at 09:00."
-    },
-    {
-      "status": "todo",
-      "label": "decision",
-      "title": "One agent instead of three",
-      "body": "Merge bazaar-duels, -taker and -maker into one tick loop (one read of clock and /me, Jev orders the moves); built in dry run, switched after a side-by-side hour."
-    },
-    {
-      "status": "todo",
-      "label": "decision",
-      "title": "Marius's PRs #60–#62",
-      "body": "Reviewed: #60 approve, #61 safe with fixes, #62 approve after rebase. Post the findings on his PRs, or a worker takes them over."
+      "status": "done",
+      "label": "clear",
+      "title": "Nothing waits on Omar",
+      "body": "Decisions are Jev's (logged); Omar steers the roadmap."
     }
   ],
   "being_built": [
@@ -331,15 +319,21 @@
     },
     {
       "status": "wip",
-      "label": "review",
-      "title": "Marius's live fixes before 09:00",
-      "body": "#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, follow-up open."
+      "label": "worker",
+      "title": "Bazaar Live show",
+      "body": "v1 built: bazaar-live PR #1 (stage, transcript, voices, CI), Railway service in bazaar #85; under /pr-review."
     },
     {
       "status": "wip",
       "label": "worker",
-      "title": "Bazaar Live show",
-      "body": "v1 built: bazaar-live PR #1 (stage, transcript, voices, CI), Railway service in bazaar #85; under /pr-review."
+      "title": "Market Test: open our venue at ~11:30",
+      "body": "Jev: `open_noon` (0.82). #71's broker runs inside the maker on Railway and opens a board venue after game hour 6.5, before the 12:00 session; the cash floor keeps the 270 P bond until then, 100 after."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Marius's live PRs taken over",
+      "body": "Jev: fix then merge #72, #62, #61; #60 through the gate; #68 closes into #72; #43 closed. Merged one by one after /pr-review."
     }
   ],
   "not_started": [
@@ -585,7 +579,7 @@
             "end": "2026-10-03T08:30",
             "status": "wip",
             "priority": "P0",
-            "owner": "Marius"
+            "owner": "worker (takeover)"
           },
           {
             "title": "Taker + maker + duels LIVE",
@@ -623,12 +617,12 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Venue + broker #71, bond decision",
-            "start": "2026-10-03T06:00",
+            "title": "Own venue + broker in the maker (#71, Jev: open at ~11:30)",
+            "start": "2026-10-03T03:20",
             "end": "2026-10-03T11:30",
-            "status": "todo",
+            "status": "wip",
             "priority": "P1",
-            "owner": "Omar decides"
+            "owner": "worker"
           },
           {
             "title": "Organic market making (#13)",
@@ -636,6 +630,14 @@
             "end": "2026-10-03T20:00",
             "status": "todo",
             "priority": "P2"
+          },
+          {
+            "title": "Venue open + broker live (Market Tests)",
+            "start": "2026-10-03T11:30",
+            "end": "2026-10-04T14:00",
+            "status": "todo",
+            "priority": "P1",
+            "owner": "maker"
           }
         ]
       },
