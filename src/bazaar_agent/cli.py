@@ -1885,9 +1885,9 @@ def budget(
     for row in rb.describe(rb.budget_table(tick_seconds, plan)):
         t.add_row(*row)
     console.print(t)
-    edge = rb.burst(plan, offsets=offsets, retries=rb.SDK_RETRIES)
+    edge = rb.burst(plan, offsets=offsets, retries=rb.TEAM_RESENDS)
     console.print(
-        f"tick boundary: {edge.calls} team-key calls → {edge.sent} requests with the SDK's retries, "
+        f"tick boundary: {edge.calls} team-key calls → {edge.sent} requests (the team client never re-sends a 429), "
         f"{edge.refused} refused 429, {edge.failed} lost (over {edge.seconds:.1f} s)"
     )
     verdict = rb.check(plan, tick_seconds, offsets=offsets)

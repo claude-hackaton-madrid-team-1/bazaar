@@ -222,7 +222,7 @@ def test_the_budget_command_prints_the_table_and_the_verdict_offline():
 
     out = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15"])
     assert out.exit_code == 0, out.output
-    assert "64 team-key calls → 71 requests" in out.output
+    assert "64 team-key calls → 64 requests" in out.output and "11 refused" in out.output
     staggered = CliRunner().invoke(cli.app, ["budget", "--ceiling", "--tick-seconds", "15", "--stagger"])
     assert "fits the key" in staggered.output
 
@@ -248,9 +248,20 @@ def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday()
     assert rb.flatten().team == 32
 
 
+def test_today_s_team_client_loses_every_refused_call_at_the_edge_unless_the_loops_stagger():
+    """sdk.TeamBazaar (B18) never re-sends a 429: a refused call waits for the next tick. At the ceiling the
+    simultaneous wake-up loses 11 of 64 team-key calls; the proposed stagger loses none (6 with three extra
+    `dealer buy` processes)."""
+    ceiling = rb.burst(rb.saturday_plan(), retries=rb.TEAM_RESENDS)
+    assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 64, 11, 11)
+    assert rb.burst(rb.saturday_plan(), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS).failed == 0
+    crowded = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS)
+    assert (crowded.calls, crowded.failed) == (79, 6)
+
+
 def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lose_it():
-    """r2 bite X6: `team_client()` re-sends a 429 twice (0.25 s × attempt), GETs and POSTs alike. A call
-    lost after its last retry may be the tick's one accept (r2 X20: the reserved slot is then wasted)."""
+    """r2 bite X6, the vendored SDK's client (the broker's; the team's before B18): it re-sends a 429 twice
+    (0.25 s × attempt), GETs and POSTs alike. A call lost after its last retry may be the tick's one accept."""
     ceiling = rb.burst(rb.saturday_plan(), retries=rb.SDK_RETRIES)
     assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 71, 7, 0)
     crowded = rb.burst(rb.saturday_plan(dealer_children=3), retries=rb.SDK_RETRIES)

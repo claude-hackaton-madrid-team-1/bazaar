@@ -37,7 +37,8 @@ BURST_PER_KEY = 20  # ... bursts of 20
 PUBLIC_RATE_PER_ADDRESS = 60.0  # reads without a key, per address
 SATURDAY_TICK_S = 30.0
 SUNDAY_TICK_S = 15.0
-SDK_RETRIES = 2  # sdk.team_client(): Bazaar(..., retries=2): a 429 is re-sent up to twice (3 sends)
+SDK_RETRIES = 2  # the vendored Bazaar(..., retries=2): a 429 is re-sent up to twice (3 sends); the broker client
+TEAM_RESENDS = 0  # sdk.TeamBazaar (B18): a 429-refused request is never re-sent, the loop decides again next tick
 SDK_BACKOFF_S = 0.25  # bazaar_sdk._Http: sleep 0.25 s × attempt before re-sending a rate_limited call
 DEFAULT_LATENCY_S = 0.15  # one synchronous SDK call (urllib, no pipelining): ~6-7 calls/s per process
 VENUES_READ = 19  # boards the taker may read per tick: El Rastro + a stall or venue for each of 18 teams
@@ -307,12 +308,17 @@ def check(
     tick_seconds: float,
     *,
     latency_s: float = DEFAULT_LATENCY_S,
-    retries: int = SDK_RETRIES,
+    retries: int | None = None,
     broker_shares_team_bucket: bool = False,
     offsets: Mapping[str, float] | None = None,
 ) -> Verdict:
-    """Sustained ≤ 5 req/s per key, no 429 at the tick boundary, keyless ≤ 60 req/s per address."""
+    """Sustained ≤ 5 req/s per key, no 429 at the tick boundary, keyless ≤ 60 req/s per address.
+
+    `retries` (default: each client's own, TEAM_RESENDS for the team key and SDK_RETRIES for the broker's)
+    is how often a refused call is re-sent."""
     loops = list(loops)
+    team_retries = TEAM_RESENDS if retries is None else retries
+    broker_retries = SDK_RETRIES if retries is None else retries
     table = budget_table(tick_seconds, loops)
     problems: list[str] = []
     team_rps = table.rps("team") + (table.rps("broker") if broker_shares_team_bucket else 0.0)
@@ -325,17 +331,17 @@ def check(
     if broker_shares_team_bucket:
         merged = [replace(b, team_at_boundary=b.team_at_boundary + b.broker_at_boundary) for b in loops]
         buckets: list[tuple[str, BurstResult]] = [
-            ("team+broker", burst(merged, "team", latency_s=latency_s, offsets=offsets, retries=retries))
+            ("team+broker", burst(merged, "team", latency_s=latency_s, offsets=offsets, retries=team_retries))
         ]
     else:
         buckets = [
-            ("team", burst(loops, "team", latency_s=latency_s, offsets=offsets, retries=retries)),
-            ("broker", burst(loops, "broker", latency_s=latency_s, offsets=offsets, retries=retries)),
+            ("team", burst(loops, "team", latency_s=latency_s, offsets=offsets, retries=team_retries)),
+            ("broker", burst(loops, "broker", latency_s=latency_s, offsets=offsets, retries=broker_retries)),
         ]
     for name, b in buckets:
         if b.refused:
             problems.append(
-                f"{name} key: {b.calls} calls at the tick boundary → {b.sent} requests with the SDK's retries, "
+                f"{name} key: {b.calls} calls at the tick boundary → {b.sent} requests with re-sends, "
                 f"{b.refused} refused 429, {b.failed} lost after the last retry "
                 f"(bucket {BURST_PER_KEY} + {RATE_PER_KEY:g}/s, {latency_s:g} s per call)"
             )

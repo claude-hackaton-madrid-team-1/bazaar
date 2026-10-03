@@ -12,6 +12,10 @@ snapshots (ticks 122–159) and the tick-30 public board fixture.
 > ladder **restarts each round** (0.058 at tick 159, 0.0 at tick 160). Not holding: the assumed duel weight.
 > Official `duel_points` reached 14.39 (tick 624), above the assumed 12.5 cap, so the duel/trade split of §1 is
 > wrong. Read `duel_points` from `/me` and don't use the simulator's Saturday levers for duels.
+> Budget correction: §3 assumed the SDK re-sends a `429` twice. Since B18, `sdk.TeamBazaar` never re-sends one,
+> so `bazaar budget` now models no team-key re-sends (the broker client keeps 2). At the ceiling the simultaneous
+> wake-up loses **11 of 64** team-key calls (not 0). With the stagger it loses 0, or 6 with three extra
+> `dealer buy` processes. The §3 "0 lost" figures are the old client's.
 
 ## 1. Score simulator (`bazaar evals score-sim`): GO
 
