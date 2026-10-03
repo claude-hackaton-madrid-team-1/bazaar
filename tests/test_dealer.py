@@ -286,20 +286,27 @@ def test_live_dealer_buy_with_the_ledger_down_exits_cleanly_before_opening(live_
     assert client.sent == [] and client.reads == 1  # read the clock, never opened a thread
 
 
-def test_a_ledger_failure_inside_the_guard_walks_instead_of_accepting(live_dealer_buy, monkeypatch, tmp_path):
+def test_a_ledger_failure_on_the_accept_slot_holds_that_tick_then_resumes(live_dealer_buy, monkeypatch, tmp_path):
+    # #72 moved the slot claim out of #62's guard into `reserve`, and a refused slot now bids her ask
+    # instead. A ledger outage there must send neither (no write without the shared ledger) and no
+    # traceback: the tick is held, the thread stays open, and the accept goes out once the ledger answers.
     from bazaar_agent.guardrails import Ledger
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
-    class ReserveFails(Ledger):
+    class ReserveFailsTwice(Ledger):
+        failures = 2
+
         def reserve_accept(self, *args, **kw):
-            raise LedgerUnavailable("accept reservation failed (OperationalError)")
+            if self.failures:
+                self.failures -= 1
+                raise LedgerUnavailable("accept reservation failed (OperationalError)")
+            return super().reserve_accept(*args, **kw)
 
     cli, client = live_dealer_buy
-    result, output = dealer_buy(cli, ReserveFails(tmp_path / "ledger.jsonl"), monkeypatch)
+    result, output = dealer_buy(cli, ReserveFailsTwice(tmp_path / "ledger.jsonl"), monkeypatch)
     assert result.exit_code == 0, result.output
-    assert client.sent == [6, 7, 8] and client.accepted == [] and client.closed  # her 9 was not taken
-    assert "accept reservation failed (OperationalError); no write without the shared ledger" in output
-    assert "walked" in output
+    assert "Traceback" not in output and output.count("no write without the shared ledger (fail closed)") == 2
+    assert client.sent == [6, 7, 8] and client.accepted  # nothing sent on the held ticks, then her ask taken
 
 
 def test_offer_terms_must_be_exactly_the_requested_item_for_cash_only():

@@ -370,12 +370,27 @@ def dealer_buy(
         verdict = gr.check(gr.Action(kind, item, rarity, move.price), ctx, rules)
         return None if verdict.allowed else "; ".join(verdict.violations)
 
+    ledger_holds: list[str] = []  # an accept slot the ledger could not answer: hold that tick's send
+
     def reserve(move: Any, c: Clock) -> bool:
+        """Claim the team's accept slot. A ledger outage is no slot and holds the tick (`stops`): the move
+        `negotiate` would send instead (bid her ask) is a write too, and none goes out without the ledger."""
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+        try:
+            reserved = ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit)
+        except LedgerUnavailable as e:
+            ledger_holds.append(f"{e}; no write without the shared ledger (fail closed)")
+            return False
+        if not reserved:
             return False
         tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
         return True
+
+    def stops() -> tuple[str, ...]:
+        """The kill switch read live, plus a ledger outage at this tick's accept slot (reported once)."""
+        held = tuple(ledger_holds)
+        ledger_holds.clear()
+        return (*gr.kill_switch(rules), *held)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         try:
@@ -401,7 +416,7 @@ def dealer_buy(
                 observer=observer,
                 words_fn=llm_cli.words_for(settings, rules, template_words),
                 reserve=reserve,
-                kill_switch=lambda: gr.kill_switch(rules),
+                kill_switch=stops,
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
