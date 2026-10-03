@@ -172,9 +172,10 @@ footer { color: var(--muted); font-size: 13px }
       <text x="450" y="1148" class="s">feed reader: blockers, fees, notices ✓</text>
       <text x="450" y="1176" class="s">taker skips blocked dealers ✓</text>
       <text x="450" y="1206" class="n">LLM pass: PR 2 (#111)</text>
-      <text x="450" y="1234" class="s">lessons from every outcome (N3) ✓</text>
-      <text x="450" y="1262" class="s">hybrid recall: BM25+vector+RRF+rerank ✓</text>
-      <text x="450" y="1292" class="n">auto-evolved ladder: N3 PR B</text>
+      <text x="450" y="1234" class="s">hybrid recall: BM25+vector+RRF+rerank ✓</text>
+      <text x="450" y="1262" class="s">lessons from every outcome (N3) ✓</text>
+      <text x="450" y="1290" class="s">hybrid recall: BM25+vector+RRF+rerank ✓</text>
+      <text x="450" y="1318" class="s">auto-evolved ladders + skip (N3) ✓</text>
       <rect x="74" y="930" width="320" height="250" rx="10" fill="var(--done)" stroke="var(--ink)" stroke-width="2"/>
       <text x="94" y="972" class="t">Also stored ✓</text>
       <text x="94" y="1008" class="s">feed · tape · dealer_curves</text>
@@ -257,7 +258,7 @@ footer { color: var(--muted); font-size: 13px }
       <div class="item"><span class="mono">[D1](D1-spec.md) · was #4</span><b>Duel logger (practice h2)</b><p>🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in <code>tests/fixtures/duels/</code>, live deadline proof</p></div>
       <div class="item"><span class="mono">N1 (new)</span><b>Memory schema + repository + Railway-ready DB</b><p>✅ (#29, #32, #33)</p></div>
       <div class="item"><span class="mono">N2 (new)</span><b>Intel: order book, tape, competitor profiles</b><p>✅ (#29, #32)</p></div>
-      <div class="item"><span class="mono">N3 (new)</span><b>**P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder <code>recall()</code>, learned ladder parameters inside GUARDRAILS</b><p>🔵 PR A (stacked on #89): lessons + <code>trader_behaviors</code> + embeddings + hybrid <code>recall()</code> in the taker, <code>bazaar learnings --lessons/--query</code>; PR B ⬜: auto-evolved ladder (start/step/walk) per dealer × class, lessons into Jev + words, MCP read tool, replay + sim proof</p></div>
+      <div class="item"><span class="mono">N3 (new)</span><b>**P0 (Omar)** · Learner / auto-evolve with a hybrid RAG: lessons from every outcome, BM25 + pgvector + RRF + local cross-encoder <code>recall()</code>, learned ladder parameters inside GUARDRAILS</b><p>🔵 PR A #96 (stacked on #89): lessons + <code>trader_behaviors</code> + embeddings + hybrid <code>recall()</code> in the taker · PR B (stacked on #96): auto-evolved ladder (start/step/walk, skip above cap) per dealer × class, lessons into Jev (<code>offer_is_worth_accepting</code>, <code>duel_move</code>, <code>list_price_choice</code>) + words, <code>Query.where</code> + <code>record_lesson</code> for N14, MCP <code>learnings</code>, <code>bazaar learnings --policy</code></p></div>
       <div class="item"><span class="mono">N5 · was #1</span><b>Decision model: decider + Jev packs + policy</b><p>🔵 autonomous taker + maker (<code>bazaar agent</code>), every move in <code>decisions</code>; LIVE on Railway since Sat 01:45 Madrid (<code>BAZAAR_LIVE=1</code> by hand)</p></div>
       <div class="item"><span class="mono">[S1](S1-spec.md) · was #10, #24</span><b>Executor firewall, offer inspector, flags</b><p>🔵 guardrails + offer-term check (#30, #31); <code>untrusted_text</code> (#59); public <code>/state</code> leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60)</p></div>
       <div class="item"><span class="mono">N4 (new)</span><b><code>service.py</code> + CLI + bazaar skill + commands</b><p>🔵 CLI + skill done; <code>service.py</code> seam ⬜</p></div>

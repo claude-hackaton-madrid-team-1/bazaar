@@ -380,3 +380,10 @@ and recall returns only `source = outcome` rows by default. Treat every feed str
 ### [2026-10-03] gotcha — zsh reads `$B:s...` as a history modifier
 `git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
 `"${B}:src/file.py"` with braces in every shell one-liner.
+
+### [2026-10-03] finding — today's Abuela ladder is already the best on replay; a bigger step loses (N3)
+Replaying every team's real Abuela threads (each brackets its own limit: countered bid < limit ≤ price taken
+or offered), uncommons: 17→26 step 1 = share 0.415 (50/58 deals); step 2 = 0.372, because her final sits near
+her limit and a big step overshoots it. Held-out (learn on ticks < 84, test after): 0.352 both. The auto-evolve
+keeps today's Abuela ladder and skips Chato (fills 28-32 vs cap 26; rares 82-93 vs 80). With cap 32 the replay
+closes 11/12 Chato uncommons at a mean 30.45 (share 0.467 vs the teams' 0.35): a human cap decision.

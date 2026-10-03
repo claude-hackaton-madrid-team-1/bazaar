@@ -261,6 +261,10 @@
           "note": true
         },
         {
+          "text": "hybrid recall: BM25+vector+RRF+rerank",
+          "mark": "✓"
+        },
+        {
           "text": "lessons from every outcome (N3)",
           "mark": "✓"
         },
@@ -269,8 +273,8 @@
           "mark": "✓"
         },
         {
-          "text": "auto-evolved ladder: N3 PR B",
-          "note": true
+          "text": "auto-evolved ladders + skip (N3)",
+          "mark": "✓"
         }
       ],
       "mark": "◐"
