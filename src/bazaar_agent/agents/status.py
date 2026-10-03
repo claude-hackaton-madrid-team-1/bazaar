@@ -5,9 +5,10 @@
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
-Events use the web view's envelope (spec 003 on feat/web-live): `{id, tick, t, type, scope, actor,
-payload}` with negative made-up ids, plus an `agent` field; types `agent.decision`, `agent.execution`
-and `agent.tick`. Read-only: nothing here can trade, change a parameter, or reveal a key, URL or
+Events use the game envelope that bazaar-live's game screens read
+(github.com/claude-hackaton-madrid-team-1/bazaar-live): `{id, tick, t, type, scope, actor, payload}`
+with negative made-up ids, plus an `agent` field; types `agent.decision`, `agent.execution` and
+`agent.tick`. Read-only: nothing here can trade, change a parameter, or reveal a key, URL or
 password (every string goes through the telemetry scrubber). CORS is open and there is no token (a
 browser page reads it, so a token would ship in its JS): the data itself must be public.
 
