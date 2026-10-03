@@ -261,6 +261,12 @@ class Recorder:
             )
         return decision_id
 
+    def executed(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
+    ) -> None:
+        """One request sent outside `send` (its call had to run elsewhere): recorded and published the same way."""
+        self._executed(decision_id, tick, method, request, response, code)
+
     def _executed(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
     ) -> None:

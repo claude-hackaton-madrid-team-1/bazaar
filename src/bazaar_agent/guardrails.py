@@ -54,6 +54,8 @@ class Guardrails(BaseModel):
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
     allow_venue_open: bool = False
+    venue_bond_reserve: int = Field(default=270, ge=0)
+    venue_open_after_game_hours: float = Field(default=6.5, ge=0)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -87,7 +89,9 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
-    "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches)",
+    "allow_venue_open": "guardrails.check (venue open/fee/announce, broker matches); agents.venue_keeper opens it",
+    "venue_bond_reserve": "guardrails.check (effective_cash_floor while a planned venue is not open yet)",
+    "venue_open_after_game_hours": "guardrails.check (venue_open) + agents.venue_keeper (first tick past it)",
 }
 
 
@@ -284,6 +288,30 @@ class Context:
     accepts_this_tick: int = 0
     paused: bool = False
     packs_last_hour: int = 0
+    has_venue: bool = False  # we run a venue we opened (open or closing), from /api/me `venue`
+
+
+def runs_venue(me: dict[str, Any]) -> bool:
+    """/api/me `venue`: our own market, open or closing (the bond is in it). A free starter stall is not one."""
+    venue = me.get("venue")
+    if isinstance(venue, str):
+        return bool(venue)
+    if not isinstance(venue, dict) or venue.get("starter") is True:
+        return False
+    return str(venue.get("status") or "open") in ("open", "closing")
+
+
+def effective_cash_floor(rules: Guardrails, ctx: Context) -> int:
+    """`cash_floor`, plus `venue_bond_reserve` while a planned venue (`allow_venue_open`) is not open yet:
+    every purchase leaves the bond and opening fee in cash until the venue opens. The same for every writer."""
+    reserve = rules.venue_bond_reserve if rules.allow_venue_open and not ctx.has_venue else 0
+    return rules.cash_floor + reserve
+
+
+def floor_text(rules: Guardrails, ctx: Context) -> str:
+    if effective_cash_floor(rules, ctx) == rules.cash_floor:
+        return f"cash_floor {rules.cash_floor}"
+    return f"cash_floor {rules.cash_floor} + venue_bond_reserve {rules.venue_bond_reserve}"
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -300,6 +328,7 @@ def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerSt
         accepts_this_tick=ledger.accepts_in_tick(tick),
         paused=(REPO_ROOT / rules.pause_file).exists(),
         packs_last_hour=sum(ledger.packs_since(t_hours - 1.0).values()),
+        has_venue=runs_venue(me),
     )
 
 
@@ -324,8 +353,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"no max_price for rarity {action.rarity!r}: buying it is not allowed")
         elif action.price > cap:
             v.append(f"price {action.price} > max_price_{action.rarity} {cap}")
-        if ctx.cash - action.price < rules.cash_floor:
-            v.append(f"cash {ctx.cash} - {action.price} < cash_floor {rules.cash_floor}")
+        if ctx.cash - action.price < effective_cash_floor(rules, ctx):
+            v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
         if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
             v.append(
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
@@ -360,7 +389,9 @@ VENUE_SWITCHED: frozenset[str] = frozenset({"venue_open", "venue_fee", "venue_an
 
 
 def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
-    """Venue writes: the build-only switch, and the bond + opening fee never taking cash below `cash_floor`.
+    """Venue writes: the switch, opening once and not before `venue_open_after_game_hours`, and the bond +
+    opening fee never taking cash below `cash_floor` (the reserve is what the opening spends, so it is not
+    added on top here).
 
     The bond is not a purchase: it is never counted against `max_spend_per_game_hour` or a rarity cap
     (`action.price` is the cash the open takes, `VENUE_COST` when the caller leaves it out)."""
@@ -371,4 +402,8 @@ def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[s
         cost = VENUE_COST if action.price is None else action.price
         if ctx.cash - cost < rules.cash_floor:
             v.append(f"cash {ctx.cash} - venue bond and fee {cost} < cash_floor {rules.cash_floor}")
+        if ctx.has_venue:
+            v.append("we already run a venue: never open a second one")
+        if ctx.t_hours < rules.venue_open_after_game_hours:
+            v.append(f"game hour {ctx.t_hours:g} < venue_open_after_game_hours {rules.venue_open_after_game_hours:g}")
     return v

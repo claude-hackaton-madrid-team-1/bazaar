@@ -21,7 +21,15 @@ from bazaar_agent.album import album_view
 from bazaar_agent.config import REPO_ROOT, Settings
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
-from bazaar_agent.guardrails import ENFORCED_BY, Context, Guardrails, LedgerStore, context_from, load_guardrails
+from bazaar_agent.guardrails import (
+    ENFORCED_BY,
+    Context,
+    Guardrails,
+    LedgerStore,
+    context_from,
+    effective_cash_floor,
+    load_guardrails,
+)
 from bazaar_agent.llm.chooser import injection_flags
 from bazaar_agent.ticks import Clock, action_budget_s
 
@@ -444,7 +452,7 @@ def strategy(b: Backend, limit: int = 5) -> dict[str, Any]:
     return {
         "tick": book_.tick,
         "cash": book_.cash,
-        "above_cash_floor": max(0, ctx.cash - b.rules.cash_floor),
+        "above_cash_floor": max(0, ctx.cash - effective_cash_floor(b.rules, ctx)),
         "spent_last_game_hour": ctx.spent_last_hour,
         "buys": [_move_row(m) for m in book_.buys[:limit]],
         "sells": [_move_row(m) for m in book_.sells[:limit]],

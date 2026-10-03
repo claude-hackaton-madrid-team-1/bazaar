@@ -1,15 +1,18 @@
 """BROKER: every tick, read our venue's book and pair crossing offers (RULES.md "Your own market", #12).
 
-Once per game tick (`ticks.run_per_tick`, never wall-clock):
+Once per game tick (`ticks.run_per_tick`, never wall-clock; on Railway inside the maker's tick, see
+`agents/venue_keeper.py`):
   1. `GET /api/broker/book` with the broker key: the venue's public offers (makers as pseudonyms) and,
      during the Market Test, `bench_offers`;
-  2. our own open offers (`/api/me/offers`, team key) so none of them is ever matched; if they cannot be
-     read, only the bench is matched that tick (fail closed);
+  2. our own open offers (`/api/me/offers`, team key, or the maker's read of them this tick) so none of
+     them is ever matched; if they cannot be read, only the bench is matched that tick (fail closed);
+     an offer we already matched is never proposed again;
   3. the exact maximum-surplus matching (`agents/matcher.py`), bench first, at most
      `max_matches_per_tick` matches;
   4. `guardrails.check()` on a `broker_match`: the kill switch, the pause file and `allow_venue_open`;
   5. each match logged to `decisions` (and, live, its request to `executions`), the tick window checked
-     right before every send: a match that would land late is dropped, never sent late.
+     right before every send: a match that would land late is dropped, never sent late. Sends are paced
+     (`pace_s`) so the broker stays inside the key budget beside the maker's own writes.
 
 Dry run (the default) sends nothing: the decisions are written with `dry_run = true`. Live needs `--live`
 (or BAZAAR_LIVE=1 on a service) AND `allow_venue_open = true` in GUARDRAILS.md.
@@ -32,7 +35,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
-from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, plan_matches, quotes_from
+from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
@@ -48,6 +51,7 @@ class BrokerConfig:
     # The starter broker sends at most 10 public matches a tick; a bench run has 5 sellers. 15 sends stay
     # inside the key's burst of 20.
     max_matches_per_tick: int = 15
+    pace_s: float = 0.0  # seconds between two sends (0.2 = 5 per second, the key's sustained rate)
 
 
 def bench_run(value: object) -> str:
@@ -160,6 +164,7 @@ class _Run:
     window: TickWindow
     stats: TickStats
     pairs: set[frozenset[str]] = field(default_factory=set)
+    sends: int = 0
 
 
 class BrokerAgent:
@@ -177,18 +182,29 @@ class BrokerAgent:
         stats_dir: Path | None = None,
         config: BrokerConfig | None = None,
         now: Callable[[], float] = time.monotonic,
+        hub: Any = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.broker, self.team, self.us, self.rules = broker, team, us, rules
-        self.live, self.log, self.events, self.now = live, log, events, now
+        self.live, self.log, self.events, self.now, self.sleep = live, log, events, now, sleep
         self.config = config or BrokerConfig()
         self.stats_dir = stats_dir
-        self.rec = Recorder("broker", decisions, live, log)
+        self.rec = Recorder("broker", decisions, live, log, hub)
         self.sessions = BenchSessions(self._session_closed)
         self.pairs_seen: set[frozenset[str]] = set()
+        self.done: set[str] = set()  # offer ids the venue accepted in a match: never proposed again
         self.history: list[TickStats] = []
 
-    def on_tick(self, clock: Clock) -> None:
-        window = window_for(clock, self.now(), self.now)
+    def on_tick(
+        self,
+        clock: Clock,
+        *,
+        window: TickWindow | None = None,
+        our_offers: Any = None,
+        events: list[Event] | None = None,
+    ) -> None:
+        """One pass. Inside the maker: its tick `window`, its read of `/api/me/offers` and of the feed."""
+        window = window or window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
             book = BrokerBook.model_validate(self.broker.book())
@@ -198,9 +214,11 @@ class BrokerAgent:
         except ValidationError as e:
             self.log(f"tick {clock.tick} broker: book unreadable ({e.error_count()} problem(s)); nothing matched")
             return
-        self._observe_feed(clock.tick)
-        ours_ok, our_ids = self._our_offer_ids(clock.tick)
-        quotes = quotes_from(book, our_ids, public=ours_ok)
+        self._observe_feed(clock.tick, events)
+        ours_ok, our_ids = self._our_offer_ids(clock.tick, our_offers)
+        found = quotes_from(book, our_ids, public=ours_ok)
+        fresh = [q for q in found.quotes if str(q.id) not in self.done]
+        quotes = Quotes(fresh, found.skipped, found.ours)
         self.sessions.observe_book({q.item.removeprefix("bench:") for q in quotes.quotes if q.bench}, clock.tick)
         plan = plan_matches(quotes.quotes, Fee(book.fee_bps, book.fee_per_card), self.config.max_matches_per_tick)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
@@ -211,7 +229,10 @@ class BrokerAgent:
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
 
-    def _observe_feed(self, tick: int) -> None:
+    def _observe_feed(self, tick: int, events: list[Event] | None = None) -> None:
+        if events is not None:
+            self.sessions.observe_events(events, tick)
+            return
         if self.events is None:
             return
         try:
@@ -219,12 +240,12 @@ class BrokerAgent:
         except Exception as e:  # the feed is a hint for session bounds; the book still drives matching
             self.log(f"tick {tick} broker: feed unavailable ({type(e).__name__}); sessions from the book")
 
-    def _our_offer_ids(self, tick: int) -> tuple[bool, set[int]]:
+    def _our_offer_ids(self, tick: int, preread: Any = None) -> tuple[bool, set[int]]:
         """Ids of our open offers. (False, ∅) when they cannot be read: public offers are then skipped."""
-        if self.team is None:
+        if preread is None and self.team is None:
             return False, set()
         try:
-            rows = offers_in(self.team.my_offers())
+            rows = offers_in(preread if preread is not None else self.team.my_offers())
         except BazaarError as e:
             self.log(f"tick {tick} broker: our offers unreadable ({e.code}); bench only this tick")
             return False, set()
@@ -281,7 +302,12 @@ class BrokerAgent:
             return
         refused = False
         if self.live:
+            if run.sends and self.config.pace_s > 0:
+                self.sleep(self.config.pace_s)
+            run.sends += 1
             refused = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request)) is None
+            if not refused:
+                self.done |= {str(m.sell.id), str(m.buy.id)}
         if m.sell.bench:
             self.sessions.record(m, tick, refused)
         if refused:
