@@ -243,7 +243,8 @@ our_market, our_pages, dealer_deals, venue_trades, top_set, set_interest, streng
 we_have_for_them, they_have_for_us, match_count, guarded, guard_reason, move_kind, move_give, move_get, move_price,
 our_gain, their_gain, suggested_move, why_climbed, why_climbed_tick`, in that order: bazaar-live's
 `db/rival_board.sql` passes exactly these through `show.rival_board`, so a new column goes last and a changed type
-needs both repos. Gains are estimates (their side at book × the top multiplier, our fee on bids and asks we take).
+needs both repos. Gains are estimates (their side at book × the top multiplier, our fee on bids and asks we take); a
+team in the top 5, near us (3 ranks) or above us is guarded: a move only when our gain is at least twice theirs.
 Read-only (DataGrip `bazaar_team_ro`); private (our spares and moves), so bazaar-live serves it only behind
 `GAME_VIEW_TOKEN`. `init_schema` replaces it only when `board_version` (its comment) is newer, with a 2 s lock wait,
 and a failure only logs `schema: rival_board vN not applied (...)`. Any function the view calls runs as the caller
