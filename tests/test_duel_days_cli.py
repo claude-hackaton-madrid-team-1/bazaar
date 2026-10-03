@@ -101,3 +101,18 @@ def test_a_latch_file_that_is_not_an_object_is_a_conflict(tmp_path):
     (tmp_path / "duels").mkdir()
     (tmp_path / "duels" / "days_sign.json").write_text("[1, 2]")
     assert dd.latch(tmp_path).verdict == "conflict"  # never silently undo a recorded conflict (security P3)
+
+
+def test_one_done_read_per_tick_when_the_store_already_read_the_finished_duels(duel_cli, monkeypatch):  # noqa: F811
+    """r1 on #159: with duel_days_auto on, the store's read and the days latch's read could both fire on a tick
+    that is a multiple of 10. The latch now reuses the store's read."""
+    from bazaar_agent import duel_store
+
+    cli, _, _, _ = duel_cli
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    monkeypatch.setattr(duel_store.DuelStore, "read_finished", lambda self, duels: True)
+    client = DoneClient([{**LIVE}], [])
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
+    assert result.exit_code == 0, result.output
+    assert client.clock()["tick"] % 10 == 0 and client.done_calls == 1
