@@ -664,6 +664,17 @@ equals the stall (0.5 of the bench points) in every simulation, unverifiable liv
 switch is off no bond reserve is held (`effective_cash_floor` = `cash_floor` 100). Turn it on only in a
 closed-door window with Omar, once the broker has an edge (#84) or organic trades to serve.
 
+### [2026-10-03] gotcha — `telemetry.scrub` also feeds the audit tables: put new masking in `scrub_for_span`
+symptom: masking private numbers inside `scrub()` turned `cash_floor 270` into `[redacted]` in the `decisions` row
+(test_status) → root cause: `decisions.scrubbed` calls `scrub` too → fix: `scrub_for_span` (span attributes only)
+cuts a number named like a limit/cost/value/floor; `scrub` keeps our numbers for Postgres and JSONL.
+
+### [2026-10-03] finding — tracing on vs off: the simulator smoke records byte-identical requests (N18)
+`SMOKE_TRACING=0|1 SMOKE_DUMP=<file> uv run python scripts/sim_smoke.py` dumps the sim feed (types and payloads,
+ids and ticks dropped): the 58 events (settlements, offers, thread messages with our words and prices) are
+identical, and the run passes with a dead Phoenix on 127.0.0.1:6006. A span used to carry `bazaar.duel.limit` and
+`bazaar.plan.max` in clear: both are gone.
+
 ### [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
 symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squashed onto #72's round-3 head: thread
 40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that

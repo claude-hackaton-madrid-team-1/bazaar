@@ -14,7 +14,7 @@ Every hook is wrapped by `never_raise`: a telemetry bug can never change or stop
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any
 
 from opentelemetry import trace
@@ -31,7 +31,7 @@ def message_event(line: Line) -> dict[str, object]:
         "message.id": line.id,
         "tick": line.tick,
         "sender": line.sender,
-        "text": line.text,
+        "text": line.text[:512] if isinstance(line.text, str) else line.text,  # untrusted: capped
         "price": line.price,
         "offer_id": line.offer_id,
         "offer_status": line.offer_status,
@@ -44,13 +44,19 @@ class NegotiationTrace(Observer):
 
     def __init__(self, root: Span, dealer: str) -> None:
         self._root, self._dealer = root, dealer
+        self._session: str | None = None
         self._seen: set[tuple[object, ...]] = set()
         self._transcript: list[str] = []
         self._refusals = 0
 
     @tm.never_raise
     def opened(self, thread_id: int) -> None:
-        tm.set_attributes(self._root, {"bazaar.thread.id": thread_id})
+        self._session = f"dealer:{self._dealer}:thread:{thread_id}"
+        tm.set_attributes(self._root, {"bazaar.thread.id": thread_id, tm.SESSION: self._session})
+
+    def tool(self, name: str) -> AbstractContextManager[Any]:
+        """A TOOL span around one request to the game (`say`, `accept`, `close_thread`)."""
+        return tm.tool_span(name, session=self._session)
 
     def wrap_tick(self, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
         def traced(clock: Any) -> None:
@@ -59,7 +65,7 @@ class NegotiationTrace(Observer):
                 "bazaar.t_hours": clock.t_hours,
                 "bazaar.next_tick_in": clock.next_tick_in,
             }
-            with tm.span(f"tick {clock.tick}", tm.CHAIN, values):
+            with tm.span(f"tick {clock.tick}", tm.CHAIN, values, session=self._session):
                 on_tick(clock)
 
         return traced
@@ -86,9 +92,7 @@ class NegotiationTrace(Observer):
     @tm.never_raise
     def guardrail(self, move: Move, denied: str | None) -> None:
         violations = denied.split("; ") if denied else []
-        tm.event(
-            "guardrail", {"allowed": denied is None, "violations": violations, "move": move.kind, "price": move.price}
-        )
+        tm.event("guardrail", {"allowed": denied is None, "violations": violations, "move": move.kind})
 
     @tm.never_raise
     def move(self, move: Move, said: str | None) -> None:
@@ -138,15 +142,23 @@ def trace_negotiation(dealer: str, topic: dict[str, Any], plan: BidPlan) -> Iter
     values = {
         "bazaar.dealer": dealer,
         "bazaar.item": ref,
-        "bazaar.plan.start": plan.start,
-        "bazaar.plan.step": plan.step,
-        "bazaar.plan.max": plan.max_price,
-        tm.INPUT: tm.as_json({"dealer": dealer, "topic": topic, "plan": plan.__dict__}),
+        tm.INPUT: tm.as_json({"dealer": dealer, "topic": topic}),  # the plan holds our ceiling: never traced
         tm.INPUT_MIME: tm.JSON_MIME,
         tm.TAGS: [f"dealer:{dealer}", f"item:{ref}"],
     }
     with tm.span("negotiation", tm.AGENT, values, root=True) as root:
         yield NegotiationTrace(root, dealer)
+
+
+@contextmanager
+def _under(parent: Span, name: str, session: str) -> Iterator[Span]:
+    """A TOOL span made a child of `parent` (a span that is not current), in `session`."""
+    use = trace.use_span(parent, end_on_exit=False, record_exception=False, set_status_on_exception=False)
+    with use, tm.tool_span(name, session=session) as current:
+        yield current
+
+
+PRIVATE_DUEL_KEYS = frozenset({"your_limit", "your_value", "your_days_weight"})
 
 
 class DuelTraces:
@@ -173,8 +185,8 @@ class DuelTraces:
             values = {
                 tm.KIND: tm.AGENT,
                 "bazaar.duel.id": did,
+                tm.SESSION: f"duel:{did}",
                 "bazaar.duel.role": duel.get("role"),
-                "bazaar.duel.limit": duel.get("your_limit"),
                 "bazaar.duel.issues": duel.get("issues"),
                 "bazaar.duel.first_tick": tick,
                 tm.TAGS: [f"duel:{did}", f"role:{duel.get('role')}"],
@@ -186,6 +198,7 @@ class DuelTraces:
             attributes=tm.attributes(
                 {
                     tm.KIND: tm.CHAIN,
+                    tm.SESSION: f"duel:{did}",
                     "bazaar.tick": tick,
                     "bazaar.duel.deadline": duel.get("deadline_tick", duel.get("deadline")),
                 }
@@ -193,18 +206,13 @@ class DuelTraces:
         )
         self._ticks[did], self._last[did] = child, duel
         tm.add_event(child, "rival_offer", {"offer": duel.get("rival_offer")})
-        values = {"kind": move.kind, "price": move.price, "days": move.days, "reason": move.reason}
-        tm.add_event(child, "our_move", values)
+        tm.add_event(child, "our_move", {"kind": move.kind, "reason": move.reason})  # the price is in move_sent
 
     @tm.never_raise
     def jev(self, duel_id: int, pick: Any) -> None:
-        """Jev's verdicts with their floats, and the move they led to, on the duel's tick span (`DuelPick`)."""
+        """The move Jev's verdicts led to, on the duel's tick span (the verdicts are EVALUATOR spans already)."""
         if duel_id not in self._ticks:
             return
-        child = self._ticks[duel_id]
-        for question, advice in (("duel_move", pick.advice), ("rival_cares_about_days", pick.days)):
-            if advice is not None:
-                tm.add_event(child, "jev_verdict", {"question": question, **advice.as_dict()})
         values = {
             "default": pick.default.kind,
             "chosen": pick.move.kind,
@@ -213,7 +221,14 @@ class DuelTraces:
             "legal": list(pick.legal),
             "why": pick.why,
         }
-        tm.add_event(child, "jev_choice", values)
+        tm.add_event(self._ticks[duel_id], "jev_choice", values)
+
+    def tool(self, duel_id: int, name: str) -> AbstractContextManager[Any]:
+        """A TOOL span around one request to the game, under the duel's tick span."""
+        child = self._ticks.get(duel_id)
+        if child is None or not tm.enabled():
+            return nullcontext()
+        return _under(child, name, f"duel:{duel_id}")
 
     @tm.never_raise
     def guardrail(self, duel_id: int, allowed: bool, violations: Iterable[str]) -> None:
@@ -253,7 +268,12 @@ class DuelTraces:
         root = self._roots.pop(duel_id)
         last = self._last.pop(duel_id, {})
         tm.set_attributes(
-            root, {"bazaar.outcome": outcome, tm.OUTPUT: tm.as_json(last), "bazaar.duel.done": bool(last.get("done"))}
+            root,
+            {
+                "bazaar.outcome": outcome,
+                tm.OUTPUT: tm.as_json({k: v for k, v in last.items() if k not in PRIVATE_DUEL_KEYS}),
+                "bazaar.duel.done": bool(last.get("done")),
+            },
         )
         root.end()
 
@@ -290,15 +310,17 @@ def trace_thread(view: Thread) -> None:
             tm.add_event(current, "standing_offer", values)
 
 
-def per_tick(name: str, on_tick: Callable[[Any], None]) -> Callable[[Any], None]:
-    """Each call of a loop's `on_tick` as its own trace `<name> <tick>`, so a loop that runs for hours
-    shows up in Phoenix tick by tick instead of as one span that lands only when it stops."""
+def per_tick(name: str, on_tick: Callable[[Any], None], *, agent: bool = False) -> Callable[[Any], None]:
+    """Each call of a loop's `on_tick` as its own trace `<name> <tick>` in session `tick:<n>`, so a loop that
+    runs for hours shows up in Phoenix tick by tick instead of as one span that lands only when it stops.
+    An agent loop (taker, maker, duels) is an AGENT span; a watcher (monitor, capture) a CHAIN."""
     if not tm.enabled():
         return on_tick
 
     def traced(clock: Any) -> None:
         values = {"bazaar.tick": clock.tick, "bazaar.t_hours": clock.t_hours, "bazaar.loop": name}
-        with tm.span(f"{name} {clock.tick}", tm.CHAIN, values, root=True):
+        kind = tm.AGENT if agent else tm.CHAIN
+        with tm.span(f"{name} {clock.tick}", kind, values, root=True, session=f"tick:{clock.tick}"):
             on_tick(clock)
 
     return traced
