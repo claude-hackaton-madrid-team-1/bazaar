@@ -22,11 +22,9 @@ except ImportError:  # pragma: no cover - a usage error, not a code path
     sys.exit("needs bazaar_sim.bench from PR #77: see this script's docstring")
 
 
-def points(eff: float, stall: float, rivals: list[float], zero_below: bool) -> float:
-    if eff < stall and zero_below:
-        return 0.0
-    top = sorted([eff, *rivals, 0.0, 0.0], reverse=True)[:3]
-    return bench.bench_points(eff, stall, sum(top) / 3)
+def points(r: bench.BenchResult, zero_below: bool) -> float:
+    """`BenchResult.points()` against two stall-level rivals; with `zero_below`, a loss to the stall scores 0."""
+    return 0.0 if zero_below and r.realised < r.stall_realised else r.points()
 
 
 def cells() -> list[tuple[str, bench.BenchPreset, object]]:
@@ -58,12 +56,13 @@ def main() -> None:
             start = time.time()
             for seed in range(args.first_seed, args.first_seed + args.books):
                 policy = WinRatePolicy(prior, seed=seed, loss_curve=mode)  # type: ignore[arg-type]
+                policy.begin(1, 0)  # bench.started: simulate() runs bench run 1 from tick 0
                 r = bench.simulate(policy, preset, seed, rule="quote")
                 wins += r.realised > r.stall_realised
                 ties += r.realised == r.stall_realised
                 losses += r.realised < r.stall_realised
-                lin.append(points(r.efficiency, r.stall, [r.stall, r.stall], False))
-                zero.append(points(r.efficiency, r.stall, [r.stall, r.stall], True))
+                lin.append(points(r, False))
+                zero.append(points(r, True))
             n = args.books
             print(
                 f"{label} | {mode} | {wins / n:.1%} / {ties / n:.1%} / {losses / n:.1%} | "

@@ -97,6 +97,19 @@ def _order(trader_id: str) -> int:
     return int(tail) if tail.isdigit() else 0
 
 
+def _run_of(offer: dict[str, Any], oid: str) -> int | None:
+    """The bench run an offer belongs to: its `run` field, else the "b12" of "b12-7"."""
+    raw = offer.get("run")
+    text = str(raw) if raw is not None else oid.partition("-")[0]
+    text = text.removeprefix("b")
+    return int(text) if text.isdigit() else None
+
+
+def _cash(side: object) -> int:
+    value = side.get("cash") if isinstance(side, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
 def _cross(asks: Sequence[tuple[int, str]], bids: Sequence[tuple[int, str]], fee: Fee) -> list[tuple[str, str]]:
     """The stall: lowest ask against highest bid while the bid covers ask + fee (lists already sorted)."""
     out = []
@@ -108,10 +121,11 @@ def _cross(asks: Sequence[tuple[int, str]], bids: Sequence[tuple[int, str]], fee
 
 
 def _stall_step(traders: Sequence[_Trader], used: set[str], k: int, fee: Fee) -> list[tuple[str, str]]:
+    """One tick of the stall; equal quotes keep the book's order (the trader's slot), as the stall does."""
     open_ = [t for t in traders if t.id not in used and t.present(k)]
-    asks = sorted(((t.quote_at(k), t.id) for t in open_ if t.side == "sell"), key=lambda a: a[0])
-    bids = sorted(((t.quote_at(k), t.id) for t in open_ if t.side == "buy"), key=lambda b: -b[0])
-    return _cross(asks, bids, fee)
+    asks = sorted(((t.quote_at(k), t.order, t.id) for t in open_ if t.side == "sell"), key=lambda a: (a[0], a[1]))
+    bids = sorted(((t.quote_at(k), t.order, t.id) for t in open_ if t.side == "buy"), key=lambda b: (-b[0], b[1]))
+    return _cross([(q, i) for q, _, i in asks], [(q, i) for q, _, i in bids], fee)
 
 
 def _gain(by_id: dict[str, _Trader], pairs: Iterable[tuple[str, str]]) -> int:
@@ -160,30 +174,45 @@ class WinRatePolicy:
         self.loss_curve = loss_curve
         self.max_candidates = max_candidates
         self.rng = random.Random(seed)
-        self.run: str | None = None
+        self.run: int | None = None
         self.start = 0
+        self.start_known = False  # False: the run's first tick is guessed as the first tick its offers showed
         self.seen: dict[str, _Seen] = {}
         self.ours: list[tuple[str, str]] = []  # pairs we sent this session
         self.deviations = 0  # reads where we chose something else than the stall's plan
+        self.fallbacks = 0  # seen traders no prior draw explained: sampled from a looser posterior instead
+        self.skipped = 0  # malformed bench offers ignored
+
+    def begin(self, run: int, tick: int) -> None:
+        """A Market Test started (`bench.started`: its run and tick). Without it the policy takes the first tick the
+        run's offers show as its start, which is late whenever nobody arrives on the run's first tick."""
+        self.run, self.start, self.start_known, self.seen, self.ours = run, tick, True, {}, []
 
     # ---------------------------------------------------------------- what the book shows
 
     def _observe(self, book: dict[str, Any]) -> tuple[int, list[tuple[str, str, int]]]:
-        offers, runs = [], set()
+        parsed: list[tuple[int, str, str, int]] = []
         for o in book.get("bench_offers") or []:
-            oid = str(o.get("id", ""))
-            want, give = o.get("want") or {}, o.get("give") or {}
-            runs.add(str(o["run"]) if o.get("run") is not None else oid.partition("-")[0])
-            if want.get("cash"):
-                offers.append((oid, "sell", int(want["cash"])))
-            elif give.get("cash"):
-                offers.append((oid, "buy", int(give["cash"])))
-        tick = int(book.get("tick") or 0)
-        run = min(runs) if runs else self.run
-        if run != self.run:
-            self.run, self.start, self.seen, self.ours = run, tick, {}, []
+            oid = o.get("id") if isinstance(o, dict) else None
+            if not isinstance(oid, str):
+                self.skipped += 1
+                continue
+            run = _run_of(o, oid)
+            ask, bid = (_cash(o.get("want")), _cash(o.get("give"))) if run is not None else (0, 0)
+            if run is None or bool(ask) == bool(bid):
+                self.skipped += 1
+                continue
+            parsed.append((run, oid, "sell" if ask else "buy", ask or bid))
+        raw_tick = book.get("tick")
+        tick = raw_tick if isinstance(raw_tick, int) and not isinstance(raw_tick, bool) else self.start
+        newest = max((r for r, _, _, _ in parsed), default=None)
+        if newest is not None and newest != self.run:
+            self.run, self.start, self.start_known, self.seen, self.ours = newest, tick, False, {}, []
+        offers = [(oid, side, q) for r, oid, side, q in parsed if r == self.run]
         k = tick - self.start
         present = {oid for oid, _, _ in offers}
+        # a match of ours was refused when either trader is still in the book: both are open again
+        self.ours = [pair for pair in self.ours if not present & set(pair)]
         matched = {i for pair in self.ours for i in pair}
         for t in self.seen.values():
             if t.id not in present and t.id not in matched and max(t.quotes) < k:
@@ -191,8 +220,6 @@ class WinRatePolicy:
         for oid, side, quote in offers:
             t = self.seen.setdefault(oid, _Seen(oid, _order(oid), side, k))
             t.quotes[k] = quote
-            if oid in matched:  # a match of ours was refused: the trader is still there
-                self.ours = [p for p in self.ours if oid not in p]
         return k, offers
 
     def refused(self, sell: str, buy: str) -> None:
@@ -211,15 +238,15 @@ class WinRatePolicy:
                 return life
         return None
 
-    def _sample_seen(self, t: _Seen, k: int) -> _Trader | None:
+    def _sample_seen(self, t: _Seen) -> _Trader:
         p, rng = self.prior, self.rng
         ticks = sorted(t.quotes)
         q0 = t.quotes[ticks[0]]
         lo_lim, hi_lim = p.cost if t.side == "sell" else p.value
         lo_sh, hi_sh = p.sell_shade if t.side == "sell" else p.buy_shade
         a, b = max(lo_lim, math.ceil(q0 / hi_sh)), min(hi_lim, math.floor(q0 / lo_sh))
-        if a > b:
-            a, b = (lo_lim, hi_lim) if t.side == "sell" else (lo_lim, hi_lim)
+        if a > b:  # a quote the prior cannot shade from: keep the limit on the right side of the quote
+            a, b = (min(lo_lim, q0), min(hi_lim, q0)) if t.side == "sell" else (max(lo_lim, q0), max(hi_lim, q0))
         moved = len(set(t.quotes.values())) > 1
         last_age = ticks[-1] - t.arrive
         for _ in range(30):
@@ -246,7 +273,14 @@ class WinRatePolicy:
             if all(abs(cand.quote_at(tk) - q) <= 1 for tk, q in t.quotes.items()):
                 cand.shown = dict(t.quotes)
                 return cand
-        return None
+        # nothing in the prior reproduces this trader (patience or relaxing outside it): keep it in the future with
+        # its quotes replayed exactly and a looser guess for the rest, rather than dropping the whole future
+        self.fallbacks += 1
+        limit = rng.randint(a, b)
+        life = max(last_age + 1, self._life(last_age + 1) or last_age + 1) if not t.gone else last_age + 1
+        cand = _Trader(t.id, t.order, t.side, limit, q0, t.arrive, life, 1.0 if moved else 0.0)
+        cand.shown = dict(t.quotes)
+        return cand
 
     def _sample_new(self, idx: int, side: str, k: int) -> _Trader:
         p, rng = self.prior, self.rng
@@ -257,13 +291,8 @@ class WinRatePolicy:
         relax = 0.0 if rng.random() < p.firm_share else rng.uniform(*p.relax)
         return _Trader(f"~{idx}", 1000 + idx, side, limit, quote, arrive, life, relax)
 
-    def _future(self, k: int) -> list[_Trader] | None:
-        traders = []
-        for t in self.seen.values():
-            s = self._sample_seen(t, k)
-            if s is None:
-                return None
-            traders.append(s)
+    def _future(self, k: int) -> list[_Trader]:
+        traders = [self._sample_seen(t) for t in self.seen.values()]
         for side in ("sell", "buy"):
             missing = self.prior.traders // 2 - sum(t.side == side for t in self.seen.values())
             traders += [self._sample_new(len(traders) + i, side, k) for i in range(max(0, missing))]
@@ -278,7 +307,9 @@ class WinRatePolicy:
             return 0.5
         return 0.5 * ours / stall if self.loss_curve == "linear" and stall > 0 else 0.0
 
-    def _rollout(self, traders: list[_Trader], k: int, now: list[tuple[str, str]], fee: Fee) -> int:
+    def _rollout(
+        self, traders: list[_Trader], by_id: dict[str, _Trader], k: int, now: list[tuple[str, str]], fee: Fee
+    ) -> int:
         """Our true gain if we match `now` at tick k, then cross like the stall to the end."""
         used = {i for pair in self.ours for i in pair} | {i for pair in now for i in pair}
         pairs = [*self.ours, *now]
@@ -286,18 +317,20 @@ class WinRatePolicy:
             step = _stall_step(traders, used, tk, fee)
             pairs += step
             used |= {i for pair in step for i in pair}
-        return _gain({t.id: t for t in traders}, pairs)
+        return _gain(by_id, pairs)
 
     def __call__(self, book: dict[str, Any]) -> list[Pair]:
-        fee = Fee(int(book.get("fee_bps") or 0), int(book.get("fee_per_card") or 0))
+        fee_bps, per_card = book.get("fee_bps"), book.get("fee_per_card")
+        fee = Fee(fee_bps if isinstance(fee_bps, int) else 0, per_card if isinstance(per_card, int) else 0)
         k, offers = self._observe(book)
         matched = {i for pair in self.ours for i in pair}
-        asks = sorted(
-            ((q, oid) for oid, side, q in offers if side == "sell" and oid not in matched), key=lambda a: a[0]
-        )
-        bids = sorted(
-            ((q, oid) for oid, side, q in offers if side == "buy" and oid not in matched), key=lambda b: -b[0]
-        )
+        open_ = [(q, i, oid, side) for i, (oid, side, q) in enumerate(offers) if oid not in matched]
+        asks = [
+            (q, oid) for q, _, oid, side in sorted((o for o in open_ if o[3] == "sell"), key=lambda o: (o[0], o[1]))
+        ]
+        bids = [
+            (q, oid) for q, _, oid, side in sorted((o for o in open_ if o[3] == "buy"), key=lambda o: (-o[0], o[1]))
+        ]
         stall_plan = _cross(asks, bids, fee)
         edges = [(s, b) for ask, s in asks for bid, b in bids if ask + fee.of(ask) <= bid]
         if not edges:
@@ -308,12 +341,9 @@ class WinRatePolicy:
                 candidates.append(must)
         scores: list[list[float]] = [[] for _ in candidates]
         drawn = 0
-        for _ in range(self.samples * 2):
-            if drawn == self.samples:
-                break
+        for _ in range(self.samples):
             traders = self._future(k)
-            if traders is None:
-                continue
+            by_id = {t.id: t for t in traders}
             drawn += 1
             stall_used: set[str] = set()
             stall_pairs: list[tuple[str, str]] = []
@@ -321,9 +351,9 @@ class WinRatePolicy:
                 step = _stall_step(traders, stall_used, tk, Fee())
                 stall_pairs += step
                 stall_used |= {i for pair in step for i in pair}
-            stall_gain = _gain({t.id: t for t in traders}, stall_pairs)
+            stall_gain = _gain(by_id, stall_pairs)
             for i, cand in enumerate(candidates):
-                scores[i].append(self._score(self._rollout(traders, k, cand, fee), stall_gain))
+                scores[i].append(self._score(self._rollout(traders, by_id, k, cand, fee), stall_gain))
         choice = stall_plan
         if drawn > 1:
             base = scores[candidates.index(stall_plan)]

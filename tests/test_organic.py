@@ -61,3 +61,15 @@ def test_the_square_root_and_the_cap_compress_a_leaders_lead():
     assert table["linear"] == 0.2727 and table["sqrt"] == 0.7208
     big = scenario_table(pairs(1, 40.0), [pairs(4)], pair_cap=10)
     assert big["linear"] == 1.0 and big["linear, capped"] == 0.6
+
+
+def test_owners_are_known_whatever_the_event_order_and_malformed_rows_are_skipped():
+    events = [
+        settled("t01", "t09", "v01"),  # newest first: the owner's trade comes before the opening
+        {"type": "settlement", "payload": {"venue": "v01", "parties": ["t08", "t09"], "price": "lots", "fee": None}},
+        {"type": "venue.opened", "payload": {"venue": "v01", "owner": "t01"}},
+        {"type": "offer.listed", "payload": "garbage"},
+        "not an event",
+    ]
+    flows = venue_flows(events)  # type: ignore[arg-type]
+    assert flows["v01"].trades == 1 and flows["v01"].volume == 0 and flows["v01"].pairs == {("t08", "t09"): 1}

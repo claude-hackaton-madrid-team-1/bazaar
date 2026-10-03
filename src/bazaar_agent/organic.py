@@ -41,39 +41,48 @@ class VenueFlow:
         return round(self.fees / self.volume, 4) if self.volume else 0.0
 
 
+def _whole(value: object) -> int:
+    """A price or fee off the feed: a whole number, anything else counts 0 (never raises on a malformed row)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def venue_flows(events: Iterable[Mapping[str, Any]]) -> dict[str, VenueFlow]:
     """Per venue: offers posted, distinct makers, trades between teams other than its owner, distinct pairs.
     Direct-thread trades (venue None) and dealer deals are not venue flow and are skipped."""
     flows: dict[str, VenueFlow] = {}
+    rows = [e for e in events if isinstance(e, Mapping) and isinstance(e.get("payload"), dict)]
 
     def flow(vid: str) -> VenueFlow:
         return flows.setdefault(vid, VenueFlow(vid))
 
-    for e in events:
-        kind, p = e.get("type"), e.get("payload") or {}
-        if kind == "venue.opened" and p.get("venue"):
+    for e in rows:  # owners first, so the order of the events never lets an owner's trade count
+        p = e["payload"]
+        if e.get("type") == "venue.opened" and p.get("venue"):
             flow(str(p["venue"])).owner = p.get("owner")
-        elif kind == "offer.listed":
-            offer = p.get("offer") or {}
+    for e in rows:
+        kind, p = e.get("type"), e["payload"]
+        if kind == "offer.listed":
+            offer = p.get("offer") if isinstance(p.get("offer"), dict) else {}
             vid = p.get("venue") or offer.get("venue")
             if not vid or offer.get("thread") is not None:
                 continue
             f = flow(str(vid))
             f.listed += 1
-            f.sells += bool((offer.get("give") or {}).get("assets"))
-            f.bids += not (offer.get("give") or {}).get("assets")
+            sells = bool((offer.get("give") or {}).get("assets")) if isinstance(offer.get("give"), dict) else False
+            f.sells += sells
+            f.bids += not sells
             maker = e.get("actor") or offer.get("maker")  # the event's actor first: the offer's maker may be masked
             if maker:
                 f.makers.add(str(maker))
         elif kind == "settlement" and p.get("venue") and p.get("kind") in (None, "trade", "match"):
-            parties = [str(t) for t in p.get("parties") or []]
+            parties = [str(t) for t in p.get("parties") or []] if isinstance(p.get("parties"), list) else []
             f = flow(str(p["venue"]))
             if len(parties) != 2 or f.owner in parties:
                 continue
             a, b = sorted(parties)
             f.trades += 1
-            f.volume += int(p.get("price") or 0)
-            f.fees += int(p.get("fee") or 0)
+            f.volume += _whole(p.get("price"))
+            f.fees += _whole(p.get("fee"))
             f.pairs[(a, b)] = f.pairs.get((a, b), 0) + 1
     return flows
 

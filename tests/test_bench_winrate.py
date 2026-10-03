@@ -57,7 +57,7 @@ def test_it_remembers_who_left_resets_on_a_new_run_and_forgets_a_refused_match()
     policy(book(32, offer("b1-1", "buy", 42)))
     assert policy.ours == []  # b1-1 is still in the book: the match was refused
     policy(book(120, offer("b2-0", "sell", 30)))
-    assert policy.run == "b2" and policy.start == 120 and list(policy.seen) == ["b2-0"]
+    assert policy.run == 2 and policy.start == 120 and list(policy.seen) == ["b2-0"]
 
 
 def test_with_the_zero_loss_curve_and_a_large_edge_it_plays_the_stall():
@@ -70,7 +70,24 @@ def test_the_run_comes_from_the_offers_run_field_and_a_refusal_can_be_reported()
     policy = WinRatePolicy(seed=5, samples=8)
     first = offer("x-0", "sell", 30) | {"run": 7}
     policy(book(10, first, offer("x-1", "buy", 50) | {"run": 7}))
-    assert policy.run == "7" and policy.start == 10
+    assert policy.run == 7 and policy.start == 10
     policy.ours = [("x-0", "x-1")]
     policy.refused("x-0", "x-1")
     assert policy.ours == []
+
+
+def test_begin_pins_the_runs_first_tick_and_malformed_offers_are_skipped():
+    policy = WinRatePolicy(seed=6, samples=8)
+    policy.begin(3, 100)
+    bad = {"id": "b3-5", "give": {"cash": "lots"}, "want": {}}
+    policy(book(102, offer("b3-0", "sell", 30), bad, {"nothing": True}))
+    assert policy.start == 100 and policy.start_known and policy.seen["b3-0"].arrive == 2 and policy.skipped == 2
+
+
+def test_the_shadow_stall_breaks_equal_quotes_in_book_order():
+    from bazaar_agent.agents.bench_winrate import _stall_step, _Trader
+
+    late_low_slot = _Trader("b1-2", 2, "sell", 30, 40, 3, 5, 0.0)
+    early_high_slot = _Trader("b1-4", 4, "sell", 30, 40, 1, 5, 0.0)
+    buyer = _Trader("b1-1", 1, "buy", 60, 45, 0, 9, 0.0)
+    assert _stall_step([early_high_slot, late_low_slot, buyer], set(), 3, Fee()) == [("b1-2", "b1-1")]
