@@ -94,3 +94,38 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
     assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+
+
+def test_dealer_final_lift_off_keeps_every_cap_as_today():
+    rules = REAL.rules
+    assert rules.dealer_final_lift == 0
+    assert rules.final_cap_for("uncommon") == rules.max_price_uncommon
+    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 27, final=True), ctx(), rules)
+    assert str(final) == "denied: price 27 > max_price_uncommon 26"
+
+
+def test_dealer_final_lift_lets_only_a_final_pass_the_card_cap():
+    rules = gr.parse_guardrails("- `dealer_final_lift` = 0.15 — x").rules
+    assert (rules.final_cap_for("uncommon"), rules.final_cap_for("rare"), rules.final_cap_for("common")) == (29, 92, 13)
+    assert rules.final_cap_for("pack") == rules.max_price_pack  # packs keep their cap
+    assert rules.final_cap_for("epic") is None  # no cap, never bought
+    assert gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 29, final=True), ctx(), rules).allowed
+    assert gr.check(gr.Action("bid", "LAV-08", "uncommon", 29, final=True), ctx(), rules).allowed  # meet her final
+    above = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 30, final=True), ctx(), rules)
+    assert "dealer final cap 29 (max_price_uncommon 26 lifted)" in str(above)
+    for plain in (gr.Action("accept_buy", "LAV-08", "uncommon", 27), gr.Action("bid", "LAV-08", "uncommon", 27)):
+        assert "price 27 > max_price_uncommon 26" in str(gr.check(plain, ctx(), rules))  # our own bids: the cap
+    opening = gr.Action("buy", "LAV-08", "uncommon", 27, final=True)  # opening a thread is never a final
+    assert not gr.check(opening, ctx(), rules).allowed
+    pack = gr.Action("accept_buy", "sobre_barrio", "pack", 21, final=True)
+    assert "max_price_pack 20" in str(gr.check(pack, ctx(), rules))
+
+
+def test_dealer_final_lift_still_meets_cash_floor_and_hourly_spend():
+    rules = gr.parse_guardrails("- `dealer_final_lift` = 0.25 — x").rules
+    final = gr.Action("accept_buy", "LAV-09", "rare", 95, final=True)
+    assert gr.check(final, ctx(cash=400), rules).allowed
+    assert "cash_floor" in str(gr.check(final, ctx(cash=360), rules))
+    assert "max_spend_per_game_hour" in str(gr.check(final, ctx(spent_last_hour=60), rules))
+    with pytest.raises(gr.GuardrailsError):
+        gr.parse_guardrails("- `dealer_final_lift` = 0.9 — too much")

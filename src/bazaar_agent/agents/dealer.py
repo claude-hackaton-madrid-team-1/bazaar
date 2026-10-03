@@ -29,15 +29,24 @@ KIND_WORDS = (
 
 @dataclass(frozen=True)
 class BidPlan:
-    """Our side of one conversation. `max_price` is the hard limit: never pay above it."""
+    """Our side of one conversation. `max_price` is the hard limit on our bids and on a plain ask.
+    `final_max` (N14a): the most we take for the dealer's FINAL offer (its limit, take it or it walks);
+    None = `max_price`, as before. It is set only from `guardrails.final_cap_for` and our value."""
 
     start: int
     step: int
     max_price: int
+    final_max: int | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
             raise ValueError(f"bad plan: start={self.start} step={self.step} max={self.max_price}")
+        if self.final_max is not None and self.final_max < self.max_price:
+            raise ValueError(f"bad plan: final_max={self.final_max} below max={self.max_price}")
+
+    @property
+    def final_cap(self) -> int:
+        return self.max_price if self.final_max is None else self.final_max
 
 
 @dataclass(frozen=True)
@@ -65,10 +74,12 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
     nxt = neg.next_bid()
     if ask is not None and offer_id is not None:
-        if ask <= neg.plan.max_price and (final or nxt is None or ask <= nxt):
-            return Move("accept", ask, offer_id, "final within limit" if final else "ask meets our next bid")
+        if final and ask <= neg.plan.final_cap:
+            return Move("accept", ask, offer_id, "final within limit")
+        if not final and ask <= neg.plan.max_price and (nxt is None or ask <= nxt):
+            return Move("accept", ask, offer_id, "ask meets our next bid")
         if final:
-            return Move("walk", reason=f"final {ask} above our limit {neg.plan.max_price}")
+            return Move("walk", reason=f"final {ask} above our limit {neg.plan.final_cap}")
     if nxt is None:
         return Move("walk", reason="no higher bid left inside our limit")
     return Move("bid", nxt, reason="small distinct step up")
