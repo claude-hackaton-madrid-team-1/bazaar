@@ -52,20 +52,23 @@ rare at under a quarter of its usual price. Flip `dup_buy_enabled` only if the s
 dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_price_for` has no cap for them, so
 `check()` refuses every epic buy.
 
-## What shipped (all off by default; existing tests unchanged; 851 tests green)
+## What shipped (all off by default; existing tests unchanged; 855 tests green)
 
 - **GUARDRAILS.md** (no existing value changed): `arb_enabled` false, `arb_min_net_spread` 3, `arb_max_inventory_p` 60,
   `dup_buy_enabled` false, `dup_min_surplus` 3, `dup_max_spend_per_hour` 40. `guardrails.check()` enforces them:
   a buy claims its exception (`Action.held_buy`, `exit_net`, `next_copy_value`) and still meets every other rule
   (cash floor, price caps, hourly spend, accept slot, kill switch, W4's per-counterparty cap on both legs).
-- **Ledger**: tagged spend rows `arb:REF:n` (bought while holding n copies: open while we hold more than n) and
-  `dup:REF`, in the existing `ledger` table: no schema change, and read only when a switch is on.
+- **Ledger**: tagged spend rows in the existing `ledger` table (no schema change, read only when a switch is on):
+  `dup:REF`, and `arb:REF:ASSET:BID:VENUE:PRICE:SELLER:BUYER`. Inventory = rows whose exact copy (asset id) is still
+  ours; the ring guard and pending exits are rebuilt from these rows after a restart or on another machine.
 - **Taker**: duplicate asks; arbitrage buys whose exit bid is on another venue or from another maker, both makers
   resolved to team ids from the feed, not a pair traded in the last 240 ticks (ring guard), resale ≥ the sell floor.
-  The exit bid is **re-read just before the buy**. The next tick the exit **takes the accept first** and hands over
-  the copy worth least to us (`accept(bid, assets=[id])`). A vanished bid, or no exit within 3 ticks, leaves the card
+  The exit bid is **re-read just before the buy**. Once that exact copy is in `/me`, the exit **takes the accept
+  first** and hands over that copy (`accept(bid, assets=[id])`). A vanished bid, or no exit within 3 ticks, leaves the card
   to the maker's sell flow (never below `sell_min_value_ratio`).
-- **Maker**: no new ask for a card with a pending exit (4 ticks), so the exit accept cannot fail on a listed copy.
+- **Maker**: no new ask for a copy with a pending exit (4 ticks), so the exit accept cannot fail on a listed copy.
+- **Review**: an independent review of `c2d1c50..HEAD` found that exits and inventory were keyed on copy *counts*
+  (wrong copy sold, exit never firing, closed rows revived). Fixed by tracking the asset id, with 4 regression tests.
 - **CLI**: `bazaar arb study STREAM [--me FILE]` (offline) and `bazaar arb scan` (reads only).
 
 ## Risks and open questions
@@ -74,8 +77,8 @@ dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_pri
   bought for 7: 4 − 7 = −3; resold for 16: +12). Its net (+9) holds only if the organisers don't clip trades one at a
   time. The scan flags crossings where a leg is negative (⚠). RULES.md says nothing about per-trade caps; only
   "ring flags" (an even split for a pair that keeps handing one side the whole pie) are documented, in the openapi.
-- In-process state: a restart between the buy and the exit forgets the exit. The card stays ours (the maker sells
-  it), and the inventory row keeps counting until it is sold.
+- The exit sells even below the buy's cost (a fee raised in between) as long as it clears the sell floor: the cost
+  is sunk, and the resale scores `proceeds − your_value`, which beats keeping a duplicate.
 - The exit uses the accept slot one tick after the buy; a duel that takes that slot delays it, up to 3 ticks.
 
 ## What Marius decides
