@@ -138,6 +138,9 @@ class Guardrails(BaseModel):
     allow_venue_open: bool = False
     venue_bond_reserve: int = Field(default=270, ge=0)
     venue_open_after_game_hours: float = Field(default=6.5, ge=0)
+    max_venues: int = Field(
+        default=1, ge=1, le=2
+    )  # 2: one board venue plus one auto hedge (RULES: a session counts our best venue)
     max_flags_sent: int = Field(default=2, ge=0, le=20)
     flag_trusted_dealers: str = "abuela,chato"  # comma-separated dealer ids the offer inspector never flags
     flag_dealers: str = "none"  # opt-in: the only dealer ids a flag may be SENT to (none: no dealer)
@@ -378,6 +381,7 @@ ENFORCED_BY: dict[str, str] = {
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
     "human_approval_above": "guardrails.check → approvals.ApprovalBoard.read (once per tick, fail closed)",
+    "max_venues": "guardrails.check (venue_open) + agents.venue_keeper.our_venue (board venue first)",
     "max_score_loss_per_move": "guardrails.check (every sale) → move_impact.sell_impact + impact_board (fail closed)",
     "score_per_neg_point_fallback": "move_impact.slope (k when our snapshots measured none)",
     "dealer_ladder_score": "move_impact.estimate (every dealer deal)",
@@ -1190,7 +1194,7 @@ def _venue_violations(action: Action, ctx: Context, rules: Guardrails) -> list[s
         cost = VENUE_COST if action.price is None else action.price
         if ctx.cash - cost < rules.cash_floor:
             v.append(f"cash {ctx.cash} - venue bond and fee {cost} < cash_floor {rules.cash_floor}")
-        if ctx.has_venue:
+        if ctx.has_venue and rules.max_venues <= 1:
             v.append("we already run a venue: never open a second one")
         if ctx.t_hours < rules.venue_open_after_game_hours:
             v.append(f"game hour {ctx.t_hours:g} < venue_open_after_game_hours {rules.venue_open_after_game_hours:g}")

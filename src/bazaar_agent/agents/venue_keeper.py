@@ -108,7 +108,8 @@ def our_venue(snap: Snapshot) -> OurVenue | None:
         for v in snap.venues
         if v.owner == snap.us and not v.house and not v.starter and v.status in ("open", "closing")
     ]
-    if mine:
+    if mine:  # with an auto hedge venue open too, the board venue is the one our broker runs
+        mine.sort(key=lambda v: v.mechanism != "board")
         return OurVenue(mine[0].id, mine[0].status)
     if not runs_venue(snap.me):
         return None
