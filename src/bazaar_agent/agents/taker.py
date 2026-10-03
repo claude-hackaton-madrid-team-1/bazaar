@@ -130,6 +130,7 @@ from bazaar_agent.official_values import OfficialValues, unread_only
 from bazaar_agent.opportunities import Opportunity, score_offer
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.pack_open import choose, sealed_packs
+from bazaar_agent.playbook import NO_NEW_DEALER_THREAD
 from bazaar_agent.schedule_watch import crossing, ladder_ticks
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import (
@@ -569,6 +570,7 @@ class Taker:
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
         self.watchdog: Any = Watchdog(getattr(decisions, "_connect", None), log)
+        self._playbook_said: set[str] = set()  # playbook instructions the taker already said it obeys
         self._crafts: list[float] = []  # game hours of our Workshop crafts (`max_taller_per_game_hour`, this process)
         self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
         self._taller_rest_until = 0  # a refused craft: no other try before this tick
@@ -1022,8 +1024,22 @@ class Taker:
 
     # ------------------------------------------------------------ (b) the dealer desk
 
+    def _playbook_holds(self, run: _TickRun, code: str) -> bool:
+        """The schedule playbook says the taker must not do `code` now (GUARDRAILS `playbook_enabled`); said once
+        per event. Only ever makes the taker more careful."""
+        book = getattr(self.news, "playbook", None) if self.rules.playbook_enabled else None
+        if book is None or code not in book.constraints("taker"):
+            return False
+        why = next(i for i in book.for_agent("taker") if i.constraint == code)
+        if why.key not in self._playbook_said:
+            self._playbook_said.add(why.key)
+            self.log(f"tick {run.snap.clock.tick} taker: playbook holds {code}: {why.do}")
+        return True
+
     def _open(self, run: _TickRun, book: Playbook, threads: list[dict[str, Any]], market: Market | None = None) -> None:
         clock = run.snap.clock
+        if self._playbook_holds(run, NO_NEW_DEALER_THREAD):
+            return
         room = min(
             self.config.max_dealer_threads - len(self.convs),
             clock.limits.max_open_threads_per_team - len(threads),

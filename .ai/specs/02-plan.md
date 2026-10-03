@@ -633,6 +633,12 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
   sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
 
+### SP2 — The schedule playbook ([spec](SP2-spec.md))
+- Step 1 — `playbook.py` + news sentinel wiring, learnings rows per instruction, taker obeys `no_new_dealer_thread`
+  behind `playbook_enabled` · **Acceptance:** tests/test_playbook.py; full gate.
+- Follow-ups: maker and duels obey their constraints (`keep_broker_up`, `yield_accepts`); a price probe that turns a
+  rumour into a verified signal.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)
