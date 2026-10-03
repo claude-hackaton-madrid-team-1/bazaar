@@ -46,6 +46,7 @@ class ChaosReport:
     cash: list[tuple[int, int]] = field(default_factory=list)  # (tick, cash after the tick)
     paid: list[Paid] = field(default_factory=list)
     ledger_spend: int = 0
+    start_cash: int | None = None
     log: list[str] = field(default_factory=list)
 
     @property
@@ -93,7 +94,7 @@ def run_chaos(
     rules = rules or load_guardrails().rules
     strategy = load_strategy()
     config = replace(QUIET, tick_seconds=TICK_S, rivals=rivals, seed=seed, rivals_enabled=rivals > 0)
-    report = ChaosReport(ticks, 0)
+    report = ChaosReport(ticks, 0, start_cash=start_cash)
     with running_sim(config, run_clock=False) as (url, sim):
         team, public = Bazaar(url, KEY, wait_on_tick=False, retries=2), PublicBazaar(url)
         if start_cash is not None:

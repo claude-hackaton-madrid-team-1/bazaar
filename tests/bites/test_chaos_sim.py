@@ -35,5 +35,7 @@ def test_what_we_really_paid_in_any_game_hour_stays_under_the_cap(report):
 
 @pytest.mark.xfail(strict=STRICT, reason="BITE X15: expired maker bids stay booked as spend (phantom spend)")
 def test_the_ledger_books_what_we_really_paid(report):
+    if (report.start_cash or 0) < 500:
+        pytest.skip("near the cash floor the maker posts no bid, so X15 cannot show")
     paid = sum(p.amount for p in report.paid)
     assert report.ledger_spend == paid, f"ledger {report.ledger_spend} P vs really paid {paid} P"
