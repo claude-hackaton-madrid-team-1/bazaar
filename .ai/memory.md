@@ -1275,6 +1275,16 @@ cost a taker move or stop the duel runner's post-send processing.
 regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
 The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
 
+### [2026-10-04] build-error — motion pitch browser and check tooling
+Computer-use and graph reads required unavailable approval; local Chrome failed its sandbox handshake → used the web-access cloud Chrome fallback, muted public reads only. Re-injecting HTML into one document retained its script context and broke the QA harness → navigate to a fresh blank page before each injection. A quoting edit broke the capture self-check → fixed with a triple-quoted JavaScript string. PPTX finalizer lacked RUNTIME_NODE_MODULES → passed the supplied runtime path. No game or Railway writes.
+
+### [2026-10-04] build-error — pitch recording fallback
+WebM capture could not encode without ffmpeg and the system Python lacked Pillow → captured checked real board frames and encoded a GIF with the bundled presentation Python runtime. The source is the muted idle board while doors are closed, not a trade recording.
+
+### [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+The full Ruff gate rejected `docs/pitch/motion/check.py` for a missing explicit `zip` strictness and long lines;
+its format check also failed. Added `strict=True` for the two script languages, wrapped the embedded JavaScript,
+and formatted the checker. Its offline self-check passed: 7 slides, 165 seconds, embedded images and source comments.
 ### [2026-10-04] finding
 Sunday schedule correction: one keyless GET https://bazaar.causaprima.ai/api/schedule returned
 `now_hours: 13.367`, "Sunday opens" at h16.65 with wall `2026-10-04T09:00:00+02:00` and 15 s ticks,

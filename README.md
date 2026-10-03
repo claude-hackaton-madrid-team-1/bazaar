@@ -1428,13 +1428,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-04] finding
+- [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+- [2026-10-04] build-error — pitch recording fallback
+- [2026-10-04] build-error — motion pitch browser and check tooling
 - [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
 - [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
 - [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
 - [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
-- [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
-- [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
-- [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
 
 <!-- BAZAAR:STATUS:END -->
 
