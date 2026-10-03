@@ -74,9 +74,10 @@ negotiates well.
 
 ### Phase 3 — Sunday (15 s ticks, doors close at 15:00): finish and present
 
-- Chamberí is released and round 3 starts at game hour 16.65 (about Sun 11:34). Duels III are about Sun 13:34. All four
-  dealer stalls close and the Grand Final runs at game hour 21.65, scheduled after the doors close; keep every runner
-  up after 15:00 (`docs/briefing.md`, "Windows this weekend").
+- Chamberí is released and round 3 starts at h16.65, Sun 09:00 CEST, with opening and the ladder restart.
+  One game hour is one real hour on Sunday. Duels III is h18.65, about 11:00; all dealer stalls close and
+  Grand Final duels start at h21.65, about 14:00. Scores freeze and doors close at h22.65, 15:00.
+  Pre-opening tests at h14.65/h15 have UNVERIFIED execution; see `docs/briefing.md`, "Windows this weekend".
 - Pitch (#16, 40 %): replay real decisions from `decisions` + Jev logs. Show the order-book view of
   the competition, the learning curve against Abuela, and the executor firewall. Frame it all as
   agent-to-agent invoice negotiation for Causa Prima.
@@ -717,3 +718,11 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Derive recorder source from thread kind so inline team messages are recorded once with correct attribution.
 - Retain DDL-free reads, prove a SELECT-only role can list, cover every `HIDING_MARKS` character, and document the unchanged deployed key.
 - Review code/security in parallel; run the full pytest once alone, then the requested gate and isolated smoke; update the PR report and push only the feature branch.
+
+### ST1 — Correct Sunday schedule documentation
+
+- Spec source: local, `01-spec.md` section 7.2 and the quoted live schedule in `docs/briefing.md`.
+- Plan: read the keyless schedule once; correct operator docs and independently review pitch charts;
+  append the finding, regenerate docs/status, run `bazaar rules` and Ruff, then commit and open a PR.
+- Acceptance: Sunday anchor/times match the schedule; pre-opening tests remain UNVERIFIED; generated docs
+  are current; requested checks pass. Evidence and Honest Implementation Report are in the PR body.
