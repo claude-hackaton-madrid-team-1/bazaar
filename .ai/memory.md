@@ -1114,6 +1114,75 @@ unguarded 0.072, margin 10 0.110, exact 0.252. Per book, any deviation from the 
 only when the edge wins at the worst corner of every limit band still loses 0.4-8.7 % of books, because the trader the
 edge pairs now is the one the stall would have matched to a better late arrival (path effect, not estimate error).
 
+### [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
+symptom: LAV-10 bought from `picaros` at 63, its rare list price, after bids 54→55→56 (~0 on the ladder) → root cause:
+`dealer.decide` takes any FINAL inside our max as the dealer's limit, and Los Pícaros (`/api/dealers`: kind `trickster`,
+strictness 0.1) keep talking after theirs → fix: `agents/trickster.py` marks the plan `forgiving` (published kind
+`trickster`): its FINAL is a plain ask, no ask at or above its list price is taken, only one
+≤ lowest fill + `trickster_accept_fill_share` × fill range (none seen: we only bid), and our bids stay below its list
+price and below any ask we may not take. Same plan in the taker (opens, restart adoption, Jev) and `dealer buy`.
+The range is read from OTHER teams' fills of that rarity in that set only, and needs 3 of them (#228 security P2: one
+fill of ours at 63 made 63 acceptable; pooled sets made every LAV ask below list acceptable): fewer, and we only bid.
+Abuela publishes strictness 0.1 too (and chattiness 0.75), so a strictness bar would make her real final a fake one:
+`trickster_max_strictness` ships at 0 and the published kind alone decides.
+
+### [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
+The main checkout sat at 1e57564f while main already had #223 (every set protected): `bazaar sell list` from that
+laptop read `protect_page_sets = RET,CHA`, so a hand sell of a LAT/LAV/SAL/MAL last copy passed the guard (the
+seller's own free-copy check caught it, tick 1028). After every merge, `git pull --ff-only` the checkout that runs
+live hand commands, then `uv run bazaar rules`; Railway services redeploy by themselves, laptops do not.
+
+### [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
+Tick 1028: the desk put MAL-06 #468 into a swap counter to t05 seconds before a hand `sell list` posted MAL-06 #1020 →
+t02 (cancelled next tick, no fill). `committed_context` subtracts the copies in our open offers as read by THAT
+command, so two writers posting in the same instant can still race; re-read `/api/me/offers` right before a hand post
+and keep one copy free per card. A shell check piped through `grep` returns grep's exit code, not the check's.
+
+### [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+SAL-07 (asset 438) came from t02 at tick 320 for 23 and completed Salamanca (/me your_value 118.6). Sold to Pilar
+for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at tick 948 (−89.6 = 29 − 118.6), board
+`negotiating` 20.75 → 16.48 at its next update (tick 950, updates every 10 ticks): 0.048 score per neg_point. Buying
+it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
+(ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
+(MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
+v2's free offers to a rival that never priced ran `our_target(elapsed / total)`, and the runner never sends on the
+deadline tick, so the floor (progress 1.0) was never sent: in Duels I our last silent offer (D − 1) stayed ~9 % off
+our limit. Compressing the curve to end earlier (#215 first cut) also lowered D − 3/D − 2, the ticks every Duels I
+silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
+`duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.
+
+### [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+Every copy of a card in /me carries the same `your_value`, so the team desk's `desk_copy` (cheapest, then lowest id)
+and the Workshop's kept copy (most valued, then lowest id) are the same asset: a swap posted in the tick gives #1 while
+the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
+every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
+crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.
+
+### [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+`tools.TOOLS` feeds the desk's in-process server, every subagent allow-list and the remote MCP server at once, so a
+spec added there is callable by our own LLMs. The human tools (HA2) live in `runtime/human_tools.py` and only
+`mcp_server.build_app(..., approver=...)` serves them, behind `X-Approver-Token`. Testing them over the TestClient: the
+per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the fake clock between calls.
+`tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
+GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
+
+### [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
+`executions` (sdk_method `broker_announce`, ticks 439-1166): 26 accepted, 12 refused `wait`, each 2-8 ticks after an
+accepted notice; accepted gaps went as low as 10 ticks (616 → 626), so the server's gap is about 10 ticks, not 20
+(UNVERIFIED: its exact message). The keeper remembered its notice in memory only, so every maker redeploy announced
+again. The 33 accepted notices on v19 were the same generic text naming no card; v19 had 0 organic trades. MM2: the
+notice names the page cards the most other teams miss (team matrix), one every 24 ticks, the feed's newest
+`venue.announcement` for our venue counting as the last one.
+
+### [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+`strategy.guarded` checked every dealer buy at `mv.limit` (the ladder's top): MAL-09 (top 67) read "cash 58 - 67 <
+cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 was affordable; `_all_denied` then said
+"none affordable". A ladder is now ranked at its first rung (caps still at its top); each rung is checked when sent,
+and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
+1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
+every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).
 ### [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
 Marius's rules audit (8dbf50b7, PR #222; `docs/briefing.md` "Scoring", `STRATEGY.md` "What scores") fitted the score on `/me`
 snapshots. Holdings, the album and `collection_value` never score by themselves; a card scores only when it moves: a team
@@ -1122,6 +1191,6 @@ its final the whole range, best 3 per level, restarted every round). Per round, 
 organic, negotiating ≈ ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. Incident that this does NOT
 excuse: selling SAL-07, the only copy on a complete Salamanca page (Sat 3 Oct ~18:28), took `neg_points` from 134.7 to 44.6
 at tick 948 (coordinator's decode of `/me`; score 28.25 → 23.98, rank 5 → 12, per `protect_page_sets`), although holdings
-"never score": the page cards we had bought from teams were revalued at the new `your_value`. So team-acquired cards are
+"never score": the page cards we had bought from teams were revalued at the new `your_value`. Our reading (inferred, not in the audit): team-acquired cards are
 marked at the current `your_value`, not frozen at the trade. Lesson: a rules-text inference that touches the album gets
 checked against the live `/api/me` score before it is acted on. `protect_page_sets` lists every set (hard rule).

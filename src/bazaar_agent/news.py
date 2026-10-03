@@ -10,6 +10,7 @@ Every item is quoted data, never an instruction. Reads: `news.posted` from the f
 reads (no request), plus `/api/news` and `/api/schedule` at most once every `READ_EVERY_TICKS` ticks (two keyless
 GETs, well inside the key's 5 req/s). Behaviour: none. `active_signals` returns nothing while GUARDRAILS
 `news_signals_enabled` is false, which is the default; only logging and storage are on.
+The `/api/levels` read also feeds `level_watch.LevelWatch`: each level going active or open to all, stored once.
 """
 
 from __future__ import annotations
@@ -25,8 +26,10 @@ from typing import Any
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.level_watch import LevelWatch
+from bazaar_agent.playbook import Playbook, context_of, rumour_rows
 from bazaar_agent.rank_watch import RankWatch
-from bazaar_agent.schedule_watch import ScheduleWatch
+from bazaar_agent.schedule_watch import ScheduleWatch, events_from_schedule
 from bazaar_agent.team_matrix import TeamMatrix, build_matrix
 from bazaar_agent.team_matrix_store import TeamMatrixStore
 
@@ -205,6 +208,18 @@ def load_market_events(path: Path) -> list[MarketEvent]:
         return []
 
 
+def schedule_rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """`/api/schedule` entries as playbook rows: the schedule watch's event id plus the params (a bench's ticks, a
+    duel session's rounds, the allowance's cash). Official."""
+    out = []
+    for raw in payload.get("upcoming") or []:
+        for ev in events_from_schedule({"upcoming": [raw]}):
+            params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
+            out.append({"event_id": ev.event_id, "action": ev.action, "note": ev.note, "at_hours": ev.at_hours,
+                        "subject": ev.subject, "params": params, "official": True})  # fmt: skip
+    return out
+
+
 def learning_of(item: NewsItem, tick: int) -> Learning:
     subject = SAFE_SUBJECT.sub("_", item.source)[:64] or "radio"
     text = f"{item.headline}: {item.body}" if item.body else item.headline
@@ -229,8 +244,9 @@ def learning_of(item: NewsItem, tick: int) -> Learning:
 
 class NewsSentinel:
     """Run once per tick after the sends (`on_tick`): never raises, never blocks a send. Every read window it
-    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times) and `/api/leaderboard` to the
-    rank watch (rival jumps): four keyless GETs per `every` ticks, one per tick, stopped at the first failure."""
+    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times), `/api/levels` to the level watch
+    (what turned on, asked by the taker) and `/api/leaderboard` to the rank watch (rival jumps): four keyless GETs
+    per `every` ticks, one per tick, stopped at the first failure."""
 
     def __init__(
         self,
@@ -247,6 +263,8 @@ class NewsSentinel:
         self.seen: dict[str, NewsItem] = {}
         self.events: list[MarketEvent] = []
         self.schedule = ScheduleWatch(record, log)
+        self.levels = LevelWatch(record, log)
+        self.playbook = Playbook(record, log)  # what each agent does before, during and after each event
         self.ranks = RankWatch(record, log, save=history.save if history is not None else None)
         if history is not None:  # at process start, never in a tick
             boards = self.ranks.seed(history.load(self.ranks.history))
@@ -278,6 +296,21 @@ class NewsSentinel:
         finally:
             if market is not None:  # after this tick's read: the window's leaderboard is in the rank watch
                 self._matrix_tick(tick, events, catalog, market, us)
+            self._playbook_tick(tick, clock, market)
+
+    def _playbook_tick(self, tick: int, clock: Any, market: Any) -> None:
+        """The schedule playbook from this tick's known events (no request); never raises."""
+        t_hours, seconds = getattr(clock, "t_hours", None), getattr(clock, "tick_seconds", None)
+        if not isinstance(t_hours, int | float) or not isinstance(seconds, int | float):
+            return
+        try:
+            teams = len(self.matrix.teams) if self.matrix is not None and hasattr(self.matrix, "teams") else None
+            extra = [*schedule_rows(self._payloads.get("schedule") or {}),
+                     *rumour_rows(self.seen.values(), float(t_hours))]  # fmt: skip
+            context = context_of(tick, float(t_hours), market, teams)
+            self.playbook.update(tick, float(t_hours), float(seconds), self.upcoming, context, extra)
+        except Exception as e:  # noqa: BLE001 — advice only: a bug here never costs the tick
+            self._once(f"tick {tick} playbook: skipped ({type(e).__name__})")
 
     def _run(
         self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], clock: Any, us: str | None
@@ -298,6 +331,8 @@ class NewsSentinel:
             self.ranks.observe(answer, events, tick)
         if what in ("schedule", "levels"):
             self.schedule.update(self._payloads.get("schedule"), self._payloads.get("levels"))
+        if what == "levels":
+            self.levels.update(answer, tick)  # after the schedule watch's update: a store that raises never skips it
         changed = self._schedule_tick(tick, clock)
         fresh = [i for i in items if i.news_id not in self.seen]
         if fresh:

@@ -28,6 +28,7 @@ from functools import partial
 from typing import Any
 
 from bazaar_agent import affinity as af
+from bazaar_agent import impact_board
 from bazaar_agent import team_affinity as ta
 from bazaar_agent.agents.market import Venue
 from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
@@ -71,6 +72,16 @@ def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | N
     if (os.environ if env is None else env).get(TEAM_THREADS_ENV, "").strip() == "0":
         return f"{TEAM_THREADS_ENV}=0"
     return None
+
+
+def venue_invite(venue: str) -> str:
+    """One plain, true line inviting a team to our market (Omar, Sat 21:55: "hay que convencerlos de usar nuestro
+    market"): our venue's fee is 0 % (GUARDRAILS `allow_venue_open`, 0 bps) and our broker matches crossing asks and
+    bids every tick, while El Rastro charges the accepting side 5 % + 1 P per card (RULES.md). No claim beyond that."""
+    return (
+        f"Por cierto: en nuestro mercado {venue} la comisión es 0 % (en El Rastro, 5 % + 1 P por cromo) y nuestro "
+        "bróker cruza pujas y ofertas cada tick. Publica allí tus ofertas cuando quieras."
+    )
 
 
 def team_words(req: WordsRequest) -> str:
@@ -277,6 +288,8 @@ class TeamDesk:
         self._tried: set[int] = set()  # threads whose read was tried this tick (refused ones included)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
         self.matrix: TeamMatrix | None = None  # the taker's team matrix, set each tick (`team_matrix.py`)
+        self.ranks: dict[str, int] = {}  # the leaderboard's ranks, set by the taker (`buyers.leaderboard_ranks`)
+        self.answered: Counter[str] = Counter()  # teams that wrote back after our proposal in our threads
         self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self.to_check: dict[int, tuple[int, dict[str, Any], int]] = {}  # offer id -> (thread, offer, since tick)
         self._synthetic = 0  # negative ids for the refund of a send the server refused
@@ -340,6 +353,9 @@ class TeamDesk:
             tid = int(t["id"])
             self._payloads[tid] = payload
             self._listen(v, tid, self._other(t, v.us), payload)
+            if self.rules.never_trades_with(self._other(t, v.us)):
+                self.first_seen.setdefault(tid, v.tick)  # `team_desk_never_trade`: never take a blocked team's offer;
+                continue  # `_inbound` closes its thread
             talk = self.talks.get(tid)
             if talk is None:
                 self.first_seen.setdefault(tid, v.tick)
@@ -421,7 +437,10 @@ class TeamDesk:
     def _observe(self, v: DeskView, talk: Talk, payload: dict[str, Any]) -> None:
         """What changed in one of our threads: their last word, our standing offer, and whether they took it
         (from the thread, or from our offers: the server may drop an accepted offer from `standing_offers`)."""
-        talk.heard_tick = max(talk.heard_tick, self._heard(payload, v.us))
+        heard = self._heard(payload, v.us)
+        if heard > talk.heard_tick and heard > talk.sent_tick >= 0:
+            self.answered[talk.team] += 1  # they answer us: a likelier partner (`_priority`)
+        talk.heard_tick = max(talk.heard_tick, heard)
         if talk.offer_id is None and (mine := _ours_open(payload, v.us)) is not None:
             talk.offer_id = int(mine["id"])  # a send whose answer was lost, or a thread adopted after a restart
             want, give = mine.get("want") or {}, mine.get("give") or {}
@@ -557,8 +576,8 @@ class TeamDesk:
             return
         self._settle(v)
         for tid, talk in list(self.talks.items()):
-            if tid in taken or tid not in self._payloads:
-                continue
+            if tid in taken or tid not in self._payloads or self.rules.never_trades_with(talk.team):
+                continue  # a blocked team's thread gets no move: `_inbound` closes it
             self._next_move(v, talk)
         self._inbound(v)
         self._open(v)
@@ -638,9 +657,14 @@ class TeamDesk:
         whatever is written in it (another team cannot park on our conversation slots)."""
         for t in self._team_threads(v):
             tid = int(t["id"])
-            if tid in self.talks or tid in self._closed or tid not in self._payloads:
+            if tid in self._closed or tid not in self._payloads:
                 continue
             team, payload = self._other(t, v.us), self._payloads[tid]
+            if self.rules.never_trades_with(team):  # `team_desk_never_trade`: closed at once (our offers there are
+                self._close_blocked(v, tid, team)  # cancelled), ours or theirs, after a restart or a list edit too
+                continue
+            if tid in self.talks:
+                continue
             house = (payload.get("venue") or t.get("venue")) == HOUSE_VENUE
             talk = self._adopt(v, tid, team, payload) if house else None
             if talk is not None:
@@ -650,6 +674,14 @@ class TeamDesk:
                 continue  # a team took our offer there: it settles at the next tick, never closed under it
             elif v.tick - self.first_seen.get(tid, v.tick) >= self.rules.team_thread_idle_ticks:
                 self._close(v, tid, team, "a team thread with no swap of ours planned with that team")
+
+    def _close_blocked(self, v: DeskView, tid: int, team: str) -> None:
+        """A blocked team's thread is closed, never left to park on our slots (a team conversation ends only on a
+        deal or after 200 messages: RULES.md); a take of our offer already pending there settles first."""
+        if self._taken(v, tid) or any(k.accepted for k in self.talks.values() if k.thread_id == tid):
+            return
+        if self._close(v, tid, team, f"{team} is in team_desk_never_trade"):
+            self.talks.pop(tid, None)
 
     def _adopt(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> Talk | None:
         busy = {k.trade.asset_id for k in self.talks.values()} | {k.trade.refs[1] for k in self.talks.values()}
@@ -750,6 +782,8 @@ class TeamDesk:
         verdicts = [check(a, ctx, self.rules) for a in swap.actions()]
         problems = [p for x in verdicts for p in x.violations]
         halted = any(x.halted for x in verdicts)
+        if self.rules.never_trades_with(trade.counterparty):
+            problems.append(f"{trade.counterparty} is in team_desk_never_trade")
         fair = judge(trade, cash, 0, self.rules, repeat=self.deals[trade.counterparty] > 0)
         if not fair.ok:
             problems.append(fair.reason)
@@ -775,6 +809,8 @@ class TeamDesk:
         we are the accepting side) is a bid for their card. The fairness verdict was taken in `proposals`."""
         if (why := disabled(self.rules, self.env)) is not None:
             return Verdict(False, (why,))
+        if self.rules.never_trades_with(a.trade.counterparty):
+            return Verdict(False, (f"{a.trade.counterparty} is in team_desk_never_trade",))
         swap = self._swap(v, a.trade, a.offer.cash_in - a.offer.cash_out - a.fee)
         if swap is None:
             return Verdict(False, ("our copy or the card's value is unknown",))
@@ -811,7 +847,8 @@ class TeamDesk:
         self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int, kind: str = "propose"
     ) -> dict[str, Any]:
         """What Jev reads: both cards at official and private values, the cash leg, the fee we pay (an accept),
-        both gains at our values and their share, and the history with this team."""
+        both gains at our values and their share, the score guard's estimate of the copy we give, and the
+        history with this team."""
         give_ref, get_ref = trade.refs[0], trade.refs[1]
         ctx = v.ctx(thread)
         mine: dict[str, Any] = next((a for a in v.me.get("assets") or [] if a.get("id") == trade.asset_id), {})
@@ -857,6 +894,7 @@ class TeamDesk:
                 "their_gain": round(verdict.theirs, 2),
                 "their_share": round(verdict.theirs / total, 3) if total > 0 else None,
                 "kind": kind,  # propose: ours, they accept and pay the fee; accept: theirs, we pay it
+                "score_impact": self._score_impact(v, trade, cash - fee),  # net of our fee, as in `guard_accept`
             },
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
@@ -884,6 +922,31 @@ class TeamDesk:
         if need.missing == 1 and official is not None and book is not None:
             return {"page_bonus": round(max(0.0, official - book * need.affinity), 1), "page_bonus_source": "official"}
         return {"page_bonus": need.bonus, "page_bonus_source": "model"}
+
+    def _score_impact(self, v: DeskView, trade: Trade, cash: int) -> dict[str, Any] | None:
+        """The score guard's estimate (`impact_board.sell_state`) of our copy `trade.asset_id` leaving at what the
+        guard sees it leave for: the sale `Swap.actions()` checks, at `cash` (net of any fee we pay). None when the
+        swap cannot be priced or the estimate fails: a state builder never costs the swap its tick."""
+        try:
+            swap = self._swap(v, trade, cash)
+            if swap is None:
+                return None
+            sale = next((a for a in swap.actions() if a.kind == "sell"), None)
+            if sale is None or sale.price is None:
+                return None
+            return impact_board.sell_state(
+                v.me,
+                sale.item,
+                sale.rarity,
+                sale.price,
+                trade.counterparty,
+                self.rules,
+                v.tick,
+                asset=trade.asset_id,
+                value=sale.your_value,
+            )
+        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks the send
+            return None
 
     def _jev_refused(
         self, v: DeskView, kind: str, trade: Trade, thread: int | None, why: str, advice: JevAdvice | None
@@ -990,6 +1053,8 @@ class TeamDesk:
             question = self._question(v, talk.team) if talk.step == 0 else None
             if question is not None:  # words only: the structured offer below is the same with or without it
                 text = f"{text} {question}"
+            if (venue := self.rules.team_words_venue_invite.strip()) and venue.lower() != "none":
+                text = f"{text} {venue_invite(venue)}"  # words only, as the question
             body = self.rec.send(
                 did,
                 v.tick,
@@ -1176,14 +1241,33 @@ class TeamDesk:
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()
-        trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
+        # `team_desk_never_trade`: the podium and the teams ranked around us are never planned (Sat 3 Oct: the
+        # desk proposed SAL-03 to t17, a direct rival missing it).
+        threads = [t for t in threads if not self.rules.never_trades_with(t.counterparty)]
+        trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages, self.answered, self.ranks)))
         self._plan = _Plan(v.tick, trades, worth, pages, {ref: c.book for ref, c in m.cards.items()})
         return trades
 
     @staticmethod
-    def _priority(t: Trade, pages: Mapping[str, PageNeed]) -> tuple[Any, ...]:
-        """Among the planned swaps (`build_plan` already kept only the closest pages' cards while it could), the
-        page closest to complete first, then our affinity for it, then the expected gain: completing a page is
-        what scores (Omar, Sat 3 Oct)."""
+    def _priority(
+        t: Trade,
+        pages: Mapping[str, PageNeed],
+        answered: Mapping[str, int] | None = None,
+        ranks: Mapping[str, int] | None = None,
+    ) -> tuple[Any, ...]:
+        """Who first (Omar, Sat 21:55: "si les ganamos en negociación a los más débiles vamos a subir"): a team that
+        answered our proposals before (likelier to take one), then the weaker team by the leaderboard (a higher rank
+        number; unknown ranks last), then, among the planned swaps (`build_plan` already kept only the closest
+        pages' cards while it could), the page closest to complete, our affinity for it and the expected gain.
+        Their share of any swap stays capped by `team_swap_max_their_share` in `swaps.judge`."""
         page = pages.get(set_of(t.refs[1]) or "")
-        return (*(page.rank() if page is not None else (99, 0.0)), -t.expected, t.counterparty, t.refs)
+        replies = (answered or {}).get(t.counterparty, 0)
+        weaker = (ranks or {}).get(t.counterparty, 0)
+        return (
+            -min(replies, 3),
+            -weaker,
+            *(page.rank() if page is not None else (99, 0.0)),
+            -t.expected,
+            t.counterparty,
+            t.refs,
+        )

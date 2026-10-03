@@ -257,6 +257,21 @@ def _mcp_token() -> str | None:
     return os.environ.get(TOKEN_VARIABLE) or read_env_file(env_file_path()).get(TOKEN_VARIABLE)
 
 
+def _approver(bearer: str) -> tuple[str | None, str]:
+    """BAZAAR_APPROVER_TOKEN (environment only: it opens the human tools) and the startup note. Unset, too weak or
+    equal to the bearer token: None, and the human tools do not exist (fail closed). Never printed."""
+    from bazaar_agent.runtime.human_tools import APPROVER_VARIABLE
+    from bazaar_agent.runtime.mcp_server import TokenError, approver_token
+
+    try:
+        approver = approver_token(os.environ.get(APPROVER_VARIABLE), bearer)
+    except TokenError as e:
+        return None, f"approver tools OFF ({e})"
+    if approver is None:
+        return None, f"approver tools OFF ({APPROVER_VARIABLE} unset)"
+    return approver, "approver tools ON (X-Approver-Token required)"
+
+
 def mcp_serve(
     host: str = typer.Option("127.0.0.1", help="Interface (Railway: 0.0.0.0)"),
     port: int | None = typer.Option(None, help=f"Port (default $PORT, else {DEFAULT_MCP_PORT})"),
@@ -269,14 +284,15 @@ def mcp_serve(
         token = require_token(_mcp_token())
     except TokenError as e:
         _fail(str(e))
-    secrets = secrets_of(settings, [token])
+    approver, approver_note = _approver(token)
+    secrets = secrets_of(settings, [token, approver])
     backend = make_backend(settings, rules, _say(secrets), server=True)
-    app = build_app(backend, token, config.mcp_calls_per_minute, secrets, host)
+    app = build_app(backend, token, config.mcp_calls_per_minute, secrets, host, approver=approver)
     bound = port if port is not None else int(os.environ.get("PORT") or DEFAULT_MCP_PORT)
     mode = "LIVE: write tools send" if backend.live else "DRY RUN: write tools send nothing"
     console.print(
         f"bazaar-mcp: {len(TOOLS)} tools on {host}:{bound}{MCP_PATH} · {mode} · bearer token required · "
-        f"{config.mcp_calls_per_minute} tool calls/min per token · GET /health is public"
+        f"{config.mcp_calls_per_minute} tool calls/min per token · {approver_note} · GET /health is public"
     )
     serve(app, host, bound)
 

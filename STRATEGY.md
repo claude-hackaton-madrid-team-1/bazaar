@@ -14,7 +14,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Teams trade rares at 53–80 P (tape, Friday); our ×1.6 set (LAV) is chased by at least one other team.
 
 ## What scores (rules audit, Sat 3 Oct; fitted on `/me` snapshots, private values left out)
-- Holding cards, the album and `collection_value` never score in themselves, but that is no licence to break a page: cards we bought from teams are marked at the current `your_value`, so selling the only copy of a page card on Sat 3 Oct (tick 948) dropped `neg_points` 134.7 → 44.6. A card scores only when it moves:
+- Holding cards, the album and `collection_value` never score in themselves, but that is no licence to break a page: selling the only copy of a page card on Sat 3 Oct (tick 948) dropped `neg_points` 134.7 → 44.6 *[inferred by the coordinator: the page cards bought from teams were revalued]*. A card scores only when it moves:
   - sold to or bought from another team, at price minus our `your_value` (`neg_points`);
   - or as a dealer deal on the ladder: the share of that dealer's own range, buying or selling. A deal at the opening price scores 0 and a deal at its final scores the whole range. Best 3 per level, restarted every round.
 - Market-making per round ≈ 22.5 × Market Test bench points + 7.5 × value other teams create on our venue. The free stall's level is 0.5 bench.

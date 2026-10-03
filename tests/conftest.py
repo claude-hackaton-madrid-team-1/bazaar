@@ -105,6 +105,26 @@ def human_approval_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def score_impact_off(request, monkeypatch):
+    """`max_score_loss_per_move` (GUARDRAILS.md) reads our settlements and score history from Postgres and fails closed:
+    the tests that predate it sell at their own prices. A test marked `score_impact` runs the real rule; every test
+    reads an empty impact board (no Postgres connect)."""
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent import impact_board
+
+    old = impact_board.install(impact_board.ImpactBoard(None))
+    if request.node.get_closest_marker("score_impact") is None:
+        monkeypatch.setattr(gr, "_impact_violations", lambda action, ctx, rules: [])
+    if request.node.get_closest_marker("no_buyback") is None:  # `no_buyback_ticks` reads the same board
+        monkeypatch.setattr(gr, "_buyback_violations", lambda action, ctx, rules: [])
+    yield
+    if old is None:
+        impact_board._BOARD.pop("board", None)
+    else:
+        impact_board.install(old)
+
+
+@pytest.fixture(autouse=True)
 def bench_policy_by_default(monkeypatch):
     """A BAZAAR_BENCH_* exported on a laptop must never change the venue keeper's broker in the suite: every test
     starts on today's exact matching, and the tests that need the edge set it themselves."""

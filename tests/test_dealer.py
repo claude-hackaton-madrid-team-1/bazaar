@@ -4,6 +4,7 @@ from bazaar_agent.agents.dealer import (
     BidPlan,
     Move,
     Negotiation,
+    affordable_rung,
     apply_advice,
     captured_share,
     decide,
@@ -12,6 +13,8 @@ from bazaar_agent.agents.dealer import (
     settled_price,
     words,
 )
+
+ABUELA_LISTED = [{"id": "abuela", "kind": "dealer", "level": 1, "status": "active"}]  # /api/dealers
 
 
 def neg(start=6, step=1, max_price=10, bids=(), opened=None):
@@ -258,6 +261,7 @@ def live_dealer_buy(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     monkeypatch.setattr(cli, "_rarity_of", lambda item: "common")
+    monkeypatch.setattr(cli, "_dealer_personas", lambda settings: ABUELA_LISTED)  # listed, not forgiving
     monkeypatch.setattr("time.sleep", lambda seconds: None)
     return cli, client
 
@@ -1131,3 +1135,22 @@ def test_jev_takes_an_early_ask_only_once_she_gave_up_the_minimum_share_of_the_g
 def test_captured_share_needs_her_opening_and_our_first_bid():
     assert captured_share(neg(bids=[], opened=(20, 0)), 15) is None
     assert captured_share(neg(bids=[20], opened=(20, 0)), 19) is None
+
+
+# ---------------------------------------------------------------- UB1: a rung above our cash room
+
+
+CASH = ("cash 58 - 54 < cash_floor 5",)
+
+
+def test_a_rung_refused_only_for_cash_is_replaced_by_the_most_we_may_still_commit():
+    assert affordable_rung(CASH, [50, 52], 53) == 53
+    assert affordable_rung(("spend 240 + 54 > max_spend_per_game_hour 250",), [50, 52], 10) is None  # no step up
+    assert affordable_rung(("spend 200 + 54 > max_spend_per_game_hour 250", *CASH), [50, 52], 53) == 53
+
+
+def test_any_other_refusal_no_bid_yet_or_no_step_left_still_walks():
+    assert affordable_rung((*CASH, "price 54 > max_price_rare 50"), [50, 52], 53) is None
+    assert affordable_rung(CASH, [], 53) is None  # never an opening bid below the plan's start
+    assert affordable_rung(CASH, [53], 53) is None  # the same price again is spam to a dealer
+    assert affordable_rung((), [50], 53) is None

@@ -8,7 +8,8 @@ a deal at her opening price scores nothing and unlocks nothing (RULES.md "Dealer
 her opening ask, final or not: we take an ask only once she came down from it, and we counter below an
 ask she has not lowered. When she holds it and no whole price is left below it (or her final is her
 opening), we walk (`Move.reopen`) and the caller may open a new thread with a lower first bid
-(`reopen_start`): her opening may anchor on our first bid.
+(`reopen_start`): her opening may anchor on our first bid. A forgiving dealer (a trickster, agents/trickster.py)
+names finals it does not keep: `decide_forgiving` reads them as plain asks and takes an ask only low in its fills.
 Words persuade, structure binds: we read only the structured offers, never the dealer's text.
 """
 
@@ -49,13 +50,18 @@ TERSE_WORDS = (
 class BidPlan:
     """Our side of one conversation. `max_price` is the hard limit on our bids and on a plain ask.
     `final_max` (N14a): the most we take for the dealer's FINAL offer (its limit, take it or it walks);
-    None = `max_price`, as before. It is set only from `guardrails.final_cap_for` and our value."""
+    None = `max_price`, as before. It is set only from `guardrails.final_cap_for` and our value.
+    `forgiving` (agents/trickster.py): a trickster's FINAL is not its limit. `decide` reads it as a plain ask, no
+    final is lifted, and an ask is taken only when `accepts` says so; False for every other dealer (as before)."""
 
     start: int
     step: int
     max_price: int
     final_max: int | None = None
     lift_after: int = 0  # a final above `max_price` is taken only after this many of our bids (N14a)
+    forgiving: bool = False
+    list_price: int | None = None  # forgiving: its list price for this item; we never pay it
+    accept_max: int | None = None  # forgiving: the most we take, low in its fill range; None: no fill seen
 
     def __post_init__(self) -> None:
         if not 1 <= self.start <= self.max_price or self.step < 1:
@@ -65,13 +71,23 @@ class BidPlan:
 
     @property
     def final_cap(self) -> int:
-        return self.max_price if self.final_max is None else self.final_max
+        return self.max_price if self.final_max is None or self.forgiving else self.final_max
 
     def takes_final(self, ask: int, bids: int) -> bool:
         """A final we take: inside our top, or inside `final_max` once we have bid `lift_after` times (a dealer
         that names a high "final" before haggling is not given the lifted cap: Friday's earliest real one came
-        after 4 bids)."""
+        after 4 bids). A forgiving dealer's FINAL is no limit: only an ask `accepts` passes, inside our top."""
+        if self.forgiving:
+            return ask <= self.max_price and self.accepts(ask)
         return ask <= self.max_price or (ask <= self.final_cap and bids >= self.lift_after)
+
+    def accepts(self, ask: int) -> bool:
+        """We may take this ask, or meet it with a bid (the same deal). Always, except with a forgiving dealer: then
+        only below its list price and at or under `accept_max`, and never with no fill seen."""
+        if not self.forgiving:
+            return True
+        below_list = self.list_price is None or ask < self.list_price
+        return below_list and self.accept_max is not None and ask <= self.accept_max
 
 
 @dataclass(frozen=True)
@@ -179,11 +195,11 @@ def reopen_start(neg: Negotiation) -> int | None:
 def meet_ask(neg: Negotiation, ask: int | None, final: bool = False) -> Move:
     """Our accept slot went elsewhere this tick: bid exactly her ask instead (a new, higher price inside our
     max, or her final inside `final_max` once we bid `lift_after` times: N14a), so the dealer can accept OUR
-    offer; going silent would freeze the thread. Only for an ask we may take (`may_take`): her opening price
-    never. Otherwise wait."""
+    offer; going silent would freeze the thread. Only for an ask we may take (`may_take`, and a forgiving
+    dealer's only as `BidPlan.accepts` says): her opening price never. Otherwise wait."""
     last = neg.bids[-1] if neg.bids else 0
     inside = ask is not None and (neg.plan.takes_final(ask, len(neg.bids)) if final else ask <= neg.plan.max_price)
-    if ask is not None and inside and neg.may_take(ask) and last < ask:
+    if ask is not None and inside and neg.may_take(ask) and neg.plan.accepts(ask) and last < ask:
         what = "final" if ask > neg.plan.max_price else "ask"
         return Move("bid", ask, reason=f"accept slot used: meet her {what}")
     return Move("wait", reason="accept slot used this tick")
@@ -192,6 +208,8 @@ def meet_ask(neg: Negotiation, ask: int | None, final: bool = False) -> Move:
 def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool) -> Move:
     """The next move, given the dealer's latest open offer (None when it has none standing)."""
     neg.see_ask(ask)
+    if neg.plan.forgiving:
+        return decide_forgiving(neg, ask, offer_id, final)
     if ask is None and neg.bids and neg.opening_ask is None:  # a second bid before her first ask is blind
         wait = patient(neg, True, "waiting for her first ask")
         return wait or Move("walk", reason=f"no ask from her after {MAX_WAITS} ticks", rest=True)
@@ -223,6 +241,47 @@ def decide(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool)
             return Move("wait", reason=f"our bid stands at her lowest ask {neg.lowest_ask}")
         return held_walk(neg, f"she held her opening ask {neg.opening_ask}: no bid left below it")
     return Move("bid", nxt, reason="small distinct step up")
+
+
+def forgiving_ceiling(neg: Negotiation) -> int:
+    """Our highest bid to a forgiving dealer: our top, below its list price (it may take our bid there: a deal at
+    its list price), and below the lowest ask it named unless we may take that ask (a bid at an ask closes there)."""
+    plan, low = neg.plan, neg.lowest_ask
+    top = plan.max_price if plan.list_price is None else min(plan.max_price, plan.list_price - 1)
+    if low is None:
+        return top
+    return min(top, low if neg.may_take(low) and plan.accepts(low) else low - 1)
+
+
+def decide_forgiving(neg: Negotiation, ask: int | None, offer_id: int | None, final: bool) -> Move:
+    """`decide` for a forgiving dealer (agents/trickster.py, Los Pícaros: "their deadlines never are"). Its FINAL is
+    a plain ask: never taken, nor walked from, for being final. An ask is taken as a plain one is (below its opening,
+    inside our top, meeting our next bid) and only when `BidPlan.accepts` it; otherwise we keep stepping up, never to
+    an ask we may not take nor to its list price (`forgiving_ceiling`). With no bid left, our last one stands: we
+    wait for its answer (it may take our bid), then walk; the thread's tick limit ends it otherwise."""
+    if ask is None and neg.bids and neg.opening_ask is None:  # a second bid before its first ask is blind
+        wait = patient(neg, True, "waiting for its first ask")
+        return wait or Move("walk", reason=f"no ask from it after {MAX_WAITS} ticks", rest=True)
+    nxt, its = neg.next_bid(), (f"its FINAL {ask} is not its limit: " if final else "")
+    meets = ask is not None and ask <= neg.plan.max_price and (nxt is None or ask <= nxt)  # as a plain ask
+    if meets and ask is not None and offer_id is not None and neg.may_take(ask) and neg.plan.accepts(ask):
+        return Move("accept", ask, offer_id, f"ask {ask} low in its fills (≤ {neg.plan.accept_max})")
+    last = neg.bids[-1] if neg.bids else 0
+    price = None if nxt is None else min(nxt, forgiving_ceiling(neg))
+    if price is not None and price > last:
+        return Move("bid", price, reason=f"{its}small distinct step up")
+    wait = patient(neg, neg.awaiting_reply, "its answer to our last bid is not in yet")
+    # `rest`: the taker does not reopen the same item at once (it would replay the same ladder against the same ask)
+    return wait or Move("walk", reason=f"{its}no bid left below its ask {neg.lowest_ask} that we may pay", rest=True)
+
+
+def affordable_rung(violations: tuple[str, ...], bids: list[int], room: int) -> int | None:
+    """The bid to send instead of a rung refused ONLY for cash (`cash_floor`) or the hour's spend: the most we may
+    still commit (`room`), when it is a distinct step above our last bid (UB1: a refused rung used to walk the
+    thread). None: walk as before (another rule refused it, no bid yet, or no step left above our last bid)."""
+    if not bids or not violations or not all(v.startswith(("cash ", "spend ")) for v in violations):
+        return None
+    return room if room > bids[-1] else None
 
 
 def bid_schedule(plan: BidPlan) -> list[int]:
@@ -384,13 +443,14 @@ def captured_share(neg: Negotiation, ask: int) -> float | None:
 def apply_advice(
     move: Move, advice: str | None, neg: Negotiation, ask: int | None, offer_id: int | None, min_share: float = 0.0
 ) -> Move:
-    """Jev may make us accept earlier (still inside the limit) or keep bidding; it never lifts the limit
-    and never takes her opening ask (`Negotiation.may_take`). With `min_share` > 0
+    """Jev may make us accept earlier (still inside the limit) or keep bidding; it never lifts the limit,
+    never takes her opening ask (`Negotiation.may_take`), nor a forgiving dealer's ask `BidPlan.accepts` refuses
+    (its list price, or above the low share of its fills). With `min_share` > 0
     (`jev_accept_min_share`) the early accept also needs her ask to give up that share of the gap between her
     opening and our first bid: the dealers match our step, so holding on meets her near the middle, while
     taking her ask after two bids captures almost none of her range (the ladder's score)."""
     ready = advice == "accept" and move.kind == "bid" and ask is not None and offer_id is not None
-    if ready and ask is not None and neg.may_take(ask) and ask <= neg.plan.max_price:
+    if ready and ask is not None and neg.may_take(ask) and ask <= neg.plan.max_price and neg.plan.accepts(ask):
         share = captured_share(neg, ask)
         if min_share > 0 and (share is None or share < min_share):
             return move

@@ -194,6 +194,23 @@ unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside 
 write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
 password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
 
+**Human approval tools (HA2), for Omar's chat and the Bazaar Live Approvals screen only.** `approvals`
+(read), `approve` and `revoke` (writes) exist only when the service has `BAZAAR_APPROVER_TOKEN`, and only on a
+request that also sends `X-Approver-Token: <BAZAAR_APPROVER_TOKEN>`. Such a request sees ONLY these three tools (an
+approver connection is its own MCP entry and never reads counterparty text); the bearer alone neither lists nor runs
+them (`unknown tool`); a wrong or empty approver token is `403 {"error": "forbidden"}` and a WARN line, never a
+lockout. An approver request has its own rate buckets (5 req/s burst 20, 30 calls/min), so no bearer holder can
+drain the human's budget. No agent tool set has them (`runtime/human_tools.py`). `approve`
+`{card, side: buy|sell, price: 1..1000, ttl_ticks: 1..480 (240), reason?, via?}` answers `{"status": "approved",
+"max_price"|"min_price", "until_tick", "by": "human:<via|mcp>"}` or `{"status": "refused", "reasons": [...]}` when an
+approval could only loosen a hard cap (rarity cap, hourly spend, official value), sell a page's last copy or sell
+below our value. A sell approval also releases a sale `max_score_loss_per_move` holds. `revoke` `{card, side,
+reason?, via?}` answers `revoked`, or `denied` (there was none); either way the request reads denied. A revoke
+never waits for a game read (it works with the clock unreadable, its row then has no tick), and an approve of the
+same card and side still checking when it comes in is refused ("approve again"). `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
+impact, the cap, who asked) and the active approvals. At most 10 approval writes a minute; each is a `decisions` row
+(agent `guard`, kind `approval_granted|refused|revoked|denied`). Spec: `.ai/specs/HA2-spec.md`.
+
 `status`, `holdings` and `strategy` (and every write's album-first read) answer from the shared Postgres
 snapshot of `/api/me` while it is provably current, else from `/api/me` itself (README, "Holdings"). Each
 answer carries where it came from:
@@ -234,6 +251,21 @@ have no rows). The taker's team desk writes both off the tick, and asks each tea
 first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / By the way, which set is your ×1.6?".
 `team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
 through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
+
+## Rival board (Postgres, RV1)
+
+`rival_board` (a view, one row per OTHER team; `sql/schema.sql`): `team, tick, rank, score, negotiating, market, level,
+pages, deals, venue, rank_change, score_change, trend_ticks, trend, our_team, our_rank, our_score, our_negotiating,
+our_market, our_pages, dealer_deals, venue_trades, top_set, set_interest, strengths, weaknesses, they_want, they_have,
+we_have_for_them, they_have_for_us, match_count, guarded, guard_reason, move_kind, move_give, move_get, move_price,
+our_gain, their_gain, suggested_move, why_climbed, why_climbed_tick`, in that order: bazaar-live's
+`db/rival_board.sql` passes exactly these through `show.rival_board`, so a new column goes last and a changed type
+needs both repos. Gains are estimates (their side at book × the top multiplier, our fee on bids and asks we take); a
+team in the top 5, near us (3 ranks) or above us is guarded: a move only when our gain is at least twice theirs.
+Read-only (DataGrip `bazaar_team_ro`); private (our spares and moves), so bazaar-live serves it only behind
+`GAME_VIEW_TOKEN`. `init_schema` replaces it only when `board_version` (its comment) is newer, with a 2 s lock wait,
+and a failure only logs `schema: rival_board vN not applied (...)`. Any function the view calls runs as the caller
+(`bazaar_live_reader` holds no table grant): keep it plain SQL.
 
 ## Evals scorecard (Postgres)
 

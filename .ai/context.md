@@ -77,12 +77,13 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
   round). Per round, market-making is about 22.5 × Market Test `bench_points` + 7.5 × organic, and
   negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. A
   round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at
-  game hour 16.65, about Sun 11:34), not when the doors open. Source: `docs/briefing.md`.
-- **Page cards are marked at the current `your_value`:** `your_value` is the collection value lost by
-  removing that copy, and on a complete page our only copy of a page card carries the whole page
-  bonus. "Holdings never score" does not make a page free to break: on Sat 3 Oct (tick 948) breaking
-  a complete page dropped `neg_points` 134.7 → 44.6 because the page cards we had bought from teams
-  were revalued (see `.ai/memory.md`, same date).
+  game hour 16.65, about Sun 11:34), not when the doors open *[audit; RULES.md says each day is a
+  round and wins on any clash]*. Source: `docs/briefing.md`.
+- **Page cards still cost points when sold:** `your_value` is the collection value lost by removing
+  that copy, and on a complete page our only copy of a page card carries the whole page bonus. On
+  Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never
+  score". *[inferred by the coordinator, not in the audit: the page cards we had bought from teams
+  were revalued at the new `your_value`; see `.ai/memory.md`, same date.]*
 - **El Rastro fee:** ceil(5 % × price) + 1 P per card, paid by the side that accepts.
 - **API (Python SDK + starter agent provided):** cash, cards, value, live score, available
   dealers, current tick and time left in it, threads (open / negotiate / accept).
@@ -164,8 +165,7 @@ laptop checkout, or one Railway service's volume: pause each, README "Pause writ
 - Any card buy or sell priced at `human_approval_above` (60 P) or more needs a human approval first
   (`uv run bazaar approve`); it fails closed.
 - No override flag, breaker reset, kill-switch bypass or approval shortcut may be used to force a
-  sale past the rules above (the Sat 3 Oct sale used a `--allow-page-card` flag and a reset of
-  the `dealer_sell` breaker; that flag never merged).
+  sale past the rules above (a `--allow-page-card` CLI flag, PR #220, was closed and never merged).
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 **This repo (decided 2026-10-03): the backlog is LOCAL.** Tasks live in `.ai/specs/02-plan.md` with a

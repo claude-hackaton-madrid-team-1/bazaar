@@ -340,7 +340,7 @@ per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, 
 `uv run bazaar rules` shows them with the code that enforces each; edit the file to change one.
 `touch .local/PAUSE` stops every write from every agent that reads that `.local/` (this checkout; each
 Railway service has its own: "Pause writes" under "Production on Railway").
-The numbers change during the game (the cash floor moved four times on Sat 3 Oct): read the file, not
+The numbers change during the game (the cash floor moved several times on Sat 3 Oct): read the file, not
 this README. Every buy also stays under the hourly spend cap and under the card's official value
 (`official_value_margin`, from `GET /api/me/value?card=`), and a big trade needs a human approval.
 
@@ -354,8 +354,8 @@ this README. Every buy also stays under the hourly spend cap and under the card'
 
 The incident: on Sat 3 Oct at about 18:28 (ticks 947-948) our only copy of SAL-07, which completed the
 Salamanca page, was sold to Pilar. Score went from 28.25 to 23.98, negotiating from 21.26 to 16.48, rank
-from 5 to 12. A `--allow-page-card` flag (PR #220, closed, never merged) and a reset of the `dealer_sell`
-breaker had bypassed the protections.
+from 5 to 12. The `--allow-page-card` flag that would have skipped the protections (PR #220) was closed and
+never merged.
 
 ## Our venue and its broker (market making)
 
@@ -620,7 +620,7 @@ dry run (or a simulator) may count on the JSONL file. `bazaar-duels`, the taker,
 CLI all reserve accepts through `ledger.reserve_accept`: an advisory lock plus a unique `(tick, slot)` index, so two processes can never
 take the same slot. **Duels first**: the duel player decides right after the tick lands; the taker
 waits until 2 s into the tick (15 % on fast ticks) and steps back when a `duel:<id>` accept is already
-recorded for the tick. The maker never accepts. Spend per game hour and packs per hour come from the
+recorded for the tick. The maker accepts only on a dealer sell thread (`dealer_sell_enabled` in GUARDRAILS.md). Spend per game hour and packs per hour come from the
 same table, so `max_spend_per_game_hour` holds for the team, not per process.
 
 **What they write.** Every proposed move is a `decisions` row (`agent`, `kind`, inputs, the strategy's
@@ -1344,8 +1344,11 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 merged #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 merged #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 merged #209 (`human_approval_above` = 60 in GUARDRAILS.md) |
+| [HA2](HA2-spec.md) (new) | Approve big trades from chat and Bazaar Live: bazaar-mcp's human-only tools `approvals`, `approve`, `revoke` (not in any agent's tool set; served only with `X-Approver-Token` = BAZAAR_APPROVER_TOKEN, fail closed, lockout, 10 writes/min; refused when an approval could only loosen a hard cap, a page's last copy or our value) + bazaar-live #53's Approvals screen calling them server-side | 1 | 🔵 PR (feat/approval-mcp-tools) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 merged #210 |
 | [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 merged #218; the edge policy is OFF by default (`BAZAAR_BENCH_POLICY` = exact) |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
+| [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1390,6 +1393,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | `uv run bazaar db readonly-user` | Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL. |
 | `uv run bazaar db tables` | Every table with its row count. |
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
+| `uv run bazaar taller` | The Workshop (SA1): three spare copies of one rarity into one card of the next (`POST /api/taller`). |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell swap` | Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked. |
@@ -1409,13 +1413,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
-- [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
-- [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
-- [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
-- [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
-- [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
-- [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
-- [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
+- [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+- [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
+- [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+- [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+- [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
+- [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+- [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 
 <!-- BAZAAR:STATUS:END -->
 
