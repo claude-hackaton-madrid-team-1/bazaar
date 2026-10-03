@@ -23,6 +23,9 @@ The model, and the evidence for each piece:
   day played` (Friday 0.5, Saturday 1, Sunday 1: the schedule's `round` actions).
 Unverified, kept as parameters: the duel/trade split of the remaining 17.5 negotiating points and
 the bench/venue split of the 30 market points (no team had either on Friday's board).
+Saturday's /me (Sat 3 Oct, round from tick 160) checks the ladder: model 0.0196 against the official 0.02 at tick 630.
+It refutes the duel weight: the official `duel_points` reached 14.39, above the assumed 12.5, so read
+duels from /me rather than from `duel_weight`.
 """
 
 from __future__ import annotations
@@ -67,7 +70,9 @@ class PriceRange:
 @dataclass(frozen=True)
 class ScoreModel:
     ladder_weight: float = 12.5  # fitted: the cap on Friday's board
-    duel_weight: float = 12.5  # unverified (negotiating 30 = ladder + duels + trades)
+    duel_weight: float = (
+        12.5  # refuted: /me showed duel_points 14.39 on Saturday (negotiating 30 = ladder + duels + trades)
+    )
     trade_weight: float = 5.0  # unverified
     bench_weight: float = 15.0  # unverified (market 30 = Market Test + value created on our venue)
     venue_weight: float = 15.0  # unverified

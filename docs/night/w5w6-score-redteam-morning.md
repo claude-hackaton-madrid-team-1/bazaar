@@ -4,6 +4,15 @@ Night of Fri 3 → Sat 4 Oct 2026. Draft PR #78, base `main`. Nothing here touch
 Data: the public feed in Postgres (`feed_events`, read-only SELECT, Friday ticks 0–159), our `/me`
 snapshots (ticks 122–159) and the tick-30 public board fixture.
 
+> **Triage, Sat 3 Oct (afternoon).** Merged with `main` at tick ~630. Kept: the score simulator, the red team, the
+> request budget and the opt-in stagger. Dropped: `MORNING.md` (§4). The injection detector's folding is now
+> `main`'s (`folded()` / `odd_unicode()`, #152); only the `asset_grab` pattern is kept from here.
+> Live check (`bazaar evals score-check --round-start 160`, Postgres read-only): the ladder model gives
+> `ladder_points` 0.0196 against the official 0.02 at ticks 628–630, so the ladder model holds on Saturday and the
+> ladder **restarts each round** (0.058 at tick 159, 0.0 at tick 160). Not holding: the assumed duel weight.
+> Official `duel_points` reached 14.39 (tick 624), above the assumed 12.5 cap, so the duel/trade split of §1 is
+> wrong. Read `duel_points` from `/me` and don't use the simulator's Saturday levers for duels.
+
 ## 1. Score simulator (`bazaar evals score-sim`): GO
 
 **Target:** reproduce our official 8.34 at tick 159 within ± 0.5. **Result, out of sample: 7.87 (−0.47)** with the
@@ -166,10 +175,8 @@ refused, 0.05 s: 10, none lost). `bazaar budget --ceiling --stagger --tick-secon
 (2) Cap the maker's writes per tick: not built (new parameter, default uncapped; overlaps BACKLOG B10/B18). (3) Never
 run taker + maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).
 
-## 4. Morning summary
+## 4. Morning summary (dropped on Saturday)
 
-`docs/night/MORNING.md` (and `_night/MORNING.md` outside the repo, with our cash figures): every night PR with its
-verdict and what it needs from Marius, the takeover map after the coordinator's triage, the decisions, and the
-08:30–11:30 checklist. The planned merge order (#60, #62, #69, #61 → #68 → #72, #71) was overtaken during the night:
-#69 and #72 (with #61 and #68's content) are merged, #60 and #62 continue as #150 and #162, and #71 must not merge
-without an explicit go-live.
+`docs/night/MORNING.md` was the 08:30–11:30 checklist for Saturday morning. That window is over, and the night's
+verdicts live on `main` in `docs/night/INDEX.md`, `SUMMARY.md` and `README.md` (#154, #167), so it was dropped
+from this PR on Sat 3 Oct.

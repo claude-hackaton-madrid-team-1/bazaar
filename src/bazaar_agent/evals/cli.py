@@ -314,7 +314,8 @@ def evals_score_sim(
         sat.add_row(name, f"{outlook.total(model):.1f}", f"{outlook.total(model) * per_point:.1f}")
     console.print(sat)
     console.print(
-        "[dim]Weights: ladder 12.5 fitted; duels 12.5, trades 5, bench 15, venue 15 assumed (unverified).[/dim]"
+        "[dim]Weights: ladder 12.5 fitted; duels 12.5 (refuted: /me showed 14.39 on Saturday), trades 5, bench 15, "
+        "venue 15 assumed (unverified).[/dim]"
     )
 
 
