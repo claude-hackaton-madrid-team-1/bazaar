@@ -612,18 +612,21 @@ class Maker:
         if not self.live:
             return
         clock, held = snap.clock, _held(snap.me)
+        present = {
+            o.get("id") for o in offers_in(snap.offers) if o.get("status") in (None, "open", "queued", "accepted")
+        }
         for oid, bid in list(self._lapsing.items()):
             if bid.seen_tick >= clock.tick:
                 continue
             ref = bid.offer.ref
             del self._lapsing[oid]
+            if oid in present:  # listed again (a read that missed it): alive, nothing to give back
+                self._bids[oid] = bid
+                continue
             if held[ref] <= bid.held and not _settled_to_us(snap.events, ref, bid.offer.created_tick, snap.us):
                 self.ledger.record(*self._refund_at(bid.offer, clock))
                 self.log(f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded")
             self._spent_at.pop(oid, None)
-        present = {
-            o.get("id") for o in offers_in(snap.offers) if o.get("status") in (None, "open", "queued", "accepted")
-        }
         for oid, bid in self._bids.items():
             if oid in present or oid in self._lapsing:
                 continue

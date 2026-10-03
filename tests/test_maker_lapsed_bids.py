@@ -30,6 +30,10 @@ class Listing(NoAccept):
             self.offers.append(bid(posted["id"], ref, give["cash"], created=tick, expires=tick + expires_in_ticks))
         return posted
 
+    def cancel(self, offer_id):
+        self.offers = [o for o in self.offers if o["id"] != offer_id]
+        return super().cancel(offer_id)
+
 
 def spend_rows(m):
     return [e for e in m.ledger.entries() if e["kind"] == "spend"]
@@ -163,3 +167,17 @@ def test_the_makers_own_cancel_of_a_bid_it_posted_refunds_at_the_spend_and_only_
     rows = spend_rows(m)
     refunds = [e for e in rows if e["price"] < 0]
     assert len(refunds) == 1 and (refunds[0]["tick"], refunds[0]["t_hours"]) == (rows[0]["tick"], rows[0]["t_hours"])
+
+
+def test_a_bid_listed_again_on_the_confirming_tick_is_alive_and_not_refunded(tmp_path):
+    """One read missed it (the listing flickered): back on the next tick, it keeps its spend."""
+    team = Listing()
+    m, lines = maker(tmp_path, team, live=True)
+    run(m, team, [T0])
+    o = posted_bid(team)
+    team.offers.remove(o)
+    run(m, team, [T0 + TTL])
+    team.offers.insert(0, o)
+    run(m, team, [T0 + TTL + 1, T0 + TTL + 2])
+    assert not any("lapsed unfilled" in line for line in lines)
+    assert len(first_bid_refunds(m)) <= 1  # the maker may cancel one of its two bids as a duplicate: one refund
