@@ -226,6 +226,10 @@ class LedgerStore(Protocol):
     def count_in_tick(self, kind: str, tick: int) -> int: ...
     def accept_items(self, tick: int) -> list[str]: ...
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
+    def release_accept(self, tick: int, item: str) -> None: ...
+
+
+RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
 
 
 class Ledger:
@@ -260,14 +264,23 @@ class Ledger:
         )
 
     def accepts_in_tick(self, tick: int) -> int:
-        return self.count_in_tick("accept", tick)
+        return len(self.accept_items(tick))
 
     def count_in_tick(self, kind: str, tick: int) -> int:
         return sum(1 for e in self.entries() if e.get("kind") == kind and e.get("tick") == tick)
 
     def accept_items(self, tick: int) -> list[str]:
-        """What took this tick's accepts: a card ref, a pack id, or `duel:<id>`."""
-        return [str(e.get("item") or "") for e in self.entries() if e.get("kind") == "accept" and e.get("tick") == tick]
+        """What took this tick's accepts: a card ref, a pack id, or `duel:<id>` (released ones left out)."""
+        items: list[str] = []
+        for e in self.entries():
+            item = str(e.get("item") or "")
+            if e.get("tick") != tick:
+                continue
+            if e.get("kind") == "accept":
+                items.append(item)
+            elif e.get("kind") == RELEASE and item in items:
+                items.remove(item)
+        return items
 
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool:
         """Count and record an accept under one file lock: two processes cannot both take the last slot."""
@@ -279,6 +292,18 @@ class Ledger:
                     return False
                 self.record("accept", tick, t_hours, price, item)
                 return True
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def release_accept(self, tick: int, item: str) -> None:
+        """Give back a reserved accept the game refused: a refused request costs nothing and moves nothing
+        (RULES.md), so the team's accept of this tick is still free. Append-only: a RELEASE row."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if item in self.accept_items(tick):
+                    self.record(RELEASE, tick, 0.0, 0, item)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 

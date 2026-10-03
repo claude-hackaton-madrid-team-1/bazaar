@@ -490,6 +490,8 @@ def duel_run(
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
+    from contextlib import suppress
+
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
@@ -503,10 +505,11 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
-    from bazaar_agent.agents.runtime import Recorder
+    from bazaar_agent.agents.runtime import KEEPS_THE_ACCEPT, Recorder
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
+    from bazaar_agent.ledger_pg import LedgerUnavailable
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
     rules = _rules().rules
@@ -550,6 +553,9 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            if move.kind == "accept" and e.code not in KEEPS_THE_ACCEPT:  # refused: it cost nothing (RULES.md)
+                with suppress(LedgerUnavailable):  # unreachable: the slot stays taken (fail closed)
+                    ledger.release_accept(c.tick, f"duel:{did}")
             duel_traces.refused(did, e)
             append_jsonl(log_path, {"tick": c.tick, "duel": did, "refused": e.code})
             return "failed"
