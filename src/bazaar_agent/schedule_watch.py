@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -93,11 +93,16 @@ def events_from_levels(payload: Mapping[str, Any]) -> list[ScheduledEvent]:
     return out
 
 
+def ticks_until(at_hours: float, t_hours: float, tick_seconds: float) -> int:
+    """Whole ticks until `at_hours` (rounded first: 1.55 h - 1.5 h at 60 s is 3 ticks, not 3.0000000000000027)."""
+    return math.ceil(round((at_hours - t_hours) * 3600.0 / tick_seconds, 6))
+
+
 def lead_ticks(ev: ScheduledEvent, t_hours: float, tick_seconds: float) -> int | None:
     """Ticks until the event at today's pace (None: time not said, or no pace)."""
     if ev.at_hours is None or tick_seconds <= 0:
         return None
-    return max(0, math.ceil((ev.at_hours - t_hours) * 3600.0 / tick_seconds))
+    return max(0, ticks_until(ev.at_hours, t_hours, tick_seconds))
 
 
 def describe(ev: ScheduledEvent, lead: int | None) -> str:
@@ -188,3 +193,39 @@ class ScheduleWatch:
             rows.append({"event_id": ev.event_id, "action": ev.action, "note": ev.note, "at_hours": ev.at_hours,
                          "lead_ticks": lead, "subject": ev.subject})  # fmt: skip
         return sorted(rows, key=lambda r: (r["at_hours"] is None, r["at_hours"] or 0.0))
+
+
+GUARD_ACTIONS = ("bench", "duels")
+
+
+def _at_or_last(row: Mapping[str, Any]) -> float:
+    at = row.get("at_hours")
+    return (
+        float(at) if isinstance(at, int | float) else math.inf
+    )  # a dealer ladder should not still be running when these start
+
+
+def ladder_ticks(ladder: tuple[int, int, int] | None, max_ticks: int) -> int:
+    """Ticks a dealer ladder may run: one bid per tick, every distinct bid, at most the thread's tick limit."""
+    if ladder is None:
+        return max_ticks
+    start, top, step = ladder
+    return max(1, min(max_ticks, (top - start) // max(1, step) + 1))
+
+
+def crossing(
+    upcoming: Sequence[Mapping[str, Any]],
+    t_hours: float,
+    tick_seconds: float,
+    ticks: int,
+    actions: tuple[str, ...] = GUARD_ACTIONS,
+) -> dict[str, Any] | None:
+    """The first upcoming `actions` event that starts within the next `ticks` ticks (None: the way is clear)."""
+    for u in sorted(upcoming, key=_at_or_last):
+        at = u.get("at_hours")
+        if u.get("action") not in actions or not isinstance(at, int | float) or tick_seconds <= 0:
+            continue
+        lead = ticks_until(float(at), t_hours, tick_seconds)
+        if 0 < lead <= ticks:
+            return {**u, "lead_ticks": lead}
+    return None

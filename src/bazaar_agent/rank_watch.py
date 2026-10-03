@@ -22,7 +22,8 @@ from bazaar_agent.learn.model import Learning
 CONFIDENCE = 0.9  # public facts: the board and the feed say so; the "why" is our reading of them
 MIN_MOVE = 0.1  # a component that moved less is not named
 LIST_CAP = 5  # items named per list in the text
-DETAIL_CAP = 20  # items kept per list in `detail`
+DETAIL_CAP = 20
+LATEST_MAX = 3  # rival moves kept for Jev's state  # items kept per list in `detail`
 FIELD_MAX = 24
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 COMPONENTS = ("negotiating", "market")
@@ -276,12 +277,15 @@ class RankWatch:
         window_ticks: int = 20,
         min_jump: int = 3,
         history_ticks: int = 60,
+        save: Callable[[list[Standing]], object] | None = None,
     ) -> None:
         self.record, self.log, self.us = record, log, us
         self.window, self.min_jump, self.history = window_ticks, min_jump, max(history_ticks, window_ticks)
         self.snapshots: dict[str, list[Standing]] = {}
         self.seen_ticks: set[int] = set()
         self._failed: set[str] = set()
+        self.save = save  # each new board, e.g. into Postgres `leaderboard_snapshots` (`leaderboard_store`)
+        self.latest: list[Learning] = []  # the newest rival moves, newest first (for Jev's state)
 
     def observe(self, board: Mapping[str, Any], events: Sequence[Mapping[str, Any]], tick: int) -> list[Learning]:
         try:
@@ -308,7 +312,19 @@ class RankWatch:
         for line in lines:
             self.log(line)
         self._keep(rows, now)
+        self.latest = [*reversed(learnings), *self.latest][:LATEST_MAX]
+        if self.save is not None:
+            self.save(rows)
         return learnings
+
+    def seed(self, rows: Sequence[Standing]) -> int:
+        """Reload stored boards (oldest first) after a restart: they become the history, never a learning."""
+        by_tick: dict[int, list[Standing]] = {}
+        for row in rows:
+            by_tick.setdefault(row.tick, []).append(row)
+        for tick in sorted(by_tick):
+            self._keep(by_tick[tick], tick)
+        return len(by_tick)
 
     def _climb(self, row: Standing) -> Standing | None:
         """The team's oldest snapshot inside the window when it climbed `min_jump` ranks since, else None."""

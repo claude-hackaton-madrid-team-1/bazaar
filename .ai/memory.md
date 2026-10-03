@@ -952,3 +952,9 @@ Since #151 merged (Sat 3 Oct): a deal keeps `(1 − d) ** rounds` with `rounds` 
 practice payloads; it was our priced messages and `** (rounds − 1)`), so simulator duel points drop about 6 % (scripted
 team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per_team_per_tick` slot, like a market accept
 (a second one in the tick is `wait_for_tick`). New knobs, unset = today: `SIM_DUEL_STYLES`, `SIM_DUEL_DECAY`, `SIM_DUEL_PAIRS`.
+
+### [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
+An integration test that failed before `conn.close()` left a psycopg session `idle in transaction` (its last select
+holds a lock), and the `schema` fixture's `drop schema … cascade` waited on it with no timeout: pytest hung for
+minutes. Use `conn.autocommit = True` and `try/finally: conn.close()` in such tests. Also: macOS has no `timeout`
+command, so `timeout 60 uv run pytest …` fails with 127 and prints nothing; run it in the background instead.

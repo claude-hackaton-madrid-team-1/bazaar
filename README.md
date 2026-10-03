@@ -1301,6 +1301,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a test connection left idle in a transaction hangs the schema teardown forever
 - [2026-10-03] finding — with #151, bazaar-sim duels score like the real game and share the team's one accept per tick
 - [2026-10-03] gotcha — local simulators share ports across workers: use 8900+ and refuse a busy port
 - [2026-10-03] finding — at 15 s ticks every agent finishes in under 4 s; the taker's pack gate asked Jev every tick
@@ -1308,7 +1309,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
 - [2026-10-03] finding — Radio Rastro's `news.posted` is in the public feed; Pilar is kind "collector" and sells only gold packs
 - [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
-- [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
 
 <!-- BAZAAR:STATUS:END -->
 

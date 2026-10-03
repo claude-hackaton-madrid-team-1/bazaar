@@ -501,6 +501,12 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
   within 20 ticks gets a `rival_move` learning explaining it from the leaderboard components, its dealer deals and
   team trades in the feed window and the trades between other teams on its venue. · **Acceptance:**
   `tests/test_rank_watch.py`, sentinel wiring in `tests/test_news.py`.
+- Step 7 (stacked PR) — `leaderboard_store.py` + table `leaderboard_snapshots` (world, tick, team): each board the rank
+  watch reads is upserted; a restarted taker reloads the last 60 ticks. · **Acceptance:**
+  `tests/test_sentinel_consumers.py` (integration on local Postgres, memory-only fallback).
+- Step 8 (stacked PR) — consumers: the taker's `schedule_guard` (TakerConfig, default on) opens no new dealer ladder
+  whose bids would still run when a Market Test or a duel session starts (one `dealer_skip` row per event); Jev's
+  `offer_is_worth_accepting` state carries the 3 newest `rival_move` lines. No price or guardrail change.
 
 ### RO1 — Read-only Postgres login for teammates (PR #184)
 - Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
