@@ -198,3 +198,11 @@ def test_competitor_views_split_us_out_without_dropping_us():
         intel.order_book(board, intel.listed_makers(EVENTS)), "t06", lambda b: b.maker
     )
     assert book_theirs == [] and [b.offer_id for b in book_us] == [123]
+
+
+def test_a_team_id_never_carries_a_trailing_newline():
+    # security-auditor #79 P3: `^t\d+$` matched "t05\n" (`$` allows one trailing newline).
+    from bazaar_agent.intel import TEAM_ID
+
+    assert TEAM_ID.match("t05") and TEAM_ID.match("t18")
+    assert not any(TEAM_ID.match(x) for x in ("t05\n", "t5x", "Puesto-7", "abuela", "", "t"))

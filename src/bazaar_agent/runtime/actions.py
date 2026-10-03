@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,9 +31,11 @@ from bazaar_agent.agents.seller import (
     committed_context,
     post,
     sell_listing,
+    trade_book,
 )
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import Action, Context, Verdict, check, context_from
+from bazaar_agent.intel import book_values
 from bazaar_agent.llm.steering import SteerDelta
 from bazaar_agent.runtime.backend import Backend
 from bazaar_agent.ticks import Clock, action_budget_s
@@ -134,6 +136,10 @@ class Base:
 def _base(b: Backend, clock: Clock, read_at: float) -> Base:
     me, offers = b.holdings.me(clock, clock_read_at=read_at).me, b.my_offers()
     ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
+    if b.rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        us = str(me.get("id") or "")
+        book = book_values(b.catalog(clock.tick))
+        ctx = replace(ctx, trades=trade_book(offers, us, b.settled_volume(us, clock.tick), book))
     return Base(me, offers, ctx, b.commitments(me, offers))
 
 
@@ -392,6 +398,16 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         return outcome(planned, "approved", dry_run=True, request=request, command="uv run bazaar duel run --play")
     from bazaar_agent.sdk import BazaarError
 
+    if move.kind == "accept" and b.rules.inspect_accepts:  # S1: re-read the duel before the slot is claimed
+        from bazaar_agent.agents.accept_gate import duel_accept_check
+
+        gate = duel_accept_check(b.team.duels, planned.detail["duel"], args.duel_id, move)
+        if not gate.allowed:
+            why = f"inspector {gate.verdict}: {gate.reason}"
+            return outcome(planned, "rejected", reason=why, request=request, inspector=gate.as_inputs())
+        if planned.budget_left() <= 0:  # the re-read took the rest of the tick: never send late
+            why = "the duel re-read took the rest of the tick"
+            return outcome(planned, "expired", reason=why, request=request, inspector=gate.as_inputs())
     limit = min(b.rules.max_accepts_per_tick, clock.limits.accepts_per_team_per_tick)
     if move.kind == "accept" and not b.ledger.reserve_accept(
         clock.tick, clock.t_hours, 0, f"duel:{args.duel_id}", limit
