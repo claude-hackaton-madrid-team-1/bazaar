@@ -38,7 +38,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, Spa
 from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from rich.console import Console, ConsoleRenderable, RenderHook
 
-from bazaar_agent.config import REPO_ROOT, read_env_file
+from bazaar_agent.config import ConfigError, env_file_path, read_env_file, sim_flag
 from bazaar_agent.jev.mask import JEV_REDACTION, mask_text
 from bazaar_agent.pgconn import redact as redact_db_passwords
 
@@ -53,6 +53,7 @@ TRACING_FLAG = "BAZAAR_TRACING"
 DEFAULT_PHOENIX_URL = "http://127.0.0.1:6006"
 OTLP_TRACES_PATH = "/v1/traces"
 DEFAULT_PROJECT = "bazaar"
+SIM_PROJECT_SUFFIX = "-sim"  # BAZAAR_SIM set: traces go to e.g. `bazaar-sim`, never the game's project
 EXPORT_TIMEOUT_S = 3.0  # per export, retries included: bounds the flush at exit when Phoenix is down
 EXPORT_DELAY_MS = 2_000  # spans reach Phoenix within ~2 s, so a negotiation can be watched live
 EXPORT_TIMEOUT_MS = 5_000  # a whole batch export, above the exporter's own timeout as OTel advises
@@ -101,17 +102,28 @@ def tracing_config(env: Mapping[str, str] | None = None) -> TracingConfig:
     """Settings from the environment, then `.env`. Endpoint precedence follows OTel, then Phoenix:
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT (used as is) > PHOENIX_COLLECTOR_ENDPOINT >
     OTEL_EXPORTER_OTLP_ENDPOINT (base URLs, `/v1/traces` appended) > local Phoenix."""
-    values = {**read_env_file(REPO_ROOT / ".env"), **os.environ} if env is None else dict(env)
+    values = {**read_env_file(env_file_path()), **os.environ} if env is None else dict(env)
 
     def pick(*names: str) -> str | None:
         return next((values[n].strip() for n in names if (values.get(n) or "").strip()), None)
 
     base = pick("PHOENIX_COLLECTOR_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT") or DEFAULT_PHOENIX_URL
     secrets = {v.strip() for k, v in values.items() if _SECRET_NAME.search(k) and len(v.strip()) >= MIN_SECRET_LENGTH}
+    project = pick("PHOENIX_PROJECT", "PHOENIX_PROJECT_NAME") or DEFAULT_PROJECT
+    file_values = read_env_file(env_file_path()) if env is None else {}
+    raw_sim = values.get("BAZAAR_SIM") or file_values.get("BAZAAR_SIM")  # load_settings: empty env = unset
+    try:
+        simulated = sim_flag(raw_sim) != "real"
+    except ConfigError:
+        simulated = True  # an unreadable flag is refused by the settings; never mix its traces with the game's
+    if simulated and not project.endswith(SIM_PROJECT_SUFFIX):
+        # Simulated duel and thread ids, and `taker tick N` names, collide with real ones: a simulator
+        # run traces into its own project, so no real score is ever written onto a simulated trace.
+        project += SIM_PROJECT_SUFFIX
     return TracingConfig(
         enabled=(pick(TRACING_FLAG) or "").lower() in _TRUE,
         endpoint=pick("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or _traces_url(base),
-        project=pick("PHOENIX_PROJECT", "PHOENIX_PROJECT_NAME") or DEFAULT_PROJECT,
+        project=project,
         api_key=pick("PHOENIX_API_KEY"),
         secrets=tuple(sorted(secrets, key=len, reverse=True)),
         database_url=pick("DATABASE_URL"),

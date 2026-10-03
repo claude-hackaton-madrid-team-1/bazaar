@@ -1,9 +1,10 @@
 # 02 — Master plan, part 2 of 2: phases, backlog and steps
 
+> **Backlog source: this repo.** GitHub issues were migrated into `.ai/specs/` (S1, M1, D1, P1, K1, N14, T1) and closed on 2026-10-03; the closed ones are archived verbatim in `docs/issues-archive.md`. Do not open GitHub issues: add a row here and a `<id>-spec.md`.
+
 - Status: **draft** — awaiting approval together with [`01-spec.md`](./01-spec.md)
-- Backlog source: **GitHub issues** (`claude-hackaton-madrid-team-1/bazaar`, #1–#24; 18 open, #23 closed 2026-10-03). They are the
-  source of truth; this file is the thin local mirror. Tasks marked `new` have no issue yet and
-  need one filed before `/spec` starts on them.
+- Backlog source: **this repo** (`.ai/specs/02-plan.md` + `<id>-spec.md`). The GitHub issues (#1–#24) were migrated into
+  specs or archived in `docs/issues-archive.md` and closed on 2026-10-03; tasks use local ids (N-ids, S1, M1, D1, P1, K1, T1).
 - Derives from: [`01-spec.md`](./01-spec.md)
 - Language: **Python only** (3.12, `uv`). No `.ts` / `.rs`; Jev is ported to Python (task N5).
 - Time is in **game hours** (`/api/schedule`, `t_hours`), never wall-clock: the clock pauses and
@@ -89,31 +90,37 @@ negotiates well.
 
 | Task id | Title | Phase | Status |
 |---|---|---|---|
-| [#21](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/21) | Feed capture + dealer curves | 0 → 1 | 🔵 `bazaar monitor` (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela `open`/`limit`/β estimate, ladder view (PR #43) |
-| [#2](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/2) | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
-| [#3](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/3) | Tick loop, governor, scheduler, kill switch | 0 → 1 | 🔵 tick loop + budget + `.local/PAUSE` done; cancel-open-offers kill switch ⬜ |
-| [#8](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/8) | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
-| [#9](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/9) | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is `bazaar evals report` (#58); `egg.found` alert and the L2 rule write-up ⬜ |
-| [#4](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/4) | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
+| N2 · was #21 | Feed capture + dealer curves | 0 → 1 | 🔵 `bazaar monitor` (#32), real-time stream (#40), thread-fill fix (#58); open: Abuela `open`/`limit`/β estimate, ladder view (PR #43) |
+| N4 · was #2 | Team key + API client + fixtures | 0 | ✅ key works; SDK bridge; API fixtures (#26) |
+| N9 · was #3 | Tick loop, governor, scheduler, kill switch | 0 → 1 | ✅ tick loop + budget + `.local/PAUSE`; the kill switch HOLDS (no writes, offers stay open) and `bazaar flatten` is the explicit cancel-everything (PR #72, from #68) |
+| [N14](N14-spec.md) · was #8 | Abuela negotiator (concession curve) | 0 | ✅ 4 negotiated deals (7/9/9/22) |
+| [N14](N14-spec.md) · was #9 | Ladder maximizer + reach L2 | 0 → 2 | 🔵 level 2 reached (El Chato unlocked); first Chato deal walked (he held 33 vs our max 24); best-3 ladder table is `bazaar evals report` (#58); `egg.found` alert and the L2 rule write-up ⬜ |
+| [D1](D1-spec.md) · was #4 | Duel logger (practice h2) | 0 | 🔵 duels logged and stored (#41, #58); open: committed C1–C6 answers, full-session fixtures in `tests/fixtures/duels/`, live deadline proof |
 | N1 (new) | Memory schema + repository + Railway-ready DB | 1 | ✅ (#29, #32, #33) |
 | N2 (new) | Intel: order book, tape, competitor profiles | 1 | ✅ (#29, #32) |
-| N3 (new) | Learner + embeddings + RAG context | 1 | ⬜ not started (after strategy + LLM) |
-| [#1](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/1) | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`, dry run on Railway; live switch-on ⬜ |
-| [#10](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/10) / [#24](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/24) | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check done (#30, #31); `untrusted_text` wrapping (#59); open: executor, flags, hostile-text tests, public `/state` leak, duel limit (PR #60) |
+| N3 (new) | **P0 (Omar) · Learner / auto-evolve**: outcomes → lessons in `learnings`/`traders_behaviors`; hybrid RAG (BM25 + pgvector + local cross-encoder reranker, Postgres only — Jev: no graph DB); per-dealer concession parameters learned within GUARDRAILS; lessons into Jev and the LLM words | 1 | 🔵 v1 approved (#96, hybrid recall; merges in the 09:30 window); auto-evolve #112 in review |
+| N5 · was #1 | Decision model: decider + Jev packs + policy | 1 | 🔵 autonomous taker + maker (`bazaar agent`), every move in `decisions`; LIVE on Railway since Sat 01:45 Madrid (`BAZAAR_LIVE=1` by hand) |
+| [S1](S1-spec.md) · was #10, #24 | Executor firewall, offer inspector, flags | 1 → 2 | 🔵 guardrails + offer-term check (#30, #31); `untrusted_text` (#59); public `/state` leak follow-up merged (#121); open: bait flags (Marius #93, off), duel limit (#60) |
 | N4 (new) | `service.py` + CLI + bazaar skill + commands | 1 | 🔵 CLI + skill done; `service.py` seam ⬜ |
 | N5 (new) | Jev port to Python (judge, mask, log, report, parity) | 0 → 1 | ✅ (#29, #31); recorded-fixture parity test ⬜ |
 | N6 (new) | Voice interface: ElevenLabs agent + Python tool server | 4 | ⬜ later |
 | N7 (new) | Observability: OTel traces → Phoenix, `bazaar thread(s)` | 1 | ✅ (#34, #35) |
 | N8 (new) | Runtime LLM: Jev-chosen model, `--llm-runtime`, ask, words, steer | 1 | 🔵 worker |
 | N9 (new) | Guardrails rule book (GUARDRAILS.md) | 1 | ✅ (#30) |
-| N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored; `bazaar-evals` service; Market Test stub until we run a venue |
-| N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
-| [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
-| [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
-| [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (dry run); our own venue ⬜ |
-| [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
-| [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | 🔵 outcome evals (#58) partly cover it; top-3 normalisation ⬜, dashboard in PR #43 |
-| [#16](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/16) / [#17](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/17) | Pitch + scoring tracker | 3 | ⬜ |
+| N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 inside the agents approved (#91, 09:30 window); Market Test stub until our venue runs |
+| N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
+| N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
+| N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
+| N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
+| N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0` | 1 → 2 | 🔵 worker (PR before Duels II, Sat 18:00) |
+| N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
+| N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
+| N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
+| [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
+| [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved: the maker opens our 0 bps board venue at game hour 6.5 (~11:30, Jev open_noon) and brokers it; 370 P reserve until then; merges before 06:00 after #72 |
+| [M1](M1-spec.md) · was #13 | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
+| [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
+| [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -149,6 +156,21 @@ Files: `src/bazaar_agent/agents/ladder.py`, `src/bazaar_agent/intel/dealer_curve
   · **Acceptance:** decision log shows the verdict, and the policy's final choice, for each step.
 - Step 4 — Three negotiated deals. · **Acceptance:** settlements in the feed + unlock progress in `/api/dealers`.
 
+### N13 — Real-time holdings + card catalog in Postgres (spec: `N13-spec.md`)
+Files: `src/bazaar_agent/{holdings,catalog_db}.py`, `sql/schema.sql`, `sdk.py`, `agents/{runtime,taker,maker}.py`,
+`runtime/{backend,actions,tools,agents}.py`, `cli.py`, `tests/test_holdings{,_db}.py`
+- Step 1 — Schema: `me_snapshots`, `holdings_state`, the `cards` columns. · **Acceptance:** `init_schema` twice in a
+  scratch schema, columns listed.
+- Step 2 — `holdings.py`: freshness verdict, single-flight read, upsert, write tracker; `sdk.TrackedBazaar`.
+  · **Acceptance:** unit tests (no DB) + Postgres tests: stale tick, a send, a thread message, max age, after a deal,
+  two readers one call, two writers never backwards.
+- Step 3 — `catalog_db.py` + `CatalogSync` from the catalog the agents already read. · **Acceptance:** tests:
+  malformed cards skipped, release and every-N-ticks writes, no rollback.
+- Step 4 — Agents, MCP tools (`status`, `holdings`, `cards`), `bazaar status`. · **Acceptance:** tool test answers
+  from the DB with tick and age and no `/me` call; taker re-reads after a deal.
+- Step 5 — Simulator run, before vs after. · **Acceptance:** `GET /api/me` per tick counted server-side, pasted.
+- Step 6 — Docs, memory, architecture boxes; gate + `scripts/sim_smoke.py`; `/pr-review`.
+
 ### N5 (part 1) — Minimal Python Jev judge
 Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 - Step 1 — Verdict logic from recorded responses (noul yes/no/below threshold, choice, schema
@@ -162,7 +184,66 @@ Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
 
+### #69 follow-up — public /state and /events must not reveal our limits
+Spec: the review comment "Remaining leaks, ranked" on PR #69 (`gh pr view 69 --json comments`).
+Files: `src/bazaar_agent/agents/status.py`, `tests/test_status.py`, `docs/services.md`, README sentence.
+- Step 1 — `sent` needs `chosen is True` (maker reprice rows); drop `jev`; unsent `accept_*` rows are not
+  published; guardrail label only on sent rows. · **Acceptance:** `reprice_*` and `accept_*` tests.
+- Step 2 — nested `topic` / `give` / `want` keep only card, pack and cash keys. · **Acceptance:** probe test.
+- Step 3 — seeded random property test: no private key or number in `/state` or `/events`. · **Acceptance:** 8 seeds green.
+- Step 4 — docs drift in `docs/services.md` and README. · Left open (low): rows are published before the send.
+
+### PR72 / PR62 / PR60 — takeover of Marius's live-trading PRs (2026-10-03, coordinator task_378a4ee99754)
+Spec (external, no local spec file): the PR review comments on #72, #68, #62, #61 and #60 (ours are the
+authoritative ones) and Greptile's open threads; RULES.md "Dealers" (a deal at the opening price does not
+count) and "The clock" (pace 5–60 s, `/api/clock` `max_tick_seconds`). One PR merged at a time; each one is
+rebased on `main` after the previous one merges.
+- PR72 (lands #61 + #68 + #72; base retargeted to `main`). Steps: refund dating at `max_tick_seconds` ·
+  one open offer per dealer thread · `dealer buy` guard with open commitments except its own thread ·
+  never close at her opening ask (walk, reopen lower once; the taker rests the item 1 game hour) · desk
+  settle timeout clears `accepted_price`, deal booked at the settled offer · busy accept slot bids her ask ·
+  kill switch re-read before every send · partial flatten exits 1 · stale `dealer_buy` text.
+  · **Acceptance:** each step has a test that fails on the old code; gate + `scripts/sim_smoke.py` green;
+  taker `--live` on the simulator; `/pr-review` APPROVE.
+- PR62 (shared-ledger reconnect). Steps: merge `main` (cli.py conflict) · `idle_in_transaction_session_timeout
+  = '5s'` · reconnect with a plain connect (schema on the first connection only) · `LedgerUnavailable` in
+  `dealer buy` HOLDS the tick (never walks or closes) · `sell` exits cleanly on an outage · reply to the
+  private-IP Greptile P1 (false for us). · **Acceptance:** tests, gate, sim smoke, `/pr-review` APPROVE.
+- PR60 (two-issue duels). Steps: drop `round()` in the inside-limit checks · finite `_number` for days in
+  `duel_jev`. · **Acceptance:** tests fail on the old code (offer 110 instead of accept 101; NaN days
+  raised), gate green, `/pr-review` APPROVE, before Duels II (Sat 18:00).
+
+### N14b — Packs, supply and new pages (spec: N14-spec.md, criteria 4–6)
+PR 1 (new pages, before the 09:30 window). Files: `GUARDRAILS.md`, `STRATEGY.md`, `guardrails.py`,
+`strategy.py`, `agents/{runtime,taker,maker}.py`, `tests/test_new_pages.py`.
+- Step 1 — `protect_page_sets` (GUARDRAILS.md, RET,CHA): `check()` refuses a sell or an accepted bid of our
+  only copy of a new page's card; `strategy.sell_moves` never proposes it, so the maker cancels an open
+  ask. · **Acceptance:** guardrail, strategy and maker tests; RED with the rule stubbed off.
+- Step 2 — `dealer_mints_unminted` (STRATEGY.md, false) from B26 #129, with its release tests. ·
+  **Acceptance:** a zero-minted RET card is a dealer buy only with the switch.
+- Step 3 — `PageWatch`: the running taker and maker log a new page once; one Taker instance ranks RET the
+  tick it appears. · **Acceptance:** two-tick taker test; sim smoke green.
+PR 2 (supply + packs, 09:30 window or next).
+- Step 4 — supply map: starting hands (ids 1–270, block k = team k) + feed settlements and `pack.opened`
+  → `supply_cards` in Postgres; `bazaar supply`. · **Acceptance:** pure tests on fixtures + DB test schema.
+- Step 5 — pack EV with page-bonus share, supply and album need; 3/hour; open-vs-keep decision for sealed
+  packs behind a kill flag. · **Acceptance:** EV tests; the gate and the 3/hour cap hold.
+
 ---
+
+### N15 — Jev picks the desk's model per request
+Spec: [`N15-spec.md`](./N15-spec.md). Files: `llm/{config,chooser,cli}.py`, `runtime/{desk_models,desk,agents,hooks,cli}.py`,
+`questions/runtime_model.json`, `RUNTIME.md`, README, `docs/architecture.status.json`.
+- Step 1 — RUNTIME.md `desk_model` = auto + `desk_role_defaults` (Claude only, validated). · **Acceptance:**
+  config tests: auto parses, a non-Claude role default or pinned desk model fails.
+- Step 2 — `ModelChooser.choose_roles()`: pin → cache → ONE Jev call for the uncached roles → per-role default.
+  · **Acceptance:** fake-Jev tests: decided, undecided, timeout, keyless, pinned, one call per request, cache reuse.
+- Step 3 — `runtime/desk_models.py` (request situation, picker) + per-subagent `AgentDefinition.model` +
+  the hook sets each subagent's per-call model (family alias pinned to our id) + `Desk` re-plans before each
+  request. · **Acceptance:** SDK options carry each role's id; the scripted desk run logs the choices; one
+  conversation keeps one session while each request runs its own models.
+- Step 4 — `bazaar llm` desk section, README, RUNTIME.md, architecture boxes. · **Acceptance:** CLI test +
+  regenerated html; dry desk run on `BAZAAR_SIM=local` shows the chosen models.
 
 ## Parallel-work notes
 

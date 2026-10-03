@@ -8,36 +8,21 @@
 # The template machinery is dependency-free (POSIX shell + awk/sed) — no runtime, no deps dir.
 # /bootstrap appends your language's ignores (node_modules/, target/, __pycache__/, vendor/, …).
 
-# Generated per-tool agent mirrors — single source of truth is .ai/; these are REGENERATED
+# Generated Claude Code mirrors — single source of truth is .ai/; these are REGENERATED
 # from it by `sh scripts/sync-ai-docs.sh` (run automatically by `sh scripts/install.sh`).
 # Kept LOCAL-ONLY so the repo holds no duplicated skill/agent/command copies. After cloning,
-# run `sh scripts/install.sh` (or the sync script) or your tools will see zero skills.
-# NOTE: the root contract entry files (AGENTS.md, CLAUDE.md, GEMINI.md) stay committed so the
-# repo stays readable on GitHub and the contract loads without a build step.
-.ai/generated/
+# run `sh scripts/install.sh` (or the sync script) or Claude Code will see zero skills.
+# NOTE: the root contract entry files (AGENTS.md, CLAUDE.md) stay committed so the repo stays
+# readable on GitHub and the contract loads without a build step.
 .claude/skills/
 .claude/agents/
 .claude/commands/
-.gemini/skills/
-.gemini/agents/
-.gemini/commands/
-.opencode/skills/
-.opencode/agents/
-.opencode/commands/
-.cursor/rules/00-context.mdc
-.agents/
-.codex/agents
 
 # Claude Code per-developer local settings (not shared).
 .claude/settings.local.json
 
 # OS / editor cruft
 .DS_Store
-
-# Demo recording tooling — kept local, not shipped. The rendered docs/imgs/demo.gif that the
-# README embeds IS committed; the script and the intermediate asciinema cast are not.
-scripts/record-demo.sh
-docs/imgs/demo.cast
 
 # Jev decision model (vendor/jev-sdk): Bun deps and masked local decision logs.
 node_modules/

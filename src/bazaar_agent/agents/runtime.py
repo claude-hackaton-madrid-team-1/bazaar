@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import psycopg
@@ -21,9 +21,13 @@ from bazaar_agent.agents.seller import Commitments, committed_context
 from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
+# Refusals after which a write may have reached the game anyway: the connection failed after the request
+# went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
+MAYBE_LANDED = ("network", "bad_response")
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -141,6 +145,34 @@ class MarketFeed:
         return [self._events[i] for i in sorted(self._events)]
 
 
+def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
+    """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
+    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+
+
+class PageWatch:
+    """The album pages one agent has seen since it started. The playbook is rebuilt from `/api/me` every
+    tick, so a page released mid-game (El Retiro Saturday, Chamberí Sunday) is ranked the first tick it
+    shows up, without a restart; this only says so once, in the log."""
+
+    def __init__(self) -> None:
+        self.seen: frozenset[str] | None = None
+
+    def new(self, me: Mapping[str, Any]) -> tuple[str, ...]:
+        """Pages in this `/api/me` that the agent had not seen: none on its first tick."""
+        pages = album_pages(me)
+        fresh = () if self.seen is None else tuple(sorted(pages - self.seen))
+        self.seen = pages if self.seen is None else self.seen | pages
+        return fresh
+
+
+def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str, Any]) -> str:
+    return (
+        f"tick {tick} {agent}: new page(s) {', '.join(fresh)} in /api/me: ranked on "
+        f"{len(album_pages(me))} pages from this tick, no restart"
+    )
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """One tick's view, read album first: `/api/me` before anything is decided."""
@@ -152,25 +184,43 @@ class Snapshot:
     dealers: list[dict[str, Any]]
     venues: list[Venue]
     events: list[Event]
+    holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
 
     @property
     def us(self) -> str:
         return str(self.me.get("id") or "")
 
+    def with_me(self, read: MeRead) -> Snapshot:
+        """The same view with fresher holdings (re-read after a deal)."""
+        return replace(self, me=read.me, holdings=read)
 
-def read_snapshot(team: Any, public: Any, feed: MarketFeed, clock: Clock) -> Snapshot:
-    """Team reads (`me`, our offers) with the key; everything public without it."""
-    me = team.me()
+
+def read_snapshot(
+    team: Any,
+    public: Any,
+    feed: MarketFeed,
+    clock: Clock,
+    holdings: Holdings | None = None,
+    clock_read_at: float | None = None,
+) -> Snapshot:
+    """Team reads (`me`, our offers) with the key; everything public without it. With `holdings`, /me
+    comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live."""
+    read = holdings.me(clock, clock_read_at=clock_read_at) if holdings is not None else None
+    me = read.me if read is not None else team.me()
     offers = team.my_offers()
     personas = public.dealers()
+    catalog = public.catalog()
+    if holdings is not None:
+        holdings.observe_catalog(clock.tick, catalog)
     return Snapshot(
         clock=clock,
         me=me,
         offers=offers,
-        catalog=public.catalog(),
+        catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
         venues=venues_from(public.venues()),
         events=feed.events(),
+        holdings=read,
     )
 
 
@@ -194,6 +244,8 @@ class Recorder:
     ) -> None:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
+        self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
         self,
@@ -238,7 +290,7 @@ class Recorder:
             },
         )
         decision_id = self.decisions.decide(decision)
-        if self.hub is not None:
+        if self.hub is not None:  # the hub publishes only its allow-listed public view of this row
             sent = "would-send" if not self.live else "sending"
             self.hub.decision(
                 {
@@ -255,6 +307,7 @@ class Recorder:
                     "chosen": chosen,
                     "status": status,
                     "dry_run": not self.live,
+                    "thread_id": thread_id,
                     "sent": sent if chosen and status == "approved" else "not sent",
                 }
             )
@@ -286,12 +339,16 @@ class Recorder:
     def send(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], call: Callable[[], Any]
     ) -> dict[str, Any] | None:
-        """Send one request; None when the server refused it (logged, recorded, the loop goes on)."""
+        """Send one request; None when the server refused it (logged, recorded, the loop goes on). After a
+        None, `maybe_landed` says whether the write may have gone through anyway (see MAYBE_LANDED): a
+        spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
+        self.maybe_landed, self.last_code = False, None
         try:
             response = call()
         except BazaarError as e:
+            self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

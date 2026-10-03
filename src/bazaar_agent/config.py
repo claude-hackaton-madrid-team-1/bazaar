@@ -63,6 +63,7 @@ class Settings(BaseModel):
     claude_code_oauth_token: SecretStr | None = None  # `claude setup-token`: Claude models on the subscription
     llm_runtime: str | None = None  # BAZAAR_LLM_RUNTIME: pins the runtime LLM (alias or model id)
     database_url: SecretStr = SecretStr(DEFAULT_DATABASE_URL)
+    sim_database: bool = False  # BAZAAR_SIM_DATABASE_URL is the database: one of the simulator's own
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
 
@@ -136,6 +137,19 @@ def check_key_for_url(url: str, key: str) -> None:
         )
 
 
+def same_database(a: str, b: str) -> bool:
+    """Do two URLs name the same database (host, port, name)? Unparsable counts as the same: fail safe."""
+    try:
+        pa, pb = urlsplit(a), urlsplit(b)
+        return ((pa.hostname or "").lower(), pa.port or 5432, database_name(a)) == (
+            (pb.hostname or "").lower(),
+            pb.port or 5432,
+            database_name(b),
+        )
+    except ValueError:
+        return True
+
+
 def database_name(url: str) -> str:
     """The database a Postgres URL names: its path, or a `dbname=` query override (libpq honours both)."""
     parts = urlsplit(url)
@@ -145,9 +159,26 @@ def database_name(url: str) -> str:
     return unquote(parts.path.lstrip("/"))
 
 
+def env_file_path() -> Path:
+    """The env file every reader uses: BAZAAR_ENV_FILE when set, else the repo's `.env`.
+
+    The override REPLACES `.env`, so a typo must not silently drop it (a BAZAAR_SIM=1 kept in `.env`
+    would vanish and the target would become the real game): a missing or relative path fails fast."""
+    override = os.environ.get("BAZAAR_ENV_FILE")
+    if not override:
+        return REPO_ROOT / ".env"
+    path = Path(override)
+    if not path.is_absolute() or not path.is_file():
+        raise ConfigError("BAZAAR_ENV_FILE must name an existing file by absolute path (it replaces .env).")
+    return path
+
+
 def load_settings(env_file: Path | None = None) -> Settings:
-    """Environment variables win over `.env`, so a one-off override needs no file edit."""
-    file_values = read_env_file(env_file or REPO_ROOT / ".env")
+    """Environment variables win over `.env`, so a one-off override needs no file edit.
+
+    BAZAAR_ENV_FILE names another env file instead of the repo's `.env` (the simulator smoke points it
+    at an empty file, so a laptop's real secrets never load into a smoke run)."""
+    file_values = read_env_file(env_file or env_file_path())
 
     def pick(name: str) -> str | None:
         value = os.environ.get(name) or file_values.get(name)
@@ -172,15 +203,17 @@ def load_settings(env_file: Path | None = None) -> Settings:
         "llm_runtime": pick("BAZAAR_LLM_RUNTIME"),
         "database_url": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "database_url_sim": pick("BAZAAR_SIM_DATABASE_URL"),
+        "database_url_real": pick("DATABASE_URL") or DEFAULT_DATABASE_URL,
         "team_id": pick("BAZAAR_TEAM_ID"),
     }
     if data_dir := pick("BAZAAR_DATA_DIR"):
         data["data_dir"] = data_dir
     elif simulated:
         data["data_dir"] = str(SIM_DATA_DIR)  # the real feed capture and ledger never see simulated play
-    sim_db = data.pop("database_url_sim")
+    sim_db, real_db = data.pop("database_url_sim"), data.pop("database_url_real")
     if sim_db and simulated:
         data["database_url"] = sim_db
+        data["sim_database"] = not same_database(str(sim_db), str(real_db))  # not the real one, respelled
     return Settings.model_validate(data)
 
 

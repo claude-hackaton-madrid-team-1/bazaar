@@ -1,6 +1,10 @@
+import time
+from datetime import UTC, datetime
+
 from bazaar_agent.ticks import (
     AFTER_TICK_S,
     CLOSED_POLL_MAX_S,
+    CLOSED_POLL_MIN_S,
     PAUSED_POLL_S,
     Clock,
     action_budget_s,
@@ -21,6 +25,57 @@ def test_sleeps_just_past_the_next_tick():
 def test_paused_and_closed_poll_slowly_instead_of_spinning():
     assert seconds_until_next_tick(clock(paused=True)) == PAUSED_POLL_S
     assert seconds_until_next_tick(clock(doors="closed")) == CLOSED_POLL_MAX_S
+
+
+# B13 (bite X4): the doors open at 09:00; a closed clock sleeps until then, not a blind 300 s.
+OPENS = "2026-10-03T09:00:00+02:00"
+OPENS_EPOCH = datetime.fromisoformat(OPENS).timestamp()
+
+
+def closed(**kw):
+    return clock(**{"doors": "closed", "paused": True, "next_tick_in": 0.0, "next_opens": OPENS, **kw})
+
+
+def test_closed_doors_sleep_until_just_after_the_announced_opening():
+    assert seconds_until_next_tick(closed(), now=OPENS_EPOCH - 20) == 20 + AFTER_TICK_S
+    assert seconds_until_next_tick(closed(), now=OPENS_EPOCH - 0.1) == CLOSED_POLL_MIN_S  # floor: no spin
+    assert seconds_until_next_tick(closed(), now=OPENS_EPOCH - 8 * 3600) == CLOSED_POLL_MAX_S  # overnight: cap
+
+
+def test_closed_doors_past_the_announced_opening_poll_like_a_pause():
+    """Our clock ahead of the server's, or a late opening: poll every 5 s, never every 1 s on one key."""
+    assert seconds_until_next_tick(closed(), now=OPENS_EPOCH + 1) == PAUSED_POLL_S
+    assert seconds_until_next_tick(closed(), now=OPENS_EPOCH + 600) == PAUSED_POLL_S
+
+
+def test_closed_doors_inside_a_day_window_poll_like_a_pause_whatever_next_opens_says():
+    """If `next_opens` already points to the next day while the doors are still closed at 09:00."""
+    days = [{"day": "sat", "opens": OPENS, "closes": "2026-10-03T23:00:00+02:00"}]
+    rolled = closed(next_opens="2026-10-04T09:00:00+02:00", days=days)
+    assert seconds_until_next_tick(rolled, now=OPENS_EPOCH + 2) == PAUSED_POLL_S
+    assert seconds_until_next_tick(rolled, now=OPENS_EPOCH - 60) == 60 + AFTER_TICK_S  # the earliest opening
+    assert seconds_until_next_tick(rolled, now=OPENS_EPOCH + 14 * 3600) == CLOSED_POLL_MAX_S  # after 23:00
+
+
+def test_closed_doors_without_a_usable_opening_keep_the_slow_poll():
+    for bad in (None, "", "09:00", "2026-10-03T09:00:00", "not a date"):  # naive stamps have no zone: ignored
+        assert seconds_until_next_tick(closed(next_opens=bad), now=OPENS_EPOCH - 20) == CLOSED_POLL_MAX_S
+    odd_days = closed(next_opens=None, days=["sat", {"opens": 3}, {"opens": "09:00", "closes": None}])
+    assert seconds_until_next_tick(odd_days, now=OPENS_EPOCH + 2) == CLOSED_POLL_MAX_S
+    assert (
+        seconds_until_next_tick(closed(next_opens=None, days=[{"opens": OPENS}]), now=OPENS_EPOCH - 9)
+        == 9 + AFTER_TICK_S
+    )
+    assert seconds_until_next_tick(closed(days="sat"), now=OPENS_EPOCH - 20) == 20 + AFTER_TICK_S
+
+
+def test_run_per_tick_wakes_for_the_opening_tick():
+    opens_in_10s = datetime.fromtimestamp(time.time() + 10, UTC).isoformat()
+    reads = iter([closed(next_opens=opens_in_10s).model_dump(), {"tick": 160, "next_tick_in": 29.0}])
+    slept: list[float] = []
+    seen: list[int] = []
+    run_per_tick(lambda: next(reads), lambda c: seen.append(c.tick), max_ticks=1, sleep=slept.append)
+    assert seen == [160] and CLOSED_POLL_MIN_S <= slept[0] <= 10 + AFTER_TICK_S
 
 
 def test_action_budget_keeps_a_margin_that_scales_with_fast_ticks():

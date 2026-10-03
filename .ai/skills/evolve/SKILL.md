@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Scan the repo and evolve the .ai/ source-of-truth. Diffs code-reality against .ai/context.md + .ai/specs/ and writes proposed evolution patches to .ai/specs/97-evolution.md for a human to apply. Works in every CLI; uses a /graphify knowledge graph as a Claude-Code-only accelerant with a direct-scan fallback everywhere else, and fans the per-dimension checks across the tool's native sub-agents. Use when the docs may have drifted from the code, after a big feature lands, or on a cadence."
+description: "Scan the repo and evolve the .ai/ source-of-truth. Diffs code-reality against .ai/context.md + .ai/specs/ and writes proposed evolution patches to .ai/specs/97-evolution.md for a human to apply. Uses a /graphify knowledge graph as an accelerant with a direct-scan fallback, and fans the per-dimension checks across Claude Code sub-agents. Use when the docs may have drifted from the code, after a big feature lands, or on a cadence."
 ---
 
 # /evolve — keep the contract in sync with the code
@@ -12,10 +12,9 @@ drift: a dependency changes, a command stops being used, a behavior ships unspec
 or commits** — a human reviews `.ai/specs/97-evolution.md` and applies what's right
 (hard rule: durable contract changes are human-reviewed; the human pushes).
 
-> **Runs in every CLI.** One part is a Claude-Code-only *accelerant*, not a requirement:
-> the `/graphify` knowledge graph (step 1). When it's unavailable — other CLIs, or Claude
-> Code without graphify installed — the skill falls back to a direct repo scan. The
-> per-dimension fan-out (step 2) always uses the tool's native sub-agents. Same output,
+> One part is an *accelerant*, not a requirement: the `/graphify` knowledge graph (step 1).
+> When graphify is not installed the skill falls back to a direct repo scan. The
+> per-dimension fan-out (step 2) always uses Claude Code sub-agents. Same output,
 > shallower-but-honest coverage.
 
 ## When to use it
@@ -39,7 +38,7 @@ ls graphify-out/graph.json 2>/dev/null
 
 - **Graph exists** → reuse it; optionally refresh with `/graphify . --update`. `hasGraph = true`.
 - **No graph, `/graphify` available (Claude Code)** → build one: `/graphify .`. `hasGraph = true`.
-- **No graphify (other CLIs, or not installed)** → skip it; read the repo directly with
+- **No graphify (not installed)** → skip it; read the repo directly with
   Grep/Glob/Read. `hasGraph = false`. Note in the report that coverage was a direct scan.
 
 ### 2. Scan for drift across five dimensions
@@ -49,9 +48,8 @@ Compare ground truth to the matching `.ai/` source on each of: **contract** (con
 **pipeline** (commands / skills / pipeline.md), **surface** (new interfaces, env vars,
 security-relevant inputs/secret handling).
 
-Fan out one analyst per dimension across the tool's native parallelism — an **Agent Team** in
-**Claude Code**, the tool's **sub-agents** in **Codex / Gemini / opencode** (or run them
-sequentially if the run is small), per the "Parallel work" section of `.ai/pipeline.md`. Brief
+Fan out one analyst per dimension across Claude Code's native parallelism — **sub-agents** or an
+**Agent Team** (or run them sequentially if the run is small), per the "Parallel work" section of `.ai/pipeline.md`. Brief
 each with the dimension's `.ai/` source + the actual files; collect a ranked `drift` list and
 touch no file during the scan.
 

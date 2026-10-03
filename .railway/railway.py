@@ -71,12 +71,13 @@ def llm_env() -> dict:
     return {"CLAUDE_CODE_OAUTH_TOKEN": preserve()}
 
 
-def runtime(name: str, command: str, data: object, enabled: bool = True, llm: bool = False) -> object:
-    """`enabled=False` declares no source: the service, its volume and variables stay, and no push
-    can deploy it. Railway has no 0-replica setting (the minimum is 1), so this is how it is off."""
+def runtime(name: str, command: str, data: object, llm: bool = False) -> object:
+    """A worker on main (`bazaar <command>`). There is no OFF variant: Railway has no 0 replicas, and an off
+    service (no source) is still redeployed from its last image by any apply that changes its config, so a
+    service we do not run is not declared at all (tests/test_railway_iac.py)."""
     return service(
         name,
-        source=github(REPO, branch=BRANCH) if enabled else None,
+        source=github(REPO, branch=BRANCH),
         build=BUILD,
         start=f"/app/.venv/bin/bazaar {command}",
         deploy=ALWAYS,
@@ -86,16 +87,16 @@ def runtime(name: str, command: str, data: object, enabled: bool = True, llm: bo
     )
 
 
-def agent(name: str, command: str, data: object, enabled: bool = True) -> object:
+def agent(name: str, command: str, data: object) -> object:
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
-    DRY RUN on purpose: this file never sets BAZAAR_LIVE. Live trading needs BAZAAR_LIVE=1 set by hand
-    on the service (README "Autonomous agents"), never here. It is declared `preserve()` so an apply keeps
-    whatever was set by hand: undeclared, `railway config plan` proposed to delete it (2026-10-03), which
-    would have put a live agent back in dry run. `enabled=False`: no source (see runtime())."""
+    Live or dry run is decided by hand, never here: this file never sets BAZAAR_LIVE (README "Autonomous
+    agents"). It is declared `preserve()` so an apply keeps whatever was set by hand: undeclared, `railway
+    config plan` proposed to delete it (2026-10-03), which would have put a live agent back in dry run. The
+    taker and the maker are LIVE since Sat 2026-10-03 01:45 Madrid."""
     return service(
         name,
-        source=github(REPO, branch=BRANCH) if enabled else None,
+        source=github(REPO, branch=BRANCH),
         build=BUILD,
         start=f"/app/.venv/bin/bazaar {command}",
         deploy=ALWAYS,
@@ -123,34 +124,6 @@ def mcp_server(name: str, data: object) -> object:
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
         env={**runtime_env(), "PORT": AGENT_PORT, "BAZAAR_MCP_TOKEN": preserve()},
-    )
-
-
-EVALS_EVERY_TICKS = "6"  # bazaar-evals looks for new inputs every 6 game ticks (3 min at 30 s, 90 s at 15 s)
-
-
-def evals_service() -> object:
-    """`bazaar evals run` on a loop (README "Evals"): Postgres in, Postgres and Phoenix annotations out.
-
-    It never uses the team key, so it gets no BAZAAR_KEY and adds nothing to the key's 5 req/s budget: its
-    loop follows the game clock through the keyless public /api/clock (tick discipline).
-    Both secrets it needs are references to the services that own them, so nothing here is preserve()d.
-    It writes no file: no volume."""
-    return service(
-        "bazaar-evals",
-        source=github(REPO, branch=BRANCH),
-        build=BUILD,
-        start=f"/app/.venv/bin/bazaar evals run --every-ticks {EVALS_EVERY_TICKS}",
-        deploy=ALWAYS,
-        replicas={REGION: 1},
-        env={
-            "RAILPACK_PYTHON_VERSION": "3.12",
-            "DATABASE_URL": "${{Postgres.DATABASE_URL}}",  # private *.railway.internal URL
-            "PHOENIX_COLLECTOR_ENDPOINT": "http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:" + PHOENIX_PORT,
-            "PHOENIX_API_KEY": "${{phoenix.PHOENIX_API_KEY}}",
-            "PHOENIX_PROJECT": "bazaar",
-            "COLUMNS": "200",
-        },
     )
 
 
@@ -190,10 +163,50 @@ def simulator() -> object:
     )
 
 
+LIVE_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
+LIVE_PORT = "8080"
+LIVE_NODE = "22.23.3"  # node runs server/*.ts by stripping types (>= 22.18); same pin as .nvmrc there
+
+
+def live_show() -> object:
+    """Bazaar Live (repo bazaar-live): the buyer and the seller at a Rastro stall, a static React show
+    plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
+    The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
+
+    The voice keys and the show's read-only database URL are set once by hand with
+    `railway variable set ... --stdin` and declared preserve() so an apply keeps them (an undeclared
+    hand-set variable is deleted by an apply); with neither key
+    the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
+    the bazaar-live README) must be declared here before it is set. Its public domain is generated once
+    with `railway domain --service bazaar-live --port 8080`: Railway IaC does not declare generated domains."""
+    return service(
+        "bazaar-live",
+        source=github(LIVE_REPO, branch=BRANCH),
+        build={"buildCommand": "npm run build"},
+        start="node server/index.ts",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/health",
+        env={
+            "RAILPACK_NODE_VERSION": LIVE_NODE,
+            "PORT": LIVE_PORT,
+            "ELEVENLABS_API_KEY": preserve(),
+            "GEMINI_API_KEY": preserve(),
+            # LIVE-T1 (bazaar-live #5): the read-only role bazaar_live_reader on the private
+            # postgres.railway.internal host (two views in schema show, no table grants), set by hand
+            # with --stdin; SHOW_DUELS stays unset (off) until the last duel session is over.
+            "SHOW_DATABASE_URL": preserve(),
+            "SHOW_DUELS": preserve(),
+            "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
+            "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
+            "TTS_DAILY_CHARS": preserve(),  # daily ElevenLabs budget (chars ~ credits): guards the 10k weekend credits
+        },
+    )
+
+
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
-    monitor_data = volume("bazaar-monitor-data", region=REGION, sizeMB=VOLUME_MB)
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
     taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
     maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
@@ -217,34 +230,33 @@ def main(ctx=None):
             "PHOENIX_API_KEY": preserve(),  # a system key for span ingestion: `bazaar obs bootstrap`
         },
     )
-    # OFF by team decision: the monitor runs in the CLI on a laptop (one monitor per team). Its
-    # source was disconnected and its deployment removed (`railway down`). To turn it back on: set
-    # enabled=True, `railway config apply` (it reconnects the repo and deploys main), and stop the
-    # laptop monitor.
-    monitor = runtime("bazaar-monitor", "monitor", monitor_data, enabled=False)
+    # bazaar-monitor: leaves this file 2026-10-03 (Omar deletes the service and its volume by hand; apply
+    # nothing until a re-plan shows 0 destroy). The monitor runs in the CLI on a laptop
+    # (one per team). An off service still redeploys its last image whenever an apply changes its config,
+    # source or not (Fri 23:14 UTC), so it is not declared at all. To run it on Railway again, re-add
+    # `volume("bazaar-monitor-data", ...)` and `runtime("bazaar-monitor", "monitor", <that volume>)`.
     duels = runtime("bazaar-duels", "duel run --play", duels_data, llm=True)
     # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
-    # (duels first; the maker never accepts). Both stay in DRY RUN until BAZAAR_LIVE=1 is set by hand.
+    # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
+    # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
     taker = agent("bazaar-taker", "agent taker", taker_data)
     maker = agent("bazaar-maker", "agent maker", maker_data)
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
-    evals = evals_service()
     sim = simulator()
+    live = live_show()
 
     return project(
         "heartfelt-warmth",
         resources=[
             phoenix,
-            monitor,
             duels,
             taker,
             maker,
             mcp,
-            evals,
             sim,
+            live,
             phoenix_data,
-            monitor_data,
             duels_data,
             taker_data,
             maker_data,

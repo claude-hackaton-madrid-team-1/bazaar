@@ -17,10 +17,11 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from bazaar_agent.config import REPO_ROOT, Settings, load_settings, read_env_file
+from bazaar_agent.config import Settings, env_file_path, load_settings, read_env_file
 from bazaar_agent.guardrails import Guardrails, GuardrailsError, load_guardrails
+from bazaar_agent.jev import JudgeResult
 from bazaar_agent.llm.config import RuntimeConfig, RuntimeConfigError, load_runtime
-from bazaar_agent.llm.models import UnknownModelError, pinned_model, resolve
+from bazaar_agent.llm.models import UnknownModelError
 from bazaar_agent.runtime.agents import who_may_call
 from bazaar_agent.runtime.backend import Backend
 from bazaar_agent.runtime.tools import TOOLS, safe_text, secrets_of
@@ -36,8 +37,9 @@ GUARDS = {
     "duel_move": "duel_offer / duel_accept: kill switch, one accept per tick (shared ledger)",
     "steer": "steer_max_change, steer_max_ttl_ticks (clamped, expires at a tick)",
 }
-# Tests replace these: the desk's SDK client and the backend (no network, no CLI process).
+# Tests replace these: the desk's SDK client, Jev's judge and the backend (no network, no CLI process).
 CLIENT_FACTORY: Callable[..., Any] | None = None
+JUDGE: Callable[..., JudgeResult] | None = None
 
 
 def _fail(message: str) -> NoReturn:
@@ -70,7 +72,9 @@ def _say(secrets: tuple[str, ...]) -> Callable[[str], None]:
 
 def _show_event(say: Callable[[str], None]) -> Callable[[Any], None]:
     def show(event: Any) -> None:
-        if event.kind == "call":
+        if event.kind == "models":
+            say(f"  models: {event.detail}")
+        elif event.kind == "call":
             say(f"  {event.agent} {event.name} {event.detail}")
         elif event.kind == "answer":
             say(f"  {event.agent} ← {event.name}: {event.detail}")
@@ -87,9 +91,13 @@ def build_desk(
     *,
     live: bool | None = None,
 ) -> tuple[Any, Backend, Any, tuple[str, ...]]:
-    """(desk, backend, its config, secrets). Raises `UnknownModelError` for a bad model name."""
+    """(desk, backend, its model picker, secrets). Raises `UnknownModelError` for a bad model name.
+
+    The picker chooses the orchestrator's and each subagent's model before every request (Jev, cached
+    per role on the game tick, or the pin); the session starts on the pin or the role defaults."""
     from bazaar_agent.runtime.agents import allow_lists
-    from bazaar_agent.runtime.desk import Desk, DeskConfig, desk_model, desk_options, scratch_dir
+    from bazaar_agent.runtime.desk import Desk, DeskConfig, desk_options, scratch_dir
+    from bazaar_agent.runtime.desk_models import build_picker, family_env
     from bazaar_agent.runtime.hooks import Guard
     from bazaar_agent.runtime.tools import sdk_server
 
@@ -102,14 +110,31 @@ def build_desk(
         secrets,
         log=lambda line: console.print(f"[red]{escape(safe_text(line, secrets))}[/red]"),
     )
-    pin = pinned_model(cli_pin, settings.llm_runtime, config.llm_runtime)
-    chosen = resolve(model) if model else desk_model(pin, config.desk_model)
-    desk_config = DeskConfig(chosen, config.desk_max_turns, config.desk_timeout_s)
+    try:
+        picker = build_picker(
+            settings, config, rules, cli_pin=cli_pin, override=model, clock=backend.clock, log=say, judge_fn=JUDGE
+        )
+    except UnknownModelError:
+        raise
+    except Exception as e:  # the choice log or the question pack is unreadable: never stop the desk for it
+        say(f"desk models: Jev off ({type(e).__name__}), role defaults")
+        picker = build_picker(settings, config, rules, cli_pin=cli_pin, override=model, log=say, log_path=None)
+    desk_config = DeskConfig(config.desk_max_turns, config.desk_timeout_s)
     token = settings.claude_code_oauth_token.get_secret_value() if settings.claude_code_oauth_token else None
-    options = desk_options(guard, sdk_server(backend, secrets), token, desk_config, scratch_dir())
+    models, families = picker.initial(), family_env(picker.model_ids())
+    options = desk_options(guard, sdk_server(backend, secrets), token, desk_config, scratch_dir(), models, families)
     factory = {"client_factory": CLIENT_FACTORY} if CLIENT_FACTORY is not None else {}
-    desk = Desk(options, timeout_s=desk_config.timeout_s, emit=_show_event(say), **factory)
-    return desk, backend, desk_config, secrets
+    desk = Desk(
+        options,
+        timeout_s=desk_config.timeout_s,
+        emit=_show_event(say),
+        plan=picker.pick,
+        models=models,
+        families=families,
+        on_aliases=guard.use_aliases,
+        **factory,
+    )
+    return desk, backend, picker, secrets
 
 
 def _auth_line(settings: Settings) -> str:
@@ -126,6 +151,8 @@ def _report(reply: Any, say: Callable[[str], None]) -> None:
     say(reply.text or "(no answer)")
     if reply.turns is not None:
         console.print(f"[dim]{reply.turns} turns[/dim]")
+    if reply.ran_on:
+        say("ran on: " + " · ".join(f"{agent} {model}" for agent, model in reply.ran_on.items()))
 
 
 OFFLINE_HELP = (
@@ -164,19 +191,21 @@ def _read_line() -> str | None:
 
 def chat(
     once: str | None = typer.Option(None, "--once", help="Send one request, print the transcript, exit"),
-    model: str | None = typer.Option(None, help="Desk model: an alias (sonnet-5-5) or a claude-* id"),
+    model: str | None = typer.Option(
+        None, help="Pin the desk and every subagent to one Claude model (alias or claude-* id); default: Jev picks"
+    ),
 ) -> None:
     """Talk to the desk: it routes to the strategist, buyer, seller or duelist. Dry run unless BAZAAR_LIVE=1."""
     from bazaar_agent.llm import cli as llm_cli
 
     settings, rules, config = _load()
     try:
-        desk, backend, desk_config, secrets = build_desk(settings, rules, config, llm_cli.STATE["pin"], model)
+        desk, backend, picker, secrets = build_desk(settings, rules, config, llm_cli.STATE["pin"], model)
     except UnknownModelError as e:
         _fail(f"cannot pick the desk model: {e}")
     mode = "[red]LIVE: write tools send[/red]" if backend.live else "[yellow]DRY RUN: nothing is sent[/yellow]"
     console.print(
-        f"[bold]desk[/bold] · {desk_config.model.alias} · {mode} · Claude: {_auth_line(settings)} · "
+        f"[bold]desk[/bold] · models: {escape(picker.describe())} · {mode} · Claude: {_auth_line(settings)} · "
         f"subagents strategist, buyer, seller, duelist · type 'exit' to leave"
     )
     code = asyncio.run(_chat_loop(desk, once, _say(secrets)))
@@ -188,11 +217,11 @@ def ask_desk(text: str, settings: Settings, rules: Guardrails, config: RuntimeCo
     """`bazaar ask` through the desk, ALWAYS a dry run (`ask` never trades, BAZAAR_LIVE or not). False
     (after saying why) when the desk is unavailable: the caller falls back to the intent parser."""
     try:
-        desk, backend, desk_config, secrets = build_desk(settings, rules, config, cli_pin, live=False)
+        desk, backend, picker, secrets = build_desk(settings, rules, config, cli_pin, live=False)
     except UnknownModelError as e:
         console.print(f"[yellow]desk off ({escape(str(e))})[/yellow]")
         return False
-    console.print(f"[dim]desk · {desk_config.model.alias} · dry run · Claude: {_auth_line(settings)}[/dim]")
+    console.print(f"[dim]desk · models: {escape(picker.describe())} · dry run · Claude: {_auth_line(settings)}[/dim]")
 
     async def once() -> Any:
         try:
@@ -225,7 +254,7 @@ def _mcp_token() -> str | None:
     """BAZAAR_MCP_TOKEN from the environment (Railway), else `.env`. Never printed."""
     from bazaar_agent.runtime.mcp_server import TOKEN_VARIABLE
 
-    return os.environ.get(TOKEN_VARIABLE) or read_env_file(REPO_ROOT / ".env").get(TOKEN_VARIABLE)
+    return os.environ.get(TOKEN_VARIABLE) or read_env_file(env_file_path()).get(TOKEN_VARIABLE)
 
 
 def mcp_serve(

@@ -1,6 +1,6 @@
 ---
 name: project-bootstrap
-description: Turns the blank cross-ai-template into a project-specific setup. Interviews the user for project, locked stack, Definition-of-Done commands, and hard rules, then fills .ai/context.md (and optionally seeds .ai/specs/00-requirements.md), wires the chosen language's pre-commit/post-commit hooks, and regenerates every tool's config with `sh scripts/sync-ai-docs.sh`. Use once, right after starting from the template, while .ai/context.md still has `<!-- FILL -->` placeholders, or when the user says "bootstrap", "set up this template", or "/bootstrap".
+description: Turns the blank cross-ai-template into a project-specific setup. Interviews the user for project, locked stack, Definition-of-Done commands, and hard rules, then fills .ai/context.md (and optionally seeds .ai/specs/00-requirements.md), wires the chosen language's pre-commit/post-commit hooks, and regenerates the Claude Code config with `sh scripts/sync-ai-docs.sh`. Use once, right after starting from the template, while .ai/context.md still has `<!-- FILL -->` placeholders, or when the user says "bootstrap", "set up this template", or "/bootstrap".
 ---
 
 # Project Bootstrap
@@ -11,7 +11,7 @@ The template ships with a generic contract: `.ai/context.md` is full of `<!-- FI
 markers and `.ai/specs/*` are empty skeletons. This skill turns that blank scaffold into a
 project-specific setup — the way a project scaffolder turns a prompt into a configured app —
 by interviewing the user, writing the answers into the source of truth, wiring the chosen
-language's commit hooks, and regenerating every tool's config from it.
+language's commit hooks, and regenerating the Claude Code config from it.
 
 The template machinery itself is **100% language-agnostic** — the sync generator is a
 dependency-free POSIX shell script and the git hooks are empty dispatchers. The ONLY place a
@@ -59,7 +59,7 @@ Don't invent stack choices — if you can't infer one with confidence, ask.
 
 ### 3. Write `.ai/context.md`
 Replace each `<!-- FILL -->` block with the gathered content. Keep it terse (it's inlined into
-every tool's prompt). **Do not touch** the "Source-of-truth convention" or "Memory protocol"
+Claude Code's prompt). **Do not touch** the "Source-of-truth convention" or "Memory protocol"
 sections — they're generic and must stay. Set the title `# Agent Operating Contract — <name>`.
 
 ### 4. Wire the commit hooks for the language
@@ -87,8 +87,8 @@ the skeleton). Otherwise tell the user to run `/spec` next. For a full spec now,
 ### 6. Regenerate & install hooks
 Run `sh scripts/install.sh` — it wires `git config core.hooksPath .githooks`, marks the hooks
 executable, and runs the sync. (If hooks are already installed, `sh scripts/sync-ai-docs.sh`
-alone suffices.) This rewrites `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.ai/generated/rules.mdc`,
-and every tool mirror from the new sources.
+alone suffices.) This rewrites `AGENTS.md`, `CLAUDE.md` and the `.claude/` mirrors from the
+new sources.
 
 ### 7. Confirm & hand off
 Show what changed (the new contract, the wired hooks, the sync summary), remind the human to
@@ -134,5 +134,5 @@ go vet ./...
 
 ## Output
 A filled `.ai/context.md` (+ optionally `00-requirements.md`), language-specific commit hooks in
-`.githooks/{pre,post}-commit.d/`, and regenerated per-tool configs, ready to commit. The repo now
-follows the project's own contract — with enforced quality gates — in every supported AI tool.
+`.githooks/{pre,post}-commit.d/`, and regenerated Claude Code configs, ready to commit. The repo now
+follows the project's own contract — with enforced quality gates — in Claude Code.

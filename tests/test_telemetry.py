@@ -114,7 +114,7 @@ def events(span, name):
 
 
 def test_a_negotiation_is_one_root_with_a_child_span_per_tick(spans):
-    out = traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda move: None)
+    out = traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda move, _tid: None)
 
     finished = spans.get_finished_spans()
     roots = [s for s in finished if s.parent is None]
@@ -145,7 +145,7 @@ def test_every_message_of_both_sides_is_an_event_once(spans):
 
 
 def test_tick_events_carry_the_offer_jev_guardrail_and_our_move(spans):
-    traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda m: "cash_floor" if m.price == 8 else None)
+    traced_run(ChattyAbuela([12, 10, 9]), advisor=advisor, guard=lambda m, _tid: "cash_floor" if m.price == 8 else None)
 
     ticks = [s for s in spans.get_finished_spans() if s.name.startswith("tick ")]
     names = [e.name for t in ticks for e in t.events]
@@ -231,7 +231,7 @@ def test_a_telemetry_bug_never_changes_or_stops_the_trade(spans, monkeypatch, ca
     monkeypatch.setattr(traces.Thread, "model_validate", broken)
     monkeypatch.setattr(tm, "attributes", broken)
     with caplog.at_level(logging.WARNING, logger="bazaar_agent.telemetry"):
-        out = traced_run(ChattyAbuela([12, 10, 9]), guard=lambda m: None)
+        out = traced_run(ChattyAbuela([12, 10, 9]), guard=lambda m, _tid: None)
     assert (out.status, out.price) == ("deal", 9)
     assert any("trading continues" in r.message for r in caplog.records)
 

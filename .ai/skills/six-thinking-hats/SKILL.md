@@ -61,8 +61,8 @@ kills it.
 ## Parallel Fan-out (and graceful degradation)
 
 For high-stakes calls, run hats **concurrently** — one sub-agent per hat (or per hat-group) —
-then a 🔵 Blue synthesis pass. Use each tool's **native** parallelism: an **Agent Team** in Claude
-Code, **sub-agents** in Codex / Gemini / opencode. Brief each with fresh, verified ground truth —
+then a 🔵 Blue synthesis pass. Use Claude Code's native parallelism: **sub-agents** or an
+**Agent Team**. Brief each with fresh, verified ground truth —
 the relevant `.ai/specs/` section and the actual files, never guesses.
 
 **Degrade gracefully:** when parallelism isn't available, or the stakes are modest, run a single

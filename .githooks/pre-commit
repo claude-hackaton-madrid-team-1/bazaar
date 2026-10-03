@@ -3,10 +3,10 @@
 #
 #   1. SYNC DRIFT GATE (always, template infrastructure): regenerate every per-tool artifact
 #      from .ai/ with the dependency-free shell generator. The per-tool skill/agent/command
-#      mirrors (.claude/.gemini/.opencode/.cursor, .ai/generated) are gitignored (local-only) so
-#      the repo holds no duplicates — regenerating them just refreshes the dev's working tree.
+#      mirrors (.claude/) are gitignored (local-only) so the repo
+#      holds no duplicates — regenerating them just refreshes the dev's working tree.
 #      The only generated files still committed are the root contract entries (AGENTS.md,
-#      CLAUDE.md, GEMINI.md); the gate blocks the commit if THOSE drift from .ai/. The generator
+#      CLAUDE.md); the gate blocks the commit if THOSE drift from .ai/. The generator
 #      is deterministic (no timestamps), so this only fires on real drift. Needs nothing but a
 #      POSIX shell + awk/sed — no node/bun/python.
 #
@@ -25,22 +25,22 @@ cd "$REPO_ROOT"
 sh scripts/sync-ai-docs.sh >/dev/null
 
 # Only the committed contract entries are gated; the per-tool mirrors are gitignored (local-only).
-PATHS="AGENTS.md CLAUDE.md GEMINI.md"
+PATHS="AGENTS.md CLAUDE.md"
 # shellcheck disable=SC2086  # $PATHS is a deliberate space-separated list — must word-split into args.
 if ! git diff --quiet -- $PATHS; then
-	echo "✗ The committed contract files (AGENTS.md/CLAUDE.md/GEMINI.md) are out of sync with .ai/." >&2
+	echo "✗ The committed contract files (AGENTS.md/CLAUDE.md) are out of sync with .ai/." >&2
 	echo "  Run 'sh scripts/sync-ai-docs.sh', then stage the regenerated files:" >&2
 	# shellcheck disable=SC2086
 	git --no-pager diff --name-only -- $PATHS >&2
 	exit 1
 fi
 
-# Guard the source-of-truth model: per-tool mirrors and local runtime adapters must never become
-# tracked again. Root entry files and .codex/config.toml are intentionally committed.
-TRACKED_MIRRORS=$(git ls-files -- .claude .gemini .opencode .cursor .ai/generated .agents .codex/agents)
+# Guard the source-of-truth model: the .claude/ mirrors must never become tracked again.
+# The root entry files (AGENTS.md, CLAUDE.md) are intentionally committed.
+TRACKED_MIRRORS=$(git ls-files -- .claude)
 if [ -n "$TRACKED_MIRRORS" ]; then
-	echo "✗ Generated/local agent mirror files are tracked, but .ai/ must remain the source of truth." >&2
-	echo "  Remove these from git and let scripts/sync-ai-docs.sh or the tool runtime recreate them locally:" >&2
+	echo "✗ Generated .claude/ mirror files are tracked, but .ai/ must remain the source of truth." >&2
+	echo "  Remove these from git and let scripts/sync-ai-docs.sh recreate them locally:" >&2
 	printf '%s\n' "$TRACKED_MIRRORS" >&2
 	exit 1
 fi
