@@ -34,13 +34,21 @@ Full tables come from `uv run python scripts/duel_tournament.py` (our arena + re
   - 2.5 P on stall-counters against rivals that never answered.
   - 1.4 P on 148 (a late talker turned our free offers into rounds).
 - **In-sample caveat.** v2's knobs were tuned on both zoos tonight; the zoo lifts are in-sample. The 0.06/0.08 W2a cell went
-  1.388 → 1.420 that way. Out-of-sample evidence: the replay on recorded rivals (+57 P over v1), and the same direction on two
-  independently written zoos.
+  1.388 → 1.420 that way. The planner's order and the D − 3/D − 2 last offer were also chosen on replay duels 5, 6 and 201,
+  so the replay is not fully out-of-sample either. The remaining out-of-sample evidence is that the direction is the same on
+  two independently written zoos.
+- **At decay 0.08 alone**, both accept-slot harnesses are under 1.40: our arena gives 1.37 and W2a's batch runner 1.385. The
+  mixed 0.08/0.10 pairs pass.
 
 **Verdict: GO.** Both harnesses pass at 0.08/0.10 in both within-tick orders. W2a's gate passes all five checks at both decay pairs.
 Safety holds everywhere.
 
 ## Risks
+- **Fixed after review (r1, PR #86).**
+  - With the default v1, the runtime `duel_move` had started ageing duels between calls, so v1's price drifted (80 → 64) where #60
+    holds it. It is back to #60's behaviour, and only v2 remembers first-seen ticks.
+  - The planner's accept slots now subtract an accept another process already took this tick.
+  - `duel_policy` needs a restart to flip.
 - **Within-tick order.** Real rivals act at their own moment, so the order is a per-rival mix, not one fact. v2 passes
   at 0.08/0.10 in either order (W2a 1.56 / 1.44; arena 1.42 / 1.47). Morning check: in the first Duels II ticks, compare each
   rival message's `tick` with the tick `duel run` first logged it (`.local/duels/duels.jsonl` has both).

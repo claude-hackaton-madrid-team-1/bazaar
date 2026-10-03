@@ -415,7 +415,7 @@ def duel_run(
 
     from bazaar_agent import guardrails as gr
     from bazaar_agent.agents.duel_jev import DuelPick
-    from bazaar_agent.agents.duel_v2 import V2Params, plan_moves
+    from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
@@ -511,10 +511,12 @@ def duel_run(
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
         live_ids = [did for did in map(duel_id, duels) if did is not None]
-        for live_id in live_ids:
-            first_seen.setdefault(live_id, c.tick)
+        for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
+            if (live_id := duel_id(d)) is not None:
+                first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
         picks: dict[int, DuelPick] = {}
-        slots = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
         params = V2Params.from_rules(rules, anchor, floor) if v2 else None
         planned: dict[int, DuelMove] = {}
         if params is not None:
@@ -523,6 +525,23 @@ def duel_run(
             except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
                 console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
                 planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
+        booked: set[int] = set()  # v2: the planner's accept takes the team's slot now, before Jev and the taker
+        for planned_id, m in planned.items() if play else ():
+            d = next(x for x in duels if duel_id(x) == planned_id)
+            ctx = gr.Context(
+                cash=0,
+                held={},
+                tick=c.tick,
+                t_hours=c.t_hours,
+                accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                paused=(REPO_ROOT / rules.pause_file).exists(),
+            )
+            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules).allowed:
+                continue
+            if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
+                booked.add(planned_id)
+            else:
+                planned[planned_id] = DuelMove("hold", reason="another process took the team's accept this tick")
         if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
             endgame = rules.duel_endgame_ticks
             left = lambda: send_by - time.monotonic()  # noqa: E731
@@ -565,7 +584,7 @@ def duel_run(
                     held={},
                     tick=c.tick,
                     t_hours=c.t_hours,
-                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                    accepts_this_tick=ledger.accepts_in_tick(c.tick) - (did in booked),  # not our own booking
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
                 verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
@@ -575,7 +594,8 @@ def duel_run(
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     continue
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-                if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
+                fresh = move.kind == "accept" and did not in booked  # a v2 accept was booked before Jev was asked
+                if fresh and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
                     console.print(f"  duel {did}: another process took the team's accept this tick")
                     record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
                     continue

@@ -265,3 +265,10 @@ def test_the_squeeze_mitigation_raises_our_share_against_exploiters():
     today, guarded = arena.summarize(res["today"]), arena.summarize(res["guarded"])
     assert guarded.mean_share > today.mean_share + 0.03 and guarded.outside == today.outside == 0
     assert arena.leakage(res["today"])["priced"] > 0
+
+
+def test_after_a_restart_v2_recovers_the_duels_start_from_its_messages():
+    from bazaar_agent.agents.duel_v2 import payload_start
+
+    assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108) == 103  # not 108: the clock survives
+    assert payload_start(duel(), 108) == 108
