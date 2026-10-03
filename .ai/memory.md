@@ -1145,3 +1145,12 @@ for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at ti
 it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
 (ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
 (MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+`tools.TOOLS` feeds the desk's in-process server, every subagent allow-list and the remote MCP server at once, so a
+spec added there is callable by our own LLMs. The human tools (HA2) live in `runtime/human_tools.py` and only
+`mcp_server.build_app(..., approver=...)` serves them, behind `X-Approver-Token`. Testing them over the TestClient: the
+per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the fake clock between calls.
+`tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
+GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
+

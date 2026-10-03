@@ -194,6 +194,19 @@ unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside 
 write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
 password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
 
+**Human approval tools (HA2), for Omar's chat and the Bazaar Live Approvals screen only.** `approvals`
+(read), `approve` and `revoke` (writes) exist only when the service has `BAZAAR_APPROVER_TOKEN`, and only on a
+request that also sends `X-Approver-Token: <BAZAAR_APPROVER_TOKEN>`: the bearer alone neither lists nor runs them
+(`unknown tool`), a wrong or empty approver token is `403 {"error": "forbidden"}`, and 5 wrong ones from one bearer
+token lock it out of them for 15 minutes. No agent tool set has them (`runtime/human_tools.py`). `approve`
+`{card, side: buy|sell, price: 1..1000, ttl_ticks: 1..480 (240), reason?, via?}` answers `{"status": "approved",
+"max_price"|"min_price", "until_tick", "by": "human:<via|mcp>"}` or `{"status": "refused", "reasons": [...]}` when an
+approval could only loosen a hard cap (rarity cap, hourly spend, official value), sell a page's last copy or sell
+below our value. `revoke` `{card, side, reason?, via?}` answers `revoked`, or `denied` (no approval: the request is
+marked denied). `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
+impact, the cap, who asked) and the active approvals. At most 10 approval writes a minute; each is a `decisions` row
+(agent `guard`, kind `approval_granted|refused|revoked|denied`). Spec: `.ai/specs/HA2-spec.md`.
+
 `status`, `holdings` and `strategy` (and every write's album-first read) answer from the shared Postgres
 snapshot of `/api/me` while it is provably current, else from `/api/me` itself (README, "Holdings"). Each
 answer carries where it came from:
