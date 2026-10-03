@@ -964,6 +964,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#117](../../pull/117) | Night B8: Duels II days readiness: sign latch on real evidence, rival days, zoo numbers | `night/b8-days` |
+| [#116](../../pull/116) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (B18, bites X20 X6 X2) | `night/b18-rate-limits` |
 | [#115](../../pull/115) | fix(duels): forced endgame accepts are booked and sent before Jev (B15, r2 X17) | `night/b15-duels-first` |
 | [#114](../../pull/114) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (B17, bite X3) | `night/b17-restart-orphans` |
 | [#113](../../pull/113) | Night B8: v2 values delivery days with their sign once a real payload says so (duel_days_auto) | `night/b8-days-wiring` |
@@ -982,7 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#98](../../pull/98) | feat(rivals): rival behaviour profiles + read-only opportunity scanner (B4) | `night/b4-rival-scanner` |
 | [#97](../../pull/97) | Night B11 (w2a): exploiter rivals that read our limit and squeeze our endgame | `night/b11-exploiters` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
-| [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
-| [#93](../../pull/93) | feat(personas): L3–L5 prep: Trickster inspector, high-precision flag policy (off), persona plans (B3, stacked on #81) | `night/b3-personas` |
 
 <!-- BAZAAR:ACTIVITY:END -->
