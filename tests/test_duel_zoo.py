@@ -214,3 +214,119 @@ def test_the_sim_style_replays_the_simulators_own_bot_message_for_message():
         ours = [(x["tick"], x["from"] == "you", x["price"]) for x in final["messages"]]
         assert ours == theirs
         assert (record.status, record.price) == (d.status, d.price)
+
+
+# ---------------------------------------------------------------- the live simulator's zoo rivals
+
+
+def drive(m, policy) -> list:
+    """Run every duel of ours in a manual world to its close with `policy`; return them."""
+    w = m.world
+    mine = sorted((d for d in w.state.duels.values() if d.team == US), key=lambda d: d.duel)
+    while any(d.status == "live" for d in mine):
+        for d in mine:
+            if d.status != "live" or d.accepted is not None:
+                continue
+            move = policy(duels.duel_view(d), w.tick, d.started_tick)
+            if move.kind == "offer":
+                body = {"text": "hola", "price": move.price}
+                if "days" in d.issues:
+                    body["days"] = move.days if move.days is not None else 0
+                duels.say(w, US, d.duel, body)
+            elif move.kind == "accept" and d.rival_offer is not None:
+                duels.accept(w, US, d.duel)
+        m.step()
+    return mine
+
+
+def countering(duel: dict, tick: int, started: int) -> zoo.Act:
+    limit, left = duel["your_limit"], duel["deadline_tick"] - tick
+    if left <= 2 and duel["rival_offer"]:
+        return zoo.Act("accept")
+    step = (tick - started) * 3
+    return zoo.Act("offer", limit + 50 - step if duel["role"] == "seller" else max(1, limit - 50 + step), 0)
+
+
+def test_without_the_variable_every_duel_faces_the_simulators_bot(monkeypatch):
+    monkeypatch.delenv(duels.STYLES_ENV, raising=False)
+    m = manual_world(duel_first_tick=1)
+    m.step()
+    assert all(duels.rival_style(m.world, d) == ("sim", {}) for d in m.world.state.duels.values())
+    assert duels.decay() == 0.06
+
+
+def test_a_no_show_rival_never_speaks_in_the_live_simulator(monkeypatch):
+    monkeypatch.setenv(duels.STYLES_ENV, "no_show")
+    m = manual_world(duel_first_tick=1, duel_ticks=6)
+    m.step()
+    mine = drive(m, countering)
+    assert mine and all(d.status == "no_deal" for d in mine)
+    assert all(msg["from"] == "you" for d in mine for msg in d.messages)
+
+
+@pytest.mark.parametrize("style", ["holdout", "tit_for_tat", "one_shot"])
+def test_live_zoo_rivals_play_like_the_offline_engine(monkeypatch, style):
+    monkeypatch.setenv(duels.STYLES_ENV, style)
+    monkeypatch.setenv(duels.DECAY_ENV, "0.1")
+    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    m.step()
+    mine = drive(m, countering)
+    for d in mine:
+        got, params = duels.rival_style(m.world, d)
+        assert got == style and d.decay_per_round == 0.1
+        sc = zoo.Scenario(
+            role=d.role,
+            limit=d.your_limit,
+            rival_limit=d.rival_limit,
+            style=style,
+            params=params,
+            decay=0.1,
+            duel_ticks=d.deadline_tick - d.started_tick,
+            started_tick=d.started_tick,
+        )
+        record, final = zoo.play(countering, sc)
+        assert [(x["tick"], x["from"] == "you", x["price"]) for x in final["messages"]] == [
+            (x["tick"], x["from"] == "you", x["price"]) for x in d.messages
+        ]
+        assert (record.status, record.price) == (d.status, d.price)
+
+
+def test_a_mix_of_styles_is_drawn_once_per_duel(monkeypatch):
+    monkeypatch.setenv(duels.STYLES_ENV, "linear, holdout,no_show")
+    m = manual_world(duel_first_tick=1)
+    m.step()
+    w = m.world
+    drawn = {d.duel: duels.rival_style(w, d) for d in w.state.duels.values()}
+    m.step(3)
+    assert drawn == {d.duel: duels.rival_style(w, d) for d in w.state.duels.values()}
+    assert {s for s, _ in drawn.values()} == {"linear", "holdout", "no_show"}
+
+
+def test_bad_settings_are_refused(monkeypatch):
+    monkeypatch.setenv(duels.STYLES_ENV, "linear,greedy")
+    with pytest.raises(ValueError, match="greedy"):
+        duels.styles()
+    monkeypatch.setenv(duels.DECAY_ENV, "1.5")
+    with pytest.raises(ValueError):
+        duels.decay()
+
+
+def test_the_live_simulator_counts_rounds_and_decay_like_the_real_game(monkeypatch):
+    monkeypatch.setenv(duels.STYLES_ENV, "no_show")
+    m = manual_world(duel_first_tick=1, duel_ticks=6)
+    m.step()
+    silent_rival = drive(m, countering)
+    assert all(d.rounds == 0 and priced(duels.duel_view(d), True) >= 3 for d in silent_rival)  # it never priced
+
+    monkeypatch.delenv(duels.STYLES_ENV)
+    m = manual_world(duel_first_tick=1, duel_every_ticks=20, duel_ticks=12)
+    m.step(21)  # the practice session closes untouched; session 2 (scored, two issues) opens at tick 21
+    scored = [d for d in drive(m, countering) if not d.practice]
+    deals = [d for d in scored if d.status == "deal"]
+    assert scored and deals
+    for d in scored:
+        view = duels.duel_view(d)
+        assert d.rounds == min(priced(view, True), priced(view, False)) > 0
+    for d in deals:
+        kept = (1 - d.decay_per_round) ** d.rounds
+        assert d.result["points"] == pytest.approx(10 * d.result["share"] * kept, abs=0.02)
