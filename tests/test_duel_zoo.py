@@ -470,3 +470,24 @@ def test_more_pairs_per_session_and_exploiters_in_the_live_simulator(monkeypatch
     assert all(d.status in ("deal", "no_deal") for d in mine)
     monkeypatch.setenv(duels.PAIRS_ENV, "9")
     assert duels.pairs() == 1
+
+
+def test_a_rival_that_raises_holds_and_never_stops_the_simulators_clock(monkeypatch):
+    # #151 security review P2: the clock loop has no try/except, so one exception in a rival stopped the shared sim.
+    monkeypatch.setenv(duels.STYLES_ENV, "linear")
+    monkeypatch.setitem(duels.LIVE_RIVALS, "linear", lambda view: 1 / 0)
+    m = manual_world(duel_first_tick=1, duel_ticks=6)
+    m.step(3)  # the session opens and the broken rival is asked every tick
+    mine = [d for d in m.world.state.duels.values() if d.team == "t01"]
+    assert mine and all(d.rival_offer is None for d in mine)  # it held; the world kept ticking
+    m.step(6)
+    assert all(d.status == "no_deal" for d in mine)
+
+
+def test_an_exploiter_never_asks_above_the_games_max_price():
+    from bazaar_sim import duel_exploit as ex
+
+    view = zoo.RivalView(tick=5, started_tick=0, deadline_tick=12, role="seller", limit=50, days_weight=None,
+                         two_issues=False, decay=0.06, params={}, messages=(), our_offer=None, its_offer=None,
+                         rng=random.Random(1), other_limit=40)  # fmt: skip
+    assert ex._squeeze_price(view, 20_000_000.0, 0.1) <= zoo.MAX_PRICE
