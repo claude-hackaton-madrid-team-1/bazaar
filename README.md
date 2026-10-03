@@ -1288,11 +1288,11 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
 - [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
 - [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
-- [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
-- [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
-- [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
-- [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
-- [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+- [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
+- [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
+- [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
+- [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
+- [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
 
 <!-- BAZAAR:STATUS:END -->
 
