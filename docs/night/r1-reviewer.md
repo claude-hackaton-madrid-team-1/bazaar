@@ -52,3 +52,9 @@ Already merged during the night: #72 (with #61's content), #105, #106, #108, #91
 
 ## Proofs
 `docs/night/r1-proofs/` holds the first batch. `_night/r1_proof*.py` holds the rest; the first line of each file names the PR and head it targets.
+
+## Final merge state (09:35)
+Merged to main since 04:20Z: #145, #89, #148, #96, #112, #150, #162, #111, #146, #154, #71, #139, #158.
+- **#71** merged with `allow_venue_open = false` (team decision 06:08), so no venue opens on its own. But **`cash_floor` is now 100 instead of 270**, and with the venue off no 270 reserve is held, so purchases may go down to 100 P. This contradicts the 02:30 "no cash_floor change" decision. **Confirm it.**
+- **#162** is merged. A frozen or hung Postgres can still stall every live writer for more than 45 s per tick. Open #141 and #137 must port their ledger methods to #162's `PgLedger` and `FallbackLedger`.
+- **#152** needs a rebase that keeps both #71's venue fields and #152's flag rules in `guardrails.py`. Otherwise every agent refuses to start.
