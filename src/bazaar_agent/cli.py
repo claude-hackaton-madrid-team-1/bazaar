@@ -141,6 +141,7 @@ def timeline_cmd(
 
     now = datetime.fromisoformat(at) if at else datetime.now(ZoneInfo("Europe/Madrid"))
     clock_doc: Any
+    sched_doc: Any
     if from_api:
         api = public_client(load_settings())
         clock_doc, sched_doc, source = api.clock(), api.schedule(), "api"
