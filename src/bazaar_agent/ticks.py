@@ -26,6 +26,7 @@ MIN_SLEEP_S = 0.05
 # so not every loop spends the key's burst of 20 at the same instant. Unset or 0: today's timing.
 TICK_OFFSET_ENV = "BAZAAR_TICK_OFFSET_S"
 MAX_OFFSET_SHARE = 0.4  # never wake later than 40 % into a tick: a 15 s tick keeps 9 s for the work
+MAX_OFFSET_S = 10.0  # and never later than 10 s, whatever the pace (a 60 s tick still starts its work early)
 
 
 class Limits(BaseModel):
@@ -117,7 +118,7 @@ def _until_opening(clock: Clock, now: float) -> float:
 def seconds_until_next_tick(clock: Clock, offset_s: float = 0.0, *, now: float | None = None) -> float:
     """How long to sleep so the next read lands just after the next tick (or the next poll).
 
-    `offset_s` delays the wake-up after a tick further (the stagger), never past 40 % of the tick.
+    `offset_s` delays the wake-up after a tick further (the stagger), never past 40 % of the tick nor 10 s.
     `now` (epoch seconds, default the wall clock) only matters while the doors are closed."""
     if clock.doors != "open":
         try:
@@ -126,7 +127,7 @@ def seconds_until_next_tick(clock: Clock, offset_s: float = 0.0, *, now: float |
             return CLOSED_POLL_MAX_S
     if clock.paused:
         return PAUSED_POLL_S
-    offset = min(max(0.0, offset_s), clock.tick_seconds * MAX_OFFSET_SHARE)
+    offset = min(max(0.0, offset_s), MAX_OFFSET_S, clock.tick_seconds * MAX_OFFSET_SHARE)
     return max(MIN_SLEEP_S, clock.next_tick_in) + AFTER_TICK_S + offset
 
 

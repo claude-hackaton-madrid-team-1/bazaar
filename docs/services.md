@@ -21,6 +21,31 @@ at once (`railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`; each s
 then `railway variable delete BAZAAR_LIVE --service bazaar-taker` (it redeploys in dry run). Neither
 withdraws our open offers: `bazaar sell cancel` does (README, "Production on Railway").
 
+## One key, staggered ticks (`BAZAAR_TICK_OFFSET_S`)
+
+All our processes share the key's 5 req/s (bursts of 20). On Sat ticks 646-650 the taker, maker, duels and
+MCP loops all read at the tick boundary and the server answered `429 rate_limited` (`tick 647 maker: read
+refused rate_limited … nothing sent`; `tick 646: /api/duels refused rate_limited`, a lost duel tick). Each
+tick loop (`ticks.run_per_tick`) therefore wakes `BAZAAR_TICK_OFFSET_S` seconds after each tick: a float,
+default 0 (unset = everyone at the boundary), capped at 10 s and at 40 % of the tick so a 15 s Sunday tick
+still keeps 9 s for its work. Not a number ≥ 0: the process stops at start and says so.
+
+| Service | Offset (s) | Order |
+|---|---|---|
+| `bazaar-duels` | 0 | first: duels have deadlines |
+| `bazaar-taker` | 2.5 | after the duels' reads |
+| `bazaar-maker` | 5 | never accepts |
+| `bazaar-mcp` | 7.5 | request-driven tools; inert unless it runs a tick loop |
+
+Set by hand (`railway variable set BAZAAR_TICK_OFFSET_S --service <svc>`), with the coordinator; the variable is
+declared `preserve()` in `.railway/railway.py`, so an apply keeps it. `bazaar budget --stagger` models the burst
+with these offsets (`rate_budget.PROPOSED_STAGGER`).
+
+A `429` on `duel run`'s `/api/duels` read is sent once more after the server's wait (`retry_after` in the body,
+else 1.2 s), only while at least 8 s of the tick's action budget is left after that wait; a second refusal loses
+the tick as before. No other read re-sends a 429 (`sdk.TeamBazaar`). **Laptop CLI commands use the same key: run
+one at a time.**
+
 ## Taker and maker: HTTP
 
 Both services serve the same three routes (CORS `*`, `GET` only).

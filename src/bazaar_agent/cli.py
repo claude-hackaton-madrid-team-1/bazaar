@@ -40,7 +40,7 @@ from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.runtime import cli as runtime_cli
-from bazaar_agent.sdk import BazaarError, public_client, team_client
+from bazaar_agent.sdk import BazaarError, public_client, read_once_more_after_429, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
@@ -1408,8 +1408,14 @@ def duel_run(
         decisions.begin_tick(c.tick)
         book.begin_tick(c.tick, c.round, us)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
-        try:
-            data = client.duels()
+        try:  # a 429 at the tick boundary would cost every duel its move: one re-read if the tick has room
+            data = read_once_more_after_429(
+                client.duels,
+                lambda: send_by - time.monotonic(),
+                on_retry=lambda e, wait: console.print(
+                    f"tick {c.tick}: /api/duels refused {e.code}, re-read in {wait:g} s"
+                ),
+            )
         except BazaarError as e:
             console.print(f"tick {c.tick}: /api/duels refused {e.code}")
             duel_traces.read_failed(c.tick, e)
