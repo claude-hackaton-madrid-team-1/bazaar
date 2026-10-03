@@ -165,7 +165,7 @@ def simulator() -> object:
 
 LIVE_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
 LIVE_PORT = "8080"
-LIVE_NODE = "22.22.0"  # node runs server/*.ts by stripping types: Node 22.18 or newer (.nvmrc in that repo)
+LIVE_NODE = "22.23.3"  # node runs server/*.ts by stripping types (>= 22.18); same pin as .nvmrc there
 
 
 def live_show() -> object:
