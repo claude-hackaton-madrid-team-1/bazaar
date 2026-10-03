@@ -461,11 +461,7 @@ def dealer_buy(
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(move: Any, c: Clock) -> bool:
-        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
-            return False
-        tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
-        return True
+        return _reserve_accept(ledger, rules, item, move, c)
 
     def on_deal(price: int, tick: int, t_hours: float) -> None:
         ledger.record("spend", tick, t_hours, price, item)
@@ -1294,10 +1290,26 @@ def _team_to(to: str | None) -> str | None:
     return to
 
 
-def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> bool:
+    """Claim the team's accept slot for a dealer accept. False holds this tick (the dealer thread stays open
+    and tries again): the slot is taken, or the shared ledger cannot answer (fail closed, never a walk)."""
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+    try:
+        if not ledger.reserve_accept(c.tick, c.t_hours, int(move.price or 0), item, limit):
+            return False
+    except LedgerUnavailable as e:
+        console.print(f"[yellow]tick {c.tick}: no accept this tick (fail closed): {e}[/yellow]")
+        return False
+    tm.event("ledger", {"kind": "accept", "tick": c.tick, "price": move.price, "item": item})
+    return True
+
+
+def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any, Any, Any]:
     """(rules, ledger, guardrail context, commitments) for a write from the CLI: /me, the shared ledger, our
     open offers and, with `max_counterparty_share` on, our team-to-team volume from the whole feed history
-    (`_history`: the shared DB first, as the maker and the taker read it)."""
+    (`_history`: the shared DB first, as the maker and the taker read it; the live window too when `live`)."""
     from bazaar_agent import guardrails as gr
 
     rules = _rules().rules
@@ -1312,7 +1324,7 @@ def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
         us = str(me.get("id") or "")
         try:
             book = intel.book_values(public_client(load_settings()).catalog())
-            settled = intel.settled_volume(_history(None, live=True), us, book)
+            settled = intel.settled_volume(_history(None, live=live), us, book)
         except BazaarError as e:
             _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
         ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
@@ -1322,7 +1334,7 @@ def _sell_context(client: Any, me: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
 def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
     from bazaar_agent.agents.seller import post
 
-    rules, ledger, ctx, commitments = _sell_context(client, me)
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1457,7 +1469,7 @@ def sell_swap(
         want_cash,
         max(give_cash + want_cash, round(book.get(str(asset.get("ref")), 0.0) + book.get(want, 0.0))),
     )
-    rules, ledger, ctx, commitments = _sell_context(client, me)
+    rules, ledger, ctx, commitments = _sell_context(client, me, live)
     try:
         out = post_swap(
             client, swap, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments

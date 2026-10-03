@@ -408,3 +408,26 @@ def test_a_live_hand_post_is_booked_hands_off(monkeypatch, tmp_path, cli_env):  
     assert out.exit_code == 0, out.output
     ledger = Ledger(tmp_path / "ledger.jsonl")
     assert len(ledger.hands_off_ids()) == 1 and "booked hands-off" in out.output
+
+
+def test_a_dealer_accept_holds_the_tick_when_the_shared_ledger_cannot_answer():
+    from types import SimpleNamespace
+
+    from bazaar_agent import cli
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    class Down:
+        def reserve_accept(self, *a):
+            raise LedgerUnavailable("ledger write failed (OperationalError)")
+
+    class Full:
+        def reserve_accept(self, *a):
+            return False
+
+    move = SimpleNamespace(price=20)
+    assert cli._reserve_accept(Down(), Guardrails(), "LAV-08", move, clock()) is False  # hold, never a traceback
+    assert cli._reserve_accept(Full(), Guardrails(), "LAV-08", move, clock()) is False
+    from bazaar_agent.guardrails import Ledger
+
+    ok = Ledger(Path(tempfile.mkdtemp()) / "ledger.jsonl")
+    assert cli._reserve_accept(ok, Guardrails(), "LAV-08", move, clock()) is True and ok.accept_items(100) == ["LAV-08"]
