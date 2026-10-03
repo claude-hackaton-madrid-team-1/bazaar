@@ -161,6 +161,8 @@ uv run bazaar curves --dealer abuela      # Abuela's concession curve from every
 uv run bazaar teams                       # the competition: flow, spend, inferred ×1.6 set (us apart)
 uv run bazaar book                        # El Rastro order book, pseudonyms resolved to teams (ours apart)
 uv run bazaar tape                        # every settlement with price
+uv run bazaar supply                      # who holds each card, how many complete pages can exist (--save: Postgres)
+uv run bazaar supply scan --rate 1        # GET /api/cards/{id} for every asset (doors closed: it shares the 5 req/s)
 uv run bazaar status                      # our cash, level, score, cards (needs BAZAAR_KEY)
 uv run bazaar threads                     # our negotiation threads; `bazaar thread <id>` for one
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
@@ -353,6 +355,15 @@ Guardrail verdicts count our open offers (`/api/me/offers`): cash they promise, 
 assets already listed. Packs are scarce: at most `max_packs_per_game_hour` (GUARDRAILS.md) and each
 dealer's own quota, so a pack move is kept only when Jev (`questions/packs.json`) says the slot is
 worth spending now; the header shows the slots used and left this game hour.
+With `pack_ev_album` the pack EV is card by card: each card still mintable in a released set, at what the
+next copy is worth to us plus its page-bonus share when our album lacks it (off for buys on Saturday:
+B9 #109 says buy no Abuela packs). A sealed pack we hold (the
+09:00 grant) is opened by the taker, one per tick, only with `open_sealed_packs` (GUARDRAILS.md) and only
+when its cards are worth more to us than any price a team paid for one sealed (`pack_open.choose`).
+`uv run bazaar supply` is the supply map (N14b): the 270 starting assets (team k was dealt ids
+15k−14…15k), the feed's settlements, listings and `pack.opened`, and the catalog's minted counts; the
+agents read the stored scan back (`supply_assets`, else `.local/supply/scan.jsonl`) to name the holders of
+a rare and, with `supply_scarcity`, to count only the copies a non-chasing team could sell us.
 
 - `uv run bazaar sell list <asset_id|ref> --price N` lists a card for cash, never below its `your_value`.
 - `uv run bazaar sell bid <ref> --price N` bids cash for any copy (how we buy rares only teams hold).
@@ -1286,13 +1297,13 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] finding — our model priced buys above the official value; every buy is now capped at /api/me/value
+- [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+- [2026-10-03] finding — bad-faith flags: precision over recall, and only to dealers a human opted in
+- [2026-10-03] gotcha — `injection_flags` missed zero-width splits, combining marks, fillers and homoglyphs
+- [2026-10-03] finding — the flag rule fired 0 times on Friday's dealers; Jev says flags stay off until L4 shows
+- [2026-10-03] finding — a card scan places every scarce rare: 538 assets, no refusal at 2 req/s (05:42)
+- [2026-10-03] finding — the feed alone places 287 assets; LAT-10 is the scarcest rare (2 copies, tick 159)
 - [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
-- [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
-- [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
-- [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
-- [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
-- [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
-- [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
 
 <!-- BAZAAR:STATUS:END -->
 

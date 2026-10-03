@@ -35,6 +35,7 @@ from bazaar_agent.guardrails import (
     parse_md_config,
 )
 from bazaar_agent.guardrails import validated as validated_model
+from bazaar_agent.supply import SupplyMap, supply_map
 
 STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
 BASIC_PACK = "sobre_barrio"  # the pack `pack_price_estimate` prices (STRATEGY.md)
@@ -58,8 +59,13 @@ class StrategyParams(BaseModel):
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
     dealer_mints_unminted: bool = False  # optional line: a dealer sells (mints) a card nobody holds yet
+    pack_ev_album: bool = False  # optional line: pack EV counts the page-bonus share of each card we lack
+    supply_scarcity: bool = False  # optional line: scarcity counts the copies other teams could sell us
     # The one exception to "all required": 0 keeps today's behaviour for every caller that predates it.
     chaser_min_p: float = Field(default=0.0, ge=0, le=1)
+    # Optional too: 0 keeps today's sell_to_need (a spare below the buyer's need, or of a set nobody chases, is
+    # not offered); N offers up to N of them at our value + `sell_min_surplus` (sell_spares, STRATEGY.md).
+    sell_spare_slots: int = Field(default=0, ge=0)
 
 
 @dataclass(frozen=True)
@@ -122,6 +128,7 @@ class Market:
     holders: dict[str, tuple[str, ...]]
     chasers: dict[str, tuple[str, ...]]
     tick: int | None
+    supply: SupplyMap | None = None  # who holds what (supply.py): starting hands, the feed, packs opened
 
 
 def is_team(party: str | None) -> bool:
@@ -176,9 +183,23 @@ def likely_holders(events: Iterable[intel.Event], us: str) -> dict[str, tuple[st
     }
 
 
+def merged_holders(feed: dict[str, tuple[str, ...]], supply: SupplyMap, us: str) -> dict[str, tuple[str, ...]]:
+    """The feed's likely holders plus the teams the supply map places a copy with (starting hands too)."""
+    refs = set(feed) | {ref for ref, c in supply.cards.items() if c.holders}
+    return {
+        ref: tuple(sorted({*feed.get(ref, ()), *(t for t in supply.sellers(ref) if is_team(t) and t != us)}))
+        for ref in refs
+    }
+
+
 def build_market(
-    me: dict[str, Any], catalog: dict[str, Any], events: Sequence[intel.Event], dealers: Iterable[dict[str, Any]]
+    me: dict[str, Any],
+    catalog: dict[str, Any],
+    events: Sequence[intel.Event],
+    dealers: Iterable[dict[str, Any]],
+    scan: Sequence[dict[str, Any]] = (),
 ) -> Market:
+    """`scan`: rows of a card scan (`GET /api/cards/{id}`, `bazaar supply scan`), when one is stored."""
     us = str(me.get("id") or "")
     cards = {
         str(c["id"]): Card(
@@ -202,6 +223,7 @@ def build_market(
         if f.top_set and is_team(f.team) and f.team != us:
             chasers[f.top_set].append(f.team)
     prints = tuple(p for p in intel.tape(events) if p.items == 1 and is_team(p.buyer))
+    supply = supply_map(catalog, me, events, scan)
     return Market(
         us=us,
         cash=int(me.get("cash") or 0),
@@ -217,9 +239,10 @@ def build_market(
         expected_book={str(p["id"]): float(p.get("expected_book") or 0) for p in catalog.get("packs") or []},
         rarity_order=tuple(sorted(rarities, key=lambda r: float(rarities[r].get("book") or 0))),
         prints=prints,
-        holders=likely_holders(events, us),
+        holders=merged_holders(likely_holders(events, us), supply, us),
         chasers={k: tuple(sorted(v)) for k, v in chasers.items()},
         tick=me.get("tick"),
+        supply=supply,
     )
 
 
@@ -341,9 +364,21 @@ class Move:
     ladder: tuple[int, int, int] | None = None  # dealer buys and packs: (start, max, step) of the bid ladder
 
 
-def urgency_of(card: Card, chasers: int, params: StrategyParams) -> float:
-    """Mean of scarcity (1 at or below scarce_minted_max copies) and competitor demand."""
-    scarcity = min(1.0, params.scarce_minted_max / card.minted) if card.minted else 1.0
+def for_sale(m: Market, card: Card) -> int:
+    """Copies another team could sell us: minted, minus ours, minus those we place with the teams that
+    chase the card's set (they keep them). Without a supply map: every copy we do not hold."""
+    ours = m.held.get(card.ref, 0)
+    if m.supply is None or card.ref not in m.supply.cards:
+        return max(0, card.minted - ours)
+    kept = sum(n for team, n in m.supply.cards[card.ref].holders if team in m.chasers.get(card.set_code, ()))
+    return max(0, card.minted - ours - kept)
+
+
+def urgency_of(card: Card, chasers: int, params: StrategyParams, available: int | None = None) -> float:
+    """Mean of scarcity (1 at or below scarce_minted_max copies) and competitor demand. `available`
+    (supply_scarcity): the copies other teams could sell us, instead of every copy minted."""
+    copies = card.minted if available is None else available
+    scarcity = min(1.0, params.scarce_minted_max / copies) if copies else 1.0
     demand = chasers / (chasers + 1)
     return round((scarcity + demand) / 2, 3)
 
@@ -471,12 +506,14 @@ def buy_case(m: Market, card: Card, params: StrategyParams) -> BuyCase:
     share = bonus_shares(m, card.set_code).get(card.ref, 0.0) * params.page_bonus_weight
     value = card.book * aff + share
     chasers = m.chasers.get(card.set_code, ())
-    note = f"{card.minted}/{card.print_run} minted" + (", chased by " + ", ".join(chasers) if chasers else "")
+    available = for_sale(m, card) if params.supply_scarcity else None
+    note = f"{card.minted}/{card.print_run} minted" + (f", {available} for sale" if available is not None else "")
+    note += ", chased by " + ", ".join(chasers) if chasers else ""
     return BuyCase(
         card,
         supply_of(m, card, params),
         value,
-        urgency_of(card, len(chasers), params),
+        urgency_of(card, len(chasers), params, available),
         f"{card.book:g}×{aff:g} + bonus share {share:.1f} = {value:.1f}",
         note,
         chasers,
@@ -600,36 +637,61 @@ def _priced(asset: dict[str, Any]) -> bool:
     return asset.get("kind") == "card" and isinstance(asset.get("id"), int) and isinstance(value, int | float)
 
 
+SPARE_MAX_AFFINITY = 1.0  # sell_spares: only sets we hold no boost in (a duplicate of any set is spare too)
+
+
+def _spare(m: Market, card: Card) -> bool:
+    """A copy sell_spares may offer: a duplicate, or a card of a set whose affinity to us is no boost (at most
+    SPARE_MAX_AFFINITY). Our only copy of a page card of a boosted set is kept for the album."""
+    return m.held.get(card.ref, 0) > 1 or m.affinity.get(card.set_code, 1.0) <= SPARE_MAX_AFFINITY
+
+
 def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
     (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
-    of a new page (`protect_page_sets`) is never offered."""
+    of a new page (`protect_page_sets`) is never offered. sell_spares (`sell_spare_slots` > 0): up to that
+    many more spare copies (`_spare`: a duplicate, or a set we hold no boost in), whose buyer's need and tape
+    sit below what we lose + `sell_min_surplus` or whose set nobody is seen chasing, are offered to anyone
+    at what we lose + `sell_min_surplus` (ranked like the rest)."""
     copies: dict[str, dict[str, Any]] = {}
     for a in filter(_priced, assets):
         ref = str(a.get("ref"))
         if ref not in copies or float(a["your_value"]) <= float(copies[ref]["your_value"]):
             copies[ref] = a
     chaser_aff = max(m.affinity.values(), default=1.0)  # every team has exactly one top-affinity set
-    moves = []
+    moves: list[Move] = []
+    spares: list[Move] = []
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or not buyers or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+            continue
+        if not buyers and not params.sell_spare_slots:
             continue
         stake = bonus_at_stake(m, card, params)
         ours = float(asset["your_value"]) + stake
         need = params.sell_need_share * card.book * chaser_aff
         tape = card_estimate(m, card, params)
         ask = math.ceil(max(ours * rules.sell_min_value_ratio, need, tape.price))
-        if ask - ours < params.sell_min_surplus:
+        spare = not buyers or ask - ours < params.sell_min_surplus
+        if spare and not (params.sell_spare_slots and _spare(m, card)):
             continue
+        if spare:  # sell_spares: listed for anyone at what we lose + the minimum surplus, never below it
+            ask = math.ceil(max(ask, ours + params.sell_min_surplus) - 1e-9)
         urgency = urgency_of(card, len(buyers), params)
         dup = ", duplicate" if m.held.get(ref, 0) > 1 else ""
         bonus = f" + page bonus {stake:.1f}" if stake else ""
-        moves.append(
+        chase = (
+            f"{', '.join(buyers)} chase {card.set_code}: "
+            f"{params.sell_need_share:g}×{card.book:g}×{chaser_aff:g} = {need:.0f}"
+            if buyers
+            else f"nobody seen chasing {card.set_code}"
+        )
+        floor = f"; spare: ours + {params.sell_min_surplus:g}" if spare else ""
+        (spares if spare else moves).append(
             Move(
                 "sell",
-                "sell_to_need",
+                "sell_spares" if spare else "sell_to_need",
                 ref,
                 card.rarity,
                 round(ours, 1),
@@ -642,13 +704,12 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
                 "sell",
                 ask,
                 f"ours {float(asset['your_value']):g}{bonus} ({card.set_code} ×{m.affinity.get(card.set_code, 1.0):g}"
-                f"{dup}); {', '.join(buyers)} chase {card.set_code}: "
-                f"{params.sell_need_share:g}×{card.book:g}×{chaser_aff:g} = {need:.0f}; {tape.basis} {tape.price:g}",
+                f"{dup}); {chase}; {tape.basis} {tape.price:g}{floor}",
                 list_command(int(asset["id"]), ask),
                 asset_id=int(asset["id"]),
             )
         )
-    return moves
+    return moves + rank(spares, m, params)[: params.sell_spare_slots]
 
 
 def rank(moves: Iterable[Move], m: Market, params: StrategyParams) -> list[Move]:
@@ -680,12 +741,57 @@ def rarity_value(m: Market, rarity: str) -> float:
         rarity = order[order.index(rarity) - 1]
 
 
+def pack_cards(m: Market, slots: Sequence[dict[str, float]]) -> dict[str, float]:
+    """P(each card is in the pack), from Marius's B9 (#109): every slot draws a rarity by its odds, then a
+    released card of that rarity uniformly, skipping printed-out cards; when every card of a rarity is
+    printed out, the slot gives the next rarity down (RULES.md). Probabilities add over slots."""
+    order = list(m.rarity_order)  # cheapest first
+    out: dict[str, float] = defaultdict(float)
+    for slot in slots:
+        for rarity, odds in slot.items():
+            r: str | None = rarity
+            while r is not None:
+                pool = [
+                    c for c in m.cards.values() if c.set_code in m.released and c.rarity == r and c.minted < c.print_run
+                ]
+                if pool:
+                    for c in pool:
+                        out[c.ref] += float(odds) / len(pool)
+                    break
+                r = order[order.index(r) - 1] if r in order and order.index(r) > 0 else None
+    return dict(out)
+
+
+def keep_value(m: Market, card: Card, params: StrategyParams) -> float:
+    """What the next copy is worth to us (B9): its copy value, plus, for a page card we lack, the share of
+    the page bonus that copy would carry (what selling it again would give up: `bonus_at_stake`)."""
+    held = m.held.get(card.ref, 0)
+    value = copy_value(m, card, held)
+    if card.page and held == 0:
+        value += bonus_at_stake(replace(m, held={**m.held, card.ref: 1}), card, params)
+    return value
+
+
+def pack_ev(m: Market, slots: Sequence[dict[str, float]], params: StrategyParams) -> tuple[float, str]:
+    """A pack's expected value to us and how it was computed. `pack_ev_album`: card by card, with the
+    page-bonus share of every card our album lacks (`/api/me`) and only cards still mintable (supply);
+    else the mean copy value per rarity."""
+    if params.pack_ev_album:
+        probs = pack_cards(m, slots)
+        ev = sum(p * keep_value(m, m.cards[ref], params) for ref, p in probs.items())
+        need = sum(p for ref, p in probs.items() if m.held.get(ref, 0) == 0 and m.cards[ref].page)
+        sets = sorted({m.cards[ref].set_code for ref in probs})
+        return ev, f"{len(probs)} pullable cards of {'/'.join(sets)}, {need:.2f} of {len(slots)} slots new to our album"
+    means = {r: rarity_value(m, r) for slot in slots for r in slot}
+    ev = sum(odds * means[r] for slot in slots for r, odds in slot.items())
+    return ev, " + ".join("/".join(f"{odds:g} {r} {means[r]:.1f}" for r, odds in slot.items()) for slot in slots)
+
+
 def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Move]:
     """pack_value: expected value to us of each pack vs its learned price; a command when a dealer sells it."""
     moves = []
     for pack, slots in m.packs.items():
-        means = {r: rarity_value(m, r) for slot in slots for r in slot}
-        ev = sum(odds * means[r] for slot in slots for r, odds in slot.items())
+        ev, slot_text = pack_ev(m, slots, params)
         quote = next((q for q in sorted(m.quotes, key=lambda q: q.list_price) if q.item == pack), None)
         fills = [float(p.price) for p in dealer_fills(m, quote.dealer) if p.ref == pack] if quote else []
         if pack == BASIC_PACK:
@@ -697,7 +803,6 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
         plan = bid_range(fills, est.price, ev, rules.max_price_for("pack"), params.min_buy_surplus, opening_ratio(m))
         capped = plan is not None and plan[1] < est.price
         actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
-        slot_text = " + ".join("/".join(f"{odds:g} {r} {means[r]:.1f}" for r, odds in slot.items()) for slot in slots)
         moves.append(
             Move(
                 "pack",
@@ -784,8 +889,9 @@ def build_playbook(
     dealers: Iterable[dict[str, Any]],
     params: StrategyParams,
     rules: Guardrails,
+    scan: Sequence[dict[str, Any]] = (),
 ) -> Playbook:
-    m = build_market(me, catalog, events, dealers)
+    m = build_market(me, catalog, events, dealers, scan)
     if params.chaser_min_p > 0:
         m = replace(m, chasers=map_chasers(me, catalog, events, params.chaser_min_p, m.chasers))
     buys, skipped = buy_moves(m, params, rules)

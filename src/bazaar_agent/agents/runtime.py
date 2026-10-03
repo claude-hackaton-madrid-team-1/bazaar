@@ -23,6 +23,7 @@ from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -115,9 +116,11 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        scans: ScanStore | None = None,
         archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self.scans = scans  # the stored card scan (supply map), when there is one
         self._archive, self._archive_failed = archive, False
         self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
@@ -173,6 +176,10 @@ class MarketFeed:
             self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
 
+    def scan(self, tick: int) -> tuple[dict[str, Any], ...]:
+        """The stored card scan (`bazaar supply scan`) for the supply map; empty when none is stored."""
+        return tuple(self.scans.rows(tick)) if self.scans is not None else ()
+
     def archive_pending(self) -> None:
         """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
         archive never delays one (bounded by a statement timeout; a failure only logs)."""
@@ -200,7 +207,11 @@ class MarketFeed:
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
-    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, dict) else None
+    return (
+        frozenset(str(p.get("set")) for p in pages if isinstance(p, dict)) if isinstance(pages, list) else frozenset()
+    )
 
 
 class PageWatch:
@@ -238,6 +249,7 @@ class Snapshot:
     venues: list[Venue]
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
+    scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
 
     @property
     def us(self) -> str:
@@ -274,6 +286,7 @@ def read_snapshot(
         venues=venues_from(public.venues(), clock.tick),
         events=feed.events(),
         holdings=read,
+        scan=feed.scan(clock.tick),
     )
 
 

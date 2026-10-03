@@ -1,8 +1,9 @@
 """The taker: board asks below value (fee included), the team accept quota, the dealer desk, tick budget."""
 
+from dataclasses import replace
+
 from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation
 from bazaar_agent.agents.desk import Conversation, DeskMove, deal_price, meet_the_ask, openings, plan_conversation
-from bazaar_agent.agents.inspector import FlagBook
 from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
@@ -600,23 +601,42 @@ def test_a_clean_dealer_accept_carries_the_inspection_in_its_decision_row(tmp_pa
     }
 
 
-def test_a_dealer_trickster_is_never_accepted_and_only_logged_as_would_flag(tmp_path):
+def trickster_tick(root, *, allow, live=True):
+    """A taker whose Abuela (made untrusted) slips LAV-01 under the LAV-08 the words name, one tick in."""
     trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
     trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}  # a common, for the LAV-08 we asked
     message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
-    for allow in (False, True):
-        team = FakeTeam()
-        root = tmp_path / str(allow)
-        root.mkdir()
-        config = TakerConfig(max_dealer_threads=3)
-        t, lines, _ = taker(root, team, FakePublic(), live=True, config=config, allow_flags=allow)
-        t.flags = FlagBook(trusted=frozenset())  # the fake trickster plays Abuela, a trusted dealer by default
-        t.on_tick(clock())
-        team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
-        t.on_tick(at(team, TICK + 1))
-        assert ("accept", 802) not in team.sent and not [s for s in team.sent if s[0] == "flag"]
-        (would,) = [line for line in lines if "would flag message 9001" in line]
-        assert ("allow_flags" in would) is (not allow) and ("dry run" in would) is allow
+    team = FakeTeam()
+    root.mkdir(exist_ok=True)
+    config = TakerConfig(max_dealer_threads=3)
+    t, lines, _ = taker(root, team, FakePublic(), live=live, config=config, allow_flags=allow)
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))  # the fake trickster plays Abuela
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))
+    return team, lines, [r for r in rows(root) if r.get("kind") == "flag"]
+
+
+def test_a_dealer_trickster_is_never_accepted_and_with_flags_off_is_only_a_would_flag_row(tmp_path):
+    team, lines, (row,) = trickster_tick(tmp_path, allow=False)
+    assert ("accept", 802) not in team.sent and not [s for s in team.sent if s[0] == "flag"]
+    assert any("would flag message 9001" in line and "allow_flags" in line for line in lines)
+    assert (row["status"], row["chosen"], row["guardrail"]) == ("rejected", False, "denied: allow_flags = false")
+    assert row["inputs"]["bound"] == ["LAV-01"] and row["inputs"]["asked"] == "LAV-08"
+    assert row["inputs"]["structure"]["give"] == {"types": ["card:LAV-01"]}
+    assert any("the words name LAV-08" in f for f in row["inputs"]["findings"])
+    assert not [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+
+
+def test_with_flags_on_a_live_taker_sends_one_flag_proven_by_its_row_and_never_again_after_a_restart(tmp_path):
+    team, lines, (row,) = trickster_tick(tmp_path, allow=True)
+    (flag,) = [s for s in team.sent if s[0] == "flag"]
+    assert flag[1] == 9001 and "instead of exactly [card:LAV-08]" in flag[2] and ("accept", 802) not in team.sent
+    assert (row["status"], row["chosen"]) == ("approved", True)
+    (execution,) = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+    assert execution["request"]["message_id"] == 9001
+    again, _, _ = trickster_tick(tmp_path, allow=True)  # a new process on the same data dir
+    assert not [s for s in again.sent if s[0] == "flag"]  # flags.jsonl remembers message 9001
 
 
 def test_the_gate_refuses_a_dealer_trick_even_if_the_desks_own_check_is_bypassed(tmp_path, monkeypatch):
@@ -667,3 +687,65 @@ def test_a_malformed_dealer_offer_is_refused_and_never_costs_the_desk_its_tick(t
     assert any(
         f"tick {TICK + 1} taker:" in line and "accept candidate" in line for line in lines
     )  # tick ran to the end
+
+
+def test_a_rate_limited_flag_keeps_one_decision_row_and_is_tried_again_on_the_next_read(tmp_path):
+    """#152 r2: a 429 was not processed, so the next read tries again, on the SAME decision row."""
+    from bazaar_agent.sdk import BazaarError
+
+    class Limited(FakeTeam):
+        def flag(self, message_id, reason=""):
+            if not [s for s in self.sent if s[0] == "flag_429"]:
+                self.sent.append(("flag_429", message_id))
+                raise BazaarError("rate_limited", "slow down", 429)
+            return super().flag(message_id, reason)
+
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = Limited()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=True)
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))  # 429
+    t.on_tick(at(team, TICK + 2))  # tried again: sent
+    assert [s[:2] for s in team.sent if s[0].startswith("flag")] == [("flag_429", 9001), ("flag", 9001)]
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "flag"]  # one row for the message, not one per try
+    flags = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+    assert [e["error_code"] for e in flags] == ["rate_limited", None] and {e["decision_id"] for e in flags} == {
+        row["id"]
+    }
+
+
+def test_a_flag_denied_first_and_sent_later_is_booked_on_a_new_approved_row(tmp_path, monkeypatch):
+    """#152 review r3 P3: the guard denies a flag (a kill switch went on mid-tick), then allows it: the send
+    is booked on a new approved row, never on the denied one."""
+    from bazaar_agent.agents import taker as taker_module
+    from bazaar_agent.guardrails import Verdict
+
+    real, denials = taker_module.check, []
+
+    def check_once_denied(action, ctx, rules):
+        if action.kind == "flag" and not denials:
+            denials.append(action)
+            return Verdict(False, ("kill switch: .local/PAUSE exists",))
+        return real(action, ctx, rules)
+
+    monkeypatch.setattr(taker_module, "check", check_once_denied)
+    trick = {"id": 802, "maker": "abuela", "status": "open", "final": True}
+    trick |= {"give": {"types": ["card:LAV-01"]}, "want": {"cash": 21}}
+    message = {"message": 9001, "sender": "abuela", "text": "LAV-08 para ti, 21 P", "offer": trick}
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3), allow_flags=True)
+    t.flags = replace(t.flags, trusted=frozenset(), opted_in=frozenset({"abuela"}))
+    t.on_tick(clock())
+    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [message], "standing_offers": [trick]}
+    t.on_tick(at(team, TICK + 1))  # denied: decided, not sent
+    t.on_tick(at(team, TICK + 2))  # allowed: sent
+    assert [s[:2] for s in team.sent if s[0] == "flag"] == [("flag", 9001)]
+    flag_rows = [r for r in rows(tmp_path) if r.get("kind") == "flag"]
+    assert [(r["status"], r["chosen"]) for r in flag_rows] == [("rejected", False), ("approved", True)]
+    assert "kill switch" in flag_rows[0]["guardrail"]
+    (execution,) = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
+    assert execution["decision_id"] == flag_rows[1]["id"]  # booked on the approved row

@@ -74,3 +74,19 @@ Full reference in `docs/briefing.md` (PR #25).
   - Four rival venues opened before ours.
   - No injection attempts in 3,436 public events.
   - #58 (open) gives us evidence of outcomes per decision: Friday duels mean 0.279 (20 scored), dealer mean 0.464, ladder L1 0.733 / L2 0, with Jev calibration per question.
+
+## Draft scope (2026-10-03, coordinator brief — writing only)
+Docs only, in `docs/pitch/`: `outline.md` (5-7 min, slide by slide, rehearsal Sunday 12:15 Madrid), `script.md` (speaker notes, ES + EN),
+`claims.md` (every claim tagged REAL / SIMULATED / PENDING / UNVERIFIED), `demo.md` (90 s live path + backup recordings),
+`evidence.md` (what to capture before scores freeze, with commands). No source code, no Railway, no merges, no new builder work.
+Reuses Marius's kit (`story.md`, `qa.md`, `charts/`, the old demo moved to `demo-inventory.md`; stacked on PR #154),
+`docs/pitch-notes.md`, the architecture artifact, README, `.ai/memory.md`, `bazaar evals`, Jev decision logs, `docs/observability.md` (PR #139).
+One story: language negotiates, verifiable agreements execute, outcomes teach, Jev decides when to act. Three proofs: a real deal,
+a deceptive offer stopped, a measured improvement. Omar presents, Marius backs up.
+
+### Plan (steps, in order)
+1. Research the evidence in parallel (proof 2 controls, proof 3 measurements + learner, capture commands) — sub-agents.
+2. Write `claims.md` first (the ledger), then `outline.md` and `script.md` strictly from it.
+3. Write `demo.md` and `evidence.md` from commands verified against the code.
+4. Review: pr-reviewer (fresh context) + a claims audit (every number in script/outline appears in `claims.md` with a tag).
+5. Saturday 12:00 first reviewable draft; after Saturday's evidence, replace every PENDING row and re-check Sunday morning.

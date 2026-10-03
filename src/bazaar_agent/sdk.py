@@ -137,11 +137,12 @@ def _pace(value: object) -> float | None:
     return float(value) if 1 <= value <= 3600 else None
 
 
-def team_client(settings: Settings, *, track: bool = True) -> Bazaar:
+def team_client(settings: Settings, *, track: bool = True, retries: int = TEAM_READ_RETRIES) -> Bazaar:
     """wait_on_tick=False: our tick loop owns timing, so a refused send never blocks a process. `track`:
     every send bumps the shared holdings epoch (`holdings.process_tracker`), for every process alike.
-    `TeamBazaar`: no re-send of a refused call or a write, 4 s per attempt."""
+    `TeamBazaar`: no re-send of a refused call or a write, 4 s per attempt. `retries`: the GET re-sends after a
+    network error (`TeamBazaar.read_retries`); 0 for loops that must stop on the first failure (the card scan)."""
     from bazaar_agent import holdings
 
     hook = holdings.process_tracker(settings) if track else None
-    return TeamBazaar(settings.bazaar_url, settings.require_team_key(), on_write=hook)
+    return TeamBazaar(settings.bazaar_url, settings.require_team_key(), on_write=hook, read_retries=retries)
