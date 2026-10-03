@@ -481,3 +481,8 @@ and the Railway taker cannot see that pause. The taker now owns a thread only wh
 (`dealer_opened` rows carry the thread id); it adopts those on sight, because a fresh bid's "Deal!" can land
 a tick after the new process starts. A `process_started` row marks the first process that writes
 `dealer_closed`: earlier threads are never booked again (their process booked them silently).
+
+### [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
+`DecisionLog` writes `inputs` through `telemetry.scrub`, which redacts anything that looks like an internal host
+name (`Omars-MacBook-Pro.local` → `[redacted]`). An identity meant to be compared later must be a token the
+scrubber keeps: `decisions.writer()` stores a short hash (`w` + 10 hex) of `RAILWAY_SERVICE_ID` or the host name.

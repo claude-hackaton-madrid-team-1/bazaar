@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
-from collections.abc import Callable
+import os
+import socket
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -78,6 +80,11 @@ class DecisionLog:
     def begin_tick(self, tick: int) -> None:
         """While Postgres is down, try it again at most once per tick (a connect can take 10 s)."""
         self._tick = tick
+
+    @property
+    def complete(self) -> bool:
+        """The last read reached every store configured: no Postgres, or Postgres answered."""
+        return self._connect is None or not self._down
 
     @property
     def where(self) -> str:
@@ -182,35 +189,36 @@ class DecisionLog:
         row = {"decision_id": decision_id, "tick": tick, "sdk_method": method, "request": request}
         self._append("executions.jsonl", {**row, "response": response, "error_code": error_code})
 
-    def thread_trails(self, agent: str, since_tick: int) -> dict[int, ThreadTrail]:
-        """What this log remembers of `agent`'s live threads with a decision at or after `since_tick`: the
-        memory a restarted process has of the threads the one before it drove. Postgres and this machine's
-        JSONL are both read (a write falls back to the file while Postgres is down). Raises nothing: an
-        unreadable store remembers nothing."""
+    def thread_trails(self, agent: str, since_tick: int, thread_ids: Iterable[int] = ()) -> dict[int, ThreadTrail]:
+        """What this log remembers of `agent`'s live threads with a decision at or after `since_tick`, and of
+        `thread_ids` whatever their age (the threads still open): the memory a restarted process has of the
+        threads the one before it drove. Postgres and this machine's JSONL are both read (a write falls back to
+        the file while Postgres is down). Raises nothing: an unreadable store remembers nothing (`complete`)."""
+        ids = sorted({int(i) for i in thread_ids})
         rows: list[tuple[Any, ...]] = []
         conn = self._db()
         if conn is not None:
             try:
                 rows += conn.execute(
-                    "select thread_id, tick, kind, candidates->>'item', chosen->>'price' from decisions "
-                    "where agent = %s and thread_id is not null and tick >= %s and dry_run is not true order by id",
-                    (agent, since_tick),
+                    "select thread_id, tick, kind, candidates->>'item', chosen->>'price', candidates->>'owner' "
+                    "from decisions where agent = %s and thread_id is not null and dry_run is not true "
+                    "and (tick >= %s or thread_id = any(%s)) order by id",
+                    (agent, since_tick, ids),
                 ).fetchall()
             except psycopg.Error as e:
                 self._failed("thread read", e)
         path = self.dir / "decisions.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
         for row in _live_rows(lines, agent):
-            tick = _int(row.get("tick"))
-            if not isinstance(row.get("thread_id"), int) or tick is None or tick < since_tick:
+            tick, tid = _int(row.get("tick")), row.get("thread_id")
+            if not isinstance(tid, int) or tick is None or (tick < since_tick and tid not in ids):
                 continue
             move = row.get("move") if row.get("chosen") else None
             price = move.get("price") if isinstance(move, dict) else None
-            inputs = row.get("inputs")
-            item = inputs.get("item") if isinstance(inputs, dict) else None
-            rows.append((row["thread_id"], tick, row.get("kind"), item, price))
+            inputs = _inputs(row)
+            rows.append((tid, tick, row.get("kind"), inputs.get("item"), price, inputs.get("owner")))
         trails: dict[int, ThreadTrail] = {}
-        for thread_id, tick, kind, item, price in rows:
+        for thread_id, tick, kind, item, price, owner in rows:
             old = trails.get(int(thread_id), ThreadTrail(int(thread_id), "", int(tick)))
             prices = [p for p in (old.top_price, _int(price)) if p is not None]
             trails[int(thread_id)] = ThreadTrail(
@@ -219,19 +227,21 @@ class DecisionLog:
                 max(old.last_tick, int(tick)),
                 max(prices) if prices else None,
                 old.closed or kind == THREAD_CLOSED,
+                old.owner or (str(owner) if owner else None),
             )
         return trails
 
-    def first_tick(self, agent: str, kind: str) -> int | None:
-        """The earliest tick of a live `kind` row by `agent`, in Postgres or this machine's JSONL (None: no row
-        or an unreadable store)."""
+    def first_tick(self, agent: str, kind: str, owner: str) -> int | None:
+        """The earliest tick of a live `kind` row by `agent` that `owner` wrote (`writer()`), in Postgres or this
+        machine's JSONL (None: no row or an unreadable store)."""
         ticks: list[int] = []
         conn = self._db()
         if conn is not None:
             try:
                 row = conn.execute(
-                    "select min(tick) from decisions where agent = %s and kind = %s and dry_run is not true",
-                    (agent, kind),
+                    "select min(tick) from decisions where agent = %s and kind = %s and dry_run is not true "
+                    "and candidates->>'owner' = %s",
+                    (agent, kind, owner),
                 ).fetchone()
                 if row is not None and row[0] is not None:
                     ticks.append(int(row[0]))
@@ -239,9 +249,10 @@ class DecisionLog:
                 self._failed("first tick read", e)
         path = self.dir / "decisions.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-        ticks += [
-            t for r in _live_rows(lines, agent) if r.get("kind") == kind and (t := _int(r.get("tick"))) is not None
-        ]
+        for r in _live_rows(lines, agent):
+            inputs = _inputs(r)
+            if r.get("kind") == kind and inputs.get("owner") == owner and (t := _int(r.get("tick"))) is not None:
+                ticks.append(t)
         return min(ticks) if ticks else None
 
     def close(self) -> None:
@@ -262,6 +273,15 @@ class ThreadTrail:
     last_tick: int
     top_price: int | None = None  # the highest price we bid or accepted there
     closed: bool = False  # a THREAD_CLOSED row: the thread was wrapped up and its deal booked
+    owner: str | None = None  # `writer()` of the process that opened it (None: opened before owners were written)
+
+
+def writer() -> str:
+    """Who writes these rows: the Railway service (stable across its redeploys), else this machine, as a short
+    hash (the log scrubs host names, and neither needs to be in it). Two live processes of one agent (Railway
+    and a laptop) never take over each other's threads."""
+    raw = os.environ.get("RAILWAY_SERVICE_ID") or socket.gethostname() or "local"
+    return "w" + hashlib.sha256(raw.encode()).hexdigest()[:10]
 
 
 MAX_INT = 10_000_000  # RULES.md: prices are whole primas up to 10,000,000; ticks stay far below it
@@ -276,6 +296,11 @@ def _int(value: object) -> int | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return n if 0 <= n <= MAX_INT else None
+
+
+def _inputs(row: dict[str, Any]) -> dict[str, Any]:
+    inputs = row.get("inputs")
+    return inputs if isinstance(inputs, dict) else {}
 
 
 def _live_rows(lines: list[str], agent: str) -> list[dict[str, Any]]:

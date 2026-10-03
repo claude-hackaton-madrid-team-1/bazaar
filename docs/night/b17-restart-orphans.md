@@ -94,3 +94,9 @@ pr-reviewer and security-auditor found two ways a deal still went unbooked, and 
   again") is gone.
 - The chaos table above was measured before these fixes, with restarts only at tick boundaries and dealers that
   answer at the boundary; it cannot show the late-"Deal!" case (`test_a_deal_that_lands_after_the_new_process_first_tick_is_booked`).
+- **Round 2: one service's threads only.** `dealer_opened` and `process_started` rows carry the writer
+  (`decisions.writer()`: a short hash of `RAILWAY_SERVICE_ID`, else the host name), so a laptop taker on the
+  shared Postgres and Railway's never adopt, close or book each other's threads (a thread opened before owners
+  were written counts as ours). Open threads are looked up by id with no lookback (a pause longer than 40
+  ticks), a Postgres blip at boot does not end the wrap-up (`DecisionLog.complete`), a rate limit or network
+  error does not use up a thread's tries, and the wrap-up ends after `restart_lookback_ticks` ticks at most.

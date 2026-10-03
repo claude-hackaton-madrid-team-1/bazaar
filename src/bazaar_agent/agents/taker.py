@@ -69,7 +69,7 @@ from bazaar_agent.agents.runtime import (
 )
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.agents.words import WordsRequest
-from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail
+from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, DecisionLog, Status, ThreadTrail, writer
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.ledger_pg import LedgerUnavailable
@@ -328,6 +328,8 @@ class Taker:
         self._restart_tries: dict[int, int] = {}  # thread -> wrap-up reads that did not wrap it up
         self._first_start: int | None = None  # the earliest PROCESS_STARTED tick: rows from then on wrap up
         self._trails: dict[int, ThreadTrail] = {}  # threads the taker drove, from the decisions log
+        self._owner = writer()  # this service (or machine): only its own threads are adopted, closed or booked
+        self._restart_ticks = 0  # ticks the restart wrap-up ran (bounded by `restart_lookback_ticks`)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -875,7 +877,7 @@ class Taker:
             run.snap.clock.tick,
             "dealer_opened",
             f"thread {thread_id} opened with {dealer} for {item}",
-            inputs={"dealer": dealer, "item": item},
+            inputs={"dealer": dealer, "item": item, "owner": self._owner},
             reason="opened",
             guardrail="-",
             chosen=False,
@@ -895,21 +897,24 @@ class Taker:
         if self._restart_checked or not self.live:
             return
         clock, cfg = run.snap.clock, self.config
+        decisions = self.rec.decisions
         if self._first_start is None:
             self.rec.decide(
                 clock.tick,
                 PROCESS_STARTED,
                 "taker started",
-                inputs={},
+                inputs={"owner": self._owner},
                 reason="start",
                 guardrail="-",
                 chosen=False,
                 status="done",
             )
-            known = self.rec.decisions.first_tick("taker", PROCESS_STARTED)
-            self._first_start = clock.tick if known is None else min(known, clock.tick)
-        self._trails = self.rec.decisions.thread_trails("taker", clock.tick - cfg.restart_lookback_ticks)
-        open_ids = {t.get("id") for t in threads}
+            self._first_start = clock.tick
+        known = decisions.first_tick("taker", PROCESS_STARTED, self._owner)  # read again while Postgres is away
+        self._first_start = min(self._first_start, known if known is not None else clock.tick)
+        open_ids = {tid for t in threads if isinstance(tid := t.get("id"), int)}
+        trails = decisions.thread_trails("taker", clock.tick - cfg.restart_lookback_ticks, open_ids)
+        self._trails = {i: tr for i, tr in trails.items() if tr.owner in (None, self._owner)}
         owned = {c.thread_id for c in self.convs.values()}
         first = self._first_start
         pending = [  # open ones wait for adoption; ended ones are read if a process that wraps up drove them
@@ -921,7 +926,11 @@ class Taker:
             and (tr.thread_id in open_ids or tr.last_tick >= first)
         ]
         todo = sorted((tr for tr in pending if tr.thread_id not in open_ids), key=lambda tr: -tr.last_tick)
-        self._restart_checked = not pending
+        self._restart_ticks += 1
+        # Done once nothing is left and every store answered (a Postgres blip at boot must not end it), or after
+        # `restart_lookback_ticks` ticks (a thread that can never be adopted must not cost a read every tick).
+        done = not pending and decisions.complete
+        self._restart_checked = done or self._restart_ticks >= cfg.restart_lookback_ticks
         for trail in todo[: cfg.max_dealer_threads]:
             self._restart_tries[trail.thread_id] = self._restart_tries.get(trail.thread_id, 0) + 1
             try:
@@ -929,6 +938,8 @@ class Taker:
                 self._wrap_up_trail(run, trail, thread)
             except BazaarError as e:
                 self.log(f"tick {clock.tick} taker: thread {trail.thread_id} from before the restart: read {e.code}")
+                if e.code in RATE_LIMITED or e.code == "network":  # the server never answered: not a try
+                    self._restart_tries[trail.thread_id] -= 1
                 if e.code in RATE_LIMITED:
                     return
             except (TypeError, ValueError, AttributeError, KeyError) as e:  # a thread body we cannot read

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, Decision, DecisionLog
+from bazaar_agent.decisions import PROCESS_STARTED, THREAD_CLOSED, Decision, DecisionLog, writer
 from tests.agent_fakes import TICK, FakePublic, FakeTeam
 from tests.bites.kit import at, dealer_took_our_bid, make_taker, thread_bid
 from tests.test_db import database_url, open_in, schema  # noqa: F401  (pytest fixtures)
@@ -190,8 +190,9 @@ def test_restart_reads_are_bounded_per_tick(tmp_path):
     assert sorted(r for r in team.reads if r.startswith("thread 1")) == [f"thread {tid}" for tid in range(10, 17)]
 
 
-def _started(log, tick):
-    log.decide(_bid_row(None, tick, 0, kind=PROCESS_STARTED, inputs={}, chosen=False, status="done", move={}))
+def _started(log, tick, owner=None):
+    inputs = {"owner": owner or writer()}
+    log.decide(_bid_row(None, tick, 0, kind=PROCESS_STARTED, inputs=inputs, chosen=False, status="done", move={}))
 
 
 def _bid_row(tid, tick, price, **extra):
@@ -363,6 +364,56 @@ def test_thread_trails_skip_rows_that_are_not_objects_or_have_bad_ticks(tmp_path
         )
     trails = log.thread_trails("taker", 0)
     assert sorted(trails) == [1, 3] and trails[3].top_price is None
-    assert log.first_tick("taker", PROCESS_STARTED) is None
+    assert log.first_tick("taker", PROCESS_STARTED, writer()) is None
+    _started(log, 80, owner="wsomeone-else")
     _started(log, 90)
-    assert log.first_tick("taker", PROCESS_STARTED) == 90
+    assert log.first_tick("taker", PROCESS_STARTED, writer()) == 90
+
+
+# ---------------------------------------------------------------- review round 2 of #140
+
+
+def _opened_by(log, tid, tick, price, owner):
+    inputs = {"dealer": "abuela", "thread": tid, "item": "LAV-08", "owner": owner}
+    log.decide(_bid_row(tid, tick, 0, kind="dealer_opened", inputs=inputs, chosen=False, status="done", move={}))
+    log.decide(_bid_row(tid, tick, price))
+
+
+def test_a_thread_another_live_taker_opened_is_never_adopted_or_booked(tmp_path):
+    """A laptop taker on the shared Postgres beside Railway's: each touches only its own threads."""
+    log = DecisionLog(tmp_path)
+    _started(log, TICK - 6, owner="wlaptop")
+    _opened_by(log, 40, TICK - 5, 20, owner="wlaptop")  # still open, driven by the other taker
+    _opened_by(log, 41, TICK - 5, 18, owner="wlaptop")  # dealt: the other taker books it
+    team = FakeTeam(threads=[DEALER_THREAD], offers=[thread_bid(77, 40, "LAV-08", 20)])
+    dealer_took_our_bid(team, 41, 78, "LAV-08", 18)
+    team.threads = [DEALER_THREAD]
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    _ticks(t, team, TICK, 4)
+    assert "abuela" not in t.convs and ("close_thread", 40) not in team.sent
+    assert "thread 41" not in team.reads and ledger.spent_since(0) == 0
+
+
+def test_an_open_thread_older_than_the_lookback_is_still_adopted(tmp_path):
+    """A pause longer than `restart_lookback_ticks`, then a redeploy: the open thread is looked up by id."""
+    log = DecisionLog(tmp_path)
+    _opened_by(log, 40, TICK - 90, 20, owner=writer())  # tick 10: outside the 40-tick lookback
+    team = FakeTeam(threads=[DEALER_THREAD], offers=[thread_bid(77, 40, "LAV-08", 20)])
+    t, lines, _ = make_taker(tmp_path, team, FakePublic())
+    t.on_tick(at(team, TICK))
+    assert any("thread 40 with abuela for LAV-08: adopted" in line for line in lines)
+    assert "thread 40" in team.reads and ("close_thread", 40) in team.sent  # stale bid: walks on its next move
+
+
+def test_a_postgres_blip_at_boot_does_not_end_the_wrap_up(tmp_path):
+    """The first read reached only the JSONL: the wrap-up keeps reading until every store answered."""
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        raise OSError("no route")
+
+    log = DecisionLog(tmp_path, flaky)
+    assert not log.complete or calls["n"] == 0
+    log.thread_trails("taker", 0)
+    assert not log.complete  # a store is configured and did not answer
