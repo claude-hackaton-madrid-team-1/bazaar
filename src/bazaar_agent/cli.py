@@ -17,7 +17,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import intel, render, traces
+from bazaar_agent import intel, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
@@ -1461,6 +1461,7 @@ def _run_agent(
     from bazaar_agent.decisions import DecisionLog
     from bazaar_agent.ledger_pg import open_ledger
     from bazaar_agent.llm.steering import STEERING_FILE, steered_strategy_params
+    from bazaar_agent.supply_db import ScanStore
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
@@ -1478,7 +1479,8 @@ def _run_agent(
     console.print(f"[bold]{name}[/bold] · {mode} · {settings.target_line()}")
     ledger = open_ledger(settings.data_dir, source=name, log=log)
     decisions = DecisionLog(settings.data_dir, connect, log)
-    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log)
+    scans = ScanStore(settings.data_dir / "supply", connect, log)
+    feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, scans)
 
     def params(tick: int) -> Any:
         return steered_strategy_params(loaded.params, rules, settings.data_dir / STEERING_FILE, tick)
@@ -1576,6 +1578,7 @@ def agent_maker(
 
 llm_cli.register(app)
 evals_cli.register(app)
+supply_cli.register(app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.

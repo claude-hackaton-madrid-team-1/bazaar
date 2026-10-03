@@ -22,6 +22,7 @@ from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
+from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -97,8 +98,10 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        scans: ScanStore | None = None,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self.scans = scans  # the stored card scan (supply map), when there is one
         self._conn: psycopg.Connection | None = None
         self._events: dict[int, Event] = {}
         self._newest_db = 0
@@ -144,6 +147,10 @@ class MarketFeed:
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         return [self._events[i] for i in sorted(self._events)]
 
+    def scan(self, tick: int) -> tuple[dict[str, Any], ...]:
+        """The stored card scan (`bazaar supply scan`) for the supply map; empty when none is stored."""
+        return tuple(self.scans.rows(tick)) if self.scans is not None else ()
+
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
@@ -185,6 +192,7 @@ class Snapshot:
     venues: list[Venue]
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
+    scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
 
     @property
     def us(self) -> str:
@@ -221,6 +229,7 @@ def read_snapshot(
         venues=venues_from(public.venues()),
         events=feed.events(),
         holdings=read,
+        scan=feed.scan(clock.tick),
     )
 
 

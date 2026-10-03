@@ -74,6 +74,7 @@ class Guardrails(BaseModel):
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
     protect_page_sets: str = "none"
+    open_sealed_packs: bool = False
 
     @field_validator("protect_page_sets")
     @classmethod
@@ -123,6 +124,7 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
 }
 
 
@@ -337,9 +339,19 @@ def refund_row(
 
 
 # `cancel` (withdraw one of our offers) and `close_thread` (walk from a thread) move no cash: only the
-# kill switch applies to them.
+# kill switch applies to them. `open_pack` moves no cash either; it also needs `open_sealed_packs`.
 ActionKind = Literal[
-    "buy", "sell", "accept_buy", "accept_sell", "bid", "duel_offer", "duel_accept", "flag", "cancel", "close_thread"
+    "buy",
+    "sell",
+    "accept_buy",
+    "accept_sell",
+    "bid",
+    "duel_offer",
+    "duel_accept",
+    "flag",
+    "cancel",
+    "close_thread",
+    "open_pack",
 ]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 
@@ -441,6 +453,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:
         v.append("allow_flags = false")
+    if action.kind == "open_pack" and not rules.open_sealed_packs:
+        v.append("open_sealed_packs = false")
     return Verdict(not v, tuple(v), halted)
 
 

@@ -65,6 +65,7 @@ from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, ch
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
+from bazaar_agent.pack_open import choose, sealed_packs
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
 from bazaar_agent.strategy import guarded as guarded_playbook
@@ -311,6 +312,7 @@ class Taker:
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
         self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
+        self._pack_notes: set[tuple[int, str]] = set()  # (asset, verdict) already recorded and not sent
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -346,14 +348,15 @@ class Taker:
                 f"{len(self.convs)} dealer thread(s) stay open): {'; '.join(stops)}"
             )
             return
-        market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
+        market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules, snap.scan)
         self._open(run, book, threads)
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm) for dm, _ in desk if dm.move.kind == "accept"]
         proposals += [board_proposal(c) for c in self._board(run, market)]
         self._accept(run, proposals)
         self._converse(run, desk)
+        self._open_pack(run, market)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         self.log(
@@ -403,6 +406,48 @@ class Taker:
                 self.log(f"tick {run.snap.clock.tick} taker: board {venue.id} refused {e.code}; skipped")
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+
+    # ------------------------------------------------------------ (c) sealed packs we hold
+
+    def _open_pack(self, run: _TickRun, market: Market) -> None:
+        """Open at most one sealed pack a tick when its cards are worth more to us than any sealed price
+        (`pack_open.choose`), behind `open_sealed_packs`. The next tick re-reads /me (album first)."""
+        packs = sealed_packs(run.snap.me)
+        if not packs:
+            return
+        tick = run.snap.clock.tick
+        choice = choose(market, packs[0], run.params)
+        verdict = check(Action("open_pack", choice.pack.pack, "pack"), self._ctx(run), self.rules)
+        status: Status = "approved" if verdict.allowed and choice.verdict == "open" else "rejected"
+        if status == "approved" and not run.window.open():
+            status = "expired"
+        note = (choice.pack.asset_id, f"{choice.verdict} {verdict}")
+        if status != "approved" and note in self._pack_notes:
+            return  # a pack kept sealed (or the switch off) is said once, not every tick
+        self._pack_notes.add(note)
+        did = self.rec.decide(
+            tick,
+            "pack_open",
+            f"{choice.verdict} sealed {choice.pack.pack} #{choice.pack.asset_id} · guardrails {verdict}",
+            inputs={"pack": choice.pack.pack, "asset_id": choice.pack.asset_id, "ev": round(choice.ev, 1)},
+            reason=choice.reason,
+            guardrail=str(verdict),
+            chosen=status == "approved",
+            status=status,
+            move={"open_pack": choice.pack.asset_id},
+        )
+        if status != "approved" or not self.live:
+            return
+        body = self.rec.send(
+            did,
+            tick,
+            "open_pack",
+            {"asset": choice.pack.asset_id},
+            lambda: self.team.open_pack(choice.pack.asset_id),
+        )
+        pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
+        if pulled:
+            self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")
 
     # ------------------------------------------------------------ (b) the dealer desk
 

@@ -30,6 +30,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - A buy whose guardrail price cap sits below the market price is not proposed ("cap below market"): that ladder cannot fill.
 - Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`.
 - Pack EV: per slot, rarity odds × the mean value to us of one more copy of a released card of that rarity (copy marginals applied); a printed-out rarity gives the next one down.
+- Supply map (`uv run bazaar supply`): the 270 starting assets (ids 1–270, team k was dealt ids 15k−14…15k), the feed's settlements, listings and `pack.opened`, and the catalog's minted counts: who holds each card, how many copies another team could sell us, and how many complete pages of each set can exist (the fewest copies of any page card).
 
 ## Parameters
 - `page_bonus_weight` = 1.0 — how much of a missing card's share of the 25 % page bonus counts toward its value.
@@ -42,3 +43,5 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.
 - `dealer_mints_unminted` = false — true: a card with zero minted copies is still a dealer buy when a dealer sells its rarity for its released set (dealers mint: Friday, Chato sold LAV-09 serials 2–4 and Abuela LAV-04 serials 15–16 without buying them first). Matters the hour a set is released (RET Saturday, CHA Sunday), when every card of it has zero copies.
+- `pack_ev_album` = false — true: a pack buy is valued card by card (Marius's B9, #109): each card still mintable in a released set, at what the next copy is worth to us, plus its page-bonus share when our album lacks it (`/api/me`). False keeps Friday's EV (the mean copy value per rarity) for buys, because B9's verdict is to buy no Abuela packs on Saturday (her pack fills median 22 P > `max_price_pack` 20, and a pack thread takes the Abuela conversation the ladder needs). Opening a sealed pack always uses the card-by-card value.
+- `supply_scarcity` = true — scarcity counts the copies other teams could sell us (minted, minus ours, minus those the supply map places with the teams that chase the set: `uv run bazaar supply`); false: every minted copy.

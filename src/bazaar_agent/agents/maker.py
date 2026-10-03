@@ -239,7 +239,7 @@ class Maker:
             )
             return
         params = self.params(clock.tick)
-        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules)
+        book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules, snap.scan)
         listed = self.ledger.count_in_tick("listing", clock.tick)
         run = _MakerRun(
             snap,
