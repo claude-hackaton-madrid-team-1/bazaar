@@ -225,3 +225,10 @@ def test_when_accepts_must_queue_the_slowest_rival_is_taken_first():
     slow = duel(2, rival=[(100, 112), (107, 113)], ours=[(100, 160)])
     moves = plan_moves([fast, slow], 109, {1: 100, 2: 100})  # 3 ticks left, 2 accepts to make: one is due now
     assert moves[2].kind == "accept" and moves[1].kind == "hold"
+
+
+def test_after_a_restart_v2_recovers_the_duels_start_from_its_messages():
+    from bazaar_agent.agents.duel_v2 import payload_start
+
+    assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108) == 103  # not 108: the clock survives
+    assert payload_start(duel(), 108) == 108

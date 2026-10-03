@@ -224,3 +224,26 @@ def test_a_bug_in_the_v2_planner_holds_every_duel(duel_cli, monkeypatch):
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "planner failed (ZeroDivisionError)" in result.output and client.sent == []
+
+
+def test_under_v2_the_planners_accept_books_the_slot_before_jev_is_asked(duel_cli, monkeypatch):
+    """r2 bite X17: the taker claims the team's accept 2 s into the tick; the duel books its accept first."""
+    from dataclasses import replace
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import duel_jev
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+    order: list[str] = []
+    reserve, pick = gr.Ledger.reserve_accept, duel_jev.DuelJev.pick
+    monkeypatch.setattr(gr.Ledger, "reserve_accept", lambda self, *a: order.append("reserve") or reserve(self, *a))
+    monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, *a, **kw: order.append("jev") or pick(self, *a, **kw))
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert order == ["reserve", "jev"] and client.sent == [("accept", 95)]  # booked once, before Jev, then sent

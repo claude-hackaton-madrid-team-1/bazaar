@@ -129,6 +129,13 @@ def own_offers(duel: Mapping[str, Any]) -> int:
     return 1 if sent == 0 and isinstance(duel.get("your_offer"), dict) else sent
 
 
+def payload_start(duel: Mapping[str, Any], tick: int) -> int:
+    """A duel's start as the payload shows it: its earliest message, else now. After a restart (every merge to main
+    redeploys the duel loop) this keeps v2's clock instead of reopening the duel at the anchor."""
+    ticks = [m["tick"] for m in duel.get("messages") or [] if isinstance(m, dict) and isinstance(m.get("tick"), int)]
+    return min([tick, *ticks])
+
+
 def rounds_spent(duel: Mapping[str, Any]) -> int:
     """Rounds of decay so far: min(our priced messages, the rival's). What `duel_max_own_offers` caps."""
     return min(own_offers(duel), len(_priced(duel, ours=False)))
