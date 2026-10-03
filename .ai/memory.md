@@ -1006,3 +1006,41 @@ all were `cash_floor`, `max_spend_per_game_hour` or `max_price_*` (PR #201).
 ticks 558–560 before duel 2496 enters its 4-tick guard. Merge through `scripts/merge_safe.sh <pr>`. A read-only
 replay of the watchdog rules on the shared DB (windows ending ticks 300/400/480/555) tripped nothing; its storms were
 real (SAL-07 refused 86×, SAL-08 53×). Breakers fail OPEN with one read per tick and a 15 s backoff after a failure.
+### [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
+From the shared `feed_events` (ticks 0–466) and `executions`: the maker listed 74 asks on rastro and 1 was cancelled;
+our only venue sales (LAT-08 25, SAL-10 76, LAT-09 68) were uncommons and rares. Every one of our listings comes back
+with `expires_tick` = `created_tick` + 20 (all 74 `list_offer` rows in `executions` since Friday), although `maker.py:103` sends
+`expires_in_ticks` = 40, the SDK default; other teams' rastro listings live 15–60 (t05 40, t04/t18 60), so the server is
+not capping rastro at 20 (why ours halves is UNVERIFIED: one hand post with another value would tell). That is 10 min at
+Saturday's 30 s ticks, 5 min on Sunday. Our ask sits at the top of what clears on venues: commons 10–12 vs a median of 9
+(p80 10, 44 fills), uncommons 26 vs 22.5 (p80 26). And a relist keeps the same price: SAL-01 was posted 15 times at 10,
+MAL-02/SAL-03/LAV-04 8–9 times at 10, MAL-08 8 times at 26. So a common or uncommon ask waits 20 ticks for a buyer at the
+top of the range, lapses silently (the live feed has no event for an expiry), and comes back unchanged, spending one of
+the 12 listings per tick each time. Fix candidates: step a relisted ask down toward the venue median (never below our
+value + `sell_min_surplus`), sell the commons to a dealer instead (#183), and post with a longer `expires_in_ticks`.
+
+### [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
+Asked as "we seem near an agreement but don't reach it". From `feed_events` + `decisions` (ticks 0–491). Duels are NOT
+it: Duels I (session 2) closed 7/7 as deals, and all 19 practice no-deals were one-sided (we were offline, or the rival
+never spoke). Team threads: none ever opened with us. It is the dealer threads (12 opened, 7 deals, 5 no deal):
+- Each side re-posts every tick, so the 2-tick (Fri) / 4-tick (Sat) `expires_tick` of a thread offer is not the cause.
+- The dealers mirror our step ("I match what you move", "You moved two, I moved nothing"): with `step` 1 the gap closes
+  ~2 P a tick, so an opening 8–15 P above our first bid needs 4–7 ticks to meet in the middle.
+- We do not wait for that: three deals were `dealer_accept` with reason "jev: accept (inside limit)" after only 2–3 of
+  our bids, at her current ask (bids 17, 18 → paid 25; 10, 11 → 25; 82, 83, 84 → 95). `dealer.decide` accepts only when
+  her ask meets our next bid or is final, so it is the Jev step that turns an open counter into taking her price. A deal
+  at her ask captures almost none of her range, which is why our ladder share is 0.009 with 7 deals.
+- Thread 187 (Chato, Fri): we stepped 17→24 and he 33→31; our `max_price` sat below his floor, so we walked 7 apart.
+- Thread 324 (Abuela, SAL-07): we stopped at 20 vs her 25 at tick 166 because the taker found the same card on rastro and
+  spent the tick's one accept on board asks; the thread was never closed and idled out at tick 207, holding one of the six
+  conversation slots for 40 ticks.
+Fix candidates: let Jev accept only what `decide` accepts (or a final) inside a thread; keep stepping until she stops
+moving; close a thread the moment its item is bought elsewhere.
+### [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
+Every merge to main restarts `duel run` (~30 redeploys on Saturday morning). Against a rival that has not priced,
+v2 waits `first_offer_wait` (max(`duel_open_wait_ticks`, `duel_stall_ticks`) = 3) ticks before its first offer, but
+`payload_start` restarted the clock at that first offer: 3 ticks of concession lost, so a seller's ask went up and
+a buyer's bid down (9 times in duel session 2, one per restart tick, from `duels.payload`). A restart inside a tick
+the old process had already offered in also sent a second message, refused `wait_for_tick` (8 in the Railway logs).
+Fix: `payload_start(..., wait)` backs our earliest message off by the wait, and `duel run` holds an offer when the
+duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not in `executions`: read `duels`.

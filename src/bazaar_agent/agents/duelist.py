@@ -221,6 +221,18 @@ def our_duel_messages(duel: dict[str, Any]) -> int:
     )
 
 
+def spoke_this_tick(duel: Mapping[str, Any], tick: int) -> bool:
+    """True when the duel already shows a message of ours at `tick`. The game takes one message per side per tick,
+    so a second one is refused (`wait_for_tick`): what a runner restarted mid-tick (every merge to main redeploys
+    `duel run`) would send right after the process it replaced."""
+    messages = duel.get("messages")
+    said = isinstance(messages, list) and any(
+        isinstance(m, dict) and m.get("from") == "you" and m.get("tick") == tick for m in messages
+    )
+    offer = duel.get("your_offer")
+    return said or (isinstance(offer, dict) and offer.get("tick") == tick)
+
+
 def duel_choice(book: TacticBook | None, duel: dict[str, Any], did: int, move: DuelMove, step: int) -> Choice | None:
     """The bluff tactic for an OFFER's text (N16). An accept or a hold gets none: an accept that is already good
     is sent as it is, never delayed or replaced by a bluff. The price and days stay the move's own."""

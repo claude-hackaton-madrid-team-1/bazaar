@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from statistics import median
 from typing import Any
 
 from bazaar_agent.evals.dealers import SELL, price_class
@@ -25,13 +26,19 @@ REFRESH_TICKS = 10  # the desk reads the dealers and their curves again this oft
 
 @dataclass(frozen=True)
 class Fill:
-    """A dealer's bids for one rarity on sell threads: its lowest opening bid, the typical (`expected`) and
-    highest (`top`) fill. With no fill yet, all three are its opening bid."""
+    """A dealer's bids for one rarity on sell threads: its lowest opening bid, the typical (`expected`, the
+    mean), highest (`top`) and `median` fill. With no fill yet, all of them are its opening bid."""
 
     opening: int
     expected: float
     top: int
     fills: int = 0
+    median: float | None = None  # None: not known (a hand-built Fill); `typical` falls back to the mean
+
+    @property
+    def typical(self) -> float:
+        """The robust typical fill: the median (one outlier deal does not move it), else the mean."""
+        return self.expected if self.median is None else self.median
 
 
 @dataclass(frozen=True)
@@ -106,9 +113,10 @@ def fills_from(curves: Iterable[SellCurve]) -> dict[tuple[str, str], Fill]:
         fills = [r.fill for r in rows if r.fill is not None]
         if fills:
             opening = min(opens) if opens else min(fills)
-            out[key] = Fill(opening, round(sum(fills) / len(fills), 1), max(fills), len(fills))
+            mean, mid = round(sum(fills) / len(fills), 1), round(float(median(fills)), 1)
+            out[key] = Fill(opening, mean, max(fills), len(fills), mid)
         elif opens:
-            out[key] = Fill(min(opens), float(min(opens)), min(opens), 0)
+            out[key] = Fill(min(opens), float(min(opens)), min(opens), 0, float(min(opens)))
     return out
 
 

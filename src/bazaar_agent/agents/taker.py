@@ -1465,7 +1465,8 @@ class Taker:
         )
         if advice.verdict != "yes":
             return dm
-        return replace(dm, move=apply_advice(dm.move, "accept", conv.neg, dm.ask, dm.offer_id))
+        move = apply_advice(dm.move, "accept", conv.neg, dm.ask, dm.offer_id, self.rules.jev_accept_min_share)
+        return replace(dm, move=move)
 
     def _finished(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
         status, tick = str(thread.get("status")), run.snap.clock.tick

@@ -60,8 +60,8 @@ READS = ["/api/news", "/api/schedule", "/api/levels", "/api/leaderboard"]
 
 
 class Public:
-    def __init__(self, news=NEWS, schedule=SCHEDULE, fail=False, levels=None, leaderboard=None):
-        self.fail, self.calls = fail, []
+    def __init__(self, news=NEWS, schedule=SCHEDULE, fail=False, levels=None, leaderboard=None, error=None):
+        self.fail, self.calls, self.error = fail, [], error
         self.answers = {
             "/api/news": news,
             "/api/schedule": schedule,
@@ -72,7 +72,7 @@ class Public:
     def call(self, method, path):
         self.calls.append(path)
         if self.fail:
-            raise RuntimeError("down")
+            raise self.error or RuntimeError("down")
         return self.answers[path]
 
 
@@ -144,6 +144,16 @@ def test_a_failed_read_is_logged_once_and_never_raises(tmp_path):
     assert sum("read failed" in line for line in lines) == 1  # said once; /api/schedule not tried after it
     assert public.calls == ["/api/news", "/api/news"]
     assert len(stored) == 1
+
+
+def test_a_refused_read_says_the_servers_reason(tmp_path):
+    """Live, Sat 3 Oct: `/api/leaderboard read failed (BazaarError)` said nothing a human could act on."""
+    from bazaar_sdk import BazaarError
+
+    public = Public(fail=True, error=BazaarError("rate_limited", "slow down", 429))
+    s, _, lines = sentinel(tmp_path, public)
+    s.on_tick(400, [FEED_NEWS], CATALOG)
+    assert any("/api/news read failed (BazaarError: rate_limited)" in line for line in lines)
 
 
 def test_a_store_that_raises_never_breaks_the_tick(tmp_path):

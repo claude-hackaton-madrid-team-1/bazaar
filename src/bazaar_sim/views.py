@@ -183,7 +183,7 @@ def card_view(w: World, asset: Asset, viewer: str) -> dict[str, Any]:
 
 
 def schedule_view(w: World) -> dict[str, Any]:
-    from bazaar_sim.broker import BENCH_TRADERS
+    from bazaar_sim.broker import bench_preset
     from bazaar_sim.duels import DECAY
 
     cfg = w.config
@@ -209,13 +209,12 @@ def schedule_view(w: World) -> dict[str, Any]:
                     "rounds": 1,
                 }
             else:
-                note, params = (
-                    "The Market Test: every venue gets the same synthetic book",
-                    {
-                        "ticks": cfg.bench_ticks,
-                        "traders": BENCH_TRADERS,
-                    },
-                )
+                p = bench_preset(w, w.state.counters.get("bench", 0) + 1 + i)
+                note = "The Market Test: every venue gets the same synthetic book"
+                params = {"ticks": p.ticks, "traders": p.traders}
+                if p.name == "hard":
+                    note = "The hard Market Test: firmer and more impatient traders"
+                    params = {"name": "The hard Market Test", **params}
             at_tick = nxt + i * every
             upcoming.append(
                 {"action": kind, "at_hours": round(at_tick * hours_per_tick, 3), "note": note, "params": params}

@@ -26,6 +26,12 @@ def no_real_tracing(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_tick_stagger(monkeypatch):
+    """A BAZAAR_TICK_OFFSET_S in a teammate's .env must not shift every tick loop the suite runs."""
+    monkeypatch.setenv("BAZAAR_TICK_OFFSET_S", "")
+
+
+@pytest.fixture(autouse=True)
 def trading_enabled_in_guardrails(monkeypatch, tmp_path_factory):
     """`guardrails.kill_switch()` re-reads GUARDRAILS.md on every call: the suite reads a copy with
     `trading_enabled = true`, so a kill switch committed in the real file never breaks unrelated tests."""

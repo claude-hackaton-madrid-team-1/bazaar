@@ -40,7 +40,8 @@ _NUMBER_WORDS = re.compile(
 _ROMAN = re.compile(r"\b[IVXLCDM]{2,}\b")
 # Words never commit to anything: no acceptance, deal, promise or guarantee in our text.
 _COMMITMENTS = re.compile(
-    r"\b(acept\w*|trato hecho|cerrad[oa]|promet\w*|garantiz\w*|accept\w*|agreed|deal|promis\w*|guarante\w*)\b",
+    r"\b(acept\w*|trato hecho|cerrad[oa]|promet\w*|garantiz\w*|accept\w*|agreed|deal|promis\w*|guarante\w*"
+    r"|settled|sold|vendid[oa]s?|(?:are|is) yours|son tuy[oa]s|es tuy[oa]|consider it done)\b",
     re.IGNORECASE,
 )
 # A dealer remembers how she is treated: a rude line costs more than a template.

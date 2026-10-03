@@ -149,7 +149,7 @@ def bid_offer(cash, oid=140, final=False, assets=(8,)):
 
 
 def test_plan_opens_above_every_fill_seen_and_steps_down_to_the_floor():
-    fill = MARKET.fills[("abuela", "uncommon")]
+    fill = MARKET.fills[("abuela", "uncommon")]  # fills 13 and 21: the median (17) × 2 does not cap 1.6 × 21
     plan = desk.plan_for(fill, 11, Guardrails())
     asks = ask_schedule(plan)
     assert asks[0] > fill.top and asks[-1] == 11
@@ -195,7 +195,7 @@ def test_guardrails_refuse_a_dealer_sale_below_our_value_and_on_the_kill_switch(
 def test_candidates_are_unlisted_spares_a_free_dealer_buys():
     found = desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails())
     assert found and found[0].ref == "LAV-08" and found[0].dealer == "abuela"
-    assert found[0].floor >= found[0].value + PARAMS.sell_min_surplus
+    assert found[0].floor >= found[0].value + Guardrails().dealer_sell_min_surplus
     assert all(c.ref != "LAV-01" for c in found)  # our only copy of a boosted set: not a spare
     assert not [c for c in desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails(), busy={"abuela", "chato"})]
     unlocked = desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails(), locked={8})
@@ -371,9 +371,9 @@ def test_market_from_db_reads_traders_and_sell_fills():
         "pilar": "Doña Pilar",
     }
     assert MARKET.trader("chato").deals_per_hour == 6
-    assert MARKET.fills[("abuela", "uncommon")] == dd.Fill(12, 17.0, 21, 2)
+    assert MARKET.fills[("abuela", "uncommon")] == dd.Fill(12, 17.0, 21, 2, 17.0)
     assert MARKET.fills[("abuela", "common")].top == 6  # the several-asset row is not a single sell
-    assert MARKET.fills[("pilar", "rare")] == dd.Fill(16, 16.0, 16, 0)  # no fill: her opening bid
+    assert MARKET.fills[("pilar", "rare")] == dd.Fill(16, 16.0, 16, 0, 16.0)  # no fill: her opening bid
 
 
 def test_only_unlocked_dealers_buy_and_an_unlock_adds_one():
@@ -474,3 +474,90 @@ def test_a_dealer_taking_our_ask_in_words_only_is_a_deal_when_our_copy_leaves_me
 def test_the_last_free_copy_of_a_page_card_is_never_a_candidate():
     found = desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails(), locked={7, 9})
     assert all(c.ref != "LAV-08" for c in found)  # copies 7 and 9 are listed: copy 8 is the last free one
+
+
+# ---------------------------------------------------------------- Sat 3 Oct: a common to Abuela walked at 6
+
+
+def commons(*fills):
+    return dd.fills_from(dd.SellCurve("abuela", "common", 5, f) for f in fills)[("abuela", "common")]
+
+
+def test_one_outlier_fill_no_longer_opens_the_ladder_far_above_what_she_pays():
+    fill = commons(5, 5, 6, 6, 13)  # one team once got 13 for a common: 1.6 × 13 opened us at 21
+    assert (fill.median, fill.top) == (6.0, 13)
+    floor = desk.sell_floor(1.3, 1.3, Guardrails().dealer_sell_min_surplus, Guardrails())
+    plan = desk.plan_for(fill, floor, Guardrails())
+    assert plan.start == 12  # 2 × her median fill, not ceil(1.6 × 13) = 21
+    asks = ask_schedule(plan)
+    assert all(a > b for a, b in zip(asks, asks[1:], strict=False)) and asks[-1] == floor  # never the same ask
+    # the cap never opens below our floor
+    assert desk.plan_for(fill, 20, Guardrails()).start == 20
+    # a hand-built Fill without a median falls back to the mean
+    assert dd.Fill(5, 6.0, 13, 5).typical == 6.0
+
+
+def test_the_dealer_sell_floor_uses_its_own_surplus_and_takes_her_final_6_for_a_common_worth_1_3():
+    from bazaar_agent.agents.dealer_sell import AskPlan, SellNegotiation, decide_sell
+
+    rules = Guardrails()
+    assert rules.dealer_sell_min_surplus == 2
+    floor = desk.sell_floor(1.3, 1.3, rules.dealer_sell_min_surplus, rules)
+    assert floor == 4 and floor >= 1.3  # never below what we lose
+    assert desk.sell_floor(1.3, 1.3, PARAMS.sell_min_surplus, rules) == 7  # the old floor: her final 6 walked
+    for floor_, kind in ((floor, "accept"), (7, "walk")):
+        neg = SellNegotiation(AskPlan(12, 1, floor_), asks=[12, 11, 10, 9, 8])
+        decide_sell(neg, 5, 301, False)  # her opening bid
+        decide_sell(neg, 6, 302, False)  # she came up
+        move = decide_sell(neg, 6, 303, True)  # her FINAL
+        assert move.kind == kind
+    assert move.kind == "walk"
+    neg = SellNegotiation(AskPlan(12, 1, floor), asks=[12, 11, 10, 9, 8])
+    decide_sell(neg, 5, 301, False)
+    assert decide_sell(neg, 6, 303, True) == decide_sell(neg, 6, 303, True)
+    assert decide_sell(neg, 6, 303, True).price == 6
+
+
+def test_the_candidate_floor_is_the_dealer_sell_surplus_and_the_venue_path_keeps_its_own():
+    lax = desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails(dealer_sell_min_surplus=0))
+    strict = desk.candidates(ME_DUP, CATALOG, MARKET, PARAMS, Guardrails(dealer_sell_min_surplus=5))
+    assert lax and strict and lax[0].floor == strict[0].floor - 5 and lax[0].floor >= lax[0].value
+
+
+# ---------------------------------------------------------------- Sat 3 Oct: four sell threads for one copy
+
+
+class WalkingDealer(FakeTeam):
+    """Every sell thread we open ends without a deal the next tick (she walks or the thread closes)."""
+
+    def thread(self, tid):
+        self.reads.append(f"thread {tid}")
+        return {"id": tid, "status": "closed", "closed_reason": "walked", "messages": [], "standing_offers": []}
+
+
+def test_a_card_that_walked_is_not_reopened_with_that_dealer_and_the_dealer_gets_gaps(tmp_path):
+    team = WalkingDealer(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, dealer_sell_enabled=True)
+    when: list[tuple[int, str, int]] = []
+    for tick in range(100, 140):  # 40 ticks inside one game hour (the fake clock stays at hour 1.5)
+        before = len(opened(team))
+        m.on_tick(clock(tick=tick))
+        for _, dealer, topic in opened(team)[before:]:
+            when.append((tick, dealer, topic["sell"]["assets"][0]))
+    refs = {8: "LAV-08", 9: "LAV-08", 7: "LAV-08"}
+    pairs = [(d, refs.get(a, a)) for _, d, a in when]
+    assert when and len(pairs) == len(set(pairs))  # never the same card twice with the same dealer this hour
+    abuela = [t for t, d, _ in when if d == "abuela"]
+    gap = Guardrails().dealer_sell_dealer_gap_ticks
+    assert all(b - a > gap for a, b in zip(abuela, abuela[1:], strict=False))
+
+
+def test_a_walked_card_comes_back_after_the_retry_window_or_when_our_floor_drops():
+    sell_desk = desk.SellDesk(FakeTeam(), Guardrails(dealer_sell_enabled=True), None, True, lambda line: None, None)
+    cand = desk.Candidate(8, "LAV-08", "uncommon", 2.0, 2.0, 7, "abuela", 13.0)
+    sell_desk.walked[("abuela", "LAV-08")] = (1.5, 7)
+    assert not sell_desk._retry_ok(cand, clock())  # same game hour (1.5), same floor
+    assert sell_desk._retry_ok(desk.Candidate(**{**cand.__dict__, "floor": 4}), clock())  # our floor dropped
+    late = clock().model_copy(update={"t_hours": 2.5})
+    assert sell_desk._retry_ok(cand, late)
+    assert sell_desk._retry_ok(desk.Candidate(**{**cand.__dict__, "dealer": "chato"}), clock())

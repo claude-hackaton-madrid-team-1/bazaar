@@ -906,6 +906,7 @@ def dealer_buy(
                 **inspector,
                 bluff=bluff,
                 events=_feed_reader(settings),
+                jev_min_share=rules.jev_accept_min_share,
             )
         if out.reopen_start is None or attempt == DEALER_REOPENS:
             break
@@ -1160,7 +1161,7 @@ def duel_run(
     from bazaar_agent.agents.bluff import message_id
     from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
     from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
-    from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
+    from bazaar_agent.agents.duel_v2 import V2Params, first_offer_wait, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
@@ -1173,6 +1174,7 @@ def duel_run(
         our_duel_messages,
         rival_offer,
         rival_text,
+        spoke_this_tick,
         template_duel_words,
     )
     from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags
@@ -1381,9 +1383,10 @@ def duel_run(
         observe_days(c.tick, duels)
         rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
+        wait = first_offer_wait(V2Params.from_rules(rules_t)) if v2 else 0
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
-                first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
+                first_seen.setdefault(live_id, payload_start(d, c.tick, wait) if v2 else c.tick)
         for d in duels:  # memory only: the rival's new offer scores our last tactic message
             if (seen_id := duel_id(d)) is not None:
                 observe_duel(book, d, seen_id, c.tick)
@@ -1432,6 +1435,8 @@ def duel_run(
             else:
                 endgame = rules.duel_endgame_ticks
                 move = duel_move(d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=endgame)
+            if move.kind == "offer" and spoke_this_tick(d, c.tick):  # a restart mid-tick: the game would refuse it
+                move = DuelMove("hold", reason="we already offered this tick: one message per side per tick")
             duel_traces.seen(d, c.tick, move)
             if pick is not None:
                 duel_traces.jev(did, pick)
@@ -1851,6 +1856,48 @@ def alerts(limit: int = typer.Option(20, help="How many of the latest alerts")) 
         console.print("no alerts yet")
     for a in rows:
         console.print(f"tick {a['tick']} [bold]{a['kind']}[/bold] {a['subject']}: {a['detail']}")
+
+
+@app.command()
+def budget(
+    tick_seconds: float = typer.Option(30.0, help="Tick length: 30 Saturday, 15 Sunday"),
+    ceiling: bool = typer.Option(False, help="Every loop at its ceiling instead of a steady busy tick"),
+    dealer_children: int = typer.Option(0, help="`bazaar dealer buy` processes running besides the taker"),
+    laptops: int = typer.Option(1, help="Copies of taker and maker (each laptop running them)"),
+    stagger: bool = typer.Option(False, help="Model the proposed stagger (opt-in per service: BAZAAR_TICK_OFFSET_S)"),
+    operator_rps: float = typer.Option(
+        0.0, min=0.0, help="MCP tools, desk, `bazaar ask`/`status`: average req/s (0 = not counted)"
+    ),
+    flatten: bool = typer.Option(False, help="Add one `bazaar flatten` (32 calls) at the tick edge"),
+) -> None:
+    """Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made."""
+    from rich.table import Table
+
+    from bazaar_agent import rate_budget as rb
+
+    plan = rb.saturday_plan(dealer_children=dealer_children) if ceiling else rb.steady_plan()
+    if not ceiling and dealer_children:
+        plan.append(rb.dealer_child().times(dealer_children))
+    plan = rb.with_copies(plan, {"taker": laptops, "maker": laptops})
+    if operator_rps:
+        plan.append(rb.operator(operator_rps, tick_seconds))
+    if flatten:
+        plan.append(rb.flatten())
+    offsets = rb.PROPOSED_STAGGER if stagger else None
+    t = Table(title=f"Calls per tick · {tick_seconds:g} s ticks · {'ceiling' if ceiling else 'steady'}")
+    for col in ("loop", "copies", "team", "team/s", "broker", "broker/s", "keyless", "keyless/s"):
+        t.add_column(col)
+    for row in rb.describe(rb.budget_table(tick_seconds, plan)):
+        t.add_row(*row)
+    console.print(t)
+    edge = rb.burst(plan, offsets=offsets, retries=rb.TEAM_RESENDS)
+    console.print(
+        f"tick boundary: {edge.calls} team-key calls → {edge.sent} requests (the team client never re-sends a 429), "
+        f"{edge.refused} refused 429, {edge.failed} lost (over {edge.seconds:.1f} s)"
+    )
+    verdict = rb.check(plan, tick_seconds, offsets=offsets)
+    problems = "\n".join(f"[red]{p}[/red]" for p in verdict.problems)
+    console.print("[green]fits the key[/green]" if verdict.ok else problems)
 
 
 # ---------------------------------------------------------------- feed capture

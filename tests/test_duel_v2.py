@@ -90,6 +90,20 @@ def test_a_quiet_rival_gets_free_descending_offers():
     assert duel_plan(one_shot, 102, 100).move.kind == "hold"  # silent only 2 ticks: it may still be conceding
 
 
+def test_a_rival_that_answers_in_the_same_tick_is_not_quiet():
+    """Duel 2507 (Duels I): the rival answered each of our offers in the same tick, listed after ours. Read by tick it
+    looked ignored, so v2 stepped down "for free" every 3 ticks and each step was a round (7 rounds, cap 3).
+    Generic numbers here: no real limit in a committed file."""
+    from bazaar_agent.agents.duel_v2 import ignored, quiet
+
+    mirror = duel(role="buyer", rival=[(104, 140)], ours=[(104, 60)])
+    mirror["messages"].reverse()  # the helper lists a tick's rival message first: put ours first, as the game did
+    assert not ignored(mirror) and not quiet(mirror, 107, 3)
+    assert "quiet" not in duel_plan(mirror, 107, 100).move.reason  # no "free" step: an answered offer is a round
+    rival_first = duel(role="buyer", rival=[(104, 140)], ours=[(104, 60)])
+    assert ignored(rival_first) and quiet(rival_first, 107, 3)  # it priced before our offer in that tick: no answer
+
+
 def test_a_silent_rival_gets_v1s_descending_offers_for_free():
     d = duel(ours=[(100, 160), (101, 155)])
     move = duel_plan(d, 102, 100).move
@@ -289,6 +303,34 @@ def test_after_a_restart_v2_recovers_the_duels_start_from_its_messages():
 
     assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108) == 103  # not 108: the clock survives
     assert payload_start(duel(), 108) == 108
+    # the rival priced first: its message is the start, whatever we waited
+    assert payload_start(duel(rival=[(103, 70)], ours=[(104, 160)]), 108, wait=3) == 103
+
+
+def test_a_restart_against_a_silent_rival_never_steps_back_on_our_own_offers():
+    """Live, Sat 3 Oct: each redeploy made v2 restart the clock at our first offer, not at our first sight of the
+    duel (it waits `first_offer_wait` ticks before opening when the rival has not priced), so a seller's ask went
+    up and a buyer's bid down (9 times in duel session 2, one per restart). A restarted runner must play on."""
+    from bazaar_agent.agents.duel_v2 import first_offer_wait, payload_start
+
+    params = V2Params()
+    wait = first_offer_wait(params)
+    assert wait == 3  # GUARDRAILS.md today: max(duel_open_wait_ticks 0, duel_stall_ticks 3)
+    for role in ("seller", "buyer"):
+        seen, deadline, ours = 100, 116, []
+        for tick in range(seen, deadline - 2):  # a runner that never restarts: our offers, tick by tick
+            move = plan_moves([duel(7, role=role, limit=100, deadline=deadline, ours=ours)], tick, {7: seen}, params)[7]
+            if move.kind == "offer":
+                ours.append((tick, move.price))
+        assert ours[0][0] == seen + wait and len(ours) > 6
+        for cut in range(1, len(ours)):  # a restart after any of them: the next offer is the same
+            sent, (tick, expected) = ours[:cut], ours[cut]
+            d = duel(7, role=role, limit=100, deadline=deadline, ours=sent)
+            restarted = {7: payload_start(d, tick, wait)}
+            assert restarted == {7: seen}
+            assert plan_moves([d], tick, restarted, params)[7].price == expected
+        prices = [p for _, p in ours]
+        assert prices == sorted(prices, reverse=role == "seller")  # a seller only comes down, a buyer only up
 
 
 # ---------------------------------------------------------------- r2 bites B2a / B2c

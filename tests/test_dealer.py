@@ -5,6 +5,7 @@ from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
     apply_advice,
+    captured_share,
     decide,
     latest_dealer_offer,
     reopen_start,
@@ -1113,3 +1114,20 @@ def test_a_cut_connection_on_the_last_read_never_crashes_dealer_buy():
         max_ticks=2,
     )
     assert out.status == "open" and any("unreadable (IncompleteRead)" in line for line in lines)
+
+
+def test_jev_takes_an_early_ask_only_once_she_gave_up_the_minimum_share_of_the_gap():
+    # Sat 3 Oct, thread 644: our bids 82, 83, 84 against her opening 97; Jev took 95 (0.13 of the gap).
+    n = neg(start=82, max_price=100, bids=[82, 83, 84], opened=(97, 0))
+    bid = decide(n, 95, 7, False)
+    assert bid.kind == "bid"
+    assert captured_share(n, 95) == pytest.approx(2 / 15)
+    assert apply_advice(bid, "accept", n, 95, 7, 0.5) == bid  # too early: keep stepping, she matches our step
+    assert apply_advice(bid, "accept", n, 95, 7).kind == "accept"  # 0 = today's rule: any ask inside the limit
+    met = decide(n, 89, 8, False)
+    assert apply_advice(met, "accept", n, 89, 8, 0.5).kind == "accept"  # 8 of 15 given up: past the middle
+
+
+def test_captured_share_needs_her_opening_and_our_first_bid():
+    assert captured_share(neg(bids=[], opened=(20, 0)), 15) is None
+    assert captured_share(neg(bids=[20], opened=(20, 0)), 19) is None

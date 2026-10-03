@@ -41,11 +41,11 @@ def with_rules(cli, monkeypatch, **update):
     monkeypatch.setattr(cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update=update)))
 
 
-def test_with_today_s_rules_the_duel_tick_never_reads_the_finished_duels(duel_cli, monkeypatch):  # noqa: F811
+def test_with_duel_days_auto_off_the_duel_tick_never_reads_the_finished_duels(duel_cli, monkeypatch):  # noqa: F811
     cli, _, _, _ = duel_cli
     client = DoneClient([{**LIVE}], [])
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
-    assert cli._rules().rules.duel_days_auto is False  # the shipped default
+    with_rules(cli, monkeypatch, duel_days_auto=False)  # GUARDRAILS.md turned it on for Duels II; the off path stays
     from bazaar_agent import duel_store
 
     monkeypatch.setattr(duel_store.DuelStore, "read_finished", lambda self, duels: False)  # main's own read: off

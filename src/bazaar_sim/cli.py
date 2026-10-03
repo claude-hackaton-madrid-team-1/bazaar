@@ -4,6 +4,7 @@ uv run bazaar-sim serve                      # http://127.0.0.1:8765, one tick e
 SIM_TICK_SECONDS=2 uv run bazaar-sim serve   # faster
 BAZAAR_SIM=local uv run bazaar status       # our CLI against it (BAZAAR_SIM=1: the public one)
 SIM_ADMIN_TOKEN=... uv run bazaar-sim reset --url https://<sim host>
+uv run bazaar-sim bench --seeds 1000           # the Market Test offline: the stall and the oracle per preset
 """
 
 from __future__ import annotations
@@ -79,6 +80,53 @@ def reset(
     except urllib.error.HTTPError as e:
         typer.echo(f"reset refused: {e.code} {e.read().decode()[:200]}", err=True)
         raise typer.Exit(1) from None
+
+
+@app.command()
+def bench(
+    seeds: int = typer.Option(1000, min=2, help="Seeded books per preset and rule"),
+    presets: str = typer.Option("normal,hard", help="Comma-separated presets (normal, hard, static)"),
+    rules: str = typer.Option("quote,limit", help="Comma-separated match rules (quote, limit)"),
+    fee_bps: int = typer.Option(0, help="The venue fee the oracle must cover (the stall charges none)"),
+    spread: int | None = typer.Option(
+        None, min=0, help="Arrivals over ticks 0..spread (default: ticks − 6; 0: all at once)"
+    ),
+    shade: float = typer.Option(
+        1.0, min=0.0, max=3.0, help="Scale every quote's shade away from its limit (2.0: twice as wide)"
+    ),
+    relax: str | None = typer.Option(None, help='The share of shade a relaxing trader gives up, "lo,hi" (0.5,1.0)'),
+) -> None:
+    """The Market Test offline: the free stall and the oracle (the best any broker could do) on seeded books."""
+    import statistics
+
+    from bazaar_sim import bench as b
+
+    def q(xs: list[float]) -> str:
+        deciles = statistics.quantiles(xs, n=10)
+        return f"{deciles[0]:.3f} {statistics.median(xs):.3f} {statistics.fmean(xs):.3f}"
+
+    typer.echo(f"{seeds} books each · efficiency = realised ÷ the possible gains at the true limits (p10 p50 mean)")
+    typer.echo("against a stall-level field a session scores 1.0 when ours > stall and 0.5 on a tie")
+    typer.echo(f"{'preset':8} {'rule':6} {'stall':>19}   {'oracle':>19}   {'oracle - stall':>19}   oracle > stall")
+    lo_hi = None
+    if relax:
+        parts = [float(x) for x in relax.split(",")]
+        if len(parts) != 2 or not 0 <= parts[0] <= parts[1] <= 1:
+            raise typer.BadParameter('--relax is "lo,hi" with 0 <= lo <= hi <= 1')
+        lo_hi = (parts[0], parts[1])
+    for name in presets.split(","):
+        p = b.preset(name.strip()).variant(spread=spread, shade=shade, relax=lo_hi)
+        for rule in (r.strip() for r in rules.split(",")):
+            if rule not in b.MATCH_RULES:
+                raise typer.BadParameter(f"unknown match rule {rule!r} (one of quote, limit)")
+            stall, oracle = [], []
+            for seed in range(seeds):
+                possible, s, o = b.references(b.make_book(p, seed), p.ticks, rule, fee_bps=fee_bps)
+                stall.append(s / possible if possible else 1.0)
+                oracle.append(o / possible if possible else 1.0)
+            gap = [o - s for o, s in zip(oracle, stall, strict=True)]
+            wins = sum(g > 0 for g in gap) / seeds
+            typer.echo(f"{p.name:8} {rule:6} {q(stall)}   {q(oracle)}   {q(gap)}   {wins:6.1%}")
 
 
 @app.command()

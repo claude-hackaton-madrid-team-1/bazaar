@@ -323,7 +323,9 @@ class NewsSentinel:
         try:
             answer = self.public.call("GET", f"/api/{what}")
         except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
-            self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
+            code = getattr(e, "code", None)  # BazaarError: the server's reason (rate_limited, http_502, ...)
+            why = f"{type(e).__name__}: {code}" if isinstance(code, str) and code else type(e).__name__
+            self._once(f"tick {tick} news: /api/{what} read failed ({why})")
             self._due = []  # the game is slow or refusing: the next read waits for the next window
             return None, {}
         return (what, answer) if isinstance(answer, dict) else (None, {})
