@@ -5,8 +5,10 @@ then runs taker + maker (with #71's venue keeper and broker) + duel player toget
 `bazaar_sim`. Nothing touched the real game, Railway or the shared Postgres.
 
 ## Verdict
-**GO for the merge sequence below, but only with the fix-ups.** Twelve PRs merge in this order with additive
-conflicts only. Each of the 10 fix-ups listed here repairs a defect that exists only when two PRs are merged
+**GO for the merge sequence below, but only with the fix-ups.** Integrated, the taker, maker (venue + broker)
+and duel player ran 580 ticks LIVE together on a local simulator: 0 crashes, 0 floor breaches, 0 double accepts,
+11 Market Tests with 0 refused matches. Twelve PRs merge in this order with additive
+conflicts only. Each fix-up listed below repairs a defect that exists only when two PRs are merged
 together: each PR passes its own tests. Without them:
 - `bazaar dealer buy --live` crashes on a ledger outage, or bids with the ledger down;
 - the maker raises `AttributeError` every tick with #79 on #62;
@@ -67,16 +69,16 @@ separate commit on this branch (`git log --first-parent`), so it can be cherry-p
 
 | | A: accelerated (4 s ticks) | B: Saturday pace (30 s ticks) | C: night switches on (4 s, v2 + edge) |
 |---|---|---|---|
-| ticks handled per agent | 300 / 300 / 300 | 40 / 40 / 40 | RUN_C_TICKS |
-| crashes (`Traceback`, `tick loop:`), exits | 0, all exit 0 | 0, all exit 0 | RUN_C_CRASH |
-| venue | opened at tick 54: cash 372 → 102 | opened at tick 5 | RUN_C_VENUE |
-| Market Tests | 5 sessions, 22 matches, 0 refused, efficiency 1.0 | 2 sessions, 5 matches, 0 refused, 0.971 | RUN_C_MT |
-| cash vs effective floor (370 before the venue, 100 after) | 0 breaches in 101 samples (min 102) | 0 breaches in 19 samples (min 105) | RUN_C_CASH |
-| ticks with more than 1 accept booked (all processes) | 0 (9 accepts) | 0 (3 accepts) | RUN_C_ACC |
-| duels | 10/10 deals, 8.3 rounds per deal, mean share 0.48 | 4 deals + 2 live at end, 8.3 rounds | RUN_C_DUELS |
-| guardrail denials | 148 venue reserve, 18 rarity cap, 9 spend cap | 16 rarity cap, 12 cash floor, 12 venue reserve | RUN_C_DEN |
-| server refusals | 6 `duel_closed`, 2 `asset_locked` | 3 `duel_closed`, 2 `asset_locked` | RUN_C_REF |
-| sim score (rank) | 80.4 (1st of 8) | 32.9 (1st) | RUN_C_SCORE |
+| ticks handled per agent | 300 / 300 / 300 | 40 / 40 / 40 | 240 / 240 / 240 |
+| crashes (`Traceback`, `tick loop:`), exits | 0, all exit 0 | 0, all exit 0 | 0, all exit 0 |
+| venue | opened at tick 54: cash 372 → 102 | opened at tick 5 | opened at tick 54: 372 → 102 |
+| Market Tests | 5 sessions, 22 matches, 0 refused, efficiency 1.0 | 2 sessions, 5 matches, 0 refused, 0.971 | 4 sessions, 18 matches, 0 refused, efficiency 1.0 |
+| cash vs effective floor (370 before the venue, 100 after) | 0 breaches in 101 samples (min 102) | 0 breaches in 19 samples (min 105) | 0 breaches in 80 samples (min 102) |
+| ticks with more than 1 accept booked (all processes) | 0 (9 accepts) | 0 (3 accepts) | 0 (8 accepts) |
+| duels | 10/10 deals, 8.3 rounds per deal, mean share 0.48 | 4 deals + 2 live at end, 8.3 rounds | 8/8 deals, **0.12 rounds per deal**, mean share 0.50 |
+| guardrail denials | 148 venue reserve, 18 rarity cap, 9 spend cap | 16 rarity cap, 12 cash floor, 12 venue reserve | 172 venue reserve, 18 rarity cap, 9 spend cap |
+| server refusals | 6 `duel_closed`, 2 `asset_locked` | 3 `duel_closed`, 2 `asset_locked` | 0 `duel_closed`, 2 `asset_locked` |
+| sim score (rank) | 80.4 (1st of 8) | 32.9 (1st) | 79.3 (1st), in 240 ticks |
 
 **Findings from the runs.**
 - **The guardrails compose across the three processes.**
@@ -89,10 +91,18 @@ separate commit on this branch (`git log --first-parent`), so it can be cherry-p
   the team's one accept slot. Each one cost nothing here: the deal had closed at our better price.
 - **`asset_locked` (low, maker).** The maker re-lists a card whose sale is still settling (2 per run), and each
   refused post uses one of the 12 listings for that tick.
-- **v1 duels spend ~8 rounds per deal** (mean share 0.48 at decay 0.06), matching PLAN fact 1; run C is the v2
-  comparison.
-- **Tick window.** At 3 s ticks the keeper's paced matches (0.2 s each, before the maker's offers) dropped 3 of 5
-  matches at the tick edge. At 4 s ticks, 0 were dropped; at 30 s ticks, 0. Watch Sunday's 15 s ticks with many
+- **Duel policy v2 inside the integrated loop (run C vs run A, same seed, the same 8 duels).**
+  - Rounds per deal: v1 8.0, v2 0.12 ("silence is free": it holds while the rival concedes).
+  - Our gain: v1 219 P, v2 244.5 P (+11.6 %; mean share 0.45 → 0.50).
+  - `duel_closed` refusals: v1 6 in A, v2 0 (v2 does not counter, so the rival never accepts our offer mid-tick).
+  - v2 had 0 planner failures and 0 guardrail refusals.
+  - The lift against the simulator's bot is smaller than W2a/W2b's zoo lifts (1.4–1.55×). This is one seed at
+    decay 0.06; it is not evidence against the gate.
+- **Edge broker (#84, `BAZAAR_BENCH_POLICY=edge`) inside #71's keeper.**
+  - It runs without errors: 0 refused, efficiency 1.0, as exact does on the simulator's static book.
+  - It picks different pairs (b2: 5 pairs, quoted 126, vs exact's 4, 137); it cannot beat a 1.0 stall here.
+- **Tick window.** At 3 s ticks the keeper's paced matches (0.2 s each, before the maker's offers) dropped 3 matches
+  at the tick edge (5 sent). At 4 s ticks, 0 were dropped; at 30 s ticks, 0. Watch Sunday's 15 s ticks with many
   bench pairs.
 - **r2's X15 (expired maker bids counted twice) was not exercised.** After the venue opened (cash ~100), the
   maker could not afford a bid, so none expired. Its bite is still open (below).
@@ -128,8 +138,8 @@ Re-run the rehearsal on the new heads before merging: `scripts/rehearsal/rehears
 ## Not integrated
 Wave-2 PRs #89, #91–#119, #121–#130 (B-items, r1/r2, the teammates' feed reader, the holdings DB, and so on):
 outside this rehearsal's frozen scope. For #100 (B12, on #81), its author's re-apply notes after #72: `may_close` →
-`may_take`; `counter_below` targets `ask - neg.base_step`; `reopen_start` reads a jittered `bids[0]`. Heads that moved after the freeze: #71 (ffb0877 applied as a delta). Pass 1 (old #71/#72
-heads, 4 fix-ups) is kept as `night/b5-rehearsal-pass1`.
+`may_take`; `counter_below` targets `ask - neg.base_step`; `reopen_start` reads a jittered `bids[0]`.
+Pass 1 (old #71/#72 heads, 4 fix-ups) is kept as `night/b5-rehearsal-pass1`.
 
 ## What Marius must decide
 1. #71 as it stands: auto-opening a real venue at h6.5 with `cash_floor` 100 (vs. the 02:30 decision).
