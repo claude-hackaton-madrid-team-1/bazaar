@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import flags_cli, intel, render, supply_cli, traces
+from bazaar_agent import flags_cli, intel, persona_cli, render, supply_cli, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -1342,17 +1342,21 @@ def duel_run(
             observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+            console.print(f"  /api/duels?done=true failed ({type(e).__name__}): the days sign waits")
 
-    def save_finished(tick: int) -> None:
-        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
+    def save_finished(tick: int) -> bool:
+        """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result.
+        True when the read was answered or refused (the days latch then needs no read of its own this tick: a
+        refusal such as a 429 waits for a later tick, never a second try in this one)."""
         try:
             data = client.duels(done=True)
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
-            return
+            return True
         except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
-            return
+            return False
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         finished = [d for d in duel_list(data) if d.get("status") != "live"]
         for d in finished:
@@ -1360,6 +1364,7 @@ def duel_run(
                 observe_duel(book, d, did, tick)  # a deal or no deal scores the last tactic of that duel
         store.save(tick, finished)
         observe_days(tick, duel_list(data))  # free scored evidence for the days sign: this read happens anyway
+        return True
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -1549,7 +1554,6 @@ def duel_run(
             if duel_id(d) not in done:
                 play_safely(d)
         duel_traces.end_tick(duel_id(d) for d in duels)
-        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):
@@ -1558,8 +1562,9 @@ def duel_run(
                 console.print(f"  duel jev outcomes failed ({type(e).__name__})")
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
-        if store.read_finished(duels):
-            save_finished(c.tick)
+        read = store.read_finished(duels) and save_finished(c.tick)
+        if not read:  # one ?done=true read per tick at most (r1, #159): the days latch reuses the store's
+            read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if book.messages:  # a flag needs our message id; without one there is nothing to match, so no read
             book.read_events(feed, c.tick)  # 2 s at most, backs off after a failure, never raises
         book.flush()  # after the sends: this tick's tactic lessons out, the other processes' in
@@ -2551,6 +2556,26 @@ def _offer_jev(settings: Any, timeout_s: float) -> Any:
     return ask
 
 
+def _swap_jev(settings: Any, rules: Any) -> Any:
+    """Jev `team_swap_worth_it` (questions/team_swaps.json) as the team desk's gate: decided at
+    `team_swap_jev_min_confidence`, and `undecided` past `jev_timeout_s` (the desk then sends nothing)."""
+    from bazaar_agent.agents.runtime import JevAdvice
+    from bazaar_agent.jev import judge, load_questions
+
+    name = "team_swap_worth_it"
+    question = {name: load_questions(REPO_ROOT / "questions" / "team_swaps.json")[name]}
+    key = settings.typesafe_api_key.get_secret_value() if settings.typesafe_api_key else None
+    bar = {name: rules.team_swap_jev_min_confidence}
+
+    def ask(state: dict[str, Any]) -> JevAdvice:
+        result = judge(state, question, api_key=key, timeout_s=rules.jev_timeout_s, thresholds=bar)
+        tm.record_jev(result, name)
+        verdict = result.verdicts[name]
+        return JevAdvice(verdict.verdict, verdict.value, verdict.probabilities, verdict.reason)
+
+    return ask
+
+
 def _status_port(port: int | None) -> int:
     """`--port`, else Railway's PORT, else 0 (no status server on a laptop unless asked)."""
     import os
@@ -2698,6 +2723,17 @@ def _run_agent(
         decisions.close()
 
 
+def _cards_heartbeat(kw: dict[str, Any], settings: Any) -> Any:
+    """New cards in the catalog the taker already reads: stored in the feed reader's learnings store (Postgres +
+    memory) when it runs, else in memory only; ranked up per GUARDRAILS `card_release_boost_enabled`."""
+    from bazaar_agent.cards_heartbeat import CardsHeartbeat
+    from bazaar_agent.learn.store import LearningStore
+
+    learner = kw.get("learner")
+    store = learner.store if learner is not None else LearningStore(None, kw["log"])
+    return CardsHeartbeat(kw["rules"], store.record, kw["log"], settings.data_dir / "agents")
+
+
 def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     """Radio Rastro and the schedule, read by the taker after its sends on its own keyless client (2 s, never
     retried: a hung or rate-limited read costs one attempt, never the next tick): stored in the feed reader's
@@ -2709,7 +2745,35 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     learner = kw.get("learner")
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
-    return NewsSentinel(reader, store.record, kw["log"], settings.data_dir / "agents")
+    return NewsSentinel(
+        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+    )
+
+
+def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
+    """Leaderboard snapshots in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.leaderboard_store import LeaderboardStore
+
+    return LeaderboardStore(lambda: db.connect(app="bazaar-leaderboard", connect_timeout_s=3), kw["log"],
+                            scope_of(settings).world)  # fmt: skip
+
+
+def _persona_book(kw: dict[str, Any], shared: bool) -> Any:
+    """The taker's persona book: the /api/dealers personas it reads every tick, stored in the shared Postgres
+    `traders` table when they change (off the tick; nothing stored without the shared database)."""
+    from bazaar_agent import db
+    from bazaar_agent.agents.persona_book import PersonaBook
+
+    def write(snaps: list[Any], tick: int) -> None:
+        with db.connect(app="bazaar-taker-personas", connect_timeout_s=3) as conn:
+            db.upsert_traders(conn, snaps, tick)
+
+    return PersonaBook(write if shared else None, kw["log"])
 
 
 @agent_app.command("taker")
@@ -2755,9 +2819,12 @@ def agent_taker(
             jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
             lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s, rules.jev_cache_ticks) if jev else None,
+            swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
+            personas=_persona_book(kw, shared),
             **kw,
         )
 
@@ -3048,6 +3115,7 @@ evals_cli.register(app)
 supply_cli.register(app)
 learn_cli.register(app)
 dealer_finals.register(dealer_app)
+persona_cli.register(dealer_app)
 
 # ---------------------------------------------------------------- agent runtime (Claude Agent SDK, README)
 # `bazaar agent chat`, `bazaar agent tools`, `bazaar mcp serve`: see bazaar_agent/runtime/cli.py.

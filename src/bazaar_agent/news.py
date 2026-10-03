@@ -23,9 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.rank_watch import RankWatch
+from bazaar_agent.schedule_watch import ScheduleWatch
 
 READ_EVERY_TICKS = 10
+READS = ("news", "schedule", "levels", "leaderboard")  # one window, one read per tick
 READ_TIMEOUT_S = 2.0  # its own keyless client: a hung /api/news never holds the taker past this (no retries)
 EVENTS_FILE = "market_events.json"
 NEWS_CONFIDENCE = 0.5  # a Radio Rastro item may be a rumour: nothing tells which
@@ -222,7 +226,9 @@ def learning_of(item: NewsItem, tick: int) -> Learning:
 
 
 class NewsSentinel:
-    """Run once per tick after the sends (`on_tick`): never raises, never blocks a send."""
+    """Run once per tick after the sends (`on_tick`): never raises, never blocks a send. Every read window it
+    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times) and `/api/leaderboard` to the
+    rank watch (rival jumps): four keyless GETs per `every` ticks, one per tick, stopped at the first failure."""
 
     def __init__(
         self,
@@ -231,58 +237,102 @@ class NewsSentinel:
         log: Callable[[str], None],
         out_dir: Path,
         every: int = READ_EVERY_TICKS,
+        history: LeaderboardStore | None = None,
     ) -> None:
         self.public, self.record, self.log, self.every = public, record, log, every
         self.path = out_dir / EVENTS_FILE
         self.seen: dict[str, NewsItem] = {}
         self.events: list[MarketEvent] = []
+        self.schedule = ScheduleWatch(record, log)
+        self.ranks = RankWatch(record, log, save=history.save if history is not None else None)
+        if history is not None:  # at process start, never in a tick
+            boards = self.ranks.seed(history.load(self.ranks.history))
+            log(f"news: rank history {boards} board(s) from Postgres")
+        self.upcoming: list[dict[str, Any]] = []
         self._last_read: int | None = None
+        self._due: list[str] = []  # this window's reads still to make, one per tick
+        self._payloads: dict[str, dict[str, Any]] = {}  # the last schedule and levels answers
         self._failed: set[str] = set()  # failures already logged (each said once)
 
-    def on_tick(self, tick: int, events: Iterable[Mapping[str, Any]], catalog: Mapping[str, Any]) -> list[NewsItem]:
+    def on_tick(
+        self,
+        tick: int,
+        events: Sequence[Mapping[str, Any]],
+        catalog: Mapping[str, Any],
+        clock: Any = None,
+        us: str | None = None,
+    ) -> list[NewsItem]:
+        """`clock`: the tick's `ticks.Clock` (t_hours, tick_seconds) for lead times; `us`: our team id (never a
+        rival of ours)."""
         try:
-            return self._run(tick, events, catalog)
+            return self._run(tick, events, catalog, clock, us)
         except Exception as e:  # noqa: BLE001 — logging only: the sentinel never breaks a tick
             self._once(f"tick {tick} news: skipped ({type(e).__name__})")
             return []
 
-    def _run(self, tick: int, events: Iterable[Mapping[str, Any]], catalog: Mapping[str, Any]) -> list[NewsItem]:
+    def _run(
+        self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], clock: Any, us: str | None
+    ) -> list[NewsItem]:
         items = items_from_feed(events)
         if self._last_read is None or tick - self._last_read >= self.every:
-            self._last_read = tick
-            items += self._read(tick)
+            self._last_read, self._due = tick, list(READS)
+        what, answer = self._read(tick)
+        if what == "news":
+            items += items_from_api(answer)
+        elif what == "schedule":
+            items += items_from_schedule(answer, tick)
+            self._payloads["schedule"] = answer
+        elif what == "levels":
+            self._payloads["levels"] = answer
+        elif what == "leaderboard":
+            self.ranks.us = us
+            self.ranks.observe(answer, events, tick)
+        if what in ("schedule", "levels"):
+            self.schedule.update(self._payloads.get("schedule"), self._payloads.get("levels"))
+        changed = self._schedule_tick(tick, clock)
         fresh = [i for i in items if i.news_id not in self.seen]
-        if not fresh:
-            return []
-        self.record([learning_of(i, tick) for i in fresh])  # a store that raises: retried next tick
-        for item in fresh:
-            self.seen[item.news_id] = item
-            kind = "official" if item.official else f"{item.source}, unverified"
-            self.log(f"tick {tick} news ({kind}): {item.headline}" + (f" · {item.body}" if item.body else ""))
-        self.events = parse_events(list(self.seen.values()), set_names(catalog))
-        self._write()
+        if fresh:
+            self.record([learning_of(i, tick) for i in fresh])  # a store that raises: retried next tick
+            for item in fresh:
+                self.seen[item.news_id] = item
+                if item.official:
+                    continue  # the schedule watch says it, with its lead time
+                kind = "official" if item.official else f"{item.source}, unverified"
+                self.log(f"tick {tick} news ({kind}): {item.headline}" + (f" · {item.body}" if item.body else ""))
+            self.events = parse_events(list(self.seen.values()), set_names(catalog))
+        if fresh or changed:
+            self._write()
         return fresh
 
-    def _read(self, tick: int) -> list[NewsItem]:
-        items: list[NewsItem] = []
-        for what, read in (
-            ("news", self._news),
-            ("schedule", lambda: items_from_schedule(self.public.schedule(), tick)),
-        ):
-            try:
-                items += read()
-            except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
-                self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
-                break  # the game is slow or refusing: the next read waits for the next window
-        return items
+    def _schedule_tick(self, tick: int, clock: Any) -> bool:
+        t_hours, seconds = getattr(clock, "t_hours", None), getattr(clock, "tick_seconds", None)
+        if not isinstance(t_hours, int | float) or not isinstance(seconds, int | float):
+            return False
+        said = self.schedule.on_tick(tick, float(t_hours), float(seconds))
+        upcoming = self.schedule.upcoming(float(t_hours), float(seconds))
+        changed = bool(said) or [u["event_id"] for u in upcoming] != [u["event_id"] for u in self.upcoming]
+        self.upcoming = upcoming
+        return changed
 
-    def _news(self) -> list[NewsItem]:
-        return items_from_api(self.public.call("GET", "/api/news"))
+    def _read(self, tick: int) -> tuple[str | None, dict[str, Any]]:
+        """At most ONE read per tick (at most `READ_TIMEOUT_S` after the sends): the window's reads go one tick
+        after another; a failure ends the window."""
+        if not self._due:
+            return None, {}
+        what = self._due.pop(0)
+        try:
+            answer = self.public.call("GET", f"/api/{what}")
+        except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
+            self._once(f"tick {tick} news: /api/{what} read failed ({type(e).__name__})")
+            self._due = []  # the game is slow or refusing: the next read waits for the next window
+            return None, {}
+        return (what, answer) if isinstance(answer, dict) else (None, {})
 
     def _write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"events": [asdict(e) for e in self.events]}, ensure_ascii=False, indent=1))
+        body = {"events": [asdict(e) for e in self.events], "upcoming": self.upcoming}
+        tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1))
         tmp.replace(self.path)
 
     def _once(self, line: str) -> None:

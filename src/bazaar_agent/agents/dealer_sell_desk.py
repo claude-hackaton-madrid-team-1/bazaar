@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from bazaar_agent.agents.dealer import Move, settled_price
@@ -39,6 +40,8 @@ from bazaar_agent.agents.dealer_sell import (
 )
 from bazaar_agent.agents.dealer_sell_data import REFRESH_TICKS, Fill, SellMarket, market_from_feed
 from bazaar_agent.guardrails import Guardrails
+from bazaar_agent.news import EVENTS_FILE, MarketEvent, active_signals, load_market_events
+from bazaar_agent.persona_model import Persona, parse_personas, sell_weight
 
 UNKNOWN_FILL_START = 2.0  # no bid seen from this dealer for this rarity: open at this × the floor
 WALK_WORDS = "Muchas gracias por su tiempo, {n}. Otro día seguro que nos entendemos."
@@ -99,9 +102,16 @@ def candidates(
     busy: Iterable[str] = (),
     locked: Iterable[int] = (),
     events: Sequence[Any] = (),
+    personas: Mapping[str, Persona] | None = None,
+    fever: Mapping[str, Mapping[str, float]] | None = None,
 ) -> list[Candidate]:
     """Spare copies an unlocked dealer we have no open thread with buys, whose floor that dealer has been seen
-    to bid for the rarity. Best first: its typical fill minus what we lose."""
+    to bid for the rarity. Best first: its typical fill minus what we lose.
+
+    `personas` (the persona model, `/api/dealers`): a dealer whose published menu does not buy the copy's rarity
+    in its set is dropped (never a common to Pilar), and the rank uses its typical fill × `sell_weight` (a
+    favourite set, an official `fever`: dealer -> set -> pct over book). Ranking only: floors, expected fills
+    and every ask stay as they are. Without personas: today's candidates and order."""
     from bazaar_agent.strategy import _spare, bonus_at_stake, build_market
 
     m = build_market(me, catalog, events, [])
@@ -112,6 +122,7 @@ def candidates(
         if a["id"] not in locked_ids:
             free[str(a.get("ref"))] = free.get(str(a.get("ref")), 0) + 1
     out: list[Candidate] = []
+    weights: dict[tuple[int, str], float] = {}
     seen: set[tuple[str, str]] = set()
     for a in sorted(cards, key=lambda a: float(a.get("your_value") or 0)):
         ref, value = str(a.get("ref")), a.get("your_value")
@@ -128,10 +139,45 @@ def candidates(
             fill = market.fills.get((t.id, card.rarity))
             if fill is None or t.id in busy_ids or (ref, t.id) in seen or floor > fill.top:
                 continue  # never seen bid that high: a thread would only walk
+            persona = personas.get(t.id) if personas else None
+            if persona is not None:
+                weight = sell_weight(persona, card.rarity, card.set_code, (fever or {}).get(t.id, {}))
+                if weight <= 0:
+                    continue  # its menu does not buy this rarity in this set
+                weights[(int(a["id"]), t.id)] = weight
             seen.add((ref, t.id))
             cand = Candidate(int(a["id"]), ref, card.rarity, round(ours, 1), float(value), floor, t.id, fill.expected)
             out.append(Candidate(**{**cand.__dict__, "name": t.greeting, "fill": fill}))
-    return sorted(out, key=lambda c: (-c.gain, c.asset_id))
+    if not personas:
+        return sorted(out, key=lambda c: (-c.gain, c.asset_id))
+    return sorted(out, key=lambda c: (-weighted_gain(c, weights.get((c.asset_id, c.dealer), 1.0)), c.asset_id))
+
+
+def weighted_gain(c: Candidate, weight: float) -> float:
+    """The rank of a candidate under the persona model: the dealer's typical fill × its weight, minus our loss."""
+    return round(c.expected * weight - c.value, 1)
+
+
+def fever_by_dealer(events: Iterable[MarketEvent], t_hours: float) -> dict[str, dict[str, float]]:
+    """dealer -> set -> pct over book, from moves already filtered by `news.active_signals` (official, in force at
+    `t_hours`). A move with no persona or a fall in price (pct <= 0) never raises a rank; the strongest wins."""
+    out: dict[str, dict[str, float]] = {}
+    for ev in events:
+        if not ev.persona or ev.pct <= 0:
+            continue
+        if ev.start_hours is not None and t_hours < ev.start_hours:
+            continue
+        sets = out.setdefault(ev.persona, {})
+        sets[ev.set_code] = max(ev.pct, sets.get(ev.set_code, 0.0))
+    return out
+
+
+def read_fever(rules: Guardrails, path: Path | None, t_hours: float) -> dict[str, dict[str, float]] | None:
+    """The fevers in force from the news sentinel's `market_events.json` (None: no path known). Nothing while
+    `news_signals_enabled` is off, and never a rumour (`news.active_signals`)."""
+    if path is None:
+        return None
+    return fever_by_dealer(active_signals(rules, load_market_events(path), t_hours), t_hours)
 
 
 # ---------------------------------------------------------------- one thread, one tick at a time
@@ -377,6 +423,9 @@ class SellDesk:
         self.opened_at: list[tuple[float, str]] = []  # (game hour, dealer) of our openings
         self.market: SellMarket | None = None
         self._market_tick: int | None = None
+        # The news sentinel writes `<data_dir>/agents/market_events.json`, the decisions log's own directory.
+        events_dir = getattr(getattr(rec, "decisions", None), "dir", None)
+        self.events_path: Path | None = Path(events_dir) / EVENTS_FILE if events_dir is not None else None
         self._said: set[tuple[int, str]] = set()
 
     def market_for(self, snap: Any) -> SellMarket:
@@ -386,6 +435,14 @@ class SellDesk:
             self.market = loaded or market_from_feed(snap.dealers, snap.events, snap.me)
             self._market_tick = tick
         return self.market
+
+    def persona_inputs(self, snap: Any) -> tuple[dict[str, Persona] | None, dict[str, dict[str, float]] | None]:
+        """The personas from the snapshot's `/api/dealers` (no new request) and the official fevers in force,
+        behind `persona_model_enabled`; (None, None) when it is off."""
+        if not getattr(self.rules, "persona_model_enabled", True):
+            return None, None
+        personas = parse_personas(getattr(snap, "dealers", None) or [])
+        return personas or None, read_fever(self.rules, self.events_path, snap.clock.t_hours)
 
     def on_tick(self, snap: Any, params: Any, locked: Iterable[int]) -> None:
         if not self.rules.dealer_sell_enabled:
@@ -407,8 +464,21 @@ class SellDesk:
         for t in market.traders:
             if t.deals_per_hour is not None and sum(d == t.id for _, d in self.opened_at) >= t.deals_per_hour:
                 busy.add(t.id)
+        try:  # a hostile persona never costs the sell desk its tick: today's ranking then
+            personas, fever = self.persona_inputs(snap)
+        except Exception:  # noqa: BLE001
+            personas, fever = None, None
         found = candidates(
-            snap.me, snap.catalog, market, params, self.rules, busy=busy, locked=locked, events=snap.events
+            snap.me,
+            snap.catalog,
+            market,
+            params,
+            self.rules,
+            busy=busy,
+            locked=locked,
+            events=snap.events,
+            personas=personas,
+            fever=fever,
         )
         if not found:
             return

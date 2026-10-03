@@ -378,7 +378,7 @@
       "status": "wip",
       "label": "worker",
       "title": "Team-to-team negotiation (N17)",
-      "body": "Review Marius's #79/#98/#101 first, then swap threads with other teams priced by their need, inside the guardrails."
+      "body": "Swap threads with other teams priced by their need, inside the guardrails. #188 switches them on: Jev team_swap_worth_it gates every swap send (fail closed), the maker leaves the desk its spare copy, swap cash capped at 40 P per game hour."
     },
     {
       "status": "wip",

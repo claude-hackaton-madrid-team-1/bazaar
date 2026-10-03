@@ -115,6 +115,7 @@ negotiates well.
 | N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0`; spec [`N16-spec.md`](./N16-spec.md) | 1 → 2 | 🔵 PR #131 (both reviews APPROVE, round 2) |
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
+| N19 (new) | **P1 · Persona model**: each dealer's published traits, menu and unlock rules (`/api/dealers`) become negotiation params (`persona_model.py`); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in `traders`; flag `persona_model_enabled`; spec [`N19-spec.md`](./N19-spec.md) | 1 → 2 | 🔵 PR open |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
@@ -125,6 +126,7 @@ negotiates well.
 | DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
 | N19 (new) | Pilar readiness (L3 collector: gold pack, buys over book) in the simulator + a news sentinel (Radio Rastro `/api/news`, `news.posted`, `/api/schedule` fevers) that logs and stores each item; signals off (`news_signals_enabled = false`) | 2 | 🔵 PR #182 |
 | [RO1](RO1-spec.md) (new) | Read-only Postgres login for teammates (DataGrip): `bazaar db readonly-user`, SELECT only, no secrets | 2 | 🔵 PR #184 |
+| CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | BR1 (new) | Buyer rank: `bazaar buyers [--card] [--json] [--save]` ranks the other teams per card (what they paid for the set and rarity, set interest, whether they miss the card, a rival penalty for the top 5 and the 3 ranks above us, no page completion for a top-5 team below 1.5 × our value); `team_buyer_rank` table; the maker addresses asks to the best non-rival buyer behind `buyer_rank_enabled` (ships false) with a public fallback after `buyer_rank_fallback_ticks` | 2 | 🔵 PR (feat/buyer-rank) |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
@@ -161,6 +163,8 @@ Phase 1 ✅ triage of Marius's #79 / #98 / #101 (`/pr-review` + `security-audito
   `BAZAAR_BLUFF`, untrusted text escaped. · **Acceptance:** spec criterion 8.
 - N17-7 — `bazaar swaps` (read-only plan, `--json`), decisions kinds, `/state` allow-list unchanged.
   · **Acceptance:** spec criterion 10.
+- N17-enable — Jev gate per swap, the maker leaves the desk its spare copy, hourly swap cash cap, flag on.
+  · **Acceptance:** N17-spec "N17-enable" criteria 1-5.
 - N17-8 — Simulator end to end: `tests/test_team_threads_sim.py` (one swap settled, one feeding offer
   refused, the inbound idle thread closed) and a team-threads step in `scripts/sim_smoke.py`; docs
   (GUARDRAILS.md, STRATEGY.md, RUNTIME.md, `docs/architecture.status.json`), `.ai/memory.md`,
@@ -498,6 +502,21 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
   keyless client (2 s timeout, no retries), after the sends; one learnings row per item; `market_events.json`.
   · **Acceptance:** `tests/test_news.py`.
 - Step 4 — `active_signals` consumers in strategy/maker behind `news_signals_enabled`. · ⬜ not started.
+- Step 5 (stacked PR) — `schedule_watch.py`: every `/api/schedule` action and every `/api/levels` level still to
+  open becomes a `schedule` learning with its lead time in ticks, said again at 20, 10 and 3 ticks ("Market Test in
+  10 ticks: keep the maker and our venue's broker up, no deploy"), and listed under `upcoming` in
+  `market_events.json`. · **Acceptance:** `tests/test_schedule_watch.py`.
+- Step 6 (stacked PR) — `rank_watch.py`: from `/api/leaderboard` (same read window), a rival that climbs 3+ ranks
+  within 20 ticks gets a `rival_move` learning explaining it from the leaderboard components, its dealer deals and
+  team trades in the feed window and the trades between other teams on its venue. · **Acceptance:**
+  `tests/test_rank_watch.py`, sentinel wiring in `tests/test_news.py`.
+- Step 7 (stacked PR) — `leaderboard_store.py` + table `leaderboard_snapshots` (world, tick, team): each board the rank
+  watch reads is upserted; a restarted taker reloads the last 60 ticks. · **Acceptance:**
+  `tests/test_sentinel_consumers.py` (integration on local Postgres, memory-only fallback).
+- Step 8 (stacked PR) — consumers: the taker's `schedule_guard` (TakerConfig, default on) opens no new dealer ladder
+  whose bids would still run when a Market Test or a duel session starts (one `dealer_skip` row per event); Jev's
+  `offer_is_worth_accepting` state carries the 3 newest `rival_move` lines. No price or guardrail change.
+
 ### RO1 — Read-only Postgres login for teammates (PR #184)
 - Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
   revoked. · **Acceptance:** integration tests on local docker (throwaway role + schema).

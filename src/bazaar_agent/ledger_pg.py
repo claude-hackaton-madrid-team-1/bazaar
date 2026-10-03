@@ -123,8 +123,13 @@ class PgLedger:
             ),
         )
 
-    def spent_since(self, t_hours: float) -> int:
-        return self._one("select sum(price) from ledger where kind = 'spend' and t_hours > %s", (t_hours,))
+    def spent_since(self, t_hours: float, prefix: str = "") -> int:
+        if not prefix:
+            return self._one("select sum(price) from ledger where kind = 'spend' and t_hours > %s", (t_hours,))
+        return self._one(
+            "select sum(price) from ledger where kind = 'spend' and t_hours > %s and starts_with(item, %s)",
+            (t_hours, prefix),
+        )
 
     def packs_since(self, t_hours: float) -> Counter[str]:
         rows = self._run(
@@ -241,8 +246,8 @@ class FallbackLedger:
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None:
         self._use(lambda ledger: ledger.record(kind, tick, t_hours, price, item))
 
-    def spent_since(self, t_hours: float) -> int:
-        return self._use(lambda ledger: ledger.spent_since(t_hours))
+    def spent_since(self, t_hours: float, prefix: str = "") -> int:
+        return self._use(lambda ledger: ledger.spent_since(t_hours, prefix))
 
     def packs_since(self, t_hours: float) -> Counter[str]:
         return self._use(lambda ledger: ledger.packs_since(t_hours))

@@ -137,7 +137,10 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     open_sealed_packs: bool = False
+    card_release_boost_enabled: bool = False
+    card_release_boost_ticks: int = Field(default=30, ge=0, le=600)
     news_signals_enabled: bool = False
+    persona_model_enabled: bool = True
     max_counterparty_share: float = Field(default=1.0, gt=0, le=1)
     counterparty_cap_base: int = Field(default=200, ge=0)
     team_threads_enabled: bool = False
@@ -148,6 +151,9 @@ class Guardrails(BaseModel):
     team_swap_min_surplus: float = Field(default=3.0, ge=0)
     team_swap_max_their_share: float = Field(default=0.6, gt=0, le=1)
     team_swap_max_our_share: float = Field(default=0.85, gt=0, le=1)
+    team_swap_jev_gate: bool = True
+    team_swap_jev_min_confidence: float = Field(default=0.75, ge=0.5, le=1)
+    team_swap_max_cash_per_hour: int = Field(default=40, ge=0)
     dealer_sell_enabled: bool = False
     dealer_sell_max_per_game_hour: int = Field(default=4, ge=0, le=8)
     dealer_sell_open_above_top: float = Field(default=1.6, ge=1.0, le=5.0)
@@ -236,7 +242,10 @@ ENFORCED_BY: dict[str, str] = {
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
+    "card_release_boost_enabled": "cards_heartbeat.boost -> strategy.rank (taker buys; ranking only)",
+    "card_release_boost_ticks": "cards_heartbeat.boost (how long a release stays boosted)",
     "news_signals_enabled": "news.active_signals (off: the sentinel only logs and stores)",
+    "persona_model_enabled": "agents.persona_desk via taker._persona_shaped + agents.dealer_sell_desk (ranking)",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
     "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",
@@ -247,6 +256,9 @@ ENFORCED_BY: dict[str, str] = {
     "team_swap_min_surplus": "swaps.judge (every proposal and accept)",
     "team_swap_max_their_share": "swaps.judge (every proposal and accept)",
     "team_swap_max_our_share": "swaps.judge (repeat deals with one team)",
+    "team_swap_jev_gate": "agents.team_desk.jev_gate (every swap proposal and accept; fail closed)",
+    "team_swap_jev_min_confidence": "agents.team_desk.jev_gate (Jev team_swap_worth_it threshold)",
+    "team_swap_max_cash_per_hour": "agents.team_desk (cash we add to swaps, `team:` spend rows in the ledger)",
     "bluff_enabled": "agents.bluff.enabled (with BAZAAR_BLUFF)",
     "dealer_sell_enabled": "agents.maker → agents.dealer_sell_desk.SellDesk (the maker only; not `dealer sell`)",
     "dealer_sell_max_per_game_hour": "agents.dealer_sell_desk.SellDesk (openings per game hour, this process)",
@@ -389,7 +401,7 @@ class LedgerStore(Protocol):
     def where(self) -> str: ...  # where the counts live, for logs: "file ledger.jsonl", "postgres ledger table on …"
 
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None: ...
-    def spent_since(self, t_hours: float) -> int: ...
+    def spent_since(self, t_hours: float, prefix: str = "") -> int: ...  # spend rows whose item starts with prefix
     def packs_since(self, t_hours: float) -> Counter[str]: ...
     def accepts_in_tick(self, tick: int) -> int: ...
     def count_in_tick(self, kind: str, tick: int) -> int: ...
@@ -421,9 +433,11 @@ class Ledger:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry) + "\n")
 
-    def spent_since(self, t_hours: float) -> int:
+    def spent_since(self, t_hours: float, prefix: str = "") -> int:
         return sum(
-            int(e.get("price", 0)) for e in self.entries() if e.get("kind") == "spend" and e["t_hours"] > t_hours
+            int(e.get("price", 0))
+            for e in self.entries()
+            if e.get("kind") == "spend" and e["t_hours"] > t_hours and str(e.get("item") or "").startswith(prefix)
         )
 
     def packs_since(self, t_hours: float) -> Counter[str]:
