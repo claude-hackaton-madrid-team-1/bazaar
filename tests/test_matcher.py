@@ -308,8 +308,8 @@ def test_on_any_book_no_bid_below_its_ask_no_order_twice_and_at_least_the_auto_m
 def test_on_the_simulators_bench_we_realise_at_least_what_its_auto_venue_realises(seed):
     """The simulator's own `_auto_bench` (the free stall) on the same synthetic book, scored at the hidden
     limits as the Market Test scores it: the exact matcher never does worse at a 0 bps venue."""
-    from bazaar_sim.broker import _auto_bench
-    from bazaar_sim.models import BenchRun, BenchTrader, Venue
+    from bazaar_sim.bench import cross_by_quote
+    from bazaar_sim.models import BenchTrader
 
     rng = random.Random(20_000 + seed)
     traders = []
@@ -325,11 +325,10 @@ def test_on_the_simulators_bench_we_realise_at_least_what_its_auto_venue_realise
                 BenchTrader(id=f"b1-{k}", side="buy", limit=value, quote=round(value * rng.uniform(0.75, 0.95)))
             )
     per_card = 0  # our venue's fee: with a fee the exact matcher may pick other traders (more quoted surplus)
-    run = BenchRun(run=1, start_tick=0, end_tick=15, traders=traders)
-    venue = Venue(venue="v09", name="ours", owner="t01", owner_name="Team 1", fee_bps=0, fee_per_card=per_card)
-    _auto_bench(venue, run)
+    # The free stall on the same book (#77 moved #55's `_auto_bench` into `bazaar_sim.bench`).
+    matched = [(s, b) for s, b, _ in cross_by_quote(traders, 0, lambda price: per_card)]
     limits = {t.id: t.limit for t in traders}
-    stall = sum(limits[b] - limits[s] for s, b in run.matched.get("v09", []))
+    stall = sum(limits[b] - limits[s] for s, b in matched)
     book = BrokerBook(
         bench_offers=[
             (
