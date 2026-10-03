@@ -28,8 +28,10 @@ THE POLICY CONTRACT (what a duel policy plugs into, `bazaar_agent.agents.duelist
 `accept` takes the rival's standing offer; `hold` sends nothing. One move per tick.
 
 THE CLOCK (mirrors `duels.on_tick`): at tick t the rival moves first, seeing our messages up to t-1, then the
-policy moves seeing the rival's messages up to t. An accept at t settles at t+1. At `deadline_tick` an open
-duel closes with no deal. A duel runs `duel_ticks` ticks from `started_tick`.
+policy moves seeing the rival's messages up to t. The real order inside a tick is not known (practice rows show
+both); `team_first=True` flips it, so the policy no longer sees the rival's tick-t message before it moves.
+An accept at t settles at t+1. At `deadline_tick` an open duel closes with no deal. A duel runs `duel_ticks`
+ticks from `started_tick`.
 
 THE SCORE (verified on all 8 real practice deals, `test_duel_zoo`): `rounds = min(our priced messages, the
 rival's priced messages)` and `result = surplus × (1 - decay) ** rounds`, in P. A rival that accepts by echoing
@@ -117,6 +119,7 @@ class Scenario:
     seed: int = 0
     duel: int = 1
     rival_accept_is_priced: bool = True
+    team_first: bool = False  # within a tick we move before the rival (the simulator's order is rival first)
 
     @property
     def rival_role(self) -> Role:
@@ -570,9 +573,14 @@ def play(policy: Policy, sc: Scenario, rival: Rival | None = None) -> tuple[Reco
         if tick >= sc.deadline_tick:
             d.status, d.closed_tick = "no_deal", tick
             break
-        _rival_turn(d, rival, tick, rng)
-        if d.accepted is None:
+        if sc.team_first:
             _team_turn(d, policy, tick)
+            if d.accepted is None:
+                _rival_turn(d, rival, tick, rng)
+        else:
+            _rival_turn(d, rival, tick, rng)
+            if d.accepted is None:
+                _team_turn(d, policy, tick)
     return _record(d), payload(d, d.closed_tick or sc.deadline_tick)
 
 

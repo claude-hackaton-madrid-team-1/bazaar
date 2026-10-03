@@ -16,6 +16,7 @@ fixed per duel; `sim` is the bot below. `SIM_DUEL_DECAY` sets the decay per roun
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import random
 from typing import Any
@@ -44,24 +45,38 @@ COUNTERS = (
 )
 ACCEPTS = ("Deal at {p} P. Pleasure doing business.",)
 STYLES_ENV, DECAY_ENV = "SIM_DUEL_STYLES", "SIM_DUEL_DECAY"
+log = logging.getLogger(__name__)
+_warned: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    """Settings are read every tick: say what is wrong once, not once per duel per tick."""
+    if message not in _warned:
+        _warned.add(message)
+        log.warning(message)
 
 
 def styles() -> tuple[str, ...]:
-    """The rival styles duels draw from (`SIM_DUEL_STYLES`); unknown names are refused, none means `sim`."""
+    """The rival styles duels draw from (`SIM_DUEL_STYLES`). Unset means `sim`; a bad value also means `sim`, with
+    a warning: this runs inside the tick, and an exception there would leave the tick half done."""
     raw = [s.strip() for s in os.environ.get(STYLES_ENV, "").split(",") if s.strip()]
     unknown = [s for s in raw if s not in duel_zoo.STYLES]
     if unknown:
-        raise ValueError(
-            f"{STYLES_ENV}: unknown rival style {', '.join(unknown)} (one of {', '.join(duel_zoo.STYLES)})"
-        )
+        _warn_once(f"{STYLES_ENV}: unknown rival style {unknown} (one of {duel_zoo.STYLES}): using sim")
+        return ("sim",)
     return tuple(raw) or ("sim",)
 
 
 def decay() -> float:
+    """The decay per round (`SIM_DUEL_DECAY`, default 0.06); a value outside [0, 1) falls back to the default."""
     raw = os.environ.get(DECAY_ENV)
-    value = float(raw) if raw not in (None, "") else DECAY
+    try:
+        value = float(raw) if raw not in (None, "") else DECAY
+    except ValueError:
+        value = -1.0
     if not 0 <= value < 1:
-        raise ValueError(f"{DECAY_ENV} must be in [0, 1): {value}")
+        _warn_once(f"{DECAY_ENV}={raw!r} is not in [0, 1): using {DECAY}")
+        return DECAY
     return value
 
 

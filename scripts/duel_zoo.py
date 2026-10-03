@@ -16,6 +16,7 @@ import importlib
 import statistics
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +213,22 @@ def sensitivity_section(policies: dict[str, Policy], n: int) -> str:
     )
 
 
+def order_section(policies: dict[str, Policy], n: int) -> str:
+    """The within-tick order: the simulator lets us see the rival's tick-t message before we move at t."""
+    base = duel_zoo.scenarios(duel_zoo.PLAN_STYLES, n=n, decays=(0.06, 0.08))
+    flipped = [replace(sc, team_first=True) for sc in base]
+    rows = []
+    for name, p in policies.items():
+        a, b = duel_zoo.summarize(duel_zoo.run(p, base)), duel_zoo.summarize(duel_zoo.run(p, flipped))
+        ra = sum(r.result for r in duel_replay.replay_all(p))
+        rb = sum(r.result for r in duel_replay.replay_all(p, team_first=True))
+        rows.append((name, round(a.mean_result, 2), round(b.mean_result, 2), round(a.deal_rate, 3),
+                     round(b.deal_rate, 3), round(ra, 2), round(rb, 2)))  # fmt: skip
+    head = ("policy", "zoo P rival first", "zoo P we first", "deals rival first", "deals we first",
+            "replay P rival first", "replay P we first")  # fmt: skip
+    return f"## Within-tick order ({len(base)} duels on the go/no-go grid, and the replay)\n\n" + table(head, rows)
+
+
 def replay_section(policies: dict[str, Policy]) -> str:
     rows: dict[int, list[Any]] = {}
     totals = []
@@ -261,6 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         tournament_section(policies, args.n),
         seeds_section(policies, args.n),
         sensitivity_section(policies, args.n),
+        order_section(policies, args.n),
         replay_section(policies),
         *(gate_section(g, resolve(g), args.n) for g in args.gate),
     ]

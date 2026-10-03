@@ -122,8 +122,14 @@ def oracle(duel: Mapping[str, Any]) -> float:
     return float(max([0, *gains]))
 
 
-def replay(policy: zoo.Policy, duel: Mapping[str, Any], counterfactual: Counterfactual = "conservative") -> Replayed:
-    record, _ = zoo.play(policy, scenario_for(duel), scripted_rival(duel, counterfactual))
+def replay(
+    policy: zoo.Policy,
+    duel: Mapping[str, Any],
+    counterfactual: Counterfactual = "conservative",
+    team_first: bool = False,
+) -> Replayed:
+    sc = replace(scenario_for(duel), team_first=team_first)
+    record, _ = zoo.play(policy, sc, scripted_rival(duel, counterfactual))
     actual = duel.get("result")
     return Replayed(
         duel=int(duel["duel"]),
@@ -138,10 +144,11 @@ def replay_all(
     policy: zoo.Policy,
     duels: Sequence[Mapping[str, Any]] | None = None,
     counterfactual: Counterfactual = "conservative",
+    team_first: bool = False,
 ) -> list[Replayed]:
     """`policy` on every unanswered real duel (the 12 of the practice session by default)."""
     rows = load() if duels is None else duels
-    return [replay(policy, d, counterfactual) for d in rows if unanswered(d)]
+    return [replay(policy, d, counterfactual, team_first) for d in rows if unanswered(d)]
 
 
 # ---------------------------------------------------------------- the fit

@@ -302,13 +302,17 @@ def test_a_mix_of_styles_is_drawn_once_per_duel(monkeypatch):
     assert {s for s, _ in drawn.values()} == {"linear", "holdout", "no_show"}
 
 
-def test_bad_settings_are_refused(monkeypatch):
+def test_bad_settings_fall_back_to_the_defaults_with_a_warning(monkeypatch, caplog):
+    monkeypatch.setattr(duels, "_warned", set())
     monkeypatch.setenv(duels.STYLES_ENV, "linear,greedy")
-    with pytest.raises(ValueError, match="greedy"):
-        duels.styles()
-    monkeypatch.setenv(duels.DECAY_ENV, "1.5")
-    with pytest.raises(ValueError):
-        duels.decay()
+    assert duels.styles() == ("sim",)
+    for bad in ("1.5", "-0.1", "fast"):
+        monkeypatch.setenv(duels.DECAY_ENV, bad)
+        assert duels.decay() == 0.06
+    assert "greedy" in caplog.text and "fast" in caplog.text
+    m = manual_world(duel_first_tick=1)
+    m.step(3)  # the tick still runs
+    assert m.world.state.duels
 
 
 def test_the_live_simulator_counts_rounds_and_decay_like_the_real_game(monkeypatch):
@@ -340,3 +344,17 @@ def test_a_listening_one_shot_takes_a_fresh_offer_that_leaves_it_its_margin_and_
     assert rival_prices(final) == [100, 180] and (record.status, record.price, record.closer) == ("deal", 180, "rival")
     deaf, _ = zoo.play(Script(zoo.Act("offer", 120)), scenario(style="one_shot", params={**params, "listens": 0.0}))
     assert deaf.status == "no_deal"
+
+
+def test_moving_first_in_the_tick_hides_the_rivals_message_of_that_tick():
+    seen: list[object] = []
+
+    def watch(duel: dict, tick: int, started: int) -> zoo.Act:
+        seen.append(duel["rival_offer"])
+        return zoo.Act("accept")
+
+    zoo.play(watch, scenario(style="linear", params=LINEAR))
+    assert seen[0] is not None and seen[0]["tick"] == 100  # the simulator's order: the rival opened first
+    seen.clear()
+    record, _ = zoo.play(watch, scenario(style="linear", params=LINEAR, team_first=True))
+    assert seen[0] is None and record.errors[0] == "no_offer" and record.close_tick == 102  # accepted at 101
