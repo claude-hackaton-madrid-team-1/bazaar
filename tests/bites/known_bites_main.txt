@@ -1,0 +1,37 @@
+# Duel bite tests (r2 X5/B1-B6) that FAIL on origin/main: strict xfails via conftest.py.
+# A fix makes one XPASS (strict → error): delete its line here. One pytest node id per line.
+tests/bites/test_b1_two_issue_days.py::test_duel_run_never_sends_a_two_issue_offer_outside_the_limit
+tests/bites/test_b1_two_issue_days.py::test_jev_counter_is_legal_only_inside_the_limit_after_days
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[128--4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[128--4.0-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[128-4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[128-4.0-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[133--4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[133--4.0-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[133-4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[133-4.0-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135--1.5-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135--1.5-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135--4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135--4.0-seller]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135-4.0-buyer]
+tests/bites/test_b1_two_issue_days.py::test_our_two_issue_offer_is_inside_the_limit_after_its_days[135-4.0-seller]
+tests/bites/test_b2_payload_shapes.py::test_duel_run_and_its_guardrail_never_accept_unvalued_days
+tests/bites/test_b2_payload_shapes.py::test_liveness_an_inside_limit_move_is_made[deadline_missing]
+tests/bites/test_b2_payload_shapes.py::test_liveness_an_inside_limit_move_is_made[limit_float]
+tests/bites/test_b2_payload_shapes.py::test_liveness_an_inside_limit_move_is_made[two_issue_weight_null]
+tests/bites/test_b2_payload_shapes.py::test_one_malformed_duel_does_not_cost_the_others_their_move
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[issues_missing_rival_days-122]
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[issues_missing_rival_days-134]
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[issues_not_a_list-122]
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[issues_not_a_list-134]
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[two_issue_weight_null-122]
+tests/bites/test_b2_payload_shapes.py::test_safety_never_raises_and_never_crosses_the_limit[two_issue_weight_null-134]
+tests/bites/test_b3_accept_slot.py::test_a_duel_that_loses_the_slot_still_sends_its_offer
+tests/bites/test_b3_accept_slot.py::test_endgame_slot_goes_to_the_most_valuable_duel
+tests/bites/test_b3_accept_slot.py::test_six_duels_sharing_a_deadline_all_close
+tests/bites/test_b4_skipped_ticks.py::test_an_inside_limit_offer_is_taken_despite_skipped_ticks[v1-ticks0-135-two ticks skipped (D-2, D-1), D-1 settles as in the sim]
+tests/bites/test_b4_skipped_ticks.py::test_an_inside_limit_offer_is_taken_despite_skipped_ticks[v1-ticks1-134-one tick skipped (D-2), D-1 does NOT settle (unverified)]
+tests/bites/test_b6_restart_mid_duel.py::test_duel_run_restart_changes_nothing[v1]
+tests/bites/test_b6_restart_mid_duel.py::test_duel_run_restart_end_to_end
+tests/bites/test_b6_restart_mid_duel.py::test_v1_after_a_restart_never_retreats_from_our_standing_offer
