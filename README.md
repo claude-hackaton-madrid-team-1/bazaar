@@ -1381,13 +1381,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+- [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
 - [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
 - [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
 - [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
 - [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
 - [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
 - [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
-- [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
 
 <!-- BAZAAR:STATUS:END -->
 
