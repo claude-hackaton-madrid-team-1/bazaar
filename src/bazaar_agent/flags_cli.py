@@ -40,8 +40,17 @@ def printable(text: str) -> str:
     """A counterparty's words safe for a terminal: only printable characters (no escape sequence, direction
     mark or lone surrogate), the invisible "printable" blanks (braille blank, Hangul fillers) blanked too, and
     whitespace runs collapsed. `words_block` then indents EVERY wrapped line, so nothing can sit at column 0."""
-    kept = "".join(ch if ch.isprintable() and ch not in HIDING_MARKS else " " for ch in text)
+    kept = "".join(ch if ch.isprintable() and ch not in HIDING_MARKS and not _mismeasured(ch) else " " for ch in text)
     return " ".join(kept.split())
+
+
+# Characters rich measures as 0 columns while terminals draw them 2 wide (skin-tone modifiers, regional
+# indicators): the terminal would wrap the row itself and put the rest at column 0 (#176 review r2).
+MISMEASURED = ((0x1F3FB, 0x1F3FF), (0x1F1E6, 0x1F1FF))
+
+
+def _mismeasured(ch: str) -> bool:
+    return any(low <= ord(ch) <= high for low, high in MISMEASURED)
 
 
 def words_block(words: str) -> Padding:
