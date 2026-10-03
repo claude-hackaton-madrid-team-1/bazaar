@@ -77,7 +77,7 @@ The plan (prices and asset ids are in `_night/w4-private-numbers.md`):
 
 **Totals:**
 - **Expected surplus for us:** +79.9 P if each trade fills whenever its counterparty values it (P(fill) above), on 160 P of volume.
-- **At Friday's fill rates:** +4.8 P. All 7 trades are addressed, and on Friday 6 % of addressed copies sold (20 % of public ones). The model's P(fill) only asks whether the counterparty values the price, not whether its bot is there to take it.
+- **At Friday's fill rates:** +4.8 P. All 7 trades are addressed, and on Friday 6 % of addressed copies sold (19 % of public ones). The model's P(fill) only asks whether the counterparty values the price, not whether its bot is there to take it.
 - **Counterparty shares:** t08 22 %, t17 22 %, t03 16 %, t04 16 %, t06 12 %, t12 12 %. In the worst case (one team takes every public listing too): 22 %, because nothing is public.
 - **Cash:** bids and cash legs use all but 1 P of the cash above `cash_floor`.
 - **Checks:** every trade has surplus for both sides; 0 checks fail.
@@ -103,7 +103,7 @@ Most trades clear for any multiplier (duplicates, swaps with a cash leg). So the
 
 | | Friday |
 |---|---|
-| Copies listed publicly that sold | 26/133 (20 %); per listing 27/511 (5 %) |
+| Copies listed publicly that sold | 25/133 (19 %); per listing 25/511 (5 %), every fill matched to an offer at its own price (B4) |
 | Copies listed to one team that sold | 1/18 (6 %); per listing 1/25 (4 %) |
 | Team-to-team settlements | 46, all on El Rastro |
 | Team-to-team threads | 0 |

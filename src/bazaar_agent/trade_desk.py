@@ -53,7 +53,7 @@ class PlanParams:
     swaps_per_team: int = 5  # swap candidates kept per team (the best by expected surplus)
     # Friday's base rates (B4's offer lifecycles): the share of copies listed for anyone, and to one team,
     # that sold. A floor for a plan whose P(fill) only asks whether the counterparty values the price.
-    friday_public_fill: float = 0.20
+    friday_public_fill: float = 0.19
     friday_addressed_fill: float = 0.06
     cash_budget: int | None = None  # the most our bids and cash legs may promise (None: all the cash above the floor)
 
@@ -575,7 +575,7 @@ def post_as(
 ) -> tuple[list[Trade], list[str]]:
     """Each trade as it would be posted, in order, through `guardrails.check()` with what the earlier ones
     promise (cash out, cards wanted, our team-to-team exposure). A swap always goes in a thread with its
-    team. A listing goes for anyone when it can (on Friday 20 % of the copies listed for anyone sold, 6 %
+    team. A listing goes for anyone when it can (on Friday 19 % of the copies listed for anyone sold, 6 %
     of those addressed to one team), but an offer anyone may take counts against every team's share: so as many listings
     as possible, in order, go public while every trade still passes; the rest are addressed. With `share`
     below 1 a listing also goes public only while no team could pass `share` of the planned volume by
@@ -856,7 +856,7 @@ def build_plan(
             lines.append(
                 f"with max_counterparty_share {pp.max_share:g} and counterparty_cap_base {base}: "
                 f"{len(problems)} of {len(posted)} trade(s) refused, {moved} public listing(s) addressed instead "
-                f"(on Friday 6 % of addressed copies sold against 20 % of public ones: the expected surplus, "
+                f"(on Friday 6 % of addressed copies sold against 19 % of public ones: the expected surplus, "
                 f"which assumes a listing fills when its counterparty values it, is optimistic for them)"
             )
         what_if = tuple(lines)
