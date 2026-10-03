@@ -394,7 +394,7 @@ def test_a_dealer_trickster_is_never_accepted_and_with_flags_off_is_only_a_would
 def test_with_flags_on_a_live_taker_sends_one_flag_proven_by_its_row_and_never_again_after_a_restart(tmp_path):
     team, lines, (row,) = trickster_tick(tmp_path, allow=True)
     (flag,) = [s for s in team.sent if s[0] == "flag"]
-    assert flag[1] == 9001 and "instead of exactly [LAV-08]" in flag[2] and ("accept", 802) not in team.sent
+    assert flag[1] == 9001 and "instead of exactly [card:LAV-08]" in flag[2] and ("accept", 802) not in team.sent
     assert (row["status"], row["chosen"]) == ("approved", True)
     (execution,) = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
     assert execution["request"]["message_id"] == 9001
