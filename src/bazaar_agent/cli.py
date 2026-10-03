@@ -1183,7 +1183,12 @@ def plan_pages(
     schedule_file: str | None = typer.Option(None, "--schedule", help=f"{FILE_HELP} (GET /api/schedule)"),
     feed_file: str | None = typer.Option(None, "--feed", help="Read the feed from this JSONL capture"),
     ladder_file: str | None = typer.Option(None, "--ladder-plan", help="W3's ladder_plan.json: its dealer slots"),
-    now_hours: float | None = typer.Option(None, "--now-hours", help="Game hour to plan from (default: schedule)"),
+    now_hours: float | None = typer.Option(
+        None,
+        "--now-hours",
+        help="Game hour to plan from (default: the schedule's now). Before the doors open, pass the hour they open "
+        "at (GET /api/clock t_hours), or yesterday's dealer deals keep today's best-three slots",
+    ),
     venue_later: int = typer.Option(9, "--venue-later", help="Game hour of the 'venue later' scenario"),
     what_if_floor: int | None = typer.Option(None, "--what-if-floor", help="Also plan the venue at this cash floor"),
     trades_file: str | None = typer.Option(
@@ -1274,6 +1279,12 @@ def plan_pages(
         f"tick {plan.tick} · cash {plan.cash} · cash_floor {rules.cash_floor} · grants still to come: {grants} · "
         f"W3 ladder slots: {len(ladder)}"
     )
+    if now_hours is None:
+        console.print(
+            f"[yellow]planned from the schedule's now (h{schedule_hours:g}): before the doors open, re-run with "
+            "--now-hours <the hour they open at> so yesterday's dealer deals do not hold today's best-three slots"
+            "[/yellow]"
+        )
     for note in plan.notes:
         console.print(f"[yellow]{note}[/yellow]")
     console.print(render.pages_table(list(plan.pages)))

@@ -315,6 +315,10 @@ def test_bazaar_plan_pages_runs_offline_from_files(tmp_path, monkeypatch):
     table = CliRunner().invoke(cli.app, [a for a in args if a != "--json"] + ["--steps"], env={"COLUMNS": "250"})
     assert table.exit_code == 0, table.output
     assert "Cash plan" in table.output and "h4" in table.output
+    assert "--now-hours <the hour they open at>" not in table.output  # --now-hours was given
+    bare = [a for a in args if a not in ("--json", "--now-hours", "4")]
+    warned = CliRunner().invoke(cli.app, bare, env={"COLUMNS": "250"})
+    assert warned.exit_code == 0 and "--now-hours <the hour they open at>" in warned.output
 
 
 def test_a_team_source_is_picked_over_a_cheaper_dealer_when_its_trade_scores_on_its_own():
