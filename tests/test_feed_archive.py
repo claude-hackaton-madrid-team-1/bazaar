@@ -39,7 +39,9 @@ class FailingTransactionConn:
 def test_a_failed_archive_only_logs_once_and_the_events_still_serve():
     lines: list[str] = []
     feed = MarketFeed(lambda n: list(WINDOW), connect=lambda: FailingTransactionConn(), log=lines.append, archive=True)  # type: ignore[arg-type,return-value]
-    assert len(feed.events()) == len(WINDOW) and len(feed.events()) == len(WINDOW)
+    for _ in range(2):  # two ticks: read, then write after the sends
+        assert len(feed.events()) == len(WINDOW)
+        feed.archive_pending()
     assert lines == ["feed: archiving the window failed (OperationalError); trading goes on"]
 
 
@@ -62,10 +64,19 @@ def test_the_window_is_archived_once_into_feed_events(database_url, schema):  # 
         db.init_schema(conn)
     feed = MarketFeed(lambda n: list(WINDOW), connect=lambda: open_in(database_url, schema), archive=True)
     feed.events()
+    assert _count(database_url, schema) == 0  # reading writes nothing: the archive waits for the sends
+    feed.archive_pending()
     feed.events()  # the next tick: already archived, nothing doubles
+    feed.archive_pending()
     with open_in(database_url, schema) as conn:
         row = conn.execute("select count(*), count(distinct id), max(id) from feed_events").fetchone()
     assert row == (len(WINDOW), len(WINDOW), max(e["id"] for e in WINDOW))
+
+
+def _count(database_url, schema):  # type: ignore[no-untyped-def]  # noqa: F811
+    with open_in(database_url, schema) as conn:
+        row = conn.execute("select count(*) from feed_events").fetchone()
+    return row[0] if row else 0
 
 
 def test_the_learnings_command_reads_the_captured_feed(tmp_path, monkeypatch):
@@ -109,6 +120,7 @@ def test_a_nul_or_lone_surrogate_never_fails_the_archive(database_url, schema): 
     ]
     feed = MarketFeed(lambda n: list(bad), connect=lambda: open_in(database_url, schema), archive=True)
     feed.events()
+    feed.archive_pending()
     with open_in(database_url, schema) as conn:
         rows = conn.execute("select id, payload from feed_events order by id").fetchall()
     assert [r[0] for r in rows] == [1, 2, 3] and rows[0][1] == {"topic": {"x": "ab"}}
@@ -118,3 +130,55 @@ def test_jsonb_safe_cleans_strings_only():
     from bazaar_agent.db import jsonb_safe
 
     assert jsonb_safe({"a\u0000": ["x\ud800", 3, None, {"k": "ok"}]}) == {"a": ["x?", 3, None, {"k": "ok"}]}
+
+
+@pytest.mark.integration
+def test_one_unstorable_event_is_skipped_and_the_rest_archived(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    events = [
+        {"id": 1, "tick": 1, "type": "announcement", "actor": "", "payload": {"text": "ok"}},
+        {"id": 2, "tick": 1, "type": "announcement", "actor": "", "payload": {"x": float("nan")}},
+        {"id": 3, "tick": 1, "type": "settlement", "actor": "", "payload": {"items": [{"to": "t01"}], "price": "abc"}},
+        {"id": 4, "tick": "two", "type": "announcement", "actor": "", "payload": {}},
+        {"id": 5, "tick": 2, "type": "announce\x00ment", "actor": "", "payload": {"text": "still fine"}},
+    ]
+    with open_in(database_url, schema) as conn, conn.cursor() as cur:
+        counts = db.insert_events(cur, events)
+        conn.commit()
+        stored = [r[0] for r in conn.execute("select id from feed_events order by id").fetchall()]
+    assert counts == {"feed_events": 2, "tape": 0} and stored == [1, 5]
+
+
+def test_the_taker_archives_after_its_sends_and_never_on_ctrl_c(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, FakeTeam, clock, parts
+
+    order: list[str] = []
+
+    class Feed(MarketFeed):
+        def archive_pending(self) -> None:
+            order.append("archive")
+
+    class Team(FakeTeam):
+        def open_thread(self, with_, topic=None, venue=None):  # type: ignore[no-untyped-def]
+            order.append("send")
+            return super().open_thread(with_, topic, venue)
+
+    kw = {**parts(tmp_path), "feed": Feed(lambda n: [])}
+    t = Taker(Team(), FakePublic(), live=True, log=lambda line: None, now=lambda: 1000.0, sleep=lambda s: None,
+              config=TakerConfig(max_dealer_threads=3), **kw)  # fmt: skip
+    t.on_tick(clock())
+    assert order == ["send", "archive"]
+
+    class Interrupted(FakeTeam):
+        def me(self):  # type: ignore[no-untyped-def]
+            raise KeyboardInterrupt
+
+    order.clear()
+    t.team = Interrupted()
+    with pytest.raises(KeyboardInterrupt):
+        t.on_tick(clock())
+    assert order == []

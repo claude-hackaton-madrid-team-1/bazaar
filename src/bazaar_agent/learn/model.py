@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SubjectKind = Literal["dealer", "venue", "team", "organiser"]
 Kind = Literal[
@@ -33,7 +34,7 @@ TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
 IDENTITY_FIELDS = frozenset({"item", "rarity", "code", "aggregate", "venue", "effective_tick"})
-ORIGINS_THAT_BLOCK = ("feed", "refusal", "thread:")  # where a rules blocker may come from
+ORIGIN_THAT_BLOCKS = re.compile(r"^(feed|refusal|thread:\d+)$")  # where a rules blocker may come from
 
 
 class Learning(BaseModel):
@@ -60,6 +61,13 @@ class Learning(BaseModel):
         cleaned = " ".join("".join(ch if ch.isprintable() else " " for ch in value).split())
         return cleaned[: TEXT_MAX - 1] + "…" if len(cleaned) > TEXT_MAX else cleaned
 
+    @model_validator(mode="after")
+    def _blockers_expire(self) -> Learning:
+        """A blocker without an expiry would hold forever: refused."""
+        if self.kind in BLOCKING_KINDS and self.until_tick is None:
+            raise ValueError(f"a {self.kind} learning needs until_tick")
+        return self
+
     @field_validator("evidence", mode="before")
     @classmethod
     def _evidence(cls, value: object) -> object:
@@ -83,7 +91,7 @@ class Learning(BaseModel):
         identifying fields), not the wording or the confidence."""
         about = {k: self.detail[k] for k in sorted(self.detail) if k in IDENTITY_FIELDS}
         raw: list[object] = [self.subject_kind, self.subject, self.kind, self.team, self.until_tick, about]
-        notice = self.kind in ("announcement", "rule_change", "fee_change") and "aggregate" not in self.detail
+        notice = self.kind in ("announcement", "rule_change") and "aggregate" not in self.detail
         if notice or (not about and self.until_tick is None):
             raw.append(list(self.evidence[:1]))  # a notice is its own event
         return hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()[:32]

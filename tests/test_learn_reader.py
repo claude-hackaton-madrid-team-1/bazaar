@@ -248,3 +248,19 @@ def test_a_stored_blocker_is_capped_when_read_too():
     old = from_refusal("abuela", "persona_quota", "", {}, US, HOUR, "LAV-03").model_copy(update={"until_tick": 1713})
     assert blocks_for([old], US, HOUR.tick + HOURLY_CAP_TICKS - 1).stops("abuela")
     assert not blocks_for([old], US, HOUR.tick + HOURLY_CAP_TICKS)
+
+
+def test_a_blocker_needs_an_expiry_and_an_exact_origin():
+    with pytest.raises(ValidationError):
+        Learning(subject_kind="dealer", subject="abuela", kind="cooloff", tick=1, confidence=1, text="x", team=US)
+    real = from_refusal("abuela", "cooloff", "", {"until_tick": 190}, US, HOUR, None)
+    for origin in ("feed_llm_guess", "thread:None", "refusal ", "thread:12x"):
+        forged = real.model_copy(update={"detail": {"code": "cooloff", "origin": origin}})
+        assert not blocks_for([forged], US, 180), origin
+    assert blocks_for([real.model_copy(update={"detail": {"origin": "thread:77"}})], US, 180)
+
+
+def test_an_llm_unlock_never_lifts_a_lock():
+    locked = from_refusal("rata", "locked", "", {}, US, HOUR, "MAL-09")
+    unlock = one(read_all(), evidence=(20014,)).model_copy(update={"source": "llm"})
+    assert blocks_for([locked, unlock], US, 177).stops("rata") == locked

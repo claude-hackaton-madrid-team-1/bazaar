@@ -103,7 +103,8 @@ def agent(name: str, command: str, data: object) -> object:
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve()},
+        # BAZAAR_LEARN=0 (set by hand) turns the taker's feed reader off; preserve() keeps it across applies.
+        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve(), "BAZAAR_LEARN": preserve()},
     )
 
 

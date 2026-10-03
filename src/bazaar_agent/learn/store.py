@@ -15,6 +15,7 @@ from typing import Any
 
 import psycopg
 
+from bazaar_agent.db import jsonb_safe
 from bazaar_agent.learn.model import Learning
 
 STATEMENT_TIMEOUT_MS = 1500  # a recall or a write must never eat the tick
@@ -38,7 +39,7 @@ def _row(learning: Learning) -> tuple[Any, ...]:
         learning.confidence,
         learning.text,
         learning.source,
-        json.dumps(learning.detail, default=str, ensure_ascii=False),
+        json.dumps(jsonb_safe(learning.detail), default=str, ensure_ascii=False, allow_nan=False),
         learning.key(),
     )
 
@@ -161,6 +162,9 @@ class LearningStore:
             conn.rollback()
 
     def _failed(self, what: str, error: Exception) -> None:
+        if isinstance(error, ValueError):  # a bad value in this batch: the connection is fine, skip the batch
+            self._log(f"learnings: {what} skipped a batch ({type(error).__name__}); memory keeps it")
+            return
         if isinstance(error, psycopg.errors.UndefinedColumn | psycopg.errors.UndefinedTable):
             self._disabled = True  # run `bazaar db init`; retrying every tick would only log the same error
             self._log(f"learnings: the learnings table is not migrated ({type(error).__name__}); memory only")
@@ -192,7 +196,7 @@ class LearningStore:
                     conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                     with conn.cursor() as cur:
                         cur.executemany(UPSERT, [_row(lr) for lr in sorted(batch.values(), key=Learning.key)])
-            except psycopg.Error as e:
+            except (psycopg.Error, ValueError) as e:  # ValueError: a value jsonb refuses (NaN, an encoding)
                 self._failed("upsert", e)
         return len(batch)
 

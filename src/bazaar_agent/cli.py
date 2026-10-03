@@ -1325,7 +1325,10 @@ def _run_agent(
         from bazaar_agent.learn.live import LiveLearner
         from bazaar_agent.learn.store import LearningStore
 
-        store = LearningStore(connect, log)  # the ledger's `connect_ready` applied the schema at start already
+        def connect_learnings() -> Any:  # a short timeout: a reconnect after the sends must not eat the next tick
+            return db.connect(app=f"bazaar-{name}", timeout_s=3)
+
+        store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
         extra["learner"] = LiveLearner(store, log)
 

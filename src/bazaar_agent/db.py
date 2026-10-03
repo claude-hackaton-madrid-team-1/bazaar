@@ -84,24 +84,38 @@ def jsonb_safe(value: Any) -> Any:
     return value
 
 
+def _event_row(e: Event) -> tuple[Any, ...]:
+    """One feed_events row; raises (ValueError, TypeError, ...) for an event Postgres would refuse."""
+    tick = e.get("tick")
+    if not isinstance(e["id"], int) or not (tick is None or isinstance(tick, int)):
+        raise ValueError(f"event {e.get('id')!r}: id and tick must be integers")
+    payload = json.dumps(jsonb_safe(e.get("payload")), allow_nan=False)  # NaN / Infinity: jsonb refuses them
+    return (e["id"], tick, jsonb_safe(e.get("type")), jsonb_safe(e.get("actor")), payload)
+
+
+def _usable(events: Iterable[Event]) -> tuple[list[tuple[Any, ...]], list[Print]]:
+    """The rows and tape prints of every event that can be stored; a bad event is skipped, never the batch."""
+    rows: list[tuple[Any, ...]] = []
+    prints: list[Print] = []
+    for e in events:
+        try:
+            row = _event_row(e)
+            printed = tape([e])
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        rows.append(row)
+        prints += printed
+    return sorted(rows, key=lambda r: r[0]), sorted(prints, key=lambda p: p.settlement)
+
+
 def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str, int]:
     """`load_events` without the commit: the caller owns the transaction (the taker's feed archive)."""
-    events = sorted(events, key=lambda e: e["id"])
-    prints: list[Print] = sorted(tape(events), key=lambda p: p.settlement)
-    if events:
+    rows, prints = _usable(events)
+    if rows:
         cur.executemany(
             "insert into feed_events (id, tick, type, actor, payload) values (%s, %s, %s, %s, %s) "
             "on conflict (id) do nothing",
-            [
-                (
-                    e["id"],
-                    e.get("tick"),
-                    e.get("type"),
-                    jsonb_safe(e.get("actor")),
-                    json.dumps(jsonb_safe(e.get("payload"))),
-                )
-                for e in events
-            ],
+            rows,
         )
     if prints:
         cur.executemany(
@@ -123,7 +137,7 @@ def insert_events(cur: psycopg.Cursor[Any], events: Iterable[Event]) -> dict[str
                 for p in prints
             ],
         )
-    return {"feed_events": len(events), "tape": len(prints)}
+    return {"feed_events": len(rows), "tape": len(prints)}
 
 
 def load_curves(conn: psycopg.Connection, events: Iterable[Event], ours: str | None = None) -> int:

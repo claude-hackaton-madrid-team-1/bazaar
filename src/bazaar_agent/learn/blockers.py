@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from bazaar_agent.learn.model import ORIGINS_THAT_BLOCK, Learning
+from bazaar_agent.learn.model import ORIGIN_THAT_BLOCKS, Learning
 from bazaar_agent.learn.reader import COOLOFF_CAP_TICKS, HOURLY_CAP_TICKS, LOCKED_RECHECK_TICKS
 
 # The longest a blocker may hold after the tick it was learned, whatever `until_tick` a stored row carries
@@ -54,7 +54,7 @@ def _unlocks(learnings: Iterable[Learning], us: str) -> dict[str, int]:
     """dealer → the newest tick it was unlocked for us (or for everyone)."""
     out: dict[str, int] = {}
     for lr in learnings:
-        if lr.subject_kind == "dealer" and lr.detail.get("unlocks") and lr.team in (None, us):
+        if lr.subject_kind == "dealer" and lr.source == "rules" and lr.detail.get("unlocks") and lr.team in (None, us):
             out[lr.subject] = max(out.get(lr.subject, -1), lr.tick)
     return out
 
@@ -77,7 +77,7 @@ def blocks_for(learnings: Iterable[Learning], us: str | None, tick: int) -> Bloc
     for lr in pool:
         if not lr.blocking or lr.subject_kind != "dealer" or lr.team != us or not in_force(lr, tick):
             continue
-        if lr.source != "rules" or not str(lr.detail.get("origin", "")).startswith(ORIGINS_THAT_BLOCK):
+        if lr.source != "rules" or not ORIGIN_THAT_BLOCKS.match(str(lr.detail.get("origin", ""))):
             continue
         if lr.kind == "blocker" and unlocked.get(lr.subject, -1) >= lr.tick:
             continue
