@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#115](../../pull/115) | fix(duels): forced endgame accepts are booked and sent before Jev (B15, r2 X17) | `night/b15-duels-first` |
 | [#114](../../pull/114) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (B17, bite X3) | `night/b17-restart-orphans` |
 | [#113](../../pull/113) | Night B8: v2 values delivery days with their sign once a real payload says so (duel_days_auto) | `night/b8-days-wiring` |
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | `ogarciarevett/feat-learner-evolve` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
 | [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
 | [#93](../../pull/93) | feat(personas): L3–L5 prep: Trickster inspector, high-precision flag policy (off), persona plans (B3, stacked on #81) | `night/b3-personas` |
-| [#92](../../pull/92) | feat(market): venue go-live runbook + Saturday bench simulation (B2, stacked on #84) | `night/b2-venue-runbook` |
 
 <!-- BAZAAR:ACTIVITY:END -->
