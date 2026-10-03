@@ -442,3 +442,12 @@ def test_a_planner_that_leaves_a_duel_out_holds_it():
     quiet = zoo.single(lambda duels, tick, first_seen: {})
     record, final = zoo.play(quiet, scenario(style="no_show"))
     assert record.status == "no_deal" and final["messages"] == [] and not record.errors
+
+
+def test_a_days_blind_rival_always_sends_its_fixed_day_but_values_days_by_its_weight():
+    sc = scenario(style="linear", params={**LINEAR, "days_fixed": 5.0}, two_issues=True, days_weight=1.0,
+                  rival_days_weight=3.0)  # fmt: skip
+    _, final = zoo.play(Script(), sc)
+    assert {m["days"] for m in final["messages"]} == {5}
+    keen = scenario(style="linear", params=LINEAR, two_issues=True, days_weight=1.0, rival_days_weight=3.0)
+    assert {m["days"] for m in zoo.play(Script(), keen)[1]["messages"]} == {10}
