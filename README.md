@@ -8,6 +8,19 @@ verdict, and leaves execution to a separate runtime that only acts on structured
 **Python only** (3.12 + `uv`). The organisers' SDK is vendored in `vendor/bazaar-kit/` and used
 first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 
+## Sunday schedule
+
+The [live schedule](https://bazaar.causaprima.ai/api/schedule), read 4 Oct, says "Sunday opens" and
+"Round 3 starts" at h16.65, 09:00 CEST, with Chamberí released and the ladder restarting. Sunday ticks are
+15 s; one game hour is one real hour. The 150 P grant is h16.7, about 09:03; Market Tests are h17/h19/h21,
+about 09:21/11:21/13:21; Duels III is h18.65, about 11:00, with two issues, 12-tick duels and decay 0.10.
+Finale warning is h21.45, about 13:48; all dealer stalls close and Grand Final duels start at h21.65,
+about 14:00. "Scores freeze" and doors close at h22.65, 15:00.
+
+The h14.65 hard Market Test and h15 Market Test precede the opening anchor. Whether they fire at opening
+or are skipped is **UNVERIFIED**. See the [quoted schedule entries](docs/briefing.md#windows-this-weekend-live-apischedule-sun-4-oct)
+and check the live schedule for changes before acting.
+
 ## Live services
 
 | Service | URL |
@@ -1414,6 +1427,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] finding
 - [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
 - [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
 - [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
@@ -1421,7 +1435,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
 - [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
 - [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
-- [2026-10-04] build-error: PR #263 merge verification separator
 
 <!-- BAZAAR:STATUS:END -->
 
