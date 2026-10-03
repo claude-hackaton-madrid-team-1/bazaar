@@ -133,6 +133,18 @@ def test_roadmap_renders_each_slot_with_priority_status_and_owner() -> None:
     assert '<span class="pill p-done">done</span><span>Sim gate</span>' in page  # no owner, no separator
 
 
+def test_every_roadmap_field_is_escaped() -> None:
+    evil = "<script>x</script>"
+    phase = {
+        "when": evil,
+        "title": evil,
+        "events": [evil],
+        "items": [{"priority": "P1", "status": "todo", "text": evil, "owner": evil}],
+    }
+    out = ap.render_roadmap([phase])
+    assert "<script>" not in out and out.count("&lt;script&gt;") == 5
+
+
 def test_roadmap_is_optional_and_rejects_unknown_priorities() -> None:
     without = {k: v for k, v in DATA.items() if k != "roadmap"}
     assert "No roadmap yet" in ap.render_page(without, PLAN, TEMPLATE)

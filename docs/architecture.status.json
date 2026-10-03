@@ -339,7 +339,7 @@
       "status": "wip",
       "label": "review",
       "title": "Marius's live fixes before 09:00",
-      "body": "#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, three leaks left for a follow-up."
+      "body": "#60, #61, #62, #72, #68 reviewed; #69 (public /state allow-list) merged, follow-up open."
     }
   ],
   "not_started": [
@@ -434,7 +434,7 @@
         {
           "priority": "P0",
           "status": "done",
-          "text": "Public `/state` allow-list (#69); 3 leaks left",
+          "text": "Public `/state` allow-list (#69); follow-up open",
           "owner": "Marius"
         },
         {
@@ -515,7 +515,7 @@
         {
           "priority": "P1",
           "status": "todo",
-          "text": "Prompt-injection guard: 200k cap, offer inspector (#24, #10)",
+          "text": "Counterparty text hardening: size cap, offer inspector (#24, #10)",
           "owner": "worker"
         }
       ]
