@@ -473,7 +473,7 @@ class Taker:
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
         self.news = news  # Radio Rastro + the schedule: logged and stored after the sends; no behaviour change
-        self._news_view: tuple[int, list[Any], dict[str, Any]] | None = None  # this tick's (tick, feed, catalog)
+        self._news_view: tuple[int, list[Any], dict[str, Any], Clock, str] | None = None  # this tick's view
         self.values = OfficialValues.of(team)  # GET /api/me/value: every card buy capped at it (Day-2 hint 1)
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
@@ -544,7 +544,7 @@ class Taker:
         if self.bluff is not None:
             self.bluff.flush()
         if self.news is not None and self._news_view is not None and self._news_view[0] == tick:
-            self.news.on_tick(*self._news_view)  # never raises; at most 2 keyless GETs every 10 ticks
+            self.news.on_tick(*self._news_view)  # never raises; at most 4 keyless GETs every 10 ticks
         self.feed.archive_pending()
 
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
@@ -555,7 +555,7 @@ class Taker:
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock
-        self._news_view = (clock.tick, snap.events, snap.catalog)
+        self._news_view = (clock.tick, snap.events, snap.catalog, clock, snap.us)
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
         for listed in threads:  # GET /api/me/threads, already read: our open dealer threads

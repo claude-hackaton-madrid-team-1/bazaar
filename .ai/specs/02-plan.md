@@ -499,6 +499,15 @@ rate limits (5 req/s per key). Files: `news.py`, `agents/taker.py` (`_after_send
   keyless client (2 s timeout, no retries), after the sends; one learnings row per item; `market_events.json`.
   · **Acceptance:** `tests/test_news.py`.
 - Step 4 — `active_signals` consumers in strategy/maker behind `news_signals_enabled`. · ⬜ not started.
+- Step 5 (stacked PR) — `schedule_watch.py`: every `/api/schedule` action and every `/api/levels` level still to
+  open becomes a `schedule` learning with its lead time in ticks, said again at 20, 10 and 3 ticks ("Market Test in
+  10 ticks: keep the maker and our venue's broker up, no deploy"), and listed under `upcoming` in
+  `market_events.json`. · **Acceptance:** `tests/test_schedule_watch.py`.
+- Step 6 (stacked PR) — `rank_watch.py`: from `/api/leaderboard` (same read window), a rival that climbs 3+ ranks
+  within 20 ticks gets a `rival_move` learning explaining it from the leaderboard components, its dealer deals and
+  team trades in the feed window and the trades between other teams on its venue. · **Acceptance:**
+  `tests/test_rank_watch.py`, sentinel wiring in `tests/test_news.py`.
+
 ### RO1 — Read-only Postgres login for teammates (PR #184)
 - Step 1 — `sql/readonly_user.sql` + `readonly_user.apply`: idempotent role, SELECT only, timeouts, secret tables
   revoked. · **Acceptance:** integration tests on local docker (throwaway role + schema).
