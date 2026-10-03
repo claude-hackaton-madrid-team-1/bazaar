@@ -67,8 +67,11 @@ def llm_env() -> dict:
     """The runtime LLM on the Claude subscription (README "LLM on the Claude subscription"), for the
     services that write negotiation words. The `claude-agent-sdk` wheel bundles the Claude Code CLI,
     so the build needs nothing more. The value is the operator's `claude setup-token` token, set by
-    hand with `railway variable set ... --stdin`; unset, every LLM path falls back to its template."""
-    return {"CLAUDE_CODE_OAUTH_TOKEN": preserve()}
+    hand with `railway variable set ... --stdin`; unset, every LLM path falls back to its template.
+
+    BAZAAR_BLUFF=0 (set by hand) turns every bluff tactic off on that service without a code deploy (N16);
+    unset or 1, tactics are on. preserve() keeps a hand-set value across applies (an undeclared one is deleted)."""
+    return {"CLAUDE_CODE_OAUTH_TOKEN": preserve(), "BAZAAR_BLUFF": preserve()}
 
 
 def runtime(name: str, command: str, data: object, llm: bool = False) -> object:

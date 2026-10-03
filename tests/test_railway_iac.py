@@ -15,6 +15,7 @@ deploy commands, nested resources, a context-only branch) is checked as Railway 
    purpose). The monitor runs in the CLI and the evals inside the agents, so neither is declared.
 5. The show (bazaar-live) holds no team key and no database: only its runtime settings and the two
    optional voice keys, both preserve().
+6. The bluff kill switch BAZAAR_BLUFF (N16) is hand-set: preserve() on the services that write words, nowhere else.
 """
 
 from __future__ import annotations
@@ -89,6 +90,19 @@ def test_only_the_live_agents_declare_bazaar_live_and_only_as_preserve(services:
     live = {name: (s.get("variables") or {}).get("BAZAAR_LIVE") for name, s in services.items()}
     assert {n for n, v in live.items() if v == {"type": "preserve"}} == LIVE_AGENTS
     assert all(v is None for n, v in live.items() if n not in LIVE_AGENTS), live
+
+
+WORDS_WRITERS = frozenset({"bazaar-duels", "bazaar-taker", "bazaar-maker"})  # llm_env(): the words services
+
+
+def test_the_bluff_kill_switch_is_hand_set_on_every_words_service_and_never_valued_here(
+    services: dict[str, dict[str, Any]],
+) -> None:
+    """BAZAAR_BLUFF=0 turns the tactics off without a deploy (N16): declared preserve() (an undeclared hand-set
+    variable is deleted by an apply), never a value in this file, and only where words are written."""
+    bluff = {name: (s.get("variables") or {}).get("BAZAAR_BLUFF") for name, s in services.items()}
+    assert {n for n, v in bluff.items() if v == {"type": "preserve"}} == WORDS_WRITERS
+    assert all(v is None for n, v in bluff.items() if n not in WORDS_WRITERS), bluff
 
 
 def test_no_command_turns_a_service_live(services: dict[str, dict[str, Any]]) -> None:
