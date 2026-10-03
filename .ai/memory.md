@@ -319,3 +319,11 @@ on any non-loopback connect or DNS lookup; a dead proxy backs it up; children ge
 empty BAZAAR_ENV_FILE. A step fails on Traceback, "tick loop:" or " refused ". ~20 s locally.
 Deployed sim verified 02:10: tick 12→13 in 11 s, store `bazaar_sim`; live buy LAV-03 at 8 (thread 7, 4 ticks).
 
+### [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
+symptom: `bazaar-monitor` (no source, `enabled=False`) RUNNING since Fri 23:14 UTC, holding one of the
+key's six SSE slots → root cause: Railway redeploys a service's last image whenever an apply changes its
+config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` watch patterns
+(deployment reason `redeploy`, patchId `iac-change-set/…`) → fix: `railway down --service bazaar-monitor`,
+then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
+`bazaar-evals` (service deleted): the file declares no service we do not run, and
+tests/test_railway_iac.py fails on a service without a source.
