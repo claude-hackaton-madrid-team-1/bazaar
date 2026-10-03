@@ -204,7 +204,9 @@ def openings_hold(snap: Snapshot) -> Result:
 
 def floors_hold(snap: Snapshot) -> Result:
     """Today's Abuela fills sit where W3's floor table says (uncommons ~23, commons ~10)."""
-    threads = [t for t in intel.dealer_threads(snap.today()) if t.dealer == "abuela" and t.fill_price]
+    threads = [
+        t for t in intel.dealer_threads(snap.today()) if t.dealer == "abuela" and t.side == "buy" and t.fill_price
+    ]
     unc = [int(t.fill_price or 0) for t in threads if t.opening_ask == 29]
     com = [int(t.fill_price or 0) for t in threads if t.opening_ask == 12]
     if len(unc) + len(com) < 4:

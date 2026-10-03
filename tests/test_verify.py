@@ -56,7 +56,16 @@ def test_feed_checks_read_only_todays_threads():
             {"id": 101 + 10 * i, "tick": 200 + i, "type": "thread.message", "payload": payload},
             settle(102 + 10 * i, 900 + i, "abuela", "t05", ref, fill, tick=201 + i, kind="card"),
         ]
+    # a sale to Abuela: her opening there is a bid (here 4), not one of her asks, so it never moves the regime
+    bid = {"give": {"cash": 4}, "want": {"types": ["card:LAV-01"]}}
+    sale = {"kind": "persona", "thread": 60, "sender": "abuela", "with": "abuela", "offer": bid}
+    events += [
+        opened(150, 60, "t05", {"sell": {"card": "LAV-01"}}, tick=210),
+        {"id": 151, "tick": 210, "type": "thread.message", "payload": sale},
+        settle(152, 960, "t05", "abuela", "LAV-01", 4, tick=211, kind="card"),
+    ]
     snap = vf.Snapshot(events=events, since_tick=200)
+    assert any(t.side == "sell" for t in vf.intel.dealer_threads(events))
     assert vf.openings_hold(snap).status == "PASS"
     assert vf.floors_hold(snap).status == "PASS"
     assert vf.floors_hold(vf.Snapshot(events=events, since_tick=300)).status == "UNKNOWN"  # nothing today yet

@@ -1194,7 +1194,7 @@ def verify(
 
     from bazaar_agent import verify as vf
 
-    events = _jsonl_file(feed_file) if feed_file else (_events(False) if live else [])
+    events = _jsonl_file(feed_file) if feed_file else (_events(True) if live else [])
     if live:
         settings = load_settings()
         team = team_client(settings) if settings.bazaar_key else None
