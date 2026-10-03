@@ -526,6 +526,7 @@ class Maker:
             cost = max(
                 ask_floor(t.value, self.rules),
                 sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
+                self.rules.exception_min(t.ref),  # protect_page_exceptions: never relisted below its MIN
             )
             venue = best_venue(snap.venues, snap.us, t.price)
             median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None

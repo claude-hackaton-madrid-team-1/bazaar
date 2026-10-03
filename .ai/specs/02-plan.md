@@ -630,9 +630,10 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
   · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
   tests/test_guardrails.py; full gate.
-- Step 2 (review of #240) — the last copy of an excepted card needs a human approval at any price (the maker
-  would list it at 68-86 on its own); the list is ASCII `SET-NN` only and matches the item exactly; an excepted
-  sale whose asset is not a copy of that card is refused · **Acceptance:** tests/test_page_exceptions.py.
+- Step 2 (review of #240 + coordinator) — entries are REF:MIN (`LAT-10:80`): no sale of an excepted card below MIN,
+  maker floors at MIN; ASCII entries, exact item match, asset must be a copy of that card · **Acceptance:**
+  tests/test_page_exceptions.py.
+- Step 3 (Omar, ~22:20) — `LAT-09:90` added to the list · **Acceptance:** tests/test_page_exceptions.py.
 
 ### SP2 — The schedule playbook ([spec](SP2-spec.md))
 - Step 1 — `playbook.py` + news sentinel wiring, learnings rows per instruction, taker obeys `no_new_dealer_thread`
