@@ -464,3 +464,9 @@ call stayed inside `jev_timeout_s` 3 s. A 90 P request reused the cache in a new
 browser); "LLM → Jev picks ✓" fits both LLM boxes. Measure a new box title or line before committing it.
 `scripts/sim_smoke.py` also needs port 8765 free: another worktree's smoke may hold it for ~30 s; wait,
 never kill it.
+
+### [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
+The simulator numbers duels and threads from 1 like the game, so sim duel 85 is not our duel 85. A
+simulator run must never write scores onto the real Phoenix traces: with `BAZAAR_SIM`, the agents'
+in-loop evals and `bazaar evals run` keep their outcomes in the simulator's Postgres (no annotation),
+and every trace goes to the `<project>-sim` Phoenix project (telemetry.tracing_config).

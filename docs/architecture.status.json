@@ -266,10 +266,6 @@
           "note": true
         },
         {
-          "text": "hybrid recall: BM25+vector+RRF+rerank",
-          "mark": "✓"
-        },
-        {
           "text": "lessons from every outcome (N3)",
           "mark": "✓"
         },
