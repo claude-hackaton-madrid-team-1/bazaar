@@ -967,6 +967,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#139](../../pull/139) | feat: lean agent-behaviour tracing in Phoenix (N18, takes over #46) | `ogarciarevett/feat-lean-tracing` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
@@ -986,6 +987,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#122](../../pull/122) | night(B22): bazaar cockpit, read-only Saturday operator screen (stacked on #102) | `night/b22-cockpit` |
 | [#120](../../pull/120) | DO NOT MERGE: night rehearsal | `night/b5-rehearsal` |
 | [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
-| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 
 <!-- BAZAAR:ACTIVITY:END -->
