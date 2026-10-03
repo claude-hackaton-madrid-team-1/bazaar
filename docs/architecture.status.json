@@ -254,7 +254,7 @@
           "mark": "✓"
         },
         {
-          "text": "LLM pass (background, never blocks)",
+          "text": "LLM pass (opt-in, background, never blocks)",
           "mark": "✓"
         },
         {
