@@ -190,3 +190,64 @@ def evals_import_duels(
             console.print(f"{path}: {n} duel snapshot(s) upserted")
             total += n
     console.print(f"imported {total} duel snapshot(s); the newest per duel is kept")
+
+
+@evals_app.command("score-sim")
+def evals_score_sim(
+    data: Annotated[Path, typer.Option(help="Calibration fixture")] = Path("tests/fixtures/evals/friday_score.json"),
+    feed: Annotated[Path | None, typer.Option(help="Rebuild the dealer deals from a feed capture (JSONL)")] = None,
+    fit: bool = typer.Option(False, help="Refit the level-2 weight on our official series first"),
+    as_json: bool = typer.Option(False, "--json", help="Calibration and marginals as JSON"),
+) -> None:
+    """The board-formula model vs Friday's official numbers, and what one more dealer deal is worth. Offline."""
+    from dataclasses import asdict, replace
+
+    from rich.table import Table
+
+    from bazaar_agent.evals import score_sim as ss
+
+    d = ss.load_data(data, feed)
+    model = ss.ScoreModel()
+    if fit:
+        w2, _ = ss.fit_level2_weight(d.deals, d.ours, d.team, model)
+        model = replace(model, level_weights={**model.level_weights, 2: w2})
+    cal = ss.calibrate(d.deals, d.board30, d.ours, d.team, model)
+    last = max(d.ours)
+    raw = ss.ladder_raw(d.deals, ss.snapshot_tick(last, model), model, ss.learned_ranges(d.deals), teams=[d.team])
+    top = ss.top_mean(raw.values())
+    marginals = ss.ladder_marginals(raw[d.team], top, model)
+    if as_json:
+        out = {
+            "model": asdict(model),
+            "level2_weight": cal.level2_weight,
+            "ours": cal.ours,
+            "rmse_ours": round(cal.rmse_ours, 3),
+            "max_err_ours": round(cal.max_err_ours, 2),
+            "board30": cal.board,
+            "board30_mae": round(cal.board_mae, 2),
+            "ladder_raw": {"ours": round(raw[d.team], 4), "top3_mean": round(top, 4), "tick": last},
+            "marginals": [asdict(m) for m in marginals],
+        }
+        print(json.dumps(out, indent=2))
+        return
+    ours = Table(title=f"Our negotiating: official vs model (level-2 weight {cal.level2_weight:g})")
+    for col in ("tick", "official", "model", "error"):
+        ours.add_column(col, justify="right")
+    for tick, official, modelled in cal.ours:
+        if tick % model.refresh_ticks == 0 or tick in (min(d.ours), last):
+            ours.add_row(str(tick), f"{official:.2f}", f"{modelled:.2f}", f"{modelled - official:+.2f}")
+    console.print(ours)
+    console.print(f"RMSE {cal.rmse_ours:.2f} over {len(cal.ours)} snapshots, worst {cal.max_err_ours:.2f}")
+    board = Table(title="Public board at tick 30 (ladder only): official vs model")
+    for col in ("team", "official", "model"):
+        board.add_column(col, justify="right")
+    for team, official, modelled in cal.board:
+        board.add_row(team, f"{official:.2f}", f"{modelled:.2f}")
+    console.print(board)
+    console.print(f"board MAE {cal.board_mae:.2f} over {len(cal.board)} teams")
+    table = Table(title=f"One more dealer deal, at tick {last}'s top-3 mean ({top:.3f}; ours {raw[d.team]:.3f})")
+    for col in ("move", "raw +", "round points +"):
+        table.add_column(col, justify="right")
+    for m in marginals:
+        table.add_row(m.move, f"{m.raw_delta:.3f}", f"{m.points:+.2f}")
+    console.print(table)
