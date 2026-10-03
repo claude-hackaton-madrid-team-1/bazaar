@@ -41,7 +41,7 @@ def read_facts(conn: psycopg.Connection, tick: int) -> mi.Facts | None:
     settlements = [r[0] for r in conn.execute(SETTLEMENTS, (team,)).fetchall() if isinstance(r[0], dict)]
     newest = conn.execute(TAPE_TICK).fetchone()
     tape_tick = newest[0] if newest is not None and isinstance(newest[0], int) else None
-    return mi.Facts(team, mi.origins(settlements, team), points, tick, tape_tick)
+    return mi.Facts(team, mi.origins(settlements, team), points, tick, tape_tick, mi.sales(settlements, team))
 
 
 class ImpactBoard(TickBoard["mi.Facts | None"]):
