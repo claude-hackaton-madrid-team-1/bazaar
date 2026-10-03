@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 AFTER_TICK_S = 0.3  # settle margin after a tick lands, so reads see the settled state
 PAUSED_POLL_S = 5.0
 CLOSED_POLL_MAX_S = 300.0
+CLOSED_POLL_MIN_S = 1.0
 MIN_SLEEP_S = 0.05
 
 
@@ -46,10 +48,52 @@ class Clock(BaseModel):
         return self.doors == "open" and not self.paused
 
 
-def seconds_until_next_tick(clock: Clock) -> float:
+def _epoch(stamp: Any) -> float | None:
+    """An ISO timestamp with a zone as epoch seconds; None when missing, malformed or naive."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return parsed.timestamp() if parsed.tzinfo is not None else None
+
+
+def _until_opening(clock: Clock, now: float) -> float:
+    """Doors closed: sleep until just after the next opening, polling at least every CLOSED_POLL_MAX_S.
+
+    The next opening is the earliest of `next_opens` and the future `opens` in `days`. Once the announced
+    opening has passed (our clock ahead of the server's, a late opening), or while `now` is inside one of
+    the day windows (the doors should be open; `next_opens` may already point to the next day), poll like
+    a pause. Without a usable timestamp, poll every CLOSED_POLL_MAX_S.
+    """
+    days = (clock.model_extra or {}).get("days")
+    upcoming = []
+    for day in days if isinstance(days, list) else []:
+        if not isinstance(day, dict):
+            continue
+        opens, closes = _epoch(day.get("opens")), _epoch(day.get("closes"))
+        if opens is not None and closes is not None and opens <= now < closes:
+            return PAUSED_POLL_S
+        if opens is not None and opens > now:
+            upcoming.append(opens)
+    next_opens = _epoch(clock.next_opens)
+    if next_opens is not None and next_opens <= now:
+        return PAUSED_POLL_S
+    if next_opens is not None:
+        upcoming.append(next_opens)
+    if not upcoming:
+        return CLOSED_POLL_MAX_S
+    return min(CLOSED_POLL_MAX_S, max(CLOSED_POLL_MIN_S, min(upcoming) - now + AFTER_TICK_S))
+
+
+def seconds_until_next_tick(clock: Clock, now: float | None = None) -> float:
     """How long to sleep so the next read lands just after the next tick (or the next poll)."""
     if clock.doors != "open":
-        return CLOSED_POLL_MAX_S
+        try:
+            return _until_opening(clock, time.time() if now is None else now)
+        except Exception:  # a bad timestamp must never stop a loop: fall back to the slow poll
+            return CLOSED_POLL_MAX_S
     if clock.paused:
         return PAUSED_POLL_S
     return max(MIN_SLEEP_S, clock.next_tick_in) + AFTER_TICK_S
