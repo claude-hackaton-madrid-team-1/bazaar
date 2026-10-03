@@ -36,6 +36,7 @@ from bazaar_agent.venue import KeyVault, Opened, VenueSpec, broker_client, open_
 
 RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; a network error may have opened it)
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
+LIST_LAG_TICKS = 3  # ticks the public list and /me may take to show the venue we just opened
 FINAL_REFUSALS = frozenset({"venue_exists", "not_allowed", "forbidden"})  # never tried again by this process
 
 # Our market: a board (only there can our broker act), no fee (fees never score; what counts is the gains
@@ -98,6 +99,7 @@ class VenueKeeper:
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
         self.opened: Opened | None = None  # the venue this process opened, its key kept in memory too
+        self.opened_tick = 0
         self.retry_tick = 0
         self.final: str | None = None  # a refusal that ends our attempts (venue_exists, ...)
         self.reminded = -REMIND_TICKS
@@ -109,7 +111,7 @@ class VenueKeeper:
     def on_tick(self, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
         """Never raises: a bug or an outage here must not cost the maker its tick."""
         try:
-            venue = self._venue(snap)
+            venue = self._venue(clock, snap)
             if venue is None and snap is not None:
                 venue = self._maybe_open(clock, snap, window)
             if venue is not None:
@@ -117,12 +119,14 @@ class VenueKeeper:
         except Exception as e:  # the type only: a message could carry a URL or a parameter
             self.log(f"tick {clock.tick} venue: {type(e).__name__}; skipped this tick")
 
-    def _venue(self, snap: Snapshot | None) -> str | None:
+    def _venue(self, clock: Clock, snap: Snapshot | None) -> str | None:
         if snap is not None and (ours := our_venue(snap)) is not None:
             return ours.venue
-        if self.opened is not None:  # the public list may lag our own opening by a tick
-            return self.opened.venue
-        return None
+        if self.opened is None:
+            return None
+        # No reads this tick, or the lists lag our own opening: keep brokering it. Gone from both for longer
+        # (closed by hand): stop, and never open another from this process (`_maybe_open`).
+        return self.opened.venue if snap is None or clock.tick - self.opened_tick <= LIST_LAG_TICKS else None
 
     # ------------------------------------------------------------ opening it, once
 
@@ -130,7 +134,7 @@ class VenueKeeper:
         rules = self.rules
         if not rules.allow_venue_open or clock.t_hours < rules.venue_open_after_game_hours:
             return None
-        if self.final is not None or clock.tick < self.retry_tick or not window.open():
+        if self.opened is not None or self.final is not None or clock.tick < self.retry_tick or not window.open():
             return None
         clock_view = {"tick": clock.tick, "t_hours": clock.t_hours}
         me = snap.me
@@ -160,7 +164,7 @@ class VenueKeeper:
             self.log(f"tick {clock.tick} venue: opened {venue or '?'} but NO broker key came back: ask the desk")
             self.final = "no_key"
             return venue or None
-        self.opened = opened
+        self.opened, self.opened_tick = opened, clock.tick
         where = " + ".join(saved) if saved else "NOWHERE: kept in this process only (a restart loses it)"
         self.log(f"tick {clock.tick} venue: OPENED {venue} ({self.plan.mechanism}, 0 bps); broker key saved to {where}")
         return venue

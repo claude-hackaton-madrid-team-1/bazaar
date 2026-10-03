@@ -112,7 +112,7 @@ negotiates well.
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
-| [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
+| [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | 🔵 PR #71: the maker opens our board venue at h6.5 and brokers it (exact matcher = the stall); limit estimates in #84 |
 | [#13](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/13) | Organic market making | 2 | 🔵 maker posts/reprices/cancels asks and bids on the best venue (LIVE since Sat 01:45 Madrid); our own venue ⬜ |
 | [#5](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/5) / [#7](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/7) | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [#15](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/15) | Score simulator + dashboard | 2 (nice-to-have) | 🔵 outcome evals (#58) partly cover it; top-3 normalisation ⬜, dashboard in PR #43 |
@@ -164,6 +164,26 @@ Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
 Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
+
+### #71 (#11 / #12) — Market Test at 12:00: our board venue inside the maker (Jev `open_noon`, 0.82)
+Spec (citations, no separate file): the coordinator's brief (items 1–6); RULES.md "Your own market" (level 2,
+bond 250 + 20, broker key, `board` vs `auto`, "You cannot trade on your own venue") and "The Market Test"
+(the best venue open during a session counts; the stall earns half); #71's Greptile P1s (pause per send,
+exact cap, key never lost, no late send, symlink-safe writes), all kept.
+Files: `agents/venue_keeper.py`, `venue.py`, `agents/broker.py`, `agents/matcher.py`, `guardrails.py`,
+`agents/maker.py`, `agents/status.py`, `GUARDRAILS.md`, `sql/schema.sql`.
+- Step 1 — Effective floor: `cash_floor` 100 + `venue_bond_reserve` 270 until `/me` shows our venue; venue
+  open refused before `venue_open_after_game_hours`, twice, or below the floor. · **Acceptance:**
+  `tests/test_guardrails.py` venue tests.
+- Step 2 — Key vault: Postgres `venue_keys` + 0600 file, never shown; durable check before the open.
+  · **Acceptance:** `tests/test_venue.py` vault tests.
+- Step 3 — Keeper in the maker's tick: open once at h6.5 (board, 0 bps), then broker every tick in the
+  window, paced. · **Acceptance:** `tests/test_venue_keeper.py`.
+- Step 4 — Matcher ties in book order; properties (no bid < ask, no order twice, ≥ auto). · **Acceptance:**
+  `tests/test_matcher.py` property tests.
+- Step 5 — Public status allow-list for broker/venue rows. · **Acceptance:** keeper status test.
+- Step 6 — Simulator proof. · **Acceptance:** `tests/test_sim_venue.py`, `scripts/sim_market_test.py` output
+  in the PR.
 
 ---
 
