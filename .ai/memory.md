@@ -957,3 +957,11 @@ team, 96 duels: 41.30 → 38.82). A duel accept now uses the team's `accepts_per
 `run_per_tick(..., max_ticks=1)` starts with no last tick, so its first `on_tick` runs in the tick we are already in:
 a "retry on the next tick" built on it went out in the same tick as the 429 it answered (PR #72 round 5). To act
 on the next tick, read the clock until `tick` is strictly later (bounded), as `negotiate.retry_close_next_tick` does.
+
+
+### [2026-10-03] gotcha — with team threads on, a taker without a Jev key sends no swap at all
+`team_swap_jev_gate = true` (N17-enable): every swap proposal and every accept of a team's offer needs Jev
+`team_swap_worth_it` to say a decided yes at 0.75. `agent taker --no-jev`, a missing `TYPESAFE_API_KEY` on the
+service (judge answers `undecided`), a Jev timeout or a tick with < `jev_min_budget_s` left all mean no swap
+(fail closed, a `rejected` decision row with the verdict). The cash we add to swaps is booked as `team:<card>`
+spend rows (`team_swap_max_cash_per_hour` sums them), still counted in `max_spend_per_game_hour`.

@@ -251,3 +251,21 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
   triage verdicts land, the plan keeps a fallback (port the minimal pieces).
 - **Rival agents are adversarial:** they may lie, inject prompts, or stall to burn our slots and
   messages. Structure-only decisions, idle closes and the message cap bound the cost.
+
+## N17-enable — switching team threads on in the live game (Sat 3 Oct)
+Omar's order: turn team threads on, do it better, never lose money, and let Jev decide. Jev (jev-1.13.0)
+leaned `enable_with_jev_gate_and_spares` 0.76. Acceptance criteria:
+1. **Jev gate per swap:** before the desk posts a proposal (an opening included) or the taker takes a team's
+   offer, Jev `team_swap_worth_it` (questions/team_swaps.json, stakes critical, bar
+   `team_swap_jev_min_confidence` 0.75) reads both cards at official and private values, the cash, the fee,
+   both gains, their share and the history. Only a decided yes at the bar sends; undecided, no, timeout, no
+   tick budget, error or no Jev at all send nothing. The verdict is in the decision row. Flag
+   `team_swap_jev_gate`.
+2. **Spares:** while team threads are on, the maker never lists the desk's copy of a duplicate (two copies:
+   neither), and the desk gives only that copy (or a named copy the maker never lists). The two never promise
+   one asset in one tick.
+3. **Money caps:** `team_swap_max_cash_per_hour` (40) over the ledger's `team:` spend rows; every swap still
+   passes the official value cap and `cash_floor`.
+4. `team_threads_enabled = true` (max open 2, dealer reserve 3 unchanged).
+5. Proof: the simulator smoke passes on a private port; the in-process simulator e2e closes swaps judged by a
+   stub Jev (yes) and closes none with an undecided one.

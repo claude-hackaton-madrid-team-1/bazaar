@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bazaar_agent.agents.market import venues_from
-from bazaar_agent.agents.runtime import Recorder
+from bazaar_agent.agents.runtime import JevAdvice, Recorder
 from bazaar_agent.agents.team_desk import TOPIC, DeskView, SwapAccept, TeamDesk, _Plan
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Context, Guardrails
@@ -65,7 +65,12 @@ def desk(tmp_path: Path, team: Team, env=None, live=True, **rules) -> tuple[Team
     return d, lines
 
 
-def view(threads=(), tick=TICK, in_use=None, paused=False, window=True) -> DeskView:
+def jev_yes(state: dict) -> JevAdvice:
+    """A stub Jev that says a decided yes to every swap (the gate's own tests use other answers)."""
+    return JevAdvice("yes", 0.95)
+
+
+def view(threads=(), tick=TICK, in_use=None, paused=False, window=True, jev=jev_yes) -> DeskView:
     held = {"LAV-01": 1, "LAV-06": 1, "LAT-03": 2, "LAT-09": 1}
     return DeskView(
         tick=tick,
@@ -82,6 +87,7 @@ def view(threads=(), tick=TICK, in_use=None, paused=False, window=True) -> DeskV
         in_use=len(threads) if in_use is None else in_use,
         ctx=lambda thread: Context(400, held, tick, 1.5, paused=paused),
         window_open=lambda: window,
+        jev=jev,
     )
 
 
@@ -252,6 +258,7 @@ def test_the_taker_takes_a_fair_counter_through_the_shared_accept_slot(tmp_path)
         now=lambda: 1000.0,
         sleep=lambda s: None,
         config=TakerConfig(max_dealer_threads=0),
+        swap_jev=jev_yes,
         **parts(tmp_path, team_threads_enabled=True),
     )
     t.team_desk.env = {}
@@ -282,6 +289,7 @@ def test_a_swap_accept_passes_the_accept_gate_and_a_block_never_takes_the_slot(t
             now=lambda: 1000.0,
             sleep=lambda s: None,
             config=TakerConfig(max_dealer_threads=0),
+            swap_jev=jev_yes,
             **parts(path, team_threads_enabled=True),
         )
         t.team_desk.env = {}
@@ -316,6 +324,7 @@ def test_the_taker_never_takes_a_counter_while_the_desk_is_off(tmp_path):
         now=lambda: 1000.0,
         sleep=lambda s: None,
         config=TakerConfig(max_dealer_threads=0),
+        swap_jev=jev_yes,
         **parts(tmp_path),  # team_threads_enabled = false (the default)
     )
     t.team_desk._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0})
@@ -657,6 +666,7 @@ def test_a_team_desk_error_never_costs_the_taker_its_tick(tmp_path):
         now=lambda: 1000.0,
         sleep=lambda s: None,
         config=TakerConfig(max_dealer_threads=0),
+        swap_jev=jev_yes,
         **parts(tmp_path, team_threads_enabled=True),
     )
 
@@ -683,6 +693,7 @@ def test_a_ledger_outage_inside_the_desk_still_stops_the_taker_tick(tmp_path):
         now=lambda: 1000.0,
         sleep=lambda s: None,
         config=TakerConfig(max_dealer_threads=0),
+        swap_jev=jev_yes,
         **parts(tmp_path, team_threads_enabled=True),
     )
 
@@ -891,6 +902,7 @@ def test_taking_a_counter_cancels_our_own_offer_in_that_thread_first(tmp_path):
             now=lambda: 1000.0,
             sleep=lambda s: None,
             config=TakerConfig(max_dealer_threads=0),
+            swap_jev=jev_yes,
             **parts(tmp, team_threads_enabled=True),
         )
         t.team_desk.env = {}
@@ -970,8 +982,10 @@ def test_a_cancel_answered_settled_keeps_the_spend(tmp_path):
     d.converse(view(), set())  # anchor: + 1 P
     reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
     d.proposals(view([reply], tick=TICK + 1))
-    d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: + 3 P, no refund
-    assert d.ledger.spent_since(0) == 1 + 3
+    team.sent.clear()
+    d.converse(view([reply], tick=TICK + 1), set())  # the concession's cancel answers settled: no refund, and
+    assert d.ledger.spent_since(0) == 1  # no new offer either (#188 r2: our copy may already be gone)
+    assert [s[0] for s in team.sent] == ["cancel"]
 
 
 def test_a_team_accept_shows_only_its_thread_and_fee_on_the_public_view():
