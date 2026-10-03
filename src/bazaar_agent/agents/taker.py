@@ -1174,7 +1174,7 @@ class Taker:
                 did,
                 clock.tick,
                 "accept",
-                {"offer": a.offer.offer_id},
+                {"their_offer": a.offer.offer_id},  # not the public "offer" key: a team thread is private
                 lambda: self.team.accept(a.offer.offer_id, assets=pick),
             )
             if body is None and not self.rec.maybe_landed:
