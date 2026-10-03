@@ -3,15 +3,17 @@
 Spec §3 step 4 and §7.1. Per live duel and tick:
   1. `legal_moves`: today's deterministic move (`duelist.duel_move`) plus the other moves that stay inside
      our own limit: accept only a rival offer strictly inside it after the worst-case cost of days,
-     counter only on our side of it, hold only while the deadline is not close. In the endgame an
-     inside-limit offer is the only move (any deal beats none, `duel_endgame_ticks`).
+     counter only strictly inside it after the worst-case cost of its own days, hold only while the deadline
+     is not close. In the endgame an inside-limit offer is the only move (any deal beats none,
+     `duel_endgame_ticks`).
   2. Jev `duel_move` (questions/duels.json) picks one. It is asked once per duel and round (cached), only
      with `min_budget_s` of the tick left, and for every live duel at once on worker threads, so a duel
      accept still lands inside the taker's duel grace.
   3. `choose`: Jev's pick only when it is a legal move (an early accept also needs `jev_can_accept_early`).
      `undecided`, a timeout, no budget, or an illegal pick keep today's move. Nothing blocks the tick.
 In a two-issue session, `rival_cares_about_days` = yes puts the rival's own days on our counter when its
-price stays on our side of the limit after those days at our worst-case weight; otherwise days stay 5.
+price stays strictly inside the limit after those days at our worst-case weight; otherwise days stay at
+today's (`duelist.OUR_DAYS`, 0).
 
 `DuelOutcomes` writes one outcome line per decided verdict when its duel leaves `/api/duels`.
 """
@@ -32,6 +34,7 @@ from bazaar_agent.agents.duelist import (
     duel_move,
     effective_price,
     inside_limit,
+    worth,
 )
 from bazaar_agent.agents.jev_journal import JevJournal
 from bazaar_agent.agents.runtime import JevAdvice, JevFn, no_jev
@@ -102,20 +105,9 @@ def surplus(worth: float, limit: int, role: str) -> float:
     return worth - limit if role == "seller" else limit - worth
 
 
-def on_our_side(worth: float, limit: int, role: str) -> bool:
-    """Not worse than our limit: a seller at or above its cost, a buyer at or below its value."""
-    return worth >= limit if role == "seller" else worth <= limit
-
-
 def own_worth(duel: Mapping[str, Any], price: int, days: object) -> float | None:
     """One of OUR offers at the worst-case cost of its days (as `effective_price` values the rival's)."""
-    if not two_issue(duel):
-        return float(price)
-    weight, n_days = _number(duel.get("your_days_weight")), _number(days)
-    if weight is None or n_days is None:
-        return None
-    penalty = abs(weight) * n_days
-    return price - penalty if duel.get("role") == "seller" else price + penalty
+    return worth(duel, price, days)
 
 
 def _rival_history(duel: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -180,7 +172,8 @@ def legal_moves(
         return {"accept": accept}
     moves: dict[str, DuelMove] = {} if accept is None else {"accept": accept}
     offer = default if default.kind == "offer" else counter
-    priced = offer.kind == "offer" and offer.price is not None and on_our_side(offer.price, *limit_role)
+    worth = own_worth(duel, offer.price, offer.days) if offer.kind == "offer" and offer.price is not None else None
+    priced = worth is not None and inside_limit(worth, *limit_role)  # after the worst-case cost of our days
     if priced and (accept is None or not _dominated(duel, offer, accept, limit_role[1])):
         moves["counter"] = offer
     if not endgame:
@@ -213,7 +206,7 @@ def with_rival_days(move: DuelMove, duel: Mapping[str, Any], days: JevAdvice | N
         return move, ""
     their_days = int(rival["days"])
     worth = own_worth(duel, move.price, their_days)
-    if worth is None or not on_our_side(worth, *limit_role):
+    if worth is None or not inside_limit(worth, *limit_role):
         return move, f"; kept days {move.days}: the rival's {their_days} would cross our limit"
     reason = f"{move.reason}; days {their_days}: the rival cares about days (jev {days.value:.2f})"
     return replace(move, days=their_days, reason=reason), f"; days → {their_days}"

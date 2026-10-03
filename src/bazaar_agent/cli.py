@@ -431,6 +431,7 @@ def duel_run(
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
+        duel_action,
         duel_deadline,
         duel_id,
         duel_move,
@@ -567,7 +568,6 @@ def duel_run(
                 record(d, move, pick, c.tick, "expired")
                 continue
             if play and move.kind in ("accept", "offer"):
-                kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
                 ctx = gr.Context(
                     cash=0,
                     held={},
@@ -576,7 +576,7 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
-                verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
+                verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
