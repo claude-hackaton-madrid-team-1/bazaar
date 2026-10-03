@@ -11,7 +11,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, is_pack
+from bazaar_agent.guardrails import (
+    ANY_TEAM,
+    Action,
+    Context,
+    Guardrails,
+    LedgerStore,
+    TradeBook,
+    Verdict,
+    check,
+    is_pack,
+)
+from bazaar_agent.intel import TEAM_ID
 
 MAX_PRICE = 10_000_000  # RULES.md: whole primas from 1 to 10,000,000
 
@@ -31,15 +42,17 @@ class Listing:
     want: dict[str, Any]
     asset_id: int | None = None
     your_value: float | None = None
+    to: str | None = None  # addressed to one team (only it may accept); None: anyone on the venue
 
     def action(self) -> Action:
-        return Action(self.kind, self.ref, self.rarity, self.price, self.your_value)
+        return Action(self.kind, self.ref, self.rarity, self.price, self.your_value, self.to or ANY_TEAM)
 
     def describe(self) -> str:
         what = f"asset {self.asset_id} ({self.ref})" if self.asset_id is not None else f"any {self.ref}"
+        where = f"{self.venue}{f' to {self.to}' if self.to else ''}"
         if self.kind == "sell":
-            return f"sell {what} for {self.price} P on {self.venue} (your_value {self.your_value:g})"
-        return f"bid {self.price} P for {what} on {self.venue}"
+            return f"sell {what} for {self.price} P on {where} (your_value {self.your_value:g})"
+        return f"bid {self.price} P for {what} on {where}"
 
 
 def _check_price(price: int) -> None:
@@ -66,7 +79,7 @@ def _has_value(asset: dict[str, Any]) -> bool:
     return isinstance(asset.get("your_value"), int | float)
 
 
-def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rastro") -> Listing:
+def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rastro", to: str | None = None) -> Listing:
     """Fails closed: a copy without `your_value` in /api/me has no floor, so it is never listed."""
     _check_price(price)
     asset = find_copy(me, target)
@@ -82,12 +95,13 @@ def sell_listing(me: dict[str, Any], target: str, price: int, venue: str = "rast
         want={"cash": price},
         asset_id=int(asset["id"]),
         your_value=float(asset.get("your_value") or 0),
+        to=to,
     )
 
 
-def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro") -> Listing:
+def bid_listing(ref: str, rarity: str | None, price: int, venue: str = "rastro", to: str | None = None) -> Listing:
     _check_price(price)
-    return Listing("bid", ref, rarity, price, venue, give={"cash": price}, want={"cards": [ref]})
+    return Listing("bid", ref, rarity, price, venue, give={"cash": price}, want={"cards": [ref]}, to=to)
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,37 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
             if isinstance(asset_id, int):
                 listed.add(asset_id)
     return Commitments(cash, tuple(wanted), frozenset(listed), thread_cash, thread_packs)
+
+
+def trade_book(
+    offers: Iterable[dict[str, Any]], us: str, settled: dict[str, int], book: dict[str, float] | None = None
+) -> TradeBook:
+    """Our team-to-team volume for `max_counterparty_share`: `settled` (`intel.settled_volume`) plus the
+    notional of our open offers another team could take (the larger of the cash and the book of the cards
+    in it, as `settled_volume` counts a settlement), addressed to it or public (on a board, to anyone).
+    Offers to a dealer are not team trades; an offer counts as ours unless another team addressed it to us
+    (the rule of `open_commitments`: an unknown maker fails closed)."""
+    addressed: dict[str, int] = {}
+    public = 0
+    for o in offers:
+        if o.get("status") not in (None, "open", "queued") or (o.get("to") == us and o.get("maker") != us):
+            continue
+        give, want = o.get("give") or {}, o.get("want") or {}
+        refs = [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
+        refs += [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
+        cash = int(give.get("cash") or 0) + int(want.get("cash") or 0)
+        notional = o.get("notional")  # this tick's accept: the price without the fee
+        cash = (
+            int(notional)
+            if isinstance(notional, int)
+            else max(cash, round(sum((book or {}).get(r, 0.0) for r in refs)))
+        )
+        to = o.get("to")
+        if isinstance(to, str) and TEAM_ID.match(to):
+            addressed[to] = addressed.get(to, 0) + cash
+        elif to is None and o.get("thread") is None:
+            public += cash
+    return TradeBook(dict(settled), addressed, public)
 
 
 def committed_context(ctx: Context, commitments: Commitments) -> Context:
@@ -185,7 +230,8 @@ def post(
             f"dry run: would {listing.describe()} · give {listing.give} want {listing.want} · guardrails "
             f"{verdict}. Add --live to post.",
         )
-    offer = client.list_offer(listing.give, listing.want, venue=listing.venue, expires_in_ticks=expires_in_ticks)
+    to = {"to": listing.to} if listing.to else {}
+    offer = client.list_offer(listing.give, listing.want, venue=listing.venue, expires_in_ticks=expires_in_ticks, **to)
     if listing.kind == "bid" and ledger is not None:
         ledger.record("spend", ctx.tick, ctx.t_hours, listing.price, listing.ref)
     return Posted(True, verdict, offer, f"posted offer {offer.get('id')}: {listing.describe()}")

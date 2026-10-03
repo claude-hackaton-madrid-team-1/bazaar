@@ -211,6 +211,134 @@ def teams(
     console.print(render.teams_table(ours, f"Us · {us} (not counted as competition)", us=us))
 
 
+def _json_file(path: str) -> Any:
+    """A captured payload: a bare body, a fixture (`{"body": ...}`) or a feed event (`{"payload": ...}`)."""
+    from pathlib import Path
+
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("body"), dict):
+        return data["body"]
+    if isinstance(data, dict) and isinstance(data.get("payload"), dict) and "type" in data:
+        return data["payload"]
+    return data
+
+
+def _history(events_file: str | None, live: bool) -> list[Event]:
+    """The whole feed history, as the agents read it: the shared `feed_events` table when Postgres answers
+    (the monitor writes it), else this machine's capture, merged with the live window when `live`. A
+    `--events` JSONL file wins. A fresh worktree has no capture: the DB is what holds Friday."""
+    if events_file:
+        return _events_file(events_file)
+    from bazaar_agent.agents.runtime import MarketFeed
+
+    settings = load_settings()
+    window = public_client(settings).feed_window if live else (lambda limit: [])
+    feed = MarketFeed(window, FeedStore(settings.feed_dir), _db_connect("bazaar-intel"), lambda m: console.print(m))
+    events = feed.events()
+    if not events:
+        console.print("[yellow]no feed history (no DB, no capture): reading the live window[/yellow]")
+        return _events(live=True)
+    return events
+
+
+def _events_file(path: str) -> list[Event]:
+    """Feed events from a JSONL file (one event per line, e.g. a `feed_events` export)."""
+    from pathlib import Path
+
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+@app.command()
+def affinity(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file (the multiset); else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    beta: float = typer.Option(0.5, help="Weight of one unit of (damped) interest per sd of the multiplier"),
+    as_json: bool = typer.Option(False, "--json", help="Print the map as JSON"),
+) -> None:
+    """Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone."""
+    from dataclasses import asdict
+
+    from bazaar_agent import affinity as af
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    events = _history(events_file, live)
+    us = str(me.get("id") or "") or None
+    amap = af.affinity_map(
+        events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, af.ModelParams(beta=beta), [us or ""]
+    )
+    if as_json:
+        typer.echo(json.dumps({t: asdict(a) for t, a in amap.teams.items()}, indent=2, default=str))
+        return
+    console.print(render.affinity_table(amap))
+    for s in af.catalog_sets(catalog):
+        console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
+
+
+@app.command("trade-plan")
+def trade_plan(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    venue: str = typer.Option("rastro", help="Venue to post on (its fee prices every trade)"),
+    share: float = typer.Option(0.25, min=0.01, max=1.0, help="No counterparty above this share of planned volume"),
+    listings: int = typer.Option(12, min=0, help="Listings (one tick: offers_per_team_per_tick)"),
+    threads: int = typer.Option(3, min=0, help="Direct proposals (swaps in a team thread)"),
+    split: float = typer.Option(0.5, min=0.05, max=1.0, help="The most of the expected pie we ask for"),
+    page_set: str = typer.Option("LAV", help="The set whose page buy list is drawn up"),
+    cash_budget: int | None = typer.Option(
+        None, min=0, help="The most bids and cash legs may promise (default: all the cash above cash_floor)"
+    ),
+    out: str = typer.Option(".local/night", help="Where trade-plan.json and trade-plan.md are written"),
+) -> None:
+    """Dry-run trade plan for the next opening, fair by construction; sends nothing.
+
+    Listings and direct proposals priced on the rival affinity map, every one with surplus for us, no
+    counterparty above `--share` of the planned volume, checked through the guardrails."""
+    from pathlib import Path
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.market import venues_from
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and venues_file) else public_client(load_settings())
+    catalog = _json_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_json_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    where = next((v for v in venues if v.id == venue), None)
+    if where is None:
+        _fail(f"venue {venue!r} is not in /api/venues")
+    events = _history(events_file, live)
+    us = str(me.get("id") or "")
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cash_budget=cash_budget)
+    rules = _rules().rules
+    offers: list[dict[str, Any]] = []
+    spent = 0
+    if not me_file:  # live inputs: what our open offers and this game hour's spend already promise
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        offers = _my_offers(_team_client())
+        spent = _ledger("trade-plan").spent_since(now.t_hours - 1.0)
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, rules, pp, where, offers, spent)
+    folder = Path(out) if Path(out).is_absolute() else REPO_ROOT / out
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "trade-plan.json").write_text(json.dumps(td.plan_dict(plan, venue), indent=2, default=str) + "\n")
+    (folder / "trade-plan.md").write_text(td.plan_markdown(plan, pp))
+    console.print(
+        f"{len(plan.listings)} listing(s) + {len(plan.threads)} proposal(s), expected {plan.expected:+.1f} P "
+        f"(without the share rule {plan.unconstrained:+.1f} P), largest share "
+        f"{max(plan.shares.values(), default=0):.0%}, {len(plan.checks)} check(s) failing · written to {folder}"
+    )
+    for check_line in plan.checks:
+        console.print(f"[red]{check_line}[/red]")
+    for line in plan.what_if:
+        console.print(f"[yellow]if the cap were on: {line}[/yellow]")
+
+
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
@@ -1159,15 +1287,22 @@ def _team_me() -> tuple[Any, dict[str, Any]]:
     raise typer.Exit(1)
 
 
-def _open_commitments(client: Any, me: dict[str, Any]) -> Any:
-    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
-    from bazaar_agent.agents.seller import offers_in, open_commitments
+def _my_offers(client: Any) -> list[dict[str, Any]]:
+    """Our open offers; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import offers_in
 
     try:
-        return open_commitments(offers_in(client.my_offers()), str(me.get("id") or ""))
+        return offers_in(client.my_offers())
     except BazaarError as e:
         console.print(f"[red]/api/me/offers refused: {e.code} ({e.status}); not checking guardrails blind[/red]")
     raise typer.Exit(1)
+
+
+def _open_commitments(client: Any, me: dict[str, Any], offers: list[dict[str, Any]] | None = None) -> Any:
+    """Our open offers as commitments; exits when they cannot be read (guardrails never check blind)."""
+    from bazaar_agent.agents.seller import open_commitments
+
+    return open_commitments(_my_offers(client) if offers is None else offers, str(me.get("id") or ""))
 
 
 def _pack_judge(settings: Any, timeout_s: float) -> Any:
@@ -1235,6 +1370,13 @@ sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a
 app.add_typer(sell_app, name="sell")
 EXPIRES_HELP = "Ticks the offer stays open"
 POST_HELP = "Actually post. Without it: dry run, nothing is sent"
+TO_HELP = "Address the offer to one team (t05): only it may accept. Default: anyone on the venue"
+
+
+def _team_to(to: str | None) -> str | None:
+    if to is not None and not intel.TEAM_ID.match(to):
+        _fail(f"--to takes a team id like t05, not {to!r}")
+    return to
 
 
 def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
@@ -1245,7 +1387,19 @@ def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expir
     ledger = _ledger("sell", live=live)
     now = Clock.model_validate(client.clock())
     ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules)
-    commitments = _open_commitments(client, me)
+    offers = _my_offers(client)
+    commitments = _open_commitments(client, me, offers)
+    if rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
+        from bazaar_agent.agents.seller import trade_book
+
+        us = str(me.get("id") or "")
+        try:
+            book = intel.book_values(public_client(load_settings()).catalog())
+            settled = intel.settled_volume(_events(live=True), us, book)
+        except BazaarError as e:
+            _fail(f"max_counterparty_share is on and the feed or catalog read failed ({e.code}): not checking blind")
+            return
+        ctx = replace(ctx, trades=trade_book(offers, us, settled, book))
     try:
         out = post(
             client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
@@ -1265,6 +1419,7 @@ def sell_list(
     price: int = typer.Option(..., min=1, help="Cash we want for it"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md)."""
@@ -1272,7 +1427,7 @@ def sell_list(
 
     client, me = _team_me()
     try:
-        listing = sell_listing(me, target, price, venue)
+        listing = sell_listing(me, target, price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return
@@ -1285,6 +1440,7 @@ def sell_bid(
     price: int = typer.Option(..., min=1, help="Cash we offer"),
     venue: str = typer.Option("rastro", help="Venue id"),
     expires: int = typer.Option(40, min=1, help=EXPIRES_HELP),
+    to: str | None = typer.Option(None, "--to", help=TO_HELP),
     live: bool = typer.Option(False, help=POST_HELP),
 ) -> None:
     """Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold."""
@@ -1292,7 +1448,7 @@ def sell_bid(
 
     client, me = _team_me()
     try:
-        listing = bid_listing(ref, _rarity_of(ref), price, venue)
+        listing = bid_listing(ref, _rarity_of(ref), price, venue, to=_team_to(to))
     except OfferError as e:
         _fail(str(e))
         return
