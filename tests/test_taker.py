@@ -1,7 +1,7 @@
 """The taker: board asks below value (fee included), the team accept quota, the dealer desk, tick budget."""
 
 from bazaar_agent.agents.dealer import BidPlan, Move, Negotiation
-from bazaar_agent.agents.desk import Conversation, DeskMove, meet_the_ask, openings, plan_conversation
+from bazaar_agent.agents.desk import Conversation, DeskMove, deal_price, meet_the_ask, openings, plan_conversation
 from bazaar_agent.agents.market import board_offers, venues_from
 from bazaar_agent.agents.runtime import JevAdvice
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates, board_proposal, rank_accepts
@@ -201,37 +201,70 @@ def test_the_desk_opens_then_bids_one_move_per_tick_without_blocking(tmp_path):
     assert set(t.convs) == {"abuela"}
 
 
+def dealer_ask(oid, cash, final=False, status="open", item="LAV-08"):
+    return {
+        "id": oid,
+        "maker": "abuela",
+        "status": status,
+        "final": final,
+        "give": {"types": [f"card:{item}"]},
+        "want": {"cash": cash},
+    }
+
+
+def her(team, tid, *offers, status="open"):
+    """Thread `tid` as the fake server shows it: her standing offers, and every offer in its messages."""
+    team.thread_payloads[tid] = {
+        "id": tid,
+        "status": status,
+        "messages": [{"offer": o} for o in offers],
+        "standing_offers": [o for o in offers if o["status"] == "open"],
+    }
+
+
 def test_a_final_dealer_offer_inside_our_max_is_accepted_and_spends_the_slot(tmp_path):
     team = FakeTeam()
     t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
     t.on_tick(clock())  # opens thread 5000 and bids 18
-    offer = {
-        "id": 801,
-        "maker": "abuela",
-        "status": "open",
-        "final": True,
-        "give": {"types": ["card:LAV-08"]},
-        "want": {"cash": 21},
-    }
-    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
+    her(team, 5000, dealer_ask(800, 24))  # her opening ask, above our max: we bid 19
     t.on_tick(at(team, TICK + 1))
-    assert team.sent[-1] == ("accept", 801) and ledger.accept_items(TICK + 1) == ["LAV-08"]
-    team.thread_payloads[5000] = {"id": 5000, "status": "deal", "messages": [], "standing_offers": []}
+    her(team, 5000, dealer_ask(801, 21, final=True))  # her final came down from 24: inside our max, taken
     t.on_tick(at(team, TICK + 2))
+    assert team.sent[-1] == ("accept", 801) and ledger.accept_items(TICK + 2) == ["LAV-08"]
+    her(team, 5000, dealer_ask(801, 21, final=True, status="settled"), status="deal")
+    t.on_tick(at(team, TICK + 3))
     assert t.convs == {} and ledger.spent_since(0) == 21  # the deal is recorded as spend once it settles
+
+
+def test_her_opening_ask_is_walked_reopened_lower_once_then_rested(tmp_path):
+    team = FakeTeam()
+    t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens thread 5000 for LAV-08 and bids 18
+    her(team, 5000, dealer_ask(800, 19))  # her opening 19: no whole price left below it
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[-1] == ("close_thread", 5000) and t.reopen_at == {("abuela", "LAV-08"): 17}
+    t.on_tick(at(team, TICK + 2))  # the new thread starts lower
+    opened = [s for s in team.sent if s[0] == "open_thread"]
+    assert len(opened) == 2 and team.sent[-1] == ("say", 5002, 17) and t.convs["abuela"].reopened
+    her(team, 5002, dealer_ask(810, 18))  # she holds her opening again, one above our 17
+    t.on_tick(at(team, TICK + 3))
+    assert team.sent[-1] == ("close_thread", 5002) and t.cooling == {("abuela", "LAV-08"): 1.5 + 1.0}
+    t.on_tick(at(team, TICK + 4))
+    assert len([s for s in team.sent if s == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})]) == 2
+    assert any("held her opening ask again: LAV-08 rests 1 game hour" in line for line in lines)
 
 
 def test_a_desk_wait_is_logged_without_a_decision_row(tmp_path):
     team = FakeTeam()
     t, lines, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
     t.on_tick(clock())  # opens thread 5000 and bids 18
-    offer = {"id": 801, "maker": "abuela", "status": "open", "final": True, "give": {"types": ["card:LAV-08"]}}
-    team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [offer]}
-    offer["want"] = {"cash": 21}
-    t.on_tick(at(team, TICK + 1))  # accepts the final 21; the thread stays open while it settles
+    her(team, 5000, dealer_ask(800, 24))
+    t.on_tick(at(team, TICK + 1))
+    her(team, 5000, dealer_ask(801, 21, final=True))
+    t.on_tick(at(team, TICK + 2))  # accepts the final 21; the thread stays open while it settles
     decisions = len(rows(tmp_path))
-    t.on_tick(at(team, TICK + 2))
-    assert f"tick {TICK + 2} taker: abuela wait (accepted, waiting for settlement)" in lines
+    t.on_tick(at(team, TICK + 3))
+    assert f"tick {TICK + 3} taker: abuela wait (accepted, waiting for settlement)" in lines
     assert len(rows(tmp_path)) == decisions  # visible in the log, no decision row
 
 
@@ -252,11 +285,27 @@ def test_an_accept_that_never_settles_stops_blocking_the_dealer_after_two_ticks(
     assert plan_conversation(conv, still_open, 14, TICK + 1).move.reason == "accepted, waiting for settlement"
     dm = plan_conversation(conv, still_open, 14, TICK + 2)
     assert conv.accepted_tick is None and dm.move.kind == "walk"  # back on the clock: max_ticks applies again
+    assert conv.accepted_price is None  # a later deal may be a higher bid of ours: never booked at the old 20
+
+
+def test_a_deal_is_booked_at_what_settled_else_the_most_we_may_have_agreed():
+    conv = Conversation(
+        "abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22), [18, 19, 21]), 50, TICK
+    )
+    conv.accepted_price = 20
+    settled = {"status": "deal", "messages": [{"offer": dealer_ask(801, 21, status="settled")}]}
+    assert deal_price(conv, settled) == 21
+    assert deal_price(conv, {"status": "deal", "messages": []}) == 21  # max(accepted 20, last bid 21)
+    conv.neg.bids.clear()
+    assert deal_price(conv, {"status": "deal"}) == 20
 
 
 def test_meet_the_ask_bids_her_price_when_the_accept_slot_went_elsewhere():
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     conv.neg.bids.append(18)
+    conv.neg.see_ask(21)  # her opening ask, inside our max 22; she came down to 20 since
+    opening = DeskMove(conv, Move("accept", 21, 800), 21, False, offer_id=800)
+    assert meet_the_ask(opening).move.kind == "wait"  # never her opening price
     accept = DeskMove(conv, Move("accept", 20, 801, "ask meets our next bid"), 20, False, offer_id=801)
     assert meet_the_ask(accept).move == Move("bid", 20, reason="accept slot used: meet her ask")
     above = DeskMove(conv, Move("accept", 25, 801), 25, False, offer_id=801)

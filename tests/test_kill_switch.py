@@ -211,7 +211,7 @@ def test_negotiate_holds_a_kill_switch_denial_and_resumes_where_it_was():
         tick = 100 + client.reads // client.reads_per_tick
         return ("pause file .local/PAUSE exists",) if tick < state["until"] else ()
 
-    def guard(move):
+    def guard(move, _tid):
         if move.price == 7 and not state["until"]:  # the pause lands while the second bid is being decided
             state["until"] = 100 + client.reads // client.reads_per_tick + 4
             return "pause file .local/PAUSE exists"

@@ -7,6 +7,8 @@ from bazaar_agent.agents.dealer import (
     apply_advice,
     decide,
     latest_dealer_offer,
+    reopen_start,
+    settled_price,
     words,
 )
 
@@ -32,9 +34,10 @@ def test_keeps_stepping_while_her_ask_is_above_our_next_bid():
     assert (move.kind, move.price) == ("bid", 8)
 
 
-def test_takes_a_final_inside_the_limit_and_walks_from_one_above_it():
-    assert decide(neg(bids=[6]), 10, 9, True).kind == "accept"
-    assert decide(neg(bids=[6]), 12, 9, True).kind == "walk"
+def test_takes_a_final_below_her_opening_inside_the_limit_and_walks_from_one_above_it():
+    assert decide(neg(bids=[6, 7], opened=(12, 1)), 10, 9, True) == Move("accept", 10, 9, "final within limit")
+    above = decide(neg(bids=[6, 7], opened=(12, 1)), 11, 9, True)
+    assert above.kind == "walk" and not above.reopen  # above our limit: no lower thread to try
 
 
 def test_never_repeats_a_price_and_walks_when_the_limit_is_spent():
@@ -87,17 +90,37 @@ def test_a_welcome_offer_is_never_taken_on_the_first_tick():
     )
 
 
-def test_lav03_replay_takes_her_welcome_when_no_whole_price_is_left_between_us():
-    # The real LAV-03 thread: we bid 6, her non-final welcome ask is 7. Waiting would freeze the thread
-    # (she only moves when we move) and there is no range left between 6 and 7: take the 7.
+def test_lav03_replay_walks_from_her_opening_ask_and_reopens_lower():
+    # The real LAV-03 thread 99: we bid 6, her opening ask was 7 and we took it. It settled at her opening
+    # price, which scores nothing on the ladder and unlocks nothing. Now: walk, and reopen from 5.
     n = Negotiation(BidPlan(6, 1, 9), [6])
-    assert decide(n, 7, 9, False) == Move("accept", 7, 9, "no room left between our 6 and her 7")
-    assert decide(neg(bids=[8], max_price=8), 8, 9, False).kind == "accept"  # spent at our max, her ask meets it
+    assert decide(n, 7, 9, False) == Move(
+        "walk", reason="she held her opening ask 7: no counter left below it", reopen=True
+    )
+    assert reopen_start(n) == 5
+    spent = neg(bids=[8], max_price=8)  # spent at our max and her opening ask meets it: still never taken
+    assert decide(spent, 8, 9, False).kind == "walk" and reopen_start(spent) == 7
 
 
-def test_a_final_offer_is_still_taken_within_our_max_even_at_her_opening():
-    assert decide(neg(start=8), 9, 1, True) == Move("accept", 9, 1, "final within limit")
+def test_a_final_offer_at_her_opening_price_is_walked_and_reopened_lower():
+    n = neg(start=8)
+    assert decide(n, 9, 1, True) == Move(
+        "walk", reason="her final 9 is her opening price: it scores nothing", reopen=True
+    )
+    assert reopen_start(n) == 7  # one step under our planned first bid
     assert decide(neg(start=8), 11, 1, True).kind == "walk"
+    assert reopen_start(Negotiation(BidPlan(1, 1, 5))) is None  # nothing lower than 1 to try
+
+
+def test_settled_price_reads_the_deal_from_the_thread_messages():
+    # The real thread 101: our bids are offers 720, 732, 744 (cancelled when replaced) and 759 at 9 (settled).
+    msgs = [
+        {"offer": {"id": i, "status": s, "give": {"cash": p}}}
+        for i, s, p in [(720, "cancelled", 6), (759, "settled", 9)]
+    ]
+    assert settled_price({"messages": [*msgs, {"offer": None}]}) == 9
+    assert settled_price({"messages": [{"offer": {"status": "settled", "want": {"cash": 7}}}]}) == 7  # her ask
+    assert settled_price({"messages": []}) is None
 
 
 def test_jev_accept_on_her_opening_ask_is_overridden():
@@ -199,7 +222,7 @@ def test_a_guardrail_denial_turns_the_move_into_a_walk_and_deals_are_reported():
         BidPlan(6, 1, 10),
         log=lambda _: None,
         sleep=lambda _: None,
-        guard=lambda m: "cash_floor" if m.price and m.price >= 8 else None,
+        guard=lambda m, _tid: "cash_floor" if m.price and m.price >= 8 else None,
     )
     assert (client.sent, out.status, client.closed) == ([6, 7], "walked", True)
 
@@ -341,20 +364,22 @@ def test_negotiate_overrides_a_jev_accept_on_her_opening_ask():
     assert (client.accepted, out.status, out.price) == ([502], "deal", 8)
 
 
-def test_a_busy_accept_slot_waits_for_the_next_tick_instead_of_walking():
+def test_a_busy_accept_slot_bids_her_ask_instead_of_going_silent():
     from bazaar_agent.agents.dealer import negotiate
 
-    class Clocked(FakeDealerClient):
-        def accept(self, offer_id):
-            super().accept(offer_id)
-            self.accept_tick = 100 + self.reads // self.reads_per_tick  # the tick the accept is sent on
+    class TakesOurBid(FakeDealerClient):
+        def say(self, tid, text, price):
+            standing = self.asks[len(self.sent) - 1] if self.sent else None
+            super().say(tid, text, price)
+            if standing is not None and price >= standing:  # our bid meets her ask: she takes it
+                self.status = "deal"
 
-    client = Clocked(asks=[12, 10, 9])
+    client = TakesOurBid(asks=[12, 10, 9])
     reserved: list[int] = []
 
     def reserve(move, clock):
         reserved.append(clock.tick)
-        return len(reserved) > 1  # the duel player holds the team's accept on the first try
+        return False  # the duel player holds the team's accept this tick
 
     out = negotiate(
         client,
@@ -365,16 +390,24 @@ def test_a_busy_accept_slot_waits_for_the_next_tick_instead_of_walking():
         sleep=lambda _: None,
         reserve=reserve,
     )
-    assert (client.closed, out.status, out.price, client.accepted) == (False, "deal", 9, [503])
-    assert len(reserved) == 2 and reserved[0] < reserved[1]  # retried on a later tick, not walked
-    assert reserved[-1] == client.accept_tick  # the slot is booked on the tick the accept is sent
+    assert client.sent == [6, 7, 8, 9] and client.accepted == [] and len(reserved) == 1  # bid her 9 that tick
+    assert (client.closed, out.status, out.price) == (False, "deal", 9)
 
 
-def test_negotiate_replays_lav03_and_takes_the_welcome_when_no_room_is_left():
+def test_a_busy_accept_slot_never_bids_her_opening_ask():
+    from bazaar_agent.agents.dealer import meet_ask
+
+    n = neg(bids=[8], opened=(12, 1))
+    assert meet_ask(n, 9) == Move("bid", 9, reason="accept slot used: meet her ask")
+    assert meet_ask(n, 12).kind == "wait" and meet_ask(n, 11).kind == "wait"  # her opening / above our max
+    assert meet_ask(neg(bids=[8]), 9).kind == "wait"  # no opening seen: we cannot tell, so never
+
+
+def test_negotiate_replays_lav03_and_walks_from_her_opening_ask_with_a_lower_reopen():
     from bazaar_agent.agents.dealer import negotiate
 
     logs: list[str] = []
-    client = FakeDealerClient(asks=[7])  # we bid 6, then her non-final welcome ask is 7
+    client = FakeDealerClient(asks=[7])  # we bid 6, then her non-final opening ask is 7
     out = negotiate(
         client,
         "abuela",
@@ -383,5 +416,6 @@ def test_negotiate_replays_lav03_and_takes_the_welcome_when_no_room_is_left():
         log=logs.append,
         sleep=lambda _: None,
     )
-    assert client.sent == [6] and (client.accepted, out.status, out.price) == ([501], "deal", 7)
-    assert any("→ accept 7 (no room left between our 6 and her 7)" in line for line in logs)
+    assert client.sent == [6] and client.accepted == [] and client.closed
+    assert (out.status, out.price, out.reopen_start) == ("walked", None, 5)
+    assert any("→ walk  (she held her opening ask 7: no counter left below it)" in line for line in logs)
