@@ -22,6 +22,8 @@ from bazaar_agent.decisions import Decision, DecisionLog, Status
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
 from bazaar_agent.holdings import Holdings, MeRead
+from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.supply_db import ScanStore
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
@@ -29,6 +31,18 @@ ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer 
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
+# A refused accept that still used the team's accept of the tick: the quota was already spent ("too early",
+# `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
+# (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
+KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def cost_nothing(code: str | None, status: int | None) -> bool:
+    """A refusal that gave the team's accept back: a 4xx (RULES.md: a refused request "costs nothing and moves
+    nothing") other than KEEPS_THE_ACCEPT. A 5xx is not one: the game may have applied it before failing."""
+    return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
+
+
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -102,9 +116,11 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        scans: ScanStore | None = None,
         archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self.scans = scans  # the stored card scan (supply map), when there is one
         self._archive, self._archive_failed = archive, False
         self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
@@ -113,6 +129,7 @@ class MarketFeed:
         self._loaded_store = False
         self._db_down = False
         self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+        self.window_ok = False  # the last `events()` read the live window: its newest events are in
 
     def _from_db(self) -> bool:
         if self._connect is None:
@@ -151,11 +168,17 @@ class MarketFeed:
             window = self._read_window(DEFAULT_WINDOW)
             for event in window:
                 self._events[event["id"]] = event
+            self.window_ok = True
         except Exception as e:
+            self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         if self._archive and from_db:
             self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
+
+    def scan(self, tick: int) -> tuple[dict[str, Any], ...]:
+        """The stored card scan (`bazaar supply scan`) for the supply map; empty when none is stored."""
+        return tuple(self.scans.rows(tick)) if self.scans is not None else ()
 
     def archive_pending(self) -> None:
         """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
@@ -184,7 +207,11 @@ class MarketFeed:
 
 def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
     """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
-    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, dict) else None
+    return (
+        frozenset(str(p.get("set")) for p in pages if isinstance(p, dict)) if isinstance(pages, list) else frozenset()
+    )
 
 
 class PageWatch:
@@ -222,6 +249,7 @@ class Snapshot:
     venues: list[Venue]
     events: list[Event]
     holdings: MeRead | None = None  # where `me` came from: the shared Postgres snapshot or a live read
+    scan: tuple[dict[str, Any], ...] = ()  # the stored card scan: starting hands for the supply map
 
     @property
     def us(self) -> str:
@@ -255,15 +283,23 @@ def read_snapshot(
         offers=offers,
         catalog=catalog,
         dealers=[d for d in personas.get("personas") or personas.get("dealers") or [] if isinstance(d, dict)],
-        venues=venues_from(public.venues()),
+        venues=venues_from(public.venues(), clock.tick),
         events=feed.events(),
         holdings=read,
+        scan=feed.scan(clock.tick),
     )
 
 
-def guard_context(snap: Snapshot, ledger: LedgerStore, rules: Guardrails, commitments: Commitments) -> Context:
-    """The live guardrail context: /me, the shared ledger, and what our open offers already promise."""
-    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules)
+def guard_context(
+    snap: Snapshot,
+    ledger: LedgerStore,
+    rules: Guardrails,
+    commitments: Commitments,
+    values: OfficialValues | None = None,
+) -> Context:
+    """The live guardrail context: /me, the shared ledger, what our open offers already promise, and the
+    official value reads that cap every card buy (`values`; None refuses every card buy)."""
+    base = context_from(snap.me, snap.clock.tick, snap.clock.t_hours, ledger, rules, values)
     return committed_context(base, commitments)
 
 
@@ -292,6 +328,7 @@ class Recorder:
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
+        self.last_status = 0  # the HTTP status of the last refused send (0: none, or no answer)
         self.last_code: str | None = None  # the last send's refusal code (None: it went through)
 
     def decide(
@@ -332,7 +369,6 @@ class Recorder:
                 "chosen": chosen,
                 "guardrail": guardrail,
                 "dry_run": not self.live,
-                "line": line,
                 "jev": jev.verdict if jev is not None else None,
             },
         )
@@ -359,6 +395,12 @@ class Recorder:
                 }
             )
         return decision_id
+
+    def executed(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
+    ) -> None:
+        """One request sent outside `send` (its call had to run elsewhere): recorded and published the same way."""
+        self._executed(decision_id, tick, method, request, response, code)
 
     def _executed(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
@@ -392,13 +434,15 @@ class Recorder:
         from bazaar_agent.sdk import BazaarError
 
         self.last_error = None
-        self.maybe_landed, self.last_code = False, None
+        self.maybe_landed, self.last_code, self.last_status = False, None, 0
         try:
-            response = call()
+            with tm.tool_span(method, {"bazaar.agent": self.agent, "bazaar.decision.id": decision_id}):
+                response = call()
         except BazaarError as e:
             self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
             # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
             self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
+            self.last_status = int(getattr(e, "status", 0) or 0)  # 4xx: refused for sure; 5xx or 0: unknown
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})

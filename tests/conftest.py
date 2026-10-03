@@ -50,3 +50,23 @@ def no_shared_holdings_db():
     yield
     holdings._PROCESS.clear()
     holdings._PROCESS.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def no_real_models(monkeypatch):
+    """No test loads the real fastembed models: that would download ~150 MB from Hugging Face on a background
+    thread (a live network call) that can still be running native code when the interpreter exits."""
+    monkeypatch.setenv("BAZAAR_MODELS", "off")
+
+
+@pytest.fixture(autouse=True)
+def official_value_cap_off(request, monkeypatch):
+    """The official value cap (`guardrails._official_value_violations`, GET /api/me/value) is off in the tests that
+    predate it: their fake clients have no `value()` and their contexts no value book, so every card buy would be
+    refused (fail closed). A test marked `official_values` runs the real cap (tests/test_official_values.py and the
+    per-path tests)."""
+    if request.node.get_closest_marker("official_values") is not None:
+        return
+    from bazaar_agent import guardrails as gr
+
+    monkeypatch.setattr(gr, "_official_value_violations", lambda action, ctx, rules: [])

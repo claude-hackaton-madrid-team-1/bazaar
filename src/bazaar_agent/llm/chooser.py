@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -31,7 +32,7 @@ from bazaar_agent.llm.models import Pin
 QUESTION_FILE = REPO_ROOT / "questions" / "runtime_model.json"
 QUESTION_ID = "model_for_move"
 DESK_QUESTION_ID = "model_for_desk_role"
-MoveKind = Literal["buy", "sell", "words", "parse_request", "steer", "desk_request"] | DeskRole
+MoveKind = Literal["buy", "sell", "words", "parse_request", "steer", "desk_request", "read_feed"] | DeskRole
 ChoiceSource = Literal["flag", "env", "runtime.md", "jev", "default"]
 MIN_JEV_BUDGET_S = 1.0  # less time than this left for Jev: use the default instead of a late answer
 WARM_LINES = 200
@@ -51,11 +52,52 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
 }
 
 
+WORD = re.compile(r"\w+")
+SPACES = re.compile(r"\s+")
+
+
+CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC", "LISU", "CANADIAN"})
+LOOKALIKE_BLOCKS = ((0x0250, 0x02AF), (0x1D00, 0x1D2B))  # IPA letters and Latin small capitals ("ɪ", "ɡ", "ᴀ")
+EMOJI_JOINERS = frozenset({"\u200d", "\ufe0f"})  # zero-width joiner and emoji variation selector: emoji, not tricks
+# Invisible "letters" and blanks that split a word: the combining grapheme joiner, the Hangul fillers, the
+# braille blank.
+HIDING_MARKS = frozenset({"\u034f", "\u115f", "\u1160", "\u3164", "\uffa0", "\u2800"})
+
+
+def odd_unicode(text: str) -> bool:
+    """Invisible or direction-changing characters (emoji joiners aside), or a word that mixes Latin letters
+    with a look-alike script (a Cyrillic "а" inside "асcept"): the shapes that hide a word from a pattern
+    or a reader. "nº", "µ" and "ʼ" are not tricks."""
+    if any((unicodedata.category(ch) == "Cf" and ch not in EMOJI_JOINERS) or ch in HIDING_MARKS for ch in text):
+        return True
+    if any(low <= ord(ch) <= high for ch in text for low, high in LOOKALIKE_BLOCKS):
+        return True
+    for word in WORD.findall(text):
+        scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
+        if "LATIN" in scripts and scripts & CONFUSABLE_SCRIPTS:
+            return True
+    return False
+
+
+def folded(text: str) -> str:
+    """The text the patterns read: compatibility-decomposed (fullwidth and superscript digits become
+    digits, accents split off), then without format characters and combining marks, so nothing invisible
+    splits a word. The patterns accept unaccented Spanish ("actua", "envia")."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    kept = "".join(
+        ch for ch in decomposed if unicodedata.category(ch) not in ("Cf", "Mn", "Me") and ch not in HIDING_MARKS
+    )
+    return SPACES.sub(" ", kept)  # "you   are\tnow" reads as "you are now"
+
+
 def injection_flags(text: str | None) -> tuple[str, ...]:
-    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input)."""
+    """Names of the prompt-injection shapes found in a counterparty's text (untrusted input), read on the
+    folded text; `odd_unicode` names the hiding itself."""
     if not text:
         return ()
-    return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(text))
+    plain = folded(text)
+    found = [name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(plain)]
+    return tuple(found + (["odd_unicode"] if odd_unicode(text) else []))
 
 
 def stakes_bucket(value_at_risk: int) -> str:

@@ -28,11 +28,13 @@ from bazaar_agent.guardrails import (
     Guardrails,
     LedgerStore,
     context_from,
+    effective_cash_floor,
     kill_switch,
     load_guardrails,
 )
 from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.llm.chooser import injection_flags
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.ticks import Clock, action_budget_s
 
 SOURCE = "runtime"  # the ledger `source` and the decisions `agent` prefix for every runtime tool call
@@ -89,6 +91,9 @@ class Backend:
         self._catalog: tuple[int, dict[str, Any]] | None = None
         self.dealer_runs: dict[str, Any] = {}  # dealer -> the live `dealer buy` child this process started
         self.duel_said: set[tuple[int, int]] = set()  # (duel, tick): one message per duel per tick
+        self.duel_first_seen: dict[int, int] = {}  # duel -> the first tick we read it (the payload has no start)
+        # GET /api/me/value, read through `team` when a card buy is checked: every buy capped at it (Day-2 hint 1)
+        self.values = OfficialValues(lambda card: self.team.value(card))
 
     @property
     def team(self) -> Any:
@@ -111,12 +116,26 @@ class Backend:
 
     @property
     def ledger(self) -> LedgerStore:
-        """The shared Postgres ledger (reopened after a failure), else the JSONL file unless shared-only."""
+        """The shared Postgres ledger (it reconnects by itself), else the JSONL file unless shared-only.
+
+        Shared-only (live, or the remote server): `open_ledger(live=True)` refuses a DATABASE_URL that is not
+        the shared one; against a simulator it may fall back to the file, which shared-only refuses here."""
         with self._build:
             if self._ledger is None:
-                from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
+                from bazaar_agent.ledger_pg import LedgerNotShared, LedgerUnavailable, PgLedger, open_ledger
 
-                opened = open_ledger(self.settings.data_dir, source=SOURCE, log=self.log)
+                try:
+                    opened = open_ledger(
+                        self.settings.data_dir,
+                        source=SOURCE,
+                        live=self.shared_ledger_only,
+                        database_url=self.settings.database_url.get_secret_value(),
+                        game_url=self.settings.bazaar_url,
+                        log=self.log,
+                    )
+                except LedgerNotShared as e:  # callers see the runtime's one fail-closed message
+                    self.log(f"runtime: {e}")
+                    raise LedgerUnavailable("the shared Postgres ledger is not configured") from None
                 if self.shared_ledger_only and not isinstance(opened, PgLedger):
                     raise LedgerUnavailable("the shared Postgres ledger is unreachable")
                 self._ledger = opened
@@ -160,12 +179,14 @@ class Backend:
             self.pending.pop(0)
 
     def failed(self, error: BaseException) -> None:
-        """After a ledger failure, drop the connection: the next call reopens it (Postgres came back)."""
-        from bazaar_agent.ledger_pg import LedgerUnavailable
+        """After a ledger failure, reopen the ledger on the next call. A `PgLedger` is kept: it reconnects by
+        itself, at most once per `pgconn.RETRY_EVERY_S`, where a fresh open would try again at once."""
+        from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger
 
         if isinstance(error, LedgerUnavailable):
             with self._build:
-                self._ledger = None
+                if not isinstance(self._ledger, PgLedger):
+                    self._ledger = None
 
     @property
     def decisions(self) -> DecisionLog:
@@ -222,6 +243,30 @@ class Backend:
             self._catalog = cached
             self.holdings.observe_catalog(tick, cached[1])
         return cached[1]
+
+    def settled_volume(self, us: str, tick: int) -> dict[str, int]:
+        """`intel.settled_volume` for `max_counterparty_share` over the whole feed history (`history`), read
+        once per game tick: too slow for every tool call."""
+        from bazaar_agent.intel import book_values, settled_volume
+
+        cached = getattr(self, "_settled", None)
+        if cached is None or cached[0] != (us, tick):
+            cached = ((us, tick), settled_volume(self.history(), us, book_values(self.catalog(tick))))
+            self._settled = cached
+        return dict(cached[1])
+
+    def history(self) -> list[Event]:
+        """The whole feed history as the maker and the taker read it (`MarketFeed`): the shared DB first,
+        else the capture, with the live window merged. `events()` (capture + window) can miss days."""
+        from bazaar_agent import db
+        from bazaar_agent.agents.runtime import MarketFeed
+
+        feed = getattr(self, "_feed", None)
+        if feed is None:
+            store = FeedStore(self.settings.feed_dir)
+            feed = MarketFeed(self.public.feed_window, store, lambda: db.connect(app="bazaar-runtime"), self.log)
+            self._feed = feed
+        return feed.events()
 
     def events(self) -> list[Event]:
         """The captured feed merged with the live window (the window alone when nothing was captured)."""
@@ -450,6 +495,49 @@ def traders(b: Backend) -> dict[str, Any]:
         return _cut(db.trader_rows(conn))
 
 
+_recall: Any = None  # one hybrid recall per server process (the models load once, in the background)
+_recall_lock = threading.Lock()
+
+
+def learnings(b: Backend, query: str, subject: str | None = None, limit: int = 5) -> dict[str, Any]:
+    """`bazaar learnings --query`: the lessons the agents would recall, and the learned dealer ladders."""
+    global _recall
+    from bazaar_agent import db
+    from bazaar_agent.learn.embed import shared_models
+    from bazaar_agent.learn.evolve import policies_from
+    from bazaar_agent.learn.recall import HybridRecall, Query
+    from bazaar_agent.learn.store import LearningStore
+
+    def connect() -> Any:
+        return db.connect(b.settings.database_url.get_secret_value(), app="bazaar-runtime")
+
+    models = shared_models()
+    models.warm()
+    with _recall_lock:  # two first calls at once build one recall, one connection
+        if _recall is None:
+            _recall = HybridRecall(LearningStore(connect), models)
+    subjects = (subject,) if subject else None
+    found = _recall.recall(Query(query, subjects=subjects, k=limit, budget_s=5.0))
+    policies = policies_from(_recall.store.recall(None, {"policy"}, None, subject_kind="dealer", limit=200))
+    return {
+        "status": found.status,
+        "models": models.status,
+        "elapsed_ms": found.elapsed_ms,
+        "lessons": found.as_quoted(limit),
+        "ladders": [
+            {
+                "dealer": p.dealer,
+                "class": p.price_class,
+                "ladder": str(p.ladder) if p.ladder else "skip",
+                "why": p.reason,
+                "since_tick": p.tick,
+                "replay": dict(p.replay),
+            }
+            for p in sorted(policies.values(), key=lambda p: p.key)
+        ],
+    }
+
+
 def alerts(b: Backend, limit: int = 20) -> dict[str, Any]:
     """`bazaar alerts`: the monitor's latest alerts (new dealers, level changes, announcements)."""
     from bazaar_agent.monitor import read_alerts
@@ -554,7 +642,7 @@ def strategy(b: Backend, limit: int = 5) -> dict[str, Any]:
     return {
         "tick": book_.tick,
         "cash": book_.cash,
-        "above_cash_floor": max(0, ctx.cash - b.rules.cash_floor),
+        "above_cash_floor": max(0, ctx.cash - effective_cash_floor(b.rules, ctx)),
         "spent_last_game_hour": ctx.spent_last_hour,
         "buys": [_move_row(m) for m in book_.buys[:limit]],
         "sells": [_move_row(m) for m in book_.sells[:limit]],

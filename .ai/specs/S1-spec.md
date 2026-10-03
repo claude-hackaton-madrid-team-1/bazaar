@@ -2,7 +2,7 @@
 
 - Task id: S1 (migrated from GitHub issue(s) #24, #10)
 - Priority: P0
-- Status: ⬜ not started. Untrusted text is capped and escaped today (#59); the public /state leak is fixed (#121).
+- Status: 🔵 part A (offer inspector on every accept, PR #146) in review; B (flags as decision rows, feed precision, Jev question) + C (injection tagging, hostile-text tests) built, stacked on A. Untrusted text is capped and escaped today (#59); the public /state leak is fixed (#121).
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
@@ -13,6 +13,19 @@ No counterparty text (team threads, duel messages, dealer words) can change what
 - [ ] 1. Every accept (dealer, team, duel) compares the structured give/want with what the text claims and refuses a mismatch; tests with a Trickster-style bait.
 - [ ] 2. Counterparty text reaches an LLM only wrapped as untrusted data, capped, never as instructions; hostile-text tests (injection, markup, long input).
 - [ ] 3. A flag is sent only at high precision (structured offer contradicts the text, proven in the decision row); off by default behind a kill flag; Marius's #93 inspector reviewed for reuse.
+
+## Design decisions (2026-10-03, part A)
+- **What "refuse a mismatch" means.** Every accept is refused when its STRUCTURE is not what our decision
+  priced (another item, a lesser rarity, our assets in `want`, another price or other days, outside our
+  limit). The text is compared with the structure on every accept, but only as evidence: it grades a refusal
+  (`block` vs `flag`) and lands in the decision row; it never approves a structure, and lying words around
+  the exact structure we priced do not refuse a good deal (words persuade, structure binds).
+- **One gate per accept kind** (`agents/accept_gate.py`): dealer (the standing offer by id, through #93's
+  inspector), board (the copy, its catalog rarity and our price), duel (read again just before the accept,
+  because `POST /api/duels/{id}/accept` binds the offer standing when it lands). It runs before the team's
+  accept slot is claimed. Kill flag: GUARDRAILS.md `inspect_accepts` (true).
+- **Flags in part A are log-only** (`would flag message N`): no code path sends `POST /api/flags` until part B,
+  which makes each flag a decision row with its evidence, behind `allow_flags` (false).
 
 ## Source (the original issue text, verbatim)
 

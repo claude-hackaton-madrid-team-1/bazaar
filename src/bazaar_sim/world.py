@@ -34,6 +34,7 @@ LIMITS = {
     "max_open_threads_per_team": 6,
     "messages_per_side_per_tick": 1,
     "offers_per_team_per_tick": 12,
+    "messages_per_team_thread": 200,  # RULES.md: a conversation between two teams ends in a deal or after 200 messages
 }
 
 
@@ -63,6 +64,7 @@ class SimConfig:
     idle_ticks: int = 40
     venue_live_ticks: int = 0
     rivals_enabled: bool = True
+    rival_inbound_threads: bool = False  # one rival opens a silent team thread to each player (slot pressure)
     limits: dict[str, int] = field(default_factory=lambda: dict(LIMITS))
 
     @classmethod
@@ -81,6 +83,7 @@ class SimConfig:
             bench_ticks=max(2, _env_int("SIM_BENCH_TICKS", 16)),
             idle_ticks=max(5, _env_int("SIM_IDLE_TICKS", 40)),
             venue_live_ticks=max(0, _env_int("SIM_VENUE_LIVE_TICKS", 0)),
+            rival_inbound_threads=_env_int("SIM_RIVAL_INBOUND_THREADS", 0) == 1,
         )
 
 

@@ -67,8 +67,11 @@ def llm_env() -> dict:
     """The runtime LLM on the Claude subscription (README "LLM on the Claude subscription"), for the
     services that write negotiation words. The `claude-agent-sdk` wheel bundles the Claude Code CLI,
     so the build needs nothing more. The value is the operator's `claude setup-token` token, set by
-    hand with `railway variable set ... --stdin`; unset, every LLM path falls back to its template."""
-    return {"CLAUDE_CODE_OAUTH_TOKEN": preserve()}
+    hand with `railway variable set ... --stdin`; unset, every LLM path falls back to its template.
+
+    BAZAAR_BLUFF=0 (set by hand) turns every bluff tactic off on that service without a code deploy (N16);
+    unset or 1, tactics are on. preserve() keeps a hand-set value across applies (an undeclared one is deleted)."""
+    return {"CLAUDE_CODE_OAUTH_TOKEN": preserve(), "BAZAAR_BLUFF": preserve()}
 
 
 def runtime(name: str, command: str, data: object, llm: bool = False) -> object:
@@ -103,8 +106,18 @@ def agent(name: str, command: str, data: object) -> object:
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        # BAZAAR_LEARN=0 (set by hand) turns the taker's feed reader off; preserve() keeps it across applies.
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve(), "BAZAAR_LEARN": preserve()},
+        # BAZAAR_LEARN=0 / BAZAAR_LLM_READ=0 (set by hand) turn the feed reader / its LLM pass off, and
+        # BAZAAR_TEAM_THREADS=0 the team desk (N17): all set by hand like BAZAAR_LIVE, declared preserve() so an
+        # apply keeps them (an undeclared hand-set variable is deleted by `railway config apply`).
+        env={
+            **runtime_env(),
+            **llm_env(),
+            "PORT": AGENT_PORT,
+            "BAZAAR_LIVE": preserve(),
+            "BAZAAR_LEARN": preserve(),
+            "BAZAAR_LLM_READ": preserve(),
+            "BAZAAR_TEAM_THREADS": preserve(),
+        },
     )
 
 

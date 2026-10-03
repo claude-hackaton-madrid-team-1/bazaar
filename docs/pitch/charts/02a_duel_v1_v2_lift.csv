@@ -1,0 +1,21 @@
+group,category,metric,v1,v2,lift_v2_over_v1,deal_rate_v1,deal_rate_v2,source
+by_rival_style,convex,mean P per duel,14.531,23.573,1.622,0.985,0.997,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,holdout,mean P per duel,19.966,27.787,1.392,0.965,0.965,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,linear,mean P per duel,15.751,33.119,2.103,0.998,0.999,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,no_show,mean P per duel,0,0,,0,0,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,one_shot,mean P per duel,23.692,24.373,1.029,0.865,0.88,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,sim,mean P per duel,10.74,28.13,2.619,1,1,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+by_rival_style,tit_for_tat,mean P per duel,15.791,17.4,1.102,0.989,0.999,"w2a tables: By rival style (n 2400 each, price only, decays 0.06/0.08/0.10)"
+all_styles,"16,800 price-only duels",mean P per duel,14.353,22.055,1.537,0.829,0.834,w2a tables: Tournament on the zoo
+all_styles,"16,800 price-only duels",rounds per deal,6.846,1.226,,,,w2a tables: Tournament on the zoo
+by_decay_12_ticks,0.06,mean P per duel,16.525,22.15,1.34,,,w2a tables: By decay and duel length (12 ticks)
+by_decay_12_ticks,0.08,mean P per duel,14.909,21.607,1.449,,,w2a tables: By decay and duel length (12 ticks)
+by_decay_12_ticks,0.10,mean P per duel,13.812,21.932,1.588,,,w2a tables: By decay and duel length (12 ticks)
+by_decay_16_ticks,0.06,mean P per duel,15.321,22.738,1.484,,,w2a tables: By decay and duel length (16 ticks)
+by_decay_16_ticks,0.08,mean P per duel,13.343,21.999,1.649,,,w2a tables: By decay and duel length (16 ticks)
+by_decay_16_ticks,0.10,mean P per duel,12.209,21.902,1.794,,,w2a tables: By decay and duel length (16 ticks)
+gate_lift_one_duel_at_a_time,0.06/0.08,mean P per duel,14.7,20.89,1.42,,,w2a tables: Go/no-go v2 vs v1 (bar 1.40)
+gate_lift_one_duel_at_a_time,0.08/0.10,mean P per duel,13.35,20.7,1.55,,,w2a tables: Go/no-go v2 vs v1 (bar 1.40)
+gate_lift_one_duel_at_a_time,0.06/0.10,mean P per duel,14.12,20.94,1.483,,,w2a tables: Go/no-go v2 vs v1 (bar 1.40)
+batch6_lift_one_accept_per_tick,0.06/0.08,lift v2/v1,,,1.33,,,"w2b report: Go/no-go table, W2a batch runner row"
+batch6_lift_one_accept_per_tick,0.08/0.10,lift v2/v1,,,1.45,,,"w2b report: Go/no-go table, W2a batch runner row"

@@ -13,13 +13,13 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from bazaar_agent.learn.blockers import Blocks, blocks_for
-from bazaar_agent.learn.model import BLOCKING_KINDS, Learning
+from bazaar_agent.learn.model import BLOCKING_KINDS, Learning, SubjectKind
 from bazaar_agent.learn.reader import FeedReader, GameHour, from_refusal, from_thread
 from bazaar_agent.learn.store import LearningStore
 
 RECALL_LIMIT = 500
-# What the blocker view needs: the blockers, and the announcements that lift a `locked` one. Other kinds
-# (behaviour, fees, and the learner's lessons) never take a place in the recall window.
+# What the blocker view needs: the blockers, and the announcements that lift a `locked` one, read from
+# structure only (`source="rules"`). Other kinds and LLM readings never take a place in the recall window.
 BLOCKER_RECALL_KINDS = frozenset({*BLOCKING_KINDS, "announcement"})
 
 
@@ -28,8 +28,11 @@ def game_hour(clock: Any, hours_per_tick: float | None = None) -> GameHour:
 
 
 class LiveLearner:
-    def __init__(self, store: LearningStore, log: Callable[[str], None] = lambda message: None) -> None:
+    def __init__(
+        self, store: LearningStore, log: Callable[[str], None] = lambda message: None, interpreter: Any = None
+    ) -> None:
         self.store, self.log = store, log
+        self.interpreter = interpreter  # learn.interpret.FeedInterpreter: the LLM pass, off the tick loop
         self.reader: FeedReader | None = None
         self.pending: list[Learning] = []
         self._failed: set[str] = set()
@@ -52,23 +55,47 @@ class LiveLearner:
             self.log(f"learnings: {what} failed ({type(error).__name__}: {str(error)[:80]}); trading as before")
         self._failed.add(what)
 
-    def blocks(self, events: Iterable[dict[str, Any]], us: str, clock: Any) -> Blocks:
-        """Read the new events, then the blockers in force for us at this tick. Empty on any error."""
+    def blocks(
+        self, events: Iterable[dict[str, Any]], us: str, clock: Any, known: Mapping[str, SubjectKind] | None = None
+    ) -> Blocks:
+        """Read the new events, then the blockers in force for us at this tick. Empty on any error.
+
+        `known` (dealer and venue ids → kind) lets the LLM pass check the subjects it reports."""
         try:
             tick = int(clock.tick)
             self.store.begin_tick(tick)
             self._us, self._tick = us, tick
             if self.reader is None or self.reader.us != us:
                 self.reader = FeedReader(us)
-            self.pending += self.reader.read(events, self._hour(clock))
+            pool = list(events)
+            fresh = [e for e in pool if isinstance(e.get("id"), int) and e["id"] > self.reader.newest]
+            self.pending += self.reader.read(fresh, self._hour(clock))
+            self._interpret(fresh, known or {}, clock)
             self.store.remember(self.pending)  # in force before the write
             facts = self.store.recall(
-                None, BLOCKER_RECALL_KINDS, tick, subject_kind="dealer", team=us, limit=RECALL_LIMIT, use_db=False
+                None,
+                BLOCKER_RECALL_KINDS,
+                tick,
+                subject_kind="dealer",
+                team=us,
+                limit=RECALL_LIMIT,
+                use_db=False,
+                source="rules",
             )
             return blocks_for(facts, us, tick)
         except Exception as e:
             self._fail("recall", e)
             return Blocks()
+
+    def _interpret(self, fresh: list[dict[str, Any]], known: Mapping[str, SubjectKind], clock: Any) -> None:
+        """Hand the new free texts to the background LLM reader; collect what its last call produced."""
+        if self.interpreter is None:
+            return
+        read = self.interpreter.offer(fresh, dict(known), int(clock.tick), float(clock.tick_seconds))
+        if read:  # one line per finished background call; the texts are in `bazaar learnings`
+            kinds = ", ".join(sorted({lr.kind for lr in read}))
+            self.log(f"learnings: the LLM reader added {len(read)} ({kinds}); none of them can block a dealer")
+        self.pending += read
 
     def thread_closed(self, thread: Mapping[str, Any], us: str, clock: Any) -> Learning | None:
         return self._learn("thread", lambda: from_thread(thread, us, self._hour(clock)))
@@ -112,7 +139,13 @@ class LiveLearner:
             if self._us is not None:
                 self.store.remember(
                     self.store.recall(
-                        None, BLOCKER_RECALL_KINDS, self._tick, subject_kind="dealer", team=self._us, limit=RECALL_LIMIT
+                        None,
+                        BLOCKER_RECALL_KINDS,
+                        self._tick,
+                        subject_kind="dealer",
+                        team=self._us,
+                        limit=RECALL_LIMIT,
+                        source="rules",
                     )
                 )
             return written
