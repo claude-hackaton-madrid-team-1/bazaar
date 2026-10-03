@@ -414,6 +414,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.duel_days import effective_rules, latch, real_game
     from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
@@ -442,6 +443,8 @@ def duel_run(
     )
     rec = Recorder("duels", decisions, play, lambda line: None)  # the duel loop prints its own lines
     log_path = settings.data_dir / "duels" / "duels.jsonl"
+    days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
+    real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     handled: list[int] = []  # the last tick this loop handled (v2 widens its accept margin after a gap)
@@ -511,6 +514,13 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = [d for d in data.get("duels") or [] if isinstance(d, dict)]
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        verdict_before = days_switch.verdict
+        days_switch.observe(duels, real)
+        if days_switch.verdict != verdict_before:
+            console.print(
+                f"  duel days sign: {days_switch.verdict} (duel {days_switch.duel}: {escape(str(days_switch.text))})"
+            )
+        rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
         for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
             if (live_id := duel_id(d)) is not None:
@@ -518,7 +528,7 @@ def duel_run(
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
         slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
-        params = V2Params.from_rules(rules, anchor, floor) if v2 else None
+        params = V2Params.from_rules(rules_t, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
         if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
@@ -541,7 +551,7 @@ def duel_run(
                 accepts_this_tick=ledger.accepts_in_tick(c.tick),
                 paused=(REPO_ROOT / rules.pause_file).exists(),
             )
-            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules).allowed:
+            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules_t).allowed:
                 continue
             if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
                 booked.add(planned_id)
@@ -593,7 +603,7 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick) - (did in booked),  # not our own booking
                     paused=(REPO_ROOT / rules.pause_file).exists(),
                 )
-                verdict = gr.check(duel_action(d, move), ctx, rules)  # the price and days we would agree to
+                verdict = gr.check(duel_action(d, move), ctx, rules_t)  # the price and days we would agree to
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")

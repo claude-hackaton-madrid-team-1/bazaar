@@ -50,6 +50,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `duel_jitter_seed` = 0 — v2 only: the seed of `duel_jitter` (change it so no one can replay our draws).
 - `duel_open_wait_ticks` = 0 — v2 only: ticks of silence before our anchor (0 = anchor on the first tick).
 - `duel_days_signed` = false — v2 only: true reads `your_days_weight` as primas gained (+) or lost (−) per day, in the policy and in `duel_inside_limit`; false keeps the worst case (every day costs |weight|). Leave false until a real two-issue payload confirms the sign.
+- `duel_days_auto` = false — v2 only: true turns `duel_days_signed` on by itself once a REAL two-issue payload's `days_meaning` ties a gain to (+) (agents.duel_days: the simulator's text and null never count, and a reversed or disagreeing text keeps it off for good). The verdict is kept in `.local/duels/days_sign.json`.
 
 ## Steering (`bazaar steer`)
 - `steer_max_change` = 0.5 — a steering delta moves a parameter by at most this fraction of its base value (0.5 = ±50 %), then its hard range applies.
