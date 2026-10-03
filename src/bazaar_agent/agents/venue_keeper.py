@@ -337,7 +337,10 @@ class VenueKeeper:
                 hub=self.hub,
             )
             self._broker = (venue, agent)
-            self.log(f"tick {clock.tick} venue: broker on for {venue} ({'LIVE' if self.live else 'dry run'})")
+            self.log(
+                f"tick {clock.tick} venue: broker on for {venue} ({'LIVE' if self.live else 'dry run'}), "
+                f"bench policy {self.broker_config.bench_policy}"
+            )
         agent = self._broker[1]
         if snap is not None:
             agent.us = snap.us

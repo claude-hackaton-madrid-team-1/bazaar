@@ -79,7 +79,7 @@ def bench_config_from_env(
     policy = BENCH_POLICIES.get(value)
     if policy is None:
         if log is not None:
-            log(f"broker: IGNORED {BENCH_POLICY_ENV}={value[:20]!r} (exact or edge); it stays {base.bench_policy}")
+            log(f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact or edge); it stays {base.bench_policy}")
         return base
     return replace(base, bench_policy=policy)
 
@@ -276,7 +276,12 @@ class BrokerAgent:
         if self.config.bench_policy != "edge":
             return plan_matches(quotes.quotes, fee, cap)
         bench = [q for q in quotes.quotes if q.bench]
-        picked = edge_plan(self.edge, bench, fee, tick, cap, expiries_in(book.bench_offers, tick))
+        try:
+            picked = edge_plan(self.edge, bench, fee, tick, cap, expiries_in(book.bench_offers, tick))
+        except Exception as e:  # never lose the tick to the edge: today's matching instead, and the models restart
+            self.log(f"tick {tick} broker: bench edge failed ({type(e).__name__}); exact matching this tick")
+            self.edge = BenchEdge(PRIORS["normal"])
+            return plan_matches(quotes.quotes, fee, cap)
         if picked.edge:
             self.edge_pairs = {(str(m.sell.id), str(m.buy.id)) for m in picked.matches}
             self.log(

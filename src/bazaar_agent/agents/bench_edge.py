@@ -18,6 +18,7 @@ probe, off by default; a refused pair is not proposed again until one of its quo
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,7 +26,16 @@ from itertools import combinations
 from typing import Any, Literal
 
 from bazaar_agent.agents.bench_model import BenchPrior, TraderModel, expiry_of
-from bazaar_agent.agents.matcher import Fee, Match, Quote, feasible, match_price, max_weight_assignment, plan_matches
+from bazaar_agent.agents.matcher import (
+    MAX_SIDE,
+    Fee,
+    Match,
+    Quote,
+    feasible,
+    match_price,
+    max_weight_assignment,
+    plan_matches,
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +57,7 @@ class EdgeConfig:
     give_up_after: int = 8  # ... and never before this many refusals
     # `edge_plan`'s safety: the edge's pairs go out only when their estimated true surplus beats the exact (stall-equal)
     # plan's by at least this many primas, and never with fewer pairs; otherwise the exact plan goes out. Without it
-    # the edge realises less than the stall on 5-26 % of simulated books; with 10 its mean is at or above the stall's
+    # the edge realises less than the stall on 2-26 % of simulated books; with 10 its mean is at or above the stall's
     # in every modelled regime (scripts/bench_edge_proof.py).
     guard_margin: float = 10.0
 
@@ -200,18 +210,22 @@ class BenchEdge:
     def _plan_run(
         self, sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, tick: int, endgame: bool, may_hold: bool
     ) -> list[tuple[float, Match]]:
-        """Crossing pairs first (a sure match is never displaced by a probe), then probes among who is left."""
+        """Crossing pairs first (a sure match is never displaced by a probe), then probes among who is left.
+        At most `MAX_SIDE` quotes a side, the best first, as the exact matcher takes: the assignment stays instant."""
+        sells = sorted(sells, key=lambda q: q.price)[:MAX_SIDE]
+        buys = sorted(buys, key=lambda q: -q.price)[:MAX_SIDE]
         table = [[self._candidate(s, b, fee) for b in buys] for s in sells]
         pairs = _assign([[c if c is not None and c.crossing else None for c in row] for row in table])
-        rows, cols = {r for r, _ in pairs}, {c for _, c in pairs}
-        left = [
-            [
-                c if c is not None and not c.crossing and r not in rows and j not in cols else None
-                for j, c in enumerate(row)
+        if self.probing:
+            rows, cols = {r for r, _ in pairs}, {c for _, c in pairs}
+            left = [
+                [
+                    c if c is not None and not c.crossing and r not in rows and j not in cols else None
+                    for j, c in enumerate(row)
+                ]
+                for r, row in enumerate(table)
             ]
-            for r, row in enumerate(table)
-        ]
-        pairs += _assign(left)
+            pairs += _assign(left)
         out = []
         for r, c in pairs:
             cand = table[r][c]
@@ -307,11 +321,12 @@ def edge_plan(
     expiries: Mapping[str, int] | None = None,
 ) -> EdgePlan:
     """One read of the bench as the broker runs it with `bench_policy = "edge"`: observe every quote, plan, and keep
-    the exact plan unless the edge's pairs beat it by `guard_margin` estimated primas with at least as many pairs."""
+    the exact plan unless the edge's pairs beat it by `guard_margin` estimated primas with at least as many pairs.
+    A gain that is not a finite number (absurd quotes) keeps the exact plan too."""
     edge.observe(bench, tick, expiries)
     mine = edge.plan(bench, fee, tick, limit=limit)
     exact = plan_matches([q for q in bench if q.bench], fee, limit)
     gain = estimated_surplus(edge, mine) - estimated_surplus(edge, exact)
-    if len(mine) < len(exact) or gain < edge.config.guard_margin:
+    if len(mine) < len(exact) or not math.isfinite(gain) or gain < edge.config.guard_margin:
         return EdgePlan(exact, False, gain)
     return EdgePlan(mine, True, gain)
