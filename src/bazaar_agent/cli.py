@@ -585,6 +585,49 @@ def opportunities(
         )
 
 
+@app.command("taker-replay")
+def taker_replay_cmd(
+    stream: str = typer.Argument(help="Feed events as JSONL (stream.jsonl or a feed_events export)"),
+    me_file: str = typer.Option(..., "--me", help="Our /api/me or an agent.me event: our album and values"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    cash: int | None = typer.Option(None, help="Start with this cash (default: the snapshot's)"),
+    start_of_day: bool = typer.Option(
+        False, help="Take back the cards we received during the replayed day (the album at its start)"
+    ),
+    duel_ticks: str = typer.Option("", help="Ticks a duel of ours took the accept slot, comma-separated"),
+    tick_seconds: float = typer.Option(60.0, help="The replayed day's pace (Friday 60 s)"),
+    what_if: bool = typer.Option(True, "--what-if/--current-only", help="Also run one change at a time"),
+    verbose: bool = typer.Option(False, "-v", help="List every buy of the current-rules run"),
+) -> None:
+    """Replay a captured day through the CURRENT taker, live against fake clients: what it would have bought."""
+    from pathlib import Path
+
+    from bazaar_agent import arb_study
+    from bazaar_agent import taker_replay as tr
+
+    events = arb_study.load_events(Path(stream))
+    me = _json_file(me_file)
+    catalog = _json_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
+    start = tr.start_of_day(me, events, int(me.get("cash") or 0) if cash is None else cash) if start_of_day else me
+    if cash is not None and not start_of_day:
+        start = {**me, "cash": cash}
+    duels = [int(t) for t in duel_ticks.split(",") if t.strip().isdigit()]
+    rules, params = _rules().rules, _strategy().params
+    runs = tr.variants(rules, params) if what_if else tr.variants(rules, params)[:1]
+    results = [
+        tr.run(events, start, catalog, r, p, duel_ticks=duels, tick_seconds=tick_seconds, label=label)
+        for label, r, p in runs
+    ]
+    typer.echo(tr.render(results, f"Taker replay of {Path(stream).name} from {start.get('cash')} P"))
+    if verbose:
+        for b in results[0].bought:
+            typer.echo(
+                f"  tick {b.tick} {b.ref} on {b.venue} from {b.maker}: {b.ask} + {b.fee}, "
+                f"one more copy {b.copy_value:g}, taker's value {b.strategy_value:g}"
+                f"{' (contested)' if b.contested else ''}"
+            )
+
+
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
