@@ -425,7 +425,7 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
 
     def inspect(thread: dict[str, Any], move: Any) -> str | None:
         gate = dealer_gate(thread, dealer, move.offer_id, move.price, topic, cards)
-        return None if gate.allowed else escape(f"{gate.verdict}: {gate.reason}")  # printed by rich
+        return None if gate.allowed else f"{gate.verdict}: {gate.reason}"  # `negotiate`'s log escapes it
 
     return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
 
@@ -523,21 +523,21 @@ def duel_run(
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
     duel_words = llm_cli.words_for(settings, rules, template_duel_words)
-    rereads: dict[int, Any] = {}  # tick -> the one /api/duels re-read the accept gates share (or its error)
+    failed_reread: dict[int, BazaarError] = {}  # tick -> the re-read that failed in it (no retry burst)
 
     def reread(tick: int) -> Callable[[], Any]:
-        """At most one re-read per tick for every duel accept (a failed one fails them all: no retry burst)."""
+        """A fresh /api/duels read just before EACH duel accept (offers move between two accepts of one tick).
+        A failed re-read fails every later accept of that tick: no retry burst on the key we all share."""
 
         def read() -> Any:
-            if tick not in rereads:
-                rereads.clear()
-                try:
-                    rereads[tick] = client.duels()
-                except BazaarError as e:
-                    rereads[tick] = e
-            if isinstance(rereads[tick], Exception):
-                raise rereads[tick]
-            return rereads[tick]
+            if tick in failed_reread:
+                raise failed_reread[tick]
+            try:
+                return client.duels()
+            except BazaarError as e:
+                failed_reread.clear()
+                failed_reread[tick] = e
+                raise
 
         return read
 

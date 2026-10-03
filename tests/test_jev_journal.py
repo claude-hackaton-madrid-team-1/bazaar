@@ -243,3 +243,25 @@ def test_duel_run_re_reads_once_per_tick_and_a_failed_re_read_fails_every_accept
     rows = decision_rows(tmp_path)
     assert [r["status"] for r in rows] == ["rejected", "rejected"]
     assert all("could not be read again" in r["inputs"]["inspector"]["findings"][0] for r in rows)
+
+
+def test_each_duel_accept_re_reads_so_a_rival_that_moved_after_an_earlier_accept_is_caught(duel_cli):
+    """Review r2 P1: a successful re-read is never reused for a later accept of the same tick."""
+    cli, client, asked, tmp_path = duel_cli
+    a, b = ({**d, "duel": n} for n in (95, 96) for d in client.payload)
+    calls = []
+
+    def duels():
+        calls.append(1)
+        if len(calls) == 2:  # duel 95's re-read: its rival moved against us
+            return {"duels": deepcopy([{**a, "rival_offer": {**a["rival_offer"], "price": 105}}, b])}
+        if len(calls) == 3:  # duel 96's re-read: its rival dropped below our limit in the meantime
+            return {"duels": deepcopy([a, {**b, "rival_offer": {**b["rival_offer"], "price": 90}}])}
+        return {"duels": deepcopy([a, b])}
+
+    client.duels = duels
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and len(calls) == 3
+    findings = [r["inputs"]["inspector"]["findings"][0] for r in decision_rows(tmp_path)]
+    assert "moved against us" in findings[0] and "90 is not inside our limit" in findings[1]

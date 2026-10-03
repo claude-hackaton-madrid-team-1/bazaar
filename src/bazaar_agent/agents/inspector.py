@@ -95,10 +95,12 @@ class CardIndex:
         return list(found.values())
 
     def negated(self, text: str, ref: str) -> bool:
-        """The words mention this card only to say they do not have it ('No me queda X', 'X is sold out')."""
+        """The words mention this card only to say they do not have it ('No me queda X', 'X is sold out'):
+        EVERY mention is denied. One mention that is not ('No X like mine! X for you') is still a claim."""
         info, low = self.by_ref.get(ref), text.lower()
         names = [ref.lower()] + ([info.name.lower()] if info is not None else [])
-        return any(_negated_at(low, m.start(), m.end()) for name in names for m in re.finditer(re.escape(name), low))
+        spans = [(m.start(), m.end()) for name in names for m in re.finditer(re.escape(name), low)]
+        return bool(spans) and all(_negated_at(low, start, end) for start, end in spans)
 
 
 NEGATION_BEFORE = (

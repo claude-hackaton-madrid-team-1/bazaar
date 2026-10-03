@@ -297,3 +297,10 @@ def test_honest_out_of_stock_words_block_but_never_flag(text):
         {"buy": {"rarity": "rare", "set": "LAV"}} if "raro" in text or "rare" in text else {"buy": {"card": "LAV-08"}}
     )
     assert inspect_offer(o, topic, text, CARDS, message_id=12).verdict == "block"
+
+
+def test_one_denied_mention_never_hides_a_claim_in_another():
+    """Review r2 P2: 'No X like mine anywhere! X for you' still claims X."""
+    o = offer({"types": ["card:LAV-03"]}, {"cash": 21})
+    text = "No Teatro Valle-Inclán like mine anywhere! Teatro Valle-Inclán for you, 21 P."
+    assert inspect_offer(o, {"buy": {"card": "LAV-08"}}, text, CARDS, message_id=14).verdict == "flag"

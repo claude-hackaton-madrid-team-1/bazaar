@@ -142,7 +142,8 @@ def duel_gate(decided: Mapping[str, Any], fresh: Mapping[str, Any] | None, move:
     limit, role = fresh.get("your_limit"), fresh.get("role")
     worth = effective_price(dict(fresh), int(price))
     priced = effective_price(dict(decided), move.price) if move.price is not None else None
-    moved = int(price) != move.price or _days(fresh) != _days(decided)
+    two_issue = "days" in (fresh.get("issues") or [])  # days bind only in a two-issue duel
+    moved = int(price) != move.price or (two_issue and _days(fresh) != _days(decided))
     findings, notes = [], []
     if not isinstance(limit, int) or role not in ("seller", "buyer") or worth is None or priced is None:
         findings.append("our limit or the rival's days cannot be read")
