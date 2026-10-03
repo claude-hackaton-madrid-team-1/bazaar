@@ -63,6 +63,9 @@ class StrategyParams(BaseModel):
     supply_scarcity: bool = False  # optional line: scarcity counts the copies other teams could sell us
     # The one exception to "all required": 0 keeps today's behaviour for every caller that predates it.
     chaser_min_p: float = Field(default=0.0, ge=0, le=1)
+    # Optional too: 0 keeps today's sell_to_need (a spare below the buyer's need, or of a set nobody chases, is
+    # not offered); N offers up to N of them at our value + `sell_min_surplus` (sell_spares, STRATEGY.md).
+    sell_spare_slots: int = Field(default=0, ge=0)
 
 
 @dataclass(frozen=True)
@@ -634,36 +637,61 @@ def _priced(asset: dict[str, Any]) -> bool:
     return asset.get("kind") == "card" and isinstance(asset.get("id"), int) and isinstance(value, int | float)
 
 
+SPARE_MAX_AFFINITY = 1.0  # sell_spares: only sets we hold no boost in (a duplicate of any set is spare too)
+
+
+def _spare(m: Market, card: Card) -> bool:
+    """A copy sell_spares may offer: a duplicate, or a card of a set whose affinity to us is no boost (at most
+    SPARE_MAX_AFFINITY). Our only copy of a page card of a boosted set is kept for the album."""
+    return m.held.get(card.ref, 0) > 1 or m.affinity.get(card.set_code, 1.0) <= SPARE_MAX_AFFINITY
+
+
 def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
     (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
-    of a new page (`protect_page_sets`) is never offered."""
+    of a new page (`protect_page_sets`) is never offered. sell_spares (`sell_spare_slots` > 0): up to that
+    many more spare copies (`_spare`: a duplicate, or a set we hold no boost in), whose buyer's need and tape
+    sit below what we lose + `sell_min_surplus` or whose set nobody is seen chasing, are offered to anyone
+    at what we lose + `sell_min_surplus` (ranked like the rest)."""
     copies: dict[str, dict[str, Any]] = {}
     for a in filter(_priced, assets):
         ref = str(a.get("ref"))
         if ref not in copies or float(a["your_value"]) <= float(copies[ref]["your_value"]):
             copies[ref] = a
     chaser_aff = max(m.affinity.values(), default=1.0)  # every team has exactly one top-affinity set
-    moves = []
+    moves: list[Move] = []
+    spares: list[Move] = []
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or not buyers or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+            continue
+        if not buyers and not params.sell_spare_slots:
             continue
         stake = bonus_at_stake(m, card, params)
         ours = float(asset["your_value"]) + stake
         need = params.sell_need_share * card.book * chaser_aff
         tape = card_estimate(m, card, params)
         ask = math.ceil(max(ours * rules.sell_min_value_ratio, need, tape.price))
-        if ask - ours < params.sell_min_surplus:
+        spare = not buyers or ask - ours < params.sell_min_surplus
+        if spare and not (params.sell_spare_slots and _spare(m, card)):
             continue
+        if spare:  # sell_spares: listed for anyone at what we lose + the minimum surplus, never below it
+            ask = math.ceil(max(ask, ours + params.sell_min_surplus) - 1e-9)
         urgency = urgency_of(card, len(buyers), params)
         dup = ", duplicate" if m.held.get(ref, 0) > 1 else ""
         bonus = f" + page bonus {stake:.1f}" if stake else ""
-        moves.append(
+        chase = (
+            f"{', '.join(buyers)} chase {card.set_code}: "
+            f"{params.sell_need_share:g}×{card.book:g}×{chaser_aff:g} = {need:.0f}"
+            if buyers
+            else f"nobody seen chasing {card.set_code}"
+        )
+        floor = f"; spare: ours + {params.sell_min_surplus:g}" if spare else ""
+        (spares if spare else moves).append(
             Move(
                 "sell",
-                "sell_to_need",
+                "sell_spares" if spare else "sell_to_need",
                 ref,
                 card.rarity,
                 round(ours, 1),
@@ -676,13 +704,12 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
                 "sell",
                 ask,
                 f"ours {float(asset['your_value']):g}{bonus} ({card.set_code} ×{m.affinity.get(card.set_code, 1.0):g}"
-                f"{dup}); {', '.join(buyers)} chase {card.set_code}: "
-                f"{params.sell_need_share:g}×{card.book:g}×{chaser_aff:g} = {need:.0f}; {tape.basis} {tape.price:g}",
+                f"{dup}); {chase}; {tape.basis} {tape.price:g}{floor}",
                 list_command(int(asset["id"]), ask),
                 asset_id=int(asset["id"]),
             )
         )
-    return moves
+    return moves + rank(spares, m, params)[: params.sell_spare_slots]
 
 
 def rank(moves: Iterable[Move], m: Market, params: StrategyParams) -> list[Move]:

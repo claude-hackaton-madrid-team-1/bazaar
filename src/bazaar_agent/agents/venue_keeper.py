@@ -11,6 +11,10 @@ Every maker tick (`Maker.on_tick`, driven by /api/clock), before the maker's own
      refused opening costs nothing and is tried again `RETRY_TICKS` later; `venue_exists` stops it for good.
   3. We run a venue and hold its key: the broker (`agents/broker.py`) reads /api/broker/book and sends
      the maximum-surplus matches (bench first) inside the maker's tick window.
+  4. With `announce_every_game_hours` (the maker passes ANNOUNCE_EVERY_GAME_HOURS): a short neutral notice
+     on our venue (`POST /api/broker/announce`, the venue's name, id, mechanism and fee only) once the
+     broker is on, then at most once per that many game hours, through `guardrails.check()`
+     (`venue_announce`: `allow_venue_open` and the kill switch). Memory only: a restart announces once more.
 Dry run (the maker's default) opens nothing and matches nothing: it writes what it would do.
 
 The broker key is never logged, printed, published or put in a decision or an execution row: the opening
@@ -30,23 +34,26 @@ from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import VENUE_COST, Guardrails, runs_venue
+from bazaar_agent.guardrails import VENUE_COST, Action, Guardrails, check, runs_venue
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.ticks import Clock
 from bazaar_agent.venue import (
     AlreadyOpened,
+    Announcement,
     KeyVault,
     Opened,
     VenueSpec,
     broker_client,
     may_have_landed,
     open_venue,
+    venue_context,
 )
 
 RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; a network error may have opened it)
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
 LIST_LAG_TICKS = 3  # ticks the public list and /me may take to show the venue we just opened
 FINAL_REFUSALS = frozenset({"venue_exists", "not_allowed", "forbidden"})  # never tried again by this process
+ANNOUNCE_EVERY_GAME_HOURS = 1.0  # the maker's notice on our venue: once, then at most once per game hour
 
 # Our market: a board (only there can our broker act), no fee (fees never score; what counts is the gains
 # realised on it), and a short neutral name and line.
@@ -57,6 +64,15 @@ PLAN = VenueSpec(
     mechanism="board",
     description="Board venue, 0 % fee: crossing offers are matched every tick.",
 )
+
+
+def announcement(plan: VenueSpec, venue: str) -> Announcement:
+    """The notice on our venue: its name, id, mechanism and fee, nothing about our cards, cash or values."""
+    fee = f"{plan.fee_bps / 100:g} %" + (f" + {plan.fee_per_card} P per card" if plan.fee_per_card else "")
+    return Announcement(
+        text=f"{plan.name} ({venue}) is open: {plan.mechanism} venue, {fee} fee. Post your asks and bids "
+        f"here; crossing offers are matched every tick."
+    )
 
 
 @dataclass(frozen=True)
@@ -100,6 +116,7 @@ class VenueKeeper:
         broker_config: BrokerConfig | None = None,
         make_broker: Callable[[SecretStr], Any] | None = None,
         stats_dir: Any = None,
+        announce_every_game_hours: float | None = None,
     ) -> None:
         self.team, self.settings, self.rules, self.vault = team, settings, rules, vault
         self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
@@ -118,6 +135,9 @@ class VenueKeeper:
         self.reminded = -REMIND_TICKS
         self._last: tuple[str, str] | None = None  # the last unsent opening (status, guardrail), said once
         self._broker: tuple[str, BrokerAgent] | None = None
+        self._client: Any = None  # the broker connection of `_broker`: the notice goes out through it
+        self.announce_every = announce_every_game_hours  # None: no notice from this process
+        self.announced_at: float | None = None  # the game hour of our last notice (sent, or would-be in a dry run)
 
     # ------------------------------------------------------------ the tick
 
@@ -282,8 +302,9 @@ class VenueKeeper:
                     self.reminded = clock.tick
                     self.log(f"tick {clock.tick} venue: we run {venue} but hold NO broker key for it: ask the desk")
                 return
+            self._client = self.make_broker(key)
             agent = BrokerAgent(
-                self.make_broker(key),
+                self._client,
                 None,
                 us=snap.us if snap is not None else None,
                 rules=self.rules,
@@ -305,3 +326,39 @@ class VenueKeeper:
             our_offers=snap.offers if snap is not None else None,
             events=snap.events if snap is not None else None,
         )
+        self._maybe_announce(venue, clock, window)
+
+    # ------------------------------------------------------------ the notice on our venue
+
+    def _maybe_announce(self, venue: str, clock: Clock, window: TickWindow) -> None:
+        """Once the broker is on, then at most once per `announce_every` game hours; only inside the tick
+        window and only when the guardrails allow `venue_announce` (a refusal is tried again next tick, quietly)."""
+        if self.announce_every is None or self._client is None or not window.open():
+            return
+        if self.announced_at is not None and clock.t_hours - self.announced_at < self.announce_every:
+            return
+        note = announcement(self.plan, venue)
+        verdict = check(
+            Action("venue_announce"),
+            venue_context(self.rules, {"tick": clock.tick, "t_hours": clock.t_hours}),
+            self.rules,
+        )
+        if not verdict.allowed:
+            return
+        self.announced_at = clock.t_hours  # sent or not, the next one waits its hour: never a notice per tick
+        did = self.rec.decide(
+            clock.tick,
+            "venue_announce",
+            f"announce on our venue {venue}: {note.text!r}",
+            inputs={"venue": venue, "text": note.text},
+            reason=f"our venue's notice, at most once per {self.announce_every:g} game hour(s)",
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            move={"announce": venue},
+        )
+        if not self.live:
+            return
+        client, request = self._client, {"text": note.text}
+        if self.rec.send(did, clock.tick, "broker_announce", request, lambda: client.announce(note.text)) is not None:
+            self.log(f"tick {clock.tick} venue: announced {venue}")
