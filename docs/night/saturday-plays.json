@@ -147,7 +147,7 @@
       "service": "monitor",
       "command": "uv run bazaar monitor --notify  (one laptop only)",
       "params": "read-only",
-      "note": "alerts on schedule.fired, level.*, venue.opened, day.*"
+      "note": "alerts on schedule.fired, level.*, venue.opened, day.*; run it all day: the Railway monitor was removed, so feed_events is fresh only while a laptop monitor runs; after any redeploy check the newest feed_events tick = the clock's tick (r2 X23)"
     },
     {
       "service": "broker",
@@ -247,7 +247,7 @@
         "at_hours": 4.05
       },
       "who": "Marius (CLI) + taker",
-      "do": "+150 P and a sobre_barrio pack. Open the packs (luck never scores). Cash 353 -> 503; headroom over cash_floor 270: 83 -> 233. Then re-run uv run bazaar plan pages (#87) and uv run bazaar trade-plan --live (#79, read-only) Hand-posted board offers are cancelled by the live maker within a tick (r2 X19): send W4's thread swaps only, or switch bazaar-maker to dry run (railway variable delete BAZAAR_LIVE --service bazaar-maker) while hand offers stand. If #71's head is merged the maker also runs our venue's broker: never dry-run it around a Market Test; thread swaps only.",
+      "do": "+150 P and a sobre_barrio pack. Marius opens every sealed pack by hand (r2 X21: nothing in our code opens packs): the Friday welcome pack (asset 425) and this one, SDK open_pack(asset_id) = POST /api/packs/{id}/open on each kind=pack asset in /api/me; repeat hourly while the taker may buy packs, until B20. Cash 353 -> 503; headroom over cash_floor 270: 83 -> 233. Then re-run uv run bazaar plan pages (#87) and uv run bazaar trade-plan --live (#79, read-only) Hand-posted board offers are cancelled by the live maker within a tick (r2 X19): send W4's thread swaps only, or switch bazaar-maker to dry run (railway variable delete BAZAAR_LIVE --service bazaar-maker) while hand offers stand. If #71's head is merged the maker also runs our venue's broker: never dry-run it around a Market Test; thread swaps only.",
       "points": "trades +1.3 to +4.0 round points (W4 +80 P)"
     },
     {
