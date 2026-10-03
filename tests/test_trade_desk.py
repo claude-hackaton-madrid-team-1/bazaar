@@ -456,3 +456,16 @@ def test_public_listings_count_against_every_team_in_the_plan():
     assert problems == [] and [t.to for t in posted] == ["t02", "t03", "t04", "t05"]
     loose, _ = td.post_as(bids, me, td.Start(), Guardrails(), share=1.0)
     assert [t.to for t in loose] == [None] * 4  # today's posting: the cap off, everything public
+
+
+def test_a_focus_keeps_the_plans_swaps_to_those_pages_while_any_can_be_planned():
+    me, catalog, amap = rich_world()
+    pp = td.PlanParams(listings=0, threads=4, max_share=1.0)
+    free = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), pp, VENUE)
+    sets = {t.refs[1][:3] for t in free.threads}
+    assert free.threads
+    for page in sets:  # a focused page: only its cards are asked for
+        focused = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), pp, VENUE, focus={page})
+        assert focused.threads and {t.refs[1][:3] for t in focused.threads} == {page}
+    nothing = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), pp, VENUE, focus={"CHA"})
+    assert [t.refs for t in nothing.threads] == [t.refs for t in free.threads]  # none for CHA: the full plan

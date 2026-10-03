@@ -31,6 +31,8 @@ Kind = Literal[
     "tactic",  # what one bluff tactic earned with one counterparty (`agents.bluff`, N16); never in the default recall
     "card_release",  # a new card, a released set or a minted jump in the catalog (`cards_heartbeat`)
     "news",  # a Radio Rastro item or an official schedule lever (`news.NewsSentinel`): quoted, maybe a rumour
+    "schedule",  # an official scheduled event (`/api/schedule`, `/api/levels`) with its lead time (`schedule_watch`)
+    "rival_move",  # a team that climbed ranks fast, and why, from public data (`rank_watch`)
 ]
 Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
 # What the outcome learner writes: everything else in the table is the feed reader's (N12).
@@ -42,7 +44,19 @@ TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
 IDENTITY_FIELDS = frozenset(
-    {"item", "rarity", "code", "aggregate", "venue", "effective_tick", "outcome", "price_class", "pattern", "news_id"}
+    {
+        "item",
+        "rarity",
+        "code",
+        "aggregate",
+        "venue",
+        "effective_tick",
+        "outcome",
+        "price_class",
+        "pattern",
+        "news_id",
+        "event_id",
+    }
 )
 # Where a rules blocker may come from (matched with `fullmatch`).
 ORIGIN_THAT_BLOCKS = re.compile(r"(feed|refusal|thread:\d+)")

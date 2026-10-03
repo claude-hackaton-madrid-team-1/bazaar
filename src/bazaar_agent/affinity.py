@@ -79,50 +79,53 @@ def signals(events: Iterable[Event], catalog: dict[str, Any] | None = None) -> l
                 asset_ref[int(a["id"])] = str(a.get("ref"))
 
     for e in events:
-        kind, p, tick = e.get("type"), e.get("payload") or {}, int(e.get("tick") or 0)
-        if kind == "settlement":
-            items = [i for i in p.get("items") or [] if intel.set_of(i.get("ref"))]
-            remember(items)
-            cash = int(p.get("price") or 0)
-            # One card for cash: the price is that card's. A bundle or a swap: interest only.
-            one = len(p.get("items") or []) == 1 and cash > 0
-            for i in items:
-                ref, s = str(i.get("ref")), str(intel.set_of(i.get("ref")))
-                price = cash if one else None
-                if TEAM.match(str(i.get("to"))):
-                    out.append(Signal(str(i["to"]), s, "buy", ref, tick, price, book.get(ref)))
-                if TEAM.match(str(i.get("frm"))):
-                    out.append(Signal(str(i["frm"]), s, "sell", ref, tick, price, book.get(ref)))
-        elif kind == "offer.listed" and TEAM.match(str(e.get("actor") or "")):
-            team, offer = str(e["actor"]), p.get("offer") or {}
-            give, want = offer.get("give") or {}, offer.get("want") or {}
-            given, wanted = _assets(give), _cards(want)
-            remember(given)
-            cash_for = int(give.get("cash") or 0) if len(wanted) == 1 and not given else 0
-            for ref in wanted:
-                sig = Signal(team, str(intel.set_of(ref)), "bid", ref, tick, cash_for or None, book.get(ref))
-                old = bids.get((team, ref))
-                if old is None or (sig.price or 0) > (old.price or 0):
-                    bids[(team, ref)] = sig
-            ask_for = int(want.get("cash") or 0) if len(given) == 1 and not wanted else 0
-            for a in given:
-                ref = str(a.get("ref"))
-                key: int | str = int(a["id"]) if isinstance(a.get("id"), int) else ref
-                sig = Signal(team, str(intel.set_of(ref)), "ask", ref, tick, ask_for or None, book.get(ref))
-                old_ask = asks.get((team, key))
-                if old_ask is None or (sig.price or 10**9) < (old_ask.price or 10**9):
-                    asks[(team, key)] = sig
-        elif kind == "thread.opened" and TEAM.match(str(p.get("team") or "")):
-            team, topic = str(p["team"]), p.get("topic") or {}
-            buy, sell = topic.get("buy") or {}, topic.get("sell") or {}
-            ref = str(buy.get("card") or "")
-            wished = intel.set_of(ref) or (str(buy["set"]) if buy.get("set") else None)
-            if wished:
-                topics.setdefault((team, ref or wished), Signal(team, wished, "topic", ref or wished, tick))
-            for asset_id in sell.get("assets") or []:
-                if isinstance(asset_id, int) and asset_id in asset_ref:
-                    sold = asset_ref[asset_id]
-                    asks.setdefault((team, asset_id), Signal(team, str(intel.set_of(sold)), "ask", sold, tick))
+        try:
+            kind, p, tick = e.get("type"), e.get("payload") or {}, int(e.get("tick") or 0)
+            if kind == "settlement":
+                items = [i for i in p.get("items") or [] if intel.set_of(i.get("ref"))]
+                remember(items)
+                cash = int(p.get("price") or 0)
+                # One card for cash: the price is that card's. A bundle or a swap: interest only.
+                one = len(p.get("items") or []) == 1 and cash > 0
+                for i in items:
+                    ref, s = str(i.get("ref")), str(intel.set_of(i.get("ref")))
+                    price = cash if one else None
+                    if TEAM.match(str(i.get("to"))):
+                        out.append(Signal(str(i["to"]), s, "buy", ref, tick, price, book.get(ref)))
+                    if TEAM.match(str(i.get("frm"))):
+                        out.append(Signal(str(i["frm"]), s, "sell", ref, tick, price, book.get(ref)))
+            elif kind == "offer.listed" and TEAM.match(str(e.get("actor") or "")):
+                team, offer = str(e["actor"]), p.get("offer") or {}
+                give, want = offer.get("give") or {}, offer.get("want") or {}
+                given, wanted = _assets(give), _cards(want)
+                remember(given)
+                cash_for = int(give.get("cash") or 0) if len(wanted) == 1 and not given else 0
+                for ref in wanted:
+                    sig = Signal(team, str(intel.set_of(ref)), "bid", ref, tick, cash_for or None, book.get(ref))
+                    old = bids.get((team, ref))
+                    if old is None or (sig.price or 0) > (old.price or 0):
+                        bids[(team, ref)] = sig
+                ask_for = int(want.get("cash") or 0) if len(given) == 1 and not wanted else 0
+                for a in given:
+                    ref = str(a.get("ref"))
+                    key: int | str = int(a["id"]) if isinstance(a.get("id"), int) else ref
+                    sig = Signal(team, str(intel.set_of(ref)), "ask", ref, tick, ask_for or None, book.get(ref))
+                    old_ask = asks.get((team, key))
+                    if old_ask is None or (sig.price or 10**9) < (old_ask.price or 10**9):
+                        asks[(team, key)] = sig
+            elif kind == "thread.opened" and TEAM.match(str(p.get("team") or "")):
+                team, topic = str(p["team"]), p.get("topic") or {}
+                buy, sell = topic.get("buy") or {}, topic.get("sell") or {}
+                ref = str(buy.get("card") or "")
+                wished = intel.set_of(ref) or (str(buy["set"]) if buy.get("set") else None)
+                if wished:
+                    topics.setdefault((team, ref or wished), Signal(team, wished, "topic", ref or wished, tick))
+                for asset_id in sell.get("assets") or []:
+                    if isinstance(asset_id, int) and asset_id in asset_ref:
+                        sold = asset_ref[asset_id]
+                        asks.setdefault((team, asset_id), Signal(team, str(intel.set_of(sold)), "ask", sold, tick))
+        except (AttributeError, TypeError, ValueError, KeyError):
+            continue  # another team's malformed event (e.g. a string topic) never stops a tick
     return out + list(bids.values()) + list(asks.values()) + list(topics.values())
 
 
