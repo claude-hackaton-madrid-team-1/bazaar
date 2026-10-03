@@ -32,7 +32,7 @@ def test_a_dealer_slipping_a_common_under_the_named_uncommon_is_refused_and_grad
     t = thread({"types": ["card:LAV-01"]}, "Teatro Valle-Inclán para ti, 21 P")
     g = dealer_gate(t, "trile", 802, 21, t["topic"], CARDS)
     assert not g.allowed and g.verdict == "flag" and g.message_id == 9001
-    assert any("instead of exactly [LAV-08]" in f for f in g.findings)
+    assert any("instead of exactly [card:LAV-08]" in f for f in g.findings)
     assert g.as_inputs()["verdict"] == "flag" and g.as_inputs()["message_id"] == 9001
 
 
@@ -150,3 +150,31 @@ def test_words_never_approve_a_duel_structure():
 def test_price_claims_read_only_priced_numbers():
     assert price_claims("Te doy 80 P, o 75 primas, y 3 días") == [80, 75]
     assert price_claims("LAV-08 por 21p") == [21] and price_claims(None) == [] and price_claims("1.5 P") == []
+
+
+@pytest.mark.parametrize(
+    "give",
+    [
+        {"types": ["pack:LAV-08"]},  # the right ref under another kind (N14a's finding)
+        {"assets": [{"id": 9, "ref": "LAV-08", "kind": "pack"}]},
+        {"types": ["LAV-08"]},  # a bare ref names no kind: never assumed to be the card
+        {"types": ["card:LAV-08"], "assets": [{"id": 9, "ref": "LAV-08"}]},  # two copies for one
+    ],
+)
+def test_the_kind_binds_too_a_pack_typed_ref_is_not_the_card(give):
+    from bazaar_agent.agents.dealer import offer_terms_problem
+
+    t = thread(give, "LAV-08 para ti, 21 P")
+    assert not dealer_gate(t, "trile", 802, 21, t["topic"], CARDS).allowed
+    assert offer_terms_problem({"give": give, "want": {"cash": 21}}, "LAV-08") is not None
+    pack = {"give": {"types": ["card:sobre_barrio"]}, "want": {"cash": 21}}
+    assert offer_terms_problem(pack, "sobre_barrio") is not None  # and a card-typed pack is no pack
+
+
+def test_an_asset_of_the_right_card_without_a_kind_is_the_card():
+    from bazaar_agent.agents.dealer import offer_terms_problem
+
+    give = {"assets": [{"id": 9, "ref": "LAV-08", "rarity": "uncommon"}]}
+    t = thread(give, "LAV-08, 21 P")
+    assert dealer_gate(t, "trile", 802, 21, t["topic"], CARDS).allowed
+    assert offer_terms_problem({"give": give, "want": {"cash": 21}}, "LAV-08") is None

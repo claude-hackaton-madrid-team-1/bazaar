@@ -164,6 +164,15 @@ def _bound_items(side: Mapping[str, Any]) -> list[str]:
     return refs + [str(c) for c in side.get("cards") or []]
 
 
+def _bound_kinds(side: Mapping[str, Any]) -> list[str]:
+    """What a side binds with its kind kept: 'card:LAV-08', 'pack:sobre_barrio' ('pack:LAV-08' is no card)."""
+    kinds = [str(t) if ":" in str(t) else f"?:{t}" for t in side.get("types") or []]
+    for a in side.get("assets") or []:
+        ok = isinstance(a, dict) and a.get("ref")
+        kinds.append(f"{a.get('kind') or 'card'}:{a['ref']}" if ok else f"asset:{a}")
+    return kinds + [f"card:{c}" for c in side.get("cards") or []]
+
+
 def _asked(topic: Mapping[str, Any]) -> tuple[str, str, Any]:
     """(side, label, spec): side 'buy' or 'sell' from our point of view."""
     for side in ("buy", "sell"):
@@ -222,7 +231,7 @@ def inspect_offer(
         findings.append("it gives cash on a buy")
     if want.get("assets") or want.get("types") or want.get("cards"):
         findings.append(f"it also wants our {_bound_items(want)}")
-    other = _other_item(bound, spec, cards)
+    other = _other_item(bound, _bound_kinds(give), spec, cards)
     if other:
         findings.append(other)
     if not findings:
@@ -242,12 +251,16 @@ def inspect_offer(
     return Inspection(dealer, oid, message_id, asked, tuple(bound), tuple(findings), "flag" if certain else "block")
 
 
-def _other_item(bound: list[str], spec: Mapping[str, Any], cards: CardIndex) -> str | None:
+def _other_item(bound: list[str], kinds: list[str], spec: Mapping[str, Any], cards: CardIndex) -> str | None:
     item = spec.get("card") or spec.get("pack")
     if item:
-        return None if bound == [str(item)] else f"it binds {bound or 'nothing'} instead of exactly [{item}]"
+        expected = f"{'card' if spec.get('card') else 'pack'}:{item}"
+        if kinds == [expected]:
+            return None
+        return f"it binds {kinds or 'nothing'} instead of exactly [{expected}]"
     rarity, code = spec.get("rarity"), spec.get("set")
-    info = cards.by_ref.get(bound[0]) if len(bound) == 1 else None
+    one_card = len(bound) == 1 and kinds[0].startswith("card:")
+    info = cards.by_ref.get(bound[0]) if one_card else None
     if info is not None and info.rarity == rarity and (not code or info.ref.startswith(f"{code}-")):
         return None
     return f"it binds {bound or 'nothing'}, not one {rarity} card" + (f" of {code}" if code else "")

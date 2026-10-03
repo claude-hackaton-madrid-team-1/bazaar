@@ -226,7 +226,7 @@ def test_plan_conversation_ignores_an_offer_that_is_not_our_buy_and_walks_after_
     conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
     trick = {"id": 9, "maker": "abuela", "status": "open", "give": {"types": ["card:LAV-02"]}, "want": {"cash": 5}}
     dm = plan_conversation(conv, {"status": "open", "standing_offers": [trick]}, 14)
-    assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [LAV-08]" in dm.ignored
+    assert dm.move.kind == "bid" and dm.ignored and "instead of exactly [card:LAV-08]" in dm.ignored
     conv.ticks = 14
     assert plan_conversation(conv, {"status": "open"}, 14).move.kind == "walk"
     assert plan_conversation(conv, {"status": "deal"}, 14).status == "deal"

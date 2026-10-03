@@ -37,7 +37,7 @@ def test_the_explainer_trickster_names_a_legendary_and_binds_a_common():
         message_id=901,
     )
     assert i.verdict == "flag" and i.message_id == 901
-    assert "instead of exactly [SAL-12]" in i.reason and "worth 10 against 450" in i.reason
+    assert "instead of exactly [card:SAL-12]" in i.reason and "worth 10 against 450" in i.reason
     assert "the words name SAL-12" in i.reason
 
 

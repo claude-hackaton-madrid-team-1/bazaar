@@ -150,10 +150,11 @@ def offer_terms_problem(offer: dict[str, Any], item: str | None) -> str | None:
         return "the offer gives cash on a buy"
     if item is None:
         return None
-    refs = [str(t).split(":", 1)[-1] for t in give.get("types") or []]
-    refs += [str(a.get("ref")) for a in give.get("assets") or [] if isinstance(a, dict)]
-    if refs != [item]:
-        return f"the offer gives {refs or 'nothing'} instead of exactly [{item}]"
+    kinds = [str(t) for t in give.get("types") or []]  # 'card:LAV-08' / 'pack:sobre_barrio': the kind binds too
+    kinds += [f"{a.get('kind') or 'card'}:{a.get('ref')}" for a in give.get("assets") or [] if isinstance(a, dict)]
+    expected = f"{'card' if '-' in item else 'pack'}:{item}"
+    if kinds != [expected] or len(give.get("assets") or []) + len(give.get("types") or []) != 1:
+        return f"the offer gives {kinds or 'nothing'} instead of exactly [{expected}]"
     return None
 
 
