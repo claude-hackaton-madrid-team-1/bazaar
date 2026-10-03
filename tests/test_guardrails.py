@@ -50,10 +50,10 @@ def test_kill_switch_accept_quota_sells_and_flags():
     off = gr.parse_guardrails("- `trading_enabled` = false — x").rules
     assert not gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), off).allowed
     assert "accept(s) already" in str(gr.check(gr.Action("duel_accept", "7"), ctx(accepts_this_tick=1), rules))
-    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-09", "rare", 30, your_value=35.0), ctx(), rules))
-    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 2}), rules).allowed
-    last_lat09 = gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 1}), rules)
-    assert "protect_page_sets" in str(last_lat09)  # La Latina stays protected...
+    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-08", "rare", 30, your_value=35.0), ctx(), rules))
+    assert gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 2}), rules).allowed
+    last_lat08 = gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 1}), rules)
+    assert "protect_page_sets" in str(last_lat08)  # La Latina stays protected...
     lat10 = gr.Action("sell", "LAT-10", "rare", 200, your_value=35.0)  # ...but for its one card (SX1)
     assert gr.check(lat10, ctx(held={"LAT-10": 1}), rules).allowed
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))

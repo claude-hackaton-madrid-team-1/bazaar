@@ -633,6 +633,7 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
 - Step 2 (review of #240 + coordinator) — entries are REF:MIN (`LAT-10:80`): no sale of an excepted card below MIN,
   maker floors at MIN; ASCII entries, exact item match, asset must be a copy of that card · **Acceptance:**
   tests/test_page_exceptions.py.
+- Step 3 (Omar, ~22:20) — `LAT-09:90` added to the list · **Acceptance:** tests/test_page_exceptions.py.
 
 ### SP2 — The schedule playbook ([spec](SP2-spec.md))
 - Step 1 — `playbook.py` + news sentinel wiring, learnings rows per instruction, taker obeys `no_new_dealer_thread`

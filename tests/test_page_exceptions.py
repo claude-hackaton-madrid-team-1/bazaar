@@ -191,7 +191,7 @@ def test_with_the_committed_rules_the_other_sale_guards_still_bind_lat10(asked):
     """The committed MIN, the move-impact guard (facts unread: the worst case), the approval threshold and the sell
     floor all still decide."""
     rules = gr.load_guardrails().rules
-    assert rules.exception_min("LAT-10") == 80
+    assert rules.exception_min("LAT-10") == 80 and rules.exception_min("LAT-09") == 90
     assert rules.max_score_loss_per_move > 0 and rules.human_approval_above == 250
     me = {
         "id": "t01",
@@ -207,3 +207,19 @@ def test_with_the_committed_rules_the_other_sale_guards_still_bind_lat10(asked):
     assert ask(200).allowed and ask(86).allowed and ask(80).allowed and asked == []
     assert "sells for 80 P or more" in str(ask(79))
     assert "human approval" in str(ask(250)) and asked[-1]["card"] == "LAT-10"  # 250 and up: a human first
+
+
+COMMITTED_PAIRS = [("LAT-10", 80), ("LAT-09", 90)]
+
+
+@pytest.mark.parametrize("kind", SELL_KINDS)
+@pytest.mark.parametrize("ref, low", COMMITTED_PAIRS)
+def test_the_committed_minimums_bind_every_sale_kind(ref, low, kind):
+    """Omar: LAT-10 at 80 or more (~20:20), LAT-09 at 90 or more (~22:20); the other LAT last copies stay protected."""
+    rules = gr.load_guardrails().rules
+    assert rules.exception_min(ref) == low and not rules.protects(ref, "rare", 1)
+    assert sell(ref, "rare", low, 35.0, {ref: 1}, rules, kind).allowed
+    refused = sell(ref, "rare", low - 1, 35.0, {ref: 1}, rules, kind)
+    assert not refused.allowed and f"{ref} sells for {low} P or more" in str(refused)
+    for other in ("LAT-01", "LAT-02", "LAT-03", "LAT-06", "LAT-08"):
+        assert "protect_page_sets" in str(sell(other, "common", 200, 5.0, {other: 1}, rules, kind))

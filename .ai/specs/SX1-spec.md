@@ -25,4 +25,6 @@ completes no page. Lift the rule for that card only, with no new override path.
   the maker's quick sale and relist floors never go below MIN. (Replaces round 1's "human approval at any price".)
 - [ ] 8. (review of #240) The list takes ASCII entries only; the item must match exactly (any other spelling stays
   protected); an excepted sale whose asset is not a copy of that card in /me is refused.
+- [ ] 9. (Omar, Sat 3 Oct ~22:20) LAT-09 added: `LAT-10:80,LAT-09:90`; LAT-09 allowed at 90 or more, refused at 89 on
+  every selling kind; the other LAT last copies stay protected.
 - Out of scope: the 200 opening (the coordinator's hand post, hands-off for the maker).
