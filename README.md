@@ -964,6 +964,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#108](../../pull/108) | feat: Jev picks the desk's model per request, orchestrator and each subagent (N15) | `ogarciarevett/feat-desk-jev-model` |
 | [#107](../../pull/107) | test(night r2): bite hunter — proofs of what could bite us Sat/Sun (tests only) | `night/r2-bite-hunter` |
 | [#106](../../pull/106) | fix(ticks): wake at the announced opening, not a blind 300 s poll (B13, bite X4) | `night/b13-wake-opening` |
 | [#105](../../pull/105) | feat: real-time holdings and card catalog in Postgres (N13) | `ogarciarevett/feat-holdings-db` |
@@ -983,6 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#86](../../pull/86) | Night W2b: duel policy v2 behind duel_policy = v1 (silence is free, one accept per tick) | `night/w2b-duel-v2` |
 | [#84](../../pull/84) | feat(market): bench broker edge for the Market Test (W1b, stacked on #71) | `night/w1b-broker-edge` |
 | [#81](../../pull/81) | feat(ladder): ladder maximiser: floor table, bid plans, backtest, 09:00 schedule (W3, stacked on #61) | `night/w3-ladder` |
-| [#80](../../pull/80) | Night W2a: duel rival zoo + replay harness on the real practice payloads | `night/w2a-duel-zoo` |
 
 <!-- BAZAAR:ACTIVITY:END -->
