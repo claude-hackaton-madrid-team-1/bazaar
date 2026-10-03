@@ -489,6 +489,37 @@ prices, bid ladders, surplus, cash, limits or reasons (`docs/services.md`, "Publ
 on its own thread: publishing from the tick loop is an append and a
 scheduled broadcast, so a slow client never delays a tick.
 
+### Live-feed reader: learnings and dealer blockers (N12)
+
+The taker reads the live feed the way a person reads the "On air · Live feed" panel of the game's
+homepage (that panel is `GET /api/feed` plus the public SSE stream, one line per event type) and keeps
+what it learns in the `learnings` table (`src/bazaar_agent/learn/`). Deterministic first: a field the
+server set is a fact, free text is kept as quoted data and never acted on.
+
+| Read from | Learned |
+|---|---|
+| `persona.cooloff` (team, `until_tick`), our thread's `closed_reason` (`cooloff`, `persona_quota`, `sold_out`), an `open_thread` refusal (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, `locked`) | a **blocker** for that dealer (or that item), expiring at its tick or at the end of the game hour; `locked` is rechecked after 10 ticks and lifted by `level.unlocked` / `persona.open_to_all` |
+| `persona.strike`, another team's unlock, duel outcomes per item | behaviour |
+| `venue.fee_announced` / `fee_changed` (with the tick it takes effect), venue opened / suspended / notices | fee changes and venue news |
+| `clock.changed`, `day.opened` / `day.closed`, rounds, `announcement`, `level.*` | rule changes and announcements |
+
+Before it opens a dealer thread, the taker recalls the blockers in force **for our team** and skips that
+dealer (a `dealer_skip` decision row) so the thread goes to the next dealer instead of a refusal. A
+blocker only ever removes a send; any learner or database error leaves the taker exactly as it was.
+`bazaar agent taker --no-learn` turns it off.
+
+**Where the feed comes from on Railway.** `bazaar-monitor` runs on a laptop only, so the taker (which
+already reads the shared `feed_events` table plus the public 500-event window every tick) also writes
+that window into `feed_events` (`insert … on conflict do nothing`, 2 s statement timeout). The archive
+keeps growing while the laptop sleeps, with no new service and no extra game call.
+
+```sh
+uv run bazaar learnings                    # what the captured feed teaches, in force at the newest tick
+uv run bazaar learnings --all --subject v04 --json
+uv run bazaar learnings --kind cooloff --kind quota --tick 180
+uv run bazaar learnings --save             # also upsert them into the shared learnings table
+```
+
 ### Jev decides: duels and the maker (spec §3 step 4, §7.1)
 
 Code lists only the **legal** moves inside `GUARDRAILS.md` and our own limit; Jev (TypeSafe
