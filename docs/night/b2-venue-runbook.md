@@ -2,7 +2,7 @@
 
 Night backlog item B2, 4 Oct 2026. Branch `night/b2-venue-runbook`, draft PR #92, stacked on #84 (W1b), which is stacked on #71.
 
-**Rewritten at 03:50 for the new #71** (e82ba8d, 03:14–03:23). It now opens our board venue from the **maker's venue keeper** at game hour 6.5 (11:30) with an exact broker, keeps the broker key in Postgres, and sets `allow_venue_open = true`, `cash_floor = 100`, `venue_bond_reserve = 270` and `venue_open_after_game_hours = 6.5`. Nothing here touched the live game. Every guardrail change below is a **proposal against #71's values**.
+**Rewritten at 03:50 for the new #71** (e82ba8d at 03:14–03:23, then e489449 at ~03:50: the venue opens once across restarts, a venue closed by hand is never reopened). It now opens our board venue from the **maker's venue keeper** at game hour 6.5 (11:30) with an exact broker, keeps the broker key in Postgres, and sets `allow_venue_open = true`, `cash_floor = 100`, `venue_bond_reserve = 270` and `venue_open_after_game_hours = 6.5`. Nothing here touched the live game. Every guardrail change below is a **proposal against #71's values**.
 
 ## What the venue is worth on Saturday (500 simulated Saturdays per row, W1a's bench #77)
 
@@ -89,7 +89,7 @@ Cells are the change in final points against that. The rivals are two stall-leve
   - rival fields stall, strong and top3;
   - a broker-down risk per session;
   - each plan has its own broker process per day.
-- Gates: 2,061 passed, 35 skipped; ruff, black and mypy clean.
+- Gates: 2,071 passed, 35 skipped; ruff, black and mypy clean.
 
 ## Risks
 
