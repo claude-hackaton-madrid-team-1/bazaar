@@ -55,6 +55,7 @@ class OfficialValues:
         self._cache: dict[tuple[str, int, int], float | None] = {}
         self.reads = 0
         self.failures = 0
+        self._down_tick: int | None = None  # the route failed this tick (network, 429, 5xx): no other card is read
 
     @classmethod
     def of(cls, client: Any) -> OfficialValues:
@@ -68,20 +69,26 @@ class OfficialValues:
             return self._cache[key]
         if any(k[1] != tick for k in self._cache):  # a new tick: every card is read again
             self._cache = {k: v for k, v in self._cache.items() if k[1] == tick}
+        if self._down_tick == tick:  # one outage per tick: refuse at once, never another GET into it
+            self.failures += 1
+            self._cache[key] = None
+            return None
         self.reads += 1
-        found = self._fetch(ref)
+        found = self._fetch(ref, tick)
         if found is None:
             self.failures += 1
         self._cache[key] = found
         return found
 
-    def _fetch(self, ref: str) -> float | None:
+    def _fetch(self, ref: str, tick: int) -> float | None:
         try:
             answer = CardValue.model_validate(self._read(ref))
         except ValidationError:
             log.warning("official value of %s: malformed answer; the buy is refused", ref)
             return None
         except Exception as e:  # BazaarError (429, network, bad key) or anything else: fail closed
+            if not _card_specific(e):  # the route itself is down: every later card of this tick is refused
+                self._down_tick = tick
             log.warning(
                 "official value of %s: read failed (%s); the buy is refused",
                 ref,
@@ -92,6 +99,13 @@ class OfficialValues:
             log.warning("official value of %s: the answer names %s; the buy is refused", ref, answer.card)
             return None
         return float(answer.your_value)
+
+
+def _card_specific(e: Exception) -> bool:
+    """A 4xx other than 429 is about the card asked (unknown card, bad query): other cards may still be read.
+    A network error, a 429, a 5xx or anything else means the route is down for this tick."""
+    status = getattr(e, "status", 0)
+    return isinstance(status, int) and 400 <= status < 500 and status != 429
 
 
 def cap_violations(

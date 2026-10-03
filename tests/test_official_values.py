@@ -148,3 +148,49 @@ def test_the_rule_is_loaded_from_guardrails_md_and_documented():
     assert loaded.rules.official_value_margin == 0
     assert "official_value_margin" in {line.rule_id for line in loaded.lines}
     assert "official_value_margin" in gr.ENFORCED_BY
+
+
+@pytest.mark.parametrize(
+    "fail",
+    [
+        BazaarError("server_error", "503", 503),
+        BazaarError("rate_limited", "429", 429),
+        BazaarError("network", "timed out"),
+        RuntimeError("boom"),
+    ],
+    ids=["503", "429", "network", "anything-else"],
+)
+def test_a_value_route_down_refuses_every_later_card_of_the_tick_without_another_read(fail):
+    reader = Reader({"LAV-08": 15.0}, fail=fail)
+    values = OfficialValues(reader)
+    assert not gr.check(gr.Action("bid", "LAV-07", "uncommon", 11), ctx(values, tick=7), RULES).allowed
+    verdict = gr.check(gr.Action("bid", "LAV-08", "uncommon", 11), ctx(values, tick=7), RULES)
+    assert not verdict.allowed and "could not be read" in str(verdict)
+    assert reader.calls == ["LAV-07"] and values.reads == 1 and values.failures == 2
+    reader.fail = None  # the next tick reads again
+    assert gr.check(gr.Action("bid", "LAV-08", "uncommon", 11), ctx(values, tick=8), RULES).allowed
+    assert reader.calls == ["LAV-07", "LAV-08"]
+
+
+def test_a_card_specific_refusal_does_not_stop_the_other_cards_of_the_tick():
+    reader = Reader({"LAV-08": 15.0}, fail=BazaarError("unknown_card", "LAV-99", 422))
+    values = OfficialValues(reader)
+    assert values.value("LAV-99", 7, 0) is None
+    reader.fail = None
+    assert values.value("LAV-08", 7, 0) == 15.0 and reader.calls == ["LAV-99", "LAV-08"]
+
+
+def test_the_team_client_reads_a_value_once_with_no_retry(monkeypatch):
+    from bazaar_agent import sdk
+
+    calls = []
+
+    def once(self, method, path, body=None, query=None):
+        calls.append((method, path, query))
+        raise sdk.BazaarError("network", "timed out")
+
+    monkeypatch.setattr(sdk.TrackedBazaar, "_call", once)
+    client = sdk.TeamBazaar("http://127.0.0.1:9", "sim-team1")
+    with pytest.raises(sdk.BazaarError):
+        client.value("LAV-03")
+    assert calls == [("GET", "/api/me/value", {"card": "LAV-03"})]

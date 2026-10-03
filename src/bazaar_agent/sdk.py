@@ -124,6 +124,11 @@ class TeamBazaar(TrackedBazaar):
             return result
         raise AssertionError("unreachable")  # pragma: no cover
 
+    def value(self, card: str) -> Any:
+        """GET /api/me/value, one request and no retry: a buy check waits at most TEAM_TIMEOUT_S on it, and a
+        failure refuses the buy (`official_values`), never re-asks inside the tick."""
+        return TrackedBazaar._call(self, "GET", "/api/me/value", query={"card": card})
+
 
 def _pace(value: object) -> float | None:
     """A sane tick length in seconds (the rules say 5-60), else None: never a bool, NaN, inf or a huge value."""
