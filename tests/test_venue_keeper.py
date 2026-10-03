@@ -447,3 +447,13 @@ def test_a_408_may_have_opened_the_venue_so_the_claim_is_kept(tmp_path):
     k = keeper(tmp_path, Team(refuse=BazaarError("http_408", "", 408)), store=store)
     k.on_tick(snap().clock, snap(), window())
     assert ("", "_claim") in store and k.held_claim
+
+
+def test_venue_mechanism_auto_opens_an_auto_venue_and_runs_no_broker(tmp_path):
+    team, broker, lines = Team(), FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)]), []
+    k = keeper(tmp_path, team, broker=broker, lines=lines, venue_mechanism="auto")
+    first = snap()
+    k.on_tick(first.clock, first, window())
+    assert team.opened == [("Team 1 market", 0, 0, {"mechanism": "auto"})]
+    assert broker.sent == [] and k.made == []
+    assert any("is auto (venue_mechanism)" in line for line in lines)
