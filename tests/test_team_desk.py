@@ -943,5 +943,6 @@ def test_a_team_accept_shows_only_its_thread_and_fee_on_the_public_view():
     offer = read_offer(their_offer(cash_out=1), US)
     assert offer is not None
     a = SwapAccept(42, offer, trade(), SwapVerdict(True, 10.8, 9.0, "fair"), 3, None)
-    row = {"kind": "team_accept", "status": "approved", "dry_run": False, "inputs": swap_proposal(a).inputs}
+    row = {"kind": "team_accept", "status": "approved", "chosen": True, "dry_run": False}
+    row["inputs"] = swap_proposal(a).inputs
     assert public_decision(row)["inputs"] == {"thread": 42, "fee": 3}
