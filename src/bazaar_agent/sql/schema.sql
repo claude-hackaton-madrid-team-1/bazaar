@@ -107,6 +107,11 @@ create table if not exists ledger (
 create index if not exists ledger_kind_tick on ledger (kind, tick);
 create index if not exists ledger_kind_hours on ledger (kind, t_hours);
 
+-- Circuit breakers (breakers.py): a tripped scope makes guardrails.check() refuse that kind of write in every
+-- process. Set by hand (`bazaar breaker trip|reset`) or by the live watchdog; read once per tick, fail open.
+-- The same statement as breakers.DDL, which a writer runs before its first write.
+create table if not exists guard_breakers (scope text primary key, tripped bool not null default false, reason text, tick int, at timestamptz not null default now(), until_tick int, source text);
+
 -- Our venue's broker key (RULES.md "Your own market"), returned once by the opening: a SECRET like the team
 -- key. Written and read only by `venue.KeyVault` (the maker on Railway, `bazaar venue open`); no public route,
 -- view or eval reads this table. The vault runs the same statement before it writes (venue.VENUE_KEYS_DDL).

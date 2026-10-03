@@ -70,3 +70,17 @@ def official_value_cap_off(request, monkeypatch):
     from bazaar_agent import guardrails as gr
 
     monkeypatch.setattr(gr, "_official_value_violations", lambda action, ctx, rules: [])
+
+
+@pytest.fixture(autouse=True)
+def no_shared_breakers():
+    """`guardrails.check()` reads the circuit breakers of this process's database once per tick: the suite reads an
+    empty board instead (no Postgres connect per test). Tests of the breakers build their own `BreakerBoard`."""
+    from bazaar_agent import breakers
+
+    old = breakers.install(breakers.BreakerBoard(None))
+    yield
+    if old is None:
+        breakers._BOARD.pop("board", None)
+    else:
+        breakers.install(old)
