@@ -59,6 +59,7 @@ It uses the quote rule only, so it never sends a refusable match, and it decides
 | hard (prior right) | cautious | 16.7 / 74.7 / 8.7 % | 0.579 | **0.540** |
 | hard (prior right) | aggressive | 37.0 / 11.3 / 51.7 % | 0.650 | 0.427 |
 | normal, shades 1.5× (prior wrong) | cautious | 17.3 / 73.7 / 9.0 % | 0.578 | 0.542 |
+| normal, shades 1.5× (prior wrong) | aggressive | 32.3 / 25.7 / 42.0 % | 0.626 | 0.452 |
 | normal, shades 2× (prior wrong) | cautious | 14.7 / 72.3 / 13.0 % | 0.558 | 0.508 |
 | normal, shades 2× (prior wrong) | aggressive | 25.7 / 30.0 / 44.3 % | 0.579 | 0.407 |
 | normal, relax 0.2–0.5 (prior wrong) | cautious | 15.7 / 75.7 / 8.7 % | 0.572 | 0.535 |

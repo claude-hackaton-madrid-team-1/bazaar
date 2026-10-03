@@ -98,15 +98,19 @@ def _order(trader_id: str) -> int:
 
 
 def _run_of(offer: dict[str, Any], oid: str) -> int | None:
-    """The bench run an offer belongs to: its `run` field, else the "b12" of "b12-7"."""
+    """The bench run an offer belongs to: its `run` field, else the "b12" of "b12-7"; None when neither says
+    (a plain id): the offer then belongs to the run we are in."""
     raw = offer.get("run")
-    text = str(raw) if raw is not None else oid.partition("-")[0]
-    text = text.removeprefix("b")
+    if raw is None and "-" not in oid:
+        return None
+    text = (str(raw) if raw is not None else oid.partition("-")[0]).removeprefix("b")
     return int(text) if text.isdigit() else None
 
 
 def _cash(side: object) -> int:
     value = side.get("cash") if isinstance(side, dict) else None
+    if isinstance(value, float) and value.is_integer():  # 30.0 is a whole quote
+        value = int(value)
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
@@ -191,24 +195,26 @@ class WinRatePolicy:
     # ---------------------------------------------------------------- what the book shows
 
     def _observe(self, book: dict[str, Any]) -> tuple[int, list[tuple[str, str, int]]]:
-        parsed: list[tuple[int, str, str, int]] = []
+        parsed: list[tuple[int | None, str, str, int]] = []
         for o in book.get("bench_offers") or []:
             oid = o.get("id") if isinstance(o, dict) else None
             if not isinstance(oid, str):
                 self.skipped += 1
                 continue
             run = _run_of(o, oid)
-            ask, bid = (_cash(o.get("want")), _cash(o.get("give"))) if run is not None else (0, 0)
-            if run is None or bool(ask) == bool(bid):
+            ask, bid = _cash(o.get("want")), _cash(o.get("give"))
+            if bool(ask) == bool(bid):
                 self.skipped += 1
                 continue
             parsed.append((run, oid, "sell" if ask else "buy", ask or bid))
         raw_tick = book.get("tick")
         tick = raw_tick if isinstance(raw_tick, int) and not isinstance(raw_tick, bool) else self.start
-        newest = max((r for r, _, _, _ in parsed), default=None)
-        if newest is not None and newest != self.run:
+        newest = max((r for r, _, _, _ in parsed if r is not None), default=None)
+        if newest is not None and (self.run is None or newest > self.run):  # a leftover older run never wins
             self.run, self.start, self.start_known, self.seen, self.ours = newest, tick, False, {}, []
-        offers = [(oid, side, q) for r, oid, side, q in parsed if r == self.run]
+        elif self.run is None and parsed:  # plain ids, no run anywhere: one session from the first offers
+            self.run, self.start, self.start_known, self.seen, self.ours = 0, tick, False, {}, []
+        offers = [(oid, side, q) for r, oid, side, q in parsed if r is None or r == self.run]
         k = tick - self.start
         present = {oid for oid, _, _ in offers}
         # a match of ours was refused when either trader is still in the book: both are open again

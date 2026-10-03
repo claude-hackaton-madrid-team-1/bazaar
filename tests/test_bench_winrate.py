@@ -91,3 +91,14 @@ def test_the_shadow_stall_breaks_equal_quotes_in_book_order():
     early_high_slot = _Trader("b1-4", 4, "sell", 30, 40, 1, 5, 0.0)
     buyer = _Trader("b1-1", 1, "buy", 60, 45, 0, 9, 0.0)
     assert _stall_step([early_high_slot, late_low_slot, buyer], set(), 3, Fee()) == [("b1-2", "b1-1")]
+
+
+def test_plain_ids_keep_one_session_an_older_run_never_wins_and_whole_float_quotes_count():
+    policy = WinRatePolicy(seed=7, samples=8)
+    plain = [{"id": "12", "give": {"cash": 0}, "want": {"cash": 30.0}}, {"id": "13", "give": {"cash": 50}}]
+    policy(book(10, *plain))
+    policy(book(11, *plain))
+    assert policy.run == 0 and policy.start == 10 and policy.seen["12"].quotes == {0: 30, 1: 30}
+    policy.begin(3, 100)
+    policy(book(101, offer("b2-0", "sell", 30), offer("b3-1", "buy", 50)))
+    assert policy.run == 3 and policy.start == 100 and set(policy.seen) == {"b3-1"}
