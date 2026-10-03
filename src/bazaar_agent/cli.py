@@ -1631,6 +1631,27 @@ def _status_port(port: int | None) -> int:
     return int(raw) if raw.isdigit() else 0
 
 
+def _feed_interpreter(settings: Any, rules: Any, log: Callable[[str], None]) -> Any:
+    """The LLM pass over the feed's free text (N12): only with RUNTIME.md `llm_read_feed = true` and a
+    runtime LLM credential; at most one call per `read_feed_every_ticks`, never while the kill switch is on."""
+    from bazaar_agent.learn.interpret import FeedInterpreter
+    from bazaar_agent.llm.config import RuntimeConfigError, load_runtime
+
+    try:
+        config = load_runtime().config
+    except RuntimeConfigError as e:
+        log(f"feed reader: LLM pass off ({e})")
+        return None
+    if not config.llm_read_feed:
+        log("feed reader: LLM pass off (RUNTIME.md llm_read_feed = false); structure only")
+        return None
+    runtime = llm_cli.runtime_for(settings, rules, "feed reader")
+    if runtime is None:
+        return None
+    pause = REPO_ROOT / rules.pause_file
+    return FeedInterpreter(runtime, log, every_ticks=config.read_feed_every_ticks, paused=pause.exists)
+
+
 def _run_agent(
     name: str,
     live: bool,
@@ -1640,6 +1661,7 @@ def _run_agent(
     host: str | None = None,
     evals_every: int | None = None,
     learn: bool = False,
+    llm_read: bool = False,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
     read-only status server, the loop. `learn`: this agent owns the live-feed reader (N12): it archives
@@ -1685,7 +1707,7 @@ def _run_agent(
 
         store = LearningStore(connect_learnings, log)  # the ledger's `connect_ready` applied the schema already
         log(f"{name}: learnings {store.open()}")  # connect now, never inside a tick
-        extra["learner"] = LiveLearner(store, log)
+        extra["learner"] = LiveLearner(store, log, _feed_interpreter(settings, rules, log) if llm_read else None)
         if name == "taker":  # one outcome learner per team: lessons + embeddings every few ticks (N3)
             from bazaar_agent.learn.embed import shared_models
             from bazaar_agent.learn.outcomes import OutcomeLearner
@@ -1759,6 +1781,11 @@ def agent_taker(
         help="Read the live feed into learnings, skip dealers under a learned blocker, archive the feed window "
         "(BAZAAR_LEARN=0 turns it off on a service)",
     ),
+    llm_read: bool = typer.Option(
+        True,
+        envvar="BAZAAR_LLM_READ",
+        help="Also read the feed's free text (dealer words, notices) with the runtime LLM, off the tick loop",
+    ),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
@@ -1779,7 +1806,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn)
+    _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn, llm_read=learn and llm_read)
 
 
 @agent_app.command("maker")
@@ -1790,12 +1817,19 @@ def agent_maker(
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
+    learn: bool = typer.Option(
+        True,
+        envvar="BAZAAR_LEARN",
+        help="Score venues at fees announced in the feed for later in a listing's life (BAZAAR_LEARN=0: off)",
+    ),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
+    from bazaar_agent.learn.venues import VenueNotices
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
+        notices = VenueNotices(kw["log"]) if learn else None
+        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, notices=notices, **kw)
 
     _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 
