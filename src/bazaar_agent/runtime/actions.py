@@ -132,8 +132,8 @@ class Base:
     commitments: Any
 
 
-def _base(b: Backend, clock: Clock) -> Base:
-    me, offers = b.team.me(), b.my_offers()
+def _base(b: Backend, clock: Clock, read_at: float) -> Base:
+    me, offers = b.holdings.me(clock, clock_read_at=read_at).me, b.my_offers()
     ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules)
     return Base(me, offers, ctx, b.commitments(me, offers))
 
@@ -141,7 +141,7 @@ def _base(b: Backend, clock: Clock) -> Base:
 def _plan_listing(
     b: Backend, clock: Clock, read_at: float, build: Callable[[dict[str, Any]], Listing], name: str
 ) -> Planned:
-    base = _base(b, clock)
+    base = _base(b, clock, read_at)
     try:
         listing = build(base.me)
     except OfferError as e:
@@ -162,7 +162,7 @@ def _plan_dealer(b: Backend, clock: Clock, read_at: float, args: DealerBuyArgs) 
         refused = _denied(f"a live dealer negotiation with {running} is still running from this runtime")
         return Planned("dealer_buy", refused, clock, read_at)
     action = Action("buy", args.item, b.rarity_of(args.item, clock.tick), args.max_price)
-    base = _base(b, clock)
+    base = _base(b, clock, read_at)
     verdict = check(action, committed_context(base.ctx, base.commitments), b.rules)
     return Planned("dealer_buy", verdict, clock, read_at, action)
 

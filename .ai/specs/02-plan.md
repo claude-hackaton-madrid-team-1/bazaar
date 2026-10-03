@@ -111,7 +111,7 @@ negotiates well.
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 v1 approved (#89, 09:30 window); v2 LLM over free text #111 in review |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 approved (#105, 09:30 window) |
 | N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
-| N15 (new) | Jev picks the desk's model per request, for the orchestrator and each subagent (no pinned Sonnet) | 1 | 🔵 approved (#108, 09:30 window) |
+| N15 (new) | **Jev picks the desk's model per request**: orchestrator + each subagent (`desk_model` = auto, one batched `model_for_desk_role` Jev call, cache, per-role defaults, pin wins); spec [`N15-spec.md`](./N15-spec.md) | 1 | 🔵 approved (#108, 09:30 window) |
 | N16 (new) | **P1 · Strategic bluffing + negotiation psychology in the words** (Omar: the agents may lie to win): deterministic tactic bank (bluffs + Voss/Cialdini tactics from the vetted MIT skill `wondelai/skills`), chosen per counterparty from learned outcomes (Jev learned_per_counterparty 0.90); a cooloff or bad-faith flag turns a tactic off; Abuela gets kindness; structure never changes; kill flag `BAZAAR_BLUFF=0` | 1 → 2 | 🔵 worker (PR before Duels II, Sat 18:00) |
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
@@ -155,6 +155,21 @@ Files: `src/bazaar_agent/agents/ladder.py`, `src/bazaar_agent/intel/dealer_curve
 - Step 3 — Jev `negotiation_move` as advisor through `bazaar_agent.jev` (logged). Undecided → conservative default.
   · **Acceptance:** decision log shows the verdict, and the policy's final choice, for each step.
 - Step 4 — Three negotiated deals. · **Acceptance:** settlements in the feed + unlock progress in `/api/dealers`.
+
+### N13 — Real-time holdings + card catalog in Postgres (spec: `N13-spec.md`)
+Files: `src/bazaar_agent/{holdings,catalog_db}.py`, `sql/schema.sql`, `sdk.py`, `agents/{runtime,taker,maker}.py`,
+`runtime/{backend,actions,tools,agents}.py`, `cli.py`, `tests/test_holdings{,_db}.py`
+- Step 1 — Schema: `me_snapshots`, `holdings_state`, the `cards` columns. · **Acceptance:** `init_schema` twice in a
+  scratch schema, columns listed.
+- Step 2 — `holdings.py`: freshness verdict, single-flight read, upsert, write tracker; `sdk.TrackedBazaar`.
+  · **Acceptance:** unit tests (no DB) + Postgres tests: stale tick, a send, a thread message, max age, after a deal,
+  two readers one call, two writers never backwards.
+- Step 3 — `catalog_db.py` + `CatalogSync` from the catalog the agents already read. · **Acceptance:** tests:
+  malformed cards skipped, release and every-N-ticks writes, no rollback.
+- Step 4 — Agents, MCP tools (`status`, `holdings`, `cards`), `bazaar status`. · **Acceptance:** tool test answers
+  from the DB with tick and age and no `/me` call; taker re-reads after a deal.
+- Step 5 — Simulator run, before vs after. · **Acceptance:** `GET /api/me` per tick counted server-side, pasted.
+- Step 6 — Docs, memory, architecture boxes; gate + `scripts/sim_smoke.py`; `/pr-review`.
 
 ### N5 (part 1) — Minimal Python Jev judge
 Files: `src/bazaar_agent/jev/{judge,log}.py`, `tests/jev/test_judge.py`
@@ -205,6 +220,20 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
 
 ---
+
+### N15 — Jev picks the desk's model per request
+Spec: [`N15-spec.md`](./N15-spec.md). Files: `llm/{config,chooser,cli}.py`, `runtime/{desk_models,desk,agents,hooks,cli}.py`,
+`questions/runtime_model.json`, `RUNTIME.md`, README, `docs/architecture.status.json`.
+- Step 1 — RUNTIME.md `desk_model` = auto + `desk_role_defaults` (Claude only, validated). · **Acceptance:**
+  config tests: auto parses, a non-Claude role default or pinned desk model fails.
+- Step 2 — `ModelChooser.choose_roles()`: pin → cache → ONE Jev call for the uncached roles → per-role default.
+  · **Acceptance:** fake-Jev tests: decided, undecided, timeout, keyless, pinned, one call per request, cache reuse.
+- Step 3 — `runtime/desk_models.py` (request situation, picker) + per-subagent `AgentDefinition.model` +
+  the hook sets each subagent's per-call model (family alias pinned to our id) + `Desk` re-plans before each
+  request. · **Acceptance:** SDK options carry each role's id; the scripted desk run logs the choices; one
+  conversation keeps one session while each request runs its own models.
+- Step 4 — `bazaar llm` desk section, README, RUNTIME.md, architecture boxes. · **Acceptance:** CLI test +
+  regenerated html; dry desk run on `BAZAAR_SIM=local` shows the chosen models.
 
 ## Parallel-work notes
 
