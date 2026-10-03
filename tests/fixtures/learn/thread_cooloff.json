@@ -1,0 +1,13 @@
+{
+ "id": 41, "kind": "persona", "with": "abuela", "team": "t01", "topic": {"buy": {"card": "LAV-03"}},
+ "venue": null, "status": "cooloff", "closed_reason": "cooloff", "until_tick": 25,
+ "messages": [
+  {"message": 301, "id": 301, "tick": 2, "sender": "t01", "text": "Buenas, Carmen, ¿me lo dejaría en 2?",
+   "offer": {"id": 900, "maker": "t01", "status": "replaced", "give": {"cash": 2}, "want": {"types": ["card:LAV-03"]}}},
+  {"message": 302, "id": 302, "tick": 3, "sender": "abuela", "text": "Ay, hijo, 12 y no se hable más.",
+   "offer": {"id": 901, "maker": "abuela", "status": "open", "final": false, "give": {"types": ["card:LAV-03"]}, "want": {"cash": 12}}},
+  {"message": 303, "id": 303, "tick": 4, "sender": "abuela", "text": "That is no way to talk. Come back later.\u0000",
+   "offer": {"id": 902, "maker": "abuela", "status": "open", "final": true, "give": {"types": ["card:LAV-03"]}, "want": {"cash": 11}}}
+ ],
+ "standing_offers": []
+}
