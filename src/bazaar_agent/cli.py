@@ -23,6 +23,7 @@ from bazaar_agent import (
     breaker_cli,
     deploy_guard,
     flags_cli,
+    impact_cli,
     injection_cli,
     intel,
     persona_cli,
@@ -41,7 +42,7 @@ from bazaar_agent.learn import cli as learn_cli
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.runtime import cli as runtime_cli
-from bazaar_agent.sdk import BazaarError, public_client, team_client
+from bazaar_agent.sdk import BazaarError, public_client, read_once_more_after_429, team_client
 from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
 app = typer.Typer(no_args_is_help=True, help="Team 1 · The Bazaar · tick-driven trading agent")
@@ -326,11 +327,18 @@ def affinity(
     catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
     beta: float = typer.Option(0.5, help="Weight of one unit of (damped) interest per sd of the multiplier"),
     as_json: bool = typer.Option(False, "--json", help="Print the map as JSON"),
+    teams: bool = typer.Option(
+        False, "--teams", help="Read-only: the stored team_affinity rows (said in a thread vs inferred)"
+    ),
 ) -> None:
     """Rival affinity map: P(each set holds each team's top multiplier), from the public feed alone."""
     from dataclasses import asdict
 
     from bazaar_agent import affinity as af
+
+    if teams:
+        _team_affinity(as_json)
+        return
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
     catalog = _payload_file(catalog_file) if catalog_file else public_client(load_settings()).catalog()
@@ -345,6 +353,26 @@ def affinity(
     console.print(render.affinity_table(amap))
     for s in af.catalog_sets(catalog):
         console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
+
+
+def _team_affinity(as_json: bool) -> None:
+    """`bazaar affinity --teams`: the `team_affinity` table as stored (a select, nothing written)."""
+    from bazaar_agent import db
+    from bazaar_agent import team_affinity as ta
+
+    try:
+        with db.connect(app="bazaar-affinity", connect_timeout_s=5) as conn:
+            conn.read_only = True
+            rows = ta.read(conn)
+    except Exception as e:  # noqa: BLE001 — a read-only report: say why and stop
+        err_console.print(f"team_affinity unreadable: {db.redact(str(e))}")
+        raise typer.Exit(1) from None
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2, default=str))
+        return
+    console.print(render.team_affinity_table(rows))
+    if not rows:
+        console.print("no rows yet: the taker's team desk writes them (inferred every 10 ticks, said on a reply)")
 
 
 @app.command("trade-plan")
@@ -863,6 +891,7 @@ def dealer_buy(
     if not pre.allowed:
         tm.guardrail_refusal("dealer.open", item, pre.violations)
         _fail(f"guardrails refuse to open this thread: {pre}")
+    plan = _forgiving_plan(settings, rules, dealer, item, rarity, plan)  # a trickster's FINAL is not its limit
 
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, the thread stays open, next tick decides again):
@@ -964,6 +993,7 @@ def dealer_sell(
     from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.official_values import unread_only
 
     rules = _rules().rules
     settings = load_settings()
@@ -998,7 +1028,8 @@ def dealer_sell(
         return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
 
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
-        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell")  # a dealer sell thread
+        # a dealer sell thread; `asset`: the score impact rule prices this copy
+        return gr.Action(kind, ref, rarity, price, your_value=your_value, scope="dealer_sell", asset=asset_id)
 
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
@@ -1023,6 +1054,8 @@ def dealer_sell(
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
         verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
+            raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     decisions = DecisionLog(
@@ -1110,6 +1143,39 @@ def _offer_inspector(settings: Any, dealer: str, topic: dict[str, Any], rules: A
     return {"on_thread": on_thread, "inspect": inspect if rules.inspect_accepts else None}
 
 
+def _dealer_personas(settings: Any) -> list[dict[str, Any]]:
+    """`GET /api/dealers` (keyless): every dealer as it publishes itself (kind, traits, menu)."""
+    body = public_client(settings).dealers()
+    return [d for d in body.get("personas") or body.get("dealers") or [] if isinstance(d, dict)]
+
+
+def _forgiving_plan(settings: Any, rules: Any, dealer: str, item: str, rarity: str | None, plan: Any) -> Any:
+    """`dealer buy`'s plan against a forgiving dealer (agents/trickster.py): its FINAL is not its limit. Its persona
+    comes from `/api/dealers`: unreadable, nothing is opened (fail closed: a fake final could be taken as a limit).
+    Its fills come from the feed history the agents read (`_history`): none, and its asks are never taken (we only
+    bid). Every other dealer's plan comes back unchanged."""
+    from rich.markup import escape
+
+    from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving, note
+    from bazaar_agent.intel import tape
+    from bazaar_agent.persona_model import parse_personas
+
+    try:
+        persona = parse_personas(_dealer_personas(settings)).get(dealer)
+    except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
+        _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
+    if persona is None or not is_forgiving(persona, rules):
+        return plan
+    try:
+        events = _history(None, live=True)
+    except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
+        console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
+        events = []
+    shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules)
+    console.print(escape(f"{dealer} forgives (kind {persona.kind}): {note(shaped)}"))
+    return shaped
+
+
 def _rules() -> Any:
     from bazaar_agent.guardrails import GuardrailsError, load_guardrails
 
@@ -1194,7 +1260,6 @@ def duel_run(
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
-    from bazaar_agent.injection_log import from_duel
     from bazaar_agent.ledger_pg import LedgerUnavailable
     from bazaar_agent.llm.steering import STEERING_FILE, steered_duel_params
 
@@ -1393,8 +1458,14 @@ def duel_run(
         decisions.begin_tick(c.tick)
         book.begin_tick(c.tick, c.round, us)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
-        try:
-            data = client.duels()
+        try:  # a 429 at the tick boundary would cost every duel its move: one re-read if the tick has room
+            data = read_once_more_after_429(
+                client.duels,
+                lambda: send_by - time.monotonic(),
+                on_retry=lambda e, wait: console.print(
+                    f"tick {c.tick}: /api/duels refused {e.code}, re-read in {wait:g} s"
+                ),
+            )
         except BazaarError as e:
             console.print(f"tick {c.tick}: /api/duels refused {e.code}")
             duel_traces.read_failed(c.tick, e)
@@ -1587,8 +1658,7 @@ def duel_run(
 
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if injection_log is not None:  # the rivals' words with an injection shape, kept with their duel id
-            for d in duels:
-                injection_log.note(from_duel(d))
+            injection_log.note_duels(duels)  # never raises; each message is scanned once
             injection_log.flush(c.tick)  # bounded; a failure only logs and retries in a few ticks
         read = store.read_finished(duels) and save_finished(c.tick)
         if not read:  # one ?done=true read per tick at most (r1, #159): the days latch reuses the store's
@@ -1628,7 +1698,10 @@ def _injection_log(settings: Settings, connect: Callable[[], Any] | None, log: C
     from bazaar_agent.injection_log import InjectionLog
     from bazaar_agent.runtime.tools import secrets_of
 
-    return InjectionLog(connect, scope_of(settings).world, secrets_of(settings), log)
+    recorder = InjectionLog(connect, scope_of(settings).world, secrets_of(settings), log)
+    if connect is not None:
+        recorder.open()  # connect and create the table now, never inside a tick
+    return recorder
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -2298,6 +2371,53 @@ def strategy(
     _print_playbook(book, loaded, rules, ctx, commitments)
 
 
+@app.command("taller")
+def taller_cmd(
+    assets: Annotated[
+        list[int] | None, typer.Argument(help="Three asset ids of one rarity; none: ranked triples")
+    ] = None,
+    live: bool = typer.Option(False, "--live", help="Actually craft. Without it: dry run, nothing is sent"),
+) -> None:
+    """The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The
+    same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
+    hourly cap counts the taker's crafts only). Dry run by default."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import taller as tl
+
+    client, me = _team_me()
+    rules, _, ctx, commitments = _sell_context(client, me, live)
+    busy = set(commitments.listed)
+    public = public_client(load_settings())
+    catalog = public.catalog()
+    if not assets:
+        dealers = public.dealers()
+        rows = dealers.get("personas") if isinstance(dealers, dict) else dealers
+        for t in tl.rank_triples(me, catalog, rows or [], busy):
+            console.print(f"{' '.join(str(a) for a in t.asset_ids)}  {', '.join(t.refs)}  {escape(t.reason())}")
+        return
+    ours = {int(a["id"]): a for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)}
+    if len(set(assets)) != tl.INPUTS or any(a not in ours or a in busy for a in assets):
+        _fail(f"give {tl.INPUTS} different free copies of ours (not in an open offer): {assets}")
+    refs = [str(ours[a]["ref"]) for a in assets]
+    rarities = {str((tl.cards_of(catalog).get(ref) or {}).get("rarity")) for ref in refs}
+    if len(rarities) != 1:
+        _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
+    action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
+    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
+    if not verdict.allowed or not live:
+        if verdict.allowed:
+            console.print("[dim]dry run: nothing sent (add --live)[/dim]")
+        return
+    try:
+        answer = tl.craft(client, assets)
+    except BazaarError as e:
+        _fail(f"refused: {e.code} ({e.message[:80]})")
+    console.print(f"crafted: {escape(tl.pulled(answer))}")
+
+
 # ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel
 
 sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a card, bid for one, see or cancel ours")
@@ -2306,6 +2426,7 @@ app.add_typer(flags_cli.flags_app, name="flags")
 app.add_typer(breaker_cli.breaker_app, name="breaker")
 app.command("approve")(approval_cli.approve)
 app.command("approvals")(approval_cli.approvals_list)
+app.command("impact")(impact_cli.impact)
 app.command("injections")(injection_cli.injections)
 app.command("deploy-guard", help="Is it safe to merge to main (which redeploys the duels)? Exit 1 = no.")(
     deploy_guard.deploy_guard_cmd
@@ -2854,8 +2975,34 @@ def _news_sentinel(kw: dict[str, Any], settings: Any) -> Any:
     store = learner.store if learner is not None else LearningStore(None, kw["log"])
     reader = PublicBazaar(settings.bazaar_url, timeout=READ_TIMEOUT_S, retries=0)
     return NewsSentinel(
-        reader, store.record, kw["log"], settings.data_dir / "agents", history=_rank_history(kw, settings)
+        reader,
+        store.record,
+        kw["log"],
+        settings.data_dir / "agents",
+        history=_rank_history(kw, settings),
+        matrix_store=_matrix_store(kw, settings),
     )
+
+
+def _matrix_store(kw: dict[str, Any], settings: Any) -> Any:
+    """The team matrix's tables in the shared Postgres when the ledger is there (its world: real or sim:<host>)."""
+    ledger = kw.get("ledger")
+    if ledger is None or not ledger.where.startswith("postgres"):
+        return None
+    from bazaar_agent import db
+    from bazaar_agent.holdings import scope_of
+    from bazaar_agent.team_matrix_store import TeamMatrixStore
+
+    return TeamMatrixStore(lambda: db.connect(app="bazaar-team-matrix", connect_timeout_s=3), kw["log"],
+                           scope_of(settings).world)  # fmt: skip
+
+
+def _latest_matrix(kw: dict[str, Any], settings: Any) -> Any:
+    """The maker reads the matrix the taker stores, at most every 10 ticks after its sends."""
+    from bazaar_agent.team_matrix_store import LatestMatrix
+
+    store = _matrix_store(kw, settings)
+    return LatestMatrix(store) if store is not None else None
 
 
 def _rank_history(kw: dict[str, Any], settings: Any) -> Any:
@@ -2882,6 +3029,24 @@ def _persona_book(kw: dict[str, Any], shared: bool) -> Any:
             db.upsert_traders(conn, snaps, tick)
 
     return PersonaBook(write if shared else None, kw["log"])
+
+
+def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
+    """Other teams' multipliers (AF1), said in a team thread or inferred from the feed, stored in the shared
+    Postgres `team_affinity` table off the tick. Without the shared database: nothing stored, nothing asked."""
+    from bazaar_agent import db
+    from bazaar_agent import team_affinity as ta
+
+    def write(rows: list[Any]) -> int:
+        with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
+            return ta.save(conn, rows)
+
+    def told() -> set[str]:
+        with db.connect(app="bazaar-taker-affinity", connect_timeout_s=3) as conn:
+            conn.read_only = True
+            return ta.said_teams(conn)
+
+    return ta.AffinityBook(write, kw["log"], told) if shared else None
 
 
 @agent_app.command("taker")
@@ -2934,6 +3099,7 @@ def agent_taker(
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             personas=_persona_book(kw, shared),
+            affinity=_affinity_book(kw, shared),
             **kw,
         )
 
@@ -2978,6 +3144,7 @@ def agent_maker(
             notices=notices,
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
+            latest_matrix=_latest_matrix(kw, settings),
             **kw,
         )
 

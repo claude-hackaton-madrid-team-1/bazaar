@@ -17,27 +17,38 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+from rich.text import Text
 
 from bazaar_agent import injection_log as il
 from bazaar_agent import pgconn
 from bazaar_agent.breaker_cli import Connect, _open
 from bazaar_agent.breakers import CONNECT_TIMEOUT_S
+from bazaar_agent.flags_cli import MISMEASURED
+from bazaar_agent.llm.chooser import HIDING_MARKS
 
 console = Console()
 err_console = Console(stderr=True)
 PREVIEW_CHARS = 160
+HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Zl", "Zp"})
 
 
 def _connect() -> psycopg.Connection:
     return pgconn.connect(app="bazaar-injections-cli", connect_timeout_s=CONNECT_TIMEOUT_S)
 
 
-def visible(text: str) -> str:
-    """Control and invisible characters as ⟨U+XXXX⟩ (the hiding stays visible, a terminal never acts on it)."""
-    return "".join(
-        f"⟨U+{ord(ch):04X}⟩" if unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cs") and ch != " " else ch
-        for ch in text
+def _hidden(ch: str) -> bool:
+    """Control, format, private, line-separator and filler characters, and the ones rich measures at 0 columns
+    that terminals draw at 2: each is shown, never drawn."""
+    return (
+        unicodedata.category(ch) in HIDDEN_CATEGORIES
+        or ch in HIDING_MARKS
+        or any(low <= ord(ch) <= high for low, high in MISMEASURED)
     )
+
+
+def visible(text: str) -> str:
+    """Hidden characters as ⟨U+XXXX⟩: the hiding stays visible and a terminal never acts on it."""
+    return "".join(f"⟨U+{ord(ch):04X}⟩" if _hidden(ch) else ch for ch in text)
 
 
 def _world_and_us(us: str | None) -> tuple[str, str | None, tuple[str, ...]]:
@@ -82,14 +93,14 @@ def _table(rows: list[dict[str, Any]], world: str) -> Table:
         words = visible(str(r["raw"]))
         if len(words) > PREVIEW_CHARS:
             words = words[:PREVIEW_CHARS] + "…"
-        table.add_row(
-            str(r["tick"]),
-            escape(visible(str(r["from_team"]))),
-            r["source"],
-            escape(", ".join(r["tags"])) + ("" if r["severity"] == "attempt" else " (weak)"),
-            escape(words),
-            escape(r["proof"]),
-            escape(r["our_response"]),
+        table.add_row(  # literal Text cells: hostile words never become markup or an emoji code
+            Text(str(r["tick"])),
+            Text(visible(str(r["from_team"]))),
+            Text(str(r["source"])),
+            Text(", ".join(r["tags"]) + ("" if r["severity"] == "attempt" else " (weak)")),
+            Text(words),
+            Text(visible(str(r["proof"]))),
+            Text(str(r["our_response"])),
         )
     return table
 

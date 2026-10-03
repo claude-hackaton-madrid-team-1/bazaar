@@ -5,7 +5,7 @@ import contextlib
 import psycopg
 import pytest
 
-from bazaar_agent.learn.live import BLOCKER_RECALL_KINDS, LiveLearner
+from bazaar_agent.learn.live import BLOCKER_RECALL_KINDS, MEMORY_KINDS, LiveLearner
 from bazaar_agent.learn.reader import FeedReader, GameHour, from_refusal
 from bazaar_agent.learn.store import LearningStore
 from bazaar_agent.sdk import BazaarError
@@ -214,7 +214,8 @@ def test_the_live_learner_reads_memory_before_sends_and_pulls_postgres_after():
     learner.blocks(FEED, US, CLOCK)
     assert calls == [False]  # before the sends: memory only
     learner.flush()
-    assert calls == [False, True]  # after the sends: Postgres, for the next tick
+    # after the sends: Postgres, for the next tick (the blockers, then the dealers' memory: agents.dealer_memory)
+    assert calls == [False, True, True]
 
 
 def test_the_blocker_recall_asks_for_blocker_kinds_only():
@@ -228,7 +229,7 @@ def test_the_blocker_recall_asks_for_blocker_kinds_only():
     learner = LiveLearner(Spy())
     learner.blocks(FEED, US, CLOCK)
     learner.flush()
-    assert seen == [BLOCKER_RECALL_KINDS, BLOCKER_RECALL_KINDS]
+    assert seen == [BLOCKER_RECALL_KINDS, BLOCKER_RECALL_KINDS, MEMORY_KINDS]  # the memory pull is its own recall
     assert "lesson" not in BLOCKER_RECALL_KINDS and "cooloff" in BLOCKER_RECALL_KINDS
 
 

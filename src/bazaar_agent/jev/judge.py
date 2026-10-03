@@ -25,6 +25,7 @@ from types import MappingProxyType
 
 import httpx
 
+from bazaar_agent.jev.decider import decider
 from bazaar_agent.jev.mask import (
     JEV_QUESTION_TYPES,
     JEV_STAKES,
@@ -66,6 +67,9 @@ JEV_UNDECIDED_REASONS = (
     "answer_missing",
     "answer_type_mismatch",
     "below_threshold",
+    # BAZAAR_DECIDER=llm only (`bazaar_agent.llm.decider`):
+    "llm_unavailable",
+    "decider_call_cap",
 )
 
 Questions = Mapping[str, Mapping[str, object]]
@@ -542,8 +546,13 @@ def judge(
     `api_key` defaults to `$TYPESAFE_API_KEY`; without one every verdict is undecided and no request
     is sent. `now` returns seconds and `sleep` takes seconds; both exist so tests can move a clock.
     Raises `JevUsageError` for a malformed request; every other failure is `undecided`.
+
+    BAZAAR_DECIDER=llm sends the same masked request to Claude instead (`bazaar_agent.jev.decider`),
+    with no TypeSafe key needed, and returns the same verdicts under the same bars.
     """
     request = mask_request(state, questions, thresholds, _timeout_ms(timeout_s))
+    if decider() == "llm":
+        return _llm_result(request)
     key = (os.environ.get(JEV_API_KEY_VARIABLE, "") if api_key is None else api_key).strip()
     if not key:
         return JudgeResult("", 0, _all_undecided(request, "typesafe_api_key_missing"))
@@ -561,6 +570,40 @@ def judge(
         for question_id, question in request.questions.items()
     }
     return JudgeResult(outcome.model, latency_ms, MappingProxyType(verdicts))
+
+
+def _llm_result(request: MaskedRequest) -> JudgeResult:
+    # Imported here: the llm package imports telemetry, which imports this package.
+    from bazaar_agent.llm.decider import process_decider
+
+    outcome = process_decider().decide(request.questions, request.thresholds, request.written_state())
+    if outcome.answers is None:
+        return JudgeResult(
+            outcome.model, outcome.latency_ms, _all_undecided(request, outcome.reason or "llm_unavailable")
+        )
+    verdicts = {
+        question_id: _verdict_for(
+            question, request.thresholds[question_id], _own_options(question, outcome.answers.get(question_id))
+        )
+        for question_id, question in request.questions.items()
+    }
+    return JudgeResult(outcome.model, outcome.latency_ms, MappingProxyType(verdicts))
+
+
+def _own_options(question: Mapping[str, object], answer: object) -> object:
+    """An LLM names its probability keys itself: keep only the question's choice options, never free text
+    that would reach logs, spans and a terminal (a `[/red]` key once crashed `bazaar llm`)."""
+    if not isinstance(answer, Mapping) or "probabilities" not in answer:
+        return answer
+    criteria = question.get("criteria")
+    raw = answer["probabilities"]
+    kept = (
+        {option: p for option, p in raw.items() if option in criteria}
+        if question.get("type") == "choice" and isinstance(criteria, Mapping) and isinstance(raw, Mapping)
+        else {}
+    )
+    trimmed = {key: value for key, value in answer.items() if key != "probabilities"}
+    return {**trimmed, "probabilities": kept} if kept else trimmed
 
 
 def questions_from_text(text: str, source: str = "questions") -> dict[str, dict[str, object]]:

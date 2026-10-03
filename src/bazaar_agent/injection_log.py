@@ -58,6 +58,7 @@ ROLE_CAST = re.compile(
     re.IGNORECASE,
 )
 MAX_RAW = 2000
+SCRUB_MARGIN = 256  # kept past MAX_RAW until the scrub ran, so a secret across the cut loses every character
 STATEMENT_TIMEOUT_MS = 1500
 RETRY_EVERY = 5  # ticks between Postgres retries after a failure
 BUFFER_MAX = 500  # attempts waiting for a write; the oldest are dropped during a long outage
@@ -70,6 +71,7 @@ IGNORED_DEALER = "ignored: dealer words never set our price"
 ORGANISER_TYPES = frozenset({"announcement", "news.posted", "schedule.fired", "clock.changed", "day.opened"})
 TEXT_FIELDS = ("text", "note", "message", "words", "comment", "description", "name")
 OURS_IN_DUEL = "you"  # how /api/duels names our own messages
+MessageKey = tuple[str, object, object]  # (source, thread or duel id, message id)
 SOURCES = ("feed", "team_thread", "duel", "dealer_thread", "offer_text")
 
 
@@ -114,13 +116,13 @@ def attempt(source: str, text: object, *, response: str = IGNORED, **ids: Any) -
     event/thread/duel/message ids (anything not an int counts as 0)."""
     if source not in SOURCES or not isinstance(text, str):
         return None
-    tags = tuple(sorted(injection_flags(text)))
+    tags = tuple(sorted(injection_flags(text[:MAX_RAW])))  # the game keeps 1,200 characters: the cap never bites
     if not tags:
         return None
     return Attempt(
         source=source,
         tags=tags,
-        raw=text[:MAX_RAW],
+        raw=text[: MAX_RAW + SCRUB_MARGIN],  # `row()` cuts our secrets first, then MAX_RAW
         tick=_int(ids.get("tick")),
         from_team=str(ids["from_team"]) if ids.get("from_team") is not None else None,
         to_us=bool(ids.get("to_us")),
@@ -168,17 +170,22 @@ def from_feed_event(event: Mapping[str, Any], us: str | None) -> list[Attempt]:
     return [a for a in out if a is not None]
 
 
-def from_thread(payload: Mapping[str, Any], us: str, source: str, tick: int | None = None) -> list[Attempt]:
-    """Every message in a thread payload (`GET /api/threads/{id}`) that another party wrote."""
+def from_thread(
+    payload: Mapping[str, Any], us: str, source: str, tick: int | None = None, seen: set[MessageKey] | None = None
+) -> list[Attempt]:
+    """Every message in a thread payload (`GET /api/threads/{id}`) that another party wrote. With `seen`, a
+    message already scanned is skipped before its scan, and every scanned one is added."""
     if source not in ("team_thread", "dealer_thread"):
         return []
     tid = payload.get("id") or payload.get("thread")
     response = IGNORED_DEALER if source == "dealer_thread" else IGNORED
     out = []
-    for m in payload.get("messages") or []:
+    for m in _messages(payload):
         if not isinstance(m, Mapping) or m.get("sender") in (None, us):
             continue
         mid = m.get("message", m.get("id"))
+        if _scanned(seen, (source, tid, mid)):
+            continue
         ids: dict[str, Any] = {
             "tick": m.get("tick", tick),
             "from_team": m.get("sender"),
@@ -189,13 +196,13 @@ def from_thread(payload: Mapping[str, Any], us: str, source: str, tick: int | No
     return [a for a in out if a is not None]
 
 
-def from_duel(duel: Mapping[str, Any]) -> list[Attempt]:
+def from_duel(duel: Mapping[str, Any], seen: set[MessageKey] | None = None) -> list[Attempt]:
     """The rival's messages in one `/api/duels` entry (ours read `from: "you"`; a message has no id, so its
-    position in the list is the message number)."""
+    position in the list is the message number). `seen` as in `from_thread`."""
     did, rival = duel.get("duel"), duel.get("rival")
     out = []
-    for i, m in enumerate(duel.get("messages") or []):
-        if not isinstance(m, Mapping) or m.get("from") == OURS_IN_DUEL:
+    for i, m in enumerate(_messages(duel)):
+        if not isinstance(m, Mapping) or m.get("from") == OURS_IN_DUEL or _scanned(seen, ("duel", did, i + 1)):
             continue
         ids: dict[str, Any] = {
             "tick": m.get("tick"),
@@ -205,6 +212,23 @@ def from_duel(duel: Mapping[str, Any]) -> list[Attempt]:
         }
         out.append(attempt("duel", m.get("text"), message_id=i + 1, **ids))
     return [a for a in out if a is not None]
+
+
+def _messages(payload: Mapping[str, Any]) -> list[Any]:
+    messages = payload.get("messages")
+    return messages if isinstance(messages, list) else []
+
+
+def _scanned(seen: set[MessageKey] | None, key: MessageKey) -> bool:
+    """True when `key` was scanned before; records it otherwise. A message without an id is always scanned."""
+    if seen is None or key[2] is None:
+        return False
+    if key in seen:
+        return True
+    if len(seen) >= SEEN_MAX:
+        seen.clear()
+    seen.add(key)
+    return False
 
 
 # ---------------------------------------------------------------- the writer
@@ -227,6 +251,7 @@ class InjectionLog:
         self._failed = False
         self._seen: set[tuple[object, ...]] = set()
         self._events: set[int] = set()  # feed event ids already read
+        self._messages: set[MessageKey] = set()  # thread and duel messages already read
         self.buffer: list[Attempt] = []
 
     def note(self, attempts: Iterable[Attempt]) -> int:
@@ -264,12 +289,33 @@ class InjectionLog:
             self._log(f"injection log: feed scan failed ({type(e).__name__})")
         return added
 
+    def note_thread(self, payload: Mapping[str, Any], us: str, source: str, tick: int | None = None) -> int:
+        """Buffer the attempts in a thread payload, scanning each message once (never raises)."""
+        try:
+            return self.note(from_thread(payload, us, source, tick, self._messages))
+        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+            self._log(f"injection log: thread scan failed ({type(e).__name__})")
+            return 0
+
+    def note_duels(self, duels: Iterable[Mapping[str, Any]]) -> int:
+        """Buffer the attempts in the duels' rival messages, scanning each message once (never raises)."""
+        added = 0
+        try:
+            for duel in duels:
+                if isinstance(duel, Mapping):
+                    added += self.note(from_duel(duel, self._messages))
+        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+            self._log(f"injection log: duel scan failed ({type(e).__name__})")
+        return added
+
     def row(self, a: Attempt) -> tuple[object, ...]:
+        """The insert row: our secrets cut from the raw and the folded text (a fullwidth copy folds back to the
+        secret), then each capped at MAX_RAW."""
         raw = self.scrub(a.raw)
         return (
             self.world, a.tick, a.source, a.event_id, a.thread_id, a.duel_id, a.message_id,
             jsonb_safe(a.from_team) if a.from_team else None, a.to_us, list(a.tags), a.severity,
-            jsonb_safe(raw), jsonb_safe(folded(raw)), a.our_response, a.proof,
+            jsonb_safe(raw[:MAX_RAW]), jsonb_safe(self.scrub(folded(raw))[:MAX_RAW]), a.our_response, a.proof,
         )  # fmt: skip
 
     def scrub(self, text: str) -> str:
@@ -286,7 +332,7 @@ class InjectionLog:
             conn = self._db(tick)
             if conn is None:
                 return 0
-            rows = [self.row(a) for a in self.buffer]
+            rows = [self.row(a) for a in sorted(self.buffer, key=_order)]  # one key order: no deadlock
             with conn.transaction():
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
@@ -310,9 +356,21 @@ class InjectionLog:
             return None
         conn = self._connect()
         conn.autocommit = True
-        conn.execute(DDL)
         self._conn, self._down_at = conn, None
         return conn
+
+    def open(self) -> bool:
+        """Connect and create the table at process start, so no tick pays either. False when Postgres is
+        down: the writes retry every few ticks (the table also comes with schema.sql)."""
+        try:
+            conn = self._db(0)
+            if conn is not None:
+                conn.execute(DDL)
+            return conn is not None
+        except Exception as e:  # noqa: BLE001
+            self._fail(e)
+            self._conn, self._down_at = None, 0
+            return False
 
     def _fail(self, e: Exception) -> None:
         if not self._failed:
@@ -360,7 +418,7 @@ def backfill(conn: psycopg.Connection, us: str | None) -> list[Attempt]:
 
 def store(conn: psycopg.Connection, log: InjectionLog, attempts: Iterable[Attempt]) -> int:
     """Insert `attempts` in one transaction; returns the rows that were new."""
-    rows = [log.row(a) for a in attempts]
+    rows = [log.row(a) for a in sorted(attempts, key=_order)]
     if not rows:
         return 0
     with conn.transaction(), conn.cursor() as cur:
@@ -373,11 +431,17 @@ def store(conn: psycopg.Connection, log: InjectionLog, attempts: Iterable[Attemp
 
 def recent(conn: psycopg.Connection, world: str = "real", limit: int = 50, weak: bool = False) -> list[dict[str, Any]]:
     """The newest stored attempts as plain dicts (weak ones only with `weak`)."""
-    with conn.cursor() as cur:
-        cur.execute(DDL)
+    with conn.cursor() as cur:  # no DDL: the read-only login (read-only transactions) lists too
+        exists = cur.execute("select to_regclass('injection_attempts') is not null").fetchone()
+        if not exists or not exists[0]:
+            return []
         cur.execute(LIST, (world, weak, limit))
         names = [c.name for c in cur.description or ()]
         return [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
+
+
+def _order(a: Attempt) -> tuple[object, ...]:
+    return (a.source, a.event_id, a.thread_id, a.duel_id, a.message_id, a.tags)
 
 
 def _int(value: object) -> int | None:

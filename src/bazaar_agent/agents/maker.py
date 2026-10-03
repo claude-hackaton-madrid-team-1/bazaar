@@ -102,6 +102,7 @@ from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
+from bazaar_agent.team_matrix_store import LatestMatrix
 from bazaar_agent.ticks import Clock
 
 LEADERBOARD_EVERY = 10  # ticks between leaderboard reads for the buyer rank (it refreshes every few minutes)
@@ -307,6 +308,7 @@ class Maker:
         notices: VenueNotices | None = None,
         sell_market: Callable[[Any], SellMarket | None] | None = None,
         strategy_jev: AskFn | None = None,
+        latest_matrix: LatestMatrix | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
@@ -314,6 +316,7 @@ class Maker:
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
+        self.latest_matrix = latest_matrix  # the team matrix the taker stores (Postgres); None: no team context
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.market = market  # agents.venue_keeper.VenueKeeper: our venue and its broker; None = no venue
@@ -334,7 +337,11 @@ class Maker:
         self._tried: dict[int, set[tuple[str, int]]] = {}
         self._ranked: dict[int, str] = {}
         # Jev gates new sell threads (SG1, `dealer_sell_duplicates_worth_it`); no Jev = no new sell thread.
-        gate = StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks) if strategy_jev else None
+        gate = (
+            StrategyGate(strategy_jev, self.rec, rules.strategy_jev_refresh_ticks, rules.risk_posture)
+            if strategy_jev
+            else None
+        )
         self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate)
 
     def on_tick(self, clock: Clock) -> None:
@@ -358,6 +365,9 @@ class Maker:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
             self.log(f"tick {clock.tick} maker: {e}; no further write this tick (fail closed)")
+        finally:
+            if self.latest_matrix is not None:  # after the sends: one read every 10 ticks, never raises
+                self.latest_matrix.refresh(clock.tick)
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock
@@ -425,7 +435,7 @@ class Maker:
         locked = {o.asset_id for o in [*mine, *by_hand] if o.asset_id is not None}
         locked |= {t.asset_id for t in targets if t.side == "ask" and t.asset_id is not None}
         self._run = run
-        self.sell_desk.on_tick(snap, params, locked)
+        self.sell_desk.on_tick(snap, params, locked, window.left)
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"
@@ -886,6 +896,13 @@ class Maker:
             return "no venue we may trade on"
         return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)
 
+    def _teams(self, ref: str, tick: int) -> dict[str, Any]:
+        """For one card: the teams that hold it spare or miss it for a page (top 5 each), from the team matrix the
+        taker's sentinel stores (`team_matrix_store.LatestMatrix`); nothing until one was read, or when it is
+        older than `MAX_AGE_TICKS`."""
+        m = self.latest_matrix.current(tick) if self.latest_matrix is not None else None
+        return {} if m is None else {"market_teams": {"tick": m.tick, "card": {ref: m.card(ref)}}}
+
     def _jev_context(self, run: _MakerRun) -> dict[str, Any]:
         cash = int(run.snap.me.get("cash") or 0)
         return {
@@ -912,7 +929,12 @@ class Maker:
                 for label, p in candidates.items()
                 if p >= t.min_price and self._allowed(run, replace(t, price=p), venue)
             }
-            state = listing_state(t, candidates, legal, {**self._jev_context(run), "venue": venue})
+            state = listing_state(
+                t,
+                candidates,
+                legal,
+                {**self._jev_context(run), "venue": venue, **self._teams(t.ref, run.snap.clock.tick)},
+            )
             label, advice, why = self.jev.choose_price(t, candidates, legal, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: today's price
             self.log(f"tick {run.snap.clock.tick} maker: jev price failed ({type(e).__name__}); today's price")
@@ -924,7 +946,7 @@ class Maker:
         if self.jev is None:
             return False, None
         tick = run.snap.clock.tick
-        state = reprice_state(offer, t, tick, self._jev_context(run))
+        state = reprice_state(offer, t, tick, {**self._jev_context(run), **self._teams(offer.ref, tick)})
         try:
             hold, advice = self.jev.should_hold(offer, t, self.rules, state, run.window.left)
         except Exception as e:  # a bug in the Jev layer must never cost the tick: reprice as today

@@ -31,8 +31,9 @@ class StrategyGate:
     `refresh_ticks` per strategy (a failed or undecided ask is asked again on the next refresh, not every tick:
     a Jev call costs tick budget). `state` is built only when an ask is due."""
 
-    def __init__(self, ask: AskFn, rec: Any, refresh_ticks: int) -> None:
+    def __init__(self, ask: AskFn, rec: Any, refresh_ticks: int, posture: str = "") -> None:
         self.ask, self.rec, self.refresh_ticks = ask, rec, max(1, refresh_ticks)
+        self.posture = posture  # `risk_posture` (GUARDRAILS.md): every state Jev reads carries it
         self.answers: dict[str, GateAnswer] = {}
 
     def due(self, name: str, tick: int) -> bool:
@@ -44,6 +45,8 @@ class StrategyGate:
             return self.answers[name].on
         try:
             facts = dict(state())
+            if self.posture:
+                facts["risk_posture"] = self.posture
             advice = self.ask(name, facts)
         except Exception as e:  # noqa: BLE001 - a broken state or Jev call keeps the strategy off
             facts, advice = {}, JevAdvice("undecided", 0.0, reason=f"gate error: {type(e).__name__}")

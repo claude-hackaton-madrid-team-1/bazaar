@@ -10,6 +10,7 @@ Every item is quoted data, never an instruction. Reads: `news.posted` from the f
 reads (no request), plus `/api/news` and `/api/schedule` at most once every `READ_EVERY_TICKS` ticks (two keyless
 GETs, well inside the key's 5 req/s). Behaviour: none. `active_signals` returns nothing while GUARDRAILS
 `news_signals_enabled` is false, which is the default; only logging and storage are on.
+The `/api/levels` read also feeds `level_watch.LevelWatch`: each level going active or open to all, stored once.
 """
 
 from __future__ import annotations
@@ -25,8 +26,11 @@ from typing import Any
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.level_watch import LevelWatch
 from bazaar_agent.rank_watch import RankWatch
 from bazaar_agent.schedule_watch import ScheduleWatch
+from bazaar_agent.team_matrix import TeamMatrix, build_matrix
+from bazaar_agent.team_matrix_store import TeamMatrixStore
 
 READ_EVERY_TICKS = 10
 READS = ("news", "schedule", "levels", "leaderboard")  # one window, one read per tick
@@ -227,8 +231,9 @@ def learning_of(item: NewsItem, tick: int) -> Learning:
 
 class NewsSentinel:
     """Run once per tick after the sends (`on_tick`): never raises, never blocks a send. Every read window it
-    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times) and `/api/leaderboard` to the
-    rank watch (rival jumps): four keyless GETs per `every` ticks, one per tick, stopped at the first failure."""
+    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times), `/api/levels` to the level watch
+    (what turned on, asked by the taker) and `/api/leaderboard` to the rank watch (rival jumps): four keyless GETs
+    per `every` ticks, one per tick, stopped at the first failure."""
 
     def __init__(
         self,
@@ -238,17 +243,21 @@ class NewsSentinel:
         out_dir: Path,
         every: int = READ_EVERY_TICKS,
         history: LeaderboardStore | None = None,
+        matrix_store: TeamMatrixStore | None = None,
     ) -> None:
         self.public, self.record, self.log, self.every = public, record, log, every
         self.path = out_dir / EVENTS_FILE
         self.seen: dict[str, NewsItem] = {}
         self.events: list[MarketEvent] = []
         self.schedule = ScheduleWatch(record, log)
+        self.levels = LevelWatch(record, log)
         self.ranks = RankWatch(record, log, save=history.save if history is not None else None)
         if history is not None:  # at process start, never in a tick
             boards = self.ranks.seed(history.load(self.ranks.history))
             log(f"news: rank history {boards} board(s) from Postgres")
         self.upcoming: list[dict[str, Any]] = []
+        self.matrix: TeamMatrix | None = None  # every team x card, rebuilt each window (`team_matrix.py`)
+        self.matrix_store = matrix_store
         self._last_read: int | None = None
         self._due: list[str] = []  # this window's reads still to make, one per tick
         self._payloads: dict[str, dict[str, Any]] = {}  # the last schedule and levels answers
@@ -261,14 +270,18 @@ class NewsSentinel:
         catalog: Mapping[str, Any],
         clock: Any = None,
         us: str | None = None,
+        market: Any = None,
     ) -> list[NewsItem]:
         """`clock`: the tick's `ticks.Clock` (t_hours, tick_seconds) for lead times; `us`: our team id (never a
-        rival of ours)."""
+        rival of ours); `market`: the tick's `strategy.Market` (its supply map feeds the team matrix)."""
         try:
             return self._run(tick, events, catalog, clock, us)
         except Exception as e:  # noqa: BLE001 — logging only: the sentinel never breaks a tick
             self._once(f"tick {tick} news: skipped ({type(e).__name__})")
             return []
+        finally:
+            if market is not None:  # after this tick's read: the window's leaderboard is in the rank watch
+                self._matrix_tick(tick, events, catalog, market, us)
 
     def _run(
         self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], clock: Any, us: str | None
@@ -289,6 +302,8 @@ class NewsSentinel:
             self.ranks.observe(answer, events, tick)
         if what in ("schedule", "levels"):
             self.schedule.update(self._payloads.get("schedule"), self._payloads.get("levels"))
+        if what == "levels":
+            self.levels.update(answer, tick)  # after the schedule watch's update: a store that raises never skips it
         changed = self._schedule_tick(tick, clock)
         fresh = [i for i in items if i.news_id not in self.seen]
         if fresh:
@@ -303,6 +318,26 @@ class NewsSentinel:
         if fresh or changed:
             self._write()
         return fresh
+
+    def _matrix_tick(
+        self, tick: int, events: Sequence[Mapping[str, Any]], catalog: Mapping[str, Any], market: Any, us: str | None
+    ) -> None:
+        """Rebuild the team matrix once per read window, on the tick its last read (the leaderboard) is done or the
+        window ended early on a failed read, and hand it to the store's background writer; never raises."""
+        due = self.matrix is None or tick - self.matrix.tick >= self.every
+        if not due or self._due:  # the window's reads are still running: wait for the leaderboard
+            return
+        try:
+            self.matrix = build_matrix(
+                tick, us or str(getattr(market, "us", "") or ""), catalog, getattr(market, "supply", None),
+                getattr(market, "held", {}), getattr(market, "released", ()), getattr(market, "chasers", {}),
+                self.ranks.trail, events,
+            )  # fmt: skip
+        except Exception as e:  # noqa: BLE001 — the matrix is advice: a bug in it never costs the tick
+            self._once(f"tick {tick} team matrix: skipped ({type(e).__name__})")
+            return
+        if self.matrix_store is not None:
+            self.matrix_store.save_later(self.matrix)  # its own thread: a hung link never holds the taker
 
     def _schedule_tick(self, tick: int, clock: Any) -> bool:
         t_hours, seconds = getattr(clock, "t_hours", None), getattr(clock, "tick_seconds", None)

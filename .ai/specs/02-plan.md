@@ -116,6 +116,7 @@ negotiates well.
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N19 (new) | **P1 · Persona model**: each dealer's published traits, menu and unlock rules (`/api/dealers`) become negotiation params (`persona_model.py`); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in `traders`; flag `persona_model_enabled`; spec [`N19-spec.md`](./N19-spec.md) | 1 → 2 | 🔵 PR open |
+| N20 (new) | Team matrix in the sentinel: every team × card (holds, spare, missing for a near page) and per-team rank, trend, rival, wants, has-for-us; stored in `team_matrix` + `team_matrix_summary`; fed to the decider states of accepts, team swaps and our asks (`market_teams`) | 2 | 🔵 PR #225 |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
@@ -130,6 +131,9 @@ negotiates well.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
+| TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
+| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
 | [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
@@ -556,6 +560,71 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
   tests/test_strategy_gate.py (maker section).
 - Step 5 — (c) market creation on v19: ❌ not built. RULES.md "You cannot trade on your own venue with your team
   key" (the simulator refuses it `self_venue`, 403), so our own asks cannot be posted on v19.
+- Step 6 — risk posture: `risk_posture` (GUARDRAILS.md) in every strategy state; guardrail review re-run with it
+  plus `duplicates_reserve_choice`, `close_v19_choice`, `podium_venue_rule_choice` (all undecided or keep).
+- Step 7 — dealer memory (`agents/dealer_memory.py`, `learn/etiquette.py`): newest 5 behaviour/lesson learnings +
+  last 3 dealer texts in the dealer_open row and the words (Jev gets lessons, flags and counts only, never dealer
+  text or etiquette rows); address from etiquette learnings, then DEALER_NAMES, then the persona name. · **Acceptance:** tests/test_dealer_memory.py, test_etiquette.py.
+- Step 8 — no `reciprocity` tactic for dealers; a sell thread holds at its floor while her bid still rises.
+  · **Acceptance:** tests/test_tactics_reciprocity.py, tests/test_dealer_sell_hold.py.
+
+### LD1 — BAZAAR_DECIDER: Claude Opus instead of Jev, behind an env switch ([spec](LD1-spec.md))
+- Step 1 — `jev/decider.py` (switch, timeout, `needed_budget_s`) and the `judge()` branch. · **Acceptance:** unset
+  asks Jev only; `llm` never calls TypeSafe (tests/jev/test_decider.py).
+- Step 2 — `llm/decider.py`: masked prompt, structured answers in Jev's shape, cache, call cap, timeout. ·
+  **Acceptance:** verdict parity and failure tests.
+- Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
+  **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
+### AF1 — Ask other teams their multipliers (said vs inferred)
+Spec: `.ai/specs/AF1-spec.md`. Files: `team_affinity.py` (new), `agents/team_desk.py`, `agents/taker.py`, `cli.py`,
+`render.py`, `sql/schema.sql`, `tests/test_team_affinity.py`, `tests/test_readonly_user.py`.
+- Step 1 — parser + rows + table/view. · **Acceptance:** parser cases, upsert never backwards, board view (tests).
+- Step 2 — the desk asks once per team per day in its first message, parses replies, writes inferred every 10 ticks
+  off the tick. · **Acceptance:** desk tests (offer unchanged, once per day, told teams not asked).
+- Step 3 — `bazaar affinity --teams` read-only. · **Acceptance:** CLI tests; read-only role test.
+
+### N20 — Team matrix in the sentinel, fed to the negotiators
+Spec: Omar via the lead (2026-10-03 18:00): "the sentinel MUST know the entire matrix of teams and let the negotiators
+know". Inputs already in the taker (no request): the supply map (feed + scan + /me), the rank watch's leaderboard
+snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_store.py`, `news.py`,
+`agents/{taker,team_desk,maker}.py`, `cli.py`, `sql/schema.sql`, `tests/test_team_matrix{,_store}.py`.
+- Step 1 — `team_matrix.build_matrix`: per team × card holds / spare / missing on a page close to complete (≤ 2
+  missing, ≥ 70 % held), with a confidence; per team rank, trend, top set, venue, last trades, podium rival,
+  wants, has_for_us. · **Acceptance:** `tests/test_team_matrix.py`.
+- Step 2 — tables `team_matrix`, `team_matrix_summary` (per world), granted to every read-only role; the taker's
+  sentinel rebuilds and stores it once per 10-tick window. · **Acceptance:** `tests/test_team_matrix_store.py`.
+- Step 3 — negotiators: `market_teams` (counterparty row + top-5 teams per card holding it spare / missing it) in
+  the decider states of board and dealer accepts (taker), team swaps (team desk, plus the plan rows), and our asks
+  (maker, from the stored matrix). No price or guardrail change. · **Acceptance:** `tests/test_team_matrix.py`.
+
+### RB1 / TF1 — rival blocklist for the team desk + a trickster's FINAL is not its limit (Sat 3 Oct, urgent)
+- RB1 — `team_desk_never_trade` (GUARDRAILS.md: t05,t10,t12,t13,t14,t17,t18): the team desk never plans, opens,
+  proposes to or accepts from these teams (Opus proposed SAL-03 to t17 at tick 814). · **Acceptance:**
+  tests/test_team_desk_blocklist.py.
+- TF1 — `agents/trickster.py`: a dealer of published kind `trickster` (Los Pícaros) has its FINAL read as a plain
+  ask; no accept at or above its list price, only at or under its lowest fill + `trickster_accept_fill_share` of its
+  fill range (none seen: only bid), on every accept path (decide, meet_ask, Jev early accept, restart adoption,
+  `dealer buy`). Abuela publishes strictness 0.1 but her FINAL is real: `trickster_max_strictness` ships at 0.
+  · **Acceptance:** tests/test_trickster_final.py.
+- SG1 follow-ups (pr-reviewer on #212): a `ladder_probe_enabled` kill flag; mark a probe and write its row when it
+  opens, not when it is planned. ❌ not done yet.
+
+### MI1 — Move impact: score cost of a sale, swap or buy, and a guard on it ([spec](MI1-spec.md))
+- Step 1 — `move_impact.py` (pure: origins from the tape, k from our snapshots, the estimate) · **Acceptance:**
+  tests/test_move_impact.py (incident replay −4.7 ± 0.5).
+- Step 2 — `impact_board.py` + `guardrails.check()` rule `max_score_loss_per_move` (approval override, fail closed)
+  and `asset=` on every sale path · **Acceptance:** tests/test_impact_guard.py.
+- Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
+  tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
+
+### SA1 — Sentinel autonomy: the Workshop, dealer sells on news, levels to agents ([spec](SA1-spec.md))
+- Step 1 — `level_watch.py` in the news sentinel: a learnings row per level going active / open to all; the taker
+  asks `active("taller")` · **Acceptance:** tests/test_level_watch.py.
+- Step 2 — dealer sell desk readiness (ladder level ranking, trickster finals, busy thread copies; switch stays
+  off) · **Acceptance:** tests/test_dealer_sell_readiness.py.
+- Step 3 — the Workshop: `agents/taller.py`, `guardrails.check` action `taller` (`taller_enabled` false,
+  `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
+  **Acceptance:** tests/test_taller.py; full gate + sim smoke.
 
 ## Parallel-work notes
 

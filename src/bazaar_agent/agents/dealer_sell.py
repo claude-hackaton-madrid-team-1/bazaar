@@ -68,13 +68,25 @@ class SellNegotiation:
     awaiting_reply: bool = False  # the thread's last message is ours
     waits: int = 0
     waited_after: int = 0
+    bids_by_offer: dict[int, int] = field(default_factory=dict)  # her structured bids, by offer id
+    hold_offer: int | None = None  # the rising bid we hold our floor ask against
+    holds: int = 0  # ticks held on `hold_offer`
 
-    def see_bid(self, bid: int | None) -> None:
+    def see_bid(self, bid: int | None, offer_id: int | None = None) -> None:
         if bid is None:
             return
+        if offer_id is not None:
+            self.bids_by_offer[offer_id] = bid
         if self.opening_bid is None:
             self.opening_bid = bid
         self.highest_bid = bid if self.highest_bid is None else max(self.highest_bid, bid)
+
+    def rising(self, offer_id: int | None) -> bool:
+        """Her bid in `offer_id` is above every bid she made before it (offer ids grow): she came up with it.
+        A repeat of her bid, or a first bid, is not rising."""
+        bid = self.bids_by_offer.get(offer_id) if offer_id is not None else None
+        earlier = [b for oid, b in self.bids_by_offer.items() if offer_id is not None and oid < offer_id]
+        return bid is not None and bool(earlier) and bid > max(earlier)
 
     @property
     def came_up(self) -> bool:
@@ -109,6 +121,23 @@ def _patient(neg: SellNegotiation, reason: str) -> Move | None:
     return None
 
 
+def _hold_at_floor(neg: SellNegotiation, offer_id: int | None) -> Move | None:
+    """Our ask sits at our floor and her bid below it is still RISING (she came up with her newest offer): hold,
+    at most `MAX_WAITS` ticks per rising offer, rather than walk from a final that may land at or above the floor
+    (Sat 3 Oct: Pilar's SAL-10 finals 65, 68, 69, 71 against our walks 2-3 P from the floor). Our floor is already
+    our last ask, and re-sending it is spam (Day-2 hint; RULES.md: "repeating the same price earns no concession"),
+    so we wait. She repeated her bid, or held one rising bid `MAX_WAITS` ticks: None (walk)."""
+    if neg.awaiting_reply or offer_id is None or not neg.rising(offer_id):
+        return None
+    if neg.hold_offer != offer_id:
+        neg.hold_offer, neg.holds = offer_id, 0
+    if neg.holds >= MAX_WAITS:
+        return None
+    neg.holds += 1
+    bid = neg.bids_by_offer[offer_id]
+    return Move("wait", reason=f"her bid {bid} is still rising: our floor ask {neg.plan.floor} stands")
+
+
 def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     """Her bid meets our next ask but she has not come up from her opening: ask strictly above it (an ask at
     her bid would close at her opening price) and strictly below our last ask. An opening bid at or above our
@@ -123,10 +152,27 @@ def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     return Move("bid", price, reason=f"counter above her unraised bid {bid}")
 
 
-def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool, final_min: int = 0) -> Move:
+TRICKSTER_KINDS = frozenset({"trickster"})  # `/api/dealers` kinds whose "final" is no limit (Los Pícaros: bad faith)
+
+
+def is_trickster(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() in TRICKSTER_KINDS
+
+
+def decide_sell(
+    neg: SellNegotiation,
+    bid: int | None,
+    offer_id: int | None,
+    final: bool,
+    final_min: int = 0,
+    kind: str = "dealer",
+) -> Move:
     """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask.
-    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`)."""
-    neg.see_bid(bid)
+    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`).
+    `kind` (`/api/dealers`): a trickster's FINAL is no limit, so it reads as an ordinary bid (never taken, nor
+    walked from, because it says final)."""
+    final = final and not is_trickster(kind)
+    neg.see_bid(bid, offer_id)
     if final and bid is not None and bid < final_min:
         return Move("walk", reason=f"her final {bid} is below {final_min} (share of our first ask)")
     if bid is None and neg.asks and neg.opening_bid is None:
@@ -142,9 +188,11 @@ def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, fin
             return _counter_above(neg, bid)
         if final:
             return Move("walk", reason=f"her final {bid} is below our floor {neg.plan.floor}")
-    if nxt is None:
-        return _patient(neg, "her answer to our lowest ask is not in yet") or Move(
-            "walk", reason="no lower ask left above our floor"
+    if nxt is None:  # our last ask is the floor
+        return (
+            _patient(neg, "her answer to our lowest ask is not in yet")
+            or _hold_at_floor(neg, offer_id)
+            or Move("walk", reason="no lower ask left above our floor")
         )
     low = neg.ask_floor()
     if low is not None and nxt < low:
@@ -168,9 +216,10 @@ def ask_schedule(plan: AskPlan) -> list[int]:
     return out
 
 
-def sell_words(step: int, price: int, dealer: str = "") -> str:
-    """Kind, varied words for an ask. The structured price is what binds; the text never changes it."""
-    name = DEALER_NAMES.get(dealer, "")
+def sell_words(step: int, price: int, dealer: str = "", name: str | None = None) -> str:
+    """Kind, varied words for an ask. The structured price is what binds; the text never changes it.
+    `name` (the address from `dealer_memory.address_for`) overrides `DEALER_NAMES`."""
+    name = DEALER_NAMES.get(dealer, "") if name is None else name
     return with_name(SELL_WORDS[step % len(SELL_WORDS)], price, name)
 
 
@@ -211,7 +260,8 @@ def see_bids(neg: SellNegotiation, thread: dict[str, Any], dealer: str, asset_id
     for m in messages:
         o = m.get("offer")
         if isinstance(o, dict) and o.get("maker") == dealer and sell_offer_problem(o, asset_id) is None:
-            neg.see_bid(whole_primas((o.get("give") or {}).get("cash")))
+            oid = o.get("id")
+            neg.see_bid(whole_primas((o.get("give") or {}).get("cash")), oid if isinstance(oid, int) else None)
     senders = [m.get("sender") for m in messages if m.get("sender")]
     neg.awaiting_reply = bool(senders) and senders[-1] != dealer
 
@@ -300,13 +350,15 @@ def negotiate_sell(
     on_deal: DealHook | None = None,
     on_move: MoveHook | None = None,
     on_thread: Callable[[dict[str, Any]], None] | None = None,
+    kind: str = "dealer",
 ) -> Outcome:
     """Open one sell thread and play it out, one message per tick (`run_per_tick`). Returns when it closes
     or times out (then the thread is closed). The kill switch holds (nothing sent, the tick does not count),
     `guard` may deny an ask or an accept (the move becomes a walk), `Hold` from it or from `reserve` holds the
     tick, `inspect` (S1) may refuse an accept (no accept this tick, never a walk), and `reserve` claims the
     team's accept slot: a taken slot sends nothing this tick. `on_thread` (the inspector's would-flag log) sees
-    each tick's thread first; it never changes the move and its failures are logged, not raised."""
+    each tick's thread first; it never changes the move and its failures are logged, not raised. `kind`: the
+    dealer's `/api/dealers` kind (a trickster's final is read as an ordinary bid, `decide_sell`)."""
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
@@ -371,7 +423,7 @@ def negotiate_sell(
             return
         bid, offer_id, final = latest_dealer_bid(thread, dealer, asset_id)
         see_bids(neg, thread, dealer, asset_id)
-        move = decide_sell(neg, bid, offer_id, final)
+        move = decide_sell(neg, bid, offer_id, final, kind=kind)
         if action_budget_s(clock) <= 0:
             log(f"tick {clock.tick}: no budget left in this tick, deciding next tick")
             return

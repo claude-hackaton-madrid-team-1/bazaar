@@ -281,7 +281,8 @@ class RankWatch:
     ) -> None:
         self.record, self.log, self.us = record, log, us
         self.window, self.min_jump, self.history = window_ticks, min_jump, max(history_ticks, window_ticks)
-        self.snapshots: dict[str, list[Standing]] = {}
+        self.snapshots: dict[str, list[Standing]] = {}  # the climb bases (reset once a climb is said)
+        self.trail: dict[str, list[Standing]] = {}  # every board per team in the history window (never reset)
         self.seen_ticks: set[int] = set()
         self._failed: set[str] = set()
         self.save = save  # each new board, e.g. into Postgres `leaderboard_snapshots` (`leaderboard_store`)
@@ -337,11 +338,11 @@ class RankWatch:
     def _keep(self, rows: Sequence[Standing], now: int) -> None:
         cutoff = now - self.history
         self.seen_ticks = {t for t in self.seen_ticks if t >= cutoff} | {now}
-        for row in rows:
-            history = [s for s in self.snapshots.get(row.team, []) if s.tick >= cutoff]
-            self.snapshots[row.team] = [*history, row]
-        for team in [t for t, h in self.snapshots.items() if not h or h[-1].tick < cutoff]:
-            del self.snapshots[team]
+        for kept in (self.snapshots, self.trail):
+            for row in rows:
+                kept[row.team] = [*(s for s in kept.get(row.team, []) if s.tick >= cutoff), row]
+            for team in [t for t, h in kept.items() if not h or h[-1].tick < cutoff]:
+                del kept[team]
 
     def _once(self, line: str) -> None:
         key = line.split(": ", 1)[-1]

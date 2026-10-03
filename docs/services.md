@@ -21,6 +21,31 @@ at once (`railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`; each s
 then `railway variable delete BAZAAR_LIVE --service bazaar-taker` (it redeploys in dry run). Neither
 withdraws our open offers: `bazaar sell cancel` does (README, "Production on Railway").
 
+## One key, staggered ticks (`BAZAAR_TICK_OFFSET_S`)
+
+All our processes share the key's 5 req/s (bursts of 20). On Sat ticks 646-650 the taker, maker, duels and
+MCP loops all read at the tick boundary and the server answered `429 rate_limited` (`tick 647 maker: read
+refused rate_limited … nothing sent`; `tick 646: /api/duels refused rate_limited`, a lost duel tick). Each
+tick loop (`ticks.run_per_tick`) therefore wakes `BAZAAR_TICK_OFFSET_S` seconds after each tick: a float,
+default 0 (unset = everyone at the boundary), capped at 10 s and at 40 % of the tick so a 15 s Sunday tick
+still keeps 9 s for its work. Not a number ≥ 0: the process stops at start and says so.
+
+| Service | Offset (s) | Order |
+|---|---|---|
+| `bazaar-duels` | 0 | first: duels have deadlines |
+| `bazaar-taker` | 2.5 | after the duels' reads |
+| `bazaar-maker` | 5 | never accepts |
+| `bazaar-mcp` | 7.5 | request-driven tools; inert unless it runs a tick loop |
+
+Set by hand (`railway variable set BAZAAR_TICK_OFFSET_S --service <svc>`), with the coordinator; the variable is
+declared `preserve()` in `.railway/railway.py`, so an apply keeps it. `bazaar budget --stagger` models the burst
+with these offsets (`rate_budget.PROPOSED_STAGGER`).
+
+A `429` on `duel run`'s `/api/duels` read is sent once more after the server's wait (`retry_after` in the body,
+else 1.2 s), only while at least 8 s of the tick's action budget is left after that wait; a second refusal loses
+the tick as before. No other read re-sends a 429 (`sdk.TeamBazaar`). **Laptop CLI commands use the same key: run
+one at a time.**
+
 ## Taker and maker: HTTP
 
 Both services serve the same three routes (CORS `*`, `GET` only).
@@ -197,6 +222,32 @@ later, wins; a row never moves backwards. `holdings_state` (one row per world, k
 `set_name`, `name`, `rarity`, `book`, `print_run`, `minted`, `released`, `page`, `hidden`, `updated_tick`.
 The evals' `snapshots` (one row per tick) follows the winning `me_snapshots` row of the real game (or of a
 simulator in its own database).
+
+## Other teams' multipliers (Postgres, AF1)
+
+`team_affinity` (key `(team, set_code, source)`): `multiplier`, `source` (`said` | `inferred`), `confidence`,
+`tick`, `thread_id`, `quote`, `updated_at`. **said**: what a team wrote in a team thread, parsed from untrusted
+words (`team_affinity.parse`; confidence 0.5, 0.25 with an injection shape); `quote` is their message, scrubbed and
+cut to 200 characters. Words may lie: nothing reads these rows back into a decision. **inferred**: one consistent
+assignment per team from the rival affinity map, with each set's probability, every 10 ticks (teams with no signal
+have no rows). The taker's team desk writes both off the tick, and asks each team once per game day (`round`) in its
+first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / By the way, which set is your ×1.6?".
+`team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
+through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
+
+## Rival board (Postgres, RV1)
+
+`rival_board` (a view, one row per OTHER team; `sql/schema.sql`): `team, tick, rank, score, negotiating, market, level,
+pages, deals, venue, rank_change, score_change, trend_ticks, trend, our_team, our_rank, our_score, our_negotiating,
+our_market, our_pages, dealer_deals, venue_trades, top_set, set_interest, strengths, weaknesses, they_want, they_have,
+we_have_for_them, they_have_for_us, match_count, guarded, guard_reason, move_kind, move_give, move_get, move_price,
+our_gain, their_gain, suggested_move, why_climbed, why_climbed_tick`, in that order: bazaar-live's
+`db/rival_board.sql` passes exactly these through `show.rival_board`, so a new column goes last and a changed type
+needs both repos. Gains are estimates (their side at book × the top multiplier, our fee on bids and asks we take).
+Read-only (DataGrip `bazaar_team_ro`); private (our spares and moves), so bazaar-live serves it only behind
+`GAME_VIEW_TOKEN`. `init_schema` replaces it only when `board_version` (its comment) is newer, with a 2 s lock wait,
+and a failure only logs `schema: rival_board vN not applied (...)`. Any function the view calls runs as the caller
+(`bazaar_live_reader` holds no table grant): keep it plain SQL.
 
 ## Evals scorecard (Postgres)
 

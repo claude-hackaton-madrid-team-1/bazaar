@@ -129,6 +129,10 @@
           "mark": "✓"
         },
         {
+          "text": "team matrix → negotiators (#225)",
+          "mark": "✓"
+        },
+        {
           "text": "bazaar-live: agent screen fixed (#19)",
           "mark": "✓"
         },
@@ -292,6 +296,11 @@
         },
         {
           "text": "outcomes + scorecard",
+          "mark": "◑",
+          "note": true
+        },
+        {
+          "text": "team_affinity: said vs inferred (AF1)",
           "mark": "◑",
           "note": true
         }

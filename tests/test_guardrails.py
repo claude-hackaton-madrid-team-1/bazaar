@@ -40,7 +40,7 @@ def test_price_caps_cash_floor_spend_cap_and_album():
     assert gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), rules).allowed
     assert "max_price_common" in str(gr.check(gr.Action("bid", "LAV-03", "common", 13), ctx(), rules))
     assert "cash_floor" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=150), rules))
-    assert "max_spend" in str(gr.check(gr.Action("buy", "LAV-03", "common", 9), ctx(spent_last_hour=145), rules))
+    assert "max_spend" in str(gr.check(gr.Action("buy", "LAV-03", "common", 9), ctx(spent_last_hour=245), rules))
     assert "already hold LAV-01" in str(gr.check(gr.Action("buy", "LAV-01", "common", 5), ctx(), rules))
 
 
@@ -51,7 +51,7 @@ def test_kill_switch_accept_quota_sells_and_flags():
     assert not gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), off).allowed
     assert "accept(s) already" in str(gr.check(gr.Action("duel_accept", "7"), ctx(accepts_this_tick=1), rules))
     assert "your_value" in str(gr.check(gr.Action("sell", "LAT-09", "rare", 30, your_value=35.0), ctx(), rules))
-    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(), rules).allowed
+    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 2}), rules).allowed
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))
 
 
@@ -101,19 +101,22 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
 VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
 
 
-def test_the_committed_file_runs_our_venue_with_a_50_floor_and_holds_no_reserve_once_it_is_open():
+def test_the_committed_file_runs_our_venue_with_a_5_floor_and_holds_no_reserve_once_it_is_open():
     """Our venue v19 opened Sat 3 Oct at game hour 3.5 (allow_venue_open = true from 3.0); cash_floor then went
-    100 -> 50 so the taker can buy again. With our venue open the floor is `cash_floor` alone; without one (the
-    starter stall does not count) every purchase would still keep `cash_floor` + `venue_bond_reserve`."""
+    100 -> 50 so the taker can buy again, 50 -> 20 (with max_spend_per_game_hour 150 -> 250) at ~16:35 by
+    team decision, and 20 -> 5 at ~17:20 (Opus decider, to unblock LAV-10 from Los Pícaros). With our venue
+    open the floor is `cash_floor` alone; without one (the starter stall does not
+    count) every purchase would still keep `cash_floor` + `venue_bond_reserve`."""
     rules = REAL.rules
     assert rules.allow_venue_open is True
-    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (50, 270, 3.0)
+    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (5, 270, 3.0)
+    assert rules.max_spend_per_game_hour == 250
     opened = ctx(cash=119, has_venue=True)
-    assert gr.effective_cash_floor(rules, opened) == 50 and gr.floor_text(rules, opened) == "cash_floor 50"
-    buy = gr.Action("buy", "LAV-09", "rare", 22)
-    assert gr.check(buy, opened, rules).allowed  # 119 - 22 = 97: refused at the old 100 floor
-    assert "cash 119 - 70 < cash_floor 50" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 70), opened, rules))
-    assert gr.effective_cash_floor(rules, ctx(cash=400)) == 320  # no venue of ours: 50 + 270
+    assert gr.effective_cash_floor(rules, opened) == 5 and gr.floor_text(rules, opened) == "cash_floor 5"
+    buy = gr.Action("buy", "LAV-09", "rare", 92)
+    assert gr.check(buy, opened, rules).allowed  # 119 - 92 = 27: refused at the old 50 floor
+    assert "cash 119 - 115 < cash_floor 5" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 115), opened, rules))
+    assert gr.effective_cash_floor(rules, ctx(cash=400)) == 275  # no venue of ours: 5 + 270
     assert gr.Guardrails().allow_venue_open is False  # the model's default stays off: only the file turns it on
 
 

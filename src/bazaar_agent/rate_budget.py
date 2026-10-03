@@ -184,8 +184,8 @@ PROPOSED_STAGGER: dict[str, float] = {
     "monitor": 0.5,
     "broker": 0.5,
     "dealer buy": 1.0,
-    "taker": 2.0,
-    "maker": 4.0,
+    "taker": 2.5,
+    "maker": 5.0,
 }
 
 

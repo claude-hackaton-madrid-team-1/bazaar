@@ -349,6 +349,314 @@ create table if not exists leaderboard_snapshots (
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
 
+-- Other teams' set multipliers (AF1, `team_affinity.py`): what a team SAID in a team thread (untrusted words,
+-- parsed; `quote` is their scrubbed message, at most 200 characters) and what we INFERRED from the feed
+-- (`affinity.affinity_map`: the likeliest multiplier and its probability). One row per team, set and source.
+create table if not exists team_affinity (
+  team text not null, set_code text not null, multiplier numeric not null,
+  source text not null check (source in ('said','inferred')), confidence numeric, tick int not null,
+  thread_id bigint, quote text check (char_length(quote) <= 200), updated_at timestamptz not null default now(),
+  primary key (team, set_code, source));
+-- DataGrip and bazaar-live: per team and set, the stated multiplier beside the inferred one.
+create or replace view team_affinity_board as
+  select coalesce(s.team, i.team) as team, coalesce(s.set_code, i.set_code) as set_code,
+         s.multiplier as said, s.confidence as said_confidence, s.tick as said_tick, s.thread_id, s.quote,
+         i.multiplier as inferred, i.confidence as inferred_confidence, i.tick as inferred_tick
+  from (select * from team_affinity where source = 'said') s
+  full join (select * from team_affinity where source = 'inferred') i
+    on i.team = s.team and i.set_code = s.set_code;
+
+-- The team matrix (`team_matrix.py`, kept by `team_matrix_store.py`): every team × card we can place and one
+-- summary per team, as the news sentinel last built them. A save replaces its world's rows in one transaction, so
+-- each world holds exactly one matrix. `world`: "real" or "sim:<host:port>", as `me_snapshots`.
+create table if not exists team_matrix (
+  world text not null, team text not null, card text not null, holds int not null, spare int not null,
+  missing_for_page bool not null, page_have int, page_of int, confidence numeric, tick int not null,
+  primary key (world, team, card));
+create table if not exists team_matrix_summary (
+  world text not null, team text not null, rank int, score numeric, trend int, top_set text, venue text,
+  rival bool not null, rival_why text, wants text, has_for_us text, last_trades text, us text, tick int not null,
+  primary key (world, team));
+
+-- The read-only logins (`readonly_user.sql`) read the matrix: granted ONCE, to every role that reads our private
+-- `decisions` table (never the public feed's readers), then the table is marked so a later deliberate REVOKE stays
+-- revoked (`readonly_user.sql` re-run grants it again on purpose). A grant that fails or times out is a notice:
+-- it never stops a process from starting.
+do $$
+declare
+  r record;
+begin
+  if coalesce(obj_description(to_regclass(format('%I.team_matrix_summary', current_schema())), 'pg_class'), '')
+     = 'read-only grants made' then
+    return;
+  end if;
+  for r in
+    select distinct g.grantee::text as role from information_schema.role_table_grants g
+     where g.table_schema = current_schema() and g.table_name = 'decisions' and g.privilege_type = 'SELECT'
+       and g.grantee::text not in (current_user::text, 'PUBLIC')
+  loop
+    execute format('grant select on %I.team_matrix, %I.team_matrix_summary to %I',
+                   current_schema(), current_schema(), r.role);
+  end loop;
+  execute format('comment on table %I.team_matrix_summary is %L', current_schema(), 'read-only grants made');
+exception when query_canceled or others then
+  raise notice 'team matrix grants skipped (%)', sqlerrm;
+end $$;
+
+-- Rival board (bazaar-live's Rivals tab, DataGrip): one row per OTHER team, read-only, from what we already store:
+-- the leaderboard history, our latest /me, the catalog, the board (feed `offer.listed`, `offer.cancelled`), the tape,
+-- competitor_profiles and the rank watch's `rival_move` learnings. "They want": cards a team bid cash for (or asked for
+-- in a swap) in the last 60 feed ticks and has not bought since; "they have": copies it asked cash for (or gave in a
+-- swap) in that window and has not sold since. A price comes only from a listing still live (not lapsed, not cancelled,
+-- open to anyone or to us). Values are estimates: a page card we miss is worth book × our set multiplier to us, one of
+-- our spare copies its `your_value` (a copy in an open offer of ours is not spare); a card a team wants is worth book ×
+-- the highest multiplier to it (every team has the same six multipliers, shuffled; page bonuses are unknown), a copy it
+-- lists nothing. Accepting their bid or ask, we pay the venue's fee, ceil(price × bps / 10000 + per card): El Rastro's
+-- 500 bps + 1 P, any other venue at the caps (1000 bps + 5 P); a swap we offer is accepted, and paid, by them (as
+-- agents/market.py prices fees). The move never gives value away (our gain > 0) and never helps a guarded
+-- team (top 5, within 3 ranks of us, or any team while our rank is unknown) unless our gain is at least twice theirs.
+-- Every feed field is hostile: shapes are checked, refs must be catalog cards, cash outside [0, 100000) drops a listing.
+--
+-- Replaced only when this version is newer than the one stored in the view's comment, with a short lock wait, and never
+-- fatally: an older checkout, bazaar-live's dependent show view blocking a column change, or a reader holding the view
+-- only leaves a warning and the previous definition, and init_schema (the ledger's start) goes on. Bump `board_version` with
+-- every change; new columns go last (`create or replace view` only appends).
+do $do$
+declare
+  board_version constant int := 2;
+  stored int := coalesce(substring(obj_description(to_regclass(format('%I.rival_board', current_schema())), 'pg_class')
+                                   from '^rival_board v(\d{1,9})$')::int, 0);
+begin
+  if stored >= board_version then
+    return;
+  end if;
+  begin
+    perform set_config('lock_timeout', '2s', true);
+    execute $view$
+create or replace view rival_board as
+with lb as (
+  select max(tick) as tick from leaderboard_snapshots where world = 'real'
+), board as (
+  select l.* from leaderboard_snapshots l join lb on l.tick = lb.tick where l.world = 'real'
+), me as (
+  select s.team, s.cards, s.affinity from me_snapshots s where s.world = 'real' order by s.tick desc, s.read_at desc limit 1
+), our_id as (
+  select coalesce((select team from me), (select t.id from traders t where t.status = 'us' order by t.id limit 1)) as team
+), us as (
+  select b.* from board b join our_id o on o.team = b.team
+), top_mult as (
+  -- the highest set multiplier: what a card is worth at most to the team that chases its set
+  select greatest(coalesce(max(case when jsonb_typeof(e.v) = 'number' then (e.v #>> '{}')::numeric end), 1), 1) as m
+    from me cross join lateral jsonb_each(case when jsonb_typeof(me.affinity) = 'object' then me.affinity else '{}'::jsonb end) e(k, v)
+), trend as (
+  select l.team, jsonb_agg(jsonb_build_object('tick', l.tick, 'rank', l.rank, 'score', l.score) order by l.tick) as points,
+         (array_agg(l.tick order by l.tick))[1] as first_tick, (array_agg(l.rank order by l.tick))[1] as first_rank,
+         (array_agg(l.score order by l.tick))[1] as first_score
+    from leaderboard_snapshots l join lb on l.tick between lb.tick - 60 and lb.tick
+   where l.world = 'real'
+   group by l.team
+), now_tick as (
+  select coalesce((select max(f.tick) from feed_events f), (select tick from lb)) as tick
+), cancelled as (
+  select distinct case when jsonb_typeof(c.payload -> 'offer') = 'number' then (c.payload ->> 'offer')::numeric end as offer_id
+    from feed_events c cross join now_tick n
+   where c.type = 'offer.cancelled' and c.tick >= n.tick - 60
+), listing as (
+  select e.id, e.tick, o ->> 'maker' as team,
+         case when jsonb_typeof(o -> 'id') = 'number' then (o ->> 'id')::numeric end as offer_id,
+         case when jsonb_typeof(o -> 'expires_tick') = 'number' then (o ->> 'expires_tick')::numeric end as expires_tick,
+         case when jsonb_typeof(o -> 'to') = 'string' then o ->> 'to' end as to_team,
+         case when jsonb_typeof(o -> 'venue') = 'string' then o ->> 'venue' end as venue,
+         case when jsonb_typeof(o -> 'give' -> 'assets') = 'array' then o -> 'give' -> 'assets' else '[]'::jsonb end as gives,
+         case when jsonb_typeof(o -> 'want' -> 'types') = 'array' then o -> 'want' -> 'types' else '[]'::jsonb end as wants,
+         case when jsonb_typeof(o -> 'give' -> 'cash') = 'number' then (o -> 'give' ->> 'cash')::numeric end as give_cash,
+         case when jsonb_typeof(o -> 'want' -> 'cash') = 'number' then (o -> 'want' ->> 'cash')::numeric end as want_cash
+    from feed_events e
+   cross join lateral (select e.payload -> 'offer' as o) x
+   where e.type = 'offer.listed' and jsonb_typeof(x.o) = 'object' and e.tick >= (select tick from now_tick) - 60
+), still_open as (
+  -- an absurd amount of cash on either side makes the whole listing noise; `open`: not lapsed, not cancelled
+  select l.*,
+         (l.expires_tick is null or l.expires_tick > (select tick from now_tick))
+         and not exists (select 1 from cancelled c where c.offer_id = l.offer_id) as open,
+         case when l.venue = 'rastro' then 500 else 1000 end as fee_bps,
+         case when l.venue = 'rastro' then 1 else 5 end as fee_per_card
+    from listing l
+   where coalesce(l.give_cash, 0) >= 0 and coalesce(l.give_cash, 0) < 100000
+     and coalesce(l.want_cash, 0) >= 0 and coalesce(l.want_cash, 0) < 100000
+), listed as (
+  -- `live`: open to anyone or to us, so its price can still be taken by us; the fee we would pay to take it
+  select l.*, l.open and (l.to_team is null or l.to_team = (select team from our_id)) as live,
+         ceil(coalesce(l.give_cash, 0) * l.fee_bps / 10000.0 + l.fee_per_card - 1e-9) as bid_fee,
+         ceil(coalesce(l.want_cash, 0) * l.fee_bps / 10000.0 + l.fee_per_card - 1e-9) as ask_fee
+    from still_open l
+), committed as (
+  -- our own copies in an open offer of ours (an ask, a swap, to anyone): not spare while it stands
+  select a ->> 'ref' as ref, count(*) as n
+    from listed l cross join lateral jsonb_array_elements(l.gives) a
+   where l.open and l.team = (select team from our_id) and jsonb_typeof(a) = 'object'
+   group by a ->> 'ref'
+), wanted as (
+  -- a bid (cash for card:X) or a swap (a copy for card:X); the price is the latest live cash bid for X
+  select l.team, substr(t.ref, 6) as ref, max(l.tick) as tick,
+         (array_agg(l.give_cash order by l.tick desc, l.id desc)
+            filter (where l.live and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
+                      and l.give_cash > 0))[1] as price,
+         (array_agg(l.bid_fee order by l.tick desc, l.id desc)
+            filter (where l.live and jsonb_array_length(l.gives) = 0 and jsonb_array_length(l.wants) = 1
+                      and l.give_cash > 0))[1] as fee
+    from listed l cross join lateral jsonb_array_elements_text(l.wants) t(ref)
+   where t.ref like 'card:%'
+   group by l.team, substr(t.ref, 6)
+), wants_open as (
+  select w.* from wanted w join cards k on k.id = w.ref
+   where not exists (select 1 from tape t where t.buyer = w.team and t.card_id = w.ref and t.tick >= w.tick)
+), offered as (
+  -- an ask (a copy for cash) or a swap (a copy for card:Y); the price is the latest live cash ask for that card
+  select l.team, a ->> 'ref' as ref, max(l.tick) as tick,
+         (array_agg(l.want_cash order by l.tick desc, l.id desc)
+            filter (where l.live and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
+                      and l.want_cash > 0))[1] as price,
+         (array_agg(l.ask_fee order by l.tick desc, l.id desc)
+            filter (where l.live and jsonb_array_length(l.gives) = 1 and jsonb_array_length(l.wants) = 0
+                      and l.want_cash > 0))[1] as fee
+    from listed l cross join lateral jsonb_array_elements(l.gives) a
+   where jsonb_typeof(a) = 'object'
+   group by l.team, a ->> 'ref'
+), haves_open as (
+  select h.* from offered h join cards k on k.id = h.ref
+   where not exists (select 1 from tape t where t.seller = h.team and t.card_id = h.ref and t.tick >= h.tick)
+), ours as (
+  select c ->> 'ref' as ref, count(*) as copies,
+         min(case when jsonb_typeof(c -> 'your_value') = 'number' then (c ->> 'your_value')::numeric end) as value
+    from me cross join lateral jsonb_array_elements(case when jsonb_typeof(me.cards) = 'array' then me.cards else '[]'::jsonb end) c
+   where jsonb_typeof(c) = 'object' and c ->> 'ref' is not null
+   group by c ->> 'ref'
+), missing as (
+  -- page cards of a released set we hold no copy of, at book × our multiplier for the set
+  select k.id as ref,
+         round(k.book * coalesce(case when jsonb_typeof(me.affinity -> k.set_code) = 'number'
+                                      then (me.affinity ->> k.set_code)::numeric end, 1), 1) as value
+    from cards k cross join me
+   where k.page and k.released and k.book is not null and not exists (select 1 from ours o where o.ref = k.id)
+), spare_matches as (
+  select w.team, w.ref, (o.copies - 1 - coalesce(c.n, 0))::int as spare, w.price as their_price, w.fee,
+         o.value as our_value, k.book * (select m from top_mult) as their_value, w.tick
+    from wants_open w join ours o on o.ref = w.ref join cards k on k.id = w.ref
+    left join committed c on c.ref = w.ref
+   where o.copies - 1 - coalesce(c.n, 0) >= 1
+), copy_matches as (
+  select h.team, h.ref, h.price as their_price, h.fee, m.value as value_to_us, h.tick
+    from haves_open h join missing m on m.ref = h.ref
+), moves as (
+  select s.team, 'swap' as kind, s.ref as give, c.ref as get, null::numeric as price,
+         round(c.value_to_us - coalesce(s.our_value, 0), 1) as our_gain, round(s.their_value, 1) as their_gain
+    from spare_matches s join copy_matches c on c.team = s.team
+  union all
+  select s.team, 'sell', s.ref, null, s.their_price,
+         round(s.their_price - s.fee - coalesce(s.our_value, 0), 1), round(s.their_value - s.their_price, 1)
+    from spare_matches s where s.their_price is not null
+  union all
+  select c.team, 'buy', null, c.ref, c.their_price,
+         round(c.value_to_us - c.their_price - c.fee, 1), round(c.their_price, 1)
+    from copy_matches c where c.their_price is not null
+), guard as (
+  select b.team,
+         case when b.rank <= 5 then 'top5'
+              when (select u.rank from us u) is null or abs(b.rank - (select u.rank from us u)) <= 3 then 'near' end as reason
+    from board b
+), best as (
+  select distinct on (m.team) m.*
+    from moves m join guard g on g.team = m.team
+   where m.our_gain > 0 and (g.reason is null or m.our_gain >= 2 * m.their_gain)
+   order by m.team, m.our_gain desc, m.their_gain, m.kind, m.give, m.get
+), dealer_deals as (
+  select team, count(*)::int as n
+    from (select buyer as team from tape where coalesce(persona, '') <> ''
+          union all select seller from tape where coalesce(persona, '') <> '') d
+   group by team
+), venue_trades as (
+  select venue, count(*)::int as n from tape where coalesce(venue, '') <> '' group by venue
+), climbs as (
+  select distinct on (l.subject) l.subject as team, l.claim, l.created_tick
+    from learnings l
+   where l.kind = 'rival_move' and l.subject_kind = 'team' and coalesce(l.source, 'rules') <> 'llm'
+   order by l.subject, l.created_tick desc nulls last, l.id desc
+)
+select b.team, b.tick, b.rank, b.score, b.negotiating, b.market, b.level, b.pages, b.deals, b.venue,
+       t.first_rank - b.rank as rank_change, b.score - t.first_score as score_change, b.tick - t.first_tick as trend_ticks,
+       coalesce(t.points, '[]'::jsonb) as trend,
+       o.team as our_team, u.rank as our_rank, u.score as our_score, u.negotiating as our_negotiating,
+       u.market as our_market, u.pages as our_pages,
+       coalesce(dd.n, 0) as dealer_deals, coalesce(vt.n, 0) as venue_trades,
+       case when p.notes ->> 'top_set' ~ '^[A-Z]{3}$' then p.notes ->> 'top_set' end as top_set,
+       coalesce((select jsonb_object_agg(e.k, e.v)
+                   from jsonb_each(case when jsonb_typeof(p.set_interest) = 'object' then p.set_interest else '{}'::jsonb end) e(k, v)
+                  where jsonb_typeof(e.v) = 'number' and e.k ~ '^[A-Z]{3}$'), '{}'::jsonb) as set_interest,
+       array_remove(array[
+         case when b.negotiating > u.negotiating then 'negotiating' end,
+         case when b.market > u.market then 'market' end,
+         case when b.pages > u.pages then 'pages' end,
+         case when coalesce(dd.n, 0) > coalesce(ud.n, 0) then 'dealer_ladder' end,
+         case when coalesce(vt.n, 0) > coalesce(uv.n, 0) then 'venue' end,
+         case when t.first_rank - b.rank >= 2 then 'climbing' end], null) as strengths,
+       array_remove(array[
+         case when b.negotiating < u.negotiating then 'negotiating' end,
+         case when b.market < u.market then 'market' end,
+         case when b.pages < u.pages then 'pages' end,
+         case when coalesce(vt.n, 0) = 0 then 'no_venue_trades' end,
+         case when t.first_rank - b.rank <= -2 then 'falling' end,
+         case when exists (select 1 from wants_open w where w.team = b.team) then 'needs_cards' end], null) as weaknesses,
+       coalesce((select jsonb_agg(jsonb_build_object('ref', w.ref, 'price', w.price, 'tick', w.tick) order by w.tick desc, w.ref)
+                   from (select * from wants_open w where w.team = b.team order by w.tick desc, w.ref limit 20) w), '[]'::jsonb) as they_want,
+       coalesce((select jsonb_agg(jsonb_build_object('ref', h.ref, 'price', h.price, 'tick', h.tick) order by h.tick desc, h.ref)
+                   from (select * from haves_open h where h.team = b.team order by h.tick desc, h.ref limit 20) h), '[]'::jsonb) as they_have,
+       coalesce((select jsonb_agg(jsonb_build_object('ref', s.ref, 'spare', s.spare, 'their_price', s.their_price, 'our_value', s.our_value)
+                                  order by s.tick desc, s.ref)
+                   from (select * from spare_matches s where s.team = b.team order by s.tick desc, s.ref limit 20) s), '[]'::jsonb) as we_have_for_them,
+       coalesce((select jsonb_agg(jsonb_build_object('ref', c.ref, 'their_price', c.their_price, 'value_to_us', c.value_to_us)
+                                  order by c.tick desc, c.ref)
+                   from (select * from copy_matches c where c.team = b.team order by c.tick desc, c.ref limit 20) c), '[]'::jsonb) as they_have_for_us,
+       ((select count(*) from spare_matches s where s.team = b.team) + (select count(*) from copy_matches c where c.team = b.team))::int as match_count,
+       g.reason is not null as guarded, g.reason as guard_reason,
+       coalesce(m.kind, case when g.reason is not null then 'hold' else 'watch' end) as move_kind,
+       m.give as move_give, m.get as move_get, round(m.price)::int as move_price, m.our_gain, m.their_gain,
+       case m.kind
+         when 'swap' then format('offer our spare %s for their %s (+%s for us, +%s for them)', m.give, m.get, m.our_gain, m.their_gain)
+         when 'sell' then format('sell our spare %s into their bid of %s (+%s for us after the fee)', m.give, m.price, m.our_gain)
+         when 'buy' then format('buy their %s at their ask of %s (+%s for us after the fee)', m.get, m.price, m.our_gain)
+         else case
+                when g.reason = 'top5' then format('don''t trade: top-5 rival (rank %s)', b.rank)
+                when g.reason = 'near' and u.rank is null then format('don''t trade: our rank is unknown (theirs %s)', b.rank)
+                when g.reason = 'near' then format('don''t trade: within 3 ranks of us (rank %s, ours %s)', b.rank, u.rank)
+                else 'nothing to trade yet: watch their bids' end
+       end as suggested_move,
+       cl.claim as why_climbed, cl.created_tick as why_climbed_tick
+  from board b
+  cross join our_id o
+  left join us u on true
+  left join trend t on t.team = b.team
+  left join competitor_profiles p on p.team = b.team
+  left join guard g on g.team = b.team
+  left join best m on m.team = b.team
+  left join dealer_deals dd on dd.team = b.team
+  left join dealer_deals ud on ud.team = u.team
+  left join venue_trades vt on vt.venue = b.venue
+  left join venue_trades uv on uv.venue = u.venue
+  left join climbs cl on cl.team = b.team
+ where b.team is distinct from o.team
+    $view$;
+    execute format('comment on view rival_board is %L', 'rival_board v' || board_version);
+    -- the teammates' read-only login (`bazaar db readonly-user`) reads it like every table of the schema
+    if exists (select from pg_roles where rolname = 'bazaar_team_ro') then
+      execute format('grant select on %I.rival_board to bazaar_team_ro', current_schema());
+    end if;
+    perform set_config('lock_timeout', '15s', true);
+  exception when others then
+    raise warning 'rival_board v% not applied (%): the previous definition stays', board_version, sqlerrm;
+  end;
+end $do$;
+
 -- Prompt-injection attempts (`injection_log.py`): every counterparty text whose words carry an injection shape
 -- (`llm.chooser.injection_flags`), with the RAW text verbatim as the proof (our own secrets scrubbed only) and
 -- the ids that let anyone check it against the game (`proof`: the feed event, thread or duel endpoint). A record,

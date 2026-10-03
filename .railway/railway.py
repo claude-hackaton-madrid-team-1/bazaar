@@ -60,6 +60,17 @@ def runtime_env() -> dict:
         "COLUMNS": "200",  # rich wraps at 80 columns without a terminal: one log line per tick
         "BAZAAR_KEY": preserve(),
         "TYPESAFE_API_KEY": preserve(),
+        # set by hand per service (README "Live services": duels 0, taker 2.5, maker 5, mcp 7.5); kept by every apply
+        "BAZAAR_TICK_OFFSET_S": preserve(),
+        # jev (unset) or llm: who answers every judge() verdict (src/bazaar_agent/jev/decider.py), and its
+        # model and budget per service (README "Decider switch"). Set by hand; preserve() so an apply keeps them.
+        "BAZAAR_DECIDER": preserve(),
+        "BAZAAR_DECIDER_MODEL": preserve(),
+        "BAZAAR_DECIDER_TIMEOUT_S": preserve(),
+        "BAZAAR_DECIDER_MAX_CALLS": preserve(),
+        "BAZAAR_DECIDER_MAX_CONCURRENT": preserve(),
+        "BAZAAR_DECIDER_CACHE_S": preserve(),
+        "BAZAAR_DECIDER_WINDOW_S": preserve(),
     }
 
 
@@ -90,7 +101,7 @@ def runtime(name: str, command: str, data: object, llm: bool = False) -> object:
     )
 
 
-def agent(name: str, command: str, data: object) -> object:
+def agent(name: str, command: str, data: object, env: dict[str, object] | None = None) -> object:
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
     Live or dry run is decided by hand, never here: this file never sets BAZAAR_LIVE (README "Autonomous
@@ -109,7 +120,9 @@ def agent(name: str, command: str, data: object) -> object:
         # BAZAAR_LEARN=0 / BAZAAR_LLM_READ=0 (set by hand) turn the feed reader / its LLM pass off, and
         # BAZAAR_TEAM_THREADS=0 the team desk (N17): all set by hand like BAZAAR_LIVE, declared preserve() so an
         # apply keeps them (an undeclared hand-set variable is deleted by `railway config apply`).
+        # `env` (one service's own hand-set switches) goes first: it can never override the fixed keys below.
         env={
+            **(env or {}),
             **runtime_env(),
             **llm_env(),
             "PORT": AGENT_PORT,
@@ -260,7 +273,11 @@ def main(ctx=None):
     # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
     # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
     taker = agent("bazaar-taker", "agent taker", taker_data)
-    maker = agent("bazaar-maker", "agent maker", maker_data)
+    # BAZAAR_BENCH_POLICY=edge (set by hand; unset or exact: today's matching) has our venue's broker match the
+    # Market Test with the bench edge (agents/bench_edge.py), behind BAZAAR_BENCH_GUARD_MARGIN (default 10; none =
+    # unguarded). Both declared preserve() so an apply keeps the hand-set values.
+    bench_env = {"BAZAAR_BENCH_POLICY": preserve(), "BAZAAR_BENCH_GUARD_MARGIN": preserve()}
+    maker = agent("bazaar-maker", "agent maker", maker_data, bench_env)
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     sim = simulator()

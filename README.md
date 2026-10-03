@@ -19,6 +19,22 @@ first; raw HTTP against `docs/api/openapi.json` is Plan B only.
 
 Endpoints, event envelope and examples for the dashboard: [`docs/services.md`](docs/services.md).
 
+**One key, staggered ticks.** Every service shares our key's 5 req/s (bursts of 20). Started together at the tick
+boundary they passed it (Sat ticks 646-650: `maker: read refused rate_limited … nothing sent`, `/api/duels refused
+rate_limited`), so each tick loop wakes `BAZAAR_TICK_OFFSET_S` seconds after the tick (default 0; at most 10 s and
+40 % of the tick). Recommended, set by hand per Railway service (declared `preserve()` in `.railway/railway.py`):
+
+| Service | `BAZAAR_TICK_OFFSET_S` | Why |
+|---|---|---|
+| `bazaar-duels` | `0` | first: duels have deadlines and an unanswered duel scores 0 |
+| `bazaar-taker` | `2.5` | |
+| `bazaar-maker` | `5` | never accepts, so it can wait |
+| `bazaar-mcp` | `7.5` | its tools answer requests (no tick loop today): the value only matters for one it may run later |
+
+A `429` on the duels read is re-read once after the server's wait (else 1.2 s), only with ≥ 8 s of the tick left;
+nothing loops on a 429. Laptop CLI commands share the same key: **run them one at a time**, never alongside each
+other in a busy tick.
+
 ## Simulator (test every agent while the game is closed)
 
 `bazaar-sim` is an HTTP API that behaves like `https://bazaar.causaprima.ai`: the same routes, the
@@ -444,6 +460,31 @@ options below remain for a Phoenix outside Railway.
    `OTEL_EXPORTER_OTLP_TRACES_HEADERS` in the shell environment (the exporter reads these from
    the environment, not from `.env`). This path is untested: check it against Arize's docs before
    relying on it.
+
+## Decider switch: Jev or Claude Opus (`BAZAAR_DECIDER`)
+
+Every verdict comes from `bazaar_agent.jev.judge()`. `BAZAAR_DECIDER=llm` sends the same masked state and
+questions to Claude instead of TypeSafe's Jev and returns the same verdicts under the same bars, so every
+caller (taker, maker, duels, team desk, pack gate, dealer buy, the model chooser) follows it. Guardrails, the
+official value cap, the cash floor, human approval, breakers and the ledger still gate every send. Spec:
+[`LD1-spec.md`](.ai/specs/LD1-spec.md).
+
+| variable | default | meaning |
+|---|---|---|
+| `BAZAAR_DECIDER` | `jev` | `llm` = Claude decides; anything else = Jev |
+| `BAZAAR_DECIDER_MODEL` | `opus-5-5` | alias or Claude id (API key first, else the subscription token) |
+| `BAZAAR_DECIDER_TIMEOUT_S` | `12` | whole-call budget (1-60), then `undecided request_timeout` |
+| `BAZAAR_DECIDER_CACHE_S` | `30` | reuse an answer for the same questions, bars and state |
+| `BAZAAR_DECIDER_MAX_CALLS` / `_WINDOW_S` | `8` / `30` | call starts per window per process, then `decider_call_cap` |
+| `BAZAAR_DECIDER_MAX_CONCURRENT` | `3` | calls in flight per process |
+
+Read from the process environment (not `.env`): export it on a laptop, set it per service on Railway.
+The caps are per process, and taker, maker and duels share ONE subscription token: turn `llm` on one service
+first (duels), watch `request_timeout` / `rate_limited` / `decider_call_cap` in the decision logs, then the
+others. A usage-limit answer pauses that process's Claude calls until the window resets (every verdict is then
+`undecided`, the words fall back to templates). Gates ask only with timeout + 1 s of the tick left. The prompt
+tells Claude to commit at or above the bar unless the options are equal, so gates that used to stay closed on
+an undecided Jev (pack slot, team swap) will decide far more often: still inside every guardrail.
 
 ## Runtime LLM (talk to it, let it write the words, steer it)
 
@@ -1258,6 +1299,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | N17 (new) | **P1 · Team-to-team negotiation**: review Marius's #79/#98/#101 first (Jev 0.92), then swap threads with other teams (our duplicates for their duplicates of our missing cards, priced by their need, inside GUARDRAILS, kill flag `BAZAAR_TEAM_THREADS=0`) | 1 → 2 | 🔵 worker (triage + spec now; code after #72; PR before Duels II) |
 | N18 (new) | Lean agent tracing in Phoenix (takes over Jhonny's ADR #46): `session.id` per negotiation, Jev as EVALUATOR spans, AGENT/TOOL spans per tick, LLM spans, evals as annotations, a pitch replay recipe; moves identical with tracing on/off (Jev 0.96) | 1 | 🔵 worker (afternoon window after Duels I) |
 | N19 (new) | **P1 · Persona model**: each dealer's published traits, menu and unlock rules (`/api/dealers`) become negotiation params (`persona_model.py`); a trait prior for dealers with no fills (L4/L5), learned curves win at 5+ fills; hourly deal budget, unlock-first order, terse words for strict dealers, sell desk ranks a collector's favourite sets; snapshots in `traders`; flag `persona_model_enabled`; spec [`N19-spec.md`](./N19-spec.md) | 1 → 2 | 🔵 PR open |
+| N20 (new) | Team matrix in the sentinel: every team × card (holds, spare, missing for a near page) and per-team rank, trend, rival, wants, has-for-us; stored in `team_matrix` + `team_matrix_summary`; fed to the decider states of accepts, team swaps and our asks (`market_teams`) | 2 | 🔵 PR #225 |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | 🔵 v1 deployed (bazaar-live #1 #2, https://bazaar-live-production.up.railway.app); v2 fantasy-RPG art + ES/EN voices and LIVE-T1 real transcripts from Postgres (bazaar-live #5) in progress; zero paid TTS until the pitch |
 | [T1](T1-spec.md) · was #14, #23 | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [M1](M1-spec.md) · was #11, #12 | Venue + limit-estimating broker | 1 → 2 | 🔵 #71 approved, shipped OFF (`allow_venue_open = false`, team decision Sat 06:08: the broker only equals the free stall); when on, the maker opens our 0 bps board venue at game hour 6.5 and brokers it; no reserve while off |
@@ -1272,6 +1314,9 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | CH1 (new) | Cards heartbeat: the taker diffs the catalog + dealer menus it already reads (no request); new cards, released sets and minted jumps become learnings (`card_release`), a log line and `agents/card_events.json`; fresh releases rank and open first for `card_release_boost_ticks` behind `card_release_boost_enabled` (order only, guardrails + official-value cap unchanged) | 1 | 🔵 PR #185 |
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
+| TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
+| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
+| [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 PR #224 + bazaar-live #46 |
 | [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
@@ -1317,6 +1362,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | `uv run bazaar db readonly-user` | Create or rotate the teammates' read-only login (SELECT only) with the admin DATABASE_URL. |
 | `uv run bazaar db tables` | Every table with its row count. |
 | `uv run bazaar strategy` | Ranked playbook from STRATEGY.md: buys, sells and packs, each with its command and guardrail verdict. |
+| `uv run bazaar taller` | The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The |
 | `uv run bazaar sell list` | List one card for cash (give the asset, want cash), never below its your_value (GUARDRAILS.md). |
 | `uv run bazaar sell bid` | Bid cash for any copy of a card (give cash, want the card): how we buy rares only teams hold. |
 | `uv run bazaar sell swap` | Propose a swap to one team: our copy (+ cash) for any copy of a card (+ cash), guardrails checked. |
@@ -1336,13 +1382,13 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
 - [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
-- [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
-- [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
-- [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
-- [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
-- [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
-- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
-- [2026-10-03] finding — whether a duel accept uses `accepts_per_team_per_tick` was never observed
+- [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+- [2026-10-03] gotcha — a hand sell and the team desk can commit both copies of a duplicate in one tick
+- [2026-10-03] gotcha — a laptop checkout that is not pulled runs the OLD guardrails for every hand command
+- [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
+- [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
+- [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+- [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
 
 <!-- BAZAAR:STATUS:END -->
 
