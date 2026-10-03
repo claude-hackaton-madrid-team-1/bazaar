@@ -512,13 +512,15 @@ def grants_from(schedule: dict[str, Any], after_hours: float | None = None) -> l
 
 @dataclass(frozen=True)
 class LadderSlot:
-    """One planned dealer deal from W3's `ladder_plan.json` schedule: a price class, not a card."""
+    """One planned dealer deal from W3's `ladder_plan.json` schedule: a price class, and the card when the
+    plan names one (`--refs`)."""
 
     hour: int
     dealer: str
     price_class: str  # "card:common", "card:uncommon", "pack:sobre_barrio"
     expected: float  # the price the backtest expects
     reserve: int  # the plan's max: what the budget sets aside
+    ref: str | None = None
 
 
 def ladder_slots_from(plan: dict[str, Any]) -> list[LadderSlot]:
@@ -534,6 +536,7 @@ def ladder_slots_from(plan: dict[str, Any]) -> list[LadderSlot]:
                 str(row.get("price_class")),
                 float((row.get("expected") or {}).get("price") or row["plan"]["max"]),
                 int(row["plan"]["max"]),
+                str(row["ref"]) if row.get("ref") else None,
             )
         )
     return out
@@ -720,6 +723,7 @@ def cash_plan(
     `cash_floor`. Prices are the expected fills; whatever does not fit is `held`, with the reason."""
     base = rules.cash_floor if floor is None else floor
     planned = venue_hour
+    taken = {ref for t in trades for ref in t.refs_in}
     held_why: dict[str, str] = {}
     steps: list[Step] = []
     pending = list(wants)
@@ -771,22 +775,47 @@ def cash_plan(
             item = "+".join(t.refs_in) or "sell"
             steps.append(Step(hour, "trade", item, t.counterparty, out, None, cash, f"W4 plan: {t.note}", t.expected))
         for slot in (s for s in ladder if s.hour == hour):
-            match = next(
-                (w for w in pending if w.source.source == slot.dealer and w.price_class == slot.price_class), None
-            )
-            price = match.source.price if match else slot.expected
+            if slot.ref and slot.ref in taken:
+                note = f"duplicate: the trade plan already buys {slot.ref} from a team"
+                steps.append(Step(hour, "held", f"ladder {slot.ref}", slot.dealer, 0, slot.reserve, cash, note))
+                continue
+            if slot.ref:  # the plan names the card: it is bought from the dealer, whatever our buy list picked
+                match = next((w for w in pending if w.card.ref == slot.ref), None)
+            else:
+                match = next(
+                    (w for w in pending if w.source.source == slot.dealer and w.price_class == slot.price_class), None
+                )
+            price = slot.expected if slot.ref else (match.source.price if match else slot.expected)
             if cash - price < floor or spent + price > rules.max_spend_per_game_hour:
                 why = f"cash {cash:.0f} − {price:.0f} < floor {floor}" if cash - price < floor else "hour cap"
                 steps.append(Step(hour, "held", f"ladder {slot.price_class}", slot.dealer, 0, slot.reserve, cash, why))
                 continue
             cash -= price
             spent += price
-            if match:
+            if match and match.source.channel == "ladder":
                 pending.remove(match)
                 steps.append(_buy_step(hour, match, price, cash, f"ladder slot {slot.price_class}"))
+            elif match:  # our buy list picked a team for it: the W3 slot buys it from the dealer instead
+                pending.remove(match)
+                note = f"W3 slot buys {slot.ref} from {slot.dealer}; the buy list picked a team (trade surplus)"
+                steps.append(
+                    Step(hour, "ladder", slot.ref or slot.price_class, slot.dealer, price, slot.reserve, cash, note)
+                )
             else:
-                note = f"W3 slot, no page card fits it: expected {slot.expected:g}, max {slot.reserve}"
-                steps.append(Step(hour, "ladder", slot.price_class, slot.dealer, price, slot.reserve, cash, note))
+                what = slot.ref or slot.price_class
+                note = f"W3 slot ({'not in our buy list' if slot.ref else 'no page card fits it'}): expected "
+                steps.append(
+                    Step(
+                        hour,
+                        "ladder",
+                        what,
+                        slot.dealer,
+                        price,
+                        slot.reserve,
+                        cash,
+                        note + f"{slot.expected:g}, max {slot.reserve}",
+                    )
+                )
         still: list[Want] = []
         done: list[Want] = []
         for w in pending:
@@ -924,7 +953,7 @@ def build_plan(
         scenarios.append(run(f"venue at open (h{start}) + planned sells", start, sells=sells))
         scenarios.append(run("no venue + planned sells", None, sells=sells))
     if ladder:
-        top3 = best_three(ladder)
+        top3 = best_three([slot for slot in ladder if not (slot.ref and slot.ref in taken)])
         scenarios.append(run("no venue · ladder best three, then trades and pages", None, ladder=top3))
         if what_if_floor is not None:
             name = f"venue at open (h{start}) · what-if cash_floor {what_if_floor} · best three, trades, pages"

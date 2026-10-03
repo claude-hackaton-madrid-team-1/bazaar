@@ -386,3 +386,36 @@ def test_w4_affinity_map_gives_chasers_and_each_holders_expected_multiplier():
     lav09 = by_source(missing(page, "LAV-09"), "teams")
     assert lav09.sellers == ("t07",)  # 70 × 1.37 → 96, still below t05's 70 × 1.53 → 108
     assert lav09.blocked == "max_price_rare 80 < team price 96"
+
+
+def test_a_ladder_slot_naming_a_card_the_trade_plan_buys_is_a_duplicate_and_spends_nothing():
+    trade = pages.PlannedTrade("t03", ("LAV-06",), 22, 0, 30.0, "bid")
+    slots = [
+        pages.LadderSlot(4, "abuela", "card:uncommon", 22.2, 25, "LAV-06"),
+        pages.LadderSlot(4, "abuela", "card:rare", 70, 77, "LAV-09"),
+    ]
+    team_pick = want("LAV-09", "teams", 75)
+    s = pages.cash_plan("d", 600, 4, [], [team_pick], RULES, ladder=slots, trades=[trade])
+    assert [(x.kind, x.item, x.amount) for x in s.steps] == [
+        ("trade", "LAV-06", 22),
+        ("held", "ladder LAV-06", 0),
+        ("ladder", "LAV-09", 70),  # the slot buys it from the dealer, so the team buy is dropped
+    ]
+    assert s.steps[1].note == "duplicate: the trade plan already buys LAV-06 from a team"
+    assert (
+        pages.ladder_slots_from(
+            {
+                "schedule": [
+                    {
+                        "game_hour": 4,
+                        "dealer": "abuela",
+                        "price_class": "card:rare",
+                        "ref": "LAV-09",
+                        "plan": {"max": 77},
+                        "expected": {},
+                    }
+                ]
+            }
+        )[0].ref
+        == "LAV-09"
+    )
