@@ -487,7 +487,7 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.accept_gate import Gate, duel_accept_check
+    from bazaar_agent.agents.accept_gate import DuelRereads, Gate, duel_accept_check
     from bazaar_agent.agents.duel_jev import DuelPick
     from bazaar_agent.agents.duelist import (
         DuelMove,
@@ -523,23 +523,7 @@ def duel_run(
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
     duel_traces = traces.DuelTraces()
     duel_words = llm_cli.words_for(settings, rules, template_duel_words)
-    failed_reread: dict[int, BazaarError] = {}  # tick -> the re-read that failed in it (no retry burst)
-
-    def reread(tick: int) -> Callable[[], Any]:
-        """A fresh /api/duels read just before EACH duel accept (offers move between two accepts of one tick).
-        A failed re-read fails every later accept of that tick: no retry burst on the key we all share."""
-
-        def read() -> Any:
-            if tick in failed_reread:
-                raise failed_reread[tick]
-            try:
-                return client.duels()
-            except BazaarError as e:
-                failed_reread.clear()
-                failed_reread[tick] = e
-                raise
-
-        return read
+    rereads = DuelRereads(client.duels)  # S1: a fresh re-read before each accept; a failed one fails its tick
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -609,6 +593,7 @@ def duel_run(
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
+        rereads.new_tick()
         decisions.begin_tick(c.tick)
         anchor, floor = steered_duel_params(rules, settings.data_dir / STEERING_FILE, c.tick)
         try:
@@ -670,7 +655,7 @@ def duel_run(
                     record(d, move, pick, c.tick, "rejected", str(verdict))
                     continue
                 if move.kind == "accept" and rules.inspect_accepts:  # before the accept slot is claimed
-                    gate = duel_accept_check(reread(c.tick), d, did, move)
+                    gate = duel_accept_check(rereads.for_tick(c.tick), d, did, move)
                     if not gate.allowed:
                         console.print(f"  duel {did}: INSPECTOR {gate.verdict}: {escape(gate.reason)}")
                         record(d, move, pick, c.tick, "rejected", f"inspector {gate.verdict}: {gate.reason}", gate)

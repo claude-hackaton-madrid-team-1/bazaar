@@ -1002,14 +1002,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — a per-tick duel re-read cache let a stale offer be accepted (review r2 of #146)
+- [2026-10-03] build-error — the taker's fake board gave every copy the rarity "common"
+- [2026-10-03] gotcha — `scripts/sim_smoke.py` can only serve on 127.0.0.1:8765
 - [2026-10-03] gotcha — the architecture board's 30 px Kalam title fits about 18 characters in a 332 px box
 - [2026-10-03] finding — Jev's desk choices per role, one batched call (local sim, ticks 0–2)
 - [2026-10-03] gotcha — the Agent tool's own `model` beats a subagent's definition, and takes aliases only
 - [2026-10-03] build-error — "wait for the game's /me" became an unbounded wait (security audit round 3, #105)
 - [2026-10-03] build-error — a lock timeout does not bound Postgres I/O (security re-audit of #105)
-- [2026-10-03] finding — a dealer's "Deal!" to a team bid lands at the next tick boundary (Friday feed)
-- [2026-10-03] build-error — the holdings write hook could hold a send for seconds (review of #105)
-- [2026-10-03] build-error — a one-shot `bazaar status` never answered from the holdings
 
 <!-- BAZAAR:STATUS:END -->
 

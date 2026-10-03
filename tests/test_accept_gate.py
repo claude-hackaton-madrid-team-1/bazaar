@@ -206,3 +206,29 @@ def test_a_dealer_copy_of_a_lesser_rarity_than_its_card_is_refused_like_on_a_boa
     t = thread({"assets": [{"id": 9, "ref": "LAV-08", "rarity": "common"}]}, "LAV-08, 21 P")
     g = dealer_gate(t, "trile", 802, 21, t["topic"], CARDS)
     assert not g.allowed and "the copy says common; the catalog has LAV-08 as uncommon" in g.reason
+
+
+def test_duel_rereads_fail_their_own_tick_only_even_when_a_reset_world_repeats_it():
+    """Review r3 P3: a failed re-read refuses the rest of its tick, never a later tick (134 → 135 → 134)."""
+    from bazaar_agent.agents.accept_gate import DuelRereads
+
+    answers = iter([RuntimeError("429"), {"duels": []}, {"duels": []}])
+    calls = []
+
+    def read():
+        calls.append(1)
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    rereads = DuelRereads(read)
+    for tick in (134, 135, 134):
+        rereads.new_tick()
+        first = rereads.for_tick(tick)
+        try:
+            first()
+        except RuntimeError:
+            with pytest.raises(RuntimeError):
+                rereads.for_tick(tick)()  # the same tick's next accept: refused with no second GET
+    assert len(calls) == 3  # one GET per tick: the 429, then a fresh read in 135 and again in the repeated 134

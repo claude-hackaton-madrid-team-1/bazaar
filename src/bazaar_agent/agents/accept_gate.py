@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from bazaar_agent.agents.duelist import DuelMove, duel_done, duel_id, effective_price, inside_limit, rival_text
@@ -178,3 +178,27 @@ def duel_accept_check(read_duels: Callable[[], Any], decided: Mapping[str, Any],
         return duel_gate(decided, fresh, move)
     except (ArithmeticError, ValueError, TypeError) as e:  # a non-finite days weight, a malformed shape
         return _block("duel", None, f"the duel could not be judged ({type(e).__name__})")
+
+
+@dataclass
+class DuelRereads:
+    """A fresh `GET /api/duels` before EACH duel accept (a rival can move between two accepts of one tick).
+    A failed re-read fails every later accept of ITS tick only: no retry burst on the key every process shares."""
+
+    read: Callable[[], Any]
+    failed: dict[int, Exception] = field(default_factory=dict)
+
+    def new_tick(self) -> None:
+        self.failed.clear()  # a reset world may repeat a tick number: a failure never outlives its tick
+
+    def for_tick(self, tick: int) -> Callable[[], Any]:
+        def read() -> Any:
+            if tick in self.failed:
+                raise self.failed[tick]
+            try:
+                return self.read()
+            except Exception as e:
+                self.failed = {tick: e}
+                raise
+
+        return read
