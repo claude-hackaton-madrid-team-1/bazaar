@@ -16,6 +16,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - complete_pages: buy missing page cards of our highest-affinity sets first; each missing card also carries its share of the page bonus.
 - scarcity_first: the fewer copies exist, the sooner we act and the higher we value it; a card with zero minted copies cannot be bought yet, only pulled or waited for.
 - sell_to_need: sell duplicates and low-affinity cards to the teams that chase their set, priced at what the card is worth to them, never below our own value.
+- sell_spares: a spare copy (a duplicate, or a card of a set whose affinity to us is at most 1, i.e. no boost) nobody would pay `sell_min_surplus` over our value for at the buyer's need or the tape (or of a set nobody is seen chasing) is still offered to anyone, at our value + `sell_min_surplus` (`sell_spare_slots` of them at most), so the maker keeps listing what we can sell at a gain.
 - new_pages: a page released mid-game (El Retiro Saturday, Chamberí Sunday) enters the ranking the first tick `/api/me` shows it: the playbook is rebuilt from `/api/me` and the catalog every tick, so no restart is needed. Our only copy of each of its page cards is never sold (`protect_page_sets` in GUARDRAILS.md).
 - dealer_floor: buy plentiful commons and uncommons from dealers at their learned fill price, not from teams.
 - pack_value: buy a pack only when its expected value to us (given what we already hold) beats its learned price, a pack slot is left this game hour (`max_packs_per_game_hour` in GUARDRAILS.md and each dealer's `per_team_per_hour`), and Jev (`spend_pack_slot_now`, `questions/packs.json`) decides yes; `no` or `undecided` keeps the slot.
@@ -39,6 +40,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `min_buy_surplus` = 2 — only propose buys whose value to us beats the expected price by at least this many primas.
 - `sell_need_share` = 0.6 — ask a buyer this share of what the card is worth to them (book × 1.6 for a team that chases the set).
 - `sell_min_surplus` = 5 — only propose sells that beat our own value of the card by at least this many primas.
+- `sell_spare_slots` = 8 — sell_spares: besides sell_to_need, offer up to this many more spare copies (duplicates, or cards of sets with affinity at most 1) to anyone, at our value (page bonus included) + `sell_min_surplus`, when the buyer's need and the tape sit below that or nobody is seen chasing the set; never a protected card (`protect_page_sets`), never below our value. 0 = off (only sell_to_need). Sells still show at most `max_moves`.
 - `rare_fallback_price` = 70 — expected price of a rare when the tape has none for that card.
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.

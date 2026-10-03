@@ -244,4 +244,5 @@ def observe_duel(book: TacticBook | None, duel: dict[str, Any], did: int, tick: 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n")
+        # ASCII-escaped: a rival's text with a lone surrogate must never stop the duel loop
+        handle.write(json.dumps(record, separators=(",", ":")) + "\n")

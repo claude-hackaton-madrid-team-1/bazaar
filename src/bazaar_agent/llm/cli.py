@@ -43,6 +43,7 @@ from bazaar_agent.llm.steering import (
     steer_request,
 )
 from bazaar_agent.llm.words import llm_words
+from bazaar_agent.official_values import OfficialValues
 from bazaar_agent.ticks import Clock
 
 console = Console()
@@ -328,7 +329,8 @@ def _print_verdict(intent: Intent, settings: Settings, rules: Guardrails) -> Non
         return
     from bazaar_agent.ledger_pg import open_ledger
 
-    ctx = gr.context_from(me, clock.tick, clock.t_hours, open_ledger(settings.data_dir, source="ask"), rules)
+    ledger = open_ledger(settings.data_dir, source="ask")
+    ctx = gr.context_from(me, clock.tick, clock.t_hours, ledger, rules, OfficialValues.of(client))
     verdict = gr.check(action, ctx, rules)
     colour = "green" if verdict.allowed else "red"
     console.print(

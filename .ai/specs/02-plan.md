@@ -122,6 +122,7 @@ negotiates well.
 | [D1](D1-spec.md) · was #5, #7 | Duel policy, days module | 1 → 2 | 🔵 safe player + days worst case (#31); calibration ⬜ |
 | [P1](P1-spec.md) / [K1](K1-spec.md) · was #16, #17 | Pitch + scoring reference | 3 | ⬜ pitch Sunday (P0); K1 is the scoring reference |
 | TO (new) | Take over Marius's night PRs (task_edf74300462e): bite fixes #140 #141 #142 #143 (stacked on #72) and #144; docs-only salvage of the closed analysis PRs #154 (`docs/night/README.md`); afternoon: #84 + #77, #78 + #128 | 2 | 🔵 #140–#144 approved (09:30 window); #154 in review; per-PR steps in #140's plan section |
+| DS1 (new) | Dealer sell for ladder deals and cash: `bazaar dealer sell <REF> --min --start [--dealer]`, falling distinct asks, never at her opening bid, only free duplicates of page cards, guarded like `dealer buy`; taker plan behind `dealer_sell_enabled` later | 1 | 🔵 PR #179 |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -349,6 +350,9 @@ a deal outside the limit loses points) and "Per tick" (one accept per team). Mar
   a flag flips only on a yes, in its own commit.
 - Step 5 — `/pr-review` (pr-reviewer + security-auditor) on both PRs; every P0/P1 fixed with a failing-first test;
   Marius's PRs closed with a pointer once ours are open. · **Acceptance:** APPROVE on both, merge asked, never done by us.
+- Step 6 (emergency, #173) — a rival's lone surrogate never freezes the duel loop: the per-tick duel log is ASCII-escaped
+  JSON and the duels table stores `db.jsonb_safe` payloads. · **Acceptance:** a `--play` tick with such a rival text
+  still sends the endgame accept (failed on main); the stored payload holds no lone surrogate.
 - Later (Sunday): criterion 3 (each finished duel's share scored by the evals and fed to the learner), mirror-duel
   rival profiles, the D − 1 accept probe (`duel_accept_margin_ticks` = 0).
 
@@ -436,6 +440,20 @@ table row for N18 is on PR #124. Files: `telemetry.py`, `traces.py`, `llm/traced
 - Step 5 — evals (#91) as annotations: not done (list in `docs/observability.md`).
 - Step 6 — `docs/observability.md` pitch replay. · **Invariants:** on/off parity (fake client + `sim_smoke`), dead
   exporter, no private number in any span (8 seeds).
+
+### DS1 — Dealer sell: ladder deals from our duplicates (PR #179)
+Spec: the lead's brief (2026-10-03): the ladder scores the share of each dealer's range we capture, best three
+deals per level, and a sale to a dealer is a dealer deal. RULES.md "Dealers": dealers buy cards; topic
+`{"sell": {"assets": [id]}}` (openapi `Topic`). Files: `agents/dealer_sell.py`, `cli.py` (`dealer sell`),
+`agents/accept_gate.py` (`dealer_gate` reads `give.cash` on a sale), `bazaar_sim/dealers.py` (buyer moves up),
+`tests/test_dealer_sell.py`, `tests/test_sim_dealers.py`.
+- Step 1 — `decide_sell`: falling distinct asks, accept a raised bid that meets our next ask or a final above the
+  floor, never at her opening bid, counter above an opening at or above `--start`. · **Acceptance:** unit tests.
+- Step 2 — refusals: the last copy of a page card not on an open offer of ours, a floor below `your_value`, a
+  dealer not active / not unlocked / not buying the rarity and set (Pilar is a "collector"). · **Acceptance:** tests.
+- Step 3 — `negotiate_sell` + CLI: guardrails on every ask and accept (with `sellable`), S1 gate, accept slot,
+  kill switch, Recorder rows. · **Acceptance:** fake-dealer tests; private sim deal.
+- Step 4 — taker plan behind `dealer_sell_enabled` (default false). · ⬜ not started.
 
 ## Parallel-work notes
 

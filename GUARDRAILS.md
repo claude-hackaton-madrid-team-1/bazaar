@@ -22,6 +22,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `max_price_rare` = 80 — never pay more for a rare card.
 - `max_price_pack` = 20 — never pay more for a sealed pack (Abuela's floor looks like 17).
 - `dealer_final_lift` = 0 — a dealer's FINAL offer on a card (its limit: take it or it walks) may be taken, or met with a bid at exactly that price, up to max_price_<rarity> × (1 + this), never above our value minus the minimum surplus; packs keep their cap and our own bids never pass it (N14a). 0 = today: Chato's uncommon finals 28-29 and rare finals 82-93 sit above the caps.
+- `official_value_margin` = 0 — every card buy (board accepts, dealer bids and finals, maker bids, swaps, the desk, `dealer buy`) pays at most the official value of one more copy (`GET /api/me/value?card=`, what the scorer counts: Day-2 hint 1) minus this, fee included, plus the copy a swap gives; read once per card per tick, only for a buy every other rule allows; a failed read refuses the buy. Our model still ranks; this only caps.
 - `max_packs_per_game_hour` = 3 — packs we may buy in one game hour, across all processes (Abuela sells `sobre_barrio` 3 per team per hour; each dealer's quota is in `/api/dealers`).
 - `sell_min_value_ratio` = 1.0 — never sell a card below this × its `your_value` (what we lose by selling it).
 

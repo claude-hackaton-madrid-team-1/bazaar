@@ -216,7 +216,7 @@ def test_simulated_pilar_pays_over_book_for_salamanca_and_under_book_for_the_res
     assert sim_catalog.dealer_buys(data, "rare", "SAL") and sim_catalog.dealer_buys(data, "rare", "LAV")
 
 
-def test_simulated_pilar_bids_book_x_1_2_for_a_salamanca_rare_and_x_0_9_for_a_lavapies_one():
+def test_simulated_pilar_bids_book_x_1_2_for_a_salamanca_rare_and_opens_x_0_9_up_to_book_for_a_lavapies_one():
     m = manual_world(pilar_open_ticks=1)
     m.step(1)
     w, us = m.world, "t01"
@@ -227,4 +227,5 @@ def test_simulated_pilar_bids_book_x_1_2_for_a_salamanca_rare_and_x_0_9_for_a_la
     w.state.threads[th.id].status = "closed"  # one open conversation per dealer
     lav = w.mint(LAV_RARE, us, "test")
     th2 = sim_threads.open_thread(w, us, {"with": "pilar", "topic": {"sell": {"assets": [lav.id]}}})
-    assert th2.neg is not None and th2.neg.limit == round(sim_catalog.cards()[LAV_RARE].book * 0.9)
+    lav_book = sim_catalog.cards()[LAV_RARE].book
+    assert th2.neg is not None and th2.neg.opening == round(lav_book * 0.9) and th2.neg.limit == lav_book
