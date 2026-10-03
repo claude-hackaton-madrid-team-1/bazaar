@@ -846,3 +846,10 @@ A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed 
 flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
 a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
 emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
+
+### [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
+An emoji cut in half by a JS/TS string slice reaches us as a lone surrogate (`"\ud83d"` in JSON). `json.dumps(...,
+ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Postgres jsonb rejects it raw or escaped.
+`duel run` logged the raw /api/duels response that way before planning, so one such rival message stopped every duel
+move each tick (fixed in #173: ASCII-escaped JSONL, `db.jsonb_safe` for the duels table). Same pattern elsewhere (other
+owners): `feed.py` capture, `monitor.py`, `llm/chooser.py`, `runtime/mcp_server.py`, `agents/status.py`.

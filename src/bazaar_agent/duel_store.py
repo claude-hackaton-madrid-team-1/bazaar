@@ -17,6 +17,7 @@ from typing import Any
 import psycopg
 
 from bazaar_agent.agents.duelist import duel_deadline, duel_id
+from bazaar_agent.db import jsonb_safe
 from bazaar_agent.decisions import scrubbed
 
 RETRY_EVERY_TICKS = 5  # after a failed write, skip Postgres for this many ticks (a connect can take 10 s)
@@ -63,7 +64,7 @@ def _row(duel: Mapping[str, Any], tick: int | None) -> tuple[Any, ...] | None:
         _int(duel.get("price")),
         _int(duel.get("days")),
         result if isinstance(result, int | float) and not isinstance(result, bool) else None,
-        json.dumps(scrubbed(dict(duel)), default=str),  # ASCII-escaped: a rival's lone surrogate stays storable
+        json.dumps(jsonb_safe(scrubbed(dict(duel))), default=str),  # no lone surrogate: Postgres jsonb rejects it
     )
 
 

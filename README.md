@@ -1285,6 +1285,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 - [2026-10-03] gotcha — a lapse looks exactly like someone else's cancel; the feed tells them apart
 - [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
 - [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
@@ -1292,7 +1293,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
 - [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
 - [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
-- [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
 
 <!-- BAZAAR:STATUS:END -->
 
