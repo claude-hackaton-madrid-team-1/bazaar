@@ -244,6 +244,9 @@ def trade_plan(
     split: float = typer.Option(0.5, min=0.05, max=1.0, help="The most of the expected pie we ask for"),
     cap_base: int = typer.Option(400, min=0, help="counterparty_cap_base the posting is checked with"),
     page_set: str = typer.Option("LAV", help="The set whose page buy list is drawn up"),
+    cash_budget: int | None = typer.Option(
+        None, min=0, help="The most bids and cash legs may promise (default: all the cash above cash_floor)"
+    ),
     out: str = typer.Option(".local/night", help="Where trade-plan.json and trade-plan.md are written"),
 ) -> None:
     """Dry-run trade plan for the next opening: listings and direct proposals priced on the rival affinity
@@ -264,7 +267,7 @@ def trade_plan(
     events = _events_file(events_file) if events_file else _events(live)
     us = str(me.get("id") or "")
     amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
-    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cap_base=cap_base)
+    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cap_base=cap_base, cash_budget=cash_budget)
     plan = td.build_plan(me, catalog, events, amap, _strategy().params, _rules().rules, pp, where)
     folder = Path(out) if Path(out).is_absolute() else REPO_ROOT / out
     folder.mkdir(parents=True, exist_ok=True)

@@ -48,6 +48,7 @@ class PlanParams:
     min_swap_surplus: float = 2.0  # our least gain on a swap, after its cash leg (as `min_buy_surplus`)
     cap_base: int = 400  # `counterparty_cap_base` the posting is checked with (GUARDRAILS.md default: 200)
     swaps_per_team: int = 5  # swap candidates kept per team (the best by expected surplus)
+    cash_budget: int | None = None  # the most our bids and cash legs may promise (None: all the cash above the floor)
 
 
 # ---------------------------------------------------------------- who holds what
@@ -742,6 +743,8 @@ def build_plan(
     m = build_market(me, catalog, events, [])
     copies = team_copies(holdings(events), m.us)
     cash_room = max(0, min(m.cash - rules.cash_floor, rules.max_spend_per_game_hour))
+    if pp.cash_budget is not None:  # the cash above the floor is shared with the dealer ladder
+        cash_room = min(cash_room, pp.cash_budget)
     ours, wanted = our_copies(m, me, params, rules), wanted_cards(m, params, rules, dealer_prices(events))
     asks = ask_trades(m, ours, amap, copies, pp, venue)
     bids = bid_trades(m, wanted, amap, copies, pp, venue)

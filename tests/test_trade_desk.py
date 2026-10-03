@@ -356,3 +356,10 @@ def test_a_thread_proposal_opens_a_team_thread_and_sends_one_structured_offer():
         "expires_in_ticks": 40,
         "to": "t15",
     }
+
+
+def test_a_cash_budget_keeps_the_plan_to_swaps_and_asks():
+    me, catalog, amap = rich_world()
+    plan = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), td.PlanParams(cash_budget=0), VENUE)
+    assert plan.cash_room == 0 and plan.checks == ()
+    assert all(td._cash_out(t) == 0 for t in (*plan.listings, *plan.threads))
