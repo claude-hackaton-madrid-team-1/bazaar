@@ -955,3 +955,27 @@ def test_warnings_stay_off_stdout_except_on_railway():
     from bazaar_agent.cli import log_stream
 
     assert log_stream({}) is sys.stderr and log_stream({"RAILWAY_ENVIRONMENT": "production"}) is sys.stdout
+
+
+# ---------------------------------------------------------------- review round 5 (#123)
+
+
+def test_a_send_answered_5xx_keeps_its_spend_and_the_offer_is_picked_up(tmp_path):
+    # security-auditor #123 r5 P2: a proposal that landed but answered a gateway 5xx was refunded as refused.
+    from bazaar_agent.guardrails import Ledger
+    from bazaar_agent.sdk import BazaarError
+
+    class Gateway(Team):
+        def say(self, tid, text="", price=None, offer=None, topic=None):
+            self.sent.append(("say", tid, offer))
+            raise BazaarError("http_502", "bad gateway", 502)
+
+    team = Gateway()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.converse(view(), set())
+    assert d.ledger.spent_since(0) == 1  # a 5xx may have landed: the spend stays booked
+    landed = {"id": 709, "maker": US, "to": THEM, "thread": 42, "status": "open", "created_tick": TICK}
+    landed |= {"give": {"assets": [{"id": 3}], "cash": 1}, "want": {"cards": ["LAV-02"]}}
+    d.proposals(view([thread(offers=[landed])], tick=TICK + 1))
+    assert (d.talks[42].offer_id, d.talks[42].cash, d.talks[42].sent_tick) == (709, -1, TICK)

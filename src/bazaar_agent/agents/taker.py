@@ -1164,7 +1164,7 @@ class Taker:
             chosen=True,
             status="approved",
             thread_id=a.thread_id,
-            move={"accept": a.offer.offer_id},
+            move={"kind": "team_accept"},  # public: never their offer id (a private thread)
         )
         if self.live:
             if not self.team_desk.clear_before_accept(view, a, did):  # our own offer there goes first

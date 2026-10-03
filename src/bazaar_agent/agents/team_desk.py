@@ -108,10 +108,11 @@ def _ours_open(payload: dict[str, Any], us: str) -> dict[str, Any] | None:
     return next((o for o in reversed(mine) if o.get("status") in (None, "open") and isinstance(o.get("id"), int)), None)
 
 
-def offer_status(payload: dict[str, Any], oid: int) -> str | None:
-    """The status of one offer as a thread shows it (its standing offers, or the offer inside a message)."""
+def offer_status(payload: dict[str, Any], oid: int, us: str | None = None) -> str | None:
+    """The status of one offer of ours as a thread shows it (its standing offers, or the offer in a message)."""
     offers = [*(payload.get("standing_offers") or []), *(m.get("offer") for m in payload.get("messages") or [])]
-    return next((str(o.get("status")) for o in offers if isinstance(o, dict) and o.get("id") == oid), None)
+    ours = [o for o in offers if isinstance(o, dict) and o.get("id") == oid and o.get("maker") in (None, us)]
+    return next((str(o.get("status")) for o in ours), None)
 
 
 def _ours_taken(o: Any, us: str) -> bool:
@@ -279,6 +280,10 @@ class TeamDesk:
         talk.heard_tick = max(talk.heard_tick, self._heard(payload, v.us))
         if talk.offer_id is None and (mine := _ours_open(payload, v.us)) is not None:
             talk.offer_id = int(mine["id"])  # a send whose answer was lost, or a thread adopted after a restart
+            want, give = mine.get("want") or {}, mine.get("give") or {}
+            talk.cash = int(want.get("cash") or 0) - int(give.get("cash") or 0)  # what stands, for its refund
+            if isinstance(mine.get("created_tick"), int):
+                talk.sent_tick = int(mine["created_tick"])
         taken = any(_ours_taken(o, v.us) for o in payload.get("standing_offers") or [])
         taken = taken or any(o.get("id") == talk.offer_id and o.get("status") == "accepted" for o in v.offers)
         if taken and not talk.accepted:
@@ -662,8 +667,9 @@ class TeamDesk:
                 {"thread_id": talk.thread_id, "swap": terms},  # kept out of the public request fields
                 lambda: self.team.say(talk.thread_id, text, offer=terms),
             )
-            if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back
-                if cash < 0:
+            if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back, but
+                # only on a definitive refusal (4xx): a 5xx may have landed, and then the spend stays booked
+                if cash < 0 and 400 <= self.rec.last_status < 500:
                     refused = {"give": {"cash": -cash}, "want": {"cards": [talk.trade.refs[1]]}, "created_tick": v.tick}
                     self._synthetic -= 1  # a refused send has no offer id: a fresh synthetic one, refunded once
                     self._refund(v, {"id": self._synthetic, **refused})
@@ -716,7 +722,7 @@ class TeamDesk:
             self.to_check.setdefault(int(offer["id"]), (tid, offer, v.tick))
 
     def _settled_or_dead(self, v: DeskView, tid: int, offer: dict[str, Any], payload: dict[str, Any]) -> None:
-        status = offer_status(payload, int(offer["id"])) if isinstance(offer.get("id"), int) else None
+        status = offer_status(payload, int(offer["id"]), v.us) if isinstance(offer.get("id"), int) else None
         if status in DEAD:
             self._refund(v, offer)
         elif status not in ("accepted", "settled"):
@@ -727,7 +733,7 @@ class TeamDesk:
         again, give the spend back once one reads dead, keep it if it settled or after `CHECK_TICKS`."""
         for oid, (tid, offer, since) in list(self.to_check.items()):
             payload = self._payloads.get(tid) or self._payload({"id": tid})
-            status = offer_status(payload, oid)
+            status = offer_status(payload, oid, v.us)
             if status in DEAD:
                 self._refund(v, offer)
             if status in (*DEAD, "accepted", "settled") or v.tick - since > CHECK_TICKS:
