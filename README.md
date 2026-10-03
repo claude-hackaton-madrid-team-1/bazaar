@@ -964,6 +964,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#133](../../pull/133) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (B16, bite X18) | `night/b16-unsettled-accepts` |
+| [#132](../../pull/132) | B25: morning assumption verifier (bazaar verify) and the timed 09:00–11:30 checklist | `night/b25-verify` |
 | [#131](../../pull/131) | feat: strategic bluffing in the words, learned per counterparty (N16) | `ogarciarevett/feat-bluff-tactics` |
 | [#130](../../pull/130) | Night B7: duel v2 within-tick order (55 % we first on real payloads) + Jev path, reconciled with B15 | `night/b7-order-jev` |
 | [#129](../../pull/129) | night(B26): new sets mid-game robustness (dealer_mints_unminted) + Sunday playbook and decisions | `night/b26-sunday` |
@@ -982,7 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#115](../../pull/115) | fix(duels): v1 forced endgame accepts are booked and sent before Jev (B15, r2 X17) | `night/b15-duels-first` |
 | [#114](../../pull/114) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (B17, bite X3) | `night/b17-restart-orphans` |
 | [#113](../../pull/113) | Night B8: v2 values delivery days with their sign once a real payload says so (duel_days_auto) | `night/b8-days-wiring` |
-| [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | `ogarciarevett/feat-learner-evolve` |
-| [#111](../../pull/111) | feat: the LLM pass over the feed's free text, and the maker reads fee notices (N12, part 2) | `ogarciarevett/feat-feed-reader-llm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
