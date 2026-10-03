@@ -41,3 +41,4 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).
 - `max_moves` = 12 — how many ranked moves to show per side.
 - `ladder_floor_quantile` = 0 — 0 keeps the lowest-fill dealer ladder; above 0 a dealer card buy opens 2 under that quantile of the limits every team's conversations closed at and stops 2 over it (`bazaar ladder floors`; 0.5 is the W3 plan).
+- `ladder_level_deals` = 0 — 0 buys each card from the cheapest dealer; above 0 the newest dealer gets card buys (when its ladder fits our caps and value) until we closed this many deals with it: the ladder counts each level's best three, and they unlock the next level early.

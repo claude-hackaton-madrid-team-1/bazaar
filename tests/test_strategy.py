@@ -516,3 +516,30 @@ def test_a_floor_plan_below_the_market_never_drops_todays_buy():
     m = dc_replace(market(), floors={("abuela", "card:uncommon"): low})  # floor 15 → 13..17, LAV-08 fills ~22
     moves, _ = strategy.buy_moves(m, PARAMS.model_copy(update={"ladder_floor_quantile": 0.5}), RULES)
     assert next(mv for mv in moves if mv.ref == "LAV-08").ladder == (18, 22, 1)  # today's ladder, not dropped
+
+
+def test_ladder_level_deals_routes_card_buys_to_the_newest_dealer_until_it_has_enough():
+    chato = {
+        "id": "chato",
+        "status": "active",
+        "level": 2,
+        "menu": {"sells": [{"rarity": "uncommon", "sets": "released", "list_price": 30}]},
+    }
+    me = {**ME, "unlocked": ["abuela", "chato"]}
+    chato_fill = settle(20, 9, "chato", "t07", "LAT-06", 28, tick=6, kind="card", persona="chato")
+    m = strategy.build_market(me, CATALOG, [*EVENTS, chato_fill], [ABUELA, chato])
+    on = PARAMS.model_copy(update={"ladder_level_deals": 3})
+    capped = Guardrails(dealer_price_caps="chato:uncommon=31")
+
+    def lav08(market_, params, rules):
+        moves, _ = strategy.buy_moves(market_, params, rules)
+        return next(mv for mv in moves if mv.ref == "LAV-08")
+
+    assert lav08(m, PARAMS, capped).source == "abuela"  # off (0): the cheapest dealer
+    assert lav08(m, on, capped).source == "chato" and "level_unlock" in lav08(m, on, capped).strategy
+    assert lav08(m, on, RULES).source == "abuela"  # Chato's plan is above max_price_uncommon 26: no route
+    done = [
+        settle(30 + i, 20 + i, "chato", "t01", "LAT-06", 28, tick=7, kind="card", persona="chato") for i in range(3)
+    ]
+    m_done = strategy.build_market(me, CATALOG, [*EVENTS, chato_fill, *done], [ABUELA, chato])
+    assert lav08(m_done, on, capped).source == "abuela"  # three deals with Chato: back to the cheapest

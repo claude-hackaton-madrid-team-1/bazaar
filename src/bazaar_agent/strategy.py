@@ -58,6 +58,7 @@ class StrategyParams(BaseModel):
     pack_price_estimate: int = Field(ge=1)
     max_moves: int = Field(ge=1)
     ladder_floor_quantile: float = Field(default=0.0, ge=0, le=1)
+    ladder_level_deals: int = Field(default=0, ge=0, le=8)
 
 
 @dataclass(frozen=True)
@@ -568,7 +569,28 @@ def buy_move(m: Market, card: Card, params: StrategyParams, rules: Guardrails) -
     if case.supply.availability in ("none", "packs"):
         return f"{card.ref}: {card.minted} minted, not buyable ({case.supply.availability}) — pull or wait"
     quote = quote_for(m, card) if case.supply.availability == "dealer" else None
+    level = level_quote(m, card, params) if quote else None
+    if level is not None and level != quote and isinstance(moved := dealer_buy(m, case, level, params, rules), Move):
+        return moved  # the newest dealer's ladder still needs deals, and its plan fits our caps and value
     return dealer_buy(m, case, quote, params, rules) if quote else team_buy(m, case, params, rules)
+
+
+def level_quote(m: Market, card: Card, params: StrategyParams) -> Quote | None:
+    """level_unlock: the newest dealer's quote for this card while we have closed fewer than
+    `ladder_level_deals` deals with it (the ladder counts each level's best three deals, and deals with
+    the newest dealer unlock the next level early). None when it is off (0), done, or the dealer does
+    not sell this card. Deals are counted over the whole feed we hold, not per day."""
+    if params.ladder_level_deals <= 0 or m.newest_dealer is None:
+        return None
+    ours = sum(1 for p in m.prints if p.persona == m.newest_dealer and p.buyer == m.us)
+    if ours >= params.ladder_level_deals:
+        return None
+    fits = [
+        q
+        for q in m.quotes
+        if q.dealer == m.newest_dealer and q.item == card.rarity and (q.sets is None or card.set_code in q.sets)
+    ]
+    return min(fits, key=lambda q: q.list_price) if fits else None
 
 
 def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[list[Move], list[str]]:
