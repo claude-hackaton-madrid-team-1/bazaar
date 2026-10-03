@@ -104,7 +104,7 @@ def _run_desk(tmp_path, enabled: bool, ticks: int = 40, jev=_jev_yes):
         )
         taken = set()
         for a in desk.proposals(view):  # the taker would rank it; here it is the only candidate
-            if not desk.jev_gate(view, a.trade, a.offer.net_cash, a.fee, a.thread_id, 0)[0]:
+            if not desk.jev_gate(view, a.trade, a.offer.net_cash, a.fee, a.thread_id, 0, "accept")[0]:
                 continue  # as the taker's `_accept_swap`: only Jev's confident yes takes their offer
             client.accept(a.offer.offer_id, a.pick)
             desk.accepted(a, w.tick)

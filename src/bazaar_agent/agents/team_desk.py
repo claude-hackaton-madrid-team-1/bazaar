@@ -58,6 +58,7 @@ DEAD = ("cancelled", "expired", "failed")  # an offer of ours in one of these wi
 CHECK_TICKS = 10  # how long an offer whose end we have not seen is re-read before its spend is simply kept
 TEAM_SPEND = "team:"  # the item prefix of the cash we add to swaps: `team_swap_max_cash_per_hour` sums these rows
 JEV_QUESTION = "team_swap_worth_it"  # questions/team_swaps.json
+NO_JEV_BUDGET = "no tick budget for jev"  # the taker's answer when the tick has no room for a Jev call
 
 
 def disabled(rules: Guardrails, env: Mapping[str, str] | None = None) -> str | None:
@@ -105,7 +106,7 @@ def maker_may_list(me: dict[str, Any], ref: str, asset_id: int | None, rules: Gu
     """While team threads are on, the maker leaves the desk its swap copy: with exactly two copies it lists
     neither (one listed would leave the desk a single free copy, which it never gives), with three or more it
     never lists the desk's copy (`desk_copy`). Off, or a single copy: the maker lists as before."""
-    if not rules.team_threads_enabled:
+    if disabled(rules) is not None:  # GUARDRAILS off, or BAZAAR_TEAM_THREADS=0 on this service too
         return True
     held = sum(1 for a in me.get("assets") or [] if a.get("ref") == ref)
     return held != 2 and (asset_id is None or asset_id != desk_copy(me, ref))
@@ -610,7 +611,7 @@ class TeamDesk:
 
     # ------------------------------------------------------------ sends
 
-    def _guard(self, v: DeskView, trade: Trade, cash: int, thread: int | None) -> Verdict:
+    def _guard(self, v: DeskView, trade: Trade, cash: int, thread: int | None, replacing: int = 0) -> Verdict:
         """The swap through the guardrails, as #79's `Swap` describes it, plus the fairness check."""
         swap = self._swap(v, trade, cash)
         if swap is None:
@@ -622,16 +623,18 @@ class TeamDesk:
         fair = judge(trade, cash, 0, self.rules, repeat=self.deals[trade.counterparty] > 0)
         if not fair.ok:
             problems.append(fair.reason)
-        if (over := self._over_cash_cap(v, -cash)) is not None:
+        if (over := self._over_cash_cap(v, -cash, replacing)) is not None:
             problems.append(over)
         return Verdict(not problems, tuple(dict.fromkeys(problems)), halted)
 
-    def _over_cash_cap(self, v: DeskView, add: int) -> str | None:
+    def _over_cash_cap(self, v: DeskView, add: int, replacing: int = 0) -> str | None:
         """`team_swap_max_cash_per_hour`: the cash we add to swaps in the last game hour (the shared ledger's
-        `team:` spend rows, refunds netted) plus this one. None when it fits, or when we add no cash."""
+        `team:` spend rows, refunds netted, never below 0) plus this one, less `replacing` (the cash of our
+        standing offer this one cancels and replaces). None when it fits, or when we add no cash."""
         if add <= 0:
             return None
-        spent = self.ledger.spent_since(v.t_hours - 1.0, TEAM_SPEND) if self.ledger is not None else 0
+        booked = self.ledger.spent_since(v.t_hours - 1.0, TEAM_SPEND) if self.ledger is not None else 0
+        spent = max(0, booked - max(0, replacing))
         cap = self.rules.team_swap_max_cash_per_hour
         if spent + add > cap:
             return f"swap cash {add} + {spent} this hour > team_swap_max_cash_per_hour {cap}"
@@ -653,7 +656,7 @@ class TeamDesk:
     # ------------------------------------------------------------ the Jev gate
 
     def jev_gate(
-        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int
+        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int, kind: str = "propose"
     ) -> tuple[bool, JevAdvice | None, str]:
         """Jev `team_swap_worth_it` on a swap every rule already allows: only a decided yes at or above
         `team_swap_jev_min_confidence` sends. Undecided, no, a timeout (`jev_timeout_s` makes it undecided), no
@@ -661,7 +664,7 @@ class TeamDesk:
         if not self.rules.team_swap_jev_gate:
             return True, None, "jev gate off"
         try:
-            advice = v.jev(self.swap_state(v, trade, cash, fee, thread, step))
+            advice = v.jev(self.swap_state(v, trade, cash, fee, thread, step, kind))
         except Exception as e:  # noqa: BLE001 — a Jev failure refuses the swap, never the tick
             return False, None, f"jev failed ({type(e).__name__}): not sent"
         bar = self.rules.team_swap_jev_min_confidence
@@ -675,7 +678,7 @@ class TeamDesk:
         )
 
     def swap_state(
-        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int
+        self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int, kind: str = "propose"
     ) -> dict[str, Any]:
         """What Jev reads: both cards at official and private values, the cash leg, the fee we pay (an accept),
         both gains at our values and their share, and the history with this team."""
@@ -709,7 +712,7 @@ class TeamDesk:
                 "our_gain": round(verdict.ours, 2),
                 "their_gain": round(verdict.theirs, 2),
                 "their_share": round(verdict.theirs / total, 3) if total > 0 else None,
-                "kind": "accept" if fee else "propose",
+                "kind": kind,  # propose: ours, they accept and pay the fee; accept: theirs, we pay it
             },
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
@@ -757,7 +760,8 @@ class TeamDesk:
 
     def _propose(self, v: DeskView, talk: Talk, advice: JevAdvice | None = None) -> None:
         cash = cash_at(talk.trade, talk.step, self.ladder)
-        verdict = self._guard(v, talk.trade, cash, talk.thread_id)
+        standing = talk.offer_id is not None and self._still_open(v, talk)  # this proposal replaces it
+        verdict = self._guard(v, talk.trade, cash, talk.thread_id, max(0, -talk.cash) if standing else 0)
         if verdict.halted:
             self.log(f"tick {v.tick} team desk: kill switch on: holding thread {talk.thread_id} ({verdict})")
             return
@@ -774,6 +778,13 @@ class TeamDesk:
             ok, advice, why = self.jev_gate(v, talk.trade, cash, 0, talk.thread_id, talk.step)
             if not ok:
                 self._jev_refused(v, "team_offer", talk.trade, talk.thread_id, why, advice)
+                last = max(talk.opened_tick, talk.sent_tick, talk.heard_tick)
+                if (
+                    advice is not None
+                    and advice.reason == NO_JEV_BUDGET
+                    and v.tick - last < self.rules.team_thread_idle_ticks
+                ):
+                    return  # no Jev budget this tick (not a verdict): nothing is sent, the next tick asks again
                 self._walk(v, talk, why)  # fail closed: no unjudged proposal, and no Jev question every tick
                 return
         status: Status = "approved" if v.window_open() else "expired"

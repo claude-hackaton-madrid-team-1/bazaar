@@ -140,11 +140,16 @@ def create_app(sim: Sim, *, run_clock: bool = True) -> FastAPI:
 
 
 async def _clock_loop(sim: Sim) -> None:
+    """Advance the shared world on its clock. A tick or a save that fails is logged and the loop goes on: the tick
+    counter moves first, so a failure is not retried in a hot loop, and /api/health never says ok over a dead clock."""
     while True:
         world = sim.world
         await asyncio.sleep(max(0.05, min(0.5, world.next_tick_in())))
-        if world.advance_if_due():
-            await asyncio.to_thread(sim.persist)
+        try:
+            if world.advance_if_due():
+                await asyncio.to_thread(sim.persist)
+        except Exception:  # noqa: BLE001 - one bad tick must never stop the simulator's clock (#178 review)
+            log.exception("sim clock: a tick or its save failed; the clock keeps going")
 
 
 def _errors(app: FastAPI) -> None:

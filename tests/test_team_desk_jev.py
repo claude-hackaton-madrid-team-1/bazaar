@@ -4,7 +4,7 @@
 import pytest
 
 from bazaar_agent.agents.runtime import JevAdvice, no_jev
-from bazaar_agent.agents.team_desk import TEAM_SPEND, DeskView
+from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView
 from bazaar_agent.guardrails import Context, Ledger
 from tests.agent_fakes import rows
 from tests.test_official_value_paths import book
@@ -221,3 +221,55 @@ def test_a_swap_proposal_above_the_official_value_is_not_sent(tmp_path):
     v2 = DeskView(**{**base.__dict__, "ctx": lambda _t: Context(400, dict(HELD), TICK, 1.5, values=fair)})
     d.converse(v2, set())
     assert [s[0] for s in opened(team)] == ["open_thread", "say"]
+
+
+# ---------------------------------------------------------------- review fixes (#188)
+
+
+def test_a_tick_with_no_jev_budget_holds_the_thread_instead_of_walking_it(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())  # opened and anchored on a yes
+    reply = thread(messages=[{"sender": "t01", "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    team.sent.clear()
+    busy = Asked(JevAdvice("undecided", 0.0, reason=NO_JEV_BUDGET))
+    d.proposals(view([reply], tick=TICK + 1, jev=busy))
+    d.converse(view([reply], tick=TICK + 1, jev=busy), set())
+    assert team.sent == [] and 42 in d.talks  # nothing sent, nothing closed
+    d.proposals(view([reply], tick=TICK + 2))
+    d.converse(view([reply], tick=TICK + 2), set())  # budget back: the concession goes out
+    assert [s[0] for s in team.sent] == ["cancel", "say"]
+
+
+def test_a_refund_of_an_older_unprefixed_spend_never_lifts_the_swap_cap(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.ledger.record("spend", TICK - 5, 1.2, -30, f"{TEAM_SPEND}LAV-09")  # its spend was booked as plain LAV-09
+    assert d._over_cash_cap(view(), 40) is None and d._over_cash_cap(view(), 41) is not None
+
+
+def test_a_concession_nets_out_the_standing_offer_it_replaces(tmp_path):
+    team = Team()
+    d, _ = desk(tmp_path, team)
+    d.ledger = Ledger(tmp_path / "ledger.jsonl")
+    d.ledger.record("spend", TICK - 5, 1.2, 39, f"{TEAM_SPEND}LAV-02")  # our standing offer's 18 + 21 elsewhere
+    assert d._over_cash_cap(view(), 3) is not None  # 39 + 3 > 40
+    assert d._over_cash_cap(view(), 3, replacing=18) is None  # 21 + 3: the old 18 is cancelled and refunded
+
+
+def test_jev_reads_an_accept_as_an_accept_even_with_no_fee(tmp_path):
+    d, _ = desk(tmp_path, Team())
+    state = d.swap_state(view(), trade(), 0, 0, None, 0, "accept")
+    assert state["swap"]["kind"] == "accept" and state["swap"]["fee"] == 0
+
+
+def test_the_maker_lists_again_when_the_desk_is_killed_by_its_environment(monkeypatch):
+    from bazaar_agent.agents.team_desk import maker_may_list
+    from bazaar_agent.guardrails import Guardrails
+
+    me = {"assets": [{"id": 3, "ref": "LAT-03", "your_value": 1.2}, {"id": 4, "ref": "LAT-03", "your_value": 1.2}]}
+    rules = Guardrails(team_threads_enabled=True)
+    assert not maker_may_list(me, "LAT-03", 4, rules)
+    monkeypatch.setenv("BAZAAR_TEAM_THREADS", "0")
+    assert maker_may_list(me, "LAT-03", 4, rules)

@@ -39,6 +39,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
+from bazaar_agent.agents.dealer_sell_data import SellMarket
+from bazaar_agent.agents.dealer_sell_desk import Candidate, SellDesk, SellHooks, standard_hooks
 from bazaar_agent.agents.maker_jev import (
     PRICE_QUESTION,
     REPRICE_QUESTION,
@@ -72,7 +74,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
-from bazaar_agent.agents.team_desk import maker_may_list
+from bazaar_agent.agents.team_desk import disabled, maker_may_list
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
     Action,
@@ -140,7 +142,7 @@ def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guard
     targets = list(targets)
     asked = {t.asset_id for t in targets if t.side == "ask"}
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
-    room = {ref: n - 2 for ref, n in held.items() if n >= 2} if rules.team_threads_enabled else {}
+    room = {ref: n - 2 for ref, n in held.items() if n >= 2} if disabled(rules) is None else {}
     kept: list[Target] = []
     for t in targets:
         if t.side == "ask" and not maker_may_list(me, t.ref, t.asset_id, rules):
@@ -289,6 +291,7 @@ class Maker:
         holdings: Holdings | None = None,
         market: Any = None,
         notices: VenueNotices | None = None,
+        sell_market: Callable[[Any], SellMarket | None] | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
@@ -307,13 +310,18 @@ class Maker:
         self._lapsing: dict[int, _Bid] = {}  # gone at or after expiry without the card: refunded next tick
         self._spent_at: dict[int, tuple[int, float]] = {}  # bid id -> (tick, t_hours) of the spend we booked
         self.values = OfficialValues.of(team)  # GET /api/me/value: every bid capped at it (Day-2 hint 1)
+        # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
+        self._run: _MakerRun | None = None
+        self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market)
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         snap: Snapshot | None = None
         try:
-            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
+            snap = read_snapshot(
+                self.team, self.public, self.feed, clock, self.holdings, parallel=self.rules.parallel_reads
+            )
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         try:
@@ -386,6 +394,11 @@ class Maker:
         actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
         for action in actions:
             self._do(run, action)
+        # Dealer sales last: never a copy an open offer of ours lists (it is locked) or one the maker wants listed.
+        locked = {o.asset_id for o in [*mine, *by_hand] if o.asset_id is not None}
+        locked |= {t.asset_id for t in targets if t.side == "ask" and t.asset_id is not None}
+        self._run = run
+        self.sell_desk.on_tick(snap, params, locked)
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"
@@ -394,6 +407,16 @@ class Maker:
             f"offer(s), {run.listings_left} listing(s) left, {window.left():.1f} s left · "
             f"{'LIVE' if self.live else 'dry run'}"
             + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")
+        )
+
+    def _sell_hooks(self, cand: Candidate) -> SellHooks:
+        def context() -> Context:
+            assert self._run is not None
+            return self._ctx(self._run)
+
+        catalog = self._run.snap.catalog if self._run is not None else {}
+        return standard_hooks(
+            cand, rules=self.rules, rec=self.rec, ledger=self.ledger, context=context, catalog=catalog, log=self.log
         )
 
     def _ctx(self, run: _MakerRun) -> Context:

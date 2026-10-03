@@ -29,6 +29,7 @@ Kind = Literal[
     "lesson",  # what one settled decision taught us (`learn.lessons`, from the evals' outcomes)
     "policy",  # a learned parameter set, e.g. a dealer ladder (`learn.evolve`), with its evidence
     "tactic",  # what one bluff tactic earned with one counterparty (`agents.bluff`, N16); never in the default recall
+    "news",  # a Radio Rastro item or an official schedule lever (`news.NewsSentinel`): quoted, maybe a rumour
 ]
 Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
 # What the outcome learner writes: everything else in the table is the feed reader's (N12).
@@ -40,7 +41,7 @@ TEXT_MAX = 300
 EVIDENCE_MAX = 20
 # detail fields that tell two facts about the same subject apart (an aggregate keeps one row per item)
 IDENTITY_FIELDS = frozenset(
-    {"item", "rarity", "code", "aggregate", "venue", "effective_tick", "outcome", "price_class", "pattern"}
+    {"item", "rarity", "code", "aggregate", "venue", "effective_tick", "outcome", "price_class", "pattern", "news_id"}
 )
 # Where a rules blocker may come from (matched with `fullmatch`).
 ORIGIN_THAT_BLOCKS = re.compile(r"(feed|refusal|thread:\d+)")
