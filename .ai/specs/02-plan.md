@@ -165,6 +165,15 @@ Files: `src/bazaar_agent/agents/duelist.py` (log-only mode)
 - Step 1 — Poll `/api/duels` each tick during the practice session and store the raw responses as
   fixtures. · **Acceptance:** `tests/fixtures/duels/*.json` with a full session.
 
+### #69 follow-up — public /state and /events must not reveal our limits
+Spec: the review comment "Remaining leaks, ranked" on PR #69 (`gh pr view 69 --json comments`).
+Files: `src/bazaar_agent/agents/status.py`, `tests/test_status.py`, `docs/services.md`, README sentence.
+- Step 1 — `sent` needs `chosen is True` (maker reprice rows); drop `jev`; unsent `accept_*` rows are not
+  published; guardrail label only on sent rows. · **Acceptance:** `reprice_*` and `accept_*` tests.
+- Step 2 — nested `topic` / `give` / `want` keep only card, pack and cash keys. · **Acceptance:** probe test.
+- Step 3 — seeded random property test: no private key or number in `/state` or `/events`. · **Acceptance:** 8 seeds green.
+- Step 4 — docs drift in `docs/services.md` and README. · Left open (low): rows are published before the send.
+
 ---
 
 ## Parallel-work notes
