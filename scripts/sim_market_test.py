@@ -7,7 +7,7 @@ first, the venue keeper before its own offers, the broker inside its tick window
 
 For each Market Test session it prints the share of the possible gains (between the hidden limits) that
 our board venue realised, and what the free auto stall realises on the same book: `bazaar_sim`'s own
-`_auto_bench`, replayed on the session's traders.
+`bench.cross_by_quote`, replayed on the session's traders.
 
 The committed `venue_open_after_game_hours` (6.5) is a game hour of the real calendar; a simulator hour
 lasts an hour of ticks, so `--open-after-hours` sets the opening hour for this run only (the rest of
@@ -35,8 +35,8 @@ from pydantic import SecretStr
 
 from bazaar_sim.app import Sim, create_app, server_config
 from bazaar_sim.auth import Gate
-from bazaar_sim.broker import _auto_bench, possible_gains
-from bazaar_sim.models import BenchRun, Venue
+from bazaar_sim.bench import cross_by_quote, possible_gains
+from bazaar_sim.models import BenchRun
 from bazaar_sim.store import MemoryStore
 from bazaar_sim.world import SimConfig, World
 
@@ -141,10 +141,8 @@ def realised(traders: list[Any], pairs: list[list[str]]) -> int:
 
 
 def stall_on(run: BenchRun) -> int:
-    """The free auto stall on this session's book: `bazaar_sim`'s own `_auto_bench` on a fresh copy."""
-    replay = BenchRun(run=run.run, start_tick=run.start_tick, end_tick=run.end_tick, traders=run.traders)
-    _auto_bench(Venue(venue="stall", name="stall", owner="-", owner_name="-", fee_bps=0, fee_per_card=0), replay)
-    return realised(run.traders, replay.matched.get("stall", []))
+    """The free auto stall on this session's book (#77 moved #55's `_auto_bench` into `bazaar_sim.bench`)."""
+    return realised(run.traders, [[s, b] for s, b, _ in cross_by_quote(run.traders, 0, lambda price: 0)])
 
 
 def report(sim: Sim, venue: str | None) -> list[dict[str, Any]]:
