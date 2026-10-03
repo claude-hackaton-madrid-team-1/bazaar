@@ -28,6 +28,7 @@ from bazaar_agent.guardrails import (
     Guardrails,
     LedgerStore,
     context_from,
+    effective_cash_floor,
     kill_switch,
     load_guardrails,
 )
@@ -638,7 +639,7 @@ def strategy(b: Backend, limit: int = 5) -> dict[str, Any]:
     return {
         "tick": book_.tick,
         "cash": book_.cash,
-        "above_cash_floor": max(0, ctx.cash - b.rules.cash_floor),
+        "above_cash_floor": max(0, ctx.cash - effective_cash_floor(b.rules, ctx)),
         "spent_last_game_hour": ctx.spent_last_hour,
         "buys": [_move_row(m) for m in book_.buys[:limit]],
         "sells": [_move_row(m) for m in book_.sells[:limit]],
