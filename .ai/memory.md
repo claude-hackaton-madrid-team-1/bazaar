@@ -846,3 +846,8 @@ A bid gone from `/api/me/offers` at or after its `expires_tick` may have lapsed 
 flatten` / the desk, which already booked its refund. The live feed emits `offer.cancelled {offer, venue}` for
 a cancel and nothing for an expiry (Friday: 644 offers past expiry, 136 cancelled, ≥ 460 silent); the simulator
 emits one with `reason: "expired"`. The maker's lapse refund (B14) checks it, and skips under the kill switch.
+
+### [2026-10-03] gotcha — the pitch kit mixed two red-team counts and four duel numbers
+`docs/pitch/story.md`/`qa.md` say 129 red-team cases; the W5 report says 168 (no source has 129). The duel
+"0.27" baselines differ: simulator v1 0.268/0.278 (modelled rivals) vs the real Friday evals mean 0.279 (estimate, practice).
+`docs/pitch/claims.md` tags every claim REAL/SIMULATED/PENDING/UNVERIFIED; quote only from it.
