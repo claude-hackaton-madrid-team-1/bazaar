@@ -158,6 +158,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "railway-sdk" },
     { name = "ruff" },
 ]
 infra = [
@@ -190,6 +191,7 @@ dev = [
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
+    { name = "railway-sdk", specifier = "==0.2.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]
 infra = [{ name = "railway-sdk", specifier = "==0.2.0" }]
