@@ -260,3 +260,15 @@ def test_scan_lists_the_closest_below_each_bar_and_says_what_the_taker_would_do(
     assert [arb.why_not(c, 1.0) for c in s.crossings] == ["", "maker unknown"]
     text = arb.render_scan(s, None, 3, 3)
     assert "would take" in text and "maker unknown" in text and "Closest below the bar" in text
+
+
+def test_scan_pairs_takeable_crossings_first():
+    # an unknown maker's cheaper ask must not hide a known maker's crossing into the same bid
+    m = market(["MAL-04"])
+    offers = [
+        ask(1, "MAL-04", 1, venue="v02", maker="m3950d43b"),
+        ask(2, "MAL-04", 4, venue="v02"),
+        bid(3, "MAL-04", 12),
+    ]
+    s = arb.scan(m, VENUES, offers, ours=set(), min_net=3, min_surplus=3)
+    assert [(c.ask.id, c.bid.id) for c in s.crossings] == [(2, 3)]

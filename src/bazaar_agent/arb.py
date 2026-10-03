@@ -209,7 +209,11 @@ def scan(
     """Live crossings (net ≥ `min_net` after both fees) and duplicate buys (surplus ≥ `min_surplus`), and the
     `near` closest of each below those bars."""
     value = next_copy_values(market)
-    every = best_per_ask(crossings(offers, venues, exclude=ours, min_net=-(10**9), value=value))
+    found = crossings(offers, venues, exclude=ours, min_net=-(10**9), value=value)
+    takeable = best_per_ask(c for c in found if not why_not(c, sell_ratio))  # the taker's pairing: eligible first
+    used = {c.ask.id for c in takeable} | {c.bid.id for c in takeable}
+    rest = best_per_ask(c for c in found if why_not(c, sell_ratio) and not {c.ask.id, c.bid.id} & used)
+    every = sorted(takeable + rest, key=lambda c: (-c.net, c.ask.id, c.bid.id))
     all_dups = dup_buys(offers, venues, market.held, value, min_surplus=-(10.0**9), exclude=ours)
     return Scan(
         [c for c in every if c.net >= min_net],

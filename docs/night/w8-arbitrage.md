@@ -52,7 +52,7 @@ rare at under a quarter of its usual price. Flip `dup_buy_enabled` only if the s
 dumping, or a team leaving). Epics and legendaries stay blocked anyway: `max_price_for` has no cap for them, so
 `check()` refuses every epic buy.
 
-## What shipped (all off by default; existing tests unchanged; 868 tests green)
+## What shipped (all off by default; existing tests unchanged; 869 tests green)
 
 - **GUARDRAILS.md** (no existing value changed): `arb_enabled` false, `arb_min_net_spread` 3, `arb_max_inventory_p` 60,
   `arb_party_cooldown_ticks` 240, `dup_buy_enabled` false, `dup_min_surplus` 3, `dup_max_spend_per_hour` 40.
