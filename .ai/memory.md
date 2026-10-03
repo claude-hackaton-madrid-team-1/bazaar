@@ -1,7 +1,7 @@
 # MEMORY — Bazaar (shared team working log)
 
-Shared, **committed** working log for every teammate and every agent (Claude Code, Codex, Gemini,
-opencode). Protocol: see the "Memory protocol" section of `.ai/context.md`.
+Shared, **committed** working log for every teammate and every agent (Claude Code sessions
+and sub-agents). Protocol: see the "Memory protocol" section of `.ai/context.md`.
 
 Append only, newest at the bottom of `## Log`, terse. The latest headings are mirrored into the
 README status block on every commit.

@@ -1,6 +1,6 @@
 # Agent Personas
 
-Specialist personas that play a single role with a single perspective. Each persona is a Markdown file consumed as a system prompt by your harness (Claude Code, Cursor, Copilot, etc.).
+Specialist personas that play a single role with a single perspective. Each persona is a Markdown file consumed as a system prompt by Claude Code.
 
 | Persona | Role | Best for |
 |---------|------|----------|

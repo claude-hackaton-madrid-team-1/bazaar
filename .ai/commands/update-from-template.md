@@ -5,8 +5,8 @@ description: Pull generic cross-ai-template updates into this repo, judgment-mer
 Refresh this repo's GENERIC template machinery from cross-ai-template, then do the one thing the
 script can't: reconcile `.ai/context.md` (new template conventions vs. this project's filled-in
 values). Work strictly locally — this is a hard rule: **NEVER push, open a PR, create a remote
-branch, or touch a remote.** Use plain shell + file edits only, so this degrades gracefully across
-Claude Code, Codex, Gemini, and opencode (no tool-specific accelerants required).
+branch, or touch a remote.** Use plain shell + file edits only, so this works in
+Claude Code (no tool-specific accelerants required).
 
 Steps:
 
@@ -16,8 +16,6 @@ Steps:
    - If the script isn't present yet (a repo that predates it), bootstrap it first with git, then
      run it: `git fetch https://github.com/ogarciarevett/cross-ai-template.git main &&
      git checkout FETCH_HEAD -- scripts/update-from-template.sh`.
-   - Pass `--with-tooling` ONLY if the user wants root tool configs (`.mcp.json`, `opencode.json`,
-     `.codex/`, `.agents/`) refreshed too — these are commonly project-customized, so default to off.
 
 2. **Judgment-merge `.ai/context.md`.** If `.ai/context.md.incoming` exists, diff it against the
    current `.ai/context.md`
@@ -28,7 +26,7 @@ Steps:
    threshold, the real typecheck/lint commands, and any project hard rules. Never overwrite a
    filled-in section with an `<!-- FILL -->` placeholder. When done, delete `.ai/context.md.incoming`.
 
-3. **Re-sync.** Run `sh scripts/sync-ai-docs.sh` so every tool's generated config matches the
+3. **Re-sync.** Run `sh scripts/sync-ai-docs.sh` so the generated Claude Code config matches the
    refreshed sources (the script already runs it, but re-run after your context.md edits).
 
 4. **Summarize for review.** Report concisely: which generic files changed, which project-specific

@@ -11,7 +11,7 @@ every CLI (no tool lock-in):
 
 - **External backlog — Linear or GitHub Projects.** Detect: GitHub Projects via
   `gh project list` (or `gh project list --owner <org>`) returning ≥ 1 project; Linear via a
-  configured Linear MCP server (`.mcp.json` / the tool's MCP config), a `LINEAR_API_KEY`, or
+  configured Linear MCP server (in Claude Code's MCP settings), a `LINEAR_API_KEY`, or
   `eng-123`-style branch/commit keys. If found, the task id is the EXTERNAL id (`ENG-421`,
   `#123`) and the ticket body is the spec. Do NOT create a local `<id>-spec.md`. Read the ticket,
   summarize its goal + acceptance criteria, cite the id, and skip to step 3.

@@ -765,7 +765,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - **Every PR is reviewed before it merges (Greptile is disabled):** run `/pr-review <PR number>`. The
   `pr-reviewer` sub-agent merges the PR onto current `main` in a scratch worktree, runs the gate, and posts
   a P0-P3 verdict on the PR. Fix every P0 and P1, re-run until it says APPROVE, then ask for the merge.
-  Run `sh scripts/sync-ai-docs.sh` once per clone or worktree so your tool sees the agent and the command.
+  Run `sh scripts/sync-ai-docs.sh` once per clone or worktree so Claude Code sees the agent and the command.
 - **Backlog:** GitHub issues are the source of truth; the plan mirrors them.
 - **Never** push from an agent, never commit `.env`, one team key only.
 
