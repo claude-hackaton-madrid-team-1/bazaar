@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.table import Table
 from rich.text import Text
 
@@ -107,6 +109,25 @@ def threads_table(threads: list, limit: int) -> Table:
             " ".join(map(str, d.dealer_prices)) or "-",
             _n(d.final_price),
             _n(d.fill_price),
+        )
+    return t
+
+
+def affinity_table(amap: Any, title: str = "Rival affinity map · P(set holds the team's top multiplier)") -> Table:
+    t = Table(title=title)
+    sets = next(iter(amap.teams.values())).sets if amap.teams else ()
+    for col in ("team", "signals", "top set", "P", "runner-up", *sets):
+        t.add_column(col, justify="left" if col in ("team", "top set", "runner-up") else "right")
+    for a in amap.teams.values():
+        ranked = [s for s in sorted(a.p_top, key=lambda s: -a.p_top[s]) if s != a.top_set]
+        second = ranked[0] if ranked else "-"
+        t.add_row(
+            a.team,
+            str(a.signals),
+            a.top_set if a.signals else "- (no signal)",
+            f"{a.confidence:.2f}",
+            f"{second} {a.p_top.get(second, 0):.2f}" if second != "-" else "-",
+            *(f"{a.p_top[s]:.2f}" for s in sets),
         )
     return t
 
