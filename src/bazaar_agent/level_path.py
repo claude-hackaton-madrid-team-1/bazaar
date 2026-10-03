@@ -18,6 +18,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from bazaar_agent import intel
 
 WHY = re.compile(r"(\d+) deals? with (\w+)")
@@ -48,7 +50,7 @@ def unlocks(events: Iterable[intel.Event]) -> list[Unlock]:
             Unlock(
                 str(p.get("team")),
                 int(e.get("tick", 0)),
-                str(p.get("persona") or p.get("level") or "?"),
+                str(p.get("persona") or (p.get("level") if isinstance(p.get("level"), str) else None) or "?"),
                 int(level) if isinstance(level, int) else None,
                 why,
                 int(m[1]) if m else None,
@@ -111,8 +113,10 @@ Rule = Callable[[intel.DealerThread], bool]
 RULES: dict[str, Rule] = {
     "every deal": lambda t: True,
     "buys": lambda t: t.side == "buy",
-    "not at the opening price": lambda t: t.fill_price != t.opening_ask,
-    "buys not at the opening price": lambda t: t.side == "buy" and t.fill_price != t.opening_ask,
+    "not at the opening price": lambda t: t.opening_ask is not None and t.fill_price != t.opening_ask,
+    "buys not at the opening price": lambda t: (
+        t.side == "buy" and t.opening_ask is not None and t.fill_price != t.opening_ask
+    ),
     "buys where we bid": lambda t: t.side == "buy" and bool(t.team_prices),
 }
 
@@ -135,30 +139,61 @@ def deals_with(threads: Sequence[intel.DealerThread], team: str, dealer: str, up
 
 
 def fit_rules(events: Sequence[intel.Event], minimum: int = 3) -> list[RuleFit]:
-    """Each candidate counting rule against every team's server count. A team that only got in when the
-    level opened to everyone, while a rule credits it `minimum` deals before activation, contradicts it."""
+    """Each candidate counting rule against every team's server count. A team that only got in when its
+    level opened to everyone, while a rule credits it `minimum` deals with that level's previous dealer
+    before then, contradicts the rule (latecomers were let in the tick their deals reached the minimum)."""
     threads = intel.dealer_threads(events)
     found = unlocks(events)
     counted = [u for u in found if u.deals is not None and u.previous]
-    late = [u for u in found if u.open_to_all]
-    activated = {t.dealer: t.activated for t in timelines(events)}
+    previous_of = {u.dealer: str(u.previous) for u in counted}  # each level's previous dealer
+    late = [u for u in found if u.open_to_all and u.dealer in previous_of]
+    opened = {t.dealer: t.opened_to_all for t in timelines(events)}
+    counted_deals = {u: deals_with(threads, u.team, str(u.previous), u.tick) for u in counted}
+    late_deals = {}
+    for u in late:
+        until = opened.get(u.dealer)
+        late_deals[u] = deals_with(threads, u.team, previous_of[u.dealer], (until if until is not None else u.tick) - 1)
     out = []
     for name, rule in RULES.items():
         misses = []
-        for u in counted:
-            n = sum(1 for t in deals_with(threads, u.team, str(u.previous), u.tick) if rule(t))
+        for u, deals in counted_deals.items():
+            n = sum(1 for t in deals if rule(t))
             if n != u.deals:
                 misses.append((u.team, int(u.deals or 0), n))
-        previous = next((u.previous for u in counted), None)
-        contradicted = tuple(
-            u.team
-            for u in late
-            if previous
-            and sum(1 for t in deals_with(threads, u.team, previous, activated.get(u.dealer) or u.tick) if rule(t))
-            >= minimum
-        )
+        contradicted = tuple(u.team for u, deals in late_deals.items() if sum(1 for t in deals if rule(t)) >= minimum)
         out.append(RuleFit(name, len(counted) - len(misses), len(counted), tuple(misses), contradicted))
     return sorted(out, key=lambda f: (len(f.contradicted_by), -f.exact))
+
+
+class UnlockRule(BaseModel):
+    """A dealer's `unlock` block in `GET /api/dealers`, validated at the boundary."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    always: bool = False
+    early_deals_with: str | None = None
+    early_min_deals: int | None = Field(default=None, ge=0)
+    early_min_level: int | None = Field(default=None, ge=0)
+    open_to_all_at: Any = None
+
+
+def dealers_from(body: Any) -> list[dict[str, Any]]:
+    """Every shape a dealers payload comes in: a list, `{personas: [...]}` / `{dealers: [...]}`, one
+    dealer (`GET /api/dealers/<id>`), or the simulator's `{id: dealer}`."""
+    body = body.get("body", body) if isinstance(body, dict) and "body" in body else body
+    if isinstance(body, list):
+        return [d for d in body if isinstance(d, dict)]
+    if not isinstance(body, dict):
+        raise ValueError("not a dealers payload")
+    for key in ("personas", "dealers"):
+        if isinstance(body.get(key), list):
+            return [d for d in body[key] if isinstance(d, dict)]
+    if "id" in body:
+        return [body]
+    values = [v for v in body.values() if isinstance(v, dict) and "id" in v]
+    if values:
+        return values
+    raise ValueError("not a dealers payload")
 
 
 @dataclass(frozen=True)
@@ -172,35 +207,39 @@ class Requirement:
     min_deals: int | None
     min_level: int | None
     open_to_all_at: Any
-    ours: int | None  # our deals with `deals_with` so far (buys not at the opening price)
+    ours: int | None  # our deals with `deals_with` since `since_tick` that count (buys not at the opening price)
 
     @property
     def missing(self) -> int | None:
         return None if self.min_deals is None or self.ours is None else max(0, self.min_deals - self.ours)
 
 
-def requirements(dealers: Iterable[Mapping[str, Any]], events: Sequence[intel.Event], team: str) -> list[Requirement]:
+COUNTED = RULES["buys not at the opening price"]  # what the plan counts toward an unlock (RULES.md + Friday)
+
+
+def requirements(
+    dealers: Iterable[Mapping[str, Any]], events: Sequence[intel.Event], team: str, since_tick: int = 0
+) -> list[Requirement]:
+    """Each dealer's early-unlock rule and our deals toward it since `since_tick` (a round's first tick,
+    if the count restarts per round). Our own level against `min_level` is the caller's to check."""
     threads = intel.dealer_threads(events)
     out = []
     for d in dealers:
-        unlock = d.get("unlock") or {}
-        previous = unlock.get("early_deals_with")
+        unlock = UnlockRule.model_validate(d.get("unlock") or {})
         ours = None
-        if previous:
-            ours = sum(
-                1
-                for t in deals_with(threads, team, str(previous), 10**9)
-                if t.side == "buy" and t.fill_price != t.opening_ask
-            )
+        if unlock.early_deals_with:
+            deals = deals_with(threads, team, unlock.early_deals_with, 10**9)
+            ours = sum(1 for t in deals if (t.fill_tick or 0) >= since_tick and COUNTED(t))
+        level = d.get("level")
         out.append(
             Requirement(
                 str(d.get("id")),
-                d.get("level") if isinstance(d.get("level"), int) else None,
+                level if isinstance(level, int) else None,
                 str(d.get("status") or "?"),
-                str(previous) if previous else None,
-                unlock.get("early_min_deals"),
-                unlock.get("early_min_level"),
-                unlock.get("open_to_all_at"),
+                unlock.early_deals_with,
+                unlock.early_min_deals,
+                unlock.early_min_level,
+                unlock.open_to_all_at,
                 ours,
             )
         )

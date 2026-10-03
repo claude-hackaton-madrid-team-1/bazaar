@@ -1,3 +1,5 @@
+import pytest
+
 from bazaar_agent import level_path as lp
 from tests.test_intel import opened, settle
 
@@ -68,3 +70,40 @@ def test_requirements_read_the_dealers_unlock_rule_and_count_our_deals():
     assert reqs["abuela"].deals_with is None
     assert (reqs["chato"].ours, reqs["chato"].missing) == (3, 0)
     assert {r.dealer: r.missing for r in lp.requirements(dealers, friday(), "t15")}["chato"] == 3
+
+
+def test_dealers_come_in_every_shape():
+    one = {"id": "chato", "level": 2}
+    for body in ([one], {"personas": [one]}, {"dealers": [one]}, one, {"chato": one}, {"body": {"personas": [one]}}):
+        assert lp.dealers_from(body) == [one]
+    with pytest.raises(ValueError):
+        lp.dealers_from({"nothing": 1})
+
+
+def test_an_unlock_block_is_validated_and_a_level_number_is_not_a_dealer():
+    bad = [{"id": "x", "unlock": {"early_deals_with": "abuela", "early_min_deals": "lots"}}]
+    with pytest.raises(ValueError):
+        lp.requirements(bad, friday(), "t02")
+    (u,) = lp.unlocks([event(9, 99, "level.unlocked", team="t03", level=2, why="3 deals with abuela")])
+    assert u.dealer == "?"  # level 2 is a number, not a dealer id
+
+
+def test_a_deal_without_a_known_opening_price_is_not_negotiated():
+    events = [
+        opened(1, 5, "t02", {"buy": {"card": "LAV-03"}}, tick=1),
+        bid(2, 5, "t02", 9, 1),
+        settle(3, 1, "abuela", "t02", "LAV-03", 9, tick=2, kind="card"),
+    ]
+    dealers = [{"id": "chato", "unlock": {"early_deals_with": "abuela", "early_min_deals": 3}}]
+    assert lp.requirements(dealers, events, "t02")[0].ours == 0
+
+
+def test_a_late_team_is_checked_up_to_its_levels_open_to_all_on_that_levels_previous_dealer():
+    # t15 reaches three negotiated buys during the head start (tick 120) yet is only let in at 158: contradicts
+    events = friday()
+    for i in range(3):
+        events += deal(300 + 10 * i, 40 + i, "t15", 12, 9, 110 + i)
+    fits = {f.rule: f for f in lp.fit_rules(sorted(events, key=lambda e: e["id"]))}
+    assert fits["buys not at the opening price"].contradicted_by == ("t15",)
+    counts = lp.requirements([{"id": "chato", "unlock": {"early_deals_with": "abuela"}}], events, "t15", since_tick=100)
+    assert counts[0].ours == 3  # only this round's deals, when counted from a round's first tick

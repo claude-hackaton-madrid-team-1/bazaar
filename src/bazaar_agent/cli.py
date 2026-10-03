@@ -1179,7 +1179,8 @@ def _jsonl_file(path: str) -> list[Event]:
 def plan_levels(
     dealers_file: str | None = typer.Option(None, "--dealers", help=f"{FILE_HELP} (GET /api/dealers, or a list)"),
     feed_file: str | None = typer.Option(None, "--feed", help="Read the feed from this JSONL capture"),
-    team: str = typer.Option("t01", "--team", help="Our team id"),
+    team: str | None = typer.Option(None, "--team", help="Our team id (default: BAZAAR_TEAM_ID, cache or /api/me)"),
+    since_tick: int = typer.Option(0, "--since-tick", help="Count our deals from this tick (a round's first)"),
     live: bool = typer.Option(True, "--live/--no-live", help=LIVE_HELP),
 ) -> None:
     """The dealer levels (B21): each level's timeline from the feed (announced, activated, open to all),
@@ -1188,8 +1189,16 @@ def plan_levels(
     from bazaar_agent import level_path as lp
 
     events = _jsonl_file(feed_file) if feed_file else _events(live)
+    us = team or _our_team()
+    if not us:
+        _fail("our team id is unknown: pass --team or set BAZAAR_TEAM_ID")
+        return
     personas = _json_file(dealers_file) if dealers_file else public_client(load_settings()).dealers()
-    dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
+    try:
+        dealers = lp.dealers_from(personas)
+    except ValueError as e:
+        _fail(f"{dealers_file or 'GET /api/dealers'}: {e}")
+        return
     for t in lp.timelines(events):
         console.print(
             f"{t.name} ({t.dealer}): announced tick {t.announced}, activated tick {t.activated}, open to all "
@@ -1198,9 +1207,16 @@ def plan_levels(
     for f in lp.fit_rules(events):
         against = f" · contradicted by {', '.join(f.contradicted_by)}" if f.contradicted_by else ""
         console.print(f"  rule '{f.rule}': matches {f.exact} of {f.teams} unlock counts{against}")
-    for r in lp.requirements(dealers, events, team):
+    try:
+        reqs = lp.requirements(dealers, events, us, since_tick)
+    except ValueError as e:  # an unlock block that fails validation
+        _fail(f"a dealer's unlock block is not what we expect: {e}")
+        return
+    for r in reqs:
         need = (
-            f"{r.min_deals} deals with {r.deals_with} (ours {r.ours}, {r.missing} to go)"
+            f"{r.min_deals} deals with {r.deals_with} (ours {r.ours}, {r.missing} to go"
+            + (f"; needs level {r.min_level}" if r.min_level else "")
+            + ")"
             if r.deals_with
             else "open from the start"
         )
