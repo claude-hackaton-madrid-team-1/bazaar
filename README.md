@@ -964,6 +964,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#119](../../pull/119) | feat(levels): B21 fastest path up the ladder levels: bazaar plan levels, unlock rule, Saturday plan (stacked on #109) | `night/b21-levels` |
+| [#118](../../pull/118) | proposal(market): fastest safe path to an open venue (B20): open at 09:00, board+edge or auto; read-only bench watch | `night/b20-venue-path` |
 | [#117](../../pull/117) | Night B8: Duels II days readiness: sign latch on real evidence, rival days, zoo numbers | `night/b8-days` |
 | [#116](../../pull/116) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (B18, bites X20 X6 X2) | `night/b18-rate-limits` |
 | [#115](../../pull/115) | fix(duels): forced endgame accepts are booked and sent before Jev (B15, r2 X17) | `night/b15-duels-first` |
@@ -982,7 +984,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#101](../../pull/101) | W8: cross-venue arbitrage and duplicate buys, guarded and off by default (stacked on #72) | `night/w8-arbitrage` |
 | [#100](../../pull/100) | feat(dealer): seeded step jitter for dealer bids, default off (B12, stacked on #81) | `night/b12-dealer-jitter` |
 | [#98](../../pull/98) | feat(rivals): rival behaviour profiles + read-only opportunity scanner (B4) | `night/b4-rival-scanner` |
-| [#97](../../pull/97) | Night B11 (w2a): exploiter rivals that read our limit and squeeze our endgame | `night/b11-exploiters` |
-| [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
 
 <!-- BAZAAR:ACTIVITY:END -->
