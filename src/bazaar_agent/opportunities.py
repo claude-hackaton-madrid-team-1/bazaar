@@ -15,17 +15,17 @@ spend cap, the counterparty share), and one that would use a copy or a card the 
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from bazaar_agent import intel
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.market import BoardOffer, Venue
 from bazaar_agent.guardrails import Action, Context, Guardrails, check
 from bazaar_agent.rivals import Listed, market_price, own_value, tape_reference
 from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake, buy_case
-from bazaar_agent.trade_desk import Trade, items_used
+from bazaar_agent.trade_desk import Trade, holdings, items_used, team_copies
 
 Kind = Literal["buy", "sell"]
 
@@ -63,18 +63,24 @@ def score_offer(
     venue: Venue | None,
     ctx: Context,
     tape: tuple[dict[str, float], dict[str, float]] = ({}, {}),
-    copies: int = 1,
+    copies: int = 0,
+    asset_id: int | None = None,
 ) -> Opportunity | None:
-    """One standing offer scored for us, or None when it is not ours to take (a card we hold offered to
-    us, a card we do not hold wanted, an unknown card). `copies`: how many of the card its maker holds."""
+    """One standing offer scored for us, or None when it is not ours to take: an ask for a card we hold, a
+    card off our pages or of a set not released (what the taker never buys), a bid for a card we do not
+    hold, an unknown card or venue. `copies`: how many of the card its maker is known to hold. `asset_id`: the copy
+    we would hand over into a bid (default: the one we lose least by)."""
     card = m.cards.get(o.ref)
-    if card is None:
+    if card is None or venue is None:  # an unknown venue has an unknown fee: not priced blind
         return None
-    fee = venue.fee(o.price) if venue is not None else 0
+    fee = venue.fee(o.price)
     market = market_price(o.ref, card.rarity, *tape)
-    their_value = own_value(amap, o.maker, o.ref, card.book, copies) if o.maker in amap.teams else None
+    their_value = None
+    if o.maker in amap.teams:  # an ask's maker parts with its last copy; a bid's maker gets one more
+        held = max(copies, 1) if o.side == "ask" else copies + 1
+        their_value = own_value(amap, o.maker, o.ref, card.book, held, m.marginals)
     if o.side == "ask":
-        if m.held.get(o.ref, 0) > 0:
+        if m.held.get(o.ref, 0) > 0 or not card.page or card.set_code not in m.released:
             return None
         worth = buy_case(m, card, params).value
         ours = worth - o.price - fee
@@ -85,6 +91,8 @@ def score_offer(
     else:
         assets = me.get("assets") or []
         mine = [a for a in assets if a.get("ref") == o.ref and isinstance(a.get("your_value"), int | float)]
+        if asset_id is not None:
+            mine = [a for a in mine if a.get("id") == asset_id]
         if not mine:
             return None
         value = min(float(a["your_value"]) for a in mine)
@@ -92,7 +100,10 @@ def score_offer(
         ours = o.price - fee - loss
         theirs = None if their_value is None else their_value - o.price
         tag = "overbid" if market is not None and o.price > market else ""
-        action = Action("accept_sell", o.ref, card.rarity, o.price, value, counterparty=o.maker)
+        # The sell floor sees what we net: the accepting side pays the fee out of the bid.
+        action = Action(
+            "accept_sell", o.ref, card.rarity, o.price - fee, your_value=value, counterparty=o.maker, volume=o.price
+        )
         reason = f"selling loses us {loss:.1f}; bid {o.price} - fee {fee}"
     if market is not None:
         reason += f"; tape {market:g}"
@@ -159,27 +170,17 @@ def scan(
     """Every offer worth more than `min_surplus` to us, best first (allowed ones before refused ones)."""
     rarity_of = {ref: c.rarity for ref, c in m.cards.items()}
     tape = tape_reference(events, rarity_of)
-    held = _held(events)
+    held = team_copies(holdings(events), m.us)
     out = []
     for o in offers:
         if o.maker == m.us:
             continue
-        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, held.get((o.maker, o.ref), 1))
+        copies = held.get(o.maker, Counter())[o.ref]
+        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, copies)
         if op is None or op.ours <= min_surplus:
             continue
         out.append(replace(op, plan=against_plan(op, plan, me)))
     return sorted(out, key=lambda op: (not op.allowed, -op.ours, op.offer_id))
-
-
-def _held(events: Sequence[dict[str, Any]]) -> dict[tuple[str, str], int]:
-    """(team, card) -> copies we know it holds (`trade_desk.holdings`), at least 1 for a maker."""
-    from bazaar_agent.trade_desk import holdings
-
-    out: dict[tuple[str, str], int] = {}
-    for c in holdings(events).values():
-        if intel.TEAM_ID.match(c.holder):
-            out[(c.holder, c.ref)] = out.get((c.holder, c.ref), 0) + 1
-    return out
 
 
 # ---------------------------------------------------------------- the replay: what Friday's boards offered us
@@ -220,13 +221,14 @@ def replay(
 ) -> Replay:
     rarity_of = {ref: c.rarity for ref, c in m.cards.items()}
     tape = tape_reference(events, rarity_of)
-    held = _held(events)
+    held = team_copies(holdings(events), m.us)
     worth: list[tuple[Listed, Opportunity]] = []
     offers = 0
     by_id = {r.id: r for r in rows}
     for o in offers_from(rows, m.us):
         offers += 1
-        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, held.get((o.maker, o.ref), 1))
+        copies = held.get(o.maker, Counter())[o.ref]
+        op = score_offer(o, m, me, params, rules, amap, venues.get(o.venue), ctx, tape, copies)
         if op is not None and op.ours > min_surplus and op.allowed:
             worth.append((by_id[o.id], op))
     taken = [(r, op) for r, op in worth if r.outcome == "filled"]

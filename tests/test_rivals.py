@@ -94,9 +94,10 @@ def test_profiles_price_fill_take_and_reprice():
 
 
 def test_tags_name_cheap_sellers_and_overbidders():
-    p = rv.TeamProfile("t09", ask_vs_own=[0.5, 0.6, 0.7], bid_vs_tape=[1.2, 1.3, 1.5], takes=3, take_latency=[1, 2, 2])
+    p = rv.TeamProfile("t09", ask_vs_tape=[0.5, 0.6, 0.7], bid_vs_tape=[1.2, 1.3, 1.5], takes=3, take_latency=[1, 2, 2])
     assert p.tags == ("cheap seller", "overbidder", "fast taker")
-    assert rv.TeamProfile("t09", ask_vs_own=[0.5]).tags == ()  # one data point is not a habit
+    assert rv.TeamProfile("t09", ask_vs_tape=[0.5]).tags == ()  # one data point is not a habit
+    assert rv.TeamProfile("t09", ask_vs_own=[0.5, 0.6, 0.7]).tags == ()  # below own value: maybe a duplicate
 
 
 def market():
@@ -245,7 +246,11 @@ def test_the_taker_sells_into_a_rich_bid_only_when_asked(tmp_path):
     t, lines = sell_taker(tmp_path / "on", on, rich)
     t.on_tick(clock())
     assert on.sent == [("accept", 77, [5])]
-    assert t.ledger.spent_since(0) == 0 and t.ledger.accept_items(100) == ["LAT-09"]
+    assert t.ledger.spent_since(0) == 0 and t.ledger.accept_items(100) == ["sell:5"]
+    # the sale settles next tick: /me still shows #5 then, and the taker never sells it again
+    on.now = clock(tick=101)
+    t.on_tick(clock(tick=101))
+    assert on.sent == [("accept", 77, [5])]
     assert any("sell LAT-09 #5 into m9's bid 77" in line for line in lines)
 
 
@@ -271,3 +276,59 @@ def test_the_counterparty_cap_holds_on_the_sell_side(tmp_path):
     t, lines = sell_taker(tmp_path, team, rich, max_counterparty_share=0.25)
     t.on_tick(clock())
     assert team.sent == [] and any("'m9' is not a known team" in line for line in lines)  # pseudonym: fail closed
+
+
+def test_the_taker_sells_a_free_copy_when_the_cheapest_is_already_offered(tmp_path):
+    from tests.agent_fakes import bid as board_bid
+    from tests.agent_fakes import clock, our_ask
+
+    team = SellTeam.make(offers=[our_ask(9, 4, "LAT-03", 30)])  # copy #4 is in our own ask
+    sell_taker(tmp_path, team, {"rastro": [board_bid(80, "LAT-03", 10, maker="m9")]})[0].on_tick(clock())
+    assert ("accept", 80, [3]) in team.sent  # #3: 10 - fee 2 - 1.2 = +6.8
+
+
+def test_a_known_copy_fills_only_its_own_ask_and_a_buyer_taking_an_ask_keeps_its_bid():
+    events = [
+        ask(1, 3, "t06", "LAT-03", 9, 71),
+        ask(2, 5, "t06", "LAT-03", 8, 72),
+        settle(1, 6, "t06", "t18", "LAT-03", 72, 8),  # copy #72 sold: the tick-5 ask, not the older one
+        bid(3, 2, "t10", "LAV-09", 30),
+        ask(4, 3, "t06", "LAV-09", 28, 90),
+        settle(2, 4, "t06", "t10", "LAV-09", 90, 28),  # t10 took t06's ask: its own bid stays open
+    ]
+    rows = {r.id: r for r in rv.listings(events)}
+    assert (rows[1].outcome, rows[2].outcome, rows[2].fill_price) == ("open", "filled", 8)
+    assert (rows[4].outcome, rows[4].taker, rows[3].outcome) == ("filled", "t10", "open")
+
+
+def test_the_scanner_skips_what_the_taker_never_buys_and_values_a_bidders_next_copy():
+    m = market()
+    venue = VENUES["rastro"]
+    epic = BoardOffer(11, "rastro", "t06", "ask", "LAV-11", 50, 70, None, 80, 30)  # not a page card
+    unreleased = BoardOffer(12, "rastro", "t06", "ask", "RET-01", 2, 71, None, 80, 30)  # RET is not out
+    for o in (epic, unreleased):
+        assert op.score_offer(o, m, ME, PARAMS, Guardrails(), AMAP, venue, ctx()) is None
+    b = BoardOffer(4, "rastro", "t18", "bid", "LAT-09", 62, None, None, 60, 20)
+    first = op.score_offer(b, m, ME, PARAMS, Guardrails(), AMAP, venue, ctx(), copies=0)
+    second = op.score_offer(b, m, ME, PARAMS, Guardrails(), AMAP, venue, ctx(), copies=1)
+    assert first is not None and second is not None
+    assert first.theirs == pytest.approx(112 - 62) and second.theirs == pytest.approx(112 * 0.25 - 62)
+
+
+def test_a_settlement_fills_the_offer_at_its_own_price():
+    # r1: t15's bid at 60 was accepted, not t06's ask at 84 for the same copy
+    events = [
+        ask(1, 10, "t06", "LAT-10", 84, 90, expires=40),
+        bid(2, 12, "t15", "LAT-10", 60, expires=40),
+        settle(1, 14, "t06", "t15", "LAT-10", 90, 60),
+    ]
+    rows = {r.id: r for r in rv.listings(events)}
+    assert (rows[2].outcome, rows[2].taker, rows[2].exact) == ("filled", "t06", True) and rows[1].outcome == "open"
+    odd = [ask(1, 10, "t06", "LAT-10", 84, 90, expires=40), settle(1, 14, "t06", "t15", "LAT-10", 90, 70)]
+    (row,) = rv.listings(odd)
+    assert (row.outcome, row.exact, row.fill_price) == ("filled", False, 70)  # only the card matched: flagged
+
+
+def test_an_unknown_venue_is_never_priced():
+    o = BoardOffer(6, "v77", "t06", "ask", "LAV-08", 15, 73, None, 80, 30)
+    assert op.score_offer(o, market(), ME, PARAMS, Guardrails(), AMAP, None, ctx()) is None

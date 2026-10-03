@@ -49,6 +49,7 @@ class Listed:
     end_tick: int | None = None
     taker: str | None = None
     fill_price: int | None = None
+    exact: bool = True  # filled by a settlement at its own price (False: only the card matched)
 
     def open_at(self, tick: int) -> bool:
         """Listed by `tick` and not yet ended (filled, cancelled or lapsed) at it."""
@@ -106,26 +107,35 @@ def listings(events: Iterable[Event]) -> list[Listed]:
                 row.outcome, row.end_tick = "cancelled", tick
         elif kind == "settlement" and not p.get("persona"):
             settlements.append((tick, p))
-    used: set[tuple[int, int]] = set()
-    for tick, p in settlements:  # oldest first: each settlement fills at most one open offer
+    by_key: dict[tuple[str, str, str], list[Listed]] = defaultdict(list)  # (side, maker, card), oldest first
+    for row in sorted(rows.values(), key=lambda r: (r.tick, r.id)):
+        by_key[(row.side, row.maker, row.ref)].append(row)
+
+    def live(row: Listed, tick: int) -> bool:
+        late = row.expires_tick is not None and tick > row.expires_tick + 1  # an accept at its last tick
+        return row.outcome == "open" and row.tick <= tick and not late
+
+    for tick, p in settlements:  # oldest first: each settlement fills at most one offer
         items = p.get("items") or []
         if len(items) != 1:
             continue
         item = items[0]
         frm, to, ref = str(item.get("frm")), str(item.get("to")), str(item.get("ref"))
-        sid = int(p.get("settlement") or 0)
-        for row in sorted(rows.values(), key=lambda r: (r.tick, r.id)):
-            if row.outcome != "open" or row.tick > tick or (sid, row.id) in used:
-                continue
-            if row.expires_tick is not None and tick > row.expires_tick + 1:  # accepted at its last tick
-                continue
-            ask_fill = row.side == "ask" and row.maker == frm and (row.asset_id == item.get("id") or row.ref == ref)
-            bid_fill = row.side == "bid" and row.maker == to and row.ref == ref
-            if ask_fill or bid_fill:
-                row.outcome, row.end_tick = "filled", tick
-                row.taker, row.fill_price = (to if ask_fill else frm), int(p.get("price") or 0)
-                used.add((sid, row.id))
-                break
+        # A settlement is an accepted offer at its own price: the seller's ask (of this very copy when the
+        # ask named one) or the buyer's bid. Price first; only when no offer matches it, the oldest one for
+        # the card (flagged inexact: the deal came from an offer the feed did not show, or a reprice).
+        price, asset = int(p.get("price") or 0), item.get("id")
+        asks = [r for r in by_key.get(("ask", frm, ref), []) if live(r, tick)]
+        bids = [r for r in by_key.get(("bid", to, ref), []) if live(r, tick)]
+        exact = [r for r in asks if r.price == price and r.asset_id in (None, asset)]
+        exact += [r for r in bids if r.price == price]
+        exact.sort(key=lambda r: (r.asset_id != asset, r.tick, r.id))  # the named copy first, then the oldest
+        fallback = [r for r in asks if r.asset_id in (None, asset)] + bids
+        hit = exact[0] if exact else min(fallback, key=lambda r: (r.tick, r.id), default=None)
+        if hit is not None:
+            hit.outcome, hit.end_tick, hit.exact = "filled", tick, bool(exact)
+            hit.taker, hit.fill_price = (to if hit.side == "ask" else frm), price
+
     last = max((int(e.get("tick") or 0) for e in events), default=0)
     for row in rows.values():
         if row.outcome == "open" and row.expires_tick is not None and row.expires_tick <= last:
@@ -176,7 +186,9 @@ class TeamProfile:
     reprices: int = 0
     reprice_steps: list[float] = field(default_factory=list)  # relative change of a repriced copy's ask
     ask_vs_tape: list[float] = field(default_factory=list)  # ask / market price
-    ask_vs_own: list[float] = field(default_factory=list)  # ask / the team's own expected value of that copy
+    # ask / the team's own expected value of that copy, at the copies we saw it hold (a floor: unseen
+    # duplicates make its real value lower and this ratio higher)
+    ask_vs_own: list[float] = field(default_factory=list)
     bid_vs_tape: list[float] = field(default_factory=list)
     takes: int = 0  # other teams' board offers this team took
     take_latency: list[int] = field(default_factory=list)  # ticks from listing to the settlement it took
@@ -212,10 +224,11 @@ class TeamProfile:
 
     @property
     def tags(self) -> tuple[str, ...]:
-        """What a trader acts on: `cheap seller` (asks a median below its own value), `overbidder` (bids a
-        median above the tape), `fast taker` (takes within 2 ticks), `relister` (reprices often)."""
+        """What a trader acts on: `cheap seller` (asks a median below the tape: observable, unlike its own
+        value, which depends on copies we may not have seen), `overbidder` (bids a median above the tape),
+        `fast taker` (takes within 2 ticks), `relister` (reprices often)."""
         out = []
-        if self.median_ask_vs_own is not None and self.median_ask_vs_own < 1.0 and len(self.ask_vs_own) >= 3:
+        if self.median_ask_vs_tape is not None and self.median_ask_vs_tape < 1.0 and len(self.ask_vs_tape) >= 3:
             out.append("cheap seller")
         if self.median_bid_vs_tape is not None and self.median_bid_vs_tape > 1.0 and len(self.bid_vs_tape) >= 3:
             out.append("overbidder")
@@ -226,11 +239,17 @@ class TeamProfile:
         return tuple(out)
 
 
-def own_value(amap: AffinityMap, team: str, ref: str, book: float, copies: int) -> float:
-    """A team's expected value of one more (bids) or its last (asks, `copies` held) copy: book × its
-    expected multiplier × the copy marginal (1, 0.25, 0.1)."""
+MARGINALS = (1.0, 0.25, 0.1)  # the catalog's copy_marginals (`/api/catalog` values), when none is given
+
+
+def own_value(
+    amap: AffinityMap, team: str, ref: str, book: float, copies: int, marginals: tuple[float, ...] = MARGINALS
+) -> float:
+    """A team's expected value of its `copies`-th copy: book × its expected multiplier × that copy's
+    marginal. For an ask, `copies` is what it holds (its last copy leaves); for a bid, what it holds + 1."""
     set_code = intel.set_of(ref) or ""
-    marginal = (1.0, 0.25, 0.1)[min(max(copies - 1, 0), 2)]
+    index = max(copies - 1, 0)
+    marginal = marginals[index] if index < len(marginals) else 0.0
     return book * amap.expected(team, set_code) * marginal
 
 

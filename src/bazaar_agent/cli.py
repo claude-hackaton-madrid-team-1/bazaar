@@ -388,14 +388,18 @@ def opportunities(
         offers = []
         for v in tradable_venues(venues, us):
             offers += [replace(o, maker=makers.get(o.id, o.maker)) for o in board_offers(public.board(v.id), v.id, us)]
-        mine = _my_offers(_team_client()) if not me_file else []
     else:
-        offers, mine = op.offers_from(rv.board_at(rows, last), us), []
+        offers = op.offers_from(rv.board_at(rows, last), us)
+    # Our open offers (their cash, cards and exposure) whenever /me comes from the API: never check blind.
+    mine = _my_offers(_team_client()) if not me_file else []
     held: dict[str, int] = {}
     for a in me.get("assets") or []:
         if a.get("kind") == "card":
             held[str(a.get("ref"))] = held.get(str(a.get("ref")), 0) + 1
     base = gr.Context(int(me.get("cash") or 0), held, last, 0.0)
+    if not me_file:  # with our key: the shared ledger's spend this game hour, as the taker sees it
+        now = Clock.model_validate(public_client(load_settings()).clock())
+        base = gr.context_from(me, now.tick, now.t_hours, _ledger("opportunities"), rules)
     book = intel.book_values(catalog)
     ctx = replace(
         committed_context(base, open_commitments(mine, us)),
