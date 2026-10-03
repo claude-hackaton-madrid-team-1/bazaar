@@ -57,6 +57,14 @@ OTHER = re.compile(
     re.IGNORECASE,
 )
 NEGATION = re.compile(r"\b(?:not|no|never|without|neither|nor)\b|n't\b", re.IGNORECASE)
+# A direction or a comparative can invert "gain (+)" ("per day earlier", "earn less"): such a text is for a person to
+# read, never for the latch (#150 review P1). Both directions count, so only the plain "per delivery day" form latches.
+DIRECTION = re.compile(
+    r"\b(?:earl(?:y|ier|iest)|soon(?:er|est)?|fast(?:er|est)?|quick(?:er|est)?|forward|advanced?|ahead|"
+    r"lat(?:e|er|est)|delay(?:s|ed)?|longer|shorter|less|fewer|lower|more|extra|reduc(?:e|es|ed)|"
+    r"decreas(?:e|es|ed)|increas(?:e|es|ed)|minus|inverse|invert(?:s|ed)?|opposite|revers(?:e|es|ed))\b",
+    re.IGNORECASE,
+)
 
 
 def _number(value: object) -> float | None:
@@ -80,13 +88,14 @@ def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     reversed  a cost or loss is tied to "(+)" or "positive": the opposite convention, so the switch stays off
     cost      only a cost or loss, no gain: every day costs, the worst case is the truth
     unknown   anything else: a gain and a loss with no sign tied to either, a text that does not speak of "you",
-              names the other side (buyer, seller, rival...) or negates (r1's review)
+              names the other side (buyer, seller, rival...), negates (r1's review) or has a direction word or a
+              comparative (earlier, sooner, later, less, fewer...: #150's review)
     """
     text = duel.get("days_meaning")
     if not real_game or not two_issue(duel) or not isinstance(text, str) or not text.strip():
         return "unknown"
-    if not YOU.search(text) or OTHER.search(text) or NEGATION.search(text):
-        return "unknown"  # not about OUR weight, about the other side's, or negated: never read a sign from it
+    if not YOU.search(text) or OTHER.search(text) or NEGATION.search(text) or DIRECTION.search(text):
+        return "unknown"  # not about OUR weight, the other side's, negated or with a direction: never read a sign
     plus_gain, plus_loss = bool(PLUS_GAIN.search(text)), bool(PLUS_LOSS.search(text))
     if plus_gain != plus_loss:
         return "signed" if plus_gain else "reversed"

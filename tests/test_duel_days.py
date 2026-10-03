@@ -47,6 +47,23 @@ def test_only_a_real_payload_that_names_a_gain_and_a_loss_confirms_the_sign(mean
     assert dd.evidence(duel(days_meaning=meaning, issues=["price"]), real) == "unknown"
 
 
+@pytest.mark.parametrize(
+    "meaning",
+    [  # #150 review P1: a direction word or a comparative can turn "gain (+)" into a cost per day of OUR days
+        "positive: you gain primas for each day earlier",
+        "you gain (+) per day sooner",
+        "primas you gain (+) per day the delivery is brought forward",
+        "positive weights mean you earn less per day",
+        "positive weights mean you gain fewer primas per day",
+        "primas you gain (+) per day of delay",  # the same direction as ours, but a person reads it, not a regex
+        "you gain (+) for every day later",
+        "primas you gain (+) or lose (-) per day faster",
+    ],
+)
+def test_a_direction_word_or_a_comparative_never_latches_a_sign(meaning):
+    assert dd.evidence(duel(days_meaning=meaning), True) == "unknown"
+
+
 def test_the_switch_latches_the_first_real_evidence_and_persists_it(tmp_path):
     path = tmp_path / "days.json"
     switch = dd.DaysSwitch.load(path)
