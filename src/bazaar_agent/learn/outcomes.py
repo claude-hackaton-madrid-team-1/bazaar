@@ -176,7 +176,8 @@ def learn_once(
     store.begin_tick(tick)
     policies: dict[Key, LadderPolicy] = {}
     if rules is not None:
-        previous = policies_from(store.recall(None, {"policy"}, None, subject_kind="dealer", team=us, limit=200))
+        stored = store.recall(None, {"policy"}, None, subject_kind="dealer", team=us, limit=200)
+        previous = policies_from(stored, us)
         policies = evolve_ladders(curves, previous, rules, tick, threads)
         learned = learned + [p.to_learning(us) for p in policies.values()]
     pending = state.changed(learned)

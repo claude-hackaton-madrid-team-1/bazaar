@@ -152,10 +152,10 @@ there, create your own key in Phoenix (Settings → API Keys) and follow README,
 on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
 (burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
 minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
-"tools": 18, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
+"tools": 19, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
 target is a mode and a public URL; nothing about the live/dry mode or the game state).
 
-Tools: the 12 reads (`status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`, `traders`, `alerts`,
+Tools: the 13 reads (`learnings`, `status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`, `traders`, `alerts`,
 `rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
 `duel_move`, `steer`). Each answer is one text block holding JSON. A write answers
 `{"tool", "tick", "status": "approved"|"rejected"|"expired"|"done"|"failed"|"hold", "sent", "guardrail",

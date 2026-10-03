@@ -341,6 +341,7 @@ def traders(b: Backend) -> dict[str, Any]:
 
 
 _recall: Any = None  # one hybrid recall per server process (the models load once, in the background)
+_recall_lock = threading.Lock()
 
 
 def learnings(b: Backend, query: str, subject: str | None = None, limit: int = 5) -> dict[str, Any]:
@@ -357,8 +358,9 @@ def learnings(b: Backend, query: str, subject: str | None = None, limit: int = 5
 
     models = shared_models()
     models.warm()
-    if _recall is None:
-        _recall = HybridRecall(LearningStore(connect), models)
+    with _recall_lock:  # two first calls at once build one recall, one connection
+        if _recall is None:
+            _recall = HybridRecall(LearningStore(connect), models)
     subjects = (subject,) if subject else None
     found = _recall.recall(Query(query, subjects=subjects, k=limit, budget_s=5.0))
     policies = policies_from(_recall.store.recall(None, {"policy"}, None, subject_kind="dealer", limit=200))

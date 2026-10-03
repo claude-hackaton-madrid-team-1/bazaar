@@ -180,7 +180,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     role, limit = d.get("role"), d.get("limit")
     if role not in ("seller", "buyer") or not isinstance(limit, int | float) or o.tick is None:
         return None
-    who = rival or "an unknown rival"
+    who = slug(rival) if rival else "an unknown rival"  # the alias as a slug only: never raw text in a lesson
     best = d.get("rival_best")
     status = d.get("status")
     if status == "deal":
@@ -208,7 +208,7 @@ def duel_lesson(o: Outcome, rival: str | None, us: str) -> Learning | None:
     }
     return Learning(
         subject_kind="rival",
-        subject=slug(who) if rival else "duels",
+        subject=who if rival else "duels",
         kind="lesson",
         tick=max(0, int(o.tick)),
         team=us,

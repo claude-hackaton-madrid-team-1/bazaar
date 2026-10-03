@@ -59,6 +59,7 @@ class CurveStats:
     silent_below: int | None  # highest first bid the dealer never answered (no ask at all)
     thread_ids: tuple[int, ...]  # the evidence
     first_bid_fills: int = 0  # fills where the dealer took the team's FIRST bid: only an upper bound on its limit
+    informative_fills: tuple[int, ...] = ()  # sorted fills minus a team taking the dealer's opening ask as is
 
     @property
     def opening(self) -> float | None:
@@ -95,6 +96,15 @@ def _drops(prices: Sequence[int]) -> list[int]:
     return [a - b for a, b in zip(prices, prices[1:], strict=False) if a >= b]
 
 
+def informative_fill(t: DealerThread) -> bool:
+    """A fill that says where the dealer's limit sits: not a team paying the dealer's opening ask untouched
+    (a fill at the opening ask bounds nothing; anyone can pay it to make a class look expensive)."""
+    if t.fill_price is None:
+        return False
+    took_opening = bool(t.dealer_prices) and t.fill_price == t.dealer_prices[0]
+    return not took_opening or any(b < t.fill_price for b in t.team_prices)
+
+
 def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveStats]:
     """Per (dealer, price class), from every dealer thread in the feed (ours and other teams')."""
     groups: dict[tuple[str, str], list[DealerThread]] = defaultdict(list)
@@ -111,10 +121,10 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
         with_final = [t for t in members if t.final_price is not None]
         patience = median(len(t.team_prices) for t in with_final) if with_final else None
         drops = [d for t in members for d in _drops(t.dealer_prices[1:])]
-        silent = [
+        silent = [  # our own threads only: another team can bid and close before the dealer answers, for free
             t.team_prices[0]
             for t in members
-            if t.side == "buy" and t.team_prices and not t.dealer_prices and t.fill_price is None
+            if t.ours and t.side == "buy" and t.team_prices and not t.dealer_prices and t.fill_price is None
         ]
         first_bid = sum(
             1 for t in members if t.fill_price is not None and t.team_prices and t.team_prices[0] == t.fill_price
@@ -131,5 +141,8 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
             silent_below=max(silent) if silent else None,
             thread_ids=tuple(sorted(t.thread for t in members)),
             first_bid_fills=first_bid,
+            informative_fills=tuple(
+                sorted(t.fill_price for t in members if t.fill_price is not None and informative_fill(t))
+            ),
         )
     return out

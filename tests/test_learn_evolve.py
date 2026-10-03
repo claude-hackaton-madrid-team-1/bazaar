@@ -45,8 +45,8 @@ ABUELA = [
         ]
     )
 ]
-CHATO = [
-    thread(500 + i, "MAL-08", [20, 22, 24], [33, 33, 32], fill, dealer="chato", team="t07")
+CHATO = [  # two teams' countered fills, all above our cap
+    thread(500 + i, "MAL-08", [20, 22, 24], [33, 33, 32], fill, dealer="chato", team=("t07", "t08")[i % 2])
     for i, fill in enumerate([28, 28, 29, 31, 32])
 ]
 
@@ -68,7 +68,7 @@ def test_our_own_walks_at_the_cap_teach_a_skip_without_any_fill():
     stats = curve_stats(walks)[("chato", "card:uncommon")]
     assert stats.fills == ()
     ladder, why = target_ladder(stats, 26, walks)
-    assert ladder is None and "0 of 3" in why and "3 walked after bidding the cap" in why
+    assert ladder is None and "0 of 3" in why and "3 walks where the dealer still asked above it" in why
     assert evolve(curve_stats(walks), {}, RULES, 10, threads=walks)[("chato", "card:uncommon")].ladder is None
     two = walks[:2]
     assert target_ladder(curve_stats(two)[("chato", "card:uncommon")], 26, two)[0] is None  # too little: no ladder...
@@ -118,8 +118,9 @@ def test_evolve_logs_each_change_once_and_keeps_the_previous_ladder():
 
 def test_a_policy_never_raises_the_strategys_top_and_skips_when_its_top_is_below_the_fills():
     policy = LadderPolicy("abuela", "card:uncommon", Ladder(17, 1, 25), "why", (17, 21, 22, 24, 25), 8, 5, 100)
-    assert policy.plan((15, 26, 1)) == ((17, 25, 1), "learned ladder 17→25 step 1 (was 15→26)")
-    assert policy.plan((15, 20, 2))[0] == (17, 20, 1)  # the strategy's top (value, cap) still binds
+    assert policy.plan((15, 26, 1)) == ((15, 25, 1), "learned ladder 17→25 step 1 (was 15→26)")  # never above today
+    assert policy.plan((20, 26, 1))[0] == (17, 25, 1)  # a lower learned start does apply
+    assert policy.plan((15, 20, 2))[0] == (15, 20, 1)  # the strategy top (value, cap) and start still bind
     low = policy.plan((10, 16, 1))
     assert low[0] is None and "0% of abuela card:uncommon fills (17-25) are at or under our top 16" in low[1]
     skip = LadderPolicy("chato", "card:uncommon", None, "skip: above the cap", (28, 32), 5, 6, 100)
@@ -450,3 +451,96 @@ def test_probing_never_starts_below_an_ignored_bid_or_half_the_opening():
     ignored = [thread(820, "LAT-06", [21], [])] + [thread(821 + i, "LAT-06", [25], [], 25) for i in range(5)]
     stats = curve_stats(ignored)[("abuela", "card:uncommon")]
     assert target_ladder(stats, 26, ignored)[0] == Ladder(22, 1, 25)
+
+
+# ---------------------------------------------------------------- review fixes (PR #112): no overpay, no poisoning
+
+
+def test_a_learned_plan_never_starts_above_today():
+    policy = LadderPolicy("abuela", "card:uncommon", Ladder(22, 1, 25), "", (21, 22, 24, 25), 8, 5, 100)
+    for base in [(12, 22, 1), (15, 26, 2), (21, 25, 1), (30, 26, 1)]:
+        plan, _ = policy.plan(base)
+        assert plan is not None and plan[0] <= base[0] and plan[1] <= base[1] and plan[0] <= plan[1]
+
+
+def test_a_probe_always_starts_below_the_lowest_fill_and_ignores_other_teams_silence():
+    first = [thread(830 + i, "LAT-06", [25], [], 25, team="t05") for i in range(5)]
+    forged = thread(840, "LAT-06", [26], [], team="t13")  # bids and closes before the dealer answers: free
+    stats = curve_stats([*first, forged])[("abuela", "card:uncommon")]
+    assert stats.silent_below is None  # only our own unanswered bids count
+    ladder, _ = target_ladder(stats, 26, [*first, forged])
+    assert ladder is not None and ladder.start < 25
+    ours = thread(850, "LAT-06", [24], [])  # even our own ignored 24 cannot lift the probe to the lowest fill
+    stats2 = curve_stats([*first, ours])[("abuela", "card:uncommon")]
+    assert target_ladder(stats2, 26, [*first, ours])[0] == Ladder(24, 1, 25)
+
+
+def test_only_dealer_produced_evidence_skips_a_class():
+    free_walks = [thread(860 + i, "MAL-08", [26], [], dealer="chato", team=f"t1{i}") for i in range(5)]
+    stats = curve_stats(free_walks)[("chato", "card:uncommon")]
+    assert target_ladder(stats, 26, free_walks)[1].startswith("only 0 fills")  # unanswered bids prove nothing
+    opening_payers = [thread(870 + i, "MAL-08", [], [33], 33, dealer="chato", team=f"t2{i}") for i in range(5)]
+    stats = curve_stats(opening_payers)[("chato", "card:uncommon")]
+    assert stats.informative_fills == ()
+    assert not target_ladder(stats, 26, opening_payers)[1].startswith("skip")  # paying the opening ask bounds nothing
+    one_team = [thread(880 + i, "MAL-08", [20, 24], [33, 32], 30, dealer="chato", team="t09") for i in range(5)]
+    assert not target_ladder(curve_stats(one_team)[("chato", "card:uncommon")], 26, one_team)[1].startswith("skip")
+    assert target_ladder(curve_stats(CHATO)[("chato", "card:uncommon")], 26, CHATO)[1].startswith("skip")
+
+
+def test_classes_without_a_cap_are_never_searched():
+    epic = [thread(890 + i, "LAV-11", [100, 110], [150, 140], 130, team="t05") for i in range(6)]
+    assert evolve(curve_stats(epic), {}, RULES, 10, threads=epic) == {}
+
+
+def test_policy_rows_from_another_writer_or_team_are_ignored():
+    curves = curve_stats(ABUELA + CHATO)
+    rows = [p.to_learning(US) for p in evolve(curves, {}, RULES, 100, threads=ABUELA + CHATO).values()]
+    other_team = [r.model_copy(update={"team": "t09"}) for r in rows]
+    other_source = [r.model_copy(update={"source": "llm"}) for r in rows]
+    assert policies_from(rows, US).keys() == policies_from(rows).keys() != set()
+    assert policies_from(other_team, US) == {} and policies_from(other_source) == {}
+
+
+def test_a_learned_skip_is_recorded_once_with_keys_the_public_view_hides(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
+
+    skip = LadderPolicy("abuela", "card:uncommon", None, "skip: every fill above the cap", (30, 31), 6, 5, 100)
+
+    class Learner:
+        policies = {("abuela", "card:uncommon"): skip}
+
+        def maybe_run(self, tick, us):
+            return False
+
+    t = Taker(
+        FakeTeam(),
+        FakePublic(),
+        live=False,
+        log=lambda line: None,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=3),
+        outcome_learner=Learner(),
+        **parts(tmp_path),
+    )  # type: ignore[arg-type]
+    t.on_tick(clock(tick=100))
+    t.on_tick(clock(tick=101))
+    skips = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    assert len(skips) == 1 and "item" not in skips[0]["inputs"] and skips[0]["inputs"]["wanted"] == "LAV-08"
+
+
+def test_lessons_without_a_tick_are_never_cached():
+    from bazaar_agent.learn.recall import HybridRecall, Lessons
+    from bazaar_agent.learn.store import LearningStore
+    from tests.test_learn_recall import CHATO as CHATO_LESSON
+    from tests.test_learn_recall import FakeModels
+
+    store = LearningStore()
+    store.record([CHATO_LESSON])
+    models = FakeModels()
+    lessons = Lessons(HybridRecall(store, models))
+    lessons("chato LAV-08 uncommon")
+    lessons("chato LAV-08 uncommon")
+    assert models.reranked == [1, 1] and lessons._cache == {}

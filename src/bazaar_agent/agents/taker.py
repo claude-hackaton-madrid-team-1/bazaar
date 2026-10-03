@@ -56,7 +56,16 @@ from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
-from bazaar_agent.strategy import Market, PackSlots, Playbook, StrategyParams, build_market, build_playbook, buy_case
+from bazaar_agent.strategy import (
+    Market,
+    PackSlots,
+    Playbook,
+    StrategyParams,
+    build_market,
+    build_playbook,
+    buy_case,
+    dealer_command,
+)
 from bazaar_agent.strategy import Move as StrategyMove
 from bazaar_agent.strategy import guarded as guarded_playbook
 from bazaar_agent.ticks import Clock, action_budget_s
@@ -298,6 +307,7 @@ class Taker:
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
         self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
         self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
+        self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -441,31 +451,37 @@ class Taker:
         return kept
 
     def _evolved(self, run: _TickRun, moves: list[StrategyMove], busy: set[str]) -> list[StrategyMove]:
-        """The learned ladder per (dealer, price class) replaces the strategy's (never above its top), and a
-        class priced above what we may pay is skipped with a `dealer_skip` row (N3). No policy: unchanged."""
+        """The learned ladder per (dealer, price class) replaces the strategy's, never above its start nor its
+        top, and a class priced above what we may pay is skipped (N3). One `dealer_skip` row per dealer, class
+        and reason (not per tick), with keys the public status view does not list. No policy: unchanged."""
         policies = self.outcome_learner.policies if self.outcome_learner is not None else {}
         if not policies:
             return moves
         kept: list[StrategyMove] = []
-        skipped: dict[str, tuple[StrategyMove, str]] = {}
+        skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
         for mv in moves:
             cls = price_class(mv.ref)
             policy = policies.get((mv.source, cls)) if mv.ladder is not None and cls is not None else None
-            if policy is None or mv.ladder is None:
+            if policy is None or mv.ladder is None or cls is None:
                 kept.append(mv)
                 continue
             plan, why = policy.plan(mv.ladder)
             if plan is None:
                 if mv.source not in busy:
-                    skipped.setdefault(mv.source, (mv, why))
+                    skipped.setdefault((mv.source, cls), (mv, why))
                 continue
-            kept.append(replace(mv, ladder=plan, limit=plan[1], reason=f"{mv.reason}; {why}"))
-        for dealer, (mv, why) in skipped.items():
+            start, top, step = plan
+            command = dealer_command(mv.ref, mv.source, start, top, step)
+            kept.append(replace(mv, ladder=plan, limit=top, reason=f"{mv.reason}; {why}", command=command))
+        for (dealer, cls), (mv, why) in skipped.items():
+            if self._learned_skips.get((dealer, cls)) == why:
+                continue
+            self._learned_skips[(dealer, cls)] = why
             self.rec.decide(
                 run.snap.clock.tick,
                 "dealer_skip",
                 f"skip {dealer} for {mv.ref}: {why}",
-                inputs={"dealer": dealer, "item": mv.ref, "score": mv.score, "learned": why},
+                inputs={"blocked_dealer": dealer, "wanted": mv.ref, "why": why},
                 reason=why,
                 guardrail="-",
                 chosen=False,
@@ -641,8 +657,8 @@ class Taker:
 
     def _lessons_for(self, run: _TickRun, conv: Conversation) -> tuple[str, ...]:
         """The top lessons about this dealer and item for the words (cached for a few ticks; none when short)."""
-        if self.lessons is None or run.window.left() < self.config.jev_min_budget_s:
-            return ()
+        if self.lessons is None or self.words_fn is template_words or run.window.left() < self.config.jev_min_budget_s:
+            return ()  # the templates never read lessons: no recall for them
         situation = f"bid to {conv.dealer} for {conv.item} ({conv.rarity})"
         found = self.lessons(situation, subjects=(conv.dealer,), tick=run.snap.clock.tick)
         return tuple(str(x["quoted_lesson"]) for x in found)

@@ -229,16 +229,15 @@ class Lessons:
         tick: int | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            bucket = None if tick is None else tick // LESSONS_CACHE_TICKS
-            key = (text, subjects, subject_kind, bucket)
-            if key in self._cache:
+            key = None if tick is None else (text, subjects, subject_kind, tick // LESSONS_CACHE_TICKS)
+            if key is not None and key in self._cache:  # no tick (a duel state): never cached, always fresh
                 return self._cache[key]
             query = Query(
                 text, subjects=subjects, subject_kind=subject_kind, tick=tick, k=self.k, budget_s=self.budget_s
             )
             found = self.recall.recall(query)
             quoted = found.as_quoted(self.k) if found.status in ("ok", "bm25_only") else []
-            if found.status in ("ok", "no_candidates"):  # BM25-only, a timeout or an error is retried next call
+            if key is not None and found.status in ("ok", "no_candidates"):  # BM25-only, timeouts, errors: retried
                 if len(self._cache) > 256:
                     self._cache.clear()
                 self._cache[key] = quoted

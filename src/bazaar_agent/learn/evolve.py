@@ -24,7 +24,7 @@ from typing import Any
 
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.intel import DealerThread
-from bazaar_agent.learn.curves import CurveStats, quantile
+from bazaar_agent.learn.curves import CurveStats, informative_fill, quantile
 from bazaar_agent.learn.model import TEXT_MAX, Learning
 
 START_Q = 0.10
@@ -93,7 +93,7 @@ class LadderPolicy:
 
     def plan(self, base: tuple[int, int, int]) -> tuple[tuple[int, int, int] | None, str]:
         """The strategy's ladder (start, top, step) evolved by this policy, or None to skip the thread.
-        Never above the strategy's top (value and cap): a learned ladder only lowers or skips."""
+        Never above the strategy's start nor its top (value and cap): a learned ladder only lowers or skips."""
         start, top, step = base
         if self.ladder is None:
             return None, self.reason
@@ -103,7 +103,7 @@ class LadderPolicy:
                 f"({self.fills[0]}-{self.fills[-1]}) are at or under our top {top}"
             )
         walk = min(self.ladder.walk, top)
-        new_start = min(self.ladder.start, walk)
+        new_start = max(1, min(self.ladder.start, start, walk))
         return (new_start, walk, max(1, self.ladder.step)), f"learned ladder {self.ladder} (was {start}→{top})"
 
     def text(self) -> str:
@@ -220,20 +220,32 @@ def target_ladder(
 
 
 def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread]) -> str | None:
-    """Why this class cannot close under our cap, or None. Evidence: fills above the cap, and conversations
-    where a team already bid the cap and still got no deal (its limit was higher). Our own walks count, so
-    a dealer nobody else trades with is learned from our errors alone."""
+    """Why this class cannot close under our cap, or None. Only evidence the DEALER produced counts:
+    - a fill above the cap that is not a team paying the opening ask as is (`curves.informative_fill`);
+    - a walk: a team bid the cap or more and the dealer still asked above the cap (its last ask or final).
+    A bid with no answer, an open thread or a team leaving proves nothing. Another team's evidence needs a
+    second team to agree; our own walks count alone (a dealer nobody else trades with: thread 187)."""
     if cap is None:
         return None
-    walked = [t for t in threads if t.fill_price is None and t.team_prices and max(t.team_prices) >= cap]
-    evidence = len(stats.fills) + len(walked)
-    closable = sum(1 for f in stats.fills if f <= cap)
-    if evidence < MIN_SKIP_EVIDENCE or closable / evidence >= MIN_DEAL_SHARE:
+    above = [t for t in threads if informative_fill(t) and (t.fill_price or 0) > cap]
+    walked = [
+        t
+        for t in threads
+        if t.fill_price is None
+        and t.team_prices
+        and max(t.team_prices) >= cap
+        and t.dealer_prices
+        and t.dealer_prices[-1] > cap
+    ]
+    closable = sum(1 for t in threads if t.fill_price is not None and t.fill_price <= cap)
+    evidence = len(above) + len(walked) + closable
+    teams = {t.team for t in (*above, *walked)}
+    ours = any(t.ours for t in (*above, *walked))
+    if evidence < MIN_SKIP_EVIDENCE or closable / evidence >= MIN_DEAL_SHARE or (len(teams) < 2 and not ours):
         return None
-    seen = f"fills {stats.fills[0]}-{stats.fills[-1]}" if stats.fills else "no fill"
     return (
         f"skip: {closable} of {evidence} {stats.dealer} {stats.price_class} conversations closed at or under the "
-        f"cap {cap} ({seen}; {len(walked)} walked after bidding the cap)"
+        f"cap {cap} ({len(above)} fills above it, {len(walked)} walks where the dealer still asked above it)"
     )
 
 
@@ -243,12 +255,12 @@ def probe(stats: CurveStats, walk_cap: int) -> tuple[Ladder, str]:
     Never below a bid it ignored, nor below half its opening ask."""
     floor = stats.fills[0]
     start = math.floor(floor * PROBE_RATIO)
-    if stats.silent_below is not None:
+    if stats.silent_below is not None:  # our own ignored bid (curves counts only ours)
         start = max(start, stats.silent_below + 1)
     if stats.opening is not None:
         start = max(start, math.ceil(stats.opening * 0.5))
     walk = max(1, walk_cap)
-    start = max(1, min(start, walk))
+    start = max(1, min(start, floor - 1, walk))  # always below the lowest fill: a probe never starts higher
     why = (
         f"probe: {stats.first_bid_fills} of {len(stats.fills)} fills took the first bid "
         f"(lowest {floor}): start lower to find the dealer's limit"
@@ -319,7 +331,7 @@ def evolve(
     out: dict[Key, LadderPolicy] = {}
     for key, stats in sorted(curves.items()):
         cap = cap_for(stats.price_class, rules)
-        if stats.price_class == "sell" or (cap is None and not stats.price_class.startswith("card:")):
+        if stats.price_class == "sell" or cap is None:  # no cap (epic, legendary): GUARDRAILS never lets us buy
             continue
         own = [t for t in threads if t.dealer == stats.dealer and t.side == "buy" and price_class(t.item) == key[1]]
         own = sorted(own, key=lambda t: (t.opened_tick, t.thread))[-MAX_SEARCH_THREADS:]  # the newest: cost and drift
@@ -346,7 +358,7 @@ def evolve(
             price_class=stats.price_class,
             ladder=ladder,
             reason=why,
-            fills=stats.fills,
+            fills=stats.informative_fills or stats.fills,
             threads=stats.threads,
             patience=stats.patience or DEFAULT_PATIENCE,
             tick=tick if changed or old is None else old.tick,
@@ -359,9 +371,13 @@ def evolve(
     return out
 
 
-def policies_from(learned: Sequence[Learning]) -> dict[Key, LadderPolicy]:
+def policies_from(learned: Sequence[Learning], us: str | None = None) -> dict[Key, LadderPolicy]:
+    """Ladder policies from stored rows: only the outcome learner's (`source == "outcome"`), and with `us`
+    only ours, so no other writer's row can steer our bids."""
     out: dict[Key, LadderPolicy] = {}
     for lr in learned:
+        if lr.source != "outcome" or (us is not None and lr.team != us):
+            continue
         policy = LadderPolicy.from_learning(lr)
         if policy is not None and (policy.key not in out or policy.tick >= out[policy.key].tick):
             out[policy.key] = policy
