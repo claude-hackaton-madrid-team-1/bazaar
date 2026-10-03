@@ -1243,14 +1243,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — under heavy load a full `pytest` run can die with a faulthandler dump
+- [2026-10-03] finding — fee announcements come with 2 ticks' notice; the sim charges the OLD fee at settlement
 - [2026-10-03] build-error — N17's team swap accept had no S1 accept gate either (merge with main)
 - [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
 - [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
 - [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
 - [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
 - [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
-- [2026-10-03] build-error — #138's `accept_bids` sold into a bid without main's S1 accept gate (#146)
-- [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
 
 <!-- BAZAAR:STATUS:END -->
 
@@ -1263,6 +1263,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#144](../../pull/144) | Merged during the session on Omar's order. pr-reviewer narrow APPROVE on a544fac (issuecomment-5966900707) after round-2 APPROVE on 40e956d; CI green. | Sat 09:51 | `5c673cb` |
 | [#158](../../pull/158) | Merged during the session on Omar's order. pr-reviewer round 5 APPROVE on e71c337 (issuecomment-5966784280), security round 2 APPROVE; CI green. dealer_final_lift stays 0 (Jev decides the lift separately). | Sat 09:31 | `be431cd` |
 | [#139](../../pull/139) | Merged during the session on Omar's order. pr-reviewer narrow APPROVE on 002ac37 (issuecomment-5966722003) after the approved 3af3641; CI test + sim-smoke green; tracing on/off identical moves. | Sat 09:22 | `fdeb199` |
 | [#71](../../pull/71) | Merged during the session on Omar's order (09:07). pr-reviewer + security narrow APPROVE on e265626/1accc4e; 24b8583 only merges main (#146): code diff identical (0 lines), gate 2829 passed, smoke passed, CI green. allow_venue_open=false, effective cash floor 100. | Sat 09:14 | `04ce5d6` |
@@ -1274,12 +1275,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#112](../../pull/112) | feat: auto-evolve the dealer ladder from outcomes inside GUARDRAILS; lessons into Jev and the words (N3, PR B, stacked on #96) | Sat 06:45 | `82bc879` |
 | [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | Sat 06:43 | `432c0a8` |
 | [#148](../../pull/148) | feat: the taker keeps our dealer threads and closed_reason in threads + messages (N12, part 3) | Sat 06:37 | `b0caeb6` |
-| [#89](../../pull/89) | feat: live-feed reader learns dealer blockers; the taker skips them (N12, part 1) | Sat 06:26 | `edee568` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#169](../../pull/169) | fix(guardrails): keep 270 in cash so our own market can always be opened | `ogarciarevett/guard-cash-floor-270` |
 | [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
 | [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
@@ -1293,7 +1294,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#155](../../pull/155) | feat(supply): supply map, pack EV with our album need, open or keep a sealed pack (N14b, part 2) | `ogarciarevett/feat-n14b-supply-packs` |
 | [#152](../../pull/152) | feat(safety): bad-faith flags as proven decision rows (off) + injection hardening on every text path (S1 parts B+C) | `ogarciarevett/s1-flags` |
 | [#151](../../pull/151) | feat(sim): duel rival zoo, exploiters and pairs in the simulator, takeover of Marius's #80 #97 #117 (D1) | `ogarciarevett/takeover-duel-sim` |
-| [#144](../../pull/144) | fix(market): price an announced venue fee that applies by settlement (take over #110, B19) | `takeover/b19-pending-fee` |
 | [#143](../../pull/143) | fix(agents): an accept /api/me does not show yet counts as held, its cash as gone (take over #133, B16) | `takeover/b16-unsettled-accepts` |
 | [#142](../../pull/142) | fix(maker): a bid that lapses unfilled gives its spend back, dated at the spend (take over #126, B14) | `takeover/b14-expired-bids` |
 | [#141](../../pull/141) | fix(agents): a refused accept gives the team's accept back; no 429 re-sends, 4 s timeouts (take over #116, B18) | `takeover/b18-rate-limits` |
