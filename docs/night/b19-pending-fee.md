@@ -72,3 +72,15 @@ item if bench numbers need to match the tape to the P.
 - **Merge note:** `tests/bites/test_c2_fee_at_settlement.py` and `tests/bites/strictness.py` are copies of r2's
   files (`strictness.py` is byte-identical). If `night/r2-bite-hunter` is merged too, keep this version of the c2
   file.
+
+## Takeover review fixes (#144, 2026-10-03)
+
+pr-reviewer APPROVED; security-auditor had no P0/P1. The cheap P2/P3s are in:
+
+- **`effective_tick ≤ tick + 2`** (`SETTLE_SLACK_TICKS`): an accept that slips into the next tick settles a tick
+  later, and Friday's announcements came with exactly 2 ticks' notice. One more tick of caution per announcement.
+- **A rival's unreadable announcement is priced at the RULES cap** (10 % + 5 P), never ignored; an unreadable
+  `effective_tick` counts as unknown (priced in); a missing `fee_per_card` keeps today's; values are clamped to
+  the cap.
+- **A venue row we cannot read is skipped** (inf, huge ints, odd types), instead of raising out of `venues_from`
+  and costing the taker's and maker's tick.

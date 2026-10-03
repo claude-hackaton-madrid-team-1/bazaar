@@ -32,8 +32,14 @@ def test_an_announced_fee_effective_by_settlement_is_priced_in():
 
 
 def test_an_announced_fee_effective_after_settlement_is_not_priced_in_yet():
-    (later,) = venues_from({"venues": [HIKE]}, tick=99)  # accept at 99 settles at 100 < 101
+    (later,) = venues_from({"venues": [HIKE]}, tick=98)  # accept at 98 settles at 99, or 100 if it slips
     assert later.fee(10) == 0 and later.pending_fee is None
+
+
+def test_an_announced_fee_two_ticks_out_is_priced_in():
+    """An accept that slips into the next tick settles a tick later (security review of #144)."""
+    (hiked,) = venues_from({"venues": [HIKE]}, tick=99)
+    assert hiked.fee(10) == 6
 
 
 def test_an_announced_fee_without_a_tick_is_priced_in():
@@ -50,10 +56,24 @@ def test_an_announced_fee_cut_never_lowers_the_fee_before_it_applies():
     assert rastro.fee(65) == 5  # the higher of today's 5 and the announced 0
 
 
-def test_an_unreadable_announced_fee_is_ignored_and_none_is_the_old_shape():
+def test_an_unreadable_announced_fee_is_priced_at_the_rules_cap_and_none_is_the_old_shape():
+    """A rival owns its venue row: an announcement we cannot read is priced at the cap, never ignored."""
     bad = {**CHEAP, "pending_fee": {"fee_bps": "lots", "effective_tick": 101}}
-    late = {**CHEAP, "pending_fee": {"fee_bps": 100, "effective_tick": "soon"}}
-    assert [v.fee(100) for v in venues_from({"venues": [bad, late, {**CHEAP, "pending_fee": None}]}, 100)] == [0] * 3
+    late = {**CHEAP, "pending_fee": {"fee_bps": 100, "effective_tick": "soon"}}  # effective unknown: priced in
+    inf = {**CHEAP, "pending_fee": {"fee_bps": float("inf"), "fee_per_card": 0, "effective_tick": 101}}
+    rows = venues_from({"venues": [bad, late, inf, {**CHEAP, "pending_fee": None}]}, 100)
+    assert [v.fee(100) for v in rows] == [15, 1, 15, 0]
+
+
+def test_a_missing_announced_per_card_fee_keeps_todays_and_huge_values_are_capped():
+    per_card = {**CHEAP, "fee_per_card": 5, "pending_fee": {"fee_bps": 1000, "effective_tick": 101}}
+    huge = {**CHEAP, "pending_fee": {"fee_bps": 10**400, "fee_per_card": 99, "effective_tick": 101}}
+    assert [v.fee(65) for v in venues_from({"venues": [per_card, huge]}, 100)] == [12, 12]
+
+
+def test_a_venue_row_we_cannot_read_is_skipped_not_raised():
+    rows = venues_from({"venues": [{**CHEAP, "fee_bps": float("inf")}, {**RASTRO}]}, 100)
+    assert [v.id for v in rows] == [RASTRO["venue"]]
 
 
 def test_only_plain_one_card_shapes_are_read():

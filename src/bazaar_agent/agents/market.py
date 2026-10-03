@@ -41,18 +41,36 @@ def _fee(bps: int, per_card: int, price: int, cards: int) -> int:
     return math.ceil(raw - 1e-9) if raw > 0 else 0
 
 
-def _pending_fee(pending: Any, tick: int | None) -> tuple[int, int] | None:
-    """The announced fee when an accept now could settle under it (effective by tick + 1; always when the
-    tick is unknown); None when nothing is pending, it takes effect later, or it cannot be read."""
+FEE_BPS_CAP, FEE_PER_CARD_CAP = 1000, 5  # RULES.md: venue fees are capped at 10 % and 5 P per card
+SETTLE_SLACK_TICKS = 2  # an accept now settles at tick + 1, or tick + 2 when it slips into the next tick
+
+
+def _whole(value: Any, cap: int) -> int | None:
+    """A whole, finite number from a rival's venue row, clamped to [0, cap]; None when it cannot be read."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return min(max(int(value), 0), cap)
+
+
+def _pending_fee(pending: Any, tick: int | None, per_card_now: int) -> tuple[int, int] | None:
+    """The announced fee when an accept now could settle under it (effective by tick + SETTLE_SLACK_TICKS;
+    always when the tick or the effective tick is unknown); None when nothing is pending or it takes effect
+    later. A fee we cannot read is priced at the RULES cap; a missing `fee_per_card` keeps today's."""
     if not isinstance(pending, dict):
         return None
-    try:
-        bps, per_card = int(pending.get("fee_bps") or 0), int(pending.get("fee_per_card") or 0)
-        effective = pending.get("effective_tick")
-        if tick is not None and effective is not None and int(effective) > tick + 1:
-            return None
-    except (TypeError, ValueError):
+    effective = pending.get("effective_tick")
+    later = (
+        isinstance(effective, int) and not isinstance(effective, bool) and effective > (tick or 0) + SETTLE_SLACK_TICKS
+    )
+    if tick is not None and later:
         return None
+    bps = _whole(pending.get("fee_bps"), FEE_BPS_CAP)
+    raw_per_card = pending.get("fee_per_card")
+    per_card = per_card_now if raw_per_card is None else _whole(raw_per_card, FEE_PER_CARD_CAP)
+    if bps is None or per_card is None:
+        return FEE_BPS_CAP, FEE_PER_CARD_CAP
     return bps, per_card
 
 
@@ -62,19 +80,23 @@ def venues_from(payload: dict[str, Any], tick: int | None = None) -> list[Venue]
     for v in payload.get("venues") or []:
         if not isinstance(v, dict) or not v.get("venue"):
             continue
-        rows.append(
-            Venue(
-                id=str(v["venue"]),
-                owner=str(v.get("owner") or ""),
-                fee_bps=int(v.get("fee_bps") or 0),
-                fee_per_card=int(v.get("fee_per_card") or 0),
-                status=str(v.get("status") or ""),
-                mechanism=str((v.get("rules") or {}).get("mechanism") or ("board" if v.get("house") else "")),
-                trades=int(v.get("trades") or 0),
-                house=bool(v.get("house")),
-                pending_fee=_pending_fee(v.get("pending_fee"), tick),
+        try:
+            per_card = int(v.get("fee_per_card") or 0)
+            rows.append(
+                Venue(
+                    id=str(v["venue"]),
+                    owner=str(v.get("owner") or ""),
+                    fee_bps=int(v.get("fee_bps") or 0),
+                    fee_per_card=per_card,
+                    status=str(v.get("status") or ""),
+                    mechanism=str((v.get("rules") or {}).get("mechanism") or ("board" if v.get("house") else "")),
+                    trades=int(v.get("trades") or 0),
+                    house=bool(v.get("house")),
+                    pending_fee=_pending_fee(v.get("pending_fee"), tick, per_card),
+                )
             )
-        )
+        except (TypeError, ValueError, OverflowError, AttributeError):  # a row we cannot read: skip that venue
+            continue
     return rows
 
 
