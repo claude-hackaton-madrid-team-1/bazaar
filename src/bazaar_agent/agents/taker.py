@@ -27,6 +27,7 @@ from typing import Any
 
 from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
+from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
 from bazaar_agent.agents.dealer import (
     Move,
     Negotiation,
@@ -66,6 +67,7 @@ from bazaar_agent.agents.runtime import (
     window_for,
 )
 from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
+from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.team_desk import DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
@@ -367,6 +369,11 @@ def conversation_view(c: Conversation) -> dict[str, Any]:
 # ---------------------------------------------------------------- the loop
 
 
+def _conversation(conv: Conversation) -> str:
+    """The bluff book's key for a dealer thread."""
+    return f"thread:{conv.thread_id}"
+
+
 @dataclass
 class _TickRun:
     snap: Snapshot
@@ -410,6 +417,7 @@ class Taker:
         outcome_learner: OutcomeLearner | None = None,
         lessons: Lessons | None = None,
         thread_store: ThreadStore | None = None,
+        bluff: TacticBook | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -422,6 +430,7 @@ class Taker:
         self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
+        self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -462,6 +471,8 @@ class Taker:
             self.learner.flush()
         if self.thread_store is not None:
             self.thread_store.flush(tick)
+        if self.bluff is not None:
+            self.bluff.flush()
         self.feed.archive_pending()
 
     def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
@@ -497,6 +508,9 @@ class Taker:
             known: dict[str, Any] = {str(d.get("id")): "dealer" for d in snap.dealers if d.get("id")}
             known.update({v.id: "venue" for v in snap.venues})
             run.blocks = self.learner.blocks(snap.events, snap.us, clock, known)
+        if self.bluff is not None:  # memory only before the sends: a cooloff, strike or flag after a tactic
+            self.bluff.begin_tick(clock.tick, clock.round, snap.us)
+            self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, run.params, self.rules)
         self._open(run, book, threads)
@@ -896,6 +910,9 @@ class Taker:
             conv.ticks += 1
             self._inspect(run, conv, thread)
             dm = plan_conversation(conv, thread, self.rules.dealer_max_ticks_per_thread, run.snap.clock.tick)
+            if self.bluff is not None and dm.status == "open":  # her new offer scores our last tactic
+                tick = run.snap.clock.tick
+                self.bluff.observe(_conversation(conv), their_price=dm.ask, their_offer=dm.offer_id, tick=tick)
             if dm.status != "open":
                 self._finished(run, conv, thread)
                 del self.convs[dealer]
@@ -985,6 +1002,11 @@ class Taker:
             self._after_deal(run, f"deal in thread {conv.thread_id}")
         if self.learner is not None:
             self.learner.thread_closed(thread, run.snap.us, run.snap.clock)
+        if self.bluff is not None:
+            reason = thread.get("closed_reason")
+            self.bluff.ended(
+                _conversation(conv), status=status, closed_reason=reason if isinstance(reason, str) else None, tick=tick
+            )
         self.log(
             f"tick {tick} taker: thread {conv.thread_id} with {conv.dealer} {status} "
             f"({thread.get('closed_reason') or '-'}) price {price if status == 'deal' else '-'}"
@@ -1017,6 +1039,7 @@ class Taker:
             return
         if not verdict.allowed:
             move = Move("walk", reason=f"guardrail: {verdict}")
+        choice = self._tactic(conv, move, dm.ask)
         inputs = {
             "dealer": conv.dealer,
             "thread": conv.thread_id,
@@ -1028,8 +1051,10 @@ class Taker:
             "final_max": conv.neg.plan.final_max,
             "changed_by": list(conv.notes),
             "recalled": list(conv.recalled),
+            **(choice.inputs() if choice is not None else {}),  # private keys: never in the public view
         }
         what = f"{move.kind} {move.price or ''} to {conv.dealer} on thread {conv.thread_id} for {conv.item}"
+        what += f" · tactic {choice.tactic}" if choice is not None and choice.tactic else ""
         status: Status = "approved" if run.window.open() else "expired"
         kind = f"dealer_{move.kind}"
         did = self.rec.decide(
@@ -1064,6 +1089,8 @@ class Taker:
             ended = {**thread, "status": ended_as or "walked", "closed_reason": thread.get("closed_reason") or "walked"}
             self._keep(ended, run.snap, conv)
             self.convs.pop(conv.dealer, None)
+            if self.bluff is not None:
+                self.bluff.dropped(_conversation(conv))
             if move.reopen:
                 self._held_opening(run, conv)
             elif move.rest:  # she stopped answering: do not open, bid and walk on this item every few ticks
@@ -1071,7 +1098,7 @@ class Taker:
             return
         price = int(move.price or 0)
         text = bid_words(
-            self.words_fn,
+            choice.words(self.words_fn) if choice is not None else self.words_fn,
             WordsRequest(conv.dealer, price, len(conv.neg.bids), conv.item, lessons=self._lessons_for(run, conv)),
             thread,
             run.snap.clock,
@@ -1085,17 +1112,19 @@ class Taker:
             self.rec.decisions.settle(did, "rejected")
             self.log(f"tick {tick} taker: kill switch on: holding bid on thread {conv.thread_id} ({'; '.join(stops)})")
             return
-        if (
-            self.rec.send(
-                did,
-                tick,
-                "say",
-                {"thread": conv.thread_id, "price": price},
-                lambda: self.team.say(conv.thread_id, text, price=price),
-            )
-            is not None
-        ):
+        body = self.rec.send(
+            did,
+            tick,
+            "say",
+            {"thread": conv.thread_id, "price": price},
+            lambda: self.team.say(conv.thread_id, text, price=price),
+        )
+        if body is not None:
             conv.neg.bids.append(price)
+            if self.bluff is not None and choice is not None:
+                self.bluff.sent(
+                    choice, their_price=dm.ask, their_offer=dm.offer_id, tick=tick, message=message_id(body)
+                )
         elif not self.rec.maybe_landed:
             return
         self._commit(run, price, conv.item, conv.thread_id)
@@ -1145,6 +1174,16 @@ class Taker:
         situation = f"bid to {conv.dealer} for {conv.item} ({conv.rarity})"
         found = self.lessons(situation, subjects=(conv.dealer,), tick=run.snap.clock.tick)
         return tuple(str(x["quoted_lesson"]) for x in found)
+
+    def _tactic(self, conv: Conversation, move: Move, her_ask: int | None) -> Choice | None:
+        """The bluff tactic for a bid's words (N16): a dealer bid only, after the guardrails passed it. It never
+        changes the price; it never sees our max or value except to keep an invented number off them."""
+        if self.bluff is None or move.kind != "bid" or move.price is None:
+            return None
+        avoid = private_numbers(conv.neg.plan.max_price, conv.value)
+        cp = Counterparty.dealer(conv.dealer)
+        conversation, step = _conversation(conv), len(conv.neg.bids)
+        return self.bluff.choose(cp, "buy", conversation, step, int(move.price), avoid=avoid, their_price=her_ask)
 
     # ------------------------------------------------------------ accepts (shared quota)
 

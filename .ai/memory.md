@@ -781,3 +781,38 @@ Private sim, 16-tick sessions: v2 held while the sim's rival conceded every tick
 limit. Two-issue session, `duel_days_signed` false: v2 valued the rival's 74 at 10 days as 36 (cost 40), offered 42 at
 0 days and made 2 of a 63 pie; the sim's scoring put the 74 offer at +72. After the rival took our 42, v2 sent the second
 "last offer" and the sim refused it (`duel_closed`): no cost, but a step that has a " refused " marker fails the smoke.
+
+### [2026-10-03] build-error — `duel run` crashed when the team client could not read /me (N16)
+symptom: the duel CLI tests exited 1 with `AttributeError: 'DuelClient' object has no attribute 'me'` → root
+cause: the new bluff book reads our team id once at start and only caught `BazaarError` → fix: `_our_team_id`
+fails open on any error (the tactic lessons then bind no team); a duel loop never waits on it.
+
+### [2026-10-03] finding — in the simulator the words never move a price; only the tactic choice changes (N16)
+Sim run with tactics on (tick 0-17): Abuela got kindness only and dealt at 7 after 2 bids; El Chato moved one
+per our step ("You moved 1, I move 1") whatever the bluff, and both sim rivals conceded 1 P per tick, so every
+tactic scored "toward" (+1). The sim's dealers read words only for mood (kindness, rudeness, injection). Expect
+the same from real dealers ("their prices come from their own rules"): lying should pay, if anywhere, against
+LLM duel rivals; the no-gain rule switches a tactic off where it earns nothing.
+
+### [2026-10-03] gotcha — every worktree's simulator smoke binds 127.0.0.1:8765
+BAZAAR_SIM=local has a fixed address, so two workers running `scripts/sim_smoke.py` at once collide
+("address already in use", the second sim exits 3). Wait until `lsof -iTCP:8765 -sTCP:LISTEN` is empty; never
+kill another worktree's simulator.
+
+### [2026-10-03] gotcha — the duel CLI test fakes never ran past the first tick's `?done=true` read
+`DuelStore.read_finished` is True on a runner's first tick, so `duel run` calls `client.duels(done=True)`; the
+`DuelClient` fake in tests/test_jev_journal.py takes no `done`, and the TypeError is swallowed by `run_per_tick`
+("tick loop: tick N failed"), so code placed after it in `on_tick` never ran in those tests. A fake for
+`duel run` needs `duels(self, done=False)` (tests/test_bluff_wiring.py does).
+
+### [2026-10-03] gotcha — git rerere is on and its cache is shared by every worktree
+`git merge origin/main` in a scratch worktree printed "Resolved '.ai/memory.md' using previous resolution": a
+reviewer's earlier scratch merge had recorded it. Check the result (`git diff HEAD`) before trusting a rerere
+resolution; `git rerere forget <path>` drops a bad one.
+
+### [2026-10-03] gotcha — a PR stacked on a base that was rebased before it merged conflicts add/add everywhere
+#131 was cut from #96's pre-rebase commits; `git merge origin/main` then hit 29 conflicts, mostly add/add in
+`learn/*` (the same files from two histories). Fix: apply only the PR's own commits onto main, `git diff --binary
+<old base head> <PR head> | git apply -3` in a scratch worktree of main, resolve the few real conflicts there, and
+use that tree for the merge commit (`git merge --no-commit origin/main`, then `git read-tree --reset -u <tree>`).
+Under `duel_policy = v2` the duel words stay main's plain templates, so N16 tactics are off for duels there.
