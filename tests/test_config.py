@@ -160,3 +160,18 @@ def test_the_flag_can_come_from_dotenv_and_the_environment_wins(tmp_path, monkey
 def test_bazaar_sim_local_is_the_hardcoded_laptop_simulator(tmp_path, monkeypatch):
     s = settings_for(tmp_path, monkeypatch, BAZAAR_SIM="local", BAZAAR_KEY="tk-real-0042")
     assert s.simulator and s.bazaar_url == "http://127.0.0.1:8765" and s.require_team_key() == "sim-team1"
+
+
+def test_bazaar_env_file_replaces_the_repo_dotenv(tmp_path, monkeypatch):
+    for name in (*NAMES, "TYPESAFE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    real = tmp_path / "real.env"
+    real.write_text("TYPESAFE_API_KEY=ts-secret\nANTHROPIC_API_KEY=sk-secret\n")
+    monkeypatch.setattr("bazaar_agent.config.REPO_ROOT", tmp_path)
+    (tmp_path / ".env").write_text(real.read_text())
+    assert load_settings().typesafe_api_key is not None
+    empty = tmp_path / "empty.env"
+    empty.write_text("")
+    monkeypatch.setenv("BAZAAR_ENV_FILE", str(empty))
+    s = load_settings()
+    assert s.typesafe_api_key is None and s.anthropic_api_key is None

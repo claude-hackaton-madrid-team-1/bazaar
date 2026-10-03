@@ -55,7 +55,9 @@ BAZAAR_SIM=1 BAZAAR_SIM_KEY=sim-team2 uv run bazaar status          # another si
 
 The whole team tests here before a PR merges, and CI does the same on every PR (the
 `sim-smoke` job: `uv run python scripts/sim_smoke.py`). It runs the same steps against a local
-simulator with no secrets and no network beyond localhost, and it fails the PR on any error.
+simulator and fails the PR on any error, including an error a tick loop swallowed (`Traceback`,
+`tick loop:`). It holds no secrets: it drops the secret variables, never reads the repo `.env`
+(`BAZAAR_ENV_FILE` points at an empty file), and sends every non-local request to a dead proxy.
 
 1. **`.env` once.** Delete any `BAZAAR_URL=` line: it now stops every command. Keep `BAZAAR_KEY`
    for the real game. For the simulator nothing else is needed (`BAZAAR_SIM_KEY` defaults to
@@ -86,7 +88,8 @@ simulator with no secrets and no network beyond localhost, and it fails the PR o
    uv run python scripts/sim_smoke.py                                       # the CI gate, start to finish (~20 s)
    ```
 
-   (`scripts/sim_smoke.py` starts its own simulator on 8765: stop terminal 1 first.)
+   (`scripts/sim_smoke.py` starts its own simulator on 8765 and refuses to run while anything else
+   answers there, a `bazaar-sim serve` or the MCP server: stop it first.)
 4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it):
    `SIM_ADMIN_TOKEN=<bazaar-sim → Variables in Railway> uv run bazaar-sim reset --url https://bazaar-sim-production-1d48.up.railway.app`.
 

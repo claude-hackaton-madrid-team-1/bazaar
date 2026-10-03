@@ -145,9 +145,18 @@ def database_name(url: str) -> str:
     return unquote(parts.path.lstrip("/"))
 
 
+def env_file_path() -> Path:
+    """The env file every reader uses: BAZAAR_ENV_FILE when set, else the repo's `.env`."""
+    override = os.environ.get("BAZAAR_ENV_FILE")
+    return Path(override) if override else REPO_ROOT / ".env"
+
+
 def load_settings(env_file: Path | None = None) -> Settings:
-    """Environment variables win over `.env`, so a one-off override needs no file edit."""
-    file_values = read_env_file(env_file or REPO_ROOT / ".env")
+    """Environment variables win over `.env`, so a one-off override needs no file edit.
+
+    BAZAAR_ENV_FILE names another env file instead of the repo's `.env` (the simulator smoke points it
+    at an empty file, so a laptop's real secrets never load into a smoke run)."""
+    file_values = read_env_file(env_file or env_file_path())
 
     def pick(name: str) -> str | None:
         value = os.environ.get(name) or file_values.get(name)

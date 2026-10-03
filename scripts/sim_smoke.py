@@ -5,8 +5,10 @@
 It starts `bazaar-sim serve` on 127.0.0.1:8765 (BAZAAR_SIM=local's hardcoded address) with an
 in-memory world, then drives our real CLI against it: status, one dealer buy with negotiation,
 two ticks of the taker and of the maker in --live, duel moves, the monitor's live stream, and the
-two key guards. No secrets, no database, no network beyond localhost: every other host goes through
-a dead proxy, so a call to the real game (or to any API) fails the smoke instead of happening.
+two key guards. No secrets, no database, no network beyond localhost: the repo's `.env` is never read
+(BAZAAR_ENV_FILE points at an empty file, and the secret variables are dropped from the environment),
+and every other host goes through a dead proxy, so a call to the real game (or to any API) fails the
+smoke instead of happening. A step also fails on a `Traceback` or a swallowed `tick loop:` error.
 Exit 0 when every step passes; 1 on the first failure, with the step's output and the sim's log.
 """
 
@@ -26,6 +28,11 @@ from pathlib import Path
 SIM = "http://127.0.0.1:8765"
 KEY = "sim-team1"
 STEP_TIMEOUT_S = 180
+PORT = 8765  # BAZAAR_SIM=local's hardcoded address (src/bazaar_agent/config.py LOCAL_SIM_URL)
+# Duel budget: the session opens at tick 2 and lasts SIM_DUEL_TICKS ticks of 2 s. The duel step starts
+# ~10 s in, so 60 ticks (120 s) leaves room for steps added before it.
+DUEL_TICKS = "60"
+CRASH_MARKERS = ("Traceback (most recent call last)", "tick loop:")
 DEAD_PROXY = "http://127.0.0.1:9"  # nothing listens there: any non-local request fails at once
 NOWHERE_DB = "postgresql://smoke:smoke@127.0.0.1:9/bazaar_sim_smoke"  # unreachable: ledgers fall back to JSONL
 SECRETS = (
@@ -38,10 +45,11 @@ SECRETS = (
 )
 
 
-def base_env(data_dir: Path) -> dict[str, str]:
+def base_env(data_dir: Path, env_file: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in SECRETS}
     env.update(
         {
+            "BAZAAR_ENV_FILE": str(env_file),  # an empty file: a laptop's real .env never loads
             "BAZAAR_SIM": "local",
             "BAZAAR_SIM_KEY": KEY,
             "BAZAAR_TEAM_ID": "t01",
@@ -69,8 +77,8 @@ def sim_env() -> dict[str, str]:
             "SIM_DATABASE_URL": "memory",
             "SIM_ADMIN_TOKEN": secrets.token_urlsafe(24),
             "SIM_DUEL_FIRST_TICK": "2",
-            "SIM_DUEL_TICKS": "20",
-            "PORT": "8765",
+            "SIM_DUEL_TICKS": DUEL_TICKS,
+            "PORT": str(PORT),
         }
     )
     return env
@@ -84,9 +92,19 @@ def get(path: str, keyed: bool = False) -> dict:
     return data
 
 
-def wait_for_sim(log: Path) -> None:
+def port_busy() -> bool:
+    try:
+        get("/api/health")
+        return True
+    except OSError:
+        return False
+
+
+def wait_for_sim(server: subprocess.Popen[bytes], log: Path) -> None:
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
+        if server.poll() is not None:
+            fail(f"bazaar-sim exited with code {server.returncode} before answering", log.read_text(errors="replace"))
         try:
             if get("/api/health").get("ok"):
                 return
@@ -110,6 +128,9 @@ def step(name: str, run: Callable[[], subprocess.CompletedProcess[str]], check: 
     started = time.monotonic()
     result = run()
     output = result.stdout + result.stderr
+    crashed = next((m for m in CRASH_MARKERS if m in output), None)
+    if crashed:
+        fail(f"{name}: {crashed!r} in its output (an error the tick loop swallowed)", output)
     if result.returncode != 0 or not check(output):
         fail(f"{name} (exit {result.returncode})", output)
     print(f"ok  {name:<44} {time.monotonic() - started:5.1f} s", flush=True)
@@ -136,7 +157,8 @@ def run_smoke(env: dict[str, str]) -> None:
     out = step(
         "status (target is the simulator)", lambda: bazaar(env, "status", "--no-cards"), lambda o: "SIMULATOR" in o
     )
-    assert "Team 1" in out or "t01" in out
+    if "Team 1" not in out:
+        fail("status did not show Team 1", out)
     ref = missing_common()
     step(
         f"dealer buy {ref} from Abuela, negotiated",
@@ -163,7 +185,7 @@ def run_smoke(env: dict[str, str]) -> None:
     step(
         "monitor with the live SSE stream, one tick",
         lambda: bazaar(env, "monitor", "--no-db", "--max-ticks", "1"),
-        lambda o: "stream on" in o,
+        lambda o: "stream live (scope team:t01" in o,  # the stream's hello, not the startup banner
     )
     real_key = {**env, "BAZAAR_SIM_KEY": "tk-real-0042"}
     refused = bazaar(real_key, "status")
@@ -177,25 +199,37 @@ def run_smoke(env: dict[str, str]) -> None:
 
 def main() -> int:
     started = time.monotonic()
+    if port_busy():
+        fail(f"something already answers on 127.0.0.1:{PORT} (a bazaar-sim serve, or the MCP server): stop it first")
     with tempfile.TemporaryDirectory(prefix="sim-smoke-") as tmp:
         log = Path(tmp) / "sim.log"
+        empty_env = Path(tmp) / "empty.env"
+        empty_env.write_text("")
         with log.open("w") as sink:
             server = subprocess.Popen(
-                [sys.executable, "-m", "bazaar_sim", "serve", "--port", "8765"],
+                [sys.executable, "-m", "bazaar_sim", "serve", "--port", str(PORT)],
                 env=sim_env(),
                 stdout=sink,
                 stderr=subprocess.STDOUT,
             )
         try:
-            wait_for_sim(log)
+            wait_for_sim(server, log)
             print(f"simulator up: tick {get('/api/clock')['tick']}", flush=True)
-            run_smoke(base_env(Path(tmp) / "client"))
+            run_smoke(base_env(Path(tmp) / "client", empty_env))
+            if server.poll() is not None:
+                fail(
+                    f"bazaar-sim exited with code {server.returncode} during the smoke", log.read_text(errors="replace")
+                )
         except SystemExit:
             print("\n--- simulator log ---\n" + log.read_text(errors="replace")[-3000:], flush=True)
             raise
         finally:
             server.terminate()
-            server.wait(timeout=10)
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=10)
     print(f"\nSMOKE PASSED in {time.monotonic() - started:.0f} s", flush=True)
     return 0
 

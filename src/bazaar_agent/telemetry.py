@@ -38,7 +38,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, Spa
 from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from rich.console import Console, ConsoleRenderable, RenderHook
 
-from bazaar_agent.config import REPO_ROOT, read_env_file
+from bazaar_agent.config import env_file_path, read_env_file
 from bazaar_agent.jev.mask import JEV_REDACTION, mask_text
 from bazaar_agent.pgconn import redact as redact_db_passwords
 
@@ -101,7 +101,7 @@ def tracing_config(env: Mapping[str, str] | None = None) -> TracingConfig:
     """Settings from the environment, then `.env`. Endpoint precedence follows OTel, then Phoenix:
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT (used as is) > PHOENIX_COLLECTOR_ENDPOINT >
     OTEL_EXPORTER_OTLP_ENDPOINT (base URLs, `/v1/traces` appended) > local Phoenix."""
-    values = {**read_env_file(REPO_ROOT / ".env"), **os.environ} if env is None else dict(env)
+    values = {**read_env_file(env_file_path()), **os.environ} if env is None else dict(env)
 
     def pick(*names: str) -> str | None:
         return next((values[n].strip() for n in names if (values.get(n) or "").strip()), None)
