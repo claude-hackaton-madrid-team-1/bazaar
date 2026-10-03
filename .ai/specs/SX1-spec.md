@@ -20,4 +20,8 @@ completes no page. Lift the rule for that card only, with no new override path.
   `human_approval_above` (tested with the committed rules).
 - [ ] 5. The committed-file tests assert every set protected except that one card.
 - [ ] 6. The PR body lists every sell path that can now offer LAT-10, and at what price.
-- Out of scope: a price floor of 200 for LAT-10 (no new override path: the coordinator decides how to post it).
+- [ ] 7. (review of #240) The last copy of an excepted card needs a human approval at any price, even with
+  `human_approval_above` off: the maker would otherwise list LAT-10 on its own at 68-86. A plan may still rank it.
+- [ ] 8. (review of #240) The list takes ASCII `SET-NN` entries only; the item must match exactly (any other
+  spelling stays protected); an excepted sale whose asset is not a copy of that card in /me is refused.
+- Out of scope: the maker opening the excepted card at 200 by itself (a human posts it after approving).
