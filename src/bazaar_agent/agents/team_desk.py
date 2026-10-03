@@ -323,6 +323,8 @@ class TeamDesk:
                 continue
             tid = int(t["id"])
             self._payloads[tid] = payload
+            if self.rules.never_trades_with(self._other(t, v.us)):
+                continue  # `team_desk_never_trade`: never take a blocked team's offer (its thread idles out)
             talk = self.talks.get(tid)
             if talk is None:
                 self.first_seen.setdefault(tid, v.tick)
@@ -660,6 +662,8 @@ class TeamDesk:
         verdicts = [check(a, ctx, self.rules) for a in swap.actions()]
         problems = [p for x in verdicts for p in x.violations]
         halted = any(x.halted for x in verdicts)
+        if self.rules.never_trades_with(trade.counterparty):
+            problems.append(f"{trade.counterparty} is in team_desk_never_trade")
         fair = judge(trade, cash, 0, self.rules, repeat=self.deals[trade.counterparty] > 0)
         if not fair.ok:
             problems.append(fair.reason)
@@ -685,6 +689,8 @@ class TeamDesk:
         we are the accepting side) is a bid for their card. The fairness verdict was taken in `proposals`."""
         if (why := disabled(self.rules, self.env)) is not None:
             return Verdict(False, (why,))
+        if self.rules.never_trades_with(a.trade.counterparty):
+            return Verdict(False, (f"{a.trade.counterparty} is in team_desk_never_trade",))
         swap = self._swap(v, a.trade, a.offer.cash_in - a.offer.cash_out - a.fee)
         if swap is None:
             return Verdict(False, ("our copy or the card's value is unknown",))
@@ -1063,6 +1069,9 @@ class TeamDesk:
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()
+        # `team_desk_never_trade`: the podium and the teams ranked around us are never planned (Sat 3 Oct: the
+        # desk proposed SAL-03 to t17, a direct rival missing it).
+        threads = [t for t in threads if not self.rules.never_trades_with(t.counterparty)]
         trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
         self._plan = _Plan(v.tick, trades, worth, pages, {ref: c.book for ref, c in m.cards.items()})
         return trades

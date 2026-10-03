@@ -1071,3 +1071,13 @@ refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused 
 Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
 service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
 429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.
+
+### [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
+symptom: LAV-10 bought from `picaros` at 63, its rare list price, after bids 54→55→56 (~0 on the ladder) → root cause:
+`dealer.decide` takes any FINAL inside our max as the dealer's limit, and Los Pícaros (`/api/dealers`: kind `trickster`,
+strictness 0.1) keep talking after theirs → fix: `agents/trickster.py` marks the plan `forgiving` (published kind
+`trickster`): its FINAL is a plain ask, no ask at or above its list price is taken, only one
+≤ lowest fill + `trickster_accept_fill_share` × fill range (none seen: we only bid), and our bids stay below its list
+price and below any ask we may not take. Same plan in the taker (opens, restart adoption, Jev) and `dealer buy`.
+Abuela publishes strictness 0.1 too (and chattiness 0.75), so a strictness bar would make her real final a fake one:
+`trickster_max_strictness` ships at 0 and the published kind alone decides.

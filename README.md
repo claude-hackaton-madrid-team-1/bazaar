@@ -1376,6 +1376,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] build-error — the taker took a trickster's fake FINAL at its list price (Los Pícaros, tick 863)
 - [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
 - [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
 - [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
@@ -1383,7 +1384,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
 - [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
 - [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
-- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
 
 <!-- BAZAAR:STATUS:END -->
 
