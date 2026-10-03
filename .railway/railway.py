@@ -44,6 +44,9 @@ ALWAYS = {"restartPolicyType": "ALWAYS"}
 AGENT_PORT = "8080"  # each agent's read-only status: GET /health, GET /state, WS /events (public domain)
 
 
+# No BAZAAR_URL and no BAZAAR_SIM anywhere in this file: every service plays the real game
+# (https://bazaar.causaprima.ai with BAZAAR_KEY), the target src/bazaar_agent/config.py picks when the
+# flag is unset. Only bazaar-sim below IS the simulator; nothing here points a client at it.
 def runtime_env() -> dict:
     """What `bazaar monitor`, `bazaar duel run` and `bazaar agent` read (config.py, telemetry.py)."""
     return {
@@ -68,12 +71,13 @@ def llm_env() -> dict:
     return {"CLAUDE_CODE_OAUTH_TOKEN": preserve()}
 
 
-def runtime(name: str, command: str, data: object, enabled: bool = True, llm: bool = False) -> object:
-    """`enabled=False` declares no source: the service, its volume and variables stay, and no push
-    can deploy it. Railway has no 0-replica setting (the minimum is 1), so this is how it is off."""
+def runtime(name: str, command: str, data: object, llm: bool = False) -> object:
+    """A worker on main (`bazaar <command>`). There is no OFF variant: Railway has no 0 replicas, and an off
+    service (no source) is still redeployed from its last image by any apply that changes its config, so a
+    service we do not run is not declared at all (tests/test_railway_iac.py)."""
     return service(
         name,
-        source=github(REPO, branch=BRANCH) if enabled else None,
+        source=github(REPO, branch=BRANCH),
         build=BUILD,
         start=f"/app/.venv/bin/bazaar {command}",
         deploy=ALWAYS,
@@ -83,21 +87,23 @@ def runtime(name: str, command: str, data: object, enabled: bool = True, llm: bo
     )
 
 
-def agent(name: str, command: str, data: object, enabled: bool = True) -> object:
+def agent(name: str, command: str, data: object) -> object:
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
-    DRY RUN on purpose: this file never sets BAZAAR_LIVE. Live trading needs BAZAAR_LIVE=1 set by hand
-    on the service (README "Autonomous agents"), never here. `enabled=False`: no source (see runtime())."""
+    Live or dry run is decided by hand, never here: this file never sets BAZAAR_LIVE (README "Autonomous
+    agents"). It is declared `preserve()` so an apply keeps whatever was set by hand: undeclared, `railway
+    config plan` proposed to delete it (2026-10-03), which would have put a live agent back in dry run. The
+    taker and the maker are LIVE since Sat 2026-10-03 01:45 Madrid."""
     return service(
         name,
-        source=github(REPO, branch=BRANCH) if enabled else None,
+        source=github(REPO, branch=BRANCH),
         build=BUILD,
         start=f"/app/.venv/bin/bazaar {command}",
         deploy=ALWAYS,
         replicas={REGION: 1},
         healthcheck="/health",
         volumeMounts={APP_DATA: data},
-        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT},
+        env={**runtime_env(), **llm_env(), "PORT": AGENT_PORT, "BAZAAR_LIVE": preserve()},
     )
 
 
@@ -121,30 +127,70 @@ def mcp_server(name: str, data: object) -> object:
     )
 
 
-EVALS_EVERY_TICKS = "6"  # bazaar-evals looks for new inputs every 6 game ticks (3 min at 30 s, 90 s at 15 s)
+SIM_PORT = "8080"
+# The simulator's world lives in its OWN database on the team's Postgres server, created once with
+# `create database bazaar_sim` (README "Simulator"). The simulator refuses any other database name,
+# so this can never point at the real `railway` one.
+SIM_DATABASE_URL = (
+    "postgresql://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/bazaar_sim"
+)
 
 
-def evals_service() -> object:
-    """`bazaar evals run` on a loop (README "Evals"): Postgres in, Postgres and Phoenix annotations out.
+def simulator() -> object:
+    """`bazaar-sim serve`: a simulated Bazaar API for testing every agent while the game is closed.
 
-    It never uses the team key, so it gets no BAZAAR_KEY and adds nothing to the key's 5 req/s budget: its
-    loop follows the game clock through the keyless public /api/clock (tick discipline).
-    Both secrets it needs are references to the services that own them, so nothing here is preserve()d.
-    It writes no file: no volume."""
+    Team keys are `sim-team1` ... `sim-team8`; a real key is refused. SIM_ADMIN_TOKEN (reset and
+    manual ticks) is generated once and set with `railway variable set ... --stdin`, never here.
+    Its public domain is a Railway-generated `*.up.railway.app` one: Railway IaC does not declare
+    generated domains (docs.railway.com/infrastructure-as-code/reference, "Custom domains"), so it was
+    created once with `railway domain --service bazaar-sim` and is listed in the README."""
     return service(
-        "bazaar-evals",
+        "bazaar-sim",
         source=github(REPO, branch=BRANCH),
         build=BUILD,
-        start=f"/app/.venv/bin/bazaar evals run --every-ticks {EVALS_EVERY_TICKS}",
+        start="/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
         deploy=ALWAYS,
         replicas={REGION: 1},
+        healthcheck="/api/health",
         env={
             "RAILPACK_PYTHON_VERSION": "3.12",
-            "DATABASE_URL": "${{Postgres.DATABASE_URL}}",  # private *.railway.internal URL
-            "PHOENIX_COLLECTOR_ENDPOINT": "http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:" + PHOENIX_PORT,
-            "PHOENIX_API_KEY": "${{phoenix.PHOENIX_API_KEY}}",
-            "PHOENIX_PROJECT": "bazaar",
-            "COLUMNS": "200",
+            "PORT": SIM_PORT,
+            "SIM_DATABASE_URL": SIM_DATABASE_URL,
+            "SIM_TICK_SECONDS": "10",
+            "SIM_CLIENT_IP_HEADER": "x-real-ip",  # set by Railway's edge; a client-sent X-Forwarded-For is ignored
+            "SIM_ADMIN_TOKEN": preserve(),
+        },
+    )
+
+
+LIVE_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
+LIVE_PORT = "8080"
+LIVE_NODE = "22.23.3"  # node runs server/*.ts by stripping types (>= 22.18); same pin as .nvmrc there
+
+
+def live_show() -> object:
+    """Bazaar Live (repo bazaar-live): the buyer and the seller at a Rastro stall, a static React show
+    plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
+    The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
+
+    The voice keys are set once by hand with `railway variable set ... --stdin` and declared preserve()
+    so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
+    the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
+    the bazaar-live README) must be declared here before it is set. Its public domain is generated once
+    with `railway domain --service bazaar-live --port 8080`: Railway IaC does not declare generated domains."""
+    return service(
+        "bazaar-live",
+        source=github(LIVE_REPO, branch=BRANCH),
+        build={"buildCommand": "npm run build"},
+        start="node server/index.ts",
+        deploy=ALWAYS,
+        replicas={REGION: 1},
+        healthcheck="/health",
+        env={
+            "RAILPACK_NODE_VERSION": LIVE_NODE,
+            "PORT": LIVE_PORT,
+            "ELEVENLABS_API_KEY": preserve(),
+            "GEMINI_API_KEY": preserve(),
         },
     )
 
@@ -152,7 +198,6 @@ def evals_service() -> object:
 @define_railway
 def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
-    monitor_data = volume("bazaar-monitor-data", region=REGION, sizeMB=VOLUME_MB)
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
     taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
     maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
@@ -176,32 +221,33 @@ def main(ctx=None):
             "PHOENIX_API_KEY": preserve(),  # a system key for span ingestion: `bazaar obs bootstrap`
         },
     )
-    # OFF by team decision: the monitor runs in the CLI on a laptop (one monitor per team). Its
-    # source was disconnected and its deployment removed (`railway down`). To turn it back on: set
-    # enabled=True, `railway config apply` (it reconnects the repo and deploys main), and stop the
-    # laptop monitor.
-    monitor = runtime("bazaar-monitor", "monitor", monitor_data, enabled=False)
+    # bazaar-monitor: leaves this file 2026-10-03 (Omar deletes the service and its volume by hand; apply
+    # nothing until a re-plan shows 0 destroy). The monitor runs in the CLI on a laptop
+    # (one per team). An off service still redeploys its last image whenever an apply changes its config,
+    # source or not (Fri 23:14 UTC), so it is not declared at all. To run it on Railway again, re-add
+    # `volume("bazaar-monitor-data", ...)` and `runtime("bazaar-monitor", "monitor", <that volume>)`.
     duels = runtime("bazaar-duels", "duel run --play", duels_data, llm=True)
     # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
-    # (duels first; the maker never accepts). Both stay in DRY RUN until BAZAAR_LIVE=1 is set by hand.
+    # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
+    # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
     taker = agent("bazaar-taker", "agent taker", taker_data)
     maker = agent("bazaar-maker", "agent maker", maker_data)
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
-    evals = evals_service()
+    sim = simulator()
+    live = live_show()
 
     return project(
         "heartfelt-warmth",
         resources=[
             phoenix,
-            monitor,
             duels,
             taker,
             maker,
             mcp,
-            evals,
+            sim,
+            live,
             phoenix_data,
-            monitor_data,
             duels_data,
             taker_data,
             maker_data,

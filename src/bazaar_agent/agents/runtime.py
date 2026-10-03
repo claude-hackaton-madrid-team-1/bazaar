@@ -242,7 +242,7 @@ class Recorder:
             },
         )
         decision_id = self.decisions.decide(decision)
-        if self.hub is not None:
+        if self.hub is not None:  # the hub publishes only its allow-listed public view of this row
             sent = "would-send" if not self.live else "sending"
             self.hub.decision(
                 {
@@ -259,6 +259,7 @@ class Recorder:
                     "chosen": chosen,
                     "status": status,
                     "dry_run": not self.live,
+                    "thread_id": thread_id,
                     "sent": sent if chosen and status == "approved" else "not sent",
                 }
             )

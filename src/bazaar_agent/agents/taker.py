@@ -25,11 +25,20 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from bazaar_agent.agents.dealer import Move, Negotiation, WordsFn, apply_advice, bid_words, template_words
+from bazaar_agent.agents.dealer import (
+    Move,
+    Negotiation,
+    WordsFn,
+    apply_advice,
+    bid_words,
+    reopen_start,
+    template_words,
+)
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
     Opening,
+    deal_price,
     meet_the_ask,
     openings,
     plan_conversation,
@@ -438,6 +447,10 @@ class Taker:
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
+        # She held her opening ask and we walked: (dealer, item) -> the lower first bid of the next thread
+        # (once); after the lower one held too, (dealer, item) -> the game hour until which we leave it.
+        self.reopen_at: dict[tuple[str, str], int] = {}
+        self.cooling: dict[tuple[str, str], float] = {}
         self._dry_accepts: dict[int, int] = {}
         self.exits: dict[str, PendingExit] = {}  # card ref -> the arbitrage exit waiting for it
         self._arb_pairs: dict[frozenset[str], int] = {}  # dry run: the two makers of an arbitrage -> its tick
@@ -605,13 +618,23 @@ class Taker:
         else:  # no Jev (or no time to ask it): a pack slot is never spent without its yes
             book = replace(book, packs=())
         book = guarded_playbook(book, ctx, self.rules)
-        moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
+        moves = sorted(
+            [
+                mv
+                for mv in (*book.buys, *book.packs)
+                if mv.source in dealer_ids and self.cooling.get((mv.source, mv.ref), -1.0) <= clock.t_hours
+            ],
+            key=lambda mv: -mv.score,
+        )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
 
     def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> None:
         tick = run.snap.clock.tick
+        lower = self.reopen_at.get((op.dealer, op.item))
+        if lower is not None and lower < op.plan.start:  # she held her opening ask last time: start lower
+            op = replace(op, plan=replace(op.plan, start=lower), reason=f"{op.reason}; reopened lower")
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         inputs = {
@@ -649,8 +672,17 @@ class Taker:
             lambda: self.team.open_thread(op.dealer, topic=topic),
         )
         if body is not None and isinstance(body.get("id"), int):
+            reopened = self.reopen_at.pop((op.dealer, op.item), None) is not None
             self.convs[op.dealer] = Conversation(
-                op.dealer, op.item, op.rarity, op.value, op.reason, Negotiation(op.plan), int(body["id"]), tick
+                op.dealer,
+                op.item,
+                op.rarity,
+                op.value,
+                op.reason,
+                Negotiation(op.plan),
+                int(body["id"]),
+                tick,
+                reopened=reopened,
             )
 
     def _desk_moves(self, run: _TickRun, *, held: bool = False) -> list[tuple[DeskMove, dict[str, Any]]]:
@@ -689,7 +721,7 @@ class Taker:
 
     def _finished(self, run: _TickRun, conv: Conversation, thread: dict[str, Any]) -> None:
         status, tick = str(thread.get("status")), run.snap.clock.tick
-        price = conv.accepted_price or (conv.neg.bids[-1] if conv.neg.bids else None)
+        price = deal_price(conv, thread)
         if status == "deal" and price is not None and self.live:
             self.ledger.record("spend", tick, run.snap.clock.t_hours, int(price), conv.item)
         self.log(
@@ -758,6 +790,8 @@ class Taker:
                 did, tick, "close_thread", {"thread": conv.thread_id}, lambda: self.team.close_thread(conv.thread_id)
             )
             self.convs.pop(conv.dealer, None)
+            if move.reopen:
+                self._held_opening(run, conv)
             return
         price = int(move.price or 0)
         text = bid_words(
@@ -770,6 +804,10 @@ class Taker:
         if not run.window.open():
             self.rec.decisions.settle(did, "expired")
             self.log(f"tick {tick} taker: the words took the rest of the tick; {conv.dealer} bid next tick")
+            return
+        if stops := kill_switch(self.rules):  # it may have gone on while the words were written: hold
+            self.rec.decisions.settle(did, "rejected")
+            self.log(f"tick {tick} taker: kill switch on: holding bid on thread {conv.thread_id} ({'; '.join(stops)})")
             return
         if (
             self.rec.send(
@@ -785,6 +823,20 @@ class Taker:
         elif not self.rec.maybe_landed:
             return
         self._commit(run, price, conv.item, conv.thread_id)
+
+    def _held_opening(self, run: _TickRun, conv: Conversation) -> None:
+        """She held her opening ask and we walked (a deal there scores nothing): reopen once with a lower
+        first bid; when the lower thread held too, leave that item with that dealer for a game hour."""
+        key, clock = (conv.dealer, conv.item), run.snap.clock
+        lower = None if conv.reopened else reopen_start(conv.neg)
+        if lower is not None:
+            self.reopen_at[key] = lower
+            self.log(f"tick {clock.tick} taker: {conv.dealer} held her opening ask: reopen {conv.item} from {lower}")
+        else:
+            self.cooling[key] = clock.t_hours + 1.0
+            self.log(
+                f"tick {clock.tick} taker: {conv.dealer} held her opening ask again: {conv.item} rests 1 game hour"
+            )
 
     # ------------------------------------------------------------ accepts (shared quota)
 
@@ -868,6 +920,9 @@ class Taker:
             return False
         if exit_ is not None and (gone := self._exit_gone(exit_.bid, run.snap.us, clock.tick + 1)):
             self._skip(run, p, f"arbitrage exit re-read: {gone}", "rejected", jev)
+            return False
+        if stops := kill_switch(self.rules):  # Jev and the duel grace took seconds: it may have gone on since
+            self._skip(run, p, f"kill switch on: holding ({'; '.join(stops)})", "rejected", jev)
             return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, p.price, p.ref, limit):
             self._skip(run, p, "another process took the team's accept this tick", "rejected", jev)
@@ -999,6 +1054,9 @@ class Taker:
                 status, gone = "rejected", "a duel holds the team's accept this tick (duels first)"
             elif not run.window.open() or not self._fresh_tick(clock):
                 status, gone = "expired", "the tick ended before the send"
+            elif stops := kill_switch(self.rules):  # the duel grace took seconds: it may have gone on since
+                self.log(f"tick {clock.tick} taker: kill switch on: holding the {what} ({'; '.join(stops)})")
+                return False
             elif not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, x.ref, accept_limit(clock, self.rules)):
                 status, gone = "rejected", "another process took the team's accept this tick"
         did = self.rec.decide(
@@ -1056,6 +1114,6 @@ class Taker:
             return
         if self.rec.send(did, clock.tick, "cancel", {"offer": bid.id}, lambda: self.team.cancel(bid.id)) is not None:
             self.ledger.record(
-                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.tick_seconds)
+                *refund_row(bid.price, bid.ref, bid.created_tick, clock.tick, clock.t_hours, clock.max_tick_seconds)
             )
             run.offers = [o for o in run.offers if o.get("id") != bid.id]

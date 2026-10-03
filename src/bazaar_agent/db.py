@@ -18,7 +18,7 @@ from typing import Any
 import psycopg
 from psycopg import sql as pgsql
 
-from bazaar_agent.config import load_settings
+from bazaar_agent.config import ConfigError, load_settings
 from bazaar_agent.intel import Print, dealer_threads, set_of, tape, team_flows
 from bazaar_agent.pgconn import DatabaseUrlError, Target, describe, redact
 from bazaar_agent.pgconn import connect as connect
@@ -345,7 +345,10 @@ def report_lines(report: CheckReport, target: Target) -> list[str]:
 
 def run_check(database_url: str | None = None) -> tuple[bool, list[str]]:
     """`bazaar db check`: (reachable, lines to print). No line ever carries the password."""
-    url = load_settings().database_url.get_secret_value() if database_url is None else database_url
+    try:
+        url = load_settings().require_database_url(database_url)
+    except ConfigError as e:
+        return False, [str(e)]
     try:
         target = describe(url)
     except DatabaseUrlError as e:

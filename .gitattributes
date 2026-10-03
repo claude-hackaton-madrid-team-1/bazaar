@@ -1,12 +1,10 @@
 # GitHub Linguist hints — keep the repo's language bar honest.
 #
-# The per-tool skill/agent/command mirrors (.claude/.gemini/.opencode/.cursor, .ai/generated)
-# and Codex-local adapters (.agents, .codex/agents) are local-only and gitignored. They are not in
-# the repo, so they need no Linguist markers.
+# The .claude/ skill/agent/command mirrors are local-only and gitignored. They are not in the
+# repo, so they need no Linguist markers.
 #
 # The only generated files still committed are the root contract entries: they INLINE / @-import
 # the .ai/ contract, so they are duplicates of the source. Mark them `linguist-generated` so they
 # (a) don't inflate the language statistics with copies and (b) collapse by default in diffs/PRs.
 AGENTS.md            linguist-generated=true
 CLAUDE.md            linguist-generated=true
-GEMINI.md            linguist-generated=true

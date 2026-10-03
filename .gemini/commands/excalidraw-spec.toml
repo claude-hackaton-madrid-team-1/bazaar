@@ -1,0 +1,21 @@
+description = "Generate an architecture diagram for the spec via the Excalidraw MCP server"
+prompt = """
+# /excalidraw-spec — diagram the architecture
+
+Render an architecture diagram of the design described in `.ai/specs/01-spec.md` using the
+`excalidraw` MCP server (configured in `.mcp.json`). Optional companion to `/spec`.
+
+## Steps
+1. Read `.ai/specs/01-spec.md` (and `00-requirements.md` for context). If the architecture
+   section is still a TODO, ask the user to fill it, or fall back to an inline Mermaid diagram.
+2. Identify the key nodes and flows: entry points / interfaces, core components, datastores,
+   queues/workers, external services, and the request/data lifecycle between them.
+3. Use the excalidraw MCP tools to lay out those nodes and edges; group related components and
+   label the main flow.
+4. Export and link/embed the result back into `.ai/specs/01-spec.md` (replace the diagram
+   placeholder). Keep it in sync if the architecture changes.
+
+## Notes
+- If the `excalidraw` MCP server isn't available this session, say so and use an inline Mermaid
+  diagram in `01-spec.md` instead — don't block the spec on the diagram.
+"""

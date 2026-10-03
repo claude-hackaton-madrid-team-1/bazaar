@@ -7,7 +7,7 @@ import psycopg
 import pytest
 
 from bazaar_agent.decisions import Decision, DecisionLog
-from bazaar_agent.guardrails import Ledger
+from bazaar_agent.guardrails import Ledger, refund_row
 from bazaar_agent.ledger_pg import LedgerUnavailable, PgLedger, open_ledger
 from tests.test_db import database_url, open_in, schema  # noqa: F401  (pytest fixtures)
 
@@ -42,6 +42,30 @@ def test_a_refund_is_a_negative_spend(tmp_path):
     ledger.record("spend", 12, 1.1, -65, "LAV-09")
     ledger.record("listing", 12, 1.1, 65, "LAV-09")
     assert ledger.spent_since(0) == 0 and ledger.count_in_tick("listing", 12) == 1
+
+
+def test_a_refund_across_a_pace_change_is_never_dated_after_its_spend(tmp_path):
+    # Friday: a 40 P bid posted at tick 230 (60 s ticks). Ten more 60 s ticks, then the pace drops to 30 s;
+    # cancelled at tick 250. Back-dating 20 ticks at the CURRENT 30 s would date the refund 5 min after the
+    # spend, and for those 5 min the hour's spend would read -40 (the cap 40 looser).
+    t_spend = 230 / 60
+    t_cancel = t_spend + (10 * 60 + 10 * 30) / 3600
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    ledger.record("spend", 230, t_spend, 40, "LAV-09")
+    row = refund_row(40, "LAV-09", 230, 250, t_cancel, max_tick_seconds=60.0)
+    assert row[1] == 230 and row[2] <= t_spend and row[3] == -40
+    ledger.record(*row)
+    # Every 30 s tick for the next two game hours: the hour's spend never reads below zero.
+    for n in range(0, 240):
+        assert ledger.spent_since(t_cancel + n * 30 / 3600 - 1.0) >= 0
+
+
+def test_a_refund_with_an_unknown_created_tick_never_loosens_the_cap(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    ledger.record("spend", 90, 1.5, 40, "LAV-09")
+    ledger.record(*refund_row(40, "LAV-09", None, 100, 1.6, max_tick_seconds=60.0))
+    assert ledger.spent_since(1.6 - 1.0) == 40  # no refund inside the window: over-counts, never under-counts
+    assert refund_row(40, "LAV-09", 105, 100, 1.6, 60.0)[1:3] == (100, pytest.approx(1.6 - 1 / 60))  # future: now
 
 
 def test_open_ledger_falls_back_to_the_file_when_postgres_is_down(tmp_path):

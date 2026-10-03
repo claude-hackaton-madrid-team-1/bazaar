@@ -353,14 +353,16 @@ def _cancel(b: Backend, args: SellCancelArgs, planned: Planned, clock: Clock | N
 
 def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
     """A withdrawn bid gives its spend back, in the game hour it was spent: a refund booked now would
-    make this hour's spend negative and loosen max_spend_per_game_hour."""
+    make this hour's spend negative and loosen max_spend_per_game_hour. Only a board bid was booked as
+    spend when posted: a dealer-thread bid never was (it counts while open, through `open_commitments`),
+    so cancelling one books nothing."""
     give, want = offer.get("give") or {}, offer.get("want") or {}
     wanted = want.get("cards") or want.get("types")
-    if not give.get("cash") or not wanted:
+    if not give.get("cash") or not wanted or offer.get("thread") is not None:
         return {}
     ref = str(wanted[0]).split(":")[-1]
     row = gr.refund_row(
-        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.tick_seconds
+        int(give["cash"]), ref, offer.get("created_tick"), clock.tick, clock.t_hours, clock.max_tick_seconds
     )
     return _book(b, [row])
 

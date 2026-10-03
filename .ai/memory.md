@@ -1,7 +1,7 @@
 # MEMORY — Bazaar (shared team working log)
 
-Shared, **committed** working log for every teammate and every agent (Claude Code, Codex, Gemini,
-opencode). Protocol: see the "Memory protocol" section of `.ai/context.md`.
+Shared, **committed** working log for every teammate and every agent (Claude Code sessions
+and sub-agents). Protocol: see the "Memory protocol" section of `.ai/context.md`.
 
 Append only, newest at the bottom of `## Log`, terse. The latest headings are mirrored into the
 README status block on every commit.
@@ -256,3 +256,105 @@ A view column `as right` is accepted, but `select right from eval_jev_calibratio
 `.railway/railway.py` is a named partial: a service it created and no longer declares is deleted.
 `bazaar-sim` is declared only on PR #55's branch, so a plan from main (or a branch without it) shows
 "- Delete service bazaar-sim". Never apply a plan with a destructive change nobody asked for.
+
+### [2026-10-03] gotcha — how bazaar-mcp was applied while bazaar-sim lives only on PR #55
+`railway config apply --file <scratch>/.railway/railway.py`, that file = main's railway.py + PR #55's
+`simulator()` verbatim with #55's own BUILD (main's adds RUNTIME.md to watchPatterns, which would have
+changed bazaar-sim). Plan first: "2 to add, 4 to change, 0 to destroy", bazaar-sim untouched; check
+`applyResult.status` in `--json` (all "applied"); the re-plan said "already up to date".
+
+### [2026-10-03] gotcha — `tests/test_status.py::test_publishing_never_waits…` flakes on CI runners
+`assert elapsed < 2.0` failed at 2.065 s and 2.080 s on GitHub runners (PR #59 and docs-only PR #64); it
+passes locally in 0.2 s and on a rerun. A slow runner, not a regression: rerun the failed job.
+
+### [2026-10-03] finding — the real Claude Code CLI enforces our PreToolUse deny (subscription, dry run)
+`bazaar agent chat --once` on the subscription token: desk → buyer (foreground), then the hook denied
+`dealer_buy` (max 90 > `max_price_rare` 80) and `sell_bid 500`; the CLI hands the model
+`PreToolUse:mcp__bazaar__<tool> hook error: <reason>`. Nothing was sent; the rows are in `decisions`
+(`desk/buyer`, rejected). The desk answered in Spanish to an English request: tighten its language line.
+
+### [2026-10-03] finding — a dealer's "Deal!" settles in the SAME tick as the message
+13 of 13 Abuela deals where she accepted our bid (message with no offer, "Deal!"/"Venga") show the
+`settlement` event in that same tick (feed, ticks 8–46). Our own accept of her offer settles at the
+next tick. The simulator (`bazaar-sim`) does the same; settling a tick later made the taker walk.
+
+### [2026-10-03] gotcha — Railway IaC cannot declare a generated `*.up.railway.app` domain
+docs.railway.com/infrastructure-as-code/reference: "Generated Railway service domains are not included
+in `.railway/railway.ts`" (custom domains only). `bazaar-sim`'s domain was made once with
+`railway domain --service bazaar-sim`; `railway config plan` still reports up to date afterwards.
+
+### [2026-10-03] gotcha — the simulator's database is `bazaar_sim`, beside `railway` on the same server
+Created with `create database bazaar_sim` (connected to `postgres`, never `railway`); our schema is
+applied there. Against a simulator our client refuses a database URL naming `railway`
+(`BAZAAR_SIM_DATABASE_URL`), and its files default to `.local/sim-client/`, never the real `.local/`.
+
+### [2026-10-03] build-error — a 64 KB pytest parametrize id killed the CI test step
+symptom: PR #55's `test` job failed with no summary right after `test_bodies_are_strict_json` →
+root cause: the 413 case's parameter (65 KB of "x") became the test id printed by `pytest -v`, and the
+log/step died there; locally and in a Linux container the suite passed → fix: `ids=[...]` short names.
+
+### [2026-10-03] gotcha — an undeclared hand-set variable is deleted by `railway config apply`
+`railway config plan --file <main's railway.py>` (01:50): "Delete variable bazaar-taker.BAZAAR_LIVE",
+"...bazaar-maker.BAZAAR_LIVE" and "Delete service bazaar-sim". The named partial owns those services, so
+a variable set by hand but not declared is removed: the live agents would drop to dry run. Fix: declare
+it `preserve()` (no value in the file). PR #55 does that for BAZAAR_LIVE and keeps bazaar-sim declared.
+
+### [2026-10-03] finding — the target is now the flag BAZAAR_SIM, never a URL
+`BAZAAR_SIM=1 uv run bazaar status` talks to the simulator with `BAZAAR_SIM_KEY` (default sim-team1);
+unset is the real game with `BAZAAR_KEY`. `BAZAAR_URL` makes every command stop: delete it from `.env`.
+
+
+### [2026-10-03] gotcha — Greptile hit its 50-credit trial limit; `/pr-review` is the gate now
+From 2026-10-03 ~02:15 Greptile answered "reached the 50-credit limit for trial accounts" and stopped
+reviewing new heads. Omar disabled it. Every PR now runs `/pr-review <n>` (`.ai/agents/pr-reviewer.md`):
+a fresh-context sub-agent that merges the PR onto current main, runs the gate and posts a P0-P3 verdict.
+Tonight's manual reviews in that shape caught a test that only failed after merging with main (#62) and
+leaks of our limits on the public `/state` (#69).
+
+### [2026-10-03] finding — the simulator smoke is the merge gate (`scripts/sim_smoke.py`, CI `sim-smoke`)
+It serves `bazaar-sim` on 127.0.0.1:8765 (memory world, 2 s ticks) and runs our CLI with BAZAAR_SIM=local:
+status, a negotiated dealer buy, two live ticks of taker and maker, duel moves, the monitor's SSE, the key
+guard and the BAZAAR_URL fail-fast. `scripts/sim_guard/sitecustomize.py` (on every child's PYTHONPATH) raises
+on any non-loopback connect or DNS lookup; a dead proxy backs it up; children get an allow-listed env and an
+empty BAZAAR_ENV_FILE. A step fails on Traceback, "tick loop:" or " refused ". ~20 s locally.
+Deployed sim verified 02:10: tick 12→13 in 11 s, store `bazaar_sim`; live buy LAV-03 at 8 (thread 7, 4 ticks).
+
+### [2026-10-03] build-error — an apply revived the OFF bazaar-monitor from its old image
+symptom: `bazaar-monitor` (no source, `enabled=False`) RUNNING since Fri 23:14 UTC, holding one of the
+key's six SSE slots → root cause: Railway redeploys a service's last image whenever an apply changes its
+config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` watch patterns
+(deployment reason `redeploy`, patchId `iac-change-set/…`) → fix: `railway down --service bazaar-monitor`,
+then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
+`bazaar-evals` (service deleted): the file declares no service we do not run, and
+tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] finding — a dealer thread's old bids read `cancelled`; the deal's offer reads `settled`
+`GET /api/threads/101` (read at tick 159, doors closed): our bids 720 (6), 732 (7), 744 (8) are
+`cancelled`, 759 (9) is `settled`; Abuela's asks 728/737/752 `cancelled`. Thread 99 (LAV-03): our 672 (6)
+`cancelled`, her 681 (7) `settled` — her OPENING ask, so that deal scored nothing on the ladder. The deal
+price is the `settled` offer in the messages (`dealer.settled_price`); `open_commitments` counts one offer
+per thread (the most cash) in case an old bid still reads open mid-thread (not observed live yet).
+
+### [2026-10-03] gotcha — a refund dated with the CURRENT tick length lands after its spend
+`t_hours` is game time played (tick 159 → 2.65 h at 60 s ticks) and the pace changes (60 s Fri, 30 s Sat).
+Back-dating a cancelled bid's refund by `ticks × tick_seconds` after a 60 → 30 s change dated it 5 min
+after its spend (hour's spend read −40). `refund_row` now uses `/api/clock` `max_tick_seconds` (+1 tick
+for the rounded `t_hours`); an unknown created tick books no refund in the window.
+
+### [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
+`BAZAAR_SIM=local uv run bazaar agent taker --live` said "ledger: shared Postgres table": the default
+`DATABASE_URL` is `localhost:5433/bazaar` (docker compose), not Railway. Sim ticks (1–20) never meet the
+real game's (159+), but to keep sim rows out of it entirely point `BAZAAR_SIM_DATABASE_URL` at a dead
+address (`postgresql://nobody@127.0.0.1:1/none`): the ledger falls back to `.local/sim-client/ledger.jsonl`.
+
+### [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
+All 1,024 dealer offers in the captured feed have `expires_tick - created_tick = 2` (security audit of #72).
+After a kill-switch hold of 2+ ticks there is no standing ask, and `decide()` bid up to her OPENING ask, which
+she took (a deal that scores nothing). Fix: `Negotiation.bid_cap()` keeps a bid below her opening until she
+came down; with no bid left below it, we walk and reopen lower.
+
+### [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
+Fail safe but costly: at 30 s ticks a bid cancelled more than ~30 min after it was posted gets a refund dated
+outside the hour while its spend still counts (at 15 s, after ~15 min), so repriced bids can eat the 150 cap.
+The exact fix is to date the refund at the matching spend row's `t_hours` (a ledger lookup by offer id);
+left for after #62's ledger rewrite lands.

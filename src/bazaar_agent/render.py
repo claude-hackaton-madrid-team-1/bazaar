@@ -210,7 +210,7 @@ def dealers_table(personas: list) -> Table:
     return t
 
 
-def status_table(me: dict) -> Table:
+def status_table(me: dict, target: str | None = None) -> Table:
     t = Table(title=f"{me.get('name', 'our team')} · status", show_header=False)
     t.add_column("field", style="bold")
     t.add_column("value")
@@ -218,6 +218,8 @@ def status_table(me: dict) -> Table:
     assets = me.get("assets") or []
     cards = [a for a in assets if a.get("kind") == "card"]
     packs = [a for a in assets if a.get("kind") == "pack"]
+    if target:
+        t.add_row("target", target.removeprefix("target: "))
     for k, v in [
         ("cash", me.get("cash")),
         ("level", me.get("level")),

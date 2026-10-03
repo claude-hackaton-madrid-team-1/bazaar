@@ -1,5 +1,5 @@
 ---
-description: "One-time project setup — interview for stack/requirements, fill .ai/context.md, and regenerate every tool's config"
+description: "One-time project setup — interview for stack/requirements, fill .ai/context.md, and regenerate the Claude Code config"
 ---
 
 Invoke the agent-skills:project-bootstrap skill.
@@ -35,7 +35,7 @@ Then:
 - Optionally seed `.ai/specs/00-requirements.md`, or hand off to `/spec` for the full spec.
 - Run `sh scripts/install.sh` (wires `core.hooksPath` + runs the sync), or just
   `sh scripts/sync-ai-docs.sh` if hooks are already installed, to regenerate AGENTS.md,
-  CLAUDE.md, GEMINI.md, and every tool mirror.
+  CLAUDE.md, and the .claude/ mirrors.
 - Show the diff, remind the human to commit, and point them to `/spec → /plan → /build`.
 
 Do NOT overwrite an already-filled `.ai/context.md` without confirming. Never invent stack

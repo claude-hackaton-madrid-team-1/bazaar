@@ -85,7 +85,7 @@ def flatten(
     ledger: LedgerStore | None,
     live: bool,
     kill_switch: Sequence[str] = (),
-    tick_seconds: float = 60.0,
+    max_tick_seconds: float = 60.0,
     pace_s: float | None = None,
     sleep: Callable[[float], None] | None = None,
 ) -> Report:
@@ -125,7 +125,7 @@ def flatten(
             report.done.append(item)
             if item.refund is not None and ledger is not None:  # a bid's cash was counted as spend when posted
                 ref, cash, created = item.refund
-                ledger.record(*refund_row(cash, ref, created, tick, t_hours, tick_seconds))
+                ledger.record(*refund_row(cash, ref, created, tick, t_hours, max_tick_seconds))
             continue
         error = refused[0] if refused else None
         code = error.code if error is not None else "refused"

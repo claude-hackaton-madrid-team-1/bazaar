@@ -211,7 +211,7 @@ def test_negotiate_holds_a_kill_switch_denial_and_resumes_where_it_was():
         tick = 100 + client.reads // client.reads_per_tick
         return ("pause file .local/PAUSE exists",) if tick < state["until"] else ()
 
-    def guard(move):
+    def guard(move, _tid):
         if move.price == 7 and not state["until"]:  # the pause lands while the second bid is being decided
             state["until"] = 100 + client.reads // client.reads_per_tick + 4
             return "pause file .local/PAUSE exists"
@@ -262,3 +262,108 @@ def test_sell_cancel_is_refused_while_the_kill_switch_is_on(switch, monkeypatch)
     result = CliRunner().invoke(cli.app, ["sell", "cancel", "7", "--live"])
     assert result.exit_code == 0, result.output
     assert team.sent == [("cancel", 7)]
+
+
+def test_the_switch_going_on_while_the_desk_writes_its_words_holds_the_bid(tmp_path, switch):
+    # The words may come from an LLM and take seconds: the switch is read again just before the send.
+    team, t, lines = _desk(tmp_path, switch)
+
+    def words_then_pause(request):
+        switch.paused(True)
+        return "Subo un poquito, ¿le parece?"
+
+    t.words_fn = words_then_pause
+    sent = len(team.sent)
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[sent:] == [] and set(t.convs) == {"abuela"}  # no bid, no walk: the thread waits
+    assert any("kill switch on: holding bid on thread 5000" in line for line in lines)
+
+
+def test_negotiate_reads_the_switch_again_after_writing_the_words():
+    # The bid's words may come from an LLM: a pause that lands while they are written holds that bid.
+    client = FakeDealerClient(asks=[12, 10, 9])
+    state: dict[str, int | None] = {"until": None}
+    lines: list[str] = []
+
+    def tick() -> int:
+        return 100 + client.reads // client.reads_per_tick
+
+    def kill_switch():
+        until = state["until"]
+        return ("pause file .local/PAUSE exists",) if until is not None and tick() < until else ()
+
+    def words(request):
+        if request.price == 7 and state["until"] is None:
+            state["until"] = tick() + 2  # the pause lands while the second bid's words are written
+        return f"¿{request.price}, señora?"
+
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        kill_switch=kill_switch,
+        words_fn=words,
+        max_ticks=6,
+    )
+    assert any("before sending bid: kill switch on: holding" in line for line in lines)
+    assert client.sent == [6, 7, 8] and not client.closed and (out.status, out.price) == ("deal", 9)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",  # an editor truncated the file mid-save
+        "# Guardrails\n- `cash_floor` = 270 — the floor.\n",  # the trading_enabled line was deleted
+    ],
+)
+def test_a_guardrails_file_without_trading_enabled_holds(switch, text):
+    switch.file.write_text(text, encoding="utf-8")
+    (stop,) = gr.kill_switch(gr.Guardrails(pause_file=str(switch.pause)))
+    assert "holding" in stop
+
+
+def test_a_guardrails_file_with_a_stray_byte_holds_instead_of_raising(switch):
+    switch.file.write_bytes(switch.file.read_bytes() + b"\xff\xfe")
+    (stop,) = gr.kill_switch(gr.Guardrails(pause_file=str(switch.pause)))
+    assert stop == "GUARDRAILS.md is invalid (UnicodeDecodeError): holding"
+
+
+def test_negotiate_opens_no_thread_while_the_switch_is_on():
+    client = FakeDealerClient(asks=[12])
+    opened: list[str] = []
+    client.open_thread = lambda dealer, topic: opened.append(dealer) or {"id": 85}
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        kill_switch=lambda: ("pause file .local/PAUSE exists",),
+    )
+    assert opened == [] and (out.thread, out.status) == (None, "held")
+
+
+def test_the_taker_reads_the_switch_again_before_an_accept(tmp_path, switch):
+    # Jev and the duel grace may take seconds: a pause that lands meanwhile holds the accept.
+    from tests.agent_fakes import ask
+    from tests.test_taker import JevAdvice
+
+    def jev_then_pause(state):
+        switch.paused(True)
+        return JevAdvice("yes", 0.9)
+
+    team = FakeTeam()
+    t, lines, _ = taker(
+        tmp_path,
+        team,
+        FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}),
+        live=True,
+        jev=jev_then_pause,
+        pause_file=str(switch.pause),
+    )
+    t.on_tick(clock())
+    assert writes(team, "accept") == [] and any("kill switch on: holding" in line for line in lines)

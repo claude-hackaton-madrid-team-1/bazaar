@@ -17,7 +17,7 @@
   --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
   --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
-.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px }
 header { display: grid; gap: 6px }
 .eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
 h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
@@ -42,6 +42,35 @@ section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
 code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
 a { color: var(--accent) }
 footer { color: var(--muted); font-size: 13px }
+.tl-wrap { overflow-x: auto; background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px }
+.tl { min-width: 1680px; padding: 6px 14px 14px }
+.tl-row { display: grid; grid-template-columns: 150px 1fr; border-top: 1px solid var(--line) }
+.tl-axis { border-top: 0 } .tl-axis .tl-track { height: 44px }
+.tl-name { font: 700 13px var(--body); padding: 9px 10px 0 0 }
+.tl-track { position: relative; min-height: 38px }
+.tl-events { height: 52px }
+.tl-closed { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, transparent 0 7px, var(--line) 7px 8px); opacity: .7 }
+.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line) }
+.tl-tick span { position: absolute; top: 4px; left: 4px; font: 500 11px var(--mono); color: var(--muted); white-space: nowrap }
+.tl-marker { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--accent); z-index: 2 }
+.tl-marker.freeze { border-left-style: dashed }
+.tl-marker span { position: absolute; bottom: 2px; left: 4px; font: 700 11px var(--mono); color: var(--accent); white-space: nowrap; background: var(--paper); padding: 0 3px }
+.tl-now { position: absolute; top: 0; bottom: 0; border-left: 2px solid #e11d48; z-index: 3 }
+.tl-event { position: absolute; top: 6px; transform: translateX(-50%); text-align: center; z-index: 1 }
+.tl-event.low { top: 28px }
+.tl-event.last { transform: translateX(-100%) }
+.tl-event::before { content: ""; display: block; width: 9px; height: 9px; margin: 0 auto 1px; transform: rotate(45deg); background: var(--ink) }
+.tl-event span { font: 500 10px var(--mono); white-space: nowrap; color: var(--ink); background: var(--paper); padding: 0 2px }
+.tl-bar { position: absolute; min-width: 30px; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 1.5px solid var(--ink); border-radius: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; z-index: 1; box-sizing: border-box }
+.tl-bar span { overflow: hidden; text-overflow: ellipsis }
+.tl-bar.out { overflow: visible }
+.tl-bar.out span { position: absolute; left: calc(100% + 6px); overflow: visible; color: var(--ink); font-weight: 500 }
+.tl-marker.end span { left: auto; right: 4px }
+.tl-bar.done { background: var(--done); color: var(--done-ink) } .tl-bar.wip { background: var(--wip); color: var(--wip-ink) }
+.tl-bar.part { background: var(--part); color: var(--part-ink) } .tl-bar.todo { background: var(--todo); color: var(--todo-ink) }
+.tl-bar .prio { font-size: 10px; padding: 0 4px }
+.prio { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1.5px solid var(--ink) }
+.prio.P0 { background: var(--accent); border-color: var(--accent); color: var(--paper) }
 </style>
 
 <div class="wrap">
@@ -78,6 +107,12 @@ footer { color: var(--muted); font-size: 13px }
     </svg>
   </div>
 
+  <section>
+    <h2>Roadmap · Fri 2 → Sun 4 October</h2>
+    <p class="sub" style="margin-bottom:12px">Madrid time. Hatched = doors closed (build time). Dashed line = build freeze, Sun 06:00; solid = deadline, Sun 14:00; red = now. Game events follow the organisers' <code>/api/schedule</code> (game hour 4 = Sat 09:00, 18 = Sun 09:00). Hover a bar for its owner and times.</p>
+$timeline
+  </section>
+
   <div class="cols">
     <section>
       <h2>Waiting on you</h2>
@@ -113,3 +148,14 @@ $backlog
   </section>
   <footer>Source of truth: the bazaar repo (<code>.ai/specs/01-spec.md</code>, <code>02-plan.md</code>, <code>docs/services.md</code>). Editable copy of this diagram: <code>docs/architecture.excalidraw</code>.</footer>
 </div>
+<script>
+(function () {
+  var tl = document.getElementById("tl");
+  if (!tl) return;
+  var s = Number(tl.dataset.start), e = Number(tl.dataset.end), n = Date.now();
+  if (n < s || n > e) return;
+  var left = ((n - s) / (e - s) * 100).toFixed(3) + "%";
+  tl.querySelectorAll(".tl-now").forEach(function (x) { x.style.left = left; x.hidden = false; });
+})();
+</script>
+

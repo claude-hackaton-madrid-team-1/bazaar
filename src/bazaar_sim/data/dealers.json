@@ -1,0 +1,137 @@
+{
+ "abuela": {
+  "avatar": {
+   "color": "#E07A5F",
+   "emoji": "🧶",
+   "initials": "AC"
+  },
+  "bio": "Carmen has sold cards from the same folding table at El Rastro every Sunday for forty years. She knows every child who ever swapped a duplicate there and most of their grandchildren.\n",
+  "enabled": true,
+  "id": "abuela",
+  "kind": "dealer",
+  "level": 1,
+  "menu": {
+   "buys": [
+    {
+     "rarity": "common",
+     "sets": "released"
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    }
+   ],
+   "deals_per_team_per_hour": 8,
+   "sells": [
+    {
+     "list_price": 26,
+     "name": "Neighbourhood pack",
+     "opening_ask": 30,
+     "pack": "sobre_barrio",
+     "per_team_per_hour": 3
+    },
+    {
+     "list_price": 10,
+     "rarity": "common",
+     "sets": "released"
+    },
+    {
+     "list_price": 25,
+     "rarity": "uncommon",
+     "sets": "released"
+    }
+   ]
+  },
+  "name": "Abuela Carmen",
+  "open_to_all": true,
+  "status": "active",
+  "title": "card stall at El Rastro, since 1985",
+  "traits": {
+   "chattiness": 0.75,
+   "generosity": 0.8,
+   "memory": 0.15,
+   "patience": 0.85,
+   "shrewdness": 0.2,
+   "strictness": 0.1
+  },
+  "unlock": {
+   "always": true,
+   "early_deals_with": null,
+   "early_min_deals": 3,
+   "early_min_level": 0,
+   "open_to_all_at": null
+  }
+ },
+ "chato": {
+  "avatar": {
+   "color": "#3D5A80",
+   "emoji": "🚬",
+   "initials": "EC"
+  },
+  "bio": "El Chato runs the stall next to Carmen's. Silver and gold packs, uncommon and rare singles. He matches every move you make, and nothing more.\n",
+  "enabled": true,
+  "how": "Better packs and rare singles; he buys uncommon and rare cards. Open a thread with him (with: chato).",
+  "id": "chato",
+  "kind": "dealer",
+  "level": 2,
+  "menu": {
+   "buys": [
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    },
+    {
+     "rarity": "rare",
+     "sets": "released"
+    }
+   ],
+   "deals_per_team_per_hour": 6,
+   "sells": [
+    {
+     "list_price": 180,
+     "name": "Silver pack",
+     "opening_ask": 188,
+     "pack": "sobre_plata",
+     "per_team_per_hour": 2
+    },
+    {
+     "list_price": 450,
+     "name": "Gold pack",
+     "opening_ask": 470,
+     "pack": "sobre_oro",
+     "per_team_per_hour": 1
+    },
+    {
+     "list_price": 30,
+     "rarity": "uncommon",
+     "sets": "released"
+    },
+    {
+     "list_price": 90,
+     "rarity": "rare",
+     "sets": "released"
+    }
+   ]
+  },
+  "name": "El Chato",
+  "open_to_all": false,
+  "status": "active",
+  "teaser": "«Better packs, friendly prices. If I like you.»",
+  "title": "the stall next to Carmen's",
+  "traits": {
+   "chattiness": 0.4,
+   "generosity": 0.3,
+   "memory": 0.6,
+   "patience": 0.6,
+   "shrewdness": 0.7,
+   "strictness": 0.5
+  },
+  "unlock": {
+   "always": false,
+   "early_deals_with": "abuela",
+   "early_min_deals": 3,
+   "early_min_level": 1,
+   "open_to_all_at": null
+  }
+ }
+}

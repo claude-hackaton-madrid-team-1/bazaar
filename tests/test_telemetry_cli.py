@@ -173,9 +173,9 @@ def test_thread_prints_the_conversation_and_traces_it(spans, runner):
 
 
 def test_thread_and_threads_json_for_the_ui(spans, runner):
-    one = json.loads(runner.invoke(cli.app, ["thread", "115", "--json"]).output)
+    one = json.loads(runner.invoke(cli.app, ["thread", "115", "--json"]).stdout)  # stderr has the target banner
     assert one["thread"]["ref"] == "LAV-06" and [m["price"] for m in one["messages"]] == [22, None]
-    many = json.loads(runner.invoke(cli.app, ["threads", "--json"]).output)
+    many = json.loads(runner.invoke(cli.app, ["threads", "--json"]).stdout)
     assert many["threads"][0]["messages"] == 2 and many["threads"][0]["last"]["sender"] == "abuela"
 
 
