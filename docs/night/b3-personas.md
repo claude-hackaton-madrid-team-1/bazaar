@@ -24,27 +24,27 @@ How a level arrives (Friday's El Chato):
 - The server's "N deals" counts match our buy settlements for 10 of the 16 teams that have a count; the rest are unexplained.
 
 ## Trickster detection (`agents/inspector.py`)
-- **Rule:**
-  - `block` (never accept) on any structural mismatch with the thread's topic: another item, our assets in `want`, cash given on a buy.
-  - `flag` only on the trickster signature, all three at once: another item, worth less, and words that claim the better one (the requested card by name or ref, a dearer card, or a higher rarity word in English or Spanish).
+- **`block`** (never accept): any structural mismatch with the thread's topic, such as another item, our assets in `want`, or cash given on a buy.
+- **`flag`**, only on the trickster signature, all three at once:
+  - another item, worth less;
+  - words that claim the better one: the requested card by name or ref, a dearer card, or a rarity *as a card* ("the legendary.", "un cromo raro", "rare card");
+  - words that do **not** name the bound item (naming it discloses the substitution, e.g. "No me queda X, te doy Y").
+- **Trusted dealers:** Abuela and Chato are blocked but never flagged.
+- **Rarity adjectives are not claims:** "qué raro, hijo" (how odd) and "an epic deal" never count.
 - **Precision on Friday:** honest dealers' structure matched the topic in **1,017 of 1,017** offers, and the rule flags **0** of 1,022 offers. The only 5 blocks are threads whose topic our capture missed.
-- **Why the structure must lead:** Abuela's words named *other* cards 17 times, all gifts ("a little present from me: La Corrala"). A text-only detector would have flagged an honest dealer.
-- **Crafted tricksters (tests):** all flag. Cases:
-  - the explainer example: "La Dama de Serrano, the legendary. Only 120.", binding SAL-02;
-  - a common in `types` for our LAV-08 while the words name LAV-08;
-  - a common for a rare request while the words say "una rara";
-  - a card for the pack while the words sell the pack.
+- **That precision is not yet proven against a real lie.** Friday had no structural mismatch with a known topic, so the words rule never ran on real data. The r1 review found three honest near-misses that flagged under the first version; they are fixed and kept as tests. This is why flags stay off until a real L4 thread is seen.
+- **Crafted tricksters:** all flag. Cases:
+  - the explainer's "La Dama de Serrano, the legendary. Only 120.", binding SAL-02;
+  - a common for our LAV-08 while the words name LAV-08;
+  - a common for a rare request ("un cromo raro");
+  - a card instead of the pack.
 
-  The near-misses block but never flag:
-  - a mismatch the words don't dress up;
-  - a dearer card than asked;
-  - extra `want` items, or cash given on a buy;
-  - a sale asking for another asset;
-  - an unknown topic.
-- **Wiring:** every thread read in `bazaar dealer buy` (new `negotiate(on_thread=…)` hook), in the desk, and in `bazaar dealer sell` runs `flag_step()`.
-  - A certain trickster is flagged once per message and at most twice per process, and only if `guardrails.check(Action("flag"))` passes.
-  - With today's **`allow_flags = false`** it is logged as `would flag message N (…allow_flags = false): <structural reason>`.
-  - An inspection failure never changes or breaks a negotiation (tested).
+  The near-misses all block but never flag: undressed mismatches, dearer cards, extra `want` items, other assets on a sale, unknown topics, and the three review cases.
+- **Wiring:** every thread read in `bazaar dealer buy` (new `negotiate(on_thread=…)` hook), the desk and `bazaar dealer sell` runs `flag_step()`.
+  - Each certain message is logged once, uncapped (`would flag message N (…allow_flags = false): <structural reason>`).
+  - At most 2 flags per process are actually sent, and only if `guardrails.check(Action("flag"))` passes.
+  - The catalog is read lazily inside the guarded hook, so an inspection failure never changes or breaks a negotiation.
+  - Unverified: a real thread message's id key. The openapi says `message`; the code falls back to `id`.
 
 ## Selling to dealers (`agents/dealer_sell.py`, `bazaar dealer sell`)
 Dealers that buy (Abuela, Chato, and most likely the Collector) could not be sold to: `dealer.py` is buy-only. A sale is a buy in mirrored prices (p → 10,000 − p). So `decide_sell` runs #61's own `decide()`, and every rule carries over with no copy:
@@ -81,7 +81,7 @@ These ranges are tiny (one or two primas), so a sale's share is coarse. Its real
 
 ## What Marius must decide
 1. **`allow_flags`** (GUARDRAILS.md, today `false`). Recommendation: switch it on when L4 opens, after the first `would flag` lines confirm the pattern on their threads.
-   - The policy only flags the three-part signature, which fired 0 times on Friday's honest dealers.
+   - The policy only flags the signature. It fired 0 times on Friday's honest dealers, but no real lie has been seen yet: watch the `would flag` lines first.
    - At most 2 flags per process; the cost of a wrong flag is unknown.
 2. **Selling to Chato** for L2 ladder deals and early L3 (`dealer sell --dealer chato`). Each sale gives up a duplicate for about 15–16 P, and it is unverified that sales count toward unlocking. The alternative is #81's `dealer_price_caps`.
 
