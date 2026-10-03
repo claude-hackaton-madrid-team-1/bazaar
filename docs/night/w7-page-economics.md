@@ -86,7 +86,7 @@ W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-0
 1. **Open** the welcome pack (asset 425) and the pack in the grant. Opening is free and luck does not score. The welcome pack's rare slot gives a LAV rare with p ≈ 0.4 × 2/10. Then re-run `bazaar plan pages`.
 2. **Post W4's plan:** 4 bids and 3 thread swaps, 82 P committed, every counterparty under 25 %. It fits the 83 P above the floor before the grant.
 3. **Once the grant lands** (09:03, or ~10:24 if the clock resumes at h2.65), **run W3's best three Abuela deals** on SAL-02 (C), SAL-07 (U) and MAL-06 (U): about 54 P at 21→25 / 8→12. Drop W3's other slots; they score nothing.
-4. **Take t06's MAL-04 ask** #2633 (7 P + fee 2, +2 P), if it is still open.
+4. **Take t06's MAL-04 ask** #2633 (7 P + fee 2), if it is still open.
 5. **Hold about 88 P.** Re-plan after the first Market Test (h3 ≈ 09:21 if the clock resumes, h5 = 10:00 if it jumps): if `/me` shows `bench_points` > 0 with no venue, the free stall scores for us, and the venue is worth ~0.45 a round, so do not lock 270 P in it.
 
 ## Decisions for Marius

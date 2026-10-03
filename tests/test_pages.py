@@ -604,3 +604,19 @@ def test_a_ladder_slot_that_does_not_fit_waits_for_the_grant():
     assert [(x.hour, x.kind) for x in s.steps] == [(4, "grant"), (4, "ladder")]  # 280 − 22 < 270 until then
     early = pages.LadderSlot(1, "abuela", "card:common", 9, 12)  # before the plan starts: history
     assert pages.cash_plan("w", 600, 2, [], [], RULES, ladder=[early]).steps == ()
+
+
+def test_a_plan_run_on_friday_leaves_saturdays_best_three_open(monkeypatch):
+    """r1 review: Friday's dealer deals must not close Saturday's slots when the plan runs before 09:00."""
+    friday = [{"id": 1, "tick": 0, "type": "day.opened", "payload": {"day": "fri"}}]
+    friday += [settle(10 + i, 100 + i, "abuela", "t01", "LAV-06", 22, tick=20 + i, kind="card") for i in range(3)]
+    seen = {}
+    real = pages.scoring_dealers
+
+    def spy(*a, **kw):
+        seen["out"] = real(*a, **kw)
+        return seen["out"]
+
+    monkeypatch.setattr(pages, "scoring_dealers", spy)
+    pages.build_plan(ME, CATALOG, friday, DEALERS, SCHEDULE, PARAMS, RULES)
+    assert seen["out"].get("abuela") == 3
