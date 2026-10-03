@@ -157,7 +157,7 @@ def test_a_finished_deals_score_shows_how_the_game_counts_days():
     assert dd.scored_evidence(done(2.0, round((20 - 10) * kept, 1)), True) == "cost"  # they cost 10
     assert dd.scored_evidence(done(-2.0, round((20 + 10) * kept, 1)), True) == "reversed"  # -2 a day added 10
     assert dd.scored_evidence(done(-2.0, round((20 - 10) * kept, 1)), True) == "unknown"  # signed or cost: same
-    assert dd.scored_evidence(done(2.0, round(20 * kept, 1)), True) == "unknown"  # days not scored at all
+    assert dd.scored_evidence(done(2.0, round(20 * kept, 1)), True) == "conflict"  # days not scored: no model fits
     assert dd.scored_evidence(done(2.0, round(30 * kept, 1)), False) == "unknown"  # the simulator: no evidence
     assert dd.scored_evidence(done(2.0, round(30 * kept, 1), days=0), True) == "unknown"
     buyer = done(2.0, round((100 - 80 + 10) * kept, 1), role="buyer", price=80)
@@ -212,3 +212,37 @@ def test_corroboration_is_shared_through_the_file(tmp_path):
     duel_run.observe([duel(days_meaning=SIM_TEXT)], True)
     runtime.observe([signed_score(11)], True)
     assert runtime.signed(True) and dd.latch(tmp_path).signed(True)
+
+
+# ---------------------------------------------------------------- #150 round 2: what still fooled the latch
+
+
+def test_a_score_that_fits_no_model_counts_against_the_sign(tmp_path):
+    # Days counted back from 10: a 2-day deal at +2 a day adds 16, which none of signed / cost / reversed predicts.
+    odd = done(2.0, round((20 + 16) * 0.92**2, 1), days=2)
+    assert dd.scored_evidence(odd, True) == "conflict"
+    switch = dd.latch(tmp_path)
+    switch.observe([duel(days_meaning=SIM_TEXT), odd], True)
+    assert switch.verdict == "conflict" and not switch.signed(True)
+
+
+@pytest.mark.parametrize(
+    "meaning",
+    [
+        "primas you gain (+) for each day before day 10",
+        "primas you gain (+) per remaining day",
+        "you gain (+) per day, counted backwards",
+        "you gain (+) per day left until delivery",
+    ],
+)
+def test_counting_words_never_latch_a_sign(meaning):
+    assert dd.evidence(duel(days_meaning=meaning), True) == "unknown"
+
+
+def test_a_conflict_reached_by_merging_the_file_is_written_back(tmp_path):
+    runtime = dd.latch(tmp_path)
+    runtime.observe([duel(days_meaning=SIM_TEXT), signed_score(11)], True)
+    assert dd.latch(tmp_path).signed(True)
+    duel_run = dd.DaysSwitch(verdict="conflict", path=tmp_path / dd.LATCH_FILE)  # held in memory, file says signed
+    duel_run.observe([], True)
+    assert dd.latch(tmp_path).verdict == "conflict" and not dd.latch(tmp_path).signed(True)

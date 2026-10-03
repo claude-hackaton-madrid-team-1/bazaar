@@ -65,7 +65,8 @@ NEGATION = re.compile(r"\b(?:not|no|never|without|neither|nor)\b|n't\b", re.IGNO
 DIRECTION = re.compile(
     r"\b(?:earl(?:y|ier|iest)|soon(?:er|est)?|fast(?:er|est)?|quick(?:er|est)?|forward|advanced?|ahead|"
     r"lat(?:e|er|est)|delay(?:s|ed)?|longer|shorter|less|fewer|lower|more|extra|reduc(?:e|es|ed)|"
-    r"decreas(?:e|es|ed)|increas(?:e|es|ed)|minus|inverse|invert(?:s|ed)?|opposite|revers(?:e|es|ed))\b",
+    r"decreas(?:e|es|ed)|increas(?:e|es|ed)|minus|inverse|invert(?:s|ed)?|opposite|revers(?:e|es|ed)|"
+    r"before|after|prior|until|remain(?:s|ing)?|left|backwards?|back|counted|counting|countdown)\b",
     re.IGNORECASE,
 )
 
@@ -135,6 +136,8 @@ def scored_evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
         for name, expected in (("signed", weight * days), ("cost", -abs(weight) * days), ("reversed", -weight * days))
         if abs(added - expected) <= SCORE_TOLERANCE
     }
+    if not fits:  # the game scored the days some other way: our sign model is wrong, never trust it (#150 r2)
+        return "conflict"
     if weight > 0:
         return "signed" if fits == {"signed"} else "cost" if fits == {"cost", "reversed"} else "unknown"
     return "reversed" if fits == {"reversed"} else "unknown"
@@ -205,8 +208,10 @@ class DaysSwitch:
                 if self.verdict == "unknown":
                     self.duel, self.text = duel.get("duel"), duel.get("days_meaning")
                 self.verdict = merged
-        if (self.verdict, self.corroborated) != (before, before_corroborated):
-            self._save()
+        disk = self._on_disk()
+        lagging = disk != self._record() and (disk is not None or self.verdict != "unknown")
+        if (self.verdict, self.corroborated) != (before, before_corroborated) or lagging:
+            self._save()  # also when the file lags what we merged (a conflict another process must see: #150 r2)
         return self.verdict
 
     def refresh(self) -> None:
@@ -229,13 +234,25 @@ class DaysSwitch:
         """Value days with their sign only when allowed (a guardrail) AND two real signals said so."""
         return allowed and self.corroborated
 
+    def _record(self) -> dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if k != "path"}
+
+    def _on_disk(self) -> dict[str, Any] | None:
+        if self.path is None:
+            return None
+        try:
+            raw = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return None
+        return raw if isinstance(raw, dict) else None
+
     def _save(self) -> None:
         """Merge with the file, then replace it atomically (a temp file and `os.replace`)."""
         if self.path is None:
             return
         self.refresh()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        record = {k: v for k, v in asdict(self).items() if k != "path"}
+        record = self._record()
         tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
         with tmp.open("w", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False))
