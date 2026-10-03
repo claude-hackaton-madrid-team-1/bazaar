@@ -1202,3 +1202,14 @@ unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the 
 the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
 from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
 ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+### [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
+From `decisions`/`executions` (read-only). Taker rejections: `max_price_uncommon` 341 (204 ticks, asks 27-33 vs cap 26,
+ticks 174-310), `cash_floor` 100 + `max_spend` 72 (all before the Sat 16:35 loosening: floor 100/50, hourly 150), `max_price_rare`
+71 (ticks 684-724, asks 98-104 vs 95), jev undecided below 0.75 on team swaps 231 (ticks 576-1322, Jev 0.26-0.44). The taker's
+256-tick gap (502 to 758) was cash stuck at 81 under floor 50. The maker's 59-tick LAT-10 sell 86 refusal (973-1277) is
+`max_score_loss_per_move` asking for a human approval (a hard rule, kept). `dealer_sell` breaker held 948-1065 until a manual reset.
+Two real bugs: (1) the taker runs BAZAAR_DECIDER=llm and `needed_budget_s` = 13 s, but a 15 s tick leaves ~10 s: every Jev-gated
+move would read "no tick budget for jev" (20 team opens already did at 30 s ticks); `decider()` now answers Jev below
+BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
+offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
