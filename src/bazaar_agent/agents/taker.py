@@ -581,9 +581,12 @@ class Taker:
         if status != "approved" or not self.live:
             return
         if move.kind == "walk":
-            self.rec.send(
+            closed = self.rec.send(
                 did, tick, "close_thread", {"thread": conv.thread_id}, lambda: self.team.close_thread(conv.thread_id)
             )
+            if closed is not None:  # we never read this thread again: keep how it ended (no extra request)
+                self._keep({**thread, "status": "walked", "closed_reason": thread.get("closed_reason") or "walked"},
+                           run.snap, conv)  # fmt: skip
             self.convs.pop(conv.dealer, None)
             return
         price = int(move.price or 0)

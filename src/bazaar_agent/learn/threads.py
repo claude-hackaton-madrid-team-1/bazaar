@@ -29,7 +29,10 @@ BUFFER_MAX = 200  # threads waiting for a write; the oldest are dropped during a
 THREAD_UPSERT = (
     "insert into threads (id, counterpart, kind, topic, venue, status, opened_tick, closed_tick, closed_reason, "
     "until_tick, updated_tick, ours) values (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, true) "
-    "on conflict (id) do update set status = excluded.status, "
+    "on conflict (id) do update set "
+    # a thread that ended never goes back to open (another process may flush an older read in the same tick)
+    "status = case when threads.status <> 'open' and excluded.status = 'open' then threads.status "
+    "else excluded.status end, "
     "closed_reason = coalesce(excluded.closed_reason, threads.closed_reason), "
     "until_tick = coalesce(excluded.until_tick, threads.until_tick), "
     "closed_tick = coalesce(threads.closed_tick, excluded.closed_tick), "
@@ -122,9 +125,20 @@ def message_rows(s: Seen) -> list[tuple[Any, ...]]:
                 json.dumps(jsonb_safe(offer), allow_nan=False) if offer is not None else None,
                 final,
                 sender == s.us,
-                s.tactics.get(mid) if sender == s.us else None,
+                _text(s.tactics.get(mid)) if sender == s.us else None,
             )
         )
+    return out
+
+
+def _storable_messages(s: Seen) -> list[tuple[Any, ...]]:
+    """One message at a time, skipping the ones that cannot be stored."""
+    out: list[tuple[Any, ...]] = []
+    for m in s.thread.get("messages") or []:
+        try:
+            out += message_rows(Seen({**s.thread, "messages": [m]}, s.us, s.tick, s.tactics))
+        except (ValueError, TypeError, AttributeError):
+            continue
     return out
 
 
@@ -134,12 +148,16 @@ def _rows(seen: list[Seen]) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]
     messages: list[tuple[Any, ...]] = []
     for s in seen:
         try:
-            row, rows = thread_row(s), message_rows(s)
+            row = thread_row(s)
         except (ValueError, TypeError, AttributeError):
             continue
-        if row is not None:
-            threads.append(row)
-            messages += rows
+        if row is None:
+            continue
+        threads.append(row)
+        try:  # a message that cannot be stored never costs the thread's own row (status, closed_reason)
+            messages += message_rows(s)
+        except (ValueError, TypeError, AttributeError):
+            messages += _storable_messages(s)
     return threads, sorted(messages, key=lambda m: m[0])
 
 
@@ -158,10 +176,10 @@ class ThreadStore:
     def saw(self, thread: Mapping[str, Any], us: str, tick: int, tactics: Mapping[int, str] | None = None) -> None:
         """Keep one answer (no I/O, never raises). The newest read of a thread wins."""
         try:
-            tid = _int(thread.get("id"))
-            if tid is None or not us:
+            tid, at = _int(thread.get("id")), _int(tick)
+            if tid is None or at is None or not us:
                 return
-            self.buffer[tid] = Seen(dict(thread), us, int(tick), dict(tactics or {}))
+            self.buffer[tid] = Seen(dict(thread), us, at, dict(tactics or {}))
             if len(self.buffer) > BUFFER_MAX:
                 for old in sorted(self.buffer, key=lambda i: self.buffer[i].tick)[: len(self.buffer) - BUFFER_MAX]:
                     del self.buffer[old]
@@ -187,6 +205,7 @@ class ThreadStore:
         """Upsert the buffered threads and their messages (after the sends). Returns the threads written."""
         if not self.buffer:
             return 0
+        conn: psycopg.Connection | None = None
         try:
             conn = self._db(tick)
             if conn is None:
@@ -205,10 +224,11 @@ class ThreadStore:
                 self._conn.close()
             self._conn, self._down_at = None, tick
             return 0
-        except (psycopg.Error, ValueError) as e:  # the data itself: drop this batch, never retry it every tick
+        except (psycopg.Error, ValueError) as e:  # the data itself: write thread by thread, drop only the bad ones
             self._fail("write", e)
+            written = self._write_each(conn, tick) if conn is not None else 0
             self.buffer = {}
-            return 0
+            return written
         except Exception as e:  # never into the tick loop
             self._fail("write", e)
             return 0
@@ -217,6 +237,28 @@ class ThreadStore:
             self._log("threads: Postgres writes are back")
             self._failed = set()
         return len(threads)
+
+    def open(self) -> None:
+        """Connect at process start, so the first write never pays a connect inside a tick."""
+        self._db(0)
+
+    def _write_each(self, conn: psycopg.Connection, tick: int) -> int:
+        """After a batch the server refused: each thread in its own transaction; a bad one is logged and dropped."""
+        written = 0
+        for tid in sorted(self.buffer):
+            threads, messages = _rows([self.buffer[tid]])
+            try:
+                with conn.transaction():
+                    conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                    with conn.cursor() as cur:
+                        if threads:
+                            cur.executemany(THREAD_UPSERT, threads)
+                        if messages:
+                            cur.executemany(MESSAGE_UPSERT, messages)
+                written += len(threads)
+            except (psycopg.Error, ValueError) as e:
+                self._fail(f"thread {tid}", e)
+        return written
 
     def _fail(self, what: str, error: Exception) -> None:
         if what not in self._failed:

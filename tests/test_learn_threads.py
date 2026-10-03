@@ -125,3 +125,70 @@ def test_the_taker_keeps_what_it_read_with_no_extra_request(tmp_path):
     assert run(spy) == run(None)  # the same requests with and without the store
     # each tick: the listing, and the dealer thread the desk read (it opens 5000 and reads it in the same tick)
     assert spy.flushed == [[77, 5000], [77, 5000]]
+
+
+def test_a_bad_message_never_costs_its_thread_row():
+    from bazaar_agent.learn.threads import _rows
+
+    nan = {"message": 304, "tick": 5, "sender": "abuela", "offer": {"want": {"cash": 1}, "x": float("nan")}}
+    bad = {**THREAD, "messages": [*THREAD["messages"], nan]}
+    threads, messages = _rows([Seen(bad, US, 6, {})])
+    assert [t[0] for t in threads] == [41] and [m[0] for m in messages] == [301, 302, 303]
+
+
+def test_a_walked_thread_is_kept_as_walked(tmp_path):
+    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, parts
+
+    class Spy(ThreadStore):
+        def flush(self, tick: int) -> int:
+            return 0
+
+    store = Spy(None)
+    team = FakeTeam()
+    t = Taker(team, FakePublic(), live=True, log=lambda line: None, now=lambda: 1000.0, sleep=lambda s: None,
+              config=TakerConfig(max_dealer_threads=3), thread_store=store, **parts(tmp_path))  # fmt: skip
+    t.on_tick(clock())  # opens thread 5000
+    for tick in range(TICK + 1, TICK + 20):  # past dealer_max_ticks_per_thread: the desk walks
+        team.now = clock(tick=tick)
+        t.on_tick(team.now)
+    assert ("close_thread", 5000) in team.sent
+    assert store.buffer[5000].thread["status"] == "walked" and store.buffer[5000].thread["closed_reason"] == "walked"
+
+
+@pytest.mark.integration
+def test_a_write_cancelled_by_a_lock_keeps_the_answers_and_writes_later(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    lines: list[str] = []
+    store = ThreadStore(lambda: open_in(database_url, schema), lines.append)
+    store.saw(THREAD, US, 6)
+    with open_in(database_url, schema) as locker:
+        locker.execute("lock table threads in access exclusive mode")  # held until this block ends
+        assert store.flush(6) == 0 and 41 in store.buffer
+    assert store.flush(7) == 0  # the cancelled statement dropped the connection: retried 5 ticks later
+    assert store.flush(11) == 1 and store.buffer == {}
+    assert lines[0].startswith("threads: write failed (") and lines[-1] == "threads: Postgres writes are back"
+    store.close()
+
+
+@pytest.mark.integration
+def test_an_ended_thread_never_goes_back_to_open_and_a_bad_thread_costs_only_itself(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    lines: list[str] = []
+    store = ThreadStore(lambda: open_in(database_url, schema), lines.append)
+    store.open()
+    store.saw(THREAD, US, 20)
+    store.flush(20)
+    store.saw({**THREAD, "status": "open", "closed_reason": None}, US, 20)  # an older read flushed in the same tick
+    store.saw({**THREAD, "id": 42, "with": "abuela\x00"}, US, 20)
+    store.flush(20)
+    with open_in(database_url, schema) as conn:
+        rows = conn.execute("select id, status, closed_reason, counterpart from threads order by id").fetchall()
+    assert rows == [(41, "cooloff", "cooloff", "abuela"), (42, "cooloff", "cooloff", "abuela")]  # 41 stays ended
+    store.close()
