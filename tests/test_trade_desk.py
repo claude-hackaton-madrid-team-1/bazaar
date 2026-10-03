@@ -157,7 +157,7 @@ def brute(pool, pp, cash_room):
     best = 0.0
     for n in range(len(pool) + 1):
         for combo in itertools.combinations(pool, n):
-            items = [i for t in combo for i in td._items(t)]
+            items = [i for t in combo for i in td.items_used(t)]
             cash = sum(td._cash_out(t) for t in combo)
             if len(items) != len(set(items)) or cash > cash_room or len(combo) > pp.listings:
                 continue
@@ -265,7 +265,7 @@ def test_the_plan_is_fair_and_every_trade_pays_us():
     assert plan.worst_share <= 0.25  # even if one team took every listing posted for anyone
     assert sum(td._cash_out(t) for t in trades) <= plan.cash_room == 150
     assert plan.unconstrained >= plan.expected > 0
-    assert len({i for t in trades for i in td._items(t)}) == sum(len(td._items(t)) for t in trades)  # each once
+    assert len({i for t in trades for i in td.items_used(t)}) == sum(len(td.items_used(t)) for t in trades)  # each once
 
 
 def test_the_page_buy_list_names_holders_dealers_and_the_cap():
@@ -409,7 +409,7 @@ def test_a_large_pool_is_cut_before_the_search():
     teams = [f"t{i:02d}" for i in range(2, 19)]
     big = [trade(rng.choice(teams), rng.randint(5, 90), rng.randint(1, 40), f"C-{i % 60}") for i in range(1500)]
     pool = td._pool(big, td.PlanParams())
-    assert len(pool) <= 120 and max(Counter(i for t in pool for i in td._items(t)).values()) <= 6
+    assert len(pool) <= 120 and max(Counter(i for t in pool for i in td.items_used(t)).values()) <= 6
     began = time.monotonic()
     listings, _, _, _ = td.choose(big, [], td.PlanParams(threads=0), cash_room=0, max_nodes=50_000)
     assert time.monotonic() - began < 30 and td._fair(listings, 0.25)
