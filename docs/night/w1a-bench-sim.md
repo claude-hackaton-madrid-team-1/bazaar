@@ -4,7 +4,7 @@ Night shift of 3–4 Oct 2026. Branch `night/w1a-bench-sim`, draft PR #77, stack
 
 ## What it is
 
-`src/bazaar_sim/bench.py` is the Market Test with no `World` attached. The simulator's venues run it tick by tick, and a broker under test runs it in-process (1,000 books in about 1 s with the stall and the oracle):
+`src/bazaar_sim/bench.py` is the Market Test with no `World` attached. The simulator's venues run it tick by tick, and a broker under test runs it in-process (1,000 hard books with the stall and the oracle scored in 0.14 s):
 
 ```python
 from bazaar_sim.bench import HARD, NORMAL, make_book, simulate, stall_policy
