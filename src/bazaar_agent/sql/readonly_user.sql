@@ -7,7 +7,8 @@
 -- transaction-local setting `bazaar.readonly_password`, so the plaintext never reaches the server.
 --
 -- Default privileges cover tables created later by the role running this file (the admin role,
--- which is the one every bazaar process writes with).
+-- which is the one every bazaar process writes with). Secret tables are revoked at the end; the
+-- caller creates them first, so a default privilege never re-grants one later.
 
 do $$
 begin
@@ -28,6 +29,9 @@ $$;
 
 alter role {role} set default_transaction_read_only = on;
 alter role {role} set statement_timeout = '30s';
+-- A DataGrip tab left open in a transaction holds locks our writers' DDL waits on.
+alter role {role} set idle_in_transaction_session_timeout = '60s';
+alter role {role} set idle_session_timeout = '10min';
 
 do $$
 begin
@@ -48,3 +52,6 @@ alter default privileges in schema {schema} revoke all on tables from {role};
 alter default privileges in schema {schema} revoke all on sequences from {role};
 alter default privileges in schema {schema} grant select on tables to {role};
 alter default privileges in schema {schema} grant select on sequences to {role};
+
+-- Secrets: our venue broker key acts as our venue (schema.sql). Never readable by this role.
+revoke all on table {schema}.venue_broker_keys from {role};

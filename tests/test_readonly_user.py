@@ -53,6 +53,21 @@ def test_the_script_renders_quoted_identifiers_and_has_no_write_grant():
     assert "{" not in rendered
 
 
+def test_an_ipv6_host_is_bracketed():
+    target = describe("postgresql://u:p@[::1]:5433/railway")
+    assert ro.connection_url(target, "x" * 20).endswith("@[::1]:5433/railway?sslmode=require")
+
+
+@pytest.mark.parametrize(
+    "name", ["Bad", "a$$b", "x; drop", "", "a" * 64], ids=["upper", "dollars", "semi", "empty", "long"]
+)
+def test_the_script_refuses_names_that_could_leave_a_dollar_quoted_body(name):
+    with pytest.raises(ValueError):
+        ro.script(role=name)
+    with pytest.raises(ValueError):
+        ro.script(schema=name)
+
+
 def test_cli_refuses_a_short_stdin_password_before_connecting(monkeypatch):
     monkeypatch.setattr(ro, "apply", lambda *a, **k: pytest.fail("must not connect"))
     result = CliRunner().invoke(cli.app, ["db", "readonly-user", "--password-stdin"], input="tiny\n")
@@ -102,6 +117,8 @@ def test_role_can_select_and_its_sessions_are_read_only_with_a_timeout(admin_url
         assert conn.execute("select name from cards").fetchall() == [("LAV-03",)]
         assert conn.execute("show default_transaction_read_only").fetchone() == ("on",)
         assert conn.execute("show statement_timeout").fetchone() == ("30s",)
+        assert conn.execute("show idle_in_transaction_session_timeout").fetchone() == ("1min",)
+        assert conn.execute("show idle_session_timeout").fetchone() == ("10min",)
         with pytest.raises(errors.ReadOnlySqlTransaction):
             conn.execute("insert into cards (name) values ('x')")
 
@@ -155,3 +172,20 @@ def test_reapplying_is_idempotent_and_rotates_the_password(admin_url, setup):
         assert conn.execute("select count(*) from cards").fetchone() == (1,)
     with pytest.raises(psycopg.OperationalError):
         login(admin_url, role, old, schema).close()
+
+
+@pytest.mark.integration
+def test_the_venue_broker_key_table_is_never_readable(admin_url, setup):
+    role, password, schema = setup
+    with psycopg.connect(admin_url, autocommit=True) as admin:
+        admin.execute(
+            sql.SQL(
+                "insert into {}.venue_broker_keys (target, venue, broker_key) values ('t', 'v01', 'bk_fake')"
+            ).format(sql.Identifier(schema))
+        )
+    with login(admin_url, *setup) as conn, pytest.raises(errors.InsufficientPrivilege):
+        conn.execute("select broker_key from venue_broker_keys")
+    with psycopg.connect(admin_url) as admin:  # a re-run keeps it revoked
+        ro.apply(admin, password, role=role, schema=schema)
+    with login(admin_url, *setup) as conn, pytest.raises(errors.InsufficientPrivilege):
+        conn.execute("select count(*) from venue_broker_keys")
