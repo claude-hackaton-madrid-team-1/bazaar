@@ -15,7 +15,7 @@ The swaps come from the trade desk (`trade_desk.build_plan(...).threads`, #79): 
 map, checked against GUARDRAILS and the per-team share of the plan. Every send passes `guardrails.check()`
 as #79's `Swap` describes it (our copy as a sale at what we receive, the cash we add as a bid). Off unless
 `team_threads_enabled` (read at start), and `BAZAAR_TEAM_THREADS=0` in the environment turns it off; off,
-it withdraws our team-thread offers and still books any a team took.
+it withdraws our team-thread offers (refunding their spend). The cash we add is booked when an offer is posted.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import os
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any
 
 from bazaar_agent import affinity as af
@@ -32,7 +33,7 @@ from bazaar_agent.agents.runtime import Recorder
 from bazaar_agent.agents.seller import Swap, open_commitments
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.decisions import Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, refund_row
 from bazaar_agent.intel import TEAM_ID
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
@@ -76,7 +77,8 @@ def free_copies(
 ) -> list[int]:
     """Our copies of `ref` that no open offer of ours promises (the offer in `thread` itself excepted: that is
     the swap being priced), cheapest to us first."""
-    listed = open_commitments([o for o in offers if thread is None or o.get("thread") != thread], us).listed
+    others = [o for o in offers if thread is None or o.get("thread") != thread or o.get("status") == "accepted"]
+    listed = open_commitments(others, us).listed  # this thread's OPEN offer is the one being replaced
     free = [
         a
         for a in me.get("assets") or []
@@ -123,7 +125,6 @@ class Talk:
     heard_tick: int = -1  # the last tick they wrote
     accepted: bool = False  # a deal is pending (we took their offer, or they took ours): say nothing more
     cash: int = 0  # the cash leg of our last proposal (+ they add, - we add)
-    ours_accepted: bool = False  # WE took their offer (the taker books what we pay)
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,7 @@ class DeskView:
     ctx: Callable[[int | None], Context]
     window_open: Callable[[], bool]
     listing_cap: int = 12  # /api/clock limits.offers_per_team_per_tick, shared with the maker (a thread offer counts)
+    max_tick_seconds: float = 60.0  # /api/clock: dates a refund in the hour of its spend (`refund_row`)
 
 
 @dataclass
@@ -192,7 +194,7 @@ class TeamDesk:
         self._closed: set[int] = set()  # threads we closed this tick: still in this tick's list, never adopted
         self._refused: set[int] = set()  # their offers we refused (logged once)
         self.rest_until: dict[str, int] = {}  # team -> the tick before which we open no new thread with it
-        self.booked: set[int] = set()  # our team-thread offers whose cash we booked as spend (by offer id)
+        self.refunded: set[int] = set()  # our team-thread offers whose spend we gave back (by offer id)
         self._plan: _Plan | None = None
 
     # ------------------------------------------------------------ reads
@@ -202,7 +204,7 @@ class TeamDesk:
             t
             for t in v.threads
             if isinstance(t.get("id"), int)
-            and (t.get("kind") == "team" or TEAM_ID.match(str(t.get("with") or "")))
+            and (t.get("kind") == "team" or (t.get("kind") is None and TEAM_ID.match(str(t.get("with") or ""))))
             and t.get("status", "open") == "open"
         ]
 
@@ -244,6 +246,8 @@ class TeamDesk:
             talk = self.talks.get(tid)
             if talk is None:
                 self.first_seen.setdefault(tid, v.tick)
+                if self._taken(v, tid):
+                    continue  # a take of our offer is pending there (a restart forgot it): no other accept
             else:
                 self._observe(v, talk, payload)
                 if talk.accepted:
@@ -270,28 +274,61 @@ class TeamDesk:
         if taken and not talk.accepted:
             talk.accepted, talk.sent_tick = True, max(talk.sent_tick, v.tick)
 
-    def _book_takes(self, v: DeskView) -> None:
-        """The cash we add to a swap is spend (`max_spend_per_game_hour`): while our offer stands it counts as an
-        open commitment, and once it settles it would count nowhere. So every offer of ours in a team thread
-        that a team ACCEPTED is booked once, by offer id, from what the server shows (our offers, the threads
-        read this tick): it needs no memory of the thread, so a restart or a desk turned off loses nothing
-        (after a restart one may be booked twice: the safe side for the cap)."""
-        seen = [*v.offers, *(o for p in self._payloads.values() for o in p.get("standing_offers") or [])]
-        for o in seen:
-            oid, cash = o.get("id"), int(((o.get("give") or {}).get("cash")) or 0)
-            team_thread = o.get("thread") is not None and TEAM_ID.match(str(o.get("to") or ""))
-            if o.get("maker") != v.us or o.get("status") != "accepted" or not team_thread or not isinstance(oid, int):
-                continue
-            ref = next(iter(str(t).split(":")[-1] for t in (o.get("want") or {}).get("cards") or []), "team swap")
-            self._book(v, oid, cash, ref, f"thread {o.get('thread')}: {o.get('to')} took our offer {oid}")
-
-    def _book(self, v: DeskView, oid: int, cash: int, ref: str, why: str) -> None:
-        if oid in self.booked or cash <= 0:
-            return
-        self.booked.add(oid)
-        if self.live and self.ledger is not None:
+    def _spend(self, v: DeskView, cash: int, ref: str) -> None:
+        """The cash we add to a swap is spend (`max_spend_per_game_hour`), booked when our offer is POSTED, as a
+        bid is (`seller.post_swap`, the maker): it lives in the shared ledger, so no restart, settlement timing
+        or desk turned off can lose it. A team-thread offer is therefore not counted again as thread cash."""
+        if self.live and self.ledger is not None and cash > 0:
             self.ledger.record("spend", v.tick, v.t_hours, cash, ref)
-            self.log(f"tick {v.tick} team desk: {why}: {cash} P booked as spend")
+
+    def _refund(self, v: DeskView, offer: dict[str, Any]) -> None:
+        """Give back the spend of an offer of ours that will never settle (we cancelled it, its thread closed, it
+        expired), once per offer, dated in the hour it was spent (`guardrails.refund_row`)."""
+        oid, cash = offer.get("id"), int((offer.get("give") or {}).get("cash") or 0)
+        if not isinstance(oid, int) or oid in self.refunded or cash <= 0 or not self.live or self.ledger is None:
+            return
+        self.refunded.add(oid)
+        ref = next(iter(str(t).split(":")[-1] for t in (offer.get("want") or {}).get("cards") or []), "team swap")
+        created = offer.get("created_tick")
+        self.ledger.record(
+            *refund_row(cash, ref, created if isinstance(created, int) else None, v.tick, v.t_hours, v.max_tick_seconds)
+        )
+
+    def _ours_in(
+        self, v: DeskView, tid: int, statuses: tuple[Any, ...] = (None, "open", "queued")
+    ) -> list[dict[str, Any]]:
+        """Our offers in one team thread, from our offers and the thread read this tick (deduplicated)."""
+        payload = self._payloads.get(tid) or {}
+        seen: dict[int, dict[str, Any]] = {}
+        for o in [*(payload.get("standing_offers") or []), *v.offers]:
+            mine = o.get("maker") == v.us and o.get("thread") == tid and isinstance(o.get("id"), int)
+            if mine and o.get("status") in statuses:
+                seen.setdefault(int(o["id"]), o)
+        return list(seen.values())
+
+    def _talk_offer(self, talk: Talk) -> dict[str, Any]:
+        """Our last offer in a thread as the desk remembers it (for a refund when the server no longer shows it)."""
+        give = {"cash": -talk.cash} if talk.cash < 0 else {}
+        return {
+            "id": talk.offer_id,
+            "give": give,
+            "want": {"cards": [talk.trade.refs[1]]},
+            "created_tick": talk.sent_tick,
+        }
+
+    def clear_before_accept(self, v: DeskView, a: SwapAccept, decision_id: int) -> bool:
+        """Before we take a team's offer in a thread, our own offer there goes: never two deals in one thread
+        (both copies would leave). False when a cancel was refused: the taker then does not accept."""
+        for o in self._ours_in(v, a.thread_id):
+            oid = int(o["id"])
+            cancel = partial(self.team.cancel, oid)
+            if self.live and self.rec.send(decision_id, v.tick, "cancel", {"offer": oid}, cancel) is None:
+                self.log(f"tick {v.tick} team desk: cancel of our offer {oid} refused: their offer is not taken")
+                return False
+            self._refund(v, o)
+        if (talk := self.talks.get(a.thread_id)) is not None:
+            talk.offer_id = None
+        return True
 
     def _judge_offer(
         self, v: DeskView, tid: int, talk: Talk | None, offer: TheirOffer, venue: Venue
@@ -324,13 +361,12 @@ class TeamDesk:
         """The taker took their offer: the thread waits for its deal (the server settles it next tick), and no
         other proposal goes there."""
         talk = self.talks.get(a.thread_id) or Talk(a.thread_id, a.offer.team, a.trade, tick)
-        talk.accepted, talk.ours_accepted, talk.sent_tick = True, True, tick  # the taker booked what we pay
+        talk.accepted, talk.sent_tick = True, tick  # the taker booked what we pay
         self.talks[a.thread_id] = talk
 
     # ------------------------------------------------------------ (2) what we say
 
     def converse(self, v: DeskView, taken: set[int]) -> None:
-        self._book_takes(v)  # also while the desk is off: an offer of ours may still be taken
         if (why := disabled(self.rules, self.env)) is not None:
             self._withdraw(v, why)
             return
@@ -352,10 +388,13 @@ class TeamDesk:
             if not status and v.tick - talk.sent_tick <= 2 * self.rules.team_thread_idle_ticks:
                 continue  # its end is unknown (a refused read): keep it, read it again next tick
             del self.talks[tid]
-            if status == "deal":  # their accept of our offer, or ours of theirs
+            if status == "deal":  # their accept of our offer, or ours of theirs: the spend booked at the post stands
                 self.deals[talk.team] += 1
-                if talk.offer_id is not None and talk.cash < 0 and not talk.ours_accepted:
-                    self._book(v, talk.offer_id, -talk.cash, talk.trade.refs[1], f"thread {tid} settled")
+                self._plan = None  # our album changed: the next plan is built on the new holdings
+                for o in self._ours_in(v, tid):  # an offer of ours left open there would be a second deal
+                    self._cancel_left(v, tid, talk.team, o)
+            elif talk.offer_id is not None:  # closed by them, expired, the message cap: our offer never settles
+                self._refund(v, self._talk_offer(talk))
             self.log(f"tick {v.tick} team desk: thread {tid} with {talk.team} ended ({status or '?'})")
 
     def _our_threads(self, v: DeskView) -> set[int]:
@@ -427,15 +466,18 @@ class TeamDesk:
 
     def _adopt(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> Talk | None:
         busy = {k.trade.asset_id for k in self.talks.values()} | {k.trade.refs[1] for k in self.talks.values()}
-        for planned in self._trades(v):
+        mine = _ours_open(payload, v.us)
+        wants = [str(c) for c in ((mine or {}).get("want") or {}).get("cards") or []]
+        plans = sorted(self._trades(v), key=lambda x: x.refs[1] not in wants)  # the pair our offer stands for first
+        for planned in plans:
             if planned.counterparty != team or planned.refs[1] in busy:
                 continue
             copy = spare_copy(v.me, v.offers, v.us, planned.refs[0], tid)
             if copy is None or copy in busy:
                 continue
             ours = [m for m in payload.get("messages") or [] if m.get("sender") == v.us and m.get("offer")]
-            mine = _ours_open(payload, v.us)
-            talk = Talk(tid, team, replace(planned, asset_id=copy), v.tick, step=len(ours))
+            same = planned.refs[1] in wants  # a different pair starts its own ladder at the anchor
+            talk = Talk(tid, team, replace(planned, asset_id=copy), v.tick, step=len(ours) if same else 0)
             talk.offer_id = int(mine["id"]) if mine is not None else None
             if mine is not None:  # the cash leg of what stands: - we add, + they add (booked if they take it)
                 talk.cash = int((mine.get("want") or {}).get("cash") or 0) - int(
@@ -591,7 +633,11 @@ class TeamDesk:
                 if self.rec.send(did, v.tick, "cancel", {"offer": old}, lambda: self.team.cancel(old)) is None:
                     self.log(f"tick {v.tick} team desk: cancel of offer {old} refused: no new offer this tick")
                     return  # never two standing offers in one thread; the next tick reads what stands
+                self._refund(v, self._talk_offer(talk))
+            elif talk.offer_id is not None and self._gone(v, talk):  # expired or cancelled by the server
+                self._refund(v, self._talk_offer(talk))
             talk.offer_id = None
+            self._spend(v, -cash, talk.trade.refs[1])  # booked before the send: an outage never leaves it unbooked
             text = self.words(WordsRequest(f"team:{talk.team}", cash, talk.step, talk.trade.refs[1], tick=v.tick))
             body = self.rec.send(
                 did,
@@ -600,8 +646,11 @@ class TeamDesk:
                 {"thread_id": talk.thread_id, "swap": terms},  # kept out of the public request fields
                 lambda: self.team.say(talk.thread_id, text, offer=terms),
             )
-            if body is None and not self.rec.maybe_landed:
-                return  # refused: nothing stands, the next tick tries again
+            if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back
+                if cash < 0:
+                    refused = {"give": {"cash": -cash}, "want": {"cards": [talk.trade.refs[1]]}, "created_tick": v.tick}
+                    self._refund(v, {"id": -(v.tick * 1000 + talk.thread_id), **refused})  # a synthetic id: once
+                return
             offer_id = (body or {}).get("offer")  # lost on the way back: the next tick reads it from the thread
             talk.offer_id = offer_id if isinstance(offer_id, int) else None
         talk.step += 1
@@ -615,6 +664,33 @@ class TeamDesk:
         payload = self._payloads.get(talk.thread_id) or {}
         seen = [o for o in [*(payload.get("standing_offers") or []), *v.offers] if o.get("id") == talk.offer_id]
         return not seen or any(o.get("status") in (None, "open", "queued") for o in seen)
+
+    def _cancel_left(self, v: DeskView, tid: int, team: str, offer: dict[str, Any]) -> None:
+        """Cancel an offer of ours left open in a thread whose deal settled, and give its spend back."""
+        oid = int(offer["id"])
+        verdict = check(Action("cancel", str(oid)), v.ctx(tid), self.rules)
+        if verdict.halted or not v.window_open():
+            return  # the kill switch holds; the next tick tries again
+        did = self.rec.decide(
+            v.tick,
+            "team_walk",
+            f"cancel our offer {oid} left in thread {tid} with {team}: its deal settled",
+            inputs={"thread": tid, "team": team},
+            reason="one deal per thread",
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            thread_id=tid,
+            move={"kind": "cancel"},
+        )
+        if self.live and self.rec.send(did, v.tick, "cancel", {"offer": oid}, lambda: self.team.cancel(oid)):
+            self._refund(v, offer)
+
+    def _gone(self, v: DeskView, talk: Talk) -> bool:
+        """Our last offer reads expired or cancelled: it will never settle (accepted or unseen: not gone)."""
+        payload = self._payloads.get(talk.thread_id) or {}
+        seen = [o for o in [*(payload.get("standing_offers") or []), *v.offers] if o.get("id") == talk.offer_id]
+        return bool(seen) and all(o.get("status") in ("expired", "cancelled") for o in seen)
 
     def _walk(self, v: DeskView, talk: Talk, why: str) -> None:
         if self._close(v, talk.thread_id, talk.team, why):
@@ -642,14 +718,23 @@ class TeamDesk:
         if status != "approved":
             return False
         if self.live:
-            self.rec.send(did, v.tick, "close_thread", {"thread": tid}, lambda: self.team.close_thread(tid))
+            ours = self._ours_in(v, tid)  # closing the thread cancels them: their spend comes back
+            if self.rec.send(did, v.tick, "close_thread", {"thread": tid}, lambda: self.team.close_thread(tid)):
+                for o in ours:
+                    self._refund(v, o)
         self.first_seen.pop(tid, None)
         self._closed.add(tid)
         return True
 
     def _inputs(self, trade: Trade, thread: int | None) -> dict[str, Any]:
-        """Public-safe: the cards and the venue (the counterparty and our values stay out of `/state`)."""
-        return {"thread": thread, "team": trade.counterparty, "card": trade.refs[0], "ref": trade.refs[1]} | {
+        """Public-safe: only the thread, venue and fee reach `/state` (the team, the cards and our values stay
+        out: none of their keys is in the public allow-list)."""
+        return {
+            "thread": thread,
+            "team": trade.counterparty,
+            "give_card": trade.refs[0],
+            "want_card": trade.refs[1],
+        } | {
             "venue": HOUSE_VENUE,
             "fee": trade.fee,
         }

@@ -540,6 +540,7 @@ class Taker:
             ctx=lambda thread: self._ctx(run, skip_thread=thread),
             window_open=run.window.open,
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
+            max_tick_seconds=snap.clock.max_tick_seconds,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
@@ -1140,9 +1141,12 @@ class Taker:
         accepting side) for their card, through the guardrails as #79's `Swap` describes it, then the same
         gates as any accept. The cash we pay is booked as spend; the thread settles at the next tick."""
         clock, view = run.snap.clock, run.team_view
-        verdict = self.team_desk.guard_accept(view, a) if view is not None else None
-        if verdict is None or not verdict.allowed:
-            self._skip(run, p, str(verdict or "denied: no team view this tick"), "rejected")
+        if view is None:
+            self._skip(run, p, "denied: no team view this tick", "rejected")
+            return False
+        verdict = self.team_desk.guard_accept(view, a)
+        if not verdict.allowed:
+            self._skip(run, p, str(verdict), "rejected")
             return False
         pay = a.offer.cash_out + a.fee
         if not self._slot(run, p, pay, f"team:{a.thread_id}", limit):
@@ -1161,6 +1165,8 @@ class Taker:
             move={"accept": a.offer.offer_id},
         )
         if self.live:
+            if not self.team_desk.clear_before_accept(view, a, did):  # our own offer there goes first
+                return True  # a cancel was refused: their offer is not taken (the slot stays spent)
             pick = a.pick
             body = self.rec.send(
                 did,

@@ -136,7 +136,7 @@ ENFORCED_BY: dict[str, str] = {
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
     "max_counterparty_share": "guardrails.check (Action.counterparty + Context.trades: maker posts, taker accepts)",
     "counterparty_cap_base": "guardrails.check (with max_counterparty_share)",
-    "team_threads_enabled": "agents.team_desk (read every tick, with BAZAAR_TEAM_THREADS=0 as the kill flag)",
+    "team_threads_enabled": "agents.team_desk (read at start; BAZAAR_TEAM_THREADS=0 in the environment turns it off)",
     "team_threads_max_open": "agents.team_desk (openings)",
     "team_threads_dealer_reserve": "agents.team_desk (openings leave these conversation slots to dealers)",
     "team_thread_max_messages": "agents.team_desk (walks after this many of our messages)",

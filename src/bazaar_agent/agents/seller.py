@@ -236,7 +236,9 @@ def open_commitments(offers: Iterable[dict[str, Any]], us: str) -> Commitments:
         refs = [str(t).split(":")[-1] for t in (want.get("cards") or []) + (want.get("types") or [])]
         cash += int(give.get("cash") or 0)
         wanted += refs
-        if o.get("thread") is not None and give.get("cash"):
+        # A dealer-thread bid is booked when its deal settles, so it counts as this hour's spend while it stands;
+        # a team-thread swap's cash is booked when it is posted (N17 team desk), so it is not counted twice.
+        if o.get("thread") is not None and give.get("cash") and not TEAM_ID.match(str(o.get("to") or "")):
             thread_cash += int(give["cash"])
             thread_packs += sum(1 for ref in refs if is_pack(ref))
     listed = {

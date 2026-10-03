@@ -55,7 +55,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `counterparty_cap_base` = 200 — the share applies to at least this volume, so the first trades are not blocked (0.25 × 200 = 50 P per team until our volume passes 200).
 
 ## Team threads (N17)
-- `team_threads_enabled` = false — the taker's team desk opens swap threads with other teams and answers theirs. Read when the agent starts (a change needs a restart). False, or `BAZAAR_TEAM_THREADS=0` in the agent's environment (on Railway setting the variable redeploys it), turns the desk off: at its first tick it closes every team thread holding an open offer of ours and still books any offer of ours a team took.
+- `team_threads_enabled` = false — the taker's team desk opens swap threads with other teams and answers theirs. Read when the agent starts (a change needs a restart). False, or `BAZAAR_TEAM_THREADS=0` in the agent's environment (on Railway setting the variable redeploys it), turns the desk off: at its first tick it closes every team thread holding an open offer of ours (its spend comes back) and leaves alone a thread where a team just took ours. The cash we add to a swap is booked as spend when the offer is posted, as a bid is.
 - `team_threads_max_open` = 2 — team threads we run at once (ours and theirs together).
 - `team_threads_dealer_reserve` = 3 — of the six conversations, a team thread never takes these: they stay for the dealer ladder.
 - `team_thread_max_messages` = 12 — our messages in one team thread before we walk (RULES.md ends a team conversation at 200).

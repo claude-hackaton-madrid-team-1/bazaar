@@ -219,7 +219,11 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
 - **Reservation:** the standing thread offer lists our copy (`open_commitments` counts thread offers and, since
   #138, accepted ones), so the maker and the taker never offer it twice; an accept claims `team:<thread>` in the
   shared ledger. No separate `team:<asset>` ledger row.
-- **Public view:** team-thread decisions publish neither the counterparty nor the terms (a private thread).
+- **Spend:** the cash we add is booked in the shared ledger when the offer is POSTED (as `seller.post_swap` and the
+  maker's bids do) and refunded when we cancel it, its thread closes or it expires (`guardrails.refund_row`); a
+  team-thread offer is therefore not counted again as thread cash. Before we take a team's counter, our own offer
+  in that thread is cancelled (never two deals in one thread).
+- **Public view:** team-thread decisions publish neither the counterparty, the cards nor the terms (a private thread).
 - **Deferred (kept here, not in 98-nice-to-haves or the status page, to stay conflict-free with main):**
   `team_threads_venue = cheapest`; cash-only legs in a thread; Jev on "open or not"; the status page entry
   once the desk goes live.
