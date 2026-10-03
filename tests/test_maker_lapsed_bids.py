@@ -218,3 +218,26 @@ def test_a_bid_listed_again_on_the_confirming_tick_is_alive_and_not_refunded(tmp
     run(m, team, [T0 + TTL + 1, T0 + TTL + 2])
     assert not any("lapsed unfilled" in line for line in lines)
     assert len(first_bid_refunds(m)) <= 1  # the maker may cancel one of its two bids as a duplicate: one refund
+
+
+def test_no_lapse_refund_on_a_tick_whose_feed_window_could_not_be_read(tmp_path):
+    """A cancel by `bazaar flatten` on a laptop shows only in the feed: with the window unreadable at the
+    confirming tick, the bid's spend stays counted (over-counts, fail safe; review round 2 of #142)."""
+    from tests.test_strategy import EVENTS
+
+    team = Listing()
+    window = {"ok": True}
+
+    def read(n):
+        if not window["ok"]:
+            raise OSError("feed down")
+        return list(EVENTS)
+
+    m, _ = maker(tmp_path, team, live=True)
+    m.feed = MarketFeed(read)
+    run(m, team, [T0])
+    team.offers.remove(posted_bid(team))
+    run(m, team, [T0 + TTL])
+    window["ok"] = False
+    run(m, team, [T0 + TTL + 1])
+    assert -65 not in [e["price"] for e in spend_rows(m)]

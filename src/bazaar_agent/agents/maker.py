@@ -617,6 +617,8 @@ class Maker:
             return
         clock, held = snap.clock, _held(snap.me)
         paused = bool(kill_switch(self.rules))  # PAUSE + `bazaar flatten` cancels (and refunds) our bids
+        # A cancel by another process shows only in the feed: without this tick's live window, no refund.
+        feed_ok = bool(getattr(self.feed, "window_ok", True))
         present = {
             o.get("id") for o in offers_in(snap.offers) if o.get("status") in (None, "open", "queued", "accepted")
         }
@@ -633,6 +635,7 @@ class Maker:
                 and not _settled_to_us(snap.events, ref, bid.offer.created_tick, snap.us)
                 and not _cancelled(snap.events, oid)
                 and not paused
+                and feed_ok
             ):
                 self.ledger.record(*self._refund_at(bid.offer, clock))
                 self.log(f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded")

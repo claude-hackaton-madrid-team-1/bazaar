@@ -117,6 +117,7 @@ class MarketFeed:
         self._loaded_store = False
         self._db_down = False
         self._skip = 0  # reads to skip Postgres after a failure (a connect may take 10 s)
+        self.window_ok = False  # the last `events()` read the live window: its newest events are in
 
     def _from_db(self) -> bool:
         if self._connect is None:
@@ -152,7 +153,9 @@ class MarketFeed:
         try:
             for event in self._read_window(DEFAULT_WINDOW):
                 self._events[event["id"]] = event
+            self.window_ok = True
         except Exception as e:
+            self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
         return [self._events[i] for i in sorted(self._events)]
 
