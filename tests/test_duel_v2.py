@@ -46,6 +46,19 @@ def test_the_default_is_todays_policy_and_every_v2_knob_is_in_guardrails_md():
     assert V2Params.from_rules(rules, anchor=0.4, floor=0.1).anchor == 0.4  # steering still applies
 
 
+def test_a_bad_jitter_seed_env_var_falls_back_to_the_rules_seed_with_one_warning(monkeypatch, caplog):
+    rules = gr.load_guardrails().rules.model_copy(update={"duel_jitter_seed": 7})
+    monkeypatch.setenv("BAZAAR_DUEL_JITTER_SEED", "12x")  # a typo must not stop every v2 duel move
+    with caplog.at_level("WARNING", logger="bazaar_agent.agents.duel_v2"):
+        assert V2Params.from_rules(rules).jitter_seed == 7
+        assert V2Params.from_rules(rules).jitter_seed == 7  # every tick builds the params: one warning only
+    assert [r.levelname for r in caplog.records if "BAZAAR_DUEL_JITTER_SEED" in r.getMessage()] == ["WARNING"]
+    monkeypatch.setenv("BAZAAR_DUEL_JITTER_SEED", "42")
+    assert V2Params.from_rules(rules).jitter_seed == 42
+    monkeypatch.delenv("BAZAAR_DUEL_JITTER_SEED")
+    assert V2Params.from_rules(rules).jitter_seed == 7
+
+
 def test_holds_in_silence_while_the_rival_concedes():
     d = duel(rival=[(100, 105), (101, 108), (102, 111)], ours=[(100, 160)])
     move = duel_plan(d, 103, 100).move
@@ -358,3 +371,10 @@ def test_under_v2_jev_may_counter_within_the_caps_and_its_counter_stays_inside_o
 def test_the_endgame_accepts_a_surplus_below_half_a_prima():
     d = duel(rival=[(100, 101, 1)], ours=[(100, 160, 0)], issues=("price", "days"), weight=0.6)  # 100.4 > 100
     assert duel_plan(d, 110, 100).move.kind == "accept"
+
+
+def test_a_non_integer_rival_price_is_never_planned_as_an_accept():
+    # security review: 101.7 used to become an accept "at 101"; the guard denied it, the planner now never plans it
+    d = duel(rival=[(100, 101.7)], ours=[(100, 160)])
+    assert duel_plan(d, 110, 100).move.kind != "accept"
+    assert duel_plan(duel(rival=[(100, 102)], ours=[(100, 160)]), 110, 100).move.kind == "accept"

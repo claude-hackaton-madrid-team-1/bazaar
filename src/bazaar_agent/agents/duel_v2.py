@@ -21,6 +21,7 @@ is on; our offers stay strictly inside our limit (PR #60), and `guardrails.check
 from __future__ import annotations
 
 import functools
+import logging
 import math
 import os
 import random
@@ -44,6 +45,21 @@ from bazaar_agent.guardrails import duel_days_ok
 OUR_SENDER = "you"  # how /api/duels names our own messages (verified, practice session)
 SIGNED_DAYS_MAX = 10
 PIE_PRIOR = 0.4  # before the rival shows more, assume the pie is this share of our limit (the simulator's median)
+JITTER_SEED_ENV = "BAZAAR_DUEL_JITTER_SEED"
+
+_LOG = logging.getLogger(__name__)
+
+
+@functools.cache
+def _env_seed(raw: str) -> int | None:
+    """BAZAAR_DUEL_JITTER_SEED as an int, or None (the GUARDRAILS.md seed) when it is not one. Cached per raw
+    value: the params are rebuilt every tick, so a typo warns once instead of stopping every v2 duel move. The
+    value itself is never logged: it stands in for a seed kept out of the committed rules."""
+    try:
+        return int(raw)
+    except ValueError:
+        _LOG.warning("%s is not an integer: using duel_jitter_seed from GUARDRAILS.md", JITTER_SEED_ENV)
+        return None
 
 
 @dataclass(frozen=True)
@@ -78,9 +94,15 @@ class V2Params:
             accept_margin=rules.duel_accept_margin_ticks,
             min_share=rules.duel_endgame_min_share,
             jitter=rules.duel_jitter,
-            jitter_seed=int(os.environ.get("BAZAAR_DUEL_JITTER_SEED") or rules.duel_jitter_seed),
+            jitter_seed=_jitter_seed(rules),
             days_signed=rules.duel_days_signed,
         )
+
+
+def _jitter_seed(rules: Any) -> int:
+    raw = os.environ.get(JITTER_SEED_ENV, "").strip()
+    seed = _env_seed(raw) if raw else None
+    return int(rules.duel_jitter_seed) if seed is None else seed
 
 
 DEFAULTS = V2Params()
@@ -367,9 +389,12 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
 def _acceptable(duel: Mapping[str, Any], signed: bool) -> tuple[DuelMove | None, float]:
     """Accepting the rival's standing offer when it is strictly inside our limit (unrounded, as the guard checks)."""
     offer = duel.get("rival_offer")
-    if not isinstance(offer, dict) or _number(offer.get("price")) is None:
+    if not isinstance(offer, dict):
         return None, 0.0
-    price = int(offer["price"])
+    raw = _number(offer.get("price"))
+    if raw is None or not raw.is_integer():  # prices are whole primas: never truncate one into an accept
+        return None, 0.0
+    price = int(raw)
     value = value_of(duel, price, offer.get("days"), signed)
     limit, role = duel["your_limit"], duel["role"]
     if value is None or not inside_limit(value, limit, role):

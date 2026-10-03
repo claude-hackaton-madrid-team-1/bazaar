@@ -181,3 +181,46 @@ def test_the_endgame_takes_a_worst_case_surplus_below_half_a_prima():
     b = two_issue(role="buyer", limit=60, weight=-0.6, rival=59)
     b["rival_offer"]["days"] = 1  # 59 + 0.6 = 59.6 < 60
     assert duel_move(b, tick=111, started_tick=100).kind == "accept"
+
+
+# ---------------------------------------------------------------- an accept agrees to the rival's standing offer
+
+
+@pytest.mark.parametrize(
+    ("role", "limit", "price", "move_price"),
+    [("buyer", 50, True, 1), ("seller", 100, 101.7, 101), ("buyer", 102, 101.7, 101), ("seller", 50, float("nan"), 0)],
+)
+def test_a_bool_or_fractional_rival_price_is_never_accepted(role, limit, price, move_price):
+    # True is an int in Python and int(101.7) is 101: neither is a price the rival offered, so neither is valued.
+    from bazaar_agent.agents.duelist import DuelMove, duel_action
+
+    d = duel(role=role, limit=limit, rival=price)
+    assert duel_move(d, tick=111, started_tick=100).kind != "accept"
+    assert duel_action(d, DuelMove("accept", move_price)).price is None
+
+
+def test_an_accept_is_valued_at_the_rivals_standing_offer_not_at_the_move():
+    from bazaar_agent.agents.duelist import DuelMove, duel_action
+
+    assert duel_action(duel(rival=60), DuelMove("accept", 999)).price is None  # the move and the offer disagree
+    assert duel_action(duel(rival=60), DuelMove("accept", 60)).price == 60
+    assert duel_action(duel(rival=60.0), DuelMove("accept", 60)).price == 60  # an integral float is that integer
+    assert duel_action(duel(), DuelMove("accept", 60)).price is None  # no standing offer: nothing to agree to
+    d = two_issue(weight=-3.0)
+    d["rival_offer"] = {"price": 130, "days": 4}
+    assert duel_action(d, DuelMove("accept", 131)).price is None
+
+
+def test_the_guard_denies_an_accept_whose_terms_are_not_the_rivals_offer():
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents.duelist import DuelMove, duel_action
+
+    rules = gr.load_guardrails().rules
+    ctx = gr.Context(cash=0, held={}, tick=1, t_hours=0.0, accepts_this_tick=0, paused=False)
+    assert not gr.check(duel_action(duel(rival=60), DuelMove("accept", 999)), ctx, rules).allowed
+    assert not gr.check(duel_action(duel(role="buyer", rival=True), DuelMove("accept", 1)), ctx, rules).allowed
+    assert gr.check(duel_action(duel(rival=60), DuelMove("accept", 60)), ctx, rules).allowed
+    d = two_issue(weight=-3.0)
+    d["rival_offer"] = {"price": 130, "days": 4}  # 130 − 3 × 4 = 118 > our cost of 100
+    assert gr.check(duel_action(d, DuelMove("accept", 130)), ctx, rules).allowed
+    assert not gr.check(duel_action(d, DuelMove("accept", 999)), ctx, rules).allowed

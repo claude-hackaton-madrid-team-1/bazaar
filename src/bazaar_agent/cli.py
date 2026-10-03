@@ -638,9 +638,11 @@ def duel_run(
                     console.print(f"  duel {did}: another process took the team's accept this tick")
                     record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
                     return
-            # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
+            # Server fields may carry text: escaped, so a stray "[/red]" cannot crash the loop after the accept
+            # slot was booked.
             console.print(
-                f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
+                f"  duel {did} {escape(str(d.get('role')))} limit {escape(str(d.get('your_limit')))} "
+                f"rival {escape(str(d.get('rival_offer')))} "
                 f"deadline {duel_deadline(d)} -> {move.kind} {move.price or ''} ({escape(move.reason)})"
                 + (f" · {escape(pick.why)}" if pick is not None else "")
             )

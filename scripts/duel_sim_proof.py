@@ -108,6 +108,9 @@ def wait_for(url: str, server: subprocess.Popen[bytes]) -> None:
 
 def run(a: argparse.Namespace) -> None:
     repo = a.repo.resolve()
+    guard = repo / "scripts" / "sim_guard" / "sitecustomize.py"
+    if not guard.is_file():  # without it the children would run with no network guard
+        raise SystemExit(f"{guard} is missing: refusing to run the children without the loopback-only guard")
     py = str(repo / ".venv" / "bin" / "python")
     url = f"http://127.0.0.1:{a.port}"
     work = a.out / a.label

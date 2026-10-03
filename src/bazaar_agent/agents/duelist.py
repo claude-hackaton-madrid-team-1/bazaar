@@ -36,10 +36,14 @@ class DuelMove:
     reason: str = ""
 
 
-def _rival_price(duel: dict[str, Any]) -> int | None:
+def _rival_price(duel: Mapping[str, Any]) -> int | None:
+    """The rival's standing price, only when it is a real integer (True is an int, int(101.7) is 101: never)."""
     offer = duel.get("rival_offer")
-    if isinstance(offer, dict) and isinstance(offer.get("price"), int | float):
-        return int(offer["price"])
+    price = offer.get("price") if isinstance(offer, dict) else None
+    if isinstance(price, int) and not isinstance(price, bool):
+        return price
+    if isinstance(price, float) and price.is_integer():  # False for NaN and infinities
+        return int(price)
     return None
 
 
@@ -159,10 +163,15 @@ def duel_move(
 
 def duel_action(duel: Mapping[str, Any], move: DuelMove) -> Action:
     """The guardrail's view of a duel move: the price and days we would agree to, with our limit and role.
-    An accept takes the rival's days. Two-issue terms we cannot read go out without a price (denied)."""
-    days = (duel.get("rival_offer") or {}).get("days") if move.kind == "accept" else move.days
+    An accept takes the rival's standing price and days: an unreadable price, or one that is not the move's, goes out
+    without a price (denied). Two-issue terms we cannot read go out without a price too."""
+    accept = move.kind == "accept"
+    days = (duel.get("rival_offer") or {}).get("days") if accept else move.days
     n_days = _number(days) if _two_issue(duel) else None
-    price = move.price if not _two_issue(duel) or n_days is not None else None
+    terms = _rival_price(duel) if accept else move.price
+    if accept and terms != move.price:
+        terms = None
+    price = terms if not _two_issue(duel) or n_days is not None else None
     limit, role = duel.get("your_limit"), duel.get("role")
     return Action(
         "duel_accept" if move.kind == "accept" else "duel_offer",
