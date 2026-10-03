@@ -116,7 +116,7 @@ class LocalModels:
             embedder = TextEmbedding(EMBED_MODEL, cache_dir=cache, threads=self._threads)
             reranker = TextCrossEncoder(RERANK_MODEL, cache_dir=cache, threads=self._threads)
         except Exception as e:  # no network, no disk, a missing wheel: lessons are off, trading is not
-            self._failed = f"{type(e).__name__}: {str(e)[:120]}"
+            self._failed = type(e).__name__  # the type only: an error text is never logged
             self._log(f"learnings: local models unavailable ({self._failed}); recall without lessons")
             return False
         with self._lock:

@@ -162,6 +162,8 @@ class HybridRecall:
                 team=query.team,
                 subjects=query.subjects,
                 limit=LEG_TOP,
+                sources=query.sources,
+                where=query.where,
             ):
                 if key in by_key:
                     cosines[key] = cos

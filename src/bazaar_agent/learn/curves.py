@@ -104,6 +104,8 @@ def curve_stats(threads: Iterable[DealerThread]) -> dict[tuple[str, str], CurveS
     out: dict[tuple[str, str], CurveStats] = {}
     for (dealer, cls), members in groups.items():
         fills = tuple(sorted(t.fill_price for t in members if t.fill_price is not None))
+        if cls.startswith("pack:") and not fills:
+            continue  # a pack name is the opener's free choice until a dealer actually sells it (a fill)
         openings = tuple(t.dealer_prices[0] for t in members if t.dealer_prices)
         with_final = [t for t in members if t.final_price is not None]
         patience = median(len(t.team_prices) for t in with_final) if with_final else None
