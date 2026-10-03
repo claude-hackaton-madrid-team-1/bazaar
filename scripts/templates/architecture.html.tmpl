@@ -42,6 +42,12 @@ section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
 code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
 a { color: var(--accent) }
 footer { color: var(--muted); font-size: 13px }
+.road { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px }
+.phase ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 7px }
+.phase li { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; align-items: start; font-size: 14px }
+.prio { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1.5px solid var(--ink) }
+.prio.P0 { background: var(--accent); border-color: var(--accent); color: var(--paper) }
+.owner { color: var(--muted) }
 </style>
 
 <div class="wrap">
@@ -77,6 +83,13 @@ footer { color: var(--muted); font-size: 13px }
       $boxes
     </svg>
   </div>
+
+  <section>
+    <h2>Roadmap to Sunday 15:00</h2>
+    <div class="road">
+$roadmap
+    </div>
+  </section>
 
   <div class="cols">
     <section>

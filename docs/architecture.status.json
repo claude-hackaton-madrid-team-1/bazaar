@@ -407,5 +407,157 @@
         "https://bazaar-sim-production-1d48.up.railway.app"
       ]
     }
+  ],
+  "roadmap": [
+    {
+      "when": "Sat 02:00–09:00 · before the open",
+      "title": "Make the live day safe",
+      "items": [
+        {
+          "priority": "P0",
+          "status": "done",
+          "text": "Taker + maker set live (`BAZAAR_LIVE=1`), target: real game",
+          "owner": "coordinator"
+        },
+        {
+          "priority": "P0",
+          "status": "done",
+          "text": "Simulator live + `BAZAAR_SIM=1` flag (#55)",
+          "owner": "worker"
+        },
+        {
+          "priority": "P0",
+          "status": "wip",
+          "text": "Simulator smoke as the merge gate (#75)",
+          "owner": "worker"
+        },
+        {
+          "priority": "P0",
+          "status": "done",
+          "text": "Public `/state` allow-list (#69); 3 leaks left",
+          "owner": "Marius"
+        },
+        {
+          "priority": "P0",
+          "status": "wip",
+          "text": "Live fixes: dealer ladder #61, ledger #62, cash accounting #72 (#60 approved)",
+          "owner": "Marius"
+        },
+        {
+          "priority": "P0",
+          "status": "done",
+          "text": "PR review gate `/pr-review` replaces Greptile (#76)",
+          "owner": "coordinator"
+        },
+        {
+          "priority": "P1",
+          "status": "wip",
+          "text": "IaC keeps `BAZAAR_LIVE`; evals + monitor out of Railway (#73)",
+          "owner": "worker"
+        },
+        {
+          "priority": "P0",
+          "status": "todo",
+          "text": "08:47 pre-flight · 09:04 post-open · 09:26 review (scheduled)",
+          "owner": "coordinator"
+        }
+      ]
+    },
+    {
+      "when": "Sat 09:00–13:00 · morning",
+      "title": "Score on the ladder and the Market Test",
+      "items": [
+        {
+          "priority": "P1",
+          "status": "todo",
+          "text": "Dealer ladder: walk instead of paying the opening ask (#8, #9)",
+          "owner": "Marius"
+        },
+        {
+          "priority": "P1",
+          "status": "todo",
+          "text": "Market Test: merge #71, decide the 270 P venue bond (#11, #12)",
+          "owner": "Omar decides"
+        },
+        {
+          "priority": "P1",
+          "status": "todo",
+          "text": "Shared kill switch in Postgres (`.local/PAUSE` is per machine)",
+          "owner": "worker"
+        },
+        {
+          "priority": "P1",
+          "status": "todo",
+          "text": "Prompt-injection guard: 200k cap, offer inspector (#24, #10)",
+          "owner": "worker"
+        }
+      ]
+    },
+    {
+      "when": "Sat 13:00–23:00 · afternoon",
+      "title": "Widen the edge",
+      "items": [
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Duels II/III policy + days module (#5, #7)"
+        },
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Organic market making on our venue (#13)"
+        },
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Trade scanner + scarcity map (#14, #22)"
+        },
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Score tracker (#15, #17)"
+        },
+        {
+          "priority": "P2",
+          "status": "wip",
+          "text": "Evals inside the agents (no service)",
+          "owner": "worker"
+        },
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Ask Jev again: one agent instead of three"
+        }
+      ]
+    },
+    {
+      "when": "Sun 09:00–15:00 · finish (15 s ticks)",
+      "title": "Pitch and close",
+      "items": [
+        {
+          "priority": "P0",
+          "status": "todo",
+          "text": "Presentation + decision log, about 40% of judging (#16)",
+          "owner": "Omar + team"
+        },
+        {
+          "priority": "P2",
+          "status": "todo",
+          "text": "Learner + 10 s per offer then learn (N3)"
+        },
+        {
+          "priority": "P3",
+          "status": "wip",
+          "text": "Bazaar Live show for the demo",
+          "owner": "worker"
+        },
+        {
+          "priority": "P3",
+          "status": "todo",
+          "text": "Web dashboard #43: move out of the bazaar repo",
+          "owner": "Marius"
+        }
+      ]
+    }
   ]
 }

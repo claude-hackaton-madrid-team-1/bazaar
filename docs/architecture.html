@@ -42,6 +42,12 @@ section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
 code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
 a { color: var(--accent) }
 footer { color: var(--muted); font-size: 13px }
+.road { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px }
+.phase ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 7px }
+.phase li { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; align-items: start; font-size: 14px }
+.prio { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1.5px solid var(--ink) }
+.prio.P0 { background: var(--accent); border-color: var(--accent); color: var(--paper) }
+.owner { color: var(--muted) }
 </style>
 
 <div class="wrap">
@@ -154,6 +160,16 @@ footer { color: var(--muted); font-size: 13px }
       <text x="900" y="924" class="n">Bazaar Live show: repo ready, not built</text>
     </svg>
   </div>
+
+  <section>
+    <h2>Roadmap to Sunday 15:00</h2>
+    <div class="road">
+<div class="item phase"><span class="mono">Sat 02:00–09:00 · before the open</span><b>Make the live day safe</b><ul><li><span class="prio P0">P0</span><span class="pill p-done">done</span><span>Taker + maker set live (<code>BAZAAR_LIVE=1</code>), target: real game<span class="owner"> · coordinator</span></span></li><li><span class="prio P0">P0</span><span class="pill p-done">done</span><span>Simulator live + <code>BAZAAR_SIM=1</code> flag (#55)<span class="owner"> · worker</span></span></li><li><span class="prio P0">P0</span><span class="pill p-wip">doing</span><span>Simulator smoke as the merge gate (#75)<span class="owner"> · worker</span></span></li><li><span class="prio P0">P0</span><span class="pill p-done">done</span><span>Public <code>/state</code> allow-list (#69); 3 leaks left<span class="owner"> · Marius</span></span></li><li><span class="prio P0">P0</span><span class="pill p-wip">doing</span><span>Live fixes: dealer ladder #61, ledger #62, cash accounting #72 (#60 approved)<span class="owner"> · Marius</span></span></li><li><span class="prio P0">P0</span><span class="pill p-done">done</span><span>PR review gate <code>/pr-review</code> replaces Greptile (#76)<span class="owner"> · coordinator</span></span></li><li><span class="prio P1">P1</span><span class="pill p-wip">doing</span><span>IaC keeps <code>BAZAAR_LIVE</code>; evals + monitor out of Railway (#73)<span class="owner"> · worker</span></span></li><li><span class="prio P0">P0</span><span class="pill p-todo">todo</span><span>08:47 pre-flight · 09:04 post-open · 09:26 review (scheduled)<span class="owner"> · coordinator</span></span></li></ul></div>
+      <div class="item phase"><span class="mono">Sat 09:00–13:00 · morning</span><b>Score on the ladder and the Market Test</b><ul><li><span class="prio P1">P1</span><span class="pill p-todo">todo</span><span>Dealer ladder: walk instead of paying the opening ask (#8, #9)<span class="owner"> · Marius</span></span></li><li><span class="prio P1">P1</span><span class="pill p-todo">todo</span><span>Market Test: merge #71, decide the 270 P venue bond (#11, #12)<span class="owner"> · Omar decides</span></span></li><li><span class="prio P1">P1</span><span class="pill p-todo">todo</span><span>Shared kill switch in Postgres (<code>.local/PAUSE</code> is per machine)<span class="owner"> · worker</span></span></li><li><span class="prio P1">P1</span><span class="pill p-todo">todo</span><span>Prompt-injection guard: 200k cap, offer inspector (#24, #10)<span class="owner"> · worker</span></span></li></ul></div>
+      <div class="item phase"><span class="mono">Sat 13:00–23:00 · afternoon</span><b>Widen the edge</b><ul><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Duels II/III policy + days module (#5, #7)</span></li><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Organic market making on our venue (#13)</span></li><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Trade scanner + scarcity map (#14, #22)</span></li><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Score tracker (#15, #17)</span></li><li><span class="prio P2">P2</span><span class="pill p-wip">doing</span><span>Evals inside the agents (no service)<span class="owner"> · worker</span></span></li><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Ask Jev again: one agent instead of three</span></li></ul></div>
+      <div class="item phase"><span class="mono">Sun 09:00–15:00 · finish (15 s ticks)</span><b>Pitch and close</b><ul><li><span class="prio P0">P0</span><span class="pill p-todo">todo</span><span>Presentation + decision log, about 40% of judging (#16)<span class="owner"> · Omar + team</span></span></li><li><span class="prio P2">P2</span><span class="pill p-todo">todo</span><span>Learner + 10 s per offer then learn (N3)</span></li><li><span class="prio P3">P3</span><span class="pill p-wip">doing</span><span>Bazaar Live show for the demo<span class="owner"> · worker</span></span></li><li><span class="prio P3">P3</span><span class="pill p-todo">todo</span><span>Web dashboard #43: move out of the bazaar repo<span class="owner"> · Marius</span></span></li></ul></div>
+    </div>
+  </section>
 
   <div class="cols">
     <section>

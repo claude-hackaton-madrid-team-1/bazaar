@@ -2,7 +2,7 @@
 """Render docs/architecture.html from docs/architecture.status.json (Python stdlib only).
 
 The page is a static, deterministic view of the architecture: one SVG box per entry of the JSON,
-three status lists, live links and the task index of .ai/specs/02-plan.md. It carries no timestamp,
+a timed roadmap, three status lists, live links and the task index of .ai/specs/02-plan.md. It carries no timestamp,
 so it changes only when an input changes. Run by the same hook and CI job as scripts/readme_status.py.
 
     python3 scripts/architecture_page.py          # rewrite docs/architecture.html
@@ -34,6 +34,9 @@ FILL = {s: f"var(--{s if s != 'partial' else 'part'})" for s in STATUSES}
 PILL_CLASS = {s: f"p-{'part' if s == 'partial' else s}" for s in STATUSES}
 # Pill statuses used by the lists (the original page spelled them wip/todo/part).
 PILL_ALIASES = {"part": "partial"}
+# Roadmap items: priority badge (Jev's P0-P3 scale) and the word shown in the status pill.
+PRIORITIES = ("P0", "P1", "P2", "P3")
+STATUS_WORD = {"done": "done", "wip": "doing", "partial": "partial", "todo": "todo"}
 
 # box id -> (x, y, width, height) in the 2000x1320 SVG viewBox
 GEOMETRY: dict[str, tuple[int, int, int, int]] = {
@@ -105,6 +108,32 @@ def render_items(items: list[dict[str, Any]]) -> str:
     return "\n        ".join(rows)
 
 
+def _roadmap_item(it: dict[str, Any]) -> str:
+    status, prio = _pill_status(it["status"]), it["priority"]
+    if prio not in PRIORITIES:
+        raise SystemExit(f"architecture.status.json: unknown priority {prio!r} (use {', '.join(PRIORITIES)})")
+    owner = f'<span class="owner"> · {html.escape(it["owner"])}</span>' if it.get("owner") else ""
+    return (
+        f'<li><span class="prio {prio}">{prio}</span>'
+        f'<span class="pill {PILL_CLASS[status]}">{STATUS_WORD[status]}</span>'
+        f"<span>{_inline(it['text'])}{owner}</span></li>"
+    )
+
+
+def render_roadmap(phases: list[dict[str, Any]]) -> str:
+    """One card per time slot, in order: when, title, then its items with priority, status and owner."""
+    if not phases:
+        return '<div class="item"><p>No roadmap yet in docs/architecture.status.json.</p></div>'
+    cards = []
+    for ph in phases:
+        items = "".join(_roadmap_item(it) for it in ph["items"])
+        cards.append(
+            f'<div class="item phase"><span class="mono">{html.escape(ph["when"])}</span>'
+            f"<b>{html.escape(ph['title'])}</b><ul>{items}</ul></div>"
+        )
+    return "\n      ".join(cards)
+
+
 def render_links(links: list[dict[str, Any]]) -> str:
     return "\n      ".join(
         f'<div class="item"><b>{html.escape(link["name"])}</b>'
@@ -143,6 +172,7 @@ def render_page(data: dict[str, Any], plan: str, template: str) -> str:
     boxes = "\n      ".join(render_box(k, v) for k, v in data["boxes"].items())
     return Template(template).substitute(
         boxes=boxes,
+        roadmap=render_roadmap(data.get("roadmap", [])),
         waiting=render_items(data["waiting_on_you"]),
         built=render_items(data["being_built"]),
         notstarted=render_items(data["not_started"]),
