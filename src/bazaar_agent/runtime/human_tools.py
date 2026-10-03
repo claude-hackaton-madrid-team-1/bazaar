@@ -46,6 +46,7 @@ PRICE_MIN, PRICE_MAX = 1, 1000
 TTL_MIN, TTL_MAX = 1, 480
 VIA = r"^[a-z][a-z0-9-]{0,23}$"  # who relays the human's click (bazaar-live): part of `by`, never free text
 STATEMENT_TIMEOUT_MS = 3000
+REVOKE_CLOCK_BUDGET_S = 2.0  # a revoke needs the tick only for its audit row: it never waits longer for the game
 _WRITES = threading.Lock()  # held only around the store writes, never across a game read
 _REVOKES: dict[tuple[str, str], int] = {}  # (card, side) -> revokes in this process: an approve checks it last
 
@@ -327,15 +328,28 @@ def grant(b: Backend, store: ApprovalStore, args: ApproveArgs, secrets: Iterable
     }
 
 
+def _tick_within(b: Backend, budget_s: float) -> int | None:
+    """The game tick, or None when the public clock fails or does not answer within `budget_s` (its SDK retries a
+    429 for 15 s). The read goes on in a daemon thread; nobody waits for it."""
+    out: list[int] = []
+
+    def read() -> None:
+        with contextlib.suppress(Exception):
+            out.append(b.clock().tick)
+
+    reader = threading.Thread(target=read, name="revoke-clock", daemon=True)
+    reader.start()
+    reader.join(budget_s)
+    return out[0] if out else None
+
+
 def withdraw(b: Backend, store: ApprovalStore, args: RevokeArgs, secrets: Iterable[str] = ()) -> dict[str, Any]:
     """Remove the approval of a card on a side; with none, record a denial. Either way its request reads denied,
     and an approve of the same card and side still checking is refused."""
     by, reason, key = _by(args.via), safe_text(args.reason.strip(), secrets), (args.card, args.side)
-    try:
-        tick: int | None = b.clock().tick
-    except Exception as e:  # the veto never waits for the game: the approval goes, its row has no tick
-        b.log(f"bazaar-mcp: revoke without a tick (clock unreadable: {type(e).__name__})")
-        tick = None
+    tick = _tick_within(b, REVOKE_CLOCK_BUDGET_S)
+    if tick is None:  # the veto never waits for the game: the approval goes, its row has no tick
+        b.log(f"bazaar-mcp: revoke without a tick (no clock within {REVOKE_CLOCK_BUDGET_S:g} s)")
     with _WRITES:
         _REVOKES[key] = _REVOKES.get(key, 0) + 1
         was = store.revoke(args.card, args.side, tick, by, reason)

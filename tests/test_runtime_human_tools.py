@@ -275,6 +275,24 @@ def test_a_revoke_works_while_the_clock_is_unreadable(tmp_path):
     assert not failed and gone["status"] == "revoked" and gone["tick"] is None and store.approvals == {}
 
 
+def test_a_revoke_never_waits_long_for_a_hung_clock(tmp_path, monkeypatch):
+    hung = threading.Event()
+
+    class HungClock(Public):
+        def clock(self):
+            hung.wait(5)
+            return super().clock()
+
+    monkeypatch.setattr(ht, "REVOKE_CLOCK_BUDGET_S", 0.2)
+    store = Store()
+    b = human_backend(tmp_path)
+    run("approve", b, store, {"card": "LAV-09", "side": "buy", "price": 90})
+    b._public = HungClock()
+    gone, failed = run("revoke", b, store, {"card": "LAV-09", "side": "buy"})
+    hung.set()
+    assert not failed and gone["status"] == "revoked" and gone["tick"] is None and store.approvals == {}
+
+
 def test_a_bearer_holder_draining_the_shared_budget_never_keeps_the_human_from_a_revoke(tmp_path):
     now = Clock()
     store = Store()
