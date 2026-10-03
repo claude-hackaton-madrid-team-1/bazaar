@@ -356,3 +356,14 @@ def test_an_unreadable_settlement_is_skipped(seeded: psycopg.Connection) -> None
         )
     seeded.commit()
     assert [s.settlement for s in our_settlements(seeded, OURS, None)] == [500]
+
+
+def test_an_agent_scores_and_annotates_only_its_own_targets(seeded: psycopg.Connection) -> None:
+    from bazaar_agent.evals import store
+
+    duels_only = run_once(seeded, OURS, targets={"duel"})
+    assert duels_only.scored == {"duel": 20} and duels_only.notes == ()
+    taker = run_once(seeded, OURS, targets={"dealer", "trade"})
+    assert taker.scored == {"dealer": 6, "trade": 1}
+    assert {p.target for p in store.pending_annotations(seeded, {"dealer"})} == {"dealer"}
+    assert len(store.pending_annotations(seeded)) == 27

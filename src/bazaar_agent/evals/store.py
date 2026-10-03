@@ -7,14 +7,14 @@ learned, a duel's price arrived) is rewritten and queued to be annotated in Phoe
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import psycopg
 
 from bazaar_agent.decisions import scrubbed
-from bazaar_agent.evals.model import Outcome
+from bazaar_agent.evals.model import TARGETS, Outcome
 
 MAX_ANNOTATION_TRIES = 3  # a span lands in Phoenix when its trace ends; after this many misses, stop looking
 NO_SPAN = MAX_ANNOTATION_TRIES  # tries value for an outcome that has no trace to attach to (Market Test)
@@ -86,12 +86,13 @@ class Pending:
     tick: int | None
 
 
-def pending_annotations(conn: psycopg.Connection) -> list[Pending]:
+def pending_annotations(conn: psycopg.Connection, targets: Collection[str] = TARGETS) -> list[Pending]:
+    """Outcomes of `targets` still waiting for their Phoenix span (each agent annotates only its own)."""
     rows = conn.execute(
         "select target, subject, score, label, explanation, details, day, recorded_tick from outcomes "
-        "where target is not null and annotated_at is null and coalesce(annotation_tries, 0) < %s "
+        "where target = any(%s) and annotated_at is null and coalesce(annotation_tries, 0) < %s "
         "order by target, subject",
-        (MAX_ANNOTATION_TRIES,),
+        (list(targets), MAX_ANNOTATION_TRIES),
     ).fetchall()
     conn.commit()
     return [

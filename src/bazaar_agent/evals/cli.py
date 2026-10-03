@@ -44,7 +44,7 @@ def _connect() -> psycopg.Connection:
     return db.connect_ready("bazaar-evals")
 
 
-def _team(conn: psycopg.Connection) -> str | None:
+def team_id(conn: psycopg.Connection) -> str | None:
     """BAZAAR_TEAM_ID, else the cached id, else the newest /me snapshot in Postgres (never the API)."""
     from bazaar_agent.evals.inputs import team_from_snapshots
     from bazaar_agent.identity import resolve_team_id
@@ -94,7 +94,7 @@ def _pass(conn: psycopg.Connection, since_tick: int | None, phoenix: bool, as_js
 
     annotator = _annotator(phoenix)
     try:
-        summary = run_once(conn, _team(conn), since_tick=since_tick, annotator=annotator, warn=_warn)
+        summary = run_once(conn, team_id(conn), since_tick=since_tick, annotator=annotator, warn=_warn)
     finally:
         if annotator is not None:
             annotator.close()
