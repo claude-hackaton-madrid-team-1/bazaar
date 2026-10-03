@@ -13,6 +13,7 @@ from bazaar_agent.agents.duel_jev import (
     DuelJev,
     DuelJevConfig,
     duel_result,
+    forced_pick,
     kept_share,
     legal_moves,
     with_rival_days,
@@ -295,3 +296,62 @@ def test_the_duels_pack_matches_the_choices_the_code_maps():
     questions = load_questions(PACK)
     assert set(questions[MOVE_QUESTION]["criteria"]) == {"accept", "counter", "hold"}
     assert questions[DAYS_QUESTION]["type"] == "noul"
+
+
+# ---------------------------------------------------------------- forced accepts (r2 bite X17, B15)
+
+
+def forced(duel, tick):
+    return forced_pick(duel, tick, 132, anchor=0.6, floor=0.05, endgame_ticks=2)
+
+
+def test_an_inside_limit_offer_in_the_endgame_is_a_forced_accept():
+    duel = {**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}
+    assert forced(duel, 134) and forced(duel, 136)  # D-2 and the deadline tick
+    assert not forced(duel, 133)  # D-3: Jev may still hold or counter
+    assert not forced({**duel, "rival_offer": {"id": 702, "price": 104, "tick": 133, "days": 0}}, 136)  # at cost
+    assert not forced({**duel, "rival_offer": None}, 136)
+    assert not forced({**duel, "status": "done"}, 136)
+
+
+def test_an_accept_jev_may_overrule_is_not_forced():
+    meets_target = {**LIVE, "rival_offer": {"id": 702, "price": 170, "tick": 133, "days": 0}}  # deadline 144
+    assert duel_move(meets_target, 134, 132).kind == "accept" and forced(meets_target, 134) is None
+
+
+def test_a_forced_accept_is_always_the_move_pick_returns_whatever_jev_says():
+    """Booking before Jev is safe only if Jev can never turn the booked accept into something else."""
+    checked = 0
+    for verdict in ("accept", "counter", "hold", "undecided"):
+        for deadline in (134, 135, 136, 140):
+            for price in (100, 105, 110, 150, 170):
+                duel = {**LIVE, "deadline_tick": deadline, "rival_offer": {"id": 7, "price": price, "tick": 133}}
+                if (fp := forced(duel, 134)) is not None:
+                    checked += 1
+                    jev = FakeJev(verdict)
+                    assert pick(duel, jev) == fp and fp.move.kind == "accept" and jev.states == []  # not asked
+    assert checked == 4 * 3 * 4  # deadlines 134-136 (in the endgame) x the four prices inside our limit 104
+
+
+def test_on_the_real_practice_payloads_v1_ends_seven_duels_on_a_forced_accept():
+    """The B15 report's exposure split: v1 replayed on the 26 practice duels (the rival's recorded moves,
+    unilateral; start at the first message; endgame 2). Forced accepts were the ones X17 could cost."""
+    from collections import Counter
+
+    duels = json.loads((REPO_ROOT / "tests/fixtures/evals/duels_done.json").read_text())["duels"]
+    split: Counter[str] = Counter()
+    for d in duels:
+        rival = [m for m in d["messages"] if m["from"] == d["rival"] and m.get("price") is not None]
+        end = d["deadline_tick"]
+        start = min([m["tick"] for m in d["messages"]] or [end - 12])  # a silent duel: 12 ticks
+        outcome = "never accepts"
+        for t in range(start, end + 1):
+            seen = [m for m in rival if m["tick"] <= t]
+            offer = {"id": 1, "price": seen[-1]["price"], "tick": seen[-1]["tick"], "days": 0} if seen else None
+            live = {**d, "status": "live", "result": None, "price": None, "days": None, "rival_offer": offer}
+            if duel_move(live, t, start, endgame_ticks=2).kind == "accept":
+                forced_at = forced_pick(live, t, start, anchor=0.6, floor=0.05, endgame_ticks=2)
+                outcome = f"forced at D-{end - t}" if forced_at else "Jev may overrule"
+                break
+        split[outcome] += 1
+    assert split == {"forced at D-2": 7, "Jev may overrule": 11, "never accepts": 8}
