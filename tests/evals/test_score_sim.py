@@ -150,3 +150,10 @@ def test_the_live_check_puts_the_model_next_to_each_official_snapshot() -> None:
     assert rows[-1].unexplained == pytest.approx(0.08, abs=0.01)  # no duels or trades on Friday: model error only
     fresh_round = ss.live_check(DATA.deals, snaps[-1:], DATA.team, MODEL, round_start=160)
     assert fresh_round[0].model_ladder_points == 0.0 and fresh_round[0].model_ladder == 0.0
+
+
+def test_a_snapshot_without_a_score_is_skipped_and_a_capped_ladder_gains_nothing() -> None:
+    rows = ss.live_check(DATA.deals, [(158, None), (159, {"negotiating": 8.34})], DATA.team, MODEL)  # type: ignore[list-item]
+    assert [r.tick for r in rows] == [159]
+    capped = replace(MODEL, cap=1.2)
+    assert all(m.points == 0.0 for m in ss.ladder_marginals(1.5, 1.0, capped))

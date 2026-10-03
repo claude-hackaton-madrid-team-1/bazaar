@@ -295,7 +295,8 @@ def evals_score_check(
         team = inputs.team_from_snapshots(conn)
         events = inputs.dealer_events(conn)
         snaps = conn.execute(
-            "select tick, score from snapshots where score is not null order by tick desc limit %s", (last,)
+            "select tick, score from snapshots where jsonb_typeof(score) = 'object' order by tick desc limit %s",
+            (last,),
         ).fetchall()
     if team is None:
         _warn("no /me snapshot in Postgres yet: nothing to compare")

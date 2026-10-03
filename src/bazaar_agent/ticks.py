@@ -53,8 +53,12 @@ class Clock(BaseModel):
 
 
 def tick_offset_from_env(environ: Mapping[str, str] | None = None) -> float:
-    """`BAZAAR_TICK_OFFSET_S` in seconds (0 when unset); a value that is not a number ≥ 0 fails fast."""
-    raw = (os.environ if environ is None else environ).get(TICK_OFFSET_ENV, "").strip()
+    """`BAZAAR_TICK_OFFSET_S` in seconds (environment, then `.env`; 0 when unset). Not a number ≥ 0: fails fast."""
+    if environ is None:
+        from bazaar_agent.config import REPO_ROOT, read_env_file
+
+        environ = {**read_env_file(REPO_ROOT / ".env"), **os.environ}
+    raw = environ.get(TICK_OFFSET_ENV, "").strip()
     if not raw:
         return 0.0
     try:

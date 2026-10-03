@@ -133,3 +133,15 @@ def test_run_per_tick_sleeps_the_offset_on_top_of_the_tick(monkeypatch):
     assert len(today) == len(staggered) == 1
     assert staggered[0] - today[0] == pytest.approx(4.0, abs=0.05)  # minus the (tiny) work time
     assert run_per_tick(lambda: {"tick": 3, "next_tick_in": 5}, lambda c: None, max_ticks=1, start_offset_s=0.0) == 1
+
+
+def test_the_stagger_is_read_from_dot_env_too(monkeypatch, tmp_path):
+    from bazaar_agent import config
+    from bazaar_agent.ticks import TICK_OFFSET_ENV, tick_offset_from_env
+
+    (tmp_path / ".env").write_text(f"{TICK_OFFSET_ENV}=1.5\n")
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv(TICK_OFFSET_ENV, raising=False)
+    assert tick_offset_from_env() == 1.5
+    monkeypatch.setenv(TICK_OFFSET_ENV, "3")
+    assert tick_offset_from_env() == 3.0  # the environment wins, as for every setting

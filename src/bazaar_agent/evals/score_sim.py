@@ -312,7 +312,11 @@ def ladder_marginals(our_raw: float, top: float, model: ScoreModel) -> list[Marg
     ]
     base = component_points(our_raw, top, model.ladder_weight, model.cap)
     return [
-        Marginal(name, round(delta, 4), round(component_points(our_raw + delta, top, model.ladder_weight) - base, 2))
+        Marginal(
+            name,
+            round(delta, 4),
+            round(component_points(our_raw + delta, top, model.ladder_weight, model.cap) - base, 2),
+        )
         for name, delta in moves
     ]
 
@@ -419,6 +423,8 @@ def live_check(
     ranges = learned_ranges(deals)
     rows = []
     for tick, score in snapshots:
+        if not isinstance(score, Mapping):  # a /me without a score is stored as JSON null
+            continue
         raw = ladder_raw(deals, snapshot_tick(tick, model), model, ranges, teams=[team], since=round_start)
         rows.append(
             LiveRow(
