@@ -244,3 +244,50 @@ create or replace view eval_jev_calibration as
          count(*) filter (where jev_right) as n_right, count(*) filter (where not jev_right) as n_wrong,
          count(*) filter (where jev_right is null) as n_unknown
     from outcomes where jev_question is not null group by jev_question;
+
+-- Card catalog and our holdings (catalog_db.py, holdings.py). `cards` above is the catalog: every card
+-- of every set from the public /api/catalog, rewritten when a set is released and at most every few ticks
+-- (`minted` grows as packs open). The columns it lacked when it shipped empty:
+do $$
+declare
+  col record;
+begin
+  for col in
+    select c.name, c.type from (values
+      ('set_name', 'text'), ('page', 'boolean'), ('hidden', 'boolean'), ('flavour', 'text')) as c(name, type)
+    where not exists (
+      select 1 from information_schema.columns i
+       where i.table_schema = current_schema() and i.table_name = 'cards' and i.column_name = c.name)
+  loop
+    execute format('alter table cards add column %I %s', col.name, col.type);
+  end loop;
+end $$;
+create index if not exists cards_set on cards (set_code, rarity);
+
+-- Our /api/me as our processes read it: one row per team and game tick (the server's tick in /me). A
+-- row is a decision input only while it is provably current (holdings.py: same tick, same epoch, young,
+-- no thread message of ours this tick); otherwise the reader calls /api/me and upserts the newer view.
+-- `world` is "real" or "sim:<host:port>": a simulator's tick and team ids (sim-team1 is t01 too) never
+-- answer for the real game, even in a shared database. A cache: a pre-release copy without `world` is
+-- dropped and recreated (every reader then reads /me live once).
+do $$
+begin
+  if to_regclass(format('%I.me_snapshots', current_schema())) is not null and not exists (
+      select 1 from information_schema.columns
+       where table_schema = current_schema() and table_name = 'me_snapshots' and column_name = 'world') then
+    drop table me_snapshots;
+  end if;
+end $$;
+create table if not exists me_snapshots (
+  world text not null, team text not null, tick int not null, epoch bigint not null, digest text not null,
+  read_at timestamptz not null, read_by text not null,
+  cash int, level int, cards jsonb, duplicates jsonb, packs jsonb, pages jsonb, affinity jsonb,
+  score jsonb, me jsonb not null,
+  primary key (world, team, tick));
+-- The version every state-changing send of ours bumps, before and after it goes (`sdk.TrackedBazaar`):
+-- a snapshot read under an older epoch is stale. One scope per world (every team of that world): a send
+-- may only ever invalidate more, never less. `thread_message_at` is our last thread message: a dealer
+-- may still answer and accept it, so a snapshot of that tick is not trusted.
+create table if not exists holdings_state (
+  scope text primary key, epoch bigint not null default 0, written_at timestamptz,
+  thread_message_at timestamptz, last_write text, last_writer text);

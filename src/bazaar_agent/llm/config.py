@@ -5,9 +5,10 @@ A missing RUNTIME.md means defaults (the LLM layer is optional); a bad line or v
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -16,6 +17,10 @@ from bazaar_agent.guardrails import GuardrailsError, RuleLine, parse_md_config, 
 from bazaar_agent.llm.models import AUTO, UnknownModelError, resolve
 
 RUNTIME_FILE = REPO_ROOT / "RUNTIME.md"
+# The desk's roles (`runtime.agents`: the orchestrator and its four subagents); Jev picks a model for each.
+DeskRole = Literal["desk", "strategist", "buyer", "seller", "duelist"]
+DESK_ROLES: tuple[DeskRole, ...] = get_args(DeskRole)
+DESK_ROLE_DEFAULTS: Mapping[str, str] = {role: "sonnet-5-5" for role in DESK_ROLES}
 
 
 class RuntimeConfigError(ValueError):
@@ -37,7 +42,8 @@ class RuntimeConfig(BaseModel):
     words_max_chars: int = Field(default=300, ge=40, le=1200)
     ask_timeout_s: float = Field(default=30.0, gt=0, le=120)
     steer_timeout_s: float = Field(default=30.0, gt=0, le=120)
-    desk_model: str = "sonnet-5-5"
+    desk_model: str = AUTO
+    desk_role_defaults: Mapping[str, str] = Field(default_factory=lambda: dict(DESK_ROLE_DEFAULTS))
     desk_max_turns: int = Field(default=16, ge=2, le=60)
     desk_timeout_s: float = Field(default=180.0, gt=0, le=900)
     mcp_calls_per_minute: int = Field(default=30, ge=1, le=600)
@@ -53,6 +59,27 @@ class RuntimeConfig(BaseModel):
     @classmethod
     def _lower(cls, value: str) -> str:
         return value.strip().lower()
+
+    @field_validator("desk_role_defaults", mode="before")
+    @classmethod
+    def _pairs(cls, value: Any) -> Any:
+        """`desk:sonnet-5-5, buyer:opus-5-5, ...` → {role: model}; every desk role exactly once."""
+        if not isinstance(value, str):
+            return value
+        pairs = [part.split(":", 1) for part in value.split(",") if part.strip()]
+        if any(len(pair) != 2 for pair in pairs):
+            raise ValueError("expected role:model pairs separated by commas")
+        roles = [role.strip().lower() for role, _ in pairs]
+        if len(set(roles)) != len(roles):
+            raise ValueError("lists a role twice")
+        return {role: model.strip().lower() for role, (_, model) in zip(roles, pairs, strict=True)}
+
+    @field_validator("desk_role_defaults")
+    @classmethod
+    def _every_role(cls, value: Mapping[str, str]) -> Mapping[str, str]:
+        if set(value) != set(DESK_ROLES):
+            raise ValueError(f"needs exactly the roles {', '.join(DESK_ROLES)}")
+        return {role: value[role] for role in DESK_ROLES}
 
     @field_validator("runtime_models")
     @classmethod
@@ -83,14 +110,17 @@ def parse_runtime(text: str, path: Path = RUNTIME_FILE) -> LoadedRuntime:
 
 
 def _check_models(config: RuntimeConfig, path: Path) -> None:
-    names = [config.runtime_model_default, config.desk_model, *config.runtime_models]
+    names = [config.runtime_model_default, *config.runtime_models]
     if config.llm_runtime != AUTO:
         names.append(config.llm_runtime)
-    for name in names:
+    desk = [*config.desk_role_defaults.values(), *([config.desk_model] if config.desk_model != AUTO else [])]
+    for name in [*names, *desk]:
         try:
-            resolve(name)
+            ref = resolve(name)
         except UnknownModelError as e:
             raise RuntimeConfigError(f"{path.name}: {e}") from None
+        if name in desk and ref.provider != "anthropic":
+            raise RuntimeConfigError(f"{path.name}: the desk runs Claude models only (Claude Agent SDK), not {name!r}")
 
 
 def load_runtime(path: Path = RUNTIME_FILE) -> LoadedRuntime:

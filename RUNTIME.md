@@ -30,7 +30,8 @@ the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
 - `steer_timeout_s` = 30 — limit for `bazaar steer` to map an instruction to parameter deltas.
 
 ## The desk (agent runtime on the Claude Agent SDK, outside the tick loop)
-- `desk_model` = sonnet-5-5 — the model for `bazaar agent chat` and `bazaar ask` through the desk and its subagents; a pinned Claude model (`--llm-runtime`, BAZAAR_LLM_RUNTIME) wins.
+- `desk_model` = auto — `auto` lets Jev pick, before every desk request (`bazaar agent chat`, `bazaar ask`), the model of the orchestrator and of each subagent: one `model_for_desk_role` call for every role the cache does not hold (`model_choice_cache_ticks`), Claude candidates from `runtime_models` only. A Claude alias or id here pins all of them; `agent chat --model`, then a pinned Claude model (`--llm-runtime`, BAZAAR_LLM_RUNTIME, `llm_runtime`), win over this line.
+- `desk_role_defaults` = desk:sonnet-5-5, strategist:sonnet-5-5, buyer:sonnet-5-5, seller:sonnet-5-5, duelist:sonnet-5-5 — each role's model when Jev is undecided, slow (over GUARDRAILS.md `jev_timeout_s`) or keyless: Sonnet is what every role ran before Jev chose, measured inside `desk_timeout_s` on the subscription; Claude models only.
 - `desk_max_turns` = 16 — turns one desk request may take, subagent hand-offs and tool calls included.
 - `desk_timeout_s` = 180 — limit for one desk request; on a timeout, `bazaar ask` falls back to its intent parser.
 - `mcp_calls_per_minute` = 30 — tool calls per minute per bearer token on the remote MCP server (`bazaar mcp serve`), so no client can hammer the game API through us (5 req/s per team key).
