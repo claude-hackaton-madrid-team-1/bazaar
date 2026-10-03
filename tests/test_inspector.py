@@ -420,3 +420,45 @@ def test_honest_words_with_the_denial_in_another_sentence_never_flag(text):
     o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
     topic = {"buy": {"rarity": "rare", "set": "LAV"}} if "Rare" in text else {"buy": {"card": "LAV-06"}}
     assert inspect_offer(o, topic, text, CARDS, message_id=17).verdict == "block"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "La Tabacalera? Out of stock, sorry. Este, 12.",
+        "You asked for La Tabacalera. I don't have it. 12 P.",
+        "La Tabacalera is all gone. 12 P for this.",
+        "La Tabacalera se agotó. Toma este, 12.",
+        "In place of La Tabacalera, this one for 12.",
+        "Here is a common for you instead of La Tabacalera: 12 P.",
+        "Te doy una común, 12 P. La Tabacalera vuela.",
+    ],
+)
+def test_the_security_audits_round_3_honest_shapes_never_flag(text):
+    o = offer({"types": ["card:LAV-02"]}, {"cash": 12})
+    assert inspect_offer(o, {"buy": {"card": "LAV-06"}}, text, CARDS, message_id=18).verdict == "block"
+
+
+def test_a_flag_whose_row_cannot_be_written_first_is_never_sent(tmp_path):
+    """Security r3 P3: the row goes to disk BEFORE the POST; no row, no flag (a restart would forget it)."""
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("a file where the data dir should be")
+    book = FlagBook(opted_in=frozenset({"trile"}), path=blocked / "flags.jsonl")
+    sent, lines = [], []
+    flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=lambda m, r: sent.append(m), log=lines.append)
+    assert sent == [] and any("not sent: flags file not written" in line for line in lines)
+
+
+def test_a_rate_limited_flag_is_withdrawn_on_disk_and_a_restart_may_try_it_again(tmp_path):
+    from bazaar_agent.guardrails import Guardrails
+    from bazaar_agent.sdk import BazaarError
+
+    path = tmp_path / "flags.jsonl"
+    book = FlagBook(opted_in=frozenset({"trile"}), path=path)
+
+    def limited(mid, reason):
+        raise BazaarError("rate_limited", "slow", 429)
+
+    flag_step(THREAD, "trile", CARDS, book, guard=lambda _: None, send=limited, log=lambda _: None)
+    again = FlagBook.from_rules(Guardrails(flag_dealers="trile"), path)
+    assert 901 not in again.sent and again.landed == 0  # the pending row was withdrawn by the 429

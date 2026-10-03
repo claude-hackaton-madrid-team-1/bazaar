@@ -27,6 +27,15 @@ from typing import Any, Literal
 
 RARITY_RANK = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
 # Rarity words a dealer may use (English and Spanish), above common: a claim the structure must back.
+# The bound card's own rarity named in the words ("a common for you"): the swap is disclosed, not hidden.
+DISCLOSED_RARITY = {
+    "common": r"\b(?:common|com[uú]n|comunes)\b",
+    "uncommon": r"\b(?:uncommon|poco com[uú]n)\b",
+    "rare": r"\b(?:rare|rar[oa]s?)\b",
+    "epic": r"\b(?:epic|[ée]pic[oa]s?)\b",
+    "legendary": r"\b(?:legendary|legendari[oa]s?)\b",
+}
+MAX_TEXT_CHARS = 2_000  # the server keeps 1,200 characters; the sentence scan never runs on more
 RARITY_WORDS = {
     "legendary": 4,
     "legendaria": 4,
@@ -132,7 +141,8 @@ SENTENCE_END = re.compile(r"[.!?\n]")
 MESSAGE_DENIAL = re.compile(
     SENTENCE_NEGATION.pattern
     + r"|\b(?:nobody|no one|nadie|wish|ojal[aá]|sold|gone|went|lost|terminad[oa]s?|termin[oó]|acabad[oa]s?"
-    r"|acab[oó]|agotad[oa]s?|vend[ií]|vendid[oa]s?|perd[ií]|sorry|lo siento|unfortunately|lamentablemente)\b"
+    r"|acab[oó]|agotad[oa]s?|agot[oó]|vend[ií]|vendid[oa]s?|perd[ií]|sorry|lo siento|unfortunately"
+    r"|lamentablemente|out of stock|in place of|instead|en vez|en lugar|replacement|substitut\w*|sustitu\w*)\b"
 )
 
 
@@ -323,8 +333,12 @@ def _words_claim(
     """The words claim something better than the structure binds: the card we asked for, a dearer card,
     or a higher rarity. None when they do not, say nothing about the item, or deny anything anywhere
     (MESSAGE_DENIAL: precision over recall)."""
+    text = text[:MAX_TEXT_CHARS]
     if MESSAGE_DENIAL.search(text.lower()):
         return None
+    rarities = {cards.by_ref[b].rarity for b in bound if b in cards.by_ref}
+    if any(re.search(DISCLOSED_RARITY.get(r, r"(?!)"), text.lower()) for r in rarities):
+        return None  # "here is a common for you": it says what the structure binds
     named = cards.mentioned(text)
     if any(i.ref in bound for i in named):
         return None  # the words name what the structure binds: the substitution is disclosed, not a trick
@@ -386,6 +400,7 @@ class FlagBook:
         book = cls(
             int(rules.max_flags_sent), frozenset(rules.trusted_dealers), frozenset(rules.flag_dealer_ids), path=path
         )
+        last: dict[int, dict[str, Any]] = {}  # the newest row per message wins (pending → outcome)
         for line in _lines(path):
             try:
                 row = json.loads(line)
@@ -393,27 +408,42 @@ class FlagBook:
                 book.skipped += 1
                 continue
             if isinstance(row, dict) and isinstance(row.get("message_id"), int):
-                book.sent[row["message_id"]] = str(row.get("reason") or "")
-                book.landed += 1 if row.get("landed", True) is not False else 0
+                last[row["message_id"]] = row
             else:
                 book.skipped += 1
+        for mid, row in last.items():
+            if row.get("retry") is True:  # a 429: not processed, it may be tried again
+                continue
+            book.sent[mid] = str(row.get("reason") or "")
+            book.landed += 1 if row.get("landed", True) is not False else 0
         book.landed += book.skipped  # fail closed: an unreadable line may have been a flag that landed
         return book
+
+    def _write(self, row: dict[str, Any]) -> str | None:
+        if self.path is None:
+            return None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:  # the leading newline ends a torn line
+                handle.write("\n" + json.dumps(row) + "\n")
+        except OSError as e:
+            return f"flags file not written ({type(e).__name__})"
+        return None
+
+    def pending(self, message_id: int, reason: str) -> str | None:
+        """Written BEFORE the POST, counted as landed: a crash or a restart mid-send never lets a flag go
+        twice or past the cap. A write problem means the flag is NOT sent (returned as the reason)."""
+        return self._write({"message_id": message_id, "landed": True, "reason": reason[:FLAG_REASON_CHARS]})
+
+    def retry_later(self, message_id: int) -> None:
+        """A 429: the server did not process it; the pending row is withdrawn so a later read tries again."""
+        self._write({"message_id": message_id, "landed": False, "retry": True})
 
     def remember(self, message_id: int, reason: str, *, landed: bool = True) -> str | None:
         """A flag we tried: never again, in this process or the next. Returns a write problem, or None."""
         self.sent[message_id] = reason
         self.landed += 1 if landed else 0
-        if self.path is None:
-            return None
-        row = {"message_id": message_id, "landed": landed, "reason": reason[:FLAG_REASON_CHARS]}
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as handle:  # the leading newline ends a torn line
-                handle.write("\n" + json.dumps(row) + "\n")
-        except OSError as e:  # the in-memory book still holds it: this process never re-sends it
-            return f"flags file not written ({type(e).__name__})"
-        return None
+        return self._write({"message_id": message_id, "landed": landed, "reason": reason[:FLAG_REASON_CHARS]})
 
     def candidate(self, inspection: Inspection) -> bool:
         """A certain trickster message from an untrusted dealer that we have not tried yet (logged and
@@ -511,6 +541,10 @@ def flag_step(
             if record is not None:
                 record(inspection, why)
         return inspection
+    unwritten = book.pending(mid, reason)
+    if unwritten:  # no record of it on disk: a restart could send it again, so it is not sent at all
+        log(f"flag of message {mid} not sent: {unwritten}")
+        return inspection
     if record is not None:
         record(inspection, None)
     try:
@@ -518,6 +552,7 @@ def flag_step(
     except Exception as e:  # a refused flag never breaks the negotiation
         status = int(getattr(e, "status", 0) or 0)
         if status == 429:  # rate limited: the server did not process it, so it may be tried on a later read
+            book.retry_later(mid)
             log(f"flag of message {mid} rate limited; tried again on a later read")
             return inspection
         landed = status == 0 or status >= 500  # no answer or a server error: it may have landed

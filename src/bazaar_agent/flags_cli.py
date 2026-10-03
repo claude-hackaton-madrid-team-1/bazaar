@@ -28,7 +28,7 @@ from bazaar_agent.feed import DEFAULT_WINDOW, FeedStore, load_events
 from bazaar_agent.guardrails import GuardrailsError, load_guardrails
 from bazaar_agent.sdk import BazaarError, public_client
 
-WORDS_SHOWN = 240  # a would-flag's words, for the human who decides on flag_dealers: terminal only, never Jev's
+WORDS_SHOWN = 1_200  # a would-flag's words in full (the server's cap), for the human who decides on flag_dealers
 flags_app = typer.Typer(no_args_is_help=True, help="Bad-faith flags: the flag rule's precision over the feed")
 console = Console()
 err_console = Console(stderr=True)
@@ -75,7 +75,8 @@ def flags_precision(
     console.print(table)
     for i, source in zip(evidence.would_flag, evidence.sources, strict=True):
         console.print(f"would flag message {i.message_id} from {escape(i.dealer)}: {escape(i.reason)}")
-        words = printable(source.text or "(no words)")[:WORDS_SHOWN]
+        said = printable(source.text or "(no words)")
+        words = said[:WORDS_SHOWN] + ("…" if len(said) > WORDS_SHOWN else "")
         console.print(f"  thread {source.thread}, tick {source.tick}, its words: [dim]{escape(words)}[/dim]")
     skipped = evidence.offers - evidence.known_topic - evidence.unreadable
     console.print(f"offers without a known topic (skipped): {skipped}; unreadable: {evidence.unreadable}")

@@ -53,9 +53,11 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
 
 
 WORD = re.compile(r"\w+")
+SPACES = re.compile(r"\s+")
 
 
-CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC", "LISU"})  # Latin look-alikes
+CONFUSABLE_SCRIPTS = frozenset({"CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC", "LISU", "CANADIAN"})
+LOOKALIKE_BLOCKS = ((0x0250, 0x02AF), (0x1D00, 0x1D2B))  # IPA letters and Latin small capitals ("ɪ", "ɡ", "ᴀ")
 EMOJI_JOINERS = frozenset({"\u200d", "\ufe0f"})  # zero-width joiner and emoji variation selector: emoji, not tricks
 # Invisible "letters" and blanks that split a word: the combining grapheme joiner, the Hangul fillers, the
 # braille blank.
@@ -67,6 +69,8 @@ def odd_unicode(text: str) -> bool:
     with a look-alike script (a Cyrillic "а" inside "асcept"): the shapes that hide a word from a pattern
     or a reader. "nº", "µ" and "ʼ" are not tricks."""
     if any((unicodedata.category(ch) == "Cf" and ch not in EMOJI_JOINERS) or ch in HIDING_MARKS for ch in text):
+        return True
+    if any(low <= ord(ch) <= high for ch in text for low, high in LOOKALIKE_BLOCKS):
         return True
     for word in WORD.findall(text):
         scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
@@ -80,9 +84,10 @@ def folded(text: str) -> str:
     digits, accents split off), then without format characters and combining marks, so nothing invisible
     splits a word. The patterns accept unaccented Spanish ("actua", "envia")."""
     decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(
+    kept = "".join(
         ch for ch in decomposed if unicodedata.category(ch) not in ("Cf", "Mn", "Me") and ch not in HIDING_MARKS
     )
+    return SPACES.sub(" ", kept)  # "you   are\tnow" reads as "you are now"
 
 
 def injection_flags(text: str | None) -> tuple[str, ...]:
