@@ -15,16 +15,15 @@ page cards of its rarity.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from statistics import median
 from typing import Any
 
 from bazaar_agent import intel
 from bazaar_agent.pages import rastro_fee
-from bazaar_agent.strategy import Card, Market, copy_value, is_team
+from bazaar_agent.strategy import Card, Market, StrategyParams, bonus_at_stake, copy_value, is_team
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,7 @@ class TapeRarity:
 
     rarity: str
     listed: int  # single-card asks for cash posted by teams
-    sold: int  # single-card team-to-team settlements
+    sold: int  # of those listed cards, how many later changed hands between teams
     median_price: float | None
 
     @property
@@ -42,8 +41,12 @@ class TapeRarity:
 
 
 def tape_by_rarity(events: Iterable[intel.Event], rarity_of: Mapping[str, str]) -> dict[str, TapeRarity]:
-    """Friday's team market per rarity: asks listed, cards sold between teams, the median price paid."""
-    listed: dict[str, int] = defaultdict(int)
+    """The team market per rarity: distinct cards a team listed alone for cash (a relist or reprice of the
+    same asset counts once), how many of THOSE cards later changed hands team to team, and the median
+    price of every single-card team-to-team sale. A rarity traded through bids only (no listing) shows a
+    fill rate of 0: the tape cannot say how often a listing of it would sell."""
+    listed: dict[str, str] = {}  # asset id -> rarity
+    sold_assets: set[str] = set()
     prices: dict[str, list[int]] = defaultdict(list)
     for e in events:
         p = e.get("payload") or {}
@@ -51,16 +54,25 @@ def tape_by_rarity(events: Iterable[intel.Event], rarity_of: Mapping[str, str]) 
             offer = p.get("offer") or p
             give, want = offer.get("give") or {}, offer.get("want") or {}
             assets = [a for a in give.get("assets") or [] if isinstance(a, dict)]
-            if len(assets) == 1 and want.get("cash") and not give.get("cash"):
-                listed[rarity_of.get(str(assets[0].get("ref")), "?")] += 1
+            maker = str(offer.get("maker") or e.get("actor") or "")
+            if len(assets) == 1 and want.get("cash") and not give.get("cash") and is_team(maker):
+                key = str(assets[0].get("id") or f"{maker}:{assets[0].get('ref')}")
+                listed[key] = rarity_of.get(str(assets[0].get("ref")), "?")
         elif e.get("type") == "settlement" and not p.get("persona"):
             items = p.get("items") or []
-            if len(items) == 1 and p.get("price") and is_team(str(items[0].get("to"))):
-                prices[rarity_of.get(str(items[0].get("ref")), "?")].append(int(p["price"]))
-    rarities = set(listed) | set(prices)
+            if len(items) == 1 and p.get("price"):
+                it = items[0]
+                if is_team(str(it.get("to"))) and is_team(str(it.get("frm"))):
+                    prices[rarity_of.get(str(it.get("ref")), "?")].append(int(p["price"]))
+                    sold_assets.add(str(it.get("id")))
+    listed_n: dict[str, int] = defaultdict(int)
+    sold_n: dict[str, int] = defaultdict(int)
+    for asset, rarity in listed.items():
+        listed_n[rarity] += 1
+        sold_n[rarity] += asset in sold_assets
     return {
-        r: TapeRarity(r, listed.get(r, 0), len(prices.get(r, [])), float(median(prices[r])) if prices.get(r) else None)
-        for r in rarities
+        r: TapeRarity(r, listed_n.get(r, 0), sold_n.get(r, 0), float(median(prices[r])) if prices.get(r) else None)
+        for r in set(listed_n) | set(prices)
     }
 
 
@@ -74,7 +86,6 @@ class CardOutcome:
     keep_value: float  # our private value of this copy (scores nothing by itself)
     sale_net: float  # the tape price after El Rastro's fee
     fill: float  # chance a listing of it sells (the tape's fill rate, or 1 for a chaser in the what-if)
-    chasers: int  # teams whose top set is this card's set
 
     @property
     def scored(self) -> float:
@@ -99,15 +110,32 @@ class PackValue:
 
 
 def pack_cards(m: Market, slots: Sequence[Mapping[str, float]], sets: Sequence[str]) -> dict[str, float]:
-    """P(each card is in the pack): every slot draws a rarity by its odds, then a page card of that rarity
-    uniformly from `sets` (assumption). Probabilities add over slots (expected copies)."""
+    """P(each card is in the pack): every slot draws a rarity by its odds, then a card of that rarity
+    uniformly from `sets` (assumption), skipping printed-out cards; when every card of a rarity is printed
+    out, the slot gives the next rarity down (RULES.md). Probabilities add over slots (expected copies)."""
+    order = list(m.rarity_order)  # cheapest first
     out: dict[str, float] = defaultdict(float)
     for slot in slots:
         for rarity, odds in slot.items():
-            pool = [c for c in m.cards.values() if c.set_code in sets and c.page and c.rarity == rarity]
-            for c in pool:
-                out[c.ref] += float(odds) / len(pool)
+            r: str | None = rarity
+            while r is not None:
+                pool = [c for c in m.cards.values() if c.set_code in sets and c.rarity == r and c.minted < c.print_run]
+                if pool:
+                    for c in pool:
+                        out[c.ref] += float(odds) / len(pool)
+                    break
+                r = order[order.index(r) - 1] if r in order and order.index(r) > 0 else None
     return dict(out)
+
+
+def keep_value(m: Market, card: Card, params: StrategyParams) -> float:
+    """What the next copy is worth to us: its copy value, plus, for a page card we lack, its share of the
+    page bonus (selling our only copy gives that share up: `strategy.bonus_at_stake`)."""
+    held = m.held.get(card.ref, 0)
+    value = copy_value(m, card, held)
+    if card.page and held == 0:
+        value += bonus_at_stake(replace(m, held={**m.held, card.ref: 1}), card, params)
+    return value
 
 
 def pack_value(
@@ -115,6 +143,7 @@ def pack_value(
     pack: str,
     price: float,
     tape: Mapping[str, TapeRarity],
+    params: StrategyParams,
     *,
     sets: Sequence[str] | None = None,
     chasers: Mapping[str, Sequence[str]] | None = None,
@@ -122,7 +151,9 @@ def pack_value(
 ) -> PackValue:
     """A pack's expected value to us. `chaser_fill` is the what-if: a card whose set has a chaser sells
     with this probability (W4's model, a chaser who values it buys) instead of the tape's fill rate."""
-    slots = m.packs.get(pack) or ()
+    if pack not in m.packs:
+        raise ValueError(f"no pack {pack!r} in the catalog (packs: {', '.join(sorted(m.packs))})")
+    slots = m.packs[pack]
     sets = list(sets or m.released)
     chasers = chasers if chasers is not None else m.chasers
     outcomes = []
@@ -131,12 +162,10 @@ def pack_value(
         t = tape.get(card.rarity)
         gross = t.median_price if t and t.median_price else card.book
         net = gross - rastro_fee(gross)
-        n_chasers = len(chasers.get(card.set_code, ()))
         fill = t.fill_rate if t else 0.0
-        if chaser_fill is not None and n_chasers:
+        if chaser_fill is not None and chasers.get(card.set_code):
             fill = chaser_fill
-        keep = copy_value(m, card, m.held.get(ref, 0))
-        outcomes.append(CardOutcome(ref, card.rarity, p, keep, net, fill, n_chasers))
+        outcomes.append(CardOutcome(ref, card.rarity, p, keep_value(m, card, params), net, fill))
     return PackValue(
         pack,
         price,
@@ -167,6 +196,8 @@ class Use:
 
 
 # W5 (#78): a trade-surplus prima is worth weight 5 / the top-3 trade raw (100–300 P, assumed) round points.
+# The other rows are FRIDAY CONSTANTS from W7's table (#87 §4), not recomputed here: re-check them after the
+# best three are spent or the caps change (`bazaar plan pages`).
 TRADE_POINTS_PER_PRIMA = (5 / 300, 5 / 100)
 
 
@@ -174,10 +205,10 @@ def uses_of_cash(packs: Sequence[PackValue]) -> list[Use]:
     """W7's (#87) and W5's (#78) round-point estimates next to the packs', all per prima of cash."""
     low, high = TRADE_POINTS_PER_PRIMA
     out = [
-        Use("Abuela best three (W3, ~0.95 share)", 54, 2.4, 2.4, "W7 §4 / W5 ladder model"),
-        Use("three Chato uncommons (needs chato:uncommon=31)", 87, 1.8, 1.8, "W7 §4"),
-        Use("W4's seven trades (+80 P expected surplus)", 82, 80 * low, 80 * high, "W7 §4 (model fills)"),
-        Use("W4's seven trades at Friday's fill rates (+4.8 P)", 82, 4.8 * low, 4.8 * high, "W4 §3"),
+        Use("Abuela best three (W3, ~0.95 share)", 54, 2.4, 2.4, "Friday constant: W7 §4 / W5 ladder model"),
+        Use("three Chato uncommons (needs chato:uncommon=31)", 87, 1.8, 1.8, "Friday constant: W7 §4"),
+        Use("W4's seven trades (+80 P expected surplus)", 82, 80 * low, 80 * high, "Friday constant: W7 §4"),
+        Use("W4's seven trades at Friday's fill rates (+4.8 P)", 82, 4.8 * low, 4.8 * high, "Friday constant: W4 §3"),
         Use("a 4th+ Abuela deal (outside the best three)", 22, 0.0, 0.0, "RULES.md: best three per level"),
     ]
     for p in packs:
@@ -193,10 +224,6 @@ def uses_of_cash(packs: Sequence[PackValue]) -> list[Use]:
     return out
 
 
-def released_sets(m: Market, extra: Iterable[str] = ()) -> list[str]:
-    return sorted(set(m.released) | set(extra))
-
-
 def pack_fills(events: Iterable[intel.Event], pack: str) -> list[int]:
     """What teams paid a dealer for this pack, in the regime of its most common opening ask (Abuela opened
     at 17 in a minority of Friday threads and at 30 in most; W3)."""
@@ -204,14 +231,14 @@ def pack_fills(events: Iterable[intel.Event], pack: str) -> list[int]:
     if not threads:
         return []
     openings = [t.opening_ask for t in threads]
-    regime = max(set(openings), key=openings.count)
+    regime = max(set(openings), key=lambda o: (openings.count(o), o))  # a tie goes to the higher (list) opening
     return [t.fill_price for t in threads if t.opening_ask == regime and t.fill_price is not None]
 
 
-def expected_price(fills: Sequence[float], cap: int | None) -> tuple[float, str]:
-    """What a pack costs: the median of the limits the dealer closed at, or `cap` when lower (W3)."""
+def expected_price(fills: Sequence[float], cap: int | None) -> tuple[float | None, str]:
+    """What a pack costs: the median of what teams paid, or `cap` when lower (W3). None: no fill seen."""
     if not fills:
-        return float("nan"), "no fill seen"
+        return None, "no fill seen: pass --price"
     mid = float(median(fills))
     if cap is not None and cap < mid:
         return float(cap), f"capped at {cap} (median limit {mid:g}: most threads would not fill)"
@@ -221,7 +248,7 @@ def expected_price(fills: Sequence[float], cap: int | None) -> tuple[float, str]
 def summary_row(p: PackValue) -> dict[str, Any]:
     return {
         "pack": p.pack,
-        "price": round(p.price, 1) if not math.isnan(p.price) else None,
+        "price": round(p.price, 1),
         "expected_book": round(p.expected_book, 1),
         "keep_value": round(p.keep_value, 1),
         "scored_surplus": round(p.scored_surplus, 2),

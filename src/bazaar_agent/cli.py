@@ -1203,20 +1203,34 @@ def plan_packs(
     personas = read(dealers_file, "dealers")
     dealers = personas if isinstance(personas, list) else personas.get("personas") or personas.get("dealers") or []
     events = _jsonl_file(feed_file) if feed_file else _events(live)
+
+    def parsed(path: str, what: str, parse: Callable[[Any], Any]) -> Any:
+        try:
+            return parse(_json_file(path))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+            _fail(f"{path} is not {what}: {type(e).__name__} {e}")
+
     chasers = None
     if affinity_file:
-        chasers, _ = pg.from_affinity_map(_json_file(affinity_file))
+        chasers = parsed(affinity_file, "a W4 affinity map", lambda d: pg.from_affinity_map(d)[0])
     if chasers_file:
-        chasers = pg.chasers_from(_json_file(chasers_file))
+        chasers = parsed(chasers_file, "{set: [team, ...]}", pg.chasers_from)
     m = pg.market_for(me, catalog, events, dealers, chasers)
+    params = _strategy().params
     tape = pk.tape_by_rarity(events, {c.ref: c.rarity for c in m.cards.values()})
     pool = [s.strip() for s in sets.split(",") if s.strip()] or list(m.released)
+    basis = "given"
     if price is None:
         price, basis = pk.expected_price(pk.pack_fills(events, pack), _rules().rules.max_price_pack)
-    else:
-        basis = "given"
-    value = pk.pack_value(m, pack, price, tape, sets=pool)
-    what_if = pk.pack_value(m, pack, price, tape, sets=pool, chaser_fill=1.0)
+    if price is None:
+        _fail(f"{pack}: {basis}")
+        return
+    try:
+        value = pk.pack_value(m, pack, price, tape, params, sets=pool)
+    except ValueError as e:
+        _fail(str(e))
+        return
+    what_if = pk.pack_value(m, pack, price, tape, params, sets=pool, chaser_fill=1.0)
     uses = pk.uses_of_cash([value])
     if as_json:
         out = {

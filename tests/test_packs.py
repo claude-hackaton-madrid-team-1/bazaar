@@ -5,7 +5,7 @@ import pytest
 from bazaar_agent import packs as pk
 from bazaar_agent.packs import TapeRarity
 from tests.test_intel import settle
-from tests.test_strategy import market
+from tests.test_strategy import PARAMS, market
 
 TAPE = {
     "common": TapeRarity("common", listed=100, sold=5, median_price=9.0),
@@ -13,17 +13,19 @@ TAPE = {
 }
 
 
-def listed(eid, team, ref, price):
-    offer = {"id": eid, "give": {"assets": [{"ref": ref}]}, "want": {"cash": price}}
+def listed(eid, team, ref, price, asset=900):
+    offer = {"id": eid, "maker": team, "give": {"assets": [{"id": asset, "ref": ref}]}, "want": {"cash": price}}
     return {"id": eid, "tick": 7, "type": "offer.listed", "actor": team, "payload": {"offer": offer}}
 
 
 def test_the_team_tape_counts_single_card_asks_and_team_to_team_sales():
     events = [
-        listed(1, "t05", "LAV-01", 12),
-        listed(2, "t06", "LAV-02", 11),
-        settle(3, 9, "t05", "t07", "LAV-01", 9, tick=8, kind="card", persona=None),
-        settle(4, 10, "abuela", "t07", "LAV-02", 10, tick=8, kind="card"),  # a dealer sale: not the team tape
+        listed(1, "t05", "LAV-01", 12, asset=900),
+        listed(2, "t05", "LAV-01", 10, asset=900),  # a reprice of the same card: listed once
+        listed(3, "t06", "LAV-02", 11, asset=901),
+        settle(4, 9, "t05", "t07", "LAV-01", 9, tick=8, kind="card", persona=None, asset_id=900),
+        settle(5, 10, "abuela", "t07", "LAV-02", 10, tick=8, kind="card"),  # a dealer sale: not the team tape
+        settle(6, 11, "v99", "t07", "LAV-02", 3, tick=8, kind="card", persona=None),  # not a team seller
     ]
     tape = pk.tape_by_rarity(events, {"LAV-01": "common", "LAV-02": "common"})
     assert tape["common"] == TapeRarity("common", 2, 1, 9.0) and tape["common"].fill_rate == 0.5
@@ -39,31 +41,32 @@ def test_pack_cards_follow_the_slot_odds_uniformly_over_the_sets():
 
 def test_resale_scores_only_the_surplus_over_our_value_at_the_fill_rate():
     m = market()
-    v = pk.pack_value(m, "sobre_barrio", 22, TAPE, sets=["LAT"])  # LAT: worth little to us (x0.5)
+    v = pk.pack_value(m, "sobre_barrio", 22, TAPE, PARAMS, sets=["LAT"])  # LAT: worth little to us (x0.5)
     o = next(o for o in v.cards if o.ref == "LAT-03")  # we hold two copies: the third is worth 0.1 x 5
     assert o.keep_value == pytest.approx(0.5) and o.sale_net == 9 - 2 and o.fill == 0.05
     assert o.scored == pytest.approx(0.05 * (7 - 0.5))
     assert v.scored_surplus < v.price / 10  # a pack never pays for itself in scored surplus at these fills
-    chased = pk.pack_value(m, "sobre_barrio", 22, TAPE, sets=["LAT"], chasers={"LAT": ["t15"]}, chaser_fill=1.0)
+    chased = pk.pack_value(m, "sobre_barrio", 22, TAPE, PARAMS, sets=["LAT"], chasers={"LAT": ["t15"]}, chaser_fill=1.0)
     assert chased.scored_surplus > v.scored_surplus * 10  # the what-if: every chased card sells
 
 
 def test_a_card_worth_more_to_us_than_its_sale_is_kept_not_sold():
     m = replace(market(), affinity={"LAV": 1.6})
-    v = pk.pack_value(m, "sobre_barrio", 22, TAPE, sets=["LAV"])
-    first_copy = next(o for o in v.cards if o.ref == "LAV-02")  # not held: worth 16 to us, sells for 7 net
-    assert first_copy.keep_value == 16 and first_copy.scored == 0.0
+    v = pk.pack_value(m, "sobre_barrio", 22, TAPE, PARAMS, sets=["LAV"])
+    first_copy = next(o for o in v.cards if o.ref == "LAV-02")  # not held: 16 to us + its page bonus share
+    assert first_copy.keep_value > 16 and first_copy.scored == 0.0
 
 
-def test_the_price_is_the_regime_median_or_the_cap():
+def test_the_price_is_the_regime_median_or_the_cap_and_none_without_fills():
     assert pk.expected_price([21, 22, 23], cap=26) == (22.0, "median limit 22")
+    assert pk.expected_price([], cap=20) == (None, "no fill seen: pass --price")
     price, basis = pk.expected_price([21, 22, 23], cap=20)
     assert price == 20 and "capped at 20" in basis
 
 
 def test_cash_uses_put_the_ladder_best_three_far_ahead_of_packs():
     m = market()
-    pack = pk.pack_value(m, "sobre_barrio", 22, TAPE, sets=["LAV", "LAT"])
+    pack = pk.pack_value(m, "sobre_barrio", 22, TAPE, PARAMS, sets=["LAV", "LAT"])
     uses = {u.name.split(" (")[0]: u.per_prima for u in pk.uses_of_cash([pack])}
     ladder_low = uses["Abuela best three"][0]
     pack_high = next(v for k, v in uses.items() if k.startswith("one sobre_barrio"))[1]
@@ -86,3 +89,17 @@ def test_pack_fills_come_from_the_dealers_usual_opening_only():
         events += [opened(100 + i, t, f"t0{i + 2}", topic, tick=i), ask(200 + i, t, opening, i)]
         events.append(settle(300 + i, 400 + i, "abuela", f"t0{i + 2}", "sobre_barrio", fill, tick=i + 1))
     assert sorted(pk.pack_fills(events, "sobre_barrio")) == [21, 22]  # the 17 opening is a minority regime
+
+
+def test_an_unknown_pack_is_an_error_not_a_zero():
+    with pytest.raises(ValueError, match="no pack 'sobre_barrios'"):
+        pk.pack_value(market(), "sobre_barrios", 22, TAPE, PARAMS)
+
+
+def test_a_printed_out_rarity_gives_the_next_one_down_and_epics_are_drawn():
+    m = market()
+    printed = {r: replace(c, minted=c.print_run) if c.rarity == "uncommon" else c for r, c in m.cards.items()}
+    probs = pk.pack_cards(replace(m, cards=printed), m.packs["sobre_barrio"], ["LAV"])
+    assert all(m.cards[r].rarity == "common" for r in probs) and pytest.approx(sum(probs.values())) == 3.0
+    epic = pk.pack_cards(m, [{"epic": 1.0}], ["LAV"])
+    assert set(epic) == {"LAV-11"}  # a non-page card: drawn, not dropped
