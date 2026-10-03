@@ -12,13 +12,14 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
+import psycopg
 import pytest
 from typer.testing import CliRunner
 
 from bazaar_agent import sdk  # isort: skip  (puts vendor/bazaar-kit on sys.path)
 import bazaar_sdk  # noqa: E402,I001
 from bazaar_agent.guardrails import Ledger
-from bazaar_agent.ledger_pg import PgLedger
+from bazaar_agent.ledger_pg import FallbackLedger, LedgerUnavailable, PgLedger
 from bazaar_agent.sdk import BazaarError, TeamBazaar
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, clock
 from tests.bites.kit import make_taker
@@ -48,13 +49,57 @@ def test_releasing_what_was_not_reserved_changes_nothing(tmp_path):
     assert ledger.spent_since(0) == 0  # a release is no spend
 
 
+class Recording:
+    """A psycopg connection stand-in: records each statement; `fail` makes the next delete raise."""
+
+    def __init__(self, fail=None):
+        self.autocommit, self.closed, self.broken, self.fail, self.sql = False, False, False, fail, []
+
+    def execute(self, sql, args=()):
+        if sql.startswith("delete") and self.fail is not None:
+            error, self.fail = self.fail, None
+            raise error
+        self.sql.append((sql, args))
+        return self
+
+    def close(self):
+        self.closed = True
+
+
+def refused():
+    raise psycopg.OperationalError("connection refused")
+
+
+def test_a_postgres_release_runs_on_the_reconnecting_connection():
+    opened = [Recording(psycopg.OperationalError("server closed the connection")), Recording()]
+    ledger = PgLedger(lambda: opened.pop(0), "taker")
+    with pytest.raises(LedgerUnavailable, match="accept release"):  # the drop fails closed: the slot stays taken
+        ledger.release_accept(100, "LAV-02")
+    assert ledger.down
+    conn = opened[0]
+    ledger.release_accept(100, "LAV-02")  # the next call reconnects
+    assert not ledger.down and [args for sql, args in conn.sql if sql.startswith("delete")] == [(100, "LAV-02")]
+
+
+def test_a_postgres_release_while_postgres_is_down_fails_closed():
+    with pytest.raises(LedgerUnavailable, match="accept release"):
+        PgLedger(refused, "taker").release_accept(100, "LAV-02")
+
+
+def test_a_dry_run_release_while_postgres_is_down_frees_the_file_slot(tmp_path):
+    ledger = FallbackLedger(PgLedger(refused, "taker"), Ledger(tmp_path / "ledger.jsonl"))
+    assert ledger.reserve_accept(100, 1.5, 10, "LAV-02", 1)
+    ledger.release_accept(100, "LAV-02")
+    assert ledger.accepts_in_tick(100) == 0 and ledger.reserve_accept(100, 1.5, 12, "LAV-08", 1)
+
+
 @pytest.mark.integration
 def test_a_released_accept_frees_its_slot_in_postgres(database_url, schema):  # noqa: F811
     from bazaar_agent import db
 
     conn = open_in(database_url, schema)
     db.init_schema(conn)
-    ledger = PgLedger(conn, "taker")
+    ledger = PgLedger(lambda: conn, "taker")
     assert ledger.reserve_accept(100, 1.5, 10, "LAV-02", 1)
     ledger.release_accept(100, "LAV-02")
     assert ledger.accepts_in_tick(100) == 0

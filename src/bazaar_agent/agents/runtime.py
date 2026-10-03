@@ -25,6 +25,7 @@ from bazaar_agent.holdings import Holdings, MeRead
 from bazaar_agent.ticks import Clock, action_budget_s
 
 DB_RETRY_EVERY = 5  # ticks between Postgres retries once the feed table was unreachable
+ARCHIVE_TIMEOUT_MS = 2000  # the taker's feed archive never holds a tick longer than this
 # Refusals after which a write may have reached the game anyway: the connection failed after the request
 # went out (`network`), or the server answered 2xx with a body that is not JSON (`bad_response`).
 MAYBE_LANDED = ("network", "bad_response")
@@ -101,7 +102,11 @@ def _row_event(row: tuple[Any, ...]) -> Event:
 
 class MarketFeed:
     """Feed events for the strategy: the shared `feed_events` table (the monitor writes it) when Postgres
-    answers, else this machine's captured JSONL; the public live window is merged in every tick."""
+    answers, else this machine's captured JSONL; the public live window is merged in every tick.
+
+    `archive=True` (the taker on Railway) also writes the window it just read into `feed_events`, so the
+    shared archive keeps growing while the laptop monitor sleeps: the window holds ~20 ticks, and an event
+    that leaves it unarchived is gone for good. Same dedupe-safe insert as the monitor; no extra game call."""
 
     def __init__(
         self,
@@ -109,8 +114,11 @@ class MarketFeed:
         store: FeedStore | None = None,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        archive: bool = False,
     ) -> None:
         self._read_window, self._store, self._connect, self._log = read_window, store, connect, log
+        self._archive, self._archive_failed = archive, False
+        self._unarchived: list[Event] = []  # the last window read, written by `archive_pending()` after the sends
         self._conn: psycopg.Connection | None = None
         self._events: dict[int, Event] = {}
         self._newest_db = 0
@@ -146,18 +154,75 @@ class MarketFeed:
         return True
 
     def events(self) -> list[Event]:
-        if not self._from_db() and self._store is not None and not self._loaded_store:
+        from_db = self._from_db()
+        if not from_db and self._store is not None and not self._loaded_store:
             for event in self._store.events():
                 self._events.setdefault(event["id"], event)
             self._loaded_store = True
+        window: list[Event] = []
         try:
-            for event in self._read_window(DEFAULT_WINDOW):
+            window = self._read_window(DEFAULT_WINDOW)
+            for event in window:
                 self._events[event["id"]] = event
             self.window_ok = True
         except Exception as e:
             self.window_ok = False
             self._log(f"feed: live window unavailable ({type(e).__name__}); ranking from what we hold")
+        if self._archive and from_db:
+            self._unarchived = [e for e in window if isinstance(e.get("id"), int) and e["id"] > self._newest_db]
         return [self._events[i] for i in sorted(self._events)]
+
+    def archive_pending(self) -> None:
+        """Write the last window's events Postgres does not hold yet: called after the tick's sends, so the
+        archive never delays one (bounded by a statement timeout; a failure only logs)."""
+        from bazaar_agent.db import insert_events
+
+        fresh, self._unarchived = self._unarchived, []
+        if not fresh or self._conn is None or self._conn.closed:
+            return
+        try:
+            with self._conn.transaction():
+                self._conn.execute(f"set local statement_timeout = {ARCHIVE_TIMEOUT_MS}")
+                with self._conn.cursor() as cur:
+                    stored = insert_events(cur, fresh)["feed_events"]
+        except Exception as e:
+            if not self._archive_failed:
+                self._log(f"feed: archiving the window failed ({type(e).__name__}); trading goes on")
+            self._archive_failed = True
+            return
+        if stored < len(fresh):  # an event Postgres would refuse (malformed, out of range): skipped, not the batch
+            self._log(f"feed: archived {stored} of {len(fresh)} new events; {len(fresh) - stored} unstorable skipped")
+        if self._archive_failed:
+            self._log("feed: archiving the window again")
+        self._archive_failed = False
+
+
+def album_pages(me: Mapping[str, Any]) -> frozenset[str]:
+    """The set codes of the pages in `/api/me`: a set released mid-game shows up here first."""
+    return frozenset(str(p.get("set")) for p in (me.get("album") or {}).get("pages") or [] if isinstance(p, dict))
+
+
+class PageWatch:
+    """The album pages one agent has seen since it started. The playbook is rebuilt from `/api/me` every
+    tick, so a page released mid-game (El Retiro Saturday, Chamberí Sunday) is ranked the first tick it
+    shows up, without a restart; this only says so once, in the log."""
+
+    def __init__(self) -> None:
+        self.seen: frozenset[str] | None = None
+
+    def new(self, me: Mapping[str, Any]) -> tuple[str, ...]:
+        """Pages in this `/api/me` that the agent had not seen: none on its first tick."""
+        pages = album_pages(me)
+        fresh = () if self.seen is None else tuple(sorted(pages - self.seen))
+        self.seen = pages if self.seen is None else self.seen | pages
+        return fresh
+
+
+def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str, Any]) -> str:
+    return (
+        f"tick {tick} {agent}: new page(s) {', '.join(fresh)} in /api/me: ranked on "
+        f"{len(album_pages(me))} pages from this tick, no restart"
+    )
 
 
 @dataclass(frozen=True)
@@ -222,6 +287,15 @@ def accept_limit(clock: Clock, rules: Guardrails) -> int:
     return min(clock.limits.accepts_per_team_per_tick, rules.max_accepts_per_tick)
 
 
+@dataclass(frozen=True)
+class Refused:
+    """What a refusal said (`BazaarError` minus its traceback): the learner reads `until_tick` from `extra`."""
+
+    code: str
+    message: str
+    extra: dict[str, Any]
+
+
 class Recorder:
     """Every proposed move: one console line, one `decisions` row, one trace event on the tick span.
     Every live send: one `executions` row with the answer or the refusal code."""
@@ -231,6 +305,7 @@ class Recorder:
     ) -> None:
         self.agent, self.decisions, self.live, self.log = agent, decisions, live, log
         self.hub = hub  # agents.status.StatusHub when the status server runs
+        self.last_error: Refused | None = None  # the last refused send: code, message, extra (no traceback)
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
         self.last_code: str | None = None  # the last send's refusal code (None: it went through)
         self.last_status: int | None = None  # the last refusal's HTTP status (0: no response)
@@ -301,6 +376,12 @@ class Recorder:
             )
         return decision_id
 
+    def executed(
+        self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
+    ) -> None:
+        """One request sent outside `send` (its call had to run elsewhere): recorded and published the same way."""
+        self._executed(decision_id, tick, method, request, response, code)
+
     def _executed(
         self, decision_id: int, tick: int, method: str, request: dict[str, Any], response: Any, code: str | None
     ) -> None:
@@ -332,11 +413,14 @@ class Recorder:
         spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
+        self.last_error = None
         self.maybe_landed, self.last_code, self.last_status = False, None, None
         try:
             response = call()
         except BazaarError as e:
             self.maybe_landed, self.last_code, self.last_status = e.code in MAYBE_LANDED, e.code, e.status
+            # Only the plain fields: the exception's traceback holds the SDK frame with our key header.
+            self.last_error = Refused(str(e.code), str(e.message), dict(e.extra) if isinstance(e.extra, dict) else {})
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})
