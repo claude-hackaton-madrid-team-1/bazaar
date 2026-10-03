@@ -103,7 +103,10 @@ def test_a_session_cut_by_the_closing_ends_next_morning(friday):
     anchor = tl.Anchor("live", 10.0, at("3T22:55:00"))
     row = tl.timeline([tl.Event(10.0, "bench", params={"ticks": 16})], days, [anchor])[0]
     slot = row.slots["live"]
-    assert slot.start == at("3T22:55:00") and slot.end == at("4T09:03:00")
+    # 10 ticks of 30 s before 23:00, the other 6 at Sunday's 15 s
+    assert slot.start == at("3T22:55:00") and slot.end == at("4T09:01:30")
+    lines = tl.render([row], [anchor])
+    assert "Sat 22:55-Sun 09:01" in lines[1]
 
 
 def test_wall_at_and_game_hour_at_are_inverse(friday):
@@ -124,7 +127,8 @@ def test_an_open_clock_anchors_now(friday):
     practice = tl.timeline(events, days, found)[0].slots["live"]
     assert practice.start is not None and practice.end is not None
     assert abs((practice.start - at("2T22:21:00")).total_seconds()) < 1  # it fired at 22:20-22:21
-    assert practice.end.strftime("%a %H:%M") == "Sat 09:32"  # 72 ticks cut by the 23:00 closing
+    # 72 ticks: ~39 of 60 s on Friday, the other ~33 at Saturday's 30 s
+    assert practice.end.strftime("%a %H:%M") == "Sat 09:16"
 
 
 def test_frozen_picks_the_next_opening(friday):
@@ -177,3 +181,9 @@ def test_the_committed_schedule_is_the_generated_one():
     saturday = [e for e in committed["events"] if e["at_hours"] < 18]
     assert len(saturday) == 17
     assert all("play" in e for e in saturday)
+
+
+def test_cli_reads_an_offset_free_time_as_madrid():
+    out = CliRunner().invoke(app, ["timeline", "--frozen-at", "2.65", "--at", "2026-10-03T08:55"])
+    assert out.exit_code == 0, out.output
+    assert "resume: h2.65 = Sat 09:00" in out.output

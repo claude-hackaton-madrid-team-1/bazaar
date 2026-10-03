@@ -78,7 +78,7 @@ free a slot sooner.
 
 | t | resume | jump | Trigger | Do (who) | Check | Points |
 |---|---|---|---|---|---|---|
-| 2.65 | **09:00** | – | `day.opened` | **Resume: Friday's round is still running.** Do the ladder's best three now (taker desk, or `uv run bazaar dealer buy <ref> --start <s> --max <m> --live`; W3/W7 picks SAL-02 C, SAL-07 U, MAL-06 U, ~54 P). Headroom is only 83 P until the grant. Practice duels resume (our 6 live, 8 not started; not scored) and take the duel loop's first claim on the accept slot until ~09:33. | `/me` `score.ladder_points` rises | Friday round +2.44 (+0.49 final), and also Saturday's if the ladder carries over |
+| 2.65 | **09:00** | – | `day.opened` | **Resume: Friday's round is still running.** Do the ladder's best three now (taker desk, or `uv run bazaar dealer buy <ref> --start <s> --max <m> --live`; W3/W7 picks SAL-02 C, SAL-07 U, MAL-06 U, ~54 P). Headroom is only 83 P until the grant. Practice duels resume (our 6 live, 8 not started; not scored) and take the duel loop's first claim on the accept slot until ~09:17 (33 ticks of 30 s). | `/me` `score.ladder_points` rises | Friday round +2.44 (+0.49 final), and also Saturday's if the ladder carries over |
 | 3.0 | **09:21** | overdue | `schedule.fired` bench | **First Market Test ever** (Friday never reached h 3). The free stalls arrive at +3 h. Nothing to run unless a board venue is open. | **G3** at ~09:30: `uv run bazaar status` → `score.bench_points`, `bench_venue`, `bench_efficiency` | 0.94 at stall level |
 | 4.0 | **10:21** | **09:00** | `schedule.fired` round | **Round 2 (Saturday) starts.** El Retiro is released (RET in dealer menus, packs and boards; price RET cards from live `your_value`). | **G2** on the first board refresh (≤ 5 ticks): `uv run bazaar evals score-check` (#78), or `score.ladder_points` = 0 means the ladder restarts per round | see G2 |
 | 4.05 | **10:24** | **09:03** | `gift.given` / grant | +150 P and a pack. Cash 353 → 503, headroom 83 → 233. Open the packs (luck never scores). Then `uv run bazaar plan pages` (#87) and `uv run bazaar trade-plan --live` (#79, read-only). **The live maker cancels any board offer it did not post, within one tick (r2 X19)**, so W4's bids posted by hand die. Either send only W4's thread swaps (thread offers are untouched), or switch the maker to dry run while hand offers stand: `railway variable delete BAZAAR_LIVE --service bazaar-maker`, then set it back with `printf 1 \| railway variable set BAZAAR_LIVE --stdin --service bazaar-maker`. On main, PAUSE does not stop the maker's cancels (#68 fixes that). Venue now if G3 said so (§ 5). | `uv run bazaar status` cash | W4 +1.3 to +4.0 |
@@ -114,7 +114,15 @@ numbers in force; the feed announces every change.
 - **Under jump:** 503 − 370 = 133 P from 09:03 until 11:30.
 - **Either way:** W4's 82 P plus the ladder's 54 P (136 P) is 3 P over that budget.
 
-**Order under resume (today's GUARDRAILS):** ladder → G3 → grant → venue → trades. Opening the venue at 09:00 would leave 33 P above a
+**Order under resume (today's GUARDRAILS):** ladder → G3 → grant → venue → trades.
+
+W7 (03:27) proposes the reverse for the 83 P: W4's trades first, the ladder after the grant. B6 keeps the ladder first:
+- **Trades are a flow.** A trade settled before 10:21 counts in Friday's round, which weighs half. The same trade
+  after 10:21 counts in Saturday's round at full weight.
+- **The best three are a level.** If the ladder carries over (G2), deals done before 10:21 count in Friday's round
+  and in Saturday's. If it restarts, they still lift Friday's round by +2.44 round points, and Saturday's best three
+  are redone after the grant.
+- **The maker cancels hand-posted board bids** (r2 X19), so W4's morning board posts need the maker in dry run anyway. Opening the venue at 09:00 would leave 33 P above a
 50 P floor, and the ladder's best three would wait until 10:24. That is when they stop counting for Friday's round.
 
 ## 6. Gates (each one is a question with a check)

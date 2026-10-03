@@ -140,7 +140,10 @@ def timeline_cmd(
 
     from bazaar_agent import timeline as tl
 
-    now = datetime.fromisoformat(at) if at else datetime.now(ZoneInfo("Europe/Madrid"))
+    madrid = ZoneInfo("Europe/Madrid")
+    now = datetime.fromisoformat(at) if at else datetime.now(madrid)
+    if now.tzinfo is None:  # a wall time without an offset is Madrid time, like the calendar
+        now = now.replace(tzinfo=madrid)
     clock_doc: Any
     sched_doc: Any
     if from_api:

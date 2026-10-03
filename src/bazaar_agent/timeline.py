@@ -202,11 +202,22 @@ def slot(event: Event, anchor: Anchor, days: Sequence[Day], ticks: int) -> Slot:
     if start is None:
         return Slot("never")
     day = day_at(start, days)
-    tick_s = day.tick_seconds if day else 60.0
-    end = start + timedelta(seconds=ticks * tick_s)
-    if day is not None and end > day.closes:  # the clock stops overnight: the session ends next morning
-        end = wall_at(event.at_hours + ticks * tick_s / 3600.0, anchor, days) or end
-    return Slot("scheduled", start, end, day.name if day else None)
+    return Slot("scheduled", start, end_after(start, ticks, days), day.name if day else None)
+
+
+def end_after(start: datetime, ticks: int, days: Sequence[Day]) -> datetime:
+    """The wall time `ticks` ticks after `start`, each at its own day's pace; the clock stops overnight."""
+    remaining, cursor = float(ticks), start
+    for d in days:
+        if d.closes <= cursor or remaining <= 0:
+            continue
+        cursor = max(cursor, d.opens)
+        fits = (d.closes - cursor).total_seconds() / d.tick_seconds
+        if remaining <= fits:
+            return cursor + timedelta(seconds=remaining * d.tick_seconds)
+        remaining -= fits
+        cursor = d.closes
+    return cursor  # past the last opening: the session cannot finish
 
 
 def timeline(events: Iterable[Event], days: Sequence[Day], found: Sequence[Anchor], teams: int = TEAMS) -> list[Row]:
@@ -277,8 +288,9 @@ def render(rows: Sequence[Row], found: Sequence[Anchor]) -> list[str]:
             s = r.slots[n]
             if s.status != "scheduled":
                 cols += f"{s.status:<22}"
-            elif r.duration_ticks and s.end:
-                cols += f"{_hhmm(s.start)}-{s.end.strftime('%H:%M'):<12}"
+            elif r.duration_ticks and s.end and s.start:
+                same_day = s.end.date() == s.start.date()
+                cols += f"{_hhmm(s.start)}-{s.end.strftime('%H:%M' if same_day else '%a %H:%M'):<12}"
             else:
                 cols += f"{_hhmm(s.start):<22}"
         lines.append(f"{r.event.at_hours:6.2f}  {r.event.action:<13} {cols}{r.event.note}")
