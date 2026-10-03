@@ -897,6 +897,7 @@ score counts trades at. Our model adds a page-bonus share and lands higher (MAL-
 32.5 vs 50.4). `guardrails.check()` now refuses a card buy above it (`official_value_margin`, read last, once per card
 per tick, a failed read refuses). First proof, the sim smoke: `dealer buy LAV-01` walked at "price 8 > official
 value 7" (LAV affinity 0.7). Tests run the cap only when marked `official_values` (tests/conftest.py).
+
 ### [2026-10-03] gotcha — a lone surrogate in another team's text stops a loop that writes it as UTF-8
 An emoji cut in half by a JS/TS string slice reaches us as a lone surrogate (`"\ud83d"` in JSON). `json.dumps(...,
 ensure_ascii=False)` written to a UTF-8 file raises `UnicodeEncodeError`, and Postgres jsonb rejects it raw or escaped.
@@ -911,3 +912,11 @@ body) are in `/api/feed` too, so the taker's sentinel reads them at no request c
 5.508; she sells only `sobre_oro` (list 420, 1/team/hour) and buys uncommon/rare/epic (SAL, RET loved). Our taker never
 buys her pack while `max_price_pack` = 20; selling to her needs `bazaar dealer sell --dealer pilar` (no runner sells
 to dealers). Schedule: "Salamanca fever: Pilar pays 25 % over book for Salamanca" from game hour 9.15 to 11.15.
+### [2026-10-03] gotcha — rich wraps a counterparty's long text to column 0, whatever you indent the first line with
+`console.print(f"    {words}")` indents only the first line: the wrapped rest starts at column 0, and padding made
+of "printable" blanks (U+2800 braille blank, U+3164/U+FFA0 Hangul fillers) can push a forged line there (#176 review).
+Print untrusted text as `Padding(Text(words), (0, 0, 0, 4))` (literal, every wrapped line indented) after blanking
+unprintable characters, those fillers, and the characters rich measures 0 wide but terminals draw 2 wide (skin-tone
+modifiers U+1F3FB-1F3FF, regional indicators U+1F1E6-1F1FF: the terminal itself would wrap to column 0)
+(`flags_cli.printable`).
+
