@@ -346,8 +346,9 @@ def test_jev_reads_which_page_the_card_completes_and_its_bonus(tmp_path):
         "of": 10,
         "missing_after": 0,
         "completes_page": True,
-        "page_bonus": 106.0,
         "affinity": 1.6,
+        "page_bonus": 106.0,  # no official value read in this view: our model
+        "page_bonus_source": "model",
     }
 
 
@@ -372,3 +373,22 @@ def test_the_closest_pages_are_the_ones_with_the_fewest_cards_missing():
         "LAT": PageNeed("LAT", 2, 10, 0.5, 33.1),
     }
     assert closest_pages(pages) == {"LAV", "MAL"} and closest_pages({}) == frozenset()
+
+
+def test_the_official_value_is_the_source_of_the_page_bonus_when_the_card_completes_the_page(tmp_path):
+    # Omar / team-lead: /api/me/value includes the completion gain (SAL-09 read 177.1 = 70 x 1.3 + 86.1 at 9/10).
+    from bazaar_agent.agents.team_desk import PageNeed, _Plan
+
+    d, _ = desk(tmp_path, Team())
+    need = PageNeed("SAL", 9, 10, 1.3, 70.0)
+    d._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0}, {"LAV": need}, {"LAV-02": 70.0})
+    base = view()
+    v = DeskView(
+        **{**base.__dict__, "ctx": lambda _t: Context(400, dict(HELD), TICK, 1.5, values=book({"LAV-02": 177.1}))}
+    )
+    page = d.swap_state(v, trade(), -1, 0, None, 0)["swap"]["get"]["page"]
+    assert page["page_bonus"] == 86.1 and page["page_bonus_source"] == "official"
+    short = PageNeed("SAL", 8, 10, 1.3, 70.0)  # one card short after it: the model's estimate
+    d._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0}, {"LAV": short}, {"LAV-02": 70.0})
+    page = d.swap_state(v, trade(), -1, 0, None, 0)["swap"]["get"]["page"]
+    assert page["page_bonus"] == 70.0 and page["page_bonus_source"] == "model"

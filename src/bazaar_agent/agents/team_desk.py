@@ -204,6 +204,7 @@ class _Plan:
     trades: tuple[Trade, ...]
     worth: dict[str, float] = field(default_factory=dict)  # card ref -> one more copy to us
     pages: dict[str, PageNeed] = field(default_factory=dict)  # set code -> how far our album page is
+    books: dict[str, float] = field(default_factory=dict)  # card ref -> book value (catalog)
 
 
 @dataclass(frozen=True)
@@ -733,16 +734,17 @@ class TeamDesk:
         total = verdict.ours + verdict.theirs
         plan = self._plan
         need = None if plan is None else plan.pages.get(set_of(get_ref) or "")
+        get_official = official(get_ref, int(ctx.held.get(get_ref, 0)))
         page = None
-        if need is not None:  # the page the card we receive belongs to: its bonus is not in /api/me/value
+        if need is not None:  # the page the card we receive belongs to
             page = {
                 "set": need.set_code,
                 "have": need.have,
                 "of": need.of,
                 "missing_after": need.missing - 1,
                 "completes_page": need.missing == 1,
-                "page_bonus": need.bonus,
                 "affinity": need.affinity,
+                **self._page_bonus(need, get_ref, get_official),
             }
         return {
             "swap": {
@@ -755,7 +757,7 @@ class TeamDesk:
                 "get": {
                     "card": get_ref,
                     "copies_held": int(ctx.held.get(get_ref, 0)),
-                    "official_value": official(get_ref, int(ctx.held.get(get_ref, 0))),
+                    "official_value": get_official,
                     "private_value": None if plan is None else plan.worth.get(get_ref),
                     "page": page,
                 },
@@ -769,6 +771,16 @@ class TeamDesk:
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
         }
+
+    def _page_bonus(self, need: PageNeed, ref: str, official: float | None) -> dict[str, Any]:
+        """The bonus completing the page scores. /api/me/value is the source of truth: for the page's last
+        missing card it already includes the completion gain (SAL-09 read 177.1 = 70 × 1.3 + 86.1 at SAL 9/10),
+        so the bonus is that value less book × affinity. Our model (25 % of the page's value) only when the
+        card does not complete the page or the official value is unread."""
+        book = None if self._plan is None else self._plan.books.get(ref)
+        if need.missing == 1 and official is not None and book is not None:
+            return {"page_bonus": round(max(0.0, official - book * need.affinity), 1), "page_bonus_source": "official"}
+        return {"page_bonus": need.bonus, "page_bonus_source": "model"}
 
     def _jev_refused(
         self, v: DeskView, kind: str, trade: Trade, thread: int | None, why: str, advice: JevAdvice | None
@@ -1052,7 +1064,7 @@ class TeamDesk:
             self._plan = _Plan(v.tick, ())
             return ()
         trades = tuple(sorted(threads, key=lambda t: self._priority(t, pages)))
-        self._plan = _Plan(v.tick, trades, worth, pages)
+        self._plan = _Plan(v.tick, trades, worth, pages, {ref: c.book for ref, c in m.cards.items()})
         return trades
 
     @staticmethod
