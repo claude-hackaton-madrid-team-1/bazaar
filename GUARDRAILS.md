@@ -51,7 +51,7 @@ Bullets without the `` `id` = value `` shape are principles: shown by the CLI, n
 - `allow_flags` = false — `POST /api/flags` costs points when wrong; enable only with the safety pack (#10).
 
 ## Counterparties (#14)
-- `max_counterparty_share` = 1.0 — no team may reach more than this share of our team-to-team volume in primas (settled + every open offer it could take; an offer anyone may take counts against the team we trade most with). 1.0 = off; 0.25 keeps any one team at a quarter, so we never "feed another team" (RULES.md, fair play).
+- `max_counterparty_share` = 1.0 — no team may reach more than this share of our team-to-team volume in primas (settled + every open offer it could take; an offer anyone may take counts against EVERY team). 1.0 = off; 0.25 keeps any one team at a quarter, so we never "feed another team" (RULES.md, fair play). Keep it off until a taker accept stops counting our public offers: at base 200, one public 68 P ask blocks every board accept (#79 review).
 - `counterparty_cap_base` = 200 — the share applies to at least this volume, so the first trades are not blocked (0.25 × 200 = 50 P per team until our volume passes 200).
 
 ## Principles (read by agents, not enforced in code yet)
