@@ -60,7 +60,19 @@ def test_caps_come_from_the_guardrails_per_class():
 def test_a_class_priced_above_our_cap_is_skipped_with_its_evidence():
     stats = curve_stats(CHATO)[("chato", "card:uncommon")]
     ladder, why = target_ladder(stats, RULES.max_price_uncommon, CHATO)
-    assert ladder is None and "0% of chato card:uncommon fills (28-32)" in why
+    assert ladder is None and "0 of 5 chato card:uncommon conversations closed at or under the cap 26" in why
+
+
+def test_our_own_walks_at_the_cap_teach_a_skip_without_any_fill():
+    walks = [thread(700 + i, "MAL-08", [22, 24, 26], [33, 32, 31], dealer="chato") for i in range(3)]
+    stats = curve_stats(walks)[("chato", "card:uncommon")]
+    assert stats.fills == ()
+    ladder, why = target_ladder(stats, 26, walks)
+    assert ladder is None and "0 of 3" in why and "3 walked after bidding the cap" in why
+    assert evolve(curve_stats(walks), {}, RULES, 10, threads=walks)[("chato", "card:uncommon")].ladder is None
+    two = walks[:2]
+    assert target_ladder(curve_stats(two)[("chato", "card:uncommon")], 26, two)[0] is None  # too little: no ladder...
+    assert evolve(curve_stats(two), {}, RULES, 10, threads=two) == {}  # ...and no skip either
 
 
 def test_too_few_fills_learn_nothing():

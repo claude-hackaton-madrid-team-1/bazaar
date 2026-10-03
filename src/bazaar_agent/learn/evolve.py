@@ -31,6 +31,7 @@ START_Q = 0.10
 MAX_SEARCH_THREADS = 200  # the newest conversations of a class the search replays (bounded cost; follows drift)
 WALK_Q = 0.90
 MIN_FILLS = 5  # fewer fills than this: no learned ladder (today's strategy keeps the thread)
+MIN_SKIP_EVIDENCE = 3  # conversations (fills + walks at the cap) before a class may be skipped
 MIN_DEAL_SHARE = 0.2  # skip a class when fewer than this share of its fills sit at or under our walk point
 DEFAULT_PATIENCE = 5.0  # bids before a final when no final has been seen (Abuela: ~5)
 STEPS = (1, 2, 3)  # the steps the search tries (small steps earn small steps)
@@ -192,17 +193,14 @@ def target_ladder(
     deals, a lower walk point, a smaller step). Without threads, the quantile rule: start at the low
     fills, reach the high fills by the dealer's patience."""
     fills = stats.fills
+    blocked = above_cap(stats, cap, threads)
+    if blocked is not None:
+        return None, blocked
     if len(fills) < MIN_FILLS:
         return None, f"only {len(fills)} fills: not enough to learn"
     lo, mid, hi = quantile(fills, START_Q), quantile(fills, 0.5), quantile(fills, WALK_Q)
     assert lo is not None and mid is not None and hi is not None
     walk_cap = math.ceil(hi) if cap is None else min(cap, fills[-1])
-    share = sum(1 for f in fills if f <= walk_cap) / len(fills)
-    if share < MIN_DEAL_SHARE:
-        return None, (
-            f"skip: {share:.0%} of {stats.dealer} {stats.price_class} fills ({fills[0]}-{fills[-1]}) "
-            f"are at or under the cap {cap}"
-        )
     patience = stats.patience or DEFAULT_PATIENCE
     if threads:
         found = search(stats, threads, walk_cap, patience)
@@ -216,6 +214,24 @@ def target_ladder(
     start = max(1, min(walk, math.floor(lo)))
     step = max(1, math.ceil((walk - start) / max(1.0, patience - 1)))
     return Ladder(start, step, walk), f"fills p10 {lo:g} / p90 {hi:g}, final after ~{patience:g} bids"
+
+
+def above_cap(stats: CurveStats, cap: int | None, threads: Sequence[DealerThread]) -> str | None:
+    """Why this class cannot close under our cap, or None. Evidence: fills above the cap, and conversations
+    where a team already bid the cap and still got no deal (its limit was higher). Our own walks count, so
+    a dealer nobody else trades with is learned from our errors alone."""
+    if cap is None:
+        return None
+    walked = [t for t in threads if t.fill_price is None and t.team_prices and max(t.team_prices) >= cap]
+    evidence = len(stats.fills) + len(walked)
+    closable = sum(1 for f in stats.fills if f <= cap)
+    if evidence < MIN_SKIP_EVIDENCE or closable / evidence >= MIN_DEAL_SHARE:
+        return None
+    seen = f"fills {stats.fills[0]}-{stats.fills[-1]}" if stats.fills else "no fill"
+    return (
+        f"skip: {closable} of {evidence} {stats.dealer} {stats.price_class} conversations closed at or under the "
+        f"cap {cap} ({seen}; {len(walked)} walked after bidding the cap)"
+    )
 
 
 def search(
@@ -287,7 +303,7 @@ def evolve(
         own = sorted(own, key=lambda t: (t.opened_tick, t.thread))[-MAX_SEARCH_THREADS:]  # the newest: cost and drift
         target, why = target_ladder(stats, cap, own)
         old = previous.get(key)
-        if target is None and len(stats.fills) < MIN_FILLS:
+        if target is None and not why.startswith("skip"):
             continue
         ladder = None if target is None else bounded(old.ladder if old else None, target, cap)
         changed = old is None or old.ladder != ladder
