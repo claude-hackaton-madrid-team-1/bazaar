@@ -87,3 +87,13 @@ dealers ignore our first bids.
 - (none yet)
 
 - Local score simulator + observability dashboard (was GitHub #15, closed 2026-10-03 as not needed to win; see docs/issues-archive.md). The evals (#58, #91) and Phoenix cover the useful part.
+
+## S1 follow-ups (security audit r4 on #152, 2026-10-03)
+- **Per-message human confirmation of a flag** (P2): an opted-in dealer's future messages are flagged without a
+  human reading them, and honest out-of-stock words outside the denial list can still grade `flag` (28 of 31 in the
+  audit's new battery). Proposal: `bazaar flags send <message_id>` after reading `bazaar flags precision`, or a
+  confirmed-ids list; optionally count a claim only when the sentence also hands the card over ("here is", "for you").
+- **Team-wide flag cap** (P3): `max_flags_sent` holds per data dir; two live takers on our key could each send the
+  same flag. Claim the flag in the shared Postgres ledger before the POST, as accepts do.
+- Look-alike letters still untagged (nit): U+01C0, U+A7AE, U+0196, Runic, Old Italic. Tags change nothing we send.
+
