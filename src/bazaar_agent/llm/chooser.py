@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,6 +44,10 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
     "money_command": re.compile(
         r"\b(accept|acepta|pay|paga|transfer|send|env[ií]a)\b.{0,30}\d", re.IGNORECASE | re.DOTALL
     ),
+    "asset_grab": re.compile(
+        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|every|todas|todos)\b|\bgive\b.{0,10}\bassets?\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
 }
 
 
@@ -50,7 +55,10 @@ def injection_flags(text: str | None) -> tuple[str, ...]:
     """Names of the prompt-injection shapes found in a counterparty's text (untrusted input)."""
     if not text:
         return ()
-    return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(text))
+    # The words filter's folding: NFKC, and format characters (zero-width, bidi) dropped, so they
+    # cannot split "ign\u200bore" into a word no pattern sees.
+    folded = "".join(ch for ch in unicodedata.normalize("NFKC", text) if unicodedata.category(ch) != "Cf")
+    return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(folded))
 
 
 def stakes_bucket(value_at_risk: int) -> str:

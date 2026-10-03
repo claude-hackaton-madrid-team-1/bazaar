@@ -347,11 +347,12 @@ def test_thread_views_keep_the_structured_price_and_mark_their_words(payload):
     assert header["ref"] is None and "<" not in header["topic"]["untrusted_text"]
 
 
-def test_hostile_payloads_are_flagged_or_carry_no_instruction_after_the_server_strips_them():
-    """Coverage note: the server strips invisible and direction characters (RULES.md "Limits"); our
-    injection flags are advisory (model choice, desk hints) and read the text as delivered."""
+def test_every_hostile_payload_is_flagged_even_split_by_invisible_characters_and_trade_talk_is_not():
+    """The flags are advisory (model choice, desk hints) and fold the text like the words filter."""
     from bazaar_agent.llm.chooser import injection_flags
 
-    flagged = {name for name, text in PAYLOADS.items() if injection_flags(text)}
-    assert flagged >= {"override", "role_tag", "fake_json", "long_1200", "broker_notice"}
-    assert injection_flags(BENIGN) == ()
+    assert {name for name, text in PAYLOADS.items() if not injection_flags(text)} == set()
+    assert "instruction_override" in injection_flags(PAYLOADS["invisible"])
+    assert injection_flags(PAYLOADS["sell_all"]) == ("asset_grab",)
+    for talk in (BENIGN, "I can sell you this card for 25", "Te doy 20 por la carta, ¿vale?", "Give me a better price"):
+        assert injection_flags(talk) == (), talk
