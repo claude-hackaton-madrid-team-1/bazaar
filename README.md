@@ -884,6 +884,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#83](../../pull/83) | chore: make the agent harness Claude-only and remove unused files | `ogarciarevett/chore-claude-only` |
 | [#82](../../pull/82) | feat: timed roadmap on the architecture page | `docs/roadmap` |
 | [#81](../../pull/81) | feat(ladder): ladder maximiser: floor table, bid plans, backtest, 09:00 schedule (W3, stacked on #61) | `night/w3-ladder` |
 | [#80](../../pull/80) | Night W2a: duel rival zoo + replay harness on the real practice payloads | `night/w2a-duel-zoo` |
