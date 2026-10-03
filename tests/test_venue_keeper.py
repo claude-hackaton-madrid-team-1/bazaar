@@ -287,3 +287,15 @@ def test_the_maker_runs_our_venue_first_every_tick_even_when_its_own_reads_fail(
         m = Maker(team, FakePublic(), live=False, log=lambda line: None, market=market, **parts(tmp_path))
         m.on_tick(clock())
         assert market.calls == [(100, read, True)]
+
+
+def test_a_venue_closed_by_hand_stops_the_broker_and_is_never_reopened_by_this_process(tmp_path):
+    team, broker = Team(), FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    k = keeper(tmp_path, team, broker=broker)
+    k.on_tick(snap().clock, snap(), window())
+    assert len(team.opened) == 1 and len(broker.sent) == 1
+    lagging = snap(tick=402)  # the lists do not show it yet: still ours
+    assert k._venue(lagging.clock, lagging) == "v09"
+    gone = snap(tick=410, cash=600)  # closed by hand: not in the lists for longer than the lag
+    k.on_tick(gone.clock, gone, window())
+    assert k._venue(gone.clock, gone) is None and len(team.opened) == 1
