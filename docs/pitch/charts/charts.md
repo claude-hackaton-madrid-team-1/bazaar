@@ -96,7 +96,7 @@ Two panels.
 
 ## 8. The Saturday clock: jump or resume?
 
-- **Claim:** whether the frozen clock jumps to game hour 4 or resumes at 2.65 moves every Saturday event by 1 h 21 min and drops Saturday's Market Tests from 8 to 7.
+- **Claim:** whether the frozen clock jumps to game hour 4 or resumes at 2.65 moves every Saturday event by 1 h 21 min. The wall clock still holds 8 Market Tests on Saturday either way: under resume, h3 (09:21) replaces h17 (which slips to Sunday 09:21). But the h3 session falls before round 2 starts (10:21), so it counts in Friday's round: Saturday's round gets 7.
 - **Type:** dumbbell / two-lane timeline: one row per event, a dot at the jump wall time and one at the resume wall time (bars for the duel sessions' start–end). Colour by action (bench, duels, grant, round).
 - **x:** wall-clock time (Sat 3 Oct 09:00 → Sun 4 Oct 15:00, CEST). **y:** event (ordered by game hour).
 - **Data:** `08_saturday_clock.csv` (events with a slot in at least one column; `status` = scheduled | overdue | never).

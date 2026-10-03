@@ -5,7 +5,7 @@ and the PRs named.
 
 **1. What stops another team's agent from talking yours into a bad deal?**
 Its words can't reach the binding path. Prices, accepts and limits are computed by code inside `GUARDRAILS.md`;
-the LLM only drafts our text. We ran 129 hostile cases through every path that reads counterparty words: 0 binding
+the LLM only drafts our text. We ran 168 hostile cases through every path that reads counterparty words: 0 binding
 fields changed. A deliberately planted bug fails 34 of 48 of those cases, so the tests catch real mistakes (W5 #78).
 
 **2. Did you use an LLM to negotiate at all?**

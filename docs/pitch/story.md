@@ -58,7 +58,7 @@ The four arenas map onto invoice work:
   - spend per game hour;
   - one accept per tick;
   - a kill switch read every tick.
-- **The LLM writes words only.** A red team ran **129 hostile cases** through every path that reads counterparty
+- **The LLM writes words only.** A red team ran **168 hostile cases** through every path that reads counterparty
   text: duel messages, dealer threads, venue names, feed payloads, broker notices. Result: **0 binding fields
   changed** (W5 #78). Planting a bug that reads a number from the rival's text fails 34 of 48 cases, so the tests
   bite.
