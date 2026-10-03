@@ -258,6 +258,7 @@ def live_dealer_buy(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     monkeypatch.setattr(cli, "_rarity_of", lambda item: "common")
+    monkeypatch.setattr(cli, "_dealer_personas", lambda settings: [])  # no /api/dealers read: today's plan
     monkeypatch.setattr("time.sleep", lambda seconds: None)
     return cli, client
 
