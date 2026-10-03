@@ -59,8 +59,14 @@ and whether the ladder restarts each round (if it does, Saturday's best three de
 Friday's Market Test at h3 (tick 180) is after our last capture, so the bench part has no real data yet.
 
 **Use it:** `uv run bazaar evals score-sim` (tables) or `--json`; `--feed capture.jsonl` rebuilds the deals from a
-monitor capture; `--fit` refits the level-2 weight. 18 tests in `tests/evals/test_score_sim.py` pin the
+monitor capture; `--fit` refits the level-2 weight. 19 tests in `tests/evals/test_score_sim.py` pin the
 calibration (8.34 ± 0.5, RMSE < 0.4, board MAE < 0.6, the holdout).
+
+**Saturday morning check:** `uv run bazaar evals score-check` (Postgres, read-only, no game call) puts the model next
+to our newest `/me` snapshots: official `ladder_points` vs the model's (today 0.058 vs 0.0587), and `rest` =
+negotiating − model ladder = duels + trades + error. If `ladder_points` falls to 0 when Saturday's round opens, the
+ladder restarts per round: rerun with `--round-start <first Saturday tick>`. After Duels I, `rest` ÷ our duel ratio
+gives the duel weight.
 
 ## 2. Red team, prompt injection (#24): GO
 
@@ -130,7 +136,9 @@ NO-GO with 3+ `dealer buy` processes on top on Sunday. Burst ≤ 20: GO on a ste
 a second laptop: every loop wakes at the same instant after the tick and the maker fires up to 45 calls back to
 back. A 429 costs nothing by itself, but the SDK retries (adds calls) and a refused accept is a missed deal.
 
-**Proposals for Marius (none changes today's behaviour):** (1) stagger loop starts after the tick (duels 0 s,
-monitor/broker 0.5 s, dealer 1 s, taker 2 s, maker 4 s): the model drops the ceiling burst to 0 refused, last call at
-10.6 s inside a 15 s tick; (2) cap the maker's writes per tick (new parameter, default uncapped); (3) never run taker
-+ maker on two laptops at once (the ledger shares accept/listing quotas, not the request rate).
+**For Marius (nothing changes today's behaviour):** (1) the stagger is built, opt-in per service: set
+`BAZAAR_TICK_OFFSET_S` (duels 0, monitor/broker 0.5, dealer 1, taker 2, maker 4; capped at 40 % of the tick; unset =
+today). The model drops the ceiling burst from 12 refused to 0, last call at 10.6 s inside a 15 s tick.
+`bazaar budget --ceiling --stagger --tick-seconds 15` shows it. (2) Cap the maker's writes per tick: not built (new
+parameter, default uncapped; Marius's call). (3) Never run taker + maker on two laptops at once (the ledger shares
+accept/listing quotas, not the request rate).
