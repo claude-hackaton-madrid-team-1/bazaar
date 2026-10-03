@@ -1434,6 +1434,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | Sun 01:35 | `36a6bef` |
 | [#265](../../pull/265) | feat: Sunday guardrails (uncommon 30, rare 105, dealer_sell reset after 40 ticks) | Sun 01:13 | `e0f3ca6` |
 | [#263](../../pull/263) | feat(broker): one live non-crossing match probe in the Market Test (off by default) | Sun 00:41 | `19457c9` |
 | [#264](../../pull/264) | docs: points ledger and bazaar-points skill | Sun 00:34 | `166f9ca` |
@@ -1445,7 +1446,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#260](../../pull/260) | docs: SAL-07 loss is price - your_value (measured); tag round rule [audit] | Sun 00:08 | `fc9cd61` |
 | [#230](../../pull/230) | docs: sync the repo with the rules audit (scoring, rounds, venue on, floor 5, hard rules) | Sun 00:02 | `9e4acc5` |
 | [#256](../../pull/256) | batch: Saturday close | Sat 23:54 | `6267eca` |
-| [#255](../../pull/255) | feat(buy-targets): a human orders an epic via MCP approve; the agents buy it from a team, always below our value | Sat 22:49 | `dd19e18` |
 
 ### Open pull requests
 
@@ -1454,7 +1454,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
-| [#234](../../pull/234) | feat(guard): record prompt-injection attempts with proofs (IJ1) | `feat/injection-log` |
 | [#231](../../pull/231) | fix: bench policy edge needs BAZAAR_BENCH_EDGE_CONFIRM=yes on the maker (DO NOT MERGE before tick 1190) | `fix/bench-edge-needs-confirm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
