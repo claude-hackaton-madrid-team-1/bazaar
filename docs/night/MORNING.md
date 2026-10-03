@@ -9,10 +9,12 @@ Times are Madrid time; GitHub shows UTC (Madrid = Z + 2 h).
 hold); #61 is merged through it, #68 closed. #62 closed, taken over by **#162** (review in progress). #140/#141 went
 to **HOLD** (r1, 06:19). #105 now ships `holdings_from_db = false` (r1, 06:06). **#91** (evals inside the tick loop)
 and **#145** (new sets, two defaults ON) were merged without the default decisions r1 asked for. #71 has a new head
-(stall finding fixed, process blocker remains). #150 is mergeable with one call to make.
+(stall finding fixed, process blocker remains). Then #96/#112 (learner, 06:43–06:46), #148 (06:37) and **#150 (duel
+stack, 06:50, defaults v1, 6b56719 ungated)** were merged too.
 
 ## TL;DR
-0. **Live on `main` now, merged overnight with defaults ON:** the learner stack **#89 + #96 + #112** (06:26–06:46: the
+0. **Live on `main` now, merged overnight with defaults ON:** **#150, the duel stack (06:50; defaults unchanged: `duel_policy = v1`)**, the learner stack **#89 + #96 + #112**
+   (06:26–06:46: the
    taker learns dealer blockers and skips them, learned ladders and class skips, and recalled "lessons" added to
    Jev's state for the duel, maker and taker moves), #145 (`protect_page_sets = RET,CHA`, `supply_scarcity`), #91
    (evals in the tick loop). r1 asked for all of them to default off. **Decide before 09:00** (§3.5).
@@ -28,7 +30,8 @@ and **#145** (new sets, two defaults ON) were merged without the default decisio
    If it resumes, every game-hour event slips 1 h 21 min, Duels I included.
 4. **Don't merge:** #71 (opens a venue at h6.5 and drops `cash_floor` 270 → 100/370 with no human step), #131
    (bluffs at dealers by default; the rest of the learner stack is already merged), #157/#158 until fixed, #159 (duplicate of #150).
-5. **Before Duels I:** #150 (duel stack v2) with its one call (commit 6b56719, §3.4) and the duel settings card. The
+5. **Before Duels I:** #150 (the duel stack) is **merged** but ships v1. Switch to v2 with one GUARDRAILS.md commit in
+   the 08:35 batch (§3.4); v2 also avoids 6b56719, the unproven v1 + Jev two-issue change that was merged ungated. The
    numbers: v2 scores **1.50×** v1 at 15 s ticks in the end-to-end sim, 0 closes outside the limit, and v1 loses 11
    accepts to the 1/tick cap (v2 none).
 6. **Cheapest lever:** `min_buy_surplus` 2 → 4 on the live taker (B28: Friday +28 → +54 P at copy value). The
@@ -71,7 +74,7 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 
 | Night PRs | Takeover | r1 verdict | Needs from you |
 |---|---|---|---|
-| #60 #86 #103 #113 #115 #130 (duel v1 fix, v2, B11, B8, B15, B7) | [#150](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/150) | mergeable, one call | gate 6b56719 to v2 or split it; cherry-pick 2fe2a40 |
+| #60 #86 #103 #113 #115 #130 (duel v1 fix, v2, B11, B8, B15, B7) | [#150](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/150) | **merged 06:50**, defaults v1, 6b56719 ungated | the v2 settings commit (§3.4); 2fe2a40 and the slot release on a refused accept are still missing (follow-up) |
 | #80 #97 #117 (duel zoo, exploiters, days) | [#151](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/151) | mergeable outside game hours | merge after Duels I (redeploys the shared sim) |
 | #114 #116 (B17 restart orphans, B18 rate limits) | [#140](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/140) → [#141](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/141) | **HOLD** | apply r1's port list (`_night/r1_b18_on_72_sdk_resolution.diff`, 1,059 tests) first |
 | #126 #133 (B14 lapsed bids, B16 unsettled accepts) | [#142](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/142) → [#143](https://github.com/claude-hackaton-madrid-team-1/bazaar/pull/143) | mergeable (stacked on #141) | merge after #140/#141 |
@@ -89,17 +92,19 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 1. **The 08:35–08:50 batch:** **#144**, then **#140 → #141 → #142 → #143** once r1's port list is applied to #140/#141
    (the double booking with two overlapping takers and the `sdk.py` conflict; the resolution diff is ready). r2's chaos
    sweep: 0 flags of 20 on #143 vs 19 of 20 on main. If the port isn't in by 08:45, merge #144 only and run **one
-   taker** (the double booking needs two). **#150 goes in this batch if you have decided 6b56719 (§3.4) by then**, with
-   the duel settings edited into GUARDRAILS.md in the same PR (one redeploy, not two); otherwise it is a mid-play
-   redeploy: right after a duel wave ends, never during one, and before Duels I. **#162** only once r1's review says GO and `DATABASE_URL` is set on every
+   taker** (the double booking needs two). **The duel settings commit (§3.4) goes in this batch**: `duel_policy` is read
+   at start, so it needs the redeploy the batch causes anyway; later it is a mid-play redeploy (right after a duel wave,
+   never during one, and before Duels I). **#162** only once r1's review says GO and `DATABASE_URL` is set on every
    live service (the live writers refuse to start without a shared ledger).
 2. **Don't merge #71** unless you make the venue go-live call on purpose; then split the flags into a one-line PR.
    Until h6.5 its 270 P reserve refuses every maker bid.
 3. **Venue:** **no venue this morning** (our cash is short of the 540 P needed under floor 270 + reserve). See whether the free starter
    stall scores at the first bench (§4), then decide. **Keep `cash_floor` 270** until then.
-4. **#150's call:** commit 6b56719 changes the *default* v1 two-issue play when Jev is on (the offer jumps by |w| × days;
-   proved only without Jev). **Gate it to v2.** Duel settings: **`duel_policy = v2`, `duel_endgame_min_share 0.3`,
-   `duel_endgame_ticks 1`, `duel_days_auto` OFF**. Merge #150 before Duels I, outside a duel wave.
+4. **Duels (#150 merged 06:50 with 6b56719 ungated):** under default v1 with Jev on, a two-issue offer now takes the
+   rival's days and re-prices them at worst-case cost (still inside our limit; never run in the sim, which used
+   `--no-jev`). **Edit GUARDRAILS.md: `duel_policy = v2`, `duel_endgame_min_share = 0.3`, `duel_endgame_ticks = 1`,
+   keep `duel_days_auto = false`**, in the 08:35 batch. If you stay on v1 for Duels II, run `bazaar-duels` with
+   `--no-jev` to stay on the proven path, or watch its two-issue offers.
 5. **Merged with defaults ON overnight:** the learner stack #89/#96/#112, #145 (`protect_page_sets = RET,CHA`,
    `supply_scarcity`) and #91 (evals in the tick loop). **Decide on each before 09:00**; r1 recommended defaults off.
    **Set `BAZAAR_LEARN=0` on `bazaar-taker`** unless you want it learning in the first live hour. The Jev lessons
@@ -124,14 +129,15 @@ Closed tonight by the coordinator and carried on in a takeover (review status fr
 | — / 09:21 | h3 bench (RESUME only). |
 | 10:00 / 11:21 | h5 Market Test. |
 | 10:10 / 11:31 | `/me` → `score`: does the free stall score at the bench (≈ 0.5)? Settles §3.3. |
-| ~11:00 / 12:20 | Last safe moment for #150 + duel settings (a merge redeploys). |
+| ~11:00 / 12:20 | Last safe moment for the duel settings commit if it missed the batch (a commit to `main` redeploys). |
 | 11:30 / 12:51 | **h6.5 Duels I** (~96 min, 34 duels, 3 at a time). Probe P6: do duel accepts count against the 1/tick limit? |
 
 ## 5. Top risks
 - **Accidental merges:** #71 (venue + floor), the learner stack (`BAZAAR_LEARN` on), #159.
 - **Clock column:** a plan written for h4 at 09:00 is 1 h 21 min wrong if the clock resumes.
 - **A merge during play redeploys:** without #140, each redeploy under-booked 10–65 P in r2's runs.
-- **Duels on default v1:** two-issue offers outside the limit at Duels II and lost accepts at shared deadlines → #150.
+- **Duels on default v1:** lost accepts at shared deadlines, and the unproven v1 + Jev two-issue path (6b56719) → the v2
+  settings commit.
 - **No monitor running:** Railway has none since #73; without a laptop monitor the feed-based tools read Friday's data.
 - **Two takers at once:** double-books dealer deals (#140 HOLD) and doubles the request rate (budget).
 - **#123 on** leaks our duplicates and album gaps through `/state`; **#139** leaks card values in accept traces.
