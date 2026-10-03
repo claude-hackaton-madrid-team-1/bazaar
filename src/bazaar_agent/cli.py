@@ -230,6 +230,55 @@ def affinity(
         console.print(f"{s}: chased by {', '.join(amap.chasers(s, 0.5)) or 'nobody at P >= 0.5'}")
 
 
+@app.command("trade-plan")
+def trade_plan(
+    live: bool = typer.Option(False, help=LIVE_HELP),
+    events_file: str | None = typer.Option(None, "--events", help="Read the feed from this JSONL file instead"),
+    me_file: str | None = typer.Option(None, "--me", help="Our /api/me from a file; else the API"),
+    catalog_file: str | None = typer.Option(None, "--catalog", help="The catalog from a file; else the API"),
+    venues_file: str | None = typer.Option(None, "--venues", help="/api/venues from a file; else the API"),
+    venue: str = typer.Option("rastro", help="Venue to post on (its fee prices every trade)"),
+    share: float = typer.Option(0.25, min=0.01, max=1.0, help="No counterparty above this share of planned volume"),
+    listings: int = typer.Option(12, min=0, help="Listings (one tick: offers_per_team_per_tick)"),
+    threads: int = typer.Option(3, min=0, help="Direct proposals (swaps in a team thread)"),
+    split: float = typer.Option(0.5, min=0.05, max=1.0, help="The most of the expected pie we ask for"),
+    cap_base: int = typer.Option(400, min=0, help="counterparty_cap_base the posting is checked with"),
+    page_set: str = typer.Option("LAV", help="The set whose page buy list is drawn up"),
+    out: str = typer.Option(".local/night", help="Where trade-plan.json and trade-plan.md are written"),
+) -> None:
+    """Dry-run trade plan for the next opening: listings and direct proposals priced on the rival affinity
+    map, every one with surplus for us, no counterparty above `--share` of the planned volume. Sends nothing."""
+    from pathlib import Path
+
+    from bazaar_agent import affinity as af
+    from bazaar_agent import trade_desk as td
+    from bazaar_agent.agents.market import venues_from
+
+    me = _json_file(me_file) if me_file else _team_me()[1]
+    public = None if (catalog_file and venues_file) else public_client(load_settings())
+    catalog = _json_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
+    venues = venues_from(_json_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    where = next((v for v in venues if v.id == venue), None)
+    if where is None:
+        _fail(f"venue {venue!r} is not in /api/venues")
+    events = _events_file(events_file) if events_file else _events(live)
+    us = str(me.get("id") or "")
+    amap = af.affinity_map(events, af.catalog_sets(catalog), af.multipliers_from(me), catalog, exclude=[us])
+    pp = td.PlanParams(listings, threads, share, split, page_set=page_set, cap_base=cap_base)
+    plan = td.build_plan(me, catalog, events, amap, _strategy().params, _rules().rules, pp, where)
+    folder = Path(out) if Path(out).is_absolute() else REPO_ROOT / out
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "trade-plan.json").write_text(json.dumps(td.plan_dict(plan, venue), indent=2, default=str) + "\n")
+    (folder / "trade-plan.md").write_text(td.plan_markdown(plan, pp))
+    console.print(
+        f"{len(plan.listings)} listing(s) + {len(plan.threads)} proposal(s), expected {plan.expected:+.1f} P "
+        f"(without the share rule {plan.unconstrained:+.1f} P), largest share "
+        f"{max(plan.shares.values(), default=0):.0%}, {len(plan.checks)} check(s) failing · written to {folder}"
+    )
+    for check_line in plan.checks:
+        console.print(f"[red]{check_line}[/red]")
+
+
 @app.command()
 def book(
     venue: str = typer.Option("rastro", help="Venue id"),
