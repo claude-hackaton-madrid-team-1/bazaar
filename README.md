@@ -1413,6 +1413,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm, one duel retry
 - [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
 - [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
 - [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
@@ -1420,7 +1421,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
 - [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
 - [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
-- [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
 
 <!-- BAZAAR:STATUS:END -->
 
