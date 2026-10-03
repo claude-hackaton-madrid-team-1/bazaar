@@ -1,8 +1,9 @@
 """A rival that never prices: v2's free ladder must reach our floor before the deadline, not on it.
 
 Duels I (Sat 3 Oct): in every silent-rival duel the last offer we sent (D − 1) was still ~9 % off our limit, because the
-ladder measured its progress to the deadline tick, which we never send. `silent_floor_lead` ends the ladder that many
-ticks earlier. Generic numbers here: no real limit in a committed file.
+ladder measured its progress to the deadline tick, which we never send. `silent_floor_lead` puts our floor on the last
+that many ticks we send and leaves every earlier offer where it was (#215 review: Duels I's silent deals closed at
+D − 2, so moving D − 3/D − 2 would only give surplus away). Generic numbers here: no real limit in a committed file.
 """
 
 import random
@@ -11,9 +12,11 @@ from bazaar_agent import guardrails as gr
 from bazaar_agent.agents.duel_v2 import (
     DEFAULTS,
     V2Params,
+    _offer,
     counter_offer,
     duel_plan,
     first_offer_wait,
+    jittered,
     payload_start,
     plan_moves,
     value_of,
@@ -58,6 +61,8 @@ def test_a_silent_rival_sees_our_floor_on_the_last_tick_we_send():
             # never further from the limit than before, and never past the floor
             assert surplus_share(role, limit, floor) <= surplus_share(role, limit, move.price), tick
             assert surplus_share(role, limit, move.price) <= surplus_share(role, limit, old[tick].price), tick
+            if tick < DEADLINE - 1:
+                assert move == old[tick], (role, limit, tick)  # D − 2 and earlier: today's offer exactly
         prices = [new[t].price for t in sorted(new)]
         assert prices == sorted(prices, reverse=role == "seller")  # monotone toward our limit, no step back
 
@@ -185,6 +190,59 @@ def test_at_lead_1_our_next_counter_never_steps_back_once_the_rival_starts_prici
             if counter.kind == "offer":
                 last = sent[last_tick].price
                 assert (counter.price <= last) if role == "seller" else (counter.price >= last), (role, limit, tick)
+
+
+def test_against_a_silent_rival_lead_1_changes_only_the_last_tick_we_send():
+    """#215 review: the lead must not lower our D − 3/D − 2 offers (the ticks Duels I's silent rivals took). Random
+    silent duels, with restarts mid-duel: every move with two or more ticks left is today's move (lead 0), and D − 1
+    carries our floor, strictly inside our limit, from v2's plan and from Jev's counter alike."""
+    rng = random.Random(47)
+    compared = floors = 0
+    for i in range(600):
+        role, limit = rng.choice(("seller", "buyer")), rng.randint(20, 300)  # a floor 1 off the limit is a hold
+        two = rng.random() < 0.5
+        issues, weight = (("price", "days"), round(rng.uniform(-4, 4), 1)) if two else (("price",), None)
+        seen = 100
+        deadline = seen + rng.randint(6, 30)
+        signed = two and rng.random() < 0.5
+        base = {
+            "days_signed": signed,
+            "jitter": rng.choice((0.0, 0.3)),
+            "jitter_seed": rng.randint(0, 9),
+            "open_wait_ticks": rng.randint(0, 3),
+            "free_offers": rng.choice((4, 16)),
+        }
+        lead1, lead0 = V2Params(**base, silent_floor_lead=1), V2Params(**base, silent_floor_lead=0)
+        rules = gr.Guardrails(duel_policy="v2", duel_days_signed=signed)
+        d = duel(i, role=role, limit=limit, deadline=deadline, issues=issues, weight=weight)
+        restart = rng.choice((None, rng.randint(seen + 1, deadline - 1)))
+        start = seen
+        for tick in range(seen, deadline):
+            if tick == restart:  # a redeploy: the new process reads the duel's start from the payload
+                start = payload_start(d, tick, first_offer_wait(lead1))
+            new, old = duel_plan(d, tick, start, lead1).move, duel_plan(d, tick, start, lead0).move
+            jev = counter_offer(d, tick, start, lead1)
+            if deadline - tick >= 2:
+                assert new == old, (i, tick, new, old)
+                assert jev == counter_offer(d, tick, start, lead0), (i, tick)
+                compared += 1
+            else:
+                mine = jittered(lead1, d)
+                floor = our_target(limit, role, 1.0, mine.anchor, mine.floor)
+                if new.kind == "hold":  # as today: no legal offer at our floor, or still waiting for the rival to open
+                    assert old.kind == "hold", (i, new, old)
+                    assert _offer(d, floor, signed, "floor") is None or "wait" in new.reason, (i, new)
+                    continue
+                assert (jev.kind, jev.price, jev.days) == (new.kind, new.price, new.days), (i, new, jev)
+                value = value_of(d, new.price, new.days, signed)
+                assert value is not None and surplus_share(role, limit, value) > 0, (i, new)  # strictly inside
+                assert value == floor, (i, new, floor)  # our floor, as a value (days repriced when signed)
+                assert gr.check(duel_action(d, new), CTX, rules).allowed, (i, new)
+                floors += 1
+            if new.kind == "offer":
+                d["messages"].append({"tick": tick, "from": "you", "price": new.price, "days": new.days})
+                d["your_offer"] = {"price": new.price, "days": new.days or 0}
+    assert compared > 5000 and floors > 550
 
 
 def test_the_lead_is_a_guardrails_knob():

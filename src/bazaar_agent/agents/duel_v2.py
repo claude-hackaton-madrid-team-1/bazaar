@@ -9,8 +9,9 @@ every tick (7–8 rounds a deal, ~30 % of the surplus gone at 6 %). v2, behind `
      `duel_stall_ticks` ticks, and a last offer at our floor before the endgame when nothing inside our limit is on
      the table. A rival that never priced, or went quiet and ignores us, gets v1's descending offers for free
      (they add a round only if it answers with a price), up to `duel_free_offers` messages. Against a rival that
-     never priced, that ladder reaches our floor `duel_silent_floor_lead` ticks before the deadline: measured to the
-     deadline, its last offer (D − 1) stayed ~9 % off our limit and the floor was due on a tick we never send.
+     never priced, the last `duel_silent_floor_lead` ticks we send (D − 1 by default) carry our floor, even past
+     that cap; every earlier offer stays on the same curve. Measured to the deadline, the curve alone left our last
+     offer (D − 1) ~9 % off our limit: the floor was due on a tick we never send.
   3. Accept a rival offer strictly inside our limit when it meets our target, when the rival has stalled and a
      counter is not worth one more round (`step × (1 − decay) < surplus × decay`), or in the endgame.
   4. The team accepts one offer per tick (RULES.md), shared by every duel: `plan_moves` gives the slot to the
@@ -172,11 +173,11 @@ def own_offers(duel: Mapping[str, Any]) -> int:
     return 1 if sent == 0 and isinstance(duel.get("your_offer"), dict) else sent
 
 
-def silent_progress(elapsed: int, total: int, params: V2Params) -> float:
-    """How far along v1's curve our offer to a rival that has not priced is: the curve ends `silent_floor_lead` ticks
-    before the deadline, so our floor goes out while the rival can still take it (`our_target` clamps at 1). Lead 1
-    never steps back once the rival prices (t/(T − 1) ≤ (t + 1)/T); a longer lead can."""
-    return elapsed / max(1, total - max(0, params.silent_floor_lead))
+def silent_progress(elapsed: int, total: int, left: int, params: V2Params) -> float:
+    """How far along v1's curve our offer to a rival that has not priced is: the same curve as a priced duel, except
+    on the last `silent_floor_lead` ticks before the deadline, which carry our floor (1.0) while the rival can still
+    take it. Every earlier offer is unchanged; a lead above 1 can step back once the rival prices."""
+    return 1.0 if left <= params.silent_floor_lead else elapsed / total
 
 
 def first_offer_wait(params: V2Params) -> int:
@@ -401,7 +402,9 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
         floor_due = left <= params.silent_floor_lead  # no deal scores 0: the floor goes out whatever the cap
         if (ours >= params.free_offers and not floor_due) or (ours == 0 and elapsed < first):
             return wait
-        silent = our_target(limit, str(role), silent_progress(elapsed, total, params), params.anchor, params.floor)
+        silent = our_target(
+            limit, str(role), silent_progress(elapsed, total, left, params), params.anchor, params.floor
+        )
         return send(silent, "the rival has not priced: our offers cost no round yet")
     if quiet(duel, tick, params.stall_ticks) and ours < params.free_offers and left > params.endgame_ticks + 1:
         return send(target, "the rival went quiet: step down for free")
@@ -457,8 +460,8 @@ def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params:
     if not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return DuelMove("hold", reason="unreadable duel")
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
-    elapsed = tick - started_tick
-    progress = elapsed / total if _priced(duel, ours=False) else silent_progress(elapsed, total, params)
+    elapsed, left = tick - started_tick, (deadline - tick) if isinstance(deadline, int) else 12
+    progress = elapsed / total if _priced(duel, ours=False) else silent_progress(elapsed, total, left, params)
     target = our_target(limit, str(role), progress, params.anchor, params.floor)
     move = _offer(duel, target, params.days_signed, "counter at our target")
     return move or DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
