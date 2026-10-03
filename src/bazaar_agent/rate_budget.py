@@ -85,15 +85,18 @@ def taker(dealer_threads: int = 3, venues: int = VENUES_READ) -> LoopBudget:
     )
 
 
-def maker(max_open_offers: int = 30, listings_per_tick: int = 12) -> LoopBudget:
+def maker(max_open_offers: int = 30, listings_per_tick: int = 12, max_cancels: int | None = None) -> LoopBudget:
+    """`max_cancels`: the maker's `--max-cancels` (`MakerConfig.max_cancels_per_tick`); None = uncapped (today)."""
     reads = 1 + 2  # loop clock (team key) + me, my_offers
-    team = reads + max_open_offers + listings_per_tick  # plan_offers: every stale offer cancelled, 12 posts
+    cancels = max_open_offers if max_cancels is None else min(max_open_offers, max_cancels)
+    team = reads + cancels + listings_per_tick  # plan_offers: stale offers cancelled, 12 posts
+    capped = "uncapped" if max_cancels is None else f"capped at {max_cancels} (--max-cancels)"
     return LoopBudget(
         "maker",
         team=team,
         team_at_boundary=team,  # nothing waits: cancels and posts follow the reads back to back
         public=4,
-        source="agents/maker.py plan_offers: cancels are uncapped (≤ max_open_offers_per_team 30), "
+        source=f"agents/maker.py plan_offers: cancels {capped} (≤ max_open_offers_per_team 30), "
         "posts ≤ offers_per_team_per_tick 12",
     )
 
@@ -152,10 +155,19 @@ def flatten(open_offers: int = 30) -> LoopBudget:
     return LoopBudget("flatten", team=2 + open_offers, team_at_boundary=2 + open_offers, source="PR #68 bazaar flatten")
 
 
-def saturday_plan(*, dealer_children: int = 0, duel_concurrency: int = 3, book_reads: int = 1) -> list[LoopBudget]:
+def saturday_plan(
+    *, dealer_children: int = 0, duel_concurrency: int = 3, book_reads: int = 1, maker_max_cancels: int | None = None
+) -> list[LoopBudget]:
     """What runs on Saturday, every loop at its CEILING: one of each service. Laptops add copies
     (`with_copies`), and `bazaar dealer buy` children add `dealer_children`."""
-    plan = [monitor(), taker(), maker(), duels(duel_concurrency), broker(book_reads), evals()]
+    plan = [
+        monitor(),
+        taker(),
+        maker(max_cancels=maker_max_cancels),
+        duels(duel_concurrency),
+        broker(book_reads),
+        evals(),
+    ]
     if dealer_children:
         plan.append(dealer_child().times(dealer_children))
     return plan

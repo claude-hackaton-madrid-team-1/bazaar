@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from bazaar_agent import db
 from bazaar_agent import rate_budget as rb
 from bazaar_agent.agents.dealer import BidPlan, negotiate
-from bazaar_agent.agents.maker import Maker
+from bazaar_agent.agents.maker import Maker, MakerConfig
 from bazaar_agent.agents.monitoring import MonitorLoop, Options
 from bazaar_agent.agents.runtime import MarketFeed
 from bazaar_agent.agents.taker import Taker, TakerConfig
@@ -130,6 +130,33 @@ def test_the_maker_cancels_every_stale_offer_in_one_tick_inside_its_ceiling(tmp_
     assert cancels == 28  # nothing caps the cancels in a tick: the ceiling counts all 30 slots
     assert tally.total("team") <= rb.maker().team
     assert tally.total("public") <= rb.maker().public
+
+
+def test_the_makers_cancel_cap_bounds_its_tick_and_its_declared_ceiling(tmp_path):
+    """B10: `--max-cancels 5` makes the maker's worst tick 3 reads + 5 cancels + 12 posts = 20, not 45."""
+    tally = rb.CallTally()
+    team = FakeTeam(offers=[our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(28)])
+    maker = Maker(
+        tally.wrap(team, "team"),
+        tally.wrap(FakePublic(), "public"),
+        live=True,
+        log=lambda line: None,
+        now=lambda: 1000.0,
+        config=MakerConfig(max_cancels_per_tick=5),
+        **parts(tmp_path),
+    )
+    counted_loop(tally.wrap(team, "team").clock, maker.on_tick)
+    assert sum(1 for s in team.sent if s[0] == "cancel") == 5
+    assert (rb.maker().team, rb.maker(max_cancels=5).team, rb.maker(max_cancels=99).team) == (45, 20, 45)
+    assert tally.total("team") <= rb.maker(max_cancels=5).team
+
+
+def test_the_saturday_ceiling_with_a_cancel_cap_drops_the_maker_term():
+    plain = {b.name: b.team for b in rb.saturday_plan()}
+    capped = {b.name: b.team for b in rb.saturday_plan(maker_max_cancels=10)}
+    assert plain["maker"] - capped["maker"] == 20 and {k: v for k, v in plain.items() if k != "maker"} == {
+        k: v for k, v in capped.items() if k != "maker"
+    }
 
 
 class Duels(DuelClient):

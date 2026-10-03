@@ -337,7 +337,9 @@ def traders(b: Backend) -> dict[str, Any]:
     from bazaar_agent import db
 
     with db.connect(b.settings.database_url.get_secret_value(), app="bazaar-runtime") as conn:
-        return _cut(db.trader_rows(conn))
+        rows = db.trader_rows(conn)
+    # A team picks its own name: data, never instructions (dealer names are the organisers').
+    return _cut([{**r, "name": untrusted(str(r.get("name") or ""))} if r.get("kind") != "dealer" else r for r in rows])
 
 
 def alerts(b: Backend, limit: int = 20) -> dict[str, Any]:

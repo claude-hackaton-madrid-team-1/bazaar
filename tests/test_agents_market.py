@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from bazaar_agent.agents.market import board_offers, our_open_offers, parse_offer, venues_from
 from bazaar_agent.agents.runtime import MarketFeed, TickWindow, live_mode, window_for
 from bazaar_agent.feed import FeedStore
-from tests.agent_fakes import CHEAP, RASTRO, FakePublic, FakeTeam, ask, bid, clock
+from tests.agent_fakes import CHEAP, RASTRO, FakePublic, FakeTeam, ask, bid, clock, our_ask
 
 
 @pytest.mark.parametrize(("price", "fee"), [(12, 2), (65, 5), (70, 5), (3, 2), (20, 2)])
@@ -137,3 +137,70 @@ def test_bazaar_agent_maker_serves_its_status_when_asked(agent_cli):
     port = int(result.output.split("http://127.0.0.1:")[1].split(" ")[0])
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
         assert json.loads(r.read())["agent"] == "maker"
+
+
+# ---------------------------------------------------------------- B10: the stagger and the cancel cap, per service
+
+
+def spy_loop(monkeypatch, cli):
+    """Record what each command hands the tick loop, then run one tick of it for real."""
+    from bazaar_agent.ticks import run_per_tick
+
+    seen: list[float | None] = []
+
+    def loop(read_clock, on_tick, **kw):
+        seen.append(kw.get("start_offset_s"))
+        return run_per_tick(read_clock, on_tick, max_ticks=1, sleep=lambda s: None, start_offset_s=0.0)
+
+    monkeypatch.setattr(cli, "run_per_tick", loop)
+    return seen
+
+
+def test_agents_take_a_tick_offset_and_default_to_the_environment(agent_cli, monkeypatch):
+    team, cli = agent_cli
+    seen = spy_loop(monkeypatch, cli)
+    args = ["agent", "taker", "--max-ticks", "1", "--no-jev", "--threads", "0"]
+    assert CliRunner().invoke(cli.app, [*args, "--tick-offset", "2"]).exit_code == 0
+    assert CliRunner().invoke(cli.app, args).exit_code == 0
+    assert (
+        CliRunner().invoke(cli.app, ["agent", "maker", "--max-ticks", "1", "--no-jev", "--tick-offset", "4"]).exit_code
+        == 0
+    )
+    assert seen == [2.0, None, 4.0]  # None: run_per_tick reads BAZAAR_TICK_OFFSET_S, unset = 0 (today)
+    assert CliRunner().invoke(cli.app, [*args, "--tick-offset", "-1"]).exit_code != 0
+
+
+def test_the_maker_command_caps_its_cancels_when_asked(agent_cli, monkeypatch):
+    team, cli = agent_cli
+    spy_loop(monkeypatch, cli)
+    team.offers = [our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(5)]
+    capped = CliRunner().invoke(cli.app, ["agent", "maker", "--max-ticks", "1", "--no-jev", "--max-cancels", "2"])
+    assert capped.exit_code == 0, capped.output
+    assert capped.output.count("max_cancels_per_tick 2 reached") == 3
+    uncapped = CliRunner().invoke(cli.app, ["agent", "maker", "--max-ticks", "1", "--no-jev"])
+    assert "max_cancels_per_tick" not in uncapped.output and team.sent == []  # dry run either way
+
+
+def test_the_duel_and_monitor_loops_take_a_tick_offset(agent_cli, monkeypatch):
+    team, cli = agent_cli
+    seen: list[float | None] = []
+
+    class Reached(Exception):
+        pass
+
+    def loop(read_clock, on_tick, **kw):
+        seen.append(kw.get("start_offset_s"))
+        raise Reached
+
+    class Public(FakePublic):
+        def clock(self):
+            return {"tick": 1}
+
+    monkeypatch.setattr(cli, "run_per_tick", loop)
+    monkeypatch.setattr(cli, "public_client", lambda settings: Public())
+    monkeypatch.setattr(cli, "open_stream", lambda settings, emit: None)
+    for args in (["duel", "run"], ["monitor", "--no-db", "--no-stream"]):
+        for extra, want in ((["--tick-offset", "0.5"], 0.5), ([], None)):
+            result = CliRunner().invoke(cli.app, [*args, *extra])
+            assert isinstance(result.exception, Reached), (args, result.output)
+            assert seen.pop() == want

@@ -168,3 +168,64 @@ def test_an_asset_without_your_value_is_never_listed(tmp_path):
     m, _ = maker(tmp_path, team, live=True)
     m.on_tick(clock())
     assert not [p for p in posted(team) if 5 in p[1].get("assets", [])]
+
+
+# ---------------------------------------------------------------- B10: the cancel cap (request budget)
+
+
+def capped(tmp_path, team, cap, *, live=True):
+    lines: list[str] = []
+    m = Maker(
+        team,
+        FakePublic(),
+        live=live,
+        log=lines.append,
+        now=lambda: 1000.0,
+        config=MakerConfig(max_cancels_per_tick=cap),
+        **parts(tmp_path),
+    )
+    return m, lines
+
+
+def cancels(team):
+    return [s[1] for s in team.sent if s[0] == "cancel"]
+
+
+def test_the_cancel_cap_is_off_by_default():
+    assert MakerConfig().max_cancels_per_tick is None  # today: every stale offer is cancelled in one tick
+
+
+def test_capped_cancels_wait_for_the_next_tick_and_are_logged_as_held(tmp_path):
+    stale = [our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(7)]  # copies the strategy no longer lists
+    team = NoAccept(offers=stale)
+    m, lines = capped(tmp_path, team, 3)
+    done: list[int] = []
+    for tick in (TICK, TICK + 1, TICK + 2):
+        team.sent.clear()
+        m.on_tick(clock(tick=tick))
+        done += cancels(team)
+        team.offers = [o for o in team.offers if o["id"] not in done]  # the server drops what we cancelled
+        assert len(cancels(team)) <= 3
+    assert done == [100, 101, 102, 103, 104, 105, 106]  # 3 + 3 + 1, in plan order, none lost
+    held = [r for r in rows(tmp_path) if r.get("kind") == "cancel_ask" and r.get("chosen") is False]
+    assert len(held) == 4 + 1  # 4 held on the first tick, 1 on the second
+    assert {r["status"] for r in held} == {"rejected"}
+    assert all("max_cancels_per_tick 3" in r["guardrail"] for r in held)
+
+
+def test_a_reprice_holds_its_price_when_the_cancel_cap_is_spent(tmp_path):
+    team = NoAccept(offers=[bid(2, "LAV-02", 9), our_ask(1, 5, "LAT-09", 90)])  # a stale bid, then a reprice
+    m, lines = capped(tmp_path, team, 1)
+    m.on_tick(clock())
+    assert cancels(team) == [2]  # the stale bid goes first; the ask is never cancelled without its repost
+    assert not any(s[0] == "list_offer" and s[1] == {"assets": [5]} for s in team.sent)
+    assert any("keep LAT-09 at 90: max_cancels_per_tick 1 reached" in line for line in lines)
+
+
+def test_the_cancel_cap_holds_in_a_dry_run_too(tmp_path):
+    team = NoAccept(offers=[our_ask(100 + i, 900 + i, "LAV-01", 30) for i in range(4)])
+    m, lines = capped(tmp_path, team, 2, live=False)
+    m.on_tick(clock())
+    assert team.sent == []
+    would = [r for r in rows(tmp_path) if r.get("kind") == "cancel_ask" and r.get("chosen") is True]
+    assert len(would) == 2

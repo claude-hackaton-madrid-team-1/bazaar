@@ -267,12 +267,17 @@ def test_the_cli_loop_reads_the_keyless_public_clock(cli_db: None, monkeypatch: 
     seen: dict[str, Any] = {}
 
     def fake_run_per_tick(read_clock: Any, on_tick: Any, **kwargs: Any) -> int:
-        seen["reader"], seen["gate"] = read_clock, on_tick
+        seen["reader"], seen["gate"], seen["offset"] = read_clock, on_tick, kwargs.get("start_offset_s")
         return 0
 
     monkeypatch.setattr(ticks, "run_per_tick", fake_run_per_tick)
     result = CliRunner().invoke(evals_cli.evals_app, ["run", "--every-ticks", "6", "--no-phoenix"])
     assert result.exit_code == 0, result.output
+    assert seen["offset"] is None  # BAZAAR_TICK_OFFSET_S, unset = today
+    staggered = CliRunner().invoke(
+        evals_cli.evals_app, ["run", "--every-ticks", "6", "--no-phoenix", "--tick-offset", "1"]
+    )
+    assert staggered.exit_code == 0 and seen["offset"] == 1.0
     assert isinstance(seen["reader"].__self__, sdk.PublicBazaar)  # no team key on this client
     assert seen["gate"].every_ticks == 6 and "every 6 game ticks" in result.output
 

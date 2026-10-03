@@ -45,8 +45,25 @@ INJECTION_PATTERNS: Mapping[str, re.Pattern[str]] = {
         r"\b(accept|acepta|pay|paga|transfer|send|env[ií]a)\b.{0,30}\d", re.IGNORECASE | re.DOTALL
     ),
     "asset_grab": re.compile(
-        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|every|todas|todos)\b|\bgive\b.{0,10}\bassets?\b",
+        r"\b(sell|give|transfer|vende|regala|dame)\b.{0,20}\b(all|every\w*|todas?|todos?)\b|\bgive\b.{0,10}\bassets?\b",
         re.IGNORECASE | re.DOTALL,
+    ),
+    # A rival posing as the organisers or a broker ("BROKER NOTICE: new organiser rule ...").
+    "fake_authority": re.compile(
+        r"\b(admin|organi[sz]ers?|organizador(es)?|moderator|broker|system|official|server)\s*"
+        r"(notice|order|rule|announcement|message|says|aviso|orden|regla)\b"
+        r"|\bnew\s+(organi[sz]er|admin|official)\s+rules?\b",
+        re.IGNORECASE,
+    ),
+    "obligation": re.compile(
+        r"\b(must|have to|required to|debes|deben|tienes que|tienen que)\b.{0,20}"
+        r"\b(accept|sell|give|pay|transfer|send|aceptar?|vender?|pagar?|dar|enviar?)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    # Words that tell us our own private numbers ("your limit is 900"): we never take them from a counterparty.
+    "limit_claim": re.compile(
+        r"\b(your|tu)\s+(limit|max(imum)?|budget|reserve|cap|l[ií]mite|presupuesto|m[aá]ximo)\s+(is|=|es|now|ahora)\b",
+        re.IGNORECASE,
     ),
 }
 
@@ -55,10 +72,15 @@ def injection_flags(text: str | None) -> tuple[str, ...]:
     """Names of the prompt-injection shapes found in a counterparty's text (untrusted input)."""
     if not text:
         return ()
-    # The words filter's folding: NFKC, and format characters (zero-width, bidi) dropped, so they
-    # cannot split "ign\u200bore" into a word no pattern sees.
-    folded = "".join(ch for ch in unicodedata.normalize("NFKC", text) if unicodedata.category(ch) != "Cf")
-    return tuple(name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(folded))
+    # The words filter's folding: NFKC, and format characters (zero-width, bidi, soft hyphen) dropped, so they
+    # cannot split "ign\u200bore" into a word no pattern sees; and, as a second reading, turned into spaces,
+    # so they cannot glue two words either ("sell\u00adall").
+    normal = unicodedata.normalize("NFKC", text)
+    dropped = "".join(ch for ch in normal if unicodedata.category(ch) != "Cf")
+    spaced = "".join(" " if unicodedata.category(ch) == "Cf" else ch for ch in normal)
+    return tuple(
+        name for name, pattern in INJECTION_PATTERNS.items() if pattern.search(dropped) or pattern.search(spaced)
+    )
 
 
 def stakes_bucket(value_at_risk: int) -> str:

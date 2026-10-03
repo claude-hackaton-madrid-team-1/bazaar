@@ -146,6 +146,9 @@ def evals_run(
     ),
     phoenix: bool = typer.Option(True, help="Attach outcomes to their Phoenix traces as annotations"),
     as_json: bool = typer.Option(False, "--json", help="The pass summary as JSON"),
+    tick_offset: float | None = typer.Option(
+        None, min=0.0, help="With --every-ticks: wake this many seconds after each tick; default $BAZAAR_TICK_OFFSET_S"
+    ),
 ) -> None:
     """Score every settled duel, dealer thread, team trade and Market Test; upsert into `outcomes`."""
     if every_ticks <= 0:
@@ -157,7 +160,7 @@ def evals_run(
 
     gate = TickGate(every_ticks, lambda conn: _pass(conn, since_tick, phoenix, as_json), phoenix)
     console.print(f"evals: every {every_ticks} game ticks (keyless /api/clock), when an input moved (Ctrl-C to stop)")
-    run_per_tick(public_client(load_settings()).clock, gate)
+    run_per_tick(public_client(load_settings()).clock, gate, start_offset_s=tick_offset)
 
 
 @evals_app.command("report")

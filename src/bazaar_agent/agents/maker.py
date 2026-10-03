@@ -13,8 +13,10 @@ Album first (`/api/me`), then:
   - with Jev (`maker_jev.MakerJev`), each price picked among three legal candidates by
     `list_price_choice` and each reprice weighed by `reprice_or_hold`; `undecided` keeps today's move.
 Caps: `offers_per_team_per_tick` new listings per tick for the whole team (counted in the shared
-ledger), `max_open_offers_per_team` open offers. The maker owns our BOARD offers: one we listed by hand
-that is not a strategy target is cancelled, so stop the maker before trading by hand.
+ledger), `max_open_offers_per_team` open offers, and optionally `MakerConfig.max_cancels_per_tick` cancels
+(a reprice's cancel included; over the cap a stale offer waits a tick and a reprice holds its price).
+The maker owns our BOARD offers: one we listed by hand that is not a strategy target is cancelled, so stop
+the maker before trading by hand.
 Dry run (the default) sends nothing and logs WOULD-moves.
 """
 
@@ -66,6 +68,9 @@ from bazaar_agent.ticks import Clock
 class MakerConfig:
     offer_ttl_ticks: int = 40  # expires_in_ticks of a new offer (the SDK default)
     reprice_min_change: float = 0.05  # reprice when the target moved by at least 5 % (and 1 P)
+    # Cancels per tick (a reprice's cancel included), for the request budget: None = uncapped (today).
+    # Over the cap a stale offer stays up one more tick, where it can still fill: keep it off unless needed.
+    max_cancels_per_tick: int | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,7 @@ class _MakerRun:
     open_total: int
     listings_left: int
     spent: int = 0  # bid cash committed this tick (posted or would-be), counted against the spend cap
+    cancels: int = 0  # cancels sent (or would-be) this tick, against `max_cancels_per_tick`
     posted: list[str] = field(default_factory=list)
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
 
@@ -231,9 +237,10 @@ class Maker:
         if action.kind == "cancel" and action.offer is not None:
             self._cancel(run, action.offer, action.why)
         elif action.kind == "reprice" and action.target is not None and action.offer is not None:
-            if run.listings_left <= 0:
+            if run.listings_left <= 0 or self._cancels_spent(run):
                 offer = action.offer
-                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: no listing left")
+                why = "no listing left" if run.listings_left <= 0 else self._cancel_cap_note()
+                self.log(f"tick {run.snap.clock.tick} maker: keep {offer.ref} at {offer.price}: {why}")
                 return
             hold, advice = self._jev_hold(run, action.offer, action.target)
             if hold:
@@ -245,9 +252,15 @@ class Maker:
         elif action.target is not None:
             self._post(run, action.target, action.why)
 
+    def _cancels_spent(self, run: _MakerRun) -> bool:
+        cap = self.config.max_cancels_per_tick
+        return cap is not None and run.cancels >= cap
+
+    def _cancel_cap_note(self) -> str:
+        return f"max_cancels_per_tick {self.config.max_cancels_per_tick} reached, next tick"
+
     def _cancel(self, run: _MakerRun, offer: OpenOffer, why: str) -> bool:
         tick = run.snap.clock.tick
-        status: Status = "approved" if run.window.open() else "expired"
         inputs = {
             "offer_id": offer.id,
             "side": offer.side,
@@ -255,6 +268,21 @@ class Maker:
             "price": offer.price,
             "venue": offer.venue,
         }
+        if self._cancels_spent(run):
+            self.rec.decide(
+                tick,
+                f"cancel_{offer.side}",
+                f"keep {offer.side} {offer.id} {offer.ref} at {offer.price} on {offer.venue}: "
+                f"{self._cancel_cap_note()}",
+                inputs=inputs,
+                reason=why,
+                guardrail=self._cancel_cap_note(),
+                chosen=False,
+                status="rejected",
+                move={"cancel": offer.id},
+            )
+            return False
+        status: Status = "approved" if run.window.open() else "expired"
         did = self.rec.decide(
             tick,
             f"cancel_{offer.side}",
@@ -268,6 +296,7 @@ class Maker:
         )
         if status != "approved":
             return False
+        run.cancels += 1  # a refused cancel still spent a request
         if self.live:
             if self.rec.send(did, tick, "cancel", {"offer": offer.id}, lambda: self.team.cancel(offer.id)) is None:
                 return False

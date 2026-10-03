@@ -417,11 +417,17 @@ def _jev_advisor(item: str, settings: Any, timeout_s: float = 3.0) -> Any:
 # ---------------------------------------------------------------- duels (needs BAZAAR_KEY)
 
 
+TICK_OFFSET_HELP = (
+    "Wake this many seconds after each tick (the stagger, max 40 % of the tick); default $BAZAAR_TICK_OFFSET_S, else 0"
+)
+
+
 @duel_app.command("run")
 def duel_run(
     play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev duel_move picks among the legal moves (undecided: today's move)"),
+    tick_offset: float | None = typer.Option(None, min=0.0, help=TICK_OFFSET_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
@@ -610,7 +616,12 @@ def duel_run(
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
     console.print(f"duels → {log_path} + Postgres duels ({mode})")
     try:
-        run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
+        run_per_tick(
+            client.clock,
+            traces.per_tick("duels tick", on_tick),
+            max_ticks=max_ticks or None,
+            start_offset_s=tick_offset,
+        )
     finally:
         duel_traces.close("stopped")
         decisions.close()
@@ -763,6 +774,7 @@ def monitor(
         True, "--stream/--no-stream", help="Hold ONE live SSE stream (6 per team key, shared by laptops and tabs)"
     ),
     show_events: bool = typer.Option(False, help="Print every streamed event as it lands, timestamped"),
+    tick_offset: float | None = typer.Option(None, min=0.0, help=TICK_OFFSET_HELP),
 ) -> None:
     """The monitoring agent: live stream + per-tick feed poll → JSONL + Postgres, traders, /me snapshot, alerts."""
     from bazaar_agent.agents.monitoring import MonitorLoop, Options
@@ -795,6 +807,7 @@ def monitor(
             traces.per_tick("monitor tick", loop.on_tick),
             max_ticks=max_ticks or None,
             sleep=lambda seconds: inbox.wait(seconds, loop.on_stream),
+            start_offset_s=tick_offset,
         )
     finally:
         if loop.stream is not None:
@@ -842,13 +855,19 @@ def budget(
         0.0, min=0.0, help="MCP tools, desk, `bazaar ask`/`status`: average req/s (0 = not counted)"
     ),
     flatten: bool = typer.Option(False, help="Add one `bazaar flatten` (32 calls) at the tick edge"),
+    max_cancels: int | None = typer.Option(
+        None, min=1, help="Model the maker's --max-cancels (with --ceiling; default uncapped, today)"
+    ),
 ) -> None:
     """Requests per tick per loop against the 5 req/s per key (bursts of 20). Offline: no call is made."""
     from rich.table import Table
 
     from bazaar_agent import rate_budget as rb
 
-    plan = rb.saturday_plan(dealer_children=dealer_children) if ceiling else rb.steady_plan()
+    if ceiling:
+        plan = rb.saturday_plan(dealer_children=dealer_children, maker_max_cancels=max_cancels)
+    else:
+        plan = rb.steady_plan()
     if not ceiling and dealer_children:
         plan.append(rb.dealer_child().times(dealer_children))
     plan = rb.with_copies(plan, {"taker": laptops, "maker": laptops})
@@ -1325,7 +1344,13 @@ def _status_port(port: int | None) -> int:
 
 
 def _run_agent(
-    name: str, live: bool, max_ticks: int, build: Callable[..., Any], port: int | None = None, host: str | None = None
+    name: str,
+    live: bool,
+    max_ticks: int,
+    build: Callable[..., Any],
+    port: int | None = None,
+    host: str | None = None,
+    tick_offset: float | None = None,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
     read-only status server, the loop."""
@@ -1379,7 +1404,12 @@ def _run_agent(
     log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
     try:
         read_clock = watched_clock(team.clock, name, log, hub)
-        run_per_tick(read_clock, traces.per_tick(f"{name} tick", agent.on_tick), max_ticks=max_ticks or None)
+        run_per_tick(
+            read_clock,
+            traces.per_tick(f"{name} tick", agent.on_tick),
+            max_ticks=max_ticks or None,
+            start_offset_s=tick_offset,
+        )
     finally:
         decisions.close()
 
@@ -1392,6 +1422,7 @@ def agent_taker(
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    tick_offset: float | None = typer.Option(None, min=0.0, help=TICK_OFFSET_HELP),
 ) -> None:
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
@@ -1410,7 +1441,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host)
+    _run_agent("taker", live, max_ticks, build, port, host, tick_offset)
 
 
 @agent_app.command("maker")
@@ -1420,14 +1451,19 @@ def agent_maker(
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    tick_offset: float | None = typer.Option(None, min=0.0, help=TICK_OFFSET_HELP),
+    max_cancels: int | None = typer.Option(
+        None, min=1, help="Cancels per tick, a reprice's included (request budget); default uncapped"
+    ),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
-    from bazaar_agent.agents.maker import Maker
+    from bazaar_agent.agents.maker import Maker, MakerConfig
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
-        return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
+        jev_fns = _maker_jev(settings, kw["rules"]) if jev else None
+        return Maker(team, public, jev=jev_fns, config=MakerConfig(max_cancels_per_tick=max_cancels), **kw)
 
-    _run_agent("maker", live, max_ticks, build, port, host)
+    _run_agent("maker", live, max_ticks, build, port, host, tick_offset)
 
 
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
