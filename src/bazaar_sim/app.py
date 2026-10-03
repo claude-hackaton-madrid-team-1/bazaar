@@ -12,7 +12,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
+import random
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -54,6 +56,9 @@ class Sim:
     streams: dict[str, int] = field(default_factory=dict)
     on_reset: Callable[[World], None] | None = None
 
+    sends: dict[str, dict[str, int]] = field(default_factory=dict)  # team -> "tick METHOD /route" -> accepted writes
+    refusals: dict[str, dict[str, int]] = field(default_factory=dict)  # team -> "METHOD /route code" -> count
+
     generation: int = 0  # bumped by every reset: a save from before a reset never lands after it
     saved: tuple[int, int] = (-1, -1)  # (generation, sequence) of the last snapshot written
     sequence: int = 0
@@ -83,6 +88,7 @@ class Sim:
             config = world.config if seed is None else SimConfig(**{**world.config.__dict__, "seed": seed})
             fresh = World.create(config, world.now)
             world.state, world.config, world.keys = fresh.state, fresh.config, fresh.keys
+            world.scenario = fresh.scenario
             world.stream_only = []
             self.generation += 1
         self.persist()
@@ -129,7 +135,8 @@ def create_app(sim: Sim, *, run_clock: bool = True) -> FastAPI:
 
     app = FastAPI(title="The Bazaar · simulator", version="0.1-sim", lifespan=lifespan)
     app.state.sim = sim
-    _errors(app)
+    _latency(app, sim)
+    _errors(app, sim)
     _public_routes(app, sim)
     _team_routes(app, sim)
     _broker_routes(app, sim)
@@ -137,6 +144,39 @@ def create_app(sim: Sim, *, run_clock: bool = True) -> FastAPI:
     _stream_route(app, sim)
     _fallback_routes(app)
     return app
+
+
+def _latency(app: FastAPI, sim: Sim) -> None:
+    """A scenario's measured request latency: each API answer waits a lognormal draw around the real median."""
+
+    @app.middleware("http")
+    async def delay(request: Request, call_next: Callable[[Request], Any]) -> Response:
+        cfg = sim.world.config
+        if cfg.latency_p50_ms > 0 and request.url.path.startswith("/api/"):
+            await asyncio.sleep(latency_seconds(cfg.latency_p50_ms, cfg.latency_p95_ms))
+        response: Response = await call_next(request)
+        if request.method != "GET" and response.status_code < 400 and request.url.path.startswith("/api/"):
+            _count(sim, sim.sends, request, f"{sim.world.tick} ")
+        return response
+
+
+def _count(sim: Sim, table: dict[str, dict[str, int]], request: Request, prefix: str = "", suffix: str = "") -> None:
+    """Tally a team's write (accepted or refused) for `GET /sim/activity`: what our agents did, measured server-side."""
+    key = request.headers.get("x-team-key")
+    team = sim.world.team_for_key(key) if key else None
+    if team is None:
+        return
+    route = request.scope.get("route")
+    path = getattr(route, "path", request.url.path)
+    label = f"{prefix}{request.method} {path}{suffix}"
+    rows = table.setdefault(team, {})
+    rows[label] = rows.get(label, 0) + 1
+
+
+def latency_seconds(p50_ms: float, p95_ms: float, rng: random.Random | None = None) -> float:
+    """One draw of a lognormal whose median is `p50_ms` and whose 95th percentile is `p95_ms`."""
+    sigma = max(0.0, math.log(max(p95_ms, p50_ms) / p50_ms) / 1.645)
+    return (rng or random).lognormvariate(math.log(p50_ms), sigma) / 1000.0
 
 
 async def _clock_loop(sim: Sim) -> None:
@@ -152,9 +192,11 @@ async def _clock_loop(sim: Sim) -> None:
             log.exception("sim clock: a tick or its save failed; the clock keeps going")
 
 
-def _errors(app: FastAPI) -> None:
+def _errors(app: FastAPI, sim: Sim) -> None:
     @app.exception_handler(SimError)
-    async def sim_error(_: Request, e: SimError) -> JSONResponse:
+    async def sim_error(request: Request, e: SimError) -> JSONResponse:
+        if request.method != "GET" and request.url.path.startswith("/api/"):
+            _count(sim, sim.refusals, request, suffix=f" {e.code}")
         return JSONResponse(e.body(), status_code=e.status)
 
     @app.exception_handler(StarletteHTTPException)
@@ -270,6 +312,14 @@ def _public_routes(app: FastAPI, sim: Sim) -> None:
         with sim.world.lock:
             return views.dealer_view(sim.world, pid)
 
+    @app.get("/api/news")
+    async def news(request: Request) -> dict[str, Any]:
+        _public(sim, request)
+        with sim.world.lock:
+            if sim.world.scenario is None:
+                raise not_found("route /api/news")
+            return {"news": list(reversed(sim.world.state.news))}
+
     @app.get("/api/levels")
     async def levels(request: Request) -> dict[str, Any]:
         _public(sim, request)
@@ -349,6 +399,15 @@ def _team_routes(app: FastAPI, sim: Sim) -> None:
         team = _team(sim, request)
         with sim.world.lock:
             return threads.close_thread(sim.world, team, tid)
+
+    @app.post("/api/taller")
+    async def taller(request: Request) -> dict[str, Any]:
+        from bazaar_sim import scenario
+
+        team = _team(sim, request)
+        body = await _body(request)
+        with sim.world.lock:
+            return scenario.craft(sim.world, team, body.get("assets"))
 
     @app.post("/api/offers")
     async def new_offer(request: Request) -> dict[str, Any]:
@@ -466,6 +525,13 @@ def _sim_routes(app: FastAPI, sim: Sim) -> None:
         sim.world.advance()
         await asyncio.to_thread(sim.persist)
         return {"ok": True, "tick": sim.world.tick}
+
+    @app.get("/sim/activity")
+    async def activity(request: Request) -> dict[str, Any]:
+        """What each team's writes did since boot: accepted ones per tick, refused ones per error code."""
+        _public(sim, request)
+        with sim.world.lock:
+            return {"tick": sim.world.tick, "sends": sim.sends, "refusals": sim.refusals}
 
     @app.get("/sim/state")
     async def state(request: Request) -> Response:
@@ -592,6 +658,8 @@ def build(config: SimConfig | None = None, store: Store | None = None) -> tuple[
     world = load_world(store, config)
     rate = float(os.environ.get("SIM_RATE_PER_S") or 5.0)
     burst = float(os.environ.get("SIM_RATE_BURST") or 20.0)
+    compression = config.compression()  # a compressed scenario replay: the per-second limits scale with the pace
+    rate, burst = rate * compression, burst * compression
     sim = Sim(
         world=world,
         store=store,

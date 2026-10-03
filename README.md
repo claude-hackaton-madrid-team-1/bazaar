@@ -123,6 +123,14 @@ raises on any non-loopback connection before a packet leaves (a dead proxy backs
    answers there, a `bazaar-sim serve` or the MCP server: stop it first. When several simulators share
    one laptop, `BAZAAR_SIM_PORT=8817` moves both the smoke and `BAZAAR_SIM=local` to another loopback
    port.)
+
+   **The Sunday scenario** (`SIM_SCENARIO=sunday`, opt-in; unset = the plain simulator): the organisers' Sunday at
+   15 s ticks, calibrated from Friday + Saturday's data (`uv run python scripts/sim_calibrate.py` writes
+   `src/bazaar_sim/data/sunday.json`): the schedule as tick events (Market Tests, Round 3 + Chamberí + the 150 P
+   allowance, Duels III, the finale), all five dealers, Radio Rastro news, the Workshop, 16 fitted rivals, request
+   latency and the real rate limits. `uv run python scripts/sim_sunday.py --port 8981 --ticks 600 --tick-seconds 2`
+   runs our taker + maker + duels against it (a compressed Sunday: the game clock still adds 15 s a tick, the
+   per-second limits scale with the pace) and prints writes per tick, idle ticks and refusal reasons per agent.
 4. **Reset the public simulator** to tick 0 when a test needs a fresh world (everyone shares it). The
    token is `SIM_ADMIN_TOKEN` in Railway (`bazaar-sim` → Variables); type it at a hidden prompt, so it
    never lands in your shell history:
@@ -1427,14 +1435,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] build-error — PR #269 Sunday runner isolation and integrated review (SS1)
+- [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
+- [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
+- [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
+- [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
+- [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
 - [2026-10-04] finding
 - [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
-- [2026-10-04] build-error — pitch recording fallback
-- [2026-10-04] build-error — motion pitch browser and check tooling
-- [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
-- [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
-- [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
-- [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
 
 <!-- BAZAAR:STATUS:END -->
 
