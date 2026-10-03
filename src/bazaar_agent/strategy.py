@@ -362,6 +362,7 @@ class Move:
     asset_id: int | None = None  # sells: the exact copy listed
     jev: str = "-"  # packs: Jev's verdict and probability on spending a slot
     ladder: tuple[int, int, int] | None = None  # dealer buys and packs: (start, max, step) of the bid ladder
+    completes_page: bool = False  # dealer buys: the card completes a page, so no fill caps its ladder top
 
 
 def for_sale(m: Market, card: Card) -> int:
@@ -422,6 +423,11 @@ def bonus_at_stake(m: Market, card: Card, params: StrategyParams) -> float:
     return params.page_bonus_weight * page_bonus_of(m, card.set_code) * card.book / (missing_book + card.book)
 
 
+def completes_page(m: Market, card: Card) -> bool:
+    """The card is the only page card of its set we miss: buying it completes the page (the whole bonus)."""
+    return card.page and set(bonus_shares(m, card.set_code)) == {card.ref}
+
+
 def bid_range(
     fills: Sequence[float],
     estimate: float,
@@ -429,12 +435,18 @@ def bid_range(
     cap: int | None,
     min_surplus: float,
     opening_ratio: float | None = None,
+    completes: bool = False,
 ) -> tuple[int, int] | None:
     """(start, max) for a dealer ladder: open at the lowest proven fill, never above what anyone paid,
     our value minus the minimum surplus, or the guardrail cap. None when nothing fits.
     With no fills yet (a new dealer), open at `opening_ratio` × the estimate: the deepest discount any
-    dealer has given off its list price."""
-    top = min(math.floor(value - min_surplus), math.ceil(max(fills)) if fills else math.ceil(estimate))
+    dealer has given off its list price.
+    `completes`: the card completes a page. Its value carries the whole page bonus, far above what anyone paid
+    for a plain card of its rarity, so the fills no longer cap the top: our value minus the minimum surplus and
+    the cap do (the send's official value cap too). The start stays at the lowest proven fill (thread 1093: a page
+    completer's top was held to the dealer's highest fill for its rarity)."""
+    paid = math.ceil(max(fills)) if fills else math.ceil(estimate)
+    top = math.floor(value - min_surplus) if completes else min(math.floor(value - min_surplus), paid)
     if cap is not None:
         top = min(top, cap)
     if top < 1:
@@ -526,8 +538,8 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
     fills = dealer_fills(m, quote.dealer)
     est = estimate_price(card.ref, card.rarity, fills, rarity_of, quote.list_price, card.book)
     same = [float(p.price) for p in fills if rarity_of.get(p.ref) == card.rarity]
-    cap = rules.max_price_for(card.rarity)
-    plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m))
+    cap, completes = rules.max_price_for(card.rarity), completes_page(m, card)
+    plan = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m), completes)
     if plan is None or case.value - est.price < params.min_buy_surplus:
         return f"{card.ref}: worth {case.value:.1f}, {quote.dealer} fills ~{est.price:g} — surplus too small"
     reach = final_reach(card.rarity, case.value, plan[1], rules, params.min_buy_surplus) or plan[1]
@@ -535,6 +547,11 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
         return f"{card.ref}: {quote.dealer} fills ~{est.price:g}, our max is {plan[1]} — cap below market"
     level = "level_unlock" if quote.dealer == m.newest_dealer else None
     scarce = "scarcity_first" if case.supply.scarce else None
+    # A page completer's step is paced as if its top were still the fills': we climb as slowly as before and the
+    # raised top only lets us take an ask above them.
+    paced = bid_range(same, est.price, case.value, cap, params.min_buy_surplus, opening_ratio(m)) if completes else None
+    ladder = (*plan, ladder_step(plan[0], paced[1] if paced else plan[1], rules.dealer_max_ticks_per_thread))
+    top = f"; top {plan[1]}: completes the page" if completes else ""
     return Move(
         "buy",
         _strategies("complete_pages", scarce, "dealer_floor", level),
@@ -549,10 +566,11 @@ def dealer_buy(m: Market, case: BuyCase, quote: Quote, params: StrategyParams, r
         (quote.dealer,),
         "buy",
         plan[1],
-        f"worth {case.worth}; {quote.dealer} fills {est.basis} → {est.price:g}; ladder {plan[0]}→{plan[1]}; "
+        f"worth {case.worth}; {quote.dealer} fills {est.basis} → {est.price:g}; ladder {plan[0]}→{plan[1]}{top}; "
         f"{case.supply_note}",
-        dealer_command(card.ref, quote.dealer, *plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)),
-        ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)),
+        dealer_command(card.ref, quote.dealer, *ladder),
+        ladder=ladder,
+        completes_page=completes,
     )
 
 

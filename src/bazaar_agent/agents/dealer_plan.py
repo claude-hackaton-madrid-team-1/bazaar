@@ -146,6 +146,8 @@ def plan_dealer_buy(
             rescued = f"skip lifted: {under} of {len(policy.fills)} fills at or under the final cap {final_max}"
             notes.append(Note("policy", _policy_ref(policy), rescued, policy.text()))
         else:
+            if mv.completes_page and planned[1] < ladder[1]:  # a page completer keeps its top: fills do not cap it
+                planned, why = (planned[0], ladder[1], planned[2]), f"{why}; top {ladder[1]} kept: completes the page"
             if planned != ladder:
                 changed = f"ladder {fmt(ladder)} → {fmt(planned)}"
                 notes.append(Note("policy", _policy_ref(policy), changed, policy.text()))

@@ -20,6 +20,7 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -439,6 +440,18 @@ def _topic_kind(thread: dict[str, Any]) -> str:
     """'sell' or 'buy' for a dealer thread's topic, else 'other' (never the topic's numbers)."""
     topic = thread.get("topic")
     return next((k for k in ("sell", "buy") if isinstance(topic, dict) and k in topic), "other")
+
+
+def official_top(plan: BidPlan, item: str, ctx: Context, rules: Guardrails) -> int | None:
+    """A dealer ladder's top lowered to the official value cap (`official_value_margin`), when that sits below the
+    plan's top and still at or above its start: a bid above it would be refused and walk the thread. Only the value
+    the open's own check already read (no request). None: nothing to lower."""
+    held = ctx.held.get(item, 0)
+    official = ctx.values.cached(item, ctx.tick, held) if ctx.values is not None else None
+    if official is None:
+        return None
+    top = math.floor(official - rules.official_value_margin + 1e-9)
+    return top if plan.start <= top < plan.max_price else None
 
 
 def _conversation(conv: Conversation) -> str:
@@ -1347,9 +1360,12 @@ class Taker:
         dp = run.plans.get((op.dealer, op.item))
         if dp is not None and dp.final_max is not None:
             op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
-        if (forgiving := self._forgiving(run, op.dealer, op.item, op.rarity, op.plan)) != op.plan:  # last: no lift
+        forgiving = self._forgiving(run, op.dealer, op.item, op.rarity, op.plan, op.move.completes_page)
+        if forgiving != op.plan:  # last: no lift
             op = replace(op, plan=forgiving, reason=f"{op.reason}; {forgiving_note(forgiving)}")
         verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        if verdict.allowed and (top := official_top(op.plan, op.item, ctx, self.rules)) is not None:
+            op = replace(op, plan=op.plan.capped(top), reason=f"{op.reason}; top {top}: official value cap")
         if not verdict.allowed and not verdict.halted and op.item in run.boost and self.cards is not None:
             self.cards.unboost(op.item)  # a refused release never holds this dealer's slot again
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
@@ -1441,16 +1457,18 @@ class Taker:
         found = self.lessons(situation, subjects=(op.dealer,), tick=run.snap.clock.tick)
         return [str(x.get("quoted_lesson")) for x in found if isinstance(x, dict)]
 
-    def _forgiving(self, run: _TickRun, dealer: str, item: str, rarity: str, plan: BidPlan) -> BidPlan:
+    def _forgiving(
+        self, run: _TickRun, dealer: str, item: str, rarity: str, plan: BidPlan, completes: bool = False
+    ) -> BidPlan:
         """A trickster's FINAL is not its limit (agents/trickster.py): a forgiving dealer's plan carries its list price
-        and the most we take, from its fills in our feed history (its tape is read once a tick, only when needed).
-        Every other dealer's plan comes back unchanged."""
+        and the most we take, from its fills in our feed history (its tape is read once a tick, only when needed;
+        `completes`: a page completer's most is our top instead). Every other dealer's plan comes back unchanged."""
         persona = self.personas.personas.get(dealer)
         if not is_forgiving(persona, self.rules):
             return plan
         if run.prints is None:
             run.prints = tape(run.snap.events)
-        return forgiving_plan(plan, persona, item, rarity, run.prints, self.rules, run.snap.us)
+        return forgiving_plan(plan, persona, item, rarity, run.prints, self.rules, run.snap.us, completes)
 
     def _desk_moves(self, run: _TickRun, *, held: bool = False) -> list[tuple[DeskMove, dict[str, Any]]]:
         """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped

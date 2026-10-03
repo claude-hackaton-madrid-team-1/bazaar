@@ -135,17 +135,20 @@ def test_a_dealer_thread_is_not_opened_when_its_opening_bid_is_above_the_officia
     assert any("official value" in line for line in lines)
 
 
-def test_a_later_dealer_bid_above_the_official_value_is_refused(tmp_path):
-    # 18.5 lets the opening 18 through; her ask 24 calls for 19 next, which is above it.
+def test_a_later_dealer_bid_above_the_official_value_is_never_planned(tmp_path):
+    # 18.5 lets the opening 18 through; her ask 24 would call for 19 next, which is above it. The open lowers the
+    # ladder's top to the official value it read (18), so 19 is never bid: we walk when nothing is left inside it.
     team = ValuedTeam(values={"LAV-08": 18.5})
-    t, lines = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
+    t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
     t.on_tick(clock())
     assert ("open_thread", "abuela", {"buy": {"card": "LAV-08"}}) in team.sent
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    (opened,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
+    assert opened["inputs"]["plan"] == "18→18 step 1" and "top 18: official value cap" in opened["reason"]
     her_ask(team, 5000, 800, 24)
     t.on_tick(at(team, TICK + 1))
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]  # 19 never sent
-    assert any("price 19 > official value 18.5 of LAV-08" in line for line in lines)
+    assert ("close_thread", 5000) in team.sent
 
 
 def test_a_failed_value_read_holds_the_dealer_thread_for_the_tick_and_never_walks(tmp_path):

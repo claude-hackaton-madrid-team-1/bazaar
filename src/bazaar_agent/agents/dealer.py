@@ -81,6 +81,12 @@ class BidPlan:
             return ask <= self.max_price and self.accepts(ask)
         return ask <= self.max_price or (ask <= self.final_cap and bids >= self.lift_after)
 
+    def capped(self, top: int) -> BidPlan:
+        """This plan with nothing above `top`: our bids, a final we take and a forgiving dealer's ask we take."""
+        final_max = None if self.final_max is None else top
+        accept_max = None if self.accept_max is None else min(self.accept_max, top)
+        return replace(self, max_price=top, final_max=final_max, accept_max=accept_max)
+
     def accepts(self, ask: int) -> bool:
         """We may take this ask, or meet it with a bid (the same deal). Always, except with a forgiving dealer: then
         only below its list price and at or under `accept_max`, and never with no fill seen."""

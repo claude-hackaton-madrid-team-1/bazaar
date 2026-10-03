@@ -198,6 +198,7 @@ class Guardrails(BaseModel):
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
     breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
     human_approval_above: int = Field(default=0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
+    human_approval_buys: bool = True  # False: `human_approval_above` gates sells only
     max_score_loss_per_move: float = Field(default=0.0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
     score_per_neg_point_fallback: float = Field(default=0.053, gt=0, le=1)
     dealer_ladder_score: float = Field(default=0.05, ge=0, le=1)
@@ -349,6 +350,7 @@ ENFORCED_BY: dict[str, str] = {
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
     "human_approval_above": "guardrails.check → approvals.ApprovalBoard.read (once per tick, fail closed)",
+    "human_approval_buys": "guardrails._approval_violations (false: no card buy waits for a human)",
     "max_score_loss_per_move": "guardrails.check (every sale) → move_impact.sell_impact + impact_board (fail closed)",
     "score_per_neg_point_fallback": "move_impact.slope (k when our snapshots measured none)",
     "dealer_ladder_score": "move_impact.estimate (every dealer deal)",
@@ -988,8 +990,11 @@ def approval_side(action: Action) -> str | None:
 
 def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
     """`human_approval_above`: a card trade at or above it (fee included, plus the copy a swap gives) needs an
-    approval covering its card, side and price. Fails closed: approvals that cannot be read approve nothing."""
+    approval covering its card, side and price. Fails closed: approvals that cannot be read approve nothing.
+    `human_approval_buys` false: a buy never needs one (every other buy cap still binds)."""
     side = approval_side(action)
+    if side == "buy" and not rules.human_approval_buys:
+        return []
     # A ranking or plan check skips it (as the official value cap): a plan prices at its ladder top, not at the
     # bid, and a human is asked only about a write about to be sent.
     if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:

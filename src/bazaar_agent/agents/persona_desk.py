@@ -116,7 +116,9 @@ def shape(
             kept.append(mv)
             continue
         ladder, why = plan_with_prior(mv.ladder, params)
-        if why is None:
+        if why is not None and mv.completes_page and ladder[1] < mv.ladder[1]:  # a page completer keeps its top
+            ladder, why = (ladder[0], mv.ladder[1], ladder[2]), f"{why}; top {mv.ladder[1]} kept: completes the page"
+        if why is None or ladder == mv.ladder:
             kept.append(mv)
             continue
         start, top, step = ladder
