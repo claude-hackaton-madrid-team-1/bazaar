@@ -1,6 +1,7 @@
 """Read-only status of one agent (taker or maker) over HTTP and WebSocket, beside its tick loop.
 
-    GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, tick, last_tick_at}
+    GET /health  {ok, agent, mode: dry|live, target: {mode: real|simulator, url}, ledger, tick, last_tick_at}
+                 ledger: shared | down (a live agent sends nothing until it answers) | local file
     GET /state   mode, tick, our open offers (maker) or dealer threads (taker), the last 50 decisions
     WS  /events  every decision and execution as it happens; a client joining late first gets the last 200
 
@@ -62,6 +63,10 @@ MOVE_FIELDS = frozenset(
     {"kind", "price", "accept", "open_thread", "topic", "cancel", "hold", "reprice", "give", "want", "venue"}
 )
 REQUEST_FIELDS = frozenset({"offer", "thread", "with", "topic", "price", "give", "want", "venue"})
+# Our venue's broker sees a private book (pseudonyms, the Market Test's bench): its rows show only that a match
+# or an opening happened and how it ended, never an offer id, a quote, a maker or a price.
+PRIVATE_KINDS = frozenset({"broker_match", "venue_open"})
+PRIVATE_METHODS = frozenset({"broker_match", "open_venue"})
 VIEW_FIELDS: dict[str, frozenset[str] | None] = {  # None: a list of plain values (card refs)
     "threads": frozenset({"dealer", "thread", "item", "ticks", "opened_tick", "accepted_price"}),
     "open_offers": frozenset({"id", "side", "ref", "price", "venue", "expires_tick", "created_tick"}),
@@ -123,6 +128,14 @@ def public_decision(row: dict[str, Any]) -> dict[str, Any]:
     its status: a rival who lists a card and sees our `skip ... accept quota` or `would accept` row for its
     offer and price would learn that its ask sat below our value. A missing `dry_run` counts as a dry run."""
     sent = _is_sent(row)
+    if row.get("kind") in PRIVATE_KINDS:  # our broker's book view: that it happened, never what it saw
+        return {
+            **_pick(row, DECISION_FIELDS if sent else UNSENT_FIELDS),
+            "guardrail": _guardrail(row.get("guardrail"), sent),
+            "jev": None,
+            "inputs": {},
+            "move": {},
+        }
     fields = INPUT_FIELDS | {SENT_PRICE} if sent else UNSENT_INPUT_FIELDS
     raw = row.get("inputs")
     inputs: dict[str, Any] = {}
@@ -141,14 +154,15 @@ def public_execution(row: dict[str, Any]) -> dict[str, Any]:
     """One request we sent: the request (public once sent) and how it ended, not the game's answer body."""
     response = row.get("response")
     created = response.get("id") if isinstance(response, dict) else None
+    private = row.get("method") in PRIVATE_METHODS
     return {
         "decision_id": row.get("decision_id"),
         "tick": row.get("tick"),
         "method": row.get("method"),
-        "request": _pick(row.get("request"), REQUEST_FIELDS),
+        "request": {} if private else _pick(row.get("request"), REQUEST_FIELDS),
         "ok": row.get("error_code") is None,
         "error_code": None if row.get("error_code") is None else "refused",  # the game's code names our cash/quota
-        "created_id": created if isinstance(created, int) else None,
+        "created_id": created if isinstance(created, int) and not private else None,
     }
 
 
@@ -167,10 +181,16 @@ class StatusHub:
     """What the server shows. Written by the tick loop (any thread), read by the server thread."""
 
     def __init__(
-        self, agent: str, live: bool, wall: Callable[[], float] = time.time, target: dict[str, str] | None = None
+        self,
+        agent: str,
+        live: bool,
+        wall: Callable[[], float] = time.time,
+        target: dict[str, str] | None = None,
+        ledger: Callable[[], str] | None = None,
     ) -> None:
         self.agent, self.mode, self._wall = agent, "live" if live else "dry", wall
         self.target = dict(target or {})  # {"mode": "real" | "simulator", "url": ...}: where its requests go
+        self._ledger = ledger  # ledger_pg.ledger_health: shared | down | local file (flags only, no network)
         self._lock = threading.Lock()
         self._events: deque[str] = deque(maxlen=REPLAY)
         self._decisions: deque[dict[str, Any]] = deque(maxlen=LAST_DECISIONS)
@@ -212,6 +232,8 @@ class StatusHub:
             self._decisions.append(payload)
 
     def execution(self, row: dict[str, Any]) -> None:
+        if row.get("method") in PRIVATE_METHODS and row.get("error_code") is not None:
+            return  # a refused opening or match would tell rivals we tried and failed
         self._publish("agent.execution", public_execution(row))
 
     def _publish(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -241,12 +263,14 @@ class StatusHub:
     # ------------------------------------------------------------ read by the server
 
     def health(self) -> dict[str, Any]:
+        ledger = {"ledger": self._ledger()} if self._ledger is not None else {}
         with self._lock:
             return {
                 "ok": True,
                 "agent": self.agent,
                 "mode": self.mode,
                 "target": self.target,
+                **ledger,
                 "tick": self._tick,
                 "last_tick_at": self._last_tick_at,
                 **self._doors,
